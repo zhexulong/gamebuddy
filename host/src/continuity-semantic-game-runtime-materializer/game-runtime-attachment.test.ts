@@ -13,9 +13,10 @@ import { DEFAULT_IDENTITY_PROFILE, identityProfileMetadata, writeIdentityProfile
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
-import { connectionAuthPath, connectionDocumentPath, TavernConnectionStore } from "../tavern/connection-store.js";
+import { connectionAuthPath, TavernConnectionStore } from "../tavern/connection-store.js";
 import { modelProviderEntry } from "../tavern/pi-provider-store.js";
 import { catalogProvider } from "../tavern/provider-catalog.js";
+import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createGameRuntimeAttachment, type GameRuntimeRecoveryAttachment } from "./game-runtime-attachment.js";
@@ -150,58 +151,70 @@ async function chatModelConfig(
   }
 }
 
-test("an unarmed Game runtime attachment still carries the player's own Game profile model", async () => {
+test("an unarmed Game runtime attachment carries the player's own provider and model from the connection they activated", async () => {
   // The operational gate nonce arms the gameplay worker; it must never decide
-  // whether the Game surface has a model. Before this invariant held, an
-  // unarmed Game runtime was constructed with no model configuration at all.
+  // whether the Game surface has a model.
   const value = await gameRoot("game-runtime-attachment-", {
     schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
-    game: { revision: 7, modelId: "player-game-model", thinkingLevel: "medium" },
+    chat: { revision: 1, thinkingLevel: "low" },
+    game: { revision: 7, thinkingLevel: "medium" },
   });
-  // The player never selected a connection in this root: the surface profile is
-  // the whole answer, exactly as before the connection could be one.
-  await assert.rejects(readFile(connectionDocumentPath(value.agentDir), "utf8"), /ENOENT/);
+  const active = await activateConnection(value.agentDir, {
+    providerId: "deepseek",
+    modelId: "deepseek-v4-pro",
+    apiKey: "sk-synthetic-connection-key",
+  });
   const attachment = await createGameRuntimeAttachment({
     runtimeRoot: value.runtimeRoot,
     agentDir: value.agentDir,
     gameplayWorkerEnabled: false,
     hostBindingFactory,
   });
-  // The Game profile decides, never the Chat profile and never a shipped
-  // default the player did not choose.
+  // The connection the player activated decides the provider and the model; the Game profile
+  // decides only the level, which is this surface's own tuning. No shipped default is substituted
+  // for either half.
   assert.deepEqual(attachment.modelConfig, {
-    provider: "cpa-oai",
-    modelId: "player-game-model",
+    provider: active.providerId,
+    modelId: active.modelId,
     thinkingLevel: "medium",
   });
   assert.equal(attachment.gameplaySubagentEnabled, false);
   assert.equal(attachment.hostBindingFactory, hostBindingFactory);
 });
 
-test("a Game runtime root without a saved profile takes the store's shipped Game profile", async () => {
+/**
+ * A fresh root has no model, and the refusal names it.
+ *
+ * The premise this replaces: the store used to ship `deepseek-v4.1-flash` on the operator's
+ * `cpa-oai` gateway, so a root with no connection configured still produced an attachment - a Game
+ * runtime that would have sent into an endpoint existing on exactly one machine. With BYOK, no
+ * connection is no model: the attachment refuses rather than inventing one, and the level the store
+ * still owns travels to the surface that will use it once a connection exists.
+ */
+test("a Game root with no activated connection has no model and refuses by name", async () => {
   const value = await gameRoot("game-runtime-attachment-default-", undefined);
-  const attachment = await createGameRuntimeAttachment({
-    runtimeRoot: value.runtimeRoot,
-    agentDir: value.agentDir,
-    gameplayWorkerEnabled: true,
-    hostBindingFactory,
-  });
-  // A root with no saved profile is not a refusal: the store itself ships the
-  // recommendation both surfaces start from, and the worker arming flag
-  // travels with the model rather than replacing it.
-  assert.deepEqual(attachment.modelConfig, {
-    provider: "cpa-oai",
-    modelId: "deepseek-v4.1-flash",
-    thinkingLevel: "high",
-  });
-  assert.equal(attachment.gameplaySubagentEnabled, true);
+  await assert.rejects(
+    () =>
+      createGameRuntimeAttachment({
+        runtimeRoot: value.runtimeRoot,
+        agentDir: value.agentDir,
+        gameplayWorkerEnabled: true,
+        hostBindingFactory,
+      }),
+    /game_runtime_model_configuration_unavailable/,
+  );
+  // The store itself still answers: it owns the level, and the refusal is not a store failure.
+  assert.equal(
+    (await new ModelProfileStore(join(value.runtimeRoot, "settings", "model-profiles.json")).read("game"))
+      .thinkingLevel,
+    "high",
+  );
 });
 
 test("a store that cannot yield a Game profile refuses the attachment instead of building a model-less runtime", async () => {
   const value = await gameRoot("game-runtime-attachment-refusal-", {
     schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
+    chat: { revision: 1, thinkingLevel: "low" },
   });
   await assert.rejects(
     () =>
@@ -215,12 +228,11 @@ test("a store that cannot yield a Game profile refuses the attachment instead of
   );
 });
 
-test("the attachment builder keeps its named refusal for a Game profile it cannot resolve", async () => {
-  // ModelProfileStore validates every profile it returns, so today the
-  // reachable refusal for a store without a usable Game profile is the store's
-  // own `invalid_model_profile_store` (asserted above). This named second gate
-  // is the only thing between a future store change and a silently model-less
-  // Game surface, so its removal must be a decision rather than an accident.
+test("the attachment builder keeps its named refusal for a Game surface it cannot resolve a model for", async () => {
+  // Two refusals stand between a root and a silently model-less Game surface, and both are stated
+  // rather than accidental: the store's own `invalid_model_profile_store` for a document it cannot
+  // read (asserted above), and this named gate for a root with no connection - the reachable case
+  // now that no model is shipped. Neither may be replaced by an invented default.
   const source = await readFile(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -233,61 +245,61 @@ test("the attachment builder keeps its named refusal for a Game profile it canno
     /if \(modelConfig === null\)\s*throw new Error\("game_runtime_model_configuration_unavailable"\);/,
   );
   assert.match(source, /\.read\(\s*"game",?\s*\)/);
+  assert.doesNotMatch(source, /cpa-oai/, "the Game attachment resolves no operator gateway of its own");
 });
 
 /**
- * The gate above is the guard, but a guard nobody can reach proves nothing, and
- * today nobody can: `ModelProfileStore.read` validates every field it returns
- * (`model-profile-store.ts:127-137`), so `resolveModelProfileConfig` is total
- * over a store that does not throw, and a store that throws refuses earlier with
- * its own `invalid_model_profile_store` (asserted above). The null branch is
- * therefore unconstructible from disk, and inventing a store state to reach it
- * would be testing a product that does not exist. What the builder CAN be pinned
- * to is the invariant the gate exists for: no attachment it returns is ever
- * model-less, in any of the configurations a root can be in.
+ * The invariant: every attachment the builder DOES return names a provider and a model, and the
+ * only roots that reach it are the ones where the player activated a connection.
  */
 test("every Game runtime attachment the builder returns names a provider and a model", async () => {
-  const saved = await gameRoot("game-runtime-attachment-model-less-saved-", {
+  const profile = {
     schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
-    game: { revision: 7, modelId: "player-game-model", thinkingLevel: "medium" },
-  });
-  const connected = await gameRoot("game-runtime-attachment-model-less-connected-", {
-    schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
-    game: { revision: 7, modelId: "player-game-model", thinkingLevel: "medium" },
-  });
+    chat: { revision: 1, thinkingLevel: "low" },
+    game: { revision: 7, thinkingLevel: "medium" },
+  };
+  const connected = await gameRoot("game-runtime-attachment-model-less-connected-", profile);
   await activateConnection(connected.agentDir, {
     providerId: "deepseek",
     modelId: "deepseek-v4-pro",
     apiKey: "sk-synthetic-connection-key",
   });
-  for (const value of [await gameRoot("game-runtime-attachment-model-less-fresh-", undefined), saved, connected]) {
-    const { modelConfig } = await createGameRuntimeAttachment({
-      runtimeRoot: value.runtimeRoot,
-      agentDir: value.agentDir,
-      gameplayWorkerEnabled: false,
-      hostBindingFactory,
-    });
-    assert.ok(modelConfig !== undefined, "an attachment carries a model configuration");
-    assert.equal(
-      typeof modelConfig.provider === "string" && modelConfig.provider.length > 0,
-      true,
-      "an attachment carries a provider",
-    );
-    assert.equal(
-      typeof modelConfig.modelId === "string" && modelConfig.modelId.length > 0,
-      true,
-      "an attachment carries a model",
-    );
-  }
+  const { modelConfig } = await createGameRuntimeAttachment({
+    runtimeRoot: connected.runtimeRoot,
+    agentDir: connected.agentDir,
+    gameplayWorkerEnabled: false,
+    hostBindingFactory,
+  });
+  assert.ok(modelConfig !== undefined, "an attachment carries a model configuration");
+  assert.equal(
+    typeof modelConfig.provider === "string" && modelConfig.provider.length > 0,
+    true,
+    "an attachment carries a provider",
+  );
+  assert.equal(
+    typeof modelConfig.modelId === "string" && modelConfig.modelId.length > 0,
+    true,
+    "an attachment carries a model",
+  );
+  // The other half of the same invariant: with no connection there is no attachment at all.
+  const bare = await gameRoot("game-runtime-attachment-model-less-fresh-", profile);
+  await assert.rejects(
+    () =>
+      createGameRuntimeAttachment({
+        runtimeRoot: bare.runtimeRoot,
+        agentDir: bare.agentDir,
+        gameplayWorkerEnabled: false,
+        hostBindingFactory,
+      }),
+    /game_runtime_model_configuration_unavailable/,
+  );
 });
 
 test("an active player connection is the Game surface's provider and model, and the Game keeps its own thinking level", async () => {
   const value = await gameRoot("game-runtime-attachment-connection-", {
     schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
-    game: { revision: 7, modelId: "player-game-model", thinkingLevel: "medium" },
+    chat: { revision: 1, thinkingLevel: "low" },
+    game: { revision: 7, thinkingLevel: "medium" },
   });
   const active = await activateConnection(value.agentDir, {
     providerId: "deepseek",
@@ -300,9 +312,9 @@ test("an active player connection is the Game surface's provider and model, and 
     gameplayWorkerEnabled: false,
     hostBindingFactory,
   });
-  // The record the player activated decides the provider and the model. Neither
-  // surface profile is substituted for it, and the endpoint is not copied into
-  // the configuration: the field pair below is the selection itself.
+  // The record the player activated decides the provider and the model. No surface profile is
+  // substituted for it, and the endpoint is not copied into the configuration: the field pair
+  // below is the selection itself.
   assert.deepEqual(attachment.modelConfig, {
     provider: active.providerId,
     modelId: active.modelId,
@@ -323,8 +335,8 @@ test("an active player connection is the Game surface's provider and model, and 
 test("Chat and Game resolve the same provider and model from one runtime root", async () => {
   const value = await gameRoot("game-runtime-attachment-parity-", {
     schemaVersion: 1,
-    chat: { revision: 1, modelId: "player-chat-model", thinkingLevel: "low" },
-    game: { revision: 7, modelId: "player-game-model", thinkingLevel: "medium" },
+    chat: { revision: 1, thinkingLevel: "low" },
+    game: { revision: 7, thinkingLevel: "medium" },
   });
   const active = await activateConnection(value.agentDir, {
     providerId: "deepseek",
@@ -359,6 +371,13 @@ test("the construction zone's recovery composition reaches the attachment unchan
     bindingIdentity: Object.freeze({}),
   });
   const value = await gameRoot("game-runtime-attachment-recovery-", undefined);
+  // A connection is what gives this root a model at all; the recovery composition rides along
+  // beside it, which is what this test is about.
+  await activateConnection(value.agentDir, {
+    providerId: "deepseek",
+    modelId: "deepseek-v4-pro",
+    apiKey: "sk-synthetic-connection-key",
+  });
   const attachment = await createGameRuntimeAttachment({
     runtimeRoot: value.runtimeRoot,
     agentDir: value.agentDir,

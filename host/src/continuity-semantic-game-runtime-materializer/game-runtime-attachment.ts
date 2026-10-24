@@ -2,7 +2,7 @@ import { join } from "node:path";
 
 import type { GameCompanionRuntimeAttachment, GameHostBindingFactory } from "../runtime-core.internal.js";
 import type { CompanionModelConfig } from "../runtime-identity.js";
-import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { TavernConnectionStore } from "../tavern/connection-store.js";
 
 /** The durable recovery fields this construction zone already owns. */
@@ -36,44 +36,40 @@ async function readActiveConnectionSelection(
 }
 
 /**
- * The one rule the Game attachment applies to the player's model: an active
+ * The one rule the Game attachment applies to the player's model: the active
  * connection decides provider and model, and the surface's own profile decides
  * only what the connection does not - the thinking level. That level is this
  * surface's tuning for how much the companion reasons before it acts in the
  * world, not a fact about the connection, so configuring a connection for Chat
  * does not retune the Game's reasoning (design/28 §2.3).
  *
- * With no active connection the surface profile applies unchanged, which is what
- * keeps a root without player connections configured exactly as it was.
- *
- * Null means neither source could yield a model: the caller refuses the
- * attachment rather than building a runtime no provider can answer for.
+ * Null means there is no model: this product ships no endpoint, so a root whose
+ * player has activated no connection has nothing to send with. The caller
+ * refuses the attachment rather than building a runtime no provider can answer
+ * for, and invents no fallback the player never chose.
  */
 function resolveGameModelConfig(
   input: Readonly<{
-    profileConfig: CompanionModelConfig | null;
+    thinkingLevel: string;
     activeConnection: Readonly<{ provider: string; modelId: string }> | null;
   }>,
 ): CompanionModelConfig | null {
-  const { profileConfig, activeConnection } = input;
-  if (profileConfig === null) return null;
-  if (activeConnection === null) return profileConfig;
+  const { thinkingLevel, activeConnection } = input;
+  if (activeConnection === null) return null;
   return Object.freeze({
     provider: activeConnection.provider,
     modelId: activeConnection.modelId,
-    thinkingLevel: profileConfig.thinkingLevel,
+    thinkingLevel,
   });
 }
 
 /**
  * Builds the one attachment every Game runtime is constructed with.
  *
- * The model configuration is the player's own and resolves exactly the way the
- * Chat surface's does: the active connection decides provider and model when the
- * player has selected one, and the surface's own `game` profile decides every
- * other case - including the case with no connection at all. One configured
- * connection therefore serves both surfaces, which is what a player means by "I
- * configured it, so it must work in the game too".
+ * The model configuration is the player's own active connection, exactly as the
+ * Chat surface resolves it, plus this surface's own thinking level. One
+ * configured connection therefore serves both surfaces, which is what a player
+ * means by "I configured it, so it must work in the game too".
  *
  * The resolved configuration is a precondition of the surface, not an option the
  * caller may skip: the attachment always carries `modelConfig`, and the
@@ -81,10 +77,9 @@ function resolveGameModelConfig(
  * Game session constructed without a model configuration is not a degraded
  * session but a dead one - the embedded runtime substitutes its `unknown`
  * placeholder model, records no provider entry, and leaves the surface unable to
- * reach any provider - so a store that cannot yield a resolvable configuration
- * fails closed here, before a runtime exists, with the same named discipline the
- * gameplay worker uses. No default model is invented and no other surface's
- * profile is substituted.
+ * reach any provider - so a root with no active connection fails closed here,
+ * before a runtime exists, with the same named discipline the gameplay worker
+ * uses. No default model is invented: this product ships no endpoint.
  */
 export async function createGameRuntimeAttachment(
   input: Readonly<{
@@ -105,7 +100,7 @@ export async function createGameRuntimeAttachment(
     "game",
   );
   const modelConfig = resolveGameModelConfig({
-    profileConfig: resolveModelProfileConfig(modelProfile),
+    thinkingLevel: modelProfile.thinkingLevel,
     activeConnection: await readActiveConnectionSelection(input.agentDir),
   });
   if (modelConfig === null) throw new Error("game_runtime_model_configuration_unavailable");

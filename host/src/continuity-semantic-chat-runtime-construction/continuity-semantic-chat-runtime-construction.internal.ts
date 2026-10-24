@@ -4,7 +4,7 @@ import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/c
 import type { PresentationRuntime } from "../presentation.js";
 import type { CompanionIdentity, CompanionModelConfig } from "../runtime-identity.js";
 import { identityKey, resolveRuntimePaths } from "../runtime-identity.js";
-import { ModelProfileStore, resolveModelProfileConfig } from "../settings/model-profile-store.js";
+import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { resolveCompanionLocale } from "../settings/player-preference-store.js";
 import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { DEFAULT_IDENTITY_PROFILE, identityProfileMetadata, readOrCreateIdentityProfile } from "../identity-profile.js";
@@ -255,18 +255,20 @@ async function buildExactChatRuntimeConstruction(
 
 /**
  * The one place that decides which provider/model/thinking level a Chat runtime
- * runs with: the player's connection selection when one is active, the frozen
- * chat model profile otherwise. A mount freezes this answer into its Pi session;
- * activating a connection asks the same function again for the mounted runtime,
- * so a root without player connections keeps exactly the previous configuration
- * and a reload can never drift from what a fresh mount would use.
+ * runs with: the player's active connection, and nothing else.
+ *
+ * This product ships no model endpoint, so there is no fallback to resolve: a
+ * root with no active connection has no model, and the refusal below is the
+ * honest answer rather than a shipped gateway that does not exist on the
+ * player's machine. A mount freezes this answer into its Pi session; activating
+ * a connection asks the same function again for the mounted runtime, so a reload
+ * can never drift from what a fresh mount would use.
  */
 async function resolveExactChatRuntimeModelSelection(
   paths: Pick<ReturnType<typeof resolveRuntimePaths>, "agentDir" | "root">,
 ): Promise<ExactChatRuntimeModelSelection> {
   const modelProfile = await new ModelProfileStore(join(paths.root, "settings", "model-profiles.json")).read("chat");
-  const activeConnection = await readActiveConnectionModelConfig(paths.agentDir);
-  const modelConfig = activeConnection ?? resolveModelProfileConfig(modelProfile);
+  const modelConfig = await readActiveConnectionModelConfig(paths.agentDir);
   if (modelConfig === null) throw new Error("chat_runtime_model_configuration_unavailable");
   return Object.freeze({ modelConfig, modelProfileRevision: modelProfile.revision });
 }
@@ -277,10 +279,9 @@ async function resolveExactChatRuntimeModelSelection(
  *
  * The record's own endpoint is not returned here: `runtime-core` merges the
  * selected provider entry into Pi's `models.json` from the same stored record,
- * so the endpoint keeps one owner. An unreadable store reads as "no active
- * connection" so the frozen chat profile still applies; the runtime's own
- * fail-closed check on the resolved model prevents a silent downgrade once a
- * selection exists.
+ * so the endpoint keeps one owner. A store that cannot be read counts as no
+ * connection: a Chat with no model is a state the surface states plainly, and
+ * inventing a selection the player never made would be a worse lie than that.
  */
 async function readActiveConnectionModelConfig(agentDir: string): Promise<CompanionModelConfig | null> {
   try {

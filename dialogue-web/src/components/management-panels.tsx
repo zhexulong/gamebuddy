@@ -13,7 +13,6 @@ import {
   type TavernConnectionV1,
   type TavernModelProfileV1,
   type TavernModelProfilesV1,
-  type TavernRecommendedModelV1,
   type TavernVoiceDevicesV1,
   type TavernVoicePreferenceV1,
 } from "../management-pipeline-api";
@@ -215,17 +214,19 @@ export function modelProfileProblemText(error: unknown, labels: ReturnType<typeo
 }
 
 /**
- * One surface's model editor (design/28 §2.3). The player types the model id and
- * the thinking level; the shipped catalog is offered as suggestions the player
- * may click or ignore, and typing any other model name saves just as well,
- * because a recommended model is never the upper bound of what may be chosen.
- * The controls always show the durable read-back, never the local choice.
+ * One surface's model editor (design/28 §2.3). The player picks the thinking level; the
+ * model itself is the active connection's, chosen where the endpoint that serves it is
+ * configured, so this editor names no model.
+ *
+ * A model id used to live here, and it was a second spelling of a choice another record
+ * owns: it could name a model no connection served, and nothing but the connection decides
+ * whether a model exists. The controls always show the durable read-back, never the local
+ * choice.
  */
 export function ModelProfileEditor({
   surface,
   surfaceLabel,
   profile,
-  suggestions,
   labels,
   pending,
   onSave,
@@ -233,22 +234,19 @@ export function ModelProfileEditor({
   surface: "chat" | "game";
   surfaceLabel: string;
   profile: TavernModelProfileV1;
-  suggestions: readonly TavernRecommendedModelV1[];
   labels: ReturnType<typeof messages>;
   pending: "chat" | "game" | null;
-  onSave: (modelId: string, thinkingLevel: string) => void;
+  onSave: (thinkingLevel: string) => void;
 }>): ReactElement {
-  const [modelId, setModelId] = useState(profile.modelId);
   const [thinkingLevel, setThinkingLevel] = useState(profile.thinkingLevel);
   // Adopt the durable profile whenever it changes: a save's read-back is the
   // only thing the editor ever shows.
   useEffect(() => {
-    setModelId(profile.modelId);
     setThinkingLevel(profile.thinkingLevel);
-  }, [profile.modelId, profile.thinkingLevel]);
+  }, [profile.thinkingLevel]);
   const busy = pending !== null;
-  const dirty = modelId !== profile.modelId || thinkingLevel !== profile.thinkingLevel;
-  const canSave = !busy && dirty && modelId.trim().length > 0 && thinkingLevel.trim().length > 0;
+  const dirty = thinkingLevel !== profile.thinkingLevel;
+  const canSave = !busy && dirty && thinkingLevel.trim().length > 0;
   return (
     <form
       className="model-profile-editor"
@@ -256,24 +254,10 @@ export function ModelProfileEditor({
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSave) return;
-        onSave(modelId.trim(), thinkingLevel.trim());
+        onSave(thinkingLevel.trim());
       }}
     >
       <h3>{surfaceLabel}</h3>
-      <label htmlFor={`model-profile-model-${surface}`}>{labels.modelProfilesModelId}</label>
-      <input
-        id={`model-profile-model-${surface}`}
-        className="form-input"
-        list={`model-profile-suggestions-${surface}`}
-        value={modelId}
-        disabled={busy}
-        onChange={(event) => setModelId(event.target.value)}
-      />
-      <datalist id={`model-profile-suggestions-${surface}`}>
-        {suggestions.map((model) => (
-          <option key={`${model.providerId}:${model.modelId}`} value={model.modelId} />
-        ))}
-      </datalist>
       <label htmlFor={`model-profile-level-${surface}`}>{labels.modelProfilesThinkingLevel}</label>
       <input
         id={`model-profile-level-${surface}`}
@@ -288,26 +272,6 @@ export function ModelProfileEditor({
           <option key={level} value={level} />
         ))}
       </datalist>
-      <div className="model-profile-suggestions" data-model-profile-suggestions>
-        <span>{labels.modelProfilesRecommended}</span>
-        {/*
-         * One chip per model id. The catalog can list the same model under more
-         * than one provider, and the chip is about the id a player may type - a
-         * repeated chip is noise, and it makes the same suggestion ambiguous to a
-         * screen reader and to anything addressing buttons by name.
-         */}
-        {[...new Map(suggestions.map((model) => [model.modelId, model])).values()].map((model) => (
-          <button
-            key={model.modelId}
-            type="button"
-            className="model-profile-chip"
-            disabled={busy}
-            onClick={() => setModelId(model.modelId)}
-          >
-            {model.modelId}
-          </button>
-        ))}
-      </div>
       {/*
        * Named after its surface. A bare "Save" here would collide with every other
        * save on the management surface, which is ambiguous for a screen reader and
@@ -332,7 +296,7 @@ export function ModelProfilesPanel({
 }: Readonly<{
   view: Extract<ModelProfilesView, { kind: "ready" }>;
   labels: ReturnType<typeof messages>;
-  onSave: (surface: "chat" | "game", modelId: string, thinkingLevel: string) => void;
+  onSave: (surface: "chat" | "game", thinkingLevel: string) => void;
 }>): ReactElement {
   return (
     <section className="management-settings-section" aria-label={labels.modelProfilesTitle} data-model-profiles>
@@ -349,19 +313,17 @@ export function ModelProfilesPanel({
         surface="chat"
         surfaceLabel={labels.modelProfilesChat}
         profile={view.profiles.chat}
-        suggestions={view.profiles.recommendedModels}
         labels={labels}
         pending={view.pending}
-        onSave={(modelId, thinkingLevel) => onSave("chat", modelId, thinkingLevel)}
+        onSave={(thinkingLevel) => onSave("chat", thinkingLevel)}
       />
       <ModelProfileEditor
         surface="game"
         surfaceLabel={labels.modelProfilesGame}
         profile={view.profiles.game}
-        suggestions={view.profiles.recommendedModels}
         labels={labels}
         pending={view.pending}
-        onSave={(modelId, thinkingLevel) => onSave("game", modelId, thinkingLevel)}
+        onSave={(thinkingLevel) => onSave("game", thinkingLevel)}
       />
     </section>
   );

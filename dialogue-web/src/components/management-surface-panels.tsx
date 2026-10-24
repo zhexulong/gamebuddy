@@ -1498,11 +1498,11 @@ export function SettingsSurfacePanel({
 
   /**
    * One model-profile mutation at a time. The Host owns both the durable record
-   * and the validation, so the panel sends exactly what the player typed and
+   * and the validation, so the panel sends exactly the level the player chose and
    * adopts the validated read-back as the only thing it shows; a rejected write
    * re-reads the authority before the failure notice appears.
    */
-  const mutateModelProfile = (surface: "chat" | "game", modelId: string, thinkingLevel: string): void => {
+  const mutateModelProfile = (surface: "chat" | "game", thinkingLevel: string): void => {
     if (modelProfilesView.kind !== "ready" || modelProfilesView.pending !== null) return;
     const profiles = modelProfilesView;
     setModelProfilesView({ ...profiles, pending: surface, notice: null });
@@ -1513,7 +1513,6 @@ export function SettingsSurfacePanel({
             apiVersion: 1,
             surface,
             expectedRevision: profiles.profiles[surface].revision,
-            modelId,
             thinkingLevel,
           },
           csrfToken,
@@ -1595,7 +1594,7 @@ export function SettingsSurfacePanel({
         <ModelProfilesPanel
           view={modelProfilesView}
           labels={labels}
-          onSave={(surface, modelId, thinkingLevel) => mutateModelProfile(surface, modelId, thinkingLevel)}
+          onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
         />
       )}
       <VoiceSettingsPanel

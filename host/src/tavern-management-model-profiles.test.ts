@@ -12,7 +12,7 @@ import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-recla
 
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
-import { TAVERN_PROVIDER_CATALOG } from "./tavern/provider-catalog.js";
+import { playerOfferedProviders } from "./tavern/provider-catalog.js";
 import type { TavernManagementState, TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type { WorldInfoBindingManagementService } from "./tavern/world-info-binding/world-info-binding-management-service.js";
 import { createTavernManagementDialogueWebRequestHandler } from "./tavern-management-dialogue-web.js";
@@ -288,8 +288,8 @@ class ControlledResponse {
 
 type ProfilesBody = Readonly<{
   apiVersion: 1;
-  chat: Readonly<{ revision: number; modelId: string; thinkingLevel: string }>;
-  game: Readonly<{ revision: number; modelId: string; thinkingLevel: string }>;
+  chat: Readonly<{ revision: number; thinkingLevel: string }>;
+  game: Readonly<{ revision: number; thinkingLevel: string }>;
   recommendedModels: readonly Readonly<{
     providerId: string;
     providerLabel: string;
@@ -309,16 +309,26 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
     assert.equal(result.status, 200);
     const profiles = result.body as ProfilesBody;
     assert.equal(profiles.apiVersion, 1);
-    assert.deepEqual(profiles.chat, { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
-    assert.deepEqual(profiles.game, { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" });
-    // The guidance list is derived from the one provider catalog, so it names the
-    // shipped models without becoming the set of models a profile may hold.
-    const shipped = TAVERN_PROVIDER_CATALOG.flatMap((provider) => provider.allowedPlayerModels.map((m) => m.modelId));
+    // A profile names the level its surface reasons at and nothing else: the model is the
+    // player's active connection's, and no default model is shipped.
+    assert.deepEqual(profiles.chat, { revision: 0, thinkingLevel: "high" });
+    assert.deepEqual(profiles.game, { revision: 0, thinkingLevel: "high" });
+    // The guidance list is derived from the one provider catalog the browser may choose from, so
+    // it names the models of every entry a player can actually configure - and the operator's own
+    // gateway is not one of them (BYOK: this product ships no endpoint).
+    const shipped = playerOfferedProviders().flatMap((provider) =>
+      provider.allowedPlayerModels.map((model) => model.modelId),
+    );
     assert.deepEqual(
       profiles.recommendedModels.map((model) => model.modelId),
       shipped,
     );
     assert.ok(shipped.includes("gpt-5.6-luna"));
+    assert.equal(
+      profiles.recommendedModels.every((model) => model.providerId !== "cpa-oai"),
+      true,
+      "the operator gateway is never offered as guidance either",
+    );
     assert.equal(
       profiles.recommendedModels.every((model) => model.providerLabel.length > 0),
       true,
@@ -330,7 +340,7 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
   });
 });
 
-test("a model id outside the shipped catalog round-trips through the authenticated update", async () => {
+test("a thinking level outside the shipped guidance round-trips through the authenticated update", async () => {
   await withHandler({}, async (profilesPath, request, bootstrap) => {
     // Cross-origin and missing-CSRF writes are refused before any store write.
     assert.equal(
@@ -343,7 +353,6 @@ test("a model id outside the shipped catalog round-trips through the authenticat
             apiVersion: 1,
             surface: "game",
             expectedRevision: 0,
-            modelId: "qwen2.5-coder:7b",
             thinkingLevel: "xhigh",
           },
         )
@@ -361,7 +370,6 @@ test("a model id outside the shipped catalog round-trips through the authenticat
             apiVersion: 1,
             surface: "game",
             expectedRevision: 0,
-            modelId: "qwen2.5-coder:7b",
             thinkingLevel: "xhigh",
           },
         )
@@ -369,7 +377,6 @@ test("a model id outside the shipped catalog round-trips through the authenticat
       403,
     );
 
-    const localModelId = "qwen2.5-coder:7b";
     const updated = await request(
       "PUT",
       "/api/tavern/v1/settings/profiles",
@@ -378,32 +385,29 @@ test("a model id outside the shipped catalog round-trips through the authenticat
         apiVersion: 1,
         surface: "game",
         expectedRevision: 0,
-        modelId: localModelId,
         thinkingLevel: "xhigh",
       },
     );
     assert.equal(updated.status, 200);
     const profiles = updated.body as ProfilesBody;
-    assert.equal(profiles.game.modelId, localModelId);
     assert.equal(profiles.game.thinkingLevel, "xhigh");
     assert.equal(profiles.game.revision, 1);
     // The other surface's durable revision must not move.
     assert.equal(profiles.chat.revision, 0);
-    assert.equal(profiles.chat.modelId, "deepseek-v4.1-flash");
+    assert.equal(profiles.chat.thinkingLevel, "high");
 
     // The durable file is the authority: a fresh store reads the exact value back.
     const reopened = await new ModelProfileStore(profilesPath).read("game");
-    assert.equal(reopened.modelId, localModelId);
     assert.equal(reopened.thinkingLevel, "xhigh");
     assert.equal(reopened.revision, 1);
 
     // The read route projects the same durable fact after the write.
     const read = await request("GET", "/api/tavern/v1/settings/profiles");
-    assert.equal((read.body as ProfilesBody).game.modelId, localModelId);
+    assert.equal((read.body as ProfilesBody).game.thinkingLevel, "xhigh");
   });
 });
 
-test("a stale revision and a malformed model id are rejected without changing the profile", async () => {
+test("a stale revision and a malformed command are rejected without changing the profile", async () => {
   await withHandler({}, async (profilesPath, request, bootstrap) => {
     await bootstrap();
     const conflict = await request(
@@ -414,7 +418,6 @@ test("a stale revision and a malformed model id are rejected without changing th
         apiVersion: 1,
         surface: "chat",
         expectedRevision: 7,
-        modelId: "deepseek-v4.1-flash",
         thinkingLevel: "high",
       },
     );
@@ -429,12 +432,28 @@ test("a stale revision and a malformed model id are rejected without changing th
         apiVersion: 1,
         surface: "chat",
         expectedRevision: 0,
-        modelId: "has space",
-        thinkingLevel: "high",
+        thinkingLevel: "3 high",
       },
     );
     assert.equal(malformed.status, 400);
     assert.equal((malformed.body as { code: string }).code, "invalid_request");
+
+    // A model id is not a member of this command any more: the exact-shape validator refuses it
+    // rather than silently accepting a field the store cannot honour.
+    const withModel = await request(
+      "PUT",
+      "/api/tavern/v1/settings/profiles",
+      {},
+      {
+        apiVersion: 1,
+        surface: "chat",
+        expectedRevision: 0,
+        modelId: "deepseek-v4.1-flash",
+        thinkingLevel: "high",
+      },
+    );
+    assert.equal(withModel.status, 400);
+    assert.equal((withModel.body as { code: string }).code, "invalid_request");
 
     assert.equal((await new ModelProfileStore(profilesPath).read("chat")).revision, 0);
   });
@@ -452,7 +471,6 @@ test("a profile that advertises no profile route answers 404 instead of inventin
         apiVersion: 1,
         surface: "chat",
         expectedRevision: 0,
-        modelId: "deepseek-v4.1-flash",
         thinkingLevel: "high",
       },
     );

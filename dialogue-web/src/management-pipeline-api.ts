@@ -968,9 +968,14 @@ export type TavernRecommendedModelV1 = Readonly<{
   defaultThinkingLevel: TavernConnectionThinkingLevelV1;
 }>;
 
+/**
+ * One surface's active model profile (design/28 §2.3): the thinking level that surface reasons
+ * at. It names no model and no provider - the player's own active connection is the one thing
+ * that names a provider, a model and an endpoint together, and this product ships no endpoint
+ * of its own.
+ */
 export type TavernModelProfileV1 = Readonly<{
   revision: number;
-  modelId: string;
   thinkingLevel: string;
 }>;
 
@@ -985,7 +990,6 @@ export type TavernModelProfileUpdateCommandV1 = Readonly<{
   apiVersion: 1;
   surface: "chat" | "game";
   expectedRevision: number;
-  modelId: string;
   thinkingLevel: string;
 }>;
 
@@ -1456,11 +1460,13 @@ const CONNECTION_FAILURES = [
   "invalid_response",
 ] as const;
 // Mirrors of the Host's open model-profile bounds (design/28 §2.3.1): the panel
-// refuses only a malformed value, never a model id the recommendation omits.
-const MODEL_PROFILE_MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,127}$/;
+// refuses only a malformed value. The model-id bound is still here because a
+// provider's published model listing is bounded by the same ceiling the Host uses,
+// so https://… a listing id the product would refuse cannot reach the panel.
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:\/-]{0,127}$/;
 const MODEL_PROFILE_THINKING_LEVEL_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 const MODEL_PROFILES_KEYS = ["apiVersion", "chat", "game", "recommendedModels"] as const;
-const MODEL_PROFILE_KEYS = ["revision", "modelId", "thinkingLevel"] as const;
+const MODEL_PROFILE_KEYS = ["revision", "thinkingLevel"] as const;
 const RECOMMENDED_MODEL_KEYS = [
   "providerId",
   "providerLabel",
@@ -1469,7 +1475,7 @@ const RECOMMENDED_MODEL_KEYS = [
   "allowedThinkingLevels",
   "defaultThinkingLevel",
 ] as const;
-const MODEL_PROFILE_UPDATE_KEYS = ["apiVersion", "surface", "expectedRevision", "modelId", "thinkingLevel"] as const;
+const MODEL_PROFILE_UPDATE_KEYS = ["apiVersion", "surface", "expectedRevision", "thinkingLevel"] as const;
 const MODEL_PROFILE_SURFACES = ["chat", "game"] as const;
 const STAGE_ST_CARD_IMPORT_JSON_KEYS = ["apiVersion", "cardSource", "card"] as const;
 const STAGE_ST_CARD_IMPORT_PNG_KEYS = ["apiVersion", "cardSource", "cardFileBase64"] as const;
@@ -2759,9 +2765,7 @@ function isConnectionRow(value: unknown): value is TavernConnectionV1 {
     (value.modelIds === null ||
       (Array.isArray(value.modelIds) &&
         value.modelIds.length <= CONNECTION_MODEL_LISTING_LIMIT &&
-        value.modelIds.every(
-          (id) => typeof id === "string" && id.length <= 128 && MODEL_PROFILE_MODEL_ID_PATTERN.test(id),
-        ))) &&
+        value.modelIds.every((id) => typeof id === "string" && id.length <= 128 && MODEL_ID_PATTERN.test(id)))) &&
     // The player's own endpoint — the one endpoint fact they read back.
     (value.baseUrl === null || isLengthBoundedString(value.baseUrl, 1, 512)) &&
     isConnectionFailure(value.failure) &&
@@ -2839,8 +2843,6 @@ function isModelProfile(value: unknown): value is TavernModelProfileV1 {
     isRecord(value) &&
     hasExactKeys(value, MODEL_PROFILE_KEYS) &&
     isNonNegativeSafeInteger(value.revision) &&
-    typeof value.modelId === "string" &&
-    MODEL_PROFILE_MODEL_ID_PATTERN.test(value.modelId) &&
     typeof value.thinkingLevel === "string" &&
     MODEL_PROFILE_THINKING_LEVEL_PATTERN.test(value.thinkingLevel)
   );
@@ -2882,8 +2884,6 @@ function isModelProfileUpdateCommand(value: unknown): value is TavernModelProfil
     value.apiVersion === TAVERN_BROWSER_API_VERSION &&
     isOneOf(value.surface, MODEL_PROFILE_SURFACES) &&
     isNonNegativeSafeInteger(value.expectedRevision) &&
-    typeof value.modelId === "string" &&
-    MODEL_PROFILE_MODEL_ID_PATTERN.test(value.modelId) &&
     typeof value.thinkingLevel === "string" &&
     MODEL_PROFILE_THINKING_LEVEL_PATTERN.test(value.thinkingLevel)
   );

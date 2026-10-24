@@ -154,11 +154,10 @@ const CLASS_B_REQUESTS: Readonly<Record<string, ClassBAction>> = Object.freeze({
     request: () => ({
       method: "PUT",
       path: "/api/tavern/v1/settings/profiles",
-      body: { apiVersion: 1, surface: "chat", expectedRevision: 0, modelId: "class-b-model", thinkingLevel: "high" },
+      body: { apiVersion: 1, surface: "chat", expectedRevision: 0, thinkingLevel: "high" },
     }),
     readBack: (body) => {
-      const chat = body.chat as { modelId: string; thinkingLevel: string };
-      assert.equal(chat.modelId, "class-b-model");
+      const chat = body.chat as { thinkingLevel: string };
       assert.equal(chat.thinkingLevel, "high");
     },
   },
@@ -362,6 +361,7 @@ function appliedPreference(
     return { ...next, disclosureVersion: update.disclosureVersion, consent: "accepted", decidedAtMs: 1 };
   if (update.action === "revoke") return { ...next, consent: "revoked" };
   if (update.action === "setOutputDevice") return { ...next, outputDevice: update.outputDevice };
+  if (update.action === "setPaced") return { ...next, paced: update.paced };
   return { ...next, persona: update.persona };
 }
 
@@ -430,10 +430,11 @@ test(
       decidedAtMs: null,
       outputDevice: null,
       persona: null,
+      paced: false,
     };
     const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
-      chat: { surface: "chat", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
-      game: { surface: "game", revision: 0, modelId: "initial-model", thinkingLevel: "low" },
+      chat: { surface: "chat", revision: 0, thinkingLevel: "low" },
+      game: { surface: "game", revision: 0, thinkingLevel: "low" },
     };
     const memories: { handle: string; title: string; content: string }[] = [];
     const memoryRead = () => ({
@@ -561,7 +562,6 @@ test(
           modelProfiles[surface] = {
             surface,
             revision: expectedRevision + 1,
-            modelId: update.modelId,
             thinkingLevel: update.thinkingLevel,
           };
           return { ...modelProfiles[surface] };

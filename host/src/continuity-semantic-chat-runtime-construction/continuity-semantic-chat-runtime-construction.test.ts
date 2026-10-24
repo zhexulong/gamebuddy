@@ -21,6 +21,7 @@ import {
   writeIdentityProfile,
 } from "../identity-profile.js";
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
+import { TavernConnectionStore } from "../tavern/connection-store.js";
 import { updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
@@ -37,6 +38,21 @@ import { resolveTavernPaths, tavernRevisionPath } from "../tavern/tavern-paths.j
 import { validateTavernArtifact } from "../tavern/types.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+
+/** One ready, active player connection in that runtime's own connection directory. */
+async function activateConnection(agentDir: string): Promise<void> {
+  const store = new TavernConnectionStore(agentDir);
+  const created = await store.create({
+    providerId: "deepseek",
+    apiKey: "sk-synthetic-connection-key",
+    baseUrl: null,
+    apiShape: null,
+    modelId: "deepseek-v4-pro",
+  });
+  const connectionId = created.connections[0]!.connectionId;
+  const probed = await store.recordProbe(connectionId, { outcome: "ready", modelIds: ["deepseek-v4-pro"] });
+  await store.activate(connectionId, probed.revision);
+}
 
 test.before(async () => {
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -82,6 +98,11 @@ async function fixture(options: FixtureOptions = {}) {
   const root = await canonicalTestRoot("chat-runtime-construction-");
   const runtimeRoot = join(root, "runtime");
   await mkdir(runtimeRoot);
+  // The player's own connection, because this product ships no model endpoint: a Chat runtime has a
+  // model only through what the player activated. Everything below is about the CONTENT a
+  // construction materializes, so the model half is established once here instead of in every test.
+  // `activateConnection` below is the seam a test uses when the model half is its subject.
+  await activateConnection(resolveRuntimePaths(principal, runtimeRoot).agentDir);
   const manifest = Object.freeze({
     schemaVersion: 2 as const,
     topology: "independent_chat_and_game_surfaces" as const,
@@ -201,6 +222,63 @@ async function releaseConstructionAndFixture(
   value.threads.close?.();
   await rm(value.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
+test("a root whose player has activated no connection has no Chat model, and the refusal names it", async () => {
+  // The premise this states, and the one `fixture()` above deliberately satisfies: this product
+  // ships no model endpoint, so the model a Chat runs with is what the player activated. With
+  // nothing configured, construction refuses by name rather than falling back to a gateway that
+  // exists on exactly one machine. (Making that mount succeed with no model is the separate change
+  // that lets the surface SAY so instead of failing to open; until it lands, this is the answer.)
+  const root = await canonicalTestRoot("chat-runtime-construction-no-model-");
+  const runtimeRoot = join(root, "runtime");
+  await mkdir(runtimeRoot);
+  const binding = createTestChatRuntimeBinding({
+    manifest: Object.freeze({
+      schemaVersion: 2 as const,
+      topology: "independent_chat_and_game_surfaces" as const,
+      runtimeRoot,
+      principal,
+      bootstrapOperationId: "bootstrap_01",
+      authorityGeneration: 1,
+    }),
+    ownerProof: Object.freeze({ processId: 42, creationTime100ns: "123456" }),
+  });
+  const threads = createChatThreadStore(runtimeRoot, identityKey(principal));
+  const profilePaths = resolveRuntimePaths(principal, runtimeRoot, "chat_session_01");
+  try {
+    await mkdir(dirname(profilePaths.identityProfilePath), { recursive: true });
+    const profile = Object.freeze({
+      ...DEFAULT_IDENTITY_PROFILE,
+      profileId: "profile_01",
+      identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }),
+    });
+    await writeIdentityProfile(profilePaths.identityProfilePath, profile);
+    await createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return identityProfileMetadata(profile);
+      },
+    }).createExplicit({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "chat_session_01",
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      opening: "blank",
+    });
+    await assert.rejects(
+      () =>
+        binding.executeWithBinding((token) =>
+          withConsumedChatRuntimeBinding(token, (execution) =>
+            prepareExactChatRuntimeConstruction(execution, permit(execution)),
+          ),
+        ),
+      /chat_runtime_model_configuration_unavailable/,
+    );
+  } finally {
+    await binding.close();
+    threads.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("Chat construction exposes only the exact catalog materialization handoff", async () => {
   const value = await fixture();
   let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
@@ -260,8 +338,11 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.deepEqual(prepared.identity, principal);
     assert.equal(prepared.runtimeRoot, value.runtimeRoot);
     assert.equal(prepared.surfaceSessionId, "chat_session_01");
-    assert.equal(prepared.modelConfig.provider, "cpa-oai");
-    assert.equal(prepared.modelConfig.modelId, "deepseek-v4.1-flash");
+    // The provider and the model are the connection the player activated, read through the same
+    // identity-scoped directory the runtime resolves its provider entry from.
+    assert.equal(prepared.modelConfig.provider, "deepseek");
+    assert.equal(prepared.modelConfig.modelId, "deepseek-v4-pro");
+    assert.equal(prepared.modelConfig.thinkingLevel, "high");
     assert.equal(prepared.modelProfileRevision, 0);
     // Chat mounts no speaking pseudo-tool or presentation callback. Native
     // assistant content is observed privately by the bound provider invocation.
@@ -322,7 +403,11 @@ test("a character-directive save does not strand the Chats that already exist", 
             revision: previous.revision,
             canonicalHash: previous.canonicalHash,
           }),
-          binding: Object.freeze({ profileId: next.profileId, revision: next.revision, canonicalHash: next.canonicalHash }),
+          binding: Object.freeze({
+            profileId: next.profileId,
+            revision: next.revision,
+            canonicalHash: next.canonicalHash,
+          }),
         }),
     });
     assert.equal(saved.profileRevision, 2);

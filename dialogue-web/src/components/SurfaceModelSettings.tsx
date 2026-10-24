@@ -11,10 +11,13 @@ import type { Messages } from "../i18n";
  * One surface's model settings (design/104 §3; the owner's ruling that the model a
  * surface uses belongs on that surface rather than only in a global Settings view).
  *
- * Which model this surface uses, and at which thinking level. The player may type
- * any model id their endpoint serves - the Host never checks it against the
- * recommended catalog - and the suggestion list is guidance, not a restriction. A
- * save is a durable revision CAS: the saved value is what the Host re-reads, and a
+ * What a surface owns here is the thinking level it reasons at. The model itself is
+ * not a surface choice and never was this product's to name: it comes from the
+ * player's own active connection, the one thing that knows a provider, a model and
+ * an endpoint together. This panel used to offer a model id field, which could only
+ * disagree with the connection it was sent through.
+ *
+ * A save is a durable revision CAS: the saved value is what the Host re-reads, and a
  * revision that moved underneath is reported as a conflict rather than shown as
  * saved.
  *
@@ -34,17 +37,15 @@ export function SurfaceModelSettings({
   labels: Messages;
 }>): ReactElement {
   const [profiles, setProfiles] = useState<TavernModelProfilesV1 | "loading" | "unavailable">("loading");
-  const [modelId, setModelId] = useState("");
   const [thinkingLevel, setThinkingLevel] = useState<TavernConnectionThinkingLevelV1>("off");
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<"saved" | "conflict" | "model_required" | "error" | null>(null);
+  const [notice, setNotice] = useState<"saved" | "conflict" | "error" | null>(null);
 
   const load = useCallback(async (): Promise<void> => {
     try {
       const read = await api.readModelProfiles();
       setProfiles(read);
       const mine: TavernModelProfileV1 = surface === "chat" ? read.chat : read.game;
-      setModelId(mine.modelId);
       setThinkingLevel(mine.thinkingLevel as TavernConnectionThinkingLevelV1);
     } catch {
       setProfiles("unavailable");
@@ -61,11 +62,6 @@ export function SurfaceModelSettings({
   const mine: TavernModelProfileV1 = surface === "chat" ? profiles.chat : profiles.game;
 
   const apply = async (): Promise<void> => {
-    const trimmed = modelId.trim();
-    if (trimmed.length === 0) {
-      setNotice("model_required");
-      return;
-    }
     setSaving(true);
     setNotice(null);
     try {
@@ -74,14 +70,12 @@ export function SurfaceModelSettings({
           apiVersion: 1,
           surface,
           expectedRevision: mine.revision,
-          modelId: trimmed,
           thinkingLevel,
         },
         csrfToken,
       );
       setProfiles(updated);
       const settled: TavernModelProfileV1 = surface === "chat" ? updated.chat : updated.game;
-      setModelId(settled.modelId);
       setThinkingLevel(settled.thinkingLevel as TavernConnectionThinkingLevelV1);
       setNotice("saved");
     } catch (error) {
@@ -107,22 +101,6 @@ export function SurfaceModelSettings({
       <p className="surface-model-settings-hint">{labels.modelProfilesHint}</p>
 
       <label className="surface-model-field">
-        <span>{labels.modelProfilesModelId}</span>
-        <input
-          type="text"
-          value={modelId}
-          list={`recommended-models-${surface}`}
-          onChange={(event) => setModelId(event.target.value)}
-          aria-label={labels.modelProfilesModelId}
-        />
-      </label>
-      <datalist id={`recommended-models-${surface}`}>
-        {recommendedFor(profiles, surface).map((entry) => (
-          <option key={`${entry.providerId}/${entry.modelId}`} value={entry.modelId} label={entry.modelLabel} />
-        ))}
-      </datalist>
-
-      <label className="surface-model-field">
         <span>{labels.modelProfilesThinkingLevel}</span>
         <select
           className="form-select"
@@ -138,29 +116,12 @@ export function SurfaceModelSettings({
         </select>
       </label>
 
-      <div className="surface-model-recommended" data-surface-model-recommended>
-        <span>{labels.modelProfilesRecommended}</span>
-        {recommendedFor(profiles, surface).map((entry) => (
-          <button
-            key={`${entry.providerId}/${entry.modelId}`}
-            type="button"
-            className="surface-model-chip"
-            disabled={saving}
-            // Two providers can publish the same model id, and the chip used to
-            // print the id alone - two suggestions reading one identical word,
-            // with nothing to say which endpoint each one came from. The chip
-            // names the provider's own label (`providerLabel`), because that is
-            // the word the player sees in the connection settings; the raw
-            // `providerId` stays in the suggestion list above, which already
-            // keys on the pair. Neither entry is dropped: they are different
-            // models that happen to share an id.
-            title={`${entry.providerLabel} (${entry.providerId})`}
-            onClick={() => setModelId(entry.modelId)}
-          >
-            {`${entry.modelId} · ${entry.providerLabel}`}
-          </button>
-        ))}
-      </div>
+      {/*
+       * No model suggestion list here. A model id is chosen where the endpoint that serves it is
+       * configured (the connection form, which offers both the curated ids and whatever that
+       * endpoint itself listed), and this surface cannot set one: it reasons at a level, through
+       * the connection the player activated.
+       */}
 
       <div className="surface-model-actions">
         <button type="button" className="small-button" disabled={saving} onClick={() => void apply()}>
@@ -172,9 +133,7 @@ export function SurfaceModelSettings({
               ? labels.modelProfilesApplied
               : notice === "conflict"
                 ? labels.modelProfilesRevisionConflict
-                : notice === "model_required"
-                  ? labels.modelProfilesModelRequired
-                  : labels.failure}
+                : labels.failure}
           </span>
         )}
       </div>

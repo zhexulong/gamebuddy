@@ -358,13 +358,12 @@ export type TavernModelProfileStorePort = Readonly<{
   update(
     surface: "chat" | "game",
     expectedRevision: number,
-    update: Readonly<{ modelId: string; thinkingLevel: string }>,
+    update: Readonly<{ thinkingLevel: string }>,
   ): Promise<TavernModelProfileProjection>;
 }>;
 export type TavernModelProfileProjection = Readonly<{
   surface: "chat" | "game";
   revision: number;
-  modelId: string;
   thinkingLevel: string;
 }>;
 
@@ -1524,7 +1523,6 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!modelProfileUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const command = body as TavernModelProfileUpdateCommandV1;
         const updated = await modelProfileStore.update(command.surface, command.expectedRevision, {
-          modelId: command.modelId,
           thinkingLevel: command.thinkingLevel,
         });
         const other = await modelProfileStore.read(command.surface === "chat" ? "game" : "chat");
@@ -2680,8 +2678,8 @@ function projectModelProfiles(
 ): TavernModelProfilesV1 {
   return {
     apiVersion: TAVERN_BROWSER_API_VERSION,
-    chat: { revision: chat.revision, modelId: chat.modelId, thinkingLevel: chat.thinkingLevel },
-    game: { revision: game.revision, modelId: game.modelId, thinkingLevel: game.thinkingLevel },
+    chat: { revision: chat.revision, thinkingLevel: chat.thinkingLevel },
+    game: { revision: game.revision, thinkingLevel: game.thinkingLevel },
     recommendedModels: playerOfferedProviders().flatMap((provider) =>
       provider.allowedPlayerModels.map((model) => ({
         providerId: provider.providerId,

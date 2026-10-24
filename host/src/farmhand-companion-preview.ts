@@ -22,8 +22,10 @@ import {
   type IntegrationLaunchHandle,
 } from "./integration-launcher.js";
 import { createGameCompanionRuntime, type GameCompanionIdentity, type RuntimeSession } from "./runtime.js";
-import { ModelProfileStore, resolveModelProfileConfig } from "./settings/model-profile-store.js";
+import { resolveRuntimePaths } from "./runtime-identity.js";
+import { ModelProfileStore } from "./settings/model-profile-store.js";
 import { isExactReceiptRecoveryPort } from "./stardew-execution-recovery-supervisor.js";
+import { TavernConnectionStore } from "./tavern/connection-store.js";
 import {
   getAuthenticatedStardewPresentationPortForPreview,
   parseStardewLauncherConfig,
@@ -414,10 +416,15 @@ function productionDependencies(): FarmhandCompanionPreviewDependencies {
       turnTracker,
       presentationLocale,
     ) => {
-      const modelConfig = resolveModelProfileConfig(
-        await new ModelProfileStore(resolve(root, "settings", "model-profiles.json")).read("game"),
-      );
-      if (modelConfig === null) throw new Error("farmhand_preview_model_configuration_unavailable");
+      // The player's own active connection is the model, exactly as the Chat and the Game
+      // attachment resolve it: this preview ships no endpoint, so a root with none configured
+      // refuses here by name rather than running on a gateway that does not exist.
+      const agentDir = resolveRuntimePaths(identity, root).agentDir;
+      const active = await new TavernConnectionStore(agentDir).active();
+      if (active === null) throw new Error("farmhand_preview_model_configuration_unavailable");
+      const thinkingLevel = (await new ModelProfileStore(resolve(root, "settings", "model-profiles.json")).read("game"))
+        .thinkingLevel;
+      const modelConfig = Object.freeze({ provider: active.providerId, modelId: active.modelId, thinkingLevel });
       return await createGameCompanionRuntime(
         identity,
         root,

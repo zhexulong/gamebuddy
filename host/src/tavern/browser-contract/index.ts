@@ -761,13 +761,16 @@ export const TavernRecommendedModelV1Schema = strictObject({
   defaultThinkingLevel: TavernConnectionThinkingLevelV1Schema,
 });
 /**
- * One surface's active model profile (design/28 §2.3). `modelId` and
- * `thinkingLevel` are exactly what the player typed and exactly what the next
- * runtime construction reads.
+ * One surface's active model profile (design/28 §2.3): the thinking level that surface
+ * reasons at, and nothing else.
+ *
+ * The model and the provider are not here, and that is deliberate: this product ships no
+ * endpoint, so the player's own active connection is the one thing that names a provider, a
+ * model and an endpoint together. A profile carrying a model id would be a second spelling of
+ * that choice, able to name a model no connection serves.
  */
 export const TavernModelProfileV1Schema = strictObject({
   revision: Revision,
-  modelId: Type.String({ minLength: 1, maxLength: 128, pattern: MODEL_ID_PATTERN }),
   thinkingLevel: Type.String({ minLength: 1, maxLength: 32, pattern: THINKING_LEVEL_PATTERN }),
 });
 /** `GET /settings/profiles`: the Chat and Game profiles plus the guidance catalog. */
@@ -781,7 +784,6 @@ export const TavernModelProfileUpdateCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   surface: Type.Union([Type.Literal("chat"), Type.Literal("game")]),
   expectedRevision: Revision,
-  modelId: Type.String({ minLength: 1, maxLength: 128, pattern: MODEL_ID_PATTERN }),
   thinkingLevel: Type.String({ minLength: 1, maxLength: 32, pattern: THINKING_LEVEL_PATTERN }),
 });
 const OperationId = Type.Union([
