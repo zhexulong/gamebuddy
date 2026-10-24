@@ -82,7 +82,7 @@ const en = {
   stardewCabinsUnavailable:
     "Cabins can only be read while the game you launched is starting up, and this page read them once, when it opened. Load your farm, then reload this page to pick a cabin - reloading only reopens this tab, and the game keeps running.",
   stardewCabinsAwaitingSession:
-    "There is no game session to read cabins from yet. Finish steps 1 and 2 above: the cabins to confirm appear here once the companion moves in.",
+    "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
   stardewCabinsEmpty:
     "This farm has no empty cabin, so your companion has nowhere to live yet. Build one at Robin's carpenter shop in the game, then reload this page to choose it.",
   stardewCabinConfirm: "Confirm cabin",
@@ -842,7 +842,7 @@ const en = {
   gameGuideStepTwoTitle: "Load your farm",
   gameGuideStepTwoDetail: "Start the game with your companion, then load the farm you want to play.",
   gameGuideStepThreeTitle: "Your companion moves in",
-  gameGuideStepThreeDetail: "Choose the cabin your companion settles into.",
+  gameGuideStepThreeDetail: "Confirm which cabin on your farm is hers, and she moves in.",
 
   // --- endgame lane: the one deliberate complete-game-termination control ----
   // The terminal operation is set apart from Stop/Disconnect: it reads as its
@@ -954,7 +954,7 @@ const zh: Messages = {
   stardewCabinsUnavailable:
     "小屋只能在启动游戏的过程中读取，而这个页面只在刚打开时读过一次。请先载入你的农场，再重新加载本页来选小屋——重新加载只是重开这个标签页，游戏不会停。",
   stardewCabinsAwaitingSession:
-    "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；伴侣住进农舍后，可确认的小屋会出现在这里。",
+    "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
   stardewCabinsEmpty:
     "这个农场还没有空着的小屋，同伴还没有地方住。请去游戏里罗宾的木匠铺建一间，然后重新加载本页来选它。",
   stardewCabinConfirm: "确认小屋",
@@ -1540,7 +1540,7 @@ const zh: Messages = {
   gameBoardWaiting: "同伴能做的事由游戏本身决定。游戏为你正在玩的农场报上来之后，它们会出现在这里。",
   gameBoardCompanionTitle: "你的同伴",
   gameBoardCompanionPresent: "{{name}} 已经在农场里陪你。",
-  gameBoardCompanionAbsent: "农场里还没有同伴住进农舍。",
+  gameBoardCompanionAbsent: "农场里还没有同伴住进小屋。",
   gameBoardAbilitiesPublished: "已公布 {{count}} 件事",
   gameBoardAbilitiesUnpublished: "还没有公布",
   gameBoardAbilitiesPublishedDetail: "这些是游戏为这次会话报上来的能力。",
@@ -1556,8 +1556,8 @@ const zh: Messages = {
   gameSetupHint: "准备好《星露谷物语》和伴侣模组。",
   gameGuideStepTwoTitle: "载入你的农场",
   gameGuideStepTwoDetail: "和伙伴一起启动游戏，然后载入你想玩的农场。",
-  gameGuideStepThreeTitle: "同伴住进农舍",
-  gameGuideStepThreeDetail: "选一间农舍，同伴就住进去。",
+  gameGuideStepThreeTitle: "同伴住进小屋",
+  gameGuideStepThreeDetail: "确认农场里的哪一间小屋是她的，她就住进去。",
   // 高级配置：这里是玩家可见文案，不出现上游工具名、他人的文件名或路由；
   // 只说清楚这些设置存在文件里、本页面不能改，以及因此没有可编辑的内容。
 
