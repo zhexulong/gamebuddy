@@ -49,5 +49,7 @@ export function openingVariantWords(
   variant: Readonly<{ label: string | null; index: number; count: number }>,
   labels: OpeningVariantLabels,
 ): string {
-  return `${openingVariantName(variant, labels)} ${position(variant)}`;
+  // With no published label there is no name to print: the position is the whole of what the strip can honestly say,
+  // and printing `openingVariantName`'s position fallback beside the position itself read `1/2 1/2`.
+  return variant.label === null ? position(variant) : `${openingVariantName(variant, labels)} ${position(variant)}`;
 }
