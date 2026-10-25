@@ -178,7 +178,11 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   expect(cabinConfirmRequests).toBe(1);
   await expect(panel).not.toContainText(cabinChoiceHandle);
   await expect(panel).not.toContainText("cabinId");
-  await expect(panel).not.toContainText(/ready|connected/i);
+  // What must never appear here is wire vocabulary or an internal identity, not an ordinary English word: the
+  // guide's own hint reads "Gets the companion ready to play in this session", which `/ready|connected/i` matched
+  // too - a false positive that pinning the surface's copy made inevitable. The identifiers are the invariant.
+  await expect(panel).not.toContainText(/\bready[a-z]*Id\b|\bconnected[A-Z]\w*/u);
+  await expect(panel).not.toContainText(/cabin_choice_|attestation_|handoff_/u);
   // The one-time boot token is gone and the profile marker is kept; the drawer
   // this journey opened is the URL's `panel` fact, which survives the reload
   // below and is what restores it (design/26 §7.2).
