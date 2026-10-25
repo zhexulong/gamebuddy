@@ -29,7 +29,10 @@ import test from "node:test";
 
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import { readExperimentalStardewActionIds } from "./lib/stardew-published-action-registry.mjs";
-import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
+import {
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "./stardew-action-gate-descriptors.mjs";
 
 const TOOLS = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
@@ -80,8 +83,6 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-tailor-clothing-smoke.mjs": "tailor_clothing",
   "run-stardew-native-local-player-dye-clothing-with-item-smoke.mjs": "dye_clothing_with_item",
   "run-stardew-native-local-player-color-placed-object-smoke.mjs": "color_placed_object",
-  "run-stardew-native-local-player-accept-special-order-smoke.mjs": "accept_special_order",
-  "run-stardew-native-local-player-claim-museum-reward-smoke.mjs": "claim_museum_reward",
   // The chat deed is NOT a native-local fixture: it lives on the farmhand lane of the
   // two-process launcher (a true client of the host), so the native-local fixture
   // library has no send_multiplayer_chat mapping - the policy-check subtest skipping
@@ -205,6 +206,14 @@ function runnerCases() {
   }
   for (const [runner, actionId] of Object.entries(CONFIG_DRIVER_ACTION)) {
     if (onDisk.has(runner)) cases.set(runner, actionId);
+  }
+  // The third registration authority, and the one that answers for a gate that completes no published action: an
+  // Experimental key maps its own harness label to the runner that drives it. Derived, not listed, because a hand
+  // ledger is exactly what missed `hold_absorption` when 3d446f3c shipped its gate - the runner, its fixture label and
+  // its descriptor entry all existed while `cases` had no way to see any of them. Declared entries above still win,
+  // because a runner whose fixture family is keyed on a DIFFERENT action states that deliberately.
+  for (const [actionId, runner] of Object.entries(STARDEW_EXPERIMENTAL_ACTION_RUNNERS)) {
+    if (onDisk.has(runner) && !cases.has(runner)) cases.set(runner, actionId);
   }
   return { cases, onDisk };
 }
