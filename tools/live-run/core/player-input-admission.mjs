@@ -60,7 +60,6 @@ export async function submitPlayerPrompt({
   if (typeof accept !== "function") throw new Error("player_input_accept_required");
   if (typeof text !== "string" || text.trim().length === 0) throw new Error("player_input_text_required");
 
-  const startedAtMs = now();
   const refusals = [];
   let attempts = 0;
   let acceptMs = 0;
