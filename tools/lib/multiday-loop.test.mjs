@@ -81,14 +81,15 @@ const instant = { sleep: async () => {}, now: () => 0, pollIntervalMs: 0 };
 test("the night is not crossed while a menu still holds the actor, even if the calendar moved", async () => {
   // The calendar moves FIRST (that is the real order), so a loop that trusted the day number would
   // declare the night over with the settlement menu still up.
+  //
+  // The summary is closed by the night lifecycle, not here, so this case no longer asserts a dismissal - it asserts
+  // the ordering: held, held, then free, and only the free one is a crossing.
   const scripted = world([held("ShippingMenu", 7), held("ShippingMenu", 7), free(7)]);
   const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
   assert.equal(outcome.crossed, true);
   assert.equal(outcome.dayAfter, 7);
-  // Two held observations, and the loop kept going through both: the calendar had already moved to 7,
-  // so a loop that trusted the day number would have returned crossed on the FIRST one.
-  assert.deepEqual(scripted.dismissals, ["ShippingMenu", "ShippingMenu"]);
-  assert.equal(outcome.menus[0].dismissReceipt.reasonCode, "modal_dismissed");
+  assert.deepEqual(scripted.dismissals, [], "dismissal is the lifecycle's, not the loop's");
+  assert.equal(outcome.menus[0].menuType, "ShippingMenu");
 });
 
 test("a menu with no audited handling stops the run by name instead of timing out", () => {
@@ -100,7 +101,8 @@ test("a menu with no audited handling stops the run by name instead of timing ou
   assert.equal(decideHeldMenu("SaveGameMenu").kind, "wait");
   assert.equal(decideHeldMenu("DialogueBox").kind, "wait");
   assert.equal(decideHeldMenu("ReadyCheckDialog").kind, "wait");
-  assert.equal(decideHeldMenu("ShippingMenu").kind, "dismiss");
+  // The lifecycle commits it; from here it is something to WAIT on, like the other engine-owned modals.
+  assert.equal(decideHeldMenu("ShippingMenu").kind, "wait");
   assert.equal(decideHeldMenu(null).kind, "none");
   assert.equal(readHeldMenu({ actorDispositionKind: "modal", actorDispositionDetail: "" }), "unknown");
   assert.equal(readHeldMenu({ actorDispositionKind: "idle" }), null);
@@ -160,24 +162,19 @@ test("the unclosable menu is stopped after a false menu type was reported", asyn
   assert.deepEqual(scripted.dismissals, []);
 });
 
-test("a dismissed menu that comes straight back stops by name rather than looping", async () => {
-  // The menu never leaves: the product's own dismiss cannot clear it, so the bound is what turns this
-  // into a named stop instead of an infinite loop.
+test("the loop never dismisses the shipping summary: that is the lifecycle's own commit", async () => {
+  // The summary used to be closed from here, while the companion was blocked inside `advance_day`. It is now
+  // committed by `SleepAndAdvanceDayLifecycle`, so the loop only waits - and a summary nothing closes is a named
+  // stop with the menu in its name, not a dismissal the harness performed.
+  //
+  // `timeoutMs: 0` on purpose: with a frozen clock the wait can only end by expiring, and an expired wait is what
+  // this case is about. A generous timeout here would make the test spin instead of asserting.
   const snapshots = Array.from({ length: 8 }, () => held("ShippingMenu", 7));
   const scripted = world(snapshots);
-  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
-  assert.equal(outcome.reasonCode, "rollover_menu_not_cleared:ShippingMenu");
-  assert.equal(scripted.dismissals.length, MAX_DISMISS_ATTEMPTS);
-});
-
-test("a refusal from the product's own dismiss is the answer, not something to retry", async () => {
-  const scripted = world([held("ShippingMenu", 7)], {
-    receipt: { state: "blocked", reasonCode: "modal_not_dismissible" },
-    reasonCode: "rollover_menu_not_dismissed:ShippingMenu:blocked/modal_not_dismissible",
-  });
-  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 600_000, ...instant });
-  assert.equal(outcome.reasonCode, "rollover_menu_not_dismissed:ShippingMenu:blocked/modal_not_dismissible");
-  assert.equal(scripted.dismissals.length, 1);
+  const outcome = await watchRollover(scripted, { dayBefore: 6, timeoutMs: 0, ...instant });
+  assert.equal(outcome.crossed, false);
+  assert.equal(outcome.reasonCode, "night_not_observed:modal:ShippingMenu");
+  assert.deepEqual(scripted.dismissals, [], "the loop must not click the summary on the companion's behalf");
 });
 
 test("an expired wait names what was holding the actor", async () => {

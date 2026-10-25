@@ -351,6 +351,23 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 // topologies (GameLocation.cs:3763-3765). Only after it is
                 // answered does startSleep() install the multiplayer
                 // ReadyCheckDialog, so the no-question form does not exist.
+                //
+                // A ShippingMenu arriving here is not a question and not a surprise: the rollover pushes it BEFORE the
+                // sleep prompt is raised, so a night that begins with yesterday's takings on screen waited forever. It
+                // asks nothing - `okClicked` only starts the outro (ShippingMenu.cs:690-696) and the settlement itself
+                // happened before the menu existed - so the lifecycle closes it the same way `dismiss_modal` does, and
+                // for the same reason: leaving it standing makes the day-start budget expire and the night report
+                // `blocked/day_start_not_observed`, which reads like a hang.
+                //
+                // A LevelUpMenu is deliberately NOT handled here: closing one grants a perk, and on a milestone that
+                // grants whatever branch the closer happened to pick. That decision is the companion's, and a proxy
+                // taking it was measured to be the wrong division of labour.
+                if (Game1.activeClickableMenu is ShippingMenu uncommittedShipping)
+                {
+                    if (!this.CommitShippingSummary(uncommittedShipping))
+                        this.Finish("blocked", "shipping_summary_commit_unavailable", null);
+                    return false;
+                }
                 if (Game1.activeClickableMenu is not DialogueBox)
                     return false;
                 this.CaptureDayBaseline();
@@ -656,6 +673,33 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// In multiplayer the native answer path immediately replaces it with the
     /// ReadyCheckDialog, so the ready barrier is observed next rather than here.
     /// </summary>
+    /// <summary>
+    /// Close the morning-after shipping summary through the engine's own commit path.
+    ///
+    /// `ShippingMenu` overrides neither `exitThisMenu` nor `cleanupBeforeExit`, so a generic close is a pure cancel - and
+    /// the save does not live on the close path. `okClicked` (ShippingMenu.cs:690-696) starts the outro, and the outro is
+    /// what creates `SaveGameMenu`, which is the menu whose completion runs the save and raises `Saved`/`DayStarted`.
+    ///
+    /// The action `dismiss_modal` already does exactly this for the same menu, and the two must not diverge: this is a
+    /// thin call into the same private method rather than a second implementation, because a lifecycle that closes the
+    /// summary differently from the published action would make one of them the wrong answer to "what does dismissing
+    /// a shipping summary do".
+    /// </summary>
+    private bool CommitShippingSummary(ShippingMenu menu)
+    {
+        System.Reflection.MethodInfo? commit = typeof(ShippingMenu).GetMethod(
+            "okClicked",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        if (commit is null)
+        {
+            this.trace.Add("shipping_summary_commit_unavailable");
+            return false;
+        }
+        commit.Invoke(menu, null);
+        this.trace.Add("shipping_summary_committed");
+        return true;
+    }
+
     private bool AnswerSleepPrompt()
     {
         if (Game1.activeClickableMenu is not DialogueBox dialogueBox)

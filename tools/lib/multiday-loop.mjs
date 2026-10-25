@@ -48,32 +48,6 @@ export function closeIsEngineCommitted(receipt) {
 }
 
 /**
- * Settle the menu holding the actor, or name why it could not be settled.
- *
- * Split out of the watch loop because this is the only branch that dispatches, and it carries the product's own
- * receipt semantics: a refusal is REPORTED rather than retried into a loop, and a close the ENGINE owns (the
- * settlement menu's commit, which is what saves the night) is WAITED FOR rather than re-sent - three "successful"
- * dismissals of the same menu is what recorded a working night as uncleared (measured 2026-10-18, g42stall).
- */
-async function settleHeldMenu({ world, menuType, menus, attempts, committed, now, deadline, sleep, pollIntervalMs }) {
-  if (committed.has(menuType)) {
-    return (await committedCloseStalled({ now, deadline, sleep, pollIntervalMs }))
-      ? `rollover_menu_not_cleared:${menuType}`
-      : null;
-  }
-  const sent = attempts.get(menuType) ?? 0;
-  if (sent >= MAX_DISMISS_ATTEMPTS) return `rollover_menu_not_cleared:${menuType}`;
-  attempts.set(menuType, sent + 1);
-  const outcome = await world.dismiss(menuType);
-  const entry = menus.find((candidate) => candidate.menuType === menuType);
-  entry.dismissReceipt = outcome.receipt ?? null;
-  entry.dismissReasonCode = outcome.reasonCode ?? null;
-  if (outcome.reasonCode !== null && outcome.reasonCode !== undefined) return outcome.reasonCode;
-  if (closeIsEngineCommitted(outcome?.receipt)) committed.add(menuType);
-  return null;
-}
-
-/**
  * Wait one poll for a close the engine owns.
  *
  * Returns true only when the harness's own deadline has passed - the bounded, named outcome - so the loop keeps its
@@ -116,7 +90,10 @@ export function readHeldMenu(snapshot) {
 export function decideHeldMenu(menuType) {
   if (menuType === null) return Object.freeze({ kind: "none", menuType: null });
   if (WAIT_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "wait", menuType });
-  if (DISMISSIBLE_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "dismiss", menuType });
+  // `ShippingMenu` is committed by the night lifecycle itself (`SleepAndAdvanceDayLifecycle`), which is where the
+  // sleep path already is. The loop waits like it does for the other engine-owned modals: a summary still standing
+  // after the product's own path could not close it is a named stop, not a task for the harness.
+  if (DISMISSIBLE_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "wait", menuType });
   if (menuType === LEVEL_UP_MENU) return Object.freeze({ kind: "respond_level_up", menuType });
   return Object.freeze({ kind: "blocked", menuType, reasonCode: `actor_held_by_unclosable_menu:${menuType}` });
 }
@@ -191,20 +168,10 @@ export async function watchRollover(
       }
     }
 
-    if (decision.kind === "dismiss") {
-      const stalled = await settleHeldMenu({
-        world,
-        menuType,
-        menus,
-        attempts,
-        committed,
-        now,
-        deadline,
-        sleep,
-        pollIntervalMs,
-      });
-      if (stalled !== null) return Object.freeze({ crossed: false, reasonCode: stalled, menus });
-    }
+    // `ShippingMenu` used to be dismissed from HERE, while the companion was blocked inside `advance_day`. That made a
+    // run report "the companion crossed the night" while the harness clicked the menu - it proved the harness. The
+    // lifecycle now commits the summary itself (`SleepAndAdvanceDayLifecycle.CommitShippingSummary`), so this loop only
+    // WAITS: a summary still standing after the product's own path could not close it is a named stop, not a task.
 
     // The night is over once the world says so. A menu still holding the actor is not over, whatever the
     // calendar says - that ordering is the whole reason this loop exists.
