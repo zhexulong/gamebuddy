@@ -12,7 +12,6 @@ namespace GameBuddy.Stardew;
 internal sealed class LocalPipeBridge : IDisposable
 {
     private const int MaximumQueuedMessages = 64;
-    private const int MaximumInboundRequestsPerSecond = 32;
 
     private long inboundFramesRead;
     private long inboundFramesEnqueued;
@@ -197,30 +196,23 @@ internal sealed class LocalPipeBridge : IDisposable
 
     private async Task ReadLoopAsync(Stream stream, long generation, CancellationToken cancellationToken)
     {
-        long windowStartMs = Environment.TickCount64;
-        int requestsInWindow = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
             string json = await ReadFrameAsync(stream, cancellationToken).ConfigureAwait(false);
-            // Read BEFORE the rate and queue checks below: a frame that is read but not enqueued is exactly the
-            // difference these counters exist to make visible.
+            // Read BEFORE the queue check below: a frame that is read but not enqueued is exactly the difference these
+            // counters exist to make visible.
             Interlocked.Increment(ref this.inboundFramesRead);
             this.lastInboundFrameType = FrameTypeOf(json);
-            long nowMs = Environment.TickCount64;
-            if (nowMs - windowStartMs >= 1_000)
-            {
-                windowStartMs = nowMs;
-                requestsInWindow = 0;
-            }
-            if (++requestsInWindow > MaximumInboundRequestsPerSecond)
-            {
-                // Name the numbers: the code alone said "rate limited" and nothing said by how much, which is why the
-                // disconnect of 2026-10-25 took a reconstruction from diagnostics to understand. 32 frames arrived in
-                // one second against a limit of 32, and the reader threw, and the bridge was reported closed with no
-                // cause attached.
-                throw new InvalidDataException(
-                    $"bridge_inbound_rate_limited:frames={requestsInWindow}:limit={MaximumInboundRequestsPerSecond}");
-            }
+            // The ONLY inbound protection is the queue depth, and that is deliberate.
+            //
+            // There used to be a second one - a fixed 32-frames-per-second window - on a same-machine, same-user named
+            // pipe whose real hazard is an unconsumed queue, not sustained traffic. It had no credit for the 171 seconds
+            // of silence that preceded it, so a Host releasing a batched burst was indistinguishable from a flood, and
+            // the consequence was not backpressure: it threw, killed the reader, and took the bridge down. Measured
+            // 2026-10-25: 32 frames in the second before the close, against a limit of 32, with the game still running.
+            //
+            // A queue that reaches 64 still fails, by name, and that check is the one backed by what the game thread can
+            // actually consume.
             if (Interlocked.Increment(ref this.inboundCount) > MaximumQueuedMessages)
             {
                 Interlocked.Decrement(ref this.inboundCount);
