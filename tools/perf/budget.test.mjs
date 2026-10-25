@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { BUDGET_TOLERANCE, budgetMicros, compare } from "../check-perf-budget.mjs";
+import { BUDGET_TOLERANCE, budgetMicros, compare, machineIdentity, machineSkipLine } from "../check-perf-budget.mjs";
 
 const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "check-perf-budget.mjs");
 
@@ -58,6 +58,7 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
     const baseline = {
       note: "fixture",
       revision: "fixture",
+      machine: machineIdentity(),
       tolerance: BUDGET_TOLERANCE,
       cases: { "journal.write/large": recorded },
     };
@@ -81,6 +82,57 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
     assert.equal(failure?.status, 1, "a case past its budget must fail the gate");
     assert.match(failure.stdout, /perf_budget_failed slow=1/u);
     assert.match(failure.stdout, /journal\.write\/large measured 200 ops\/s 5 µs\/op, budget 3\.00 µs\/op/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const elsewhere = { platform: "linux", arch: "arm64", processors: 8, cpuModel: "Some Other CPU @ 2.00GHz" };
+
+test("a baseline from another machine is a stated skip, not a comparison", () => {
+  assert.equal(machineSkipLine(machineIdentity(), machineIdentity()), undefined, "the recording machine compares");
+
+  const line = machineSkipLine(elsewhere, machineIdentity());
+  assert.match(
+    line,
+    /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on /u,
+  );
+});
+
+test("a baseline recorded before machines were recorded cannot be compared either", () => {
+  const line = machineSkipLine(undefined, machineIdentity());
+  assert.match(line, /^perf_budget_skipped: baseline predates the machine identity, measured on /u);
+});
+
+test("the CLI skips with both identities instead of failing on another machine's numbers", async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-perf-skip-"));
+  try {
+    await mkdir(join(root, "tools", "perf"), { recursive: true });
+    const baseline = {
+      note: "fixture",
+      revision: "fixture",
+      machine: elsewhere,
+      tolerance: BUDGET_TOLERANCE,
+      cases: { "journal.write/large": recorded },
+    };
+    await writeFile(join(root, "tools", "perf", "baseline.json"), `${JSON.stringify(baseline, null, 2)}\n`);
+    // Over budget by any reading: if the gate compared this, it would exit 1.
+    const resultsPath = join(root, "results.txt");
+    await writeFile(
+      resultsPath,
+      `PERF_RESULT ${JSON.stringify({ id: "journal.write", size: "large", opsPerSecond: 20, perOpMicros: 50 })}\n`,
+    );
+
+    const stdout = execFileSync(process.execPath, [gatePath, "--root", root, "--results", resultsPath], {
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    assert.match(
+      stdout,
+      /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on /mu,
+    );
+    assert.doesNotMatch(stdout, /perf_budget_(failed|ok)/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
