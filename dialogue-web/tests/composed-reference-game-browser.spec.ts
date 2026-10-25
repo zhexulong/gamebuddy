@@ -3587,9 +3587,10 @@ test("the conversation column is the transcript and the composer, with the model
   // `chat-model-drawer`, not about the shared primitive's own tests.
   await expect(drawer).toBeVisible();
   await expect(popout.locator(".surface-model-settings")).toBeVisible();
-  await expect(popout.getByLabel("Model ID")).toHaveValue("deepseek-v4");
+  // This surface owns the level it reasons at; the model comes from the active connection.
   await expect(popout.getByLabel("Thinking level")).toHaveValue("medium");
-  await expect(popout.getByRole("button", { name: "deepseek-v4" })).toBeVisible();
+  await expect(popout.getByRole("button", { name: "deepseek-v4" })).toHaveCount(0);
+  await expect(popout.locator(".surface-model-chip").first()).toContainText("deepseek-v4");
   // ...and the conversation column still carries no form while it is open.
   await expect(chatSurface.locator("input, select, textarea")).toHaveCount(1);
 
@@ -4691,7 +4692,18 @@ test("a chat with no durable draft lets the player save the first one from the c
     if (refuseNextSave || route.request().method() === "DELETE") {
       // A refused save, and the authoritative re-read that follows it: the
       // durable draft the surface must take instead is older and empty.
-      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "draft_conflict" }) });
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            type: "about:blank",
+            title: "Draft revision conflict",
+            status: 409,
+            code: "draft_conflict",
+            requestId: handle,
+            retryable: false,
+          }),
+        });
       durable = { apiVersion: 1, revision: 3, text: null };
       snapshotDraft = { revision: 3, present: false };
       return;
@@ -5143,7 +5155,18 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
     expect(route.request().headers()["x-csrf-token"]).toBe(csrfToken);
     expect(route.request().postDataJSON()).toEqual({ apiVersion: 1, selectionGeneration: 1, chatHandle: selectTarget });
     if (selectStatus !== 200)
-      return route.fulfill({ status: selectStatus, contentType: "application/json", body: JSON.stringify({ code: "selection_conflict" }) });
+      return route.fulfill({
+        status: selectStatus,
+        contentType: "application/json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: "Chat selection conflict",
+          status: selectStatus,
+          code: "selection_conflict",
+          requestId: handle,
+          retryable: false,
+        }),
+      });
     mountedHandle = selectTarget;
     return route.fulfill(jsonOk({ apiVersion: 1, status: "switched" }));
   });
@@ -5933,19 +5956,18 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   await chatSurface.getByTestId("chat-model-trigger").click();
   const popout = page.getByRole("dialog", { name: "Chat model settings" });
   await expect(popout).toBeVisible();
-  await popout.getByLabel("Model ID").fill("deepseek-v5");
+  await popout.getByLabel("Thinking level").selectOption("high");
   await popout.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => profileWrites.length).toBe(1);
   expect(profileWrites[0]).toEqual({
     apiVersion: 1,
     surface: "chat",
     expectedRevision: 1,
-    modelId: "deepseek-v5",
-    thinkingLevel: "medium",
+    thinkingLevel: "high",
   });
   // The durable read-back is what the editor shows, and the generation is untouched.
   await expect(popout.locator('[data-model-notice="saved"]')).toBeVisible();
-  await expect(popout.getByLabel("Model ID")).toHaveValue("deepseek-v5");
+  await expect(popout.getByLabel("Thinking level")).toHaveValue("high");
   await expect(page.getByText("Thinking…")).toBeVisible();
   // The drawer's own close control, not Escape: the Save that just ran disabled itself and dropped
   // focus to <body>, so this asserts the surface's close affordance rather than a keyboard accident.
@@ -5990,8 +6012,8 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   // surface's own model settings reads it back from the Host, never from anything the surface kept
   // locally through the switch and the completion.
   await page.getByTestId("chat-surface").getByTestId("chat-model-trigger").click();
-  await expect(page.getByRole("dialog", { name: "Chat model settings" }).getByLabel("Model ID")).toHaveValue(
-    "deepseek-v5",
+  await expect(page.getByRole("dialog", { name: "Chat model settings" }).getByLabel("Thinking level")).toHaveValue(
+    "high",
   );
 });
 
@@ -6883,13 +6905,16 @@ test("a cabin list read before the game started says what happened, and why relo
   // The shape a launch leaves behind: a Player Host instance exists, so the handoff no longer reads as
   // "there is no session yet" - the read that failed ran when the page opened.
   const launched = {
-    ...game,
+    ...root,
     game: {
-      ...game.game,
-      instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
-      connectionStatus: "active",
-      actionAuthority: "active",
-      capabilitySummary: { available: true, count: 1 },
+      ...game,
+      game: {
+        ...game.game,
+        instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
+        connectionStatus: "active",
+        actionAuthority: "active",
+        capabilitySummary: { available: true, count: 1 },
+      },
     },
   };
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>

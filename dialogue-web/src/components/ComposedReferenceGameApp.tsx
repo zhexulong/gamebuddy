@@ -15,7 +15,7 @@ import {
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
-import { composedProblemView as problemView } from "../composed-problem-view";
+import { composedProblemView as problemView, declaredProblemSentence } from "../composed-problem-view";
 import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import {
@@ -549,15 +549,18 @@ export function ComposedReferenceGameApp() {
       seedDraft(result);
       setDraftNotice({ kind: "success", text: labels().success });
       commit({ ...current, draft: result });
-    } catch {
+    } catch (error) {
+      // The refusal's own sentence, not a generic one: a stale draft and a forbidden draft read differently to the
+      // player, and every other mutation on this surface already words itself through the catalogue.
+      const sentence = declaredProblemSentence(error, labels()) ?? labels().failure;
       try {
         const draft = await managementPipelineApiRef.current.readDraft();
         seedDraft(draft);
-        setDraftNotice({ kind: "failure", text: labels().failure });
+        setDraftNotice({ kind: "failure", text: sentence });
         const fresh = viewRef.current;
         if (fresh.kind === "ready") commit({ ...fresh, draft });
       } catch {
-        setDraftNotice({ kind: "failure", text: labels().failure });
+        setDraftNotice({ kind: "failure", text: sentence });
       }
     }
   };
