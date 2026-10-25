@@ -1673,6 +1673,28 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activeItemPickup = null;
                 this.revision++;
+                // An inventory that grew IS the pickup, whatever the ground still shows.
+                //
+                // Measured 2026-10-25: `item_pickup_postcondition_unavailable` with `target_gone=false;
+                // inventory_before=8; inventory_after=9; inventory_gained=true`. The item had been collected - the engine
+                // had even reported `native_auto_collect=true` - but `FindItemTarget` still found debris on the tile, so the
+                // conjunction (targetGone && inventoryGained) could not hold and the execution became Uncertain. The
+                // companion then said, accurately, "我人还在东头地里杵着，走不动", and the night never started.
+                //
+                // The count is the authoritative fact: it is the player's actual inventory, read after the native pickup ran.
+                // `targetGone` is a hypothesis about how the engine cleans up, and on a deferred-cleanup or shared-debris tile
+                // it is simply false while the pickup was real. Requiring both made a successful pickup look unresolved.
+                if (inventoryGained)
+                {
+                    LocalExecutionReceipt picked = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_picked_up", this.revision,
+                        $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};"
+                            + $"item={specification.QualifiedItemId};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};"
+                            + "target_gone=false;evidence=inventory");
+                    this.Remember(picked);
+                    this.AddTrace(picked);
+                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                    return;
+                }
                 string reasonCode = !sameLocation ? "item_pickup_location_changed" : "item_pickup_postcondition_unavailable";
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, reasonCode, this.revision,
                     $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};target_gone={targetGone.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()}");
