@@ -176,17 +176,6 @@ async function readFixtureSource() {
   fixtureSourceCache = parts.join("\n");
   return fixtureSourceCache;
 }
-
-// A scenario branch can be written as `==` or as the `is` pattern, and the two have swapped places
-// more than once. The assertions below are about the branch existing and what it contains, so the
-// anchor resolves either spelling instead of pinning one and silently slicing an empty string.
-function scenarioAnchor(entry, scenario) {
-  for (const form of [`if (fixture.FixtureScenario is "${scenario}"`, `if (fixture.FixtureScenario == "${scenario}"`]) {
-    const at = entry.indexOf(form, from);
-    if (at >= 0) return at;
-  }
-  return -1;
-}
 // The scenario branches spell their comparison either `is` or `==`, and the code has used both.
 // Anchors therefore resolve to whichever the file currently contains, and quote the literal the
 // assertion is actually about.
@@ -1767,7 +1756,6 @@ test("native-local npc-relationship fixture establishes an unchanged persisted f
   assert.match(runner, /nearestCardinalApproach\(snapshot\.tile, current\)/);
   assert.match(runner, /withinRadius\(snapshot\.tile, target, 6\)/);
   assert.doesNotMatch(runner, /travelToTown/);
-  const executions = await readExecutionManagerSources();
   await restoreNativeLocalPlayerFixture(options);
 });
 
