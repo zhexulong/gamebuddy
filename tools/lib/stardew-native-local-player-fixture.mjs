@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { cp, lstat, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 import { STARDEW_BRIDGE_PIPE_NAME, STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
@@ -322,10 +322,12 @@ async function restoreNativeLocalPlayerFixtureInternal(options) {
   // mutates, so it is restored in the same step. Without this the next run of
   // the same fixture can start from a stale RecoveryRequired journal and fail
   // closed for reasons the prompt and the world cannot explain.
-  await restoreBodyProgramJournal(backup);
+  const journalArchive = await restoreBodyProgramJournal(backup, options.evidenceDir);
   const result = await restoreManagedFiles(context, backup, true);
   await endTransaction(context, options.backupName);
-  return result;
+  // The archive record travels in the result because the marker it is also written into lives inside the
+  // transaction backup, and that backup is consumed one line above.
+  return Object.freeze({ ...result, journalArchive });
 }
 
 function resolveContext(options) {
@@ -1315,17 +1317,31 @@ function ownedJournalScopePath(marker) {
   return scopePath;
 }
 
-async function restoreBodyProgramJournal(backup) {
+async function restoreBodyProgramJournal(backup, evidenceDir) {
   const scopeBackup = join(backup, "body-program-journal");
-  const marker = await readJson(join(backup, "body-program-journal.json"));
+  const markerPath = join(backup, "body-program-journal.json");
+  const marker = await readJson(markerPath);
   if (marker?.version !== 1) throw new Error("invalid_fixture_backup_manifest");
   const { path, existed } = marker;
   if (existed === null) {
     if (path !== null || marker.saveRoot !== null) throw new Error("invalid_fixture_backup_manifest");
-    return marker;
+    return journalArchiveRecord({ reason: "no_journal_scope" });
   }
   if (typeof path !== "string" || typeof existed !== "boolean") throw new Error("invalid_fixture_backup_manifest");
   const scopePath = ownedJournalScopePath(marker);
+  // The run's own evidence copy is taken BEFORE the removal below, because the
+  // live scope is the only durable record of what this run's programs did.
+  const archive = await archiveBodyProgramJournal(scopePath, evidenceDir);
+  try {
+    await writeJson(markerPath, { ...marker, archive });
+  } catch (error) {
+    // Recording the outcome is bookkeeping; the removal below is what the next run depends on, so an unwritable
+    // marker must not become a fixture that blocks the run. Said out loud rather than swallowed, because the
+    // returned record is then the only copy of the answer.
+    process.stderr.write(
+      `[fixture] journal archive marker not written: ${String(error?.message ?? error).slice(0, 200)}\n`,
+    );
+  }
   // Always clear the live scope first: a run that wrote a journal must not keep
   // it merely because the pre-run state had none.
   await rm(scopePath, { recursive: true, force: true });
@@ -1334,7 +1350,99 @@ async function restoreBodyProgramJournal(backup) {
     await mkdir(dirname(scopePath), { recursive: true });
     await cp(scopeBackup, scopePath, { recursive: true, force: true });
   }
-  return marker;
+  return archive;
+}
+
+/** The directory inside a run's evidence bundle that receives the journal copy. */
+const JOURNAL_ARCHIVE_DIRECTORY = "body-program-journal";
+
+/**
+ * One record of the archive attempt: `archived` is true exactly when no refusal reason was recorded.
+ *
+ * The reasons are a closed vocabulary a reader branches on instead of a missing file:
+ * `no_journal_scope` - the transaction declared no save root or no binding, so no journal was ever in scope;
+ * `no_live_journal` - in scope, and the run wrote nothing, so there is nothing to keep;
+ * `no_bundle_path` - no `evidenceDir` was supplied, and the fixture refuses to guess where a bundle is;
+ * `bundle_path_not_absolute` - supplied, but relative, so it would resolve against a working directory nobody chose;
+ * `bundle_inside_journal_scope` - the bundle would be deleted by the removal that follows the copy;
+ * `copy_failed` - the copy was attempted and did not produce a faithful copy, and `detail` names the reason.
+ *
+ * One constructor for both sides on purpose: the marker is the file a later reader finds and the result is what the
+ * launcher prints, and two hand-written booleans would drift the moment either side gained a reason.
+ */
+function journalArchiveRecord({ reason, directory = null, detail = null, files = [] }) {
+  return Object.freeze({
+    archived: reason === null,
+    reason,
+    directory,
+    detail,
+    fileCount: files.length,
+    files: Object.freeze([...files]),
+  });
+}
+
+/**
+ * Every regular file under `root` with its sha256, `/`-separated and sorted so two trees compare as values.
+ *
+ * Symlinks are skipped rather than followed: the journal store writes one regular file per scope, and a link
+ * followed out of the scope would copy bytes the transaction does not own.
+ */
+async function journalFileDigests(root) {
+  const files = [];
+  const visit = async (directory, prefix) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const name = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const absolute = join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolute, name);
+      else if (entry.isFile()) files.push({ path: name, sha256: digest(await readFile(absolute)) });
+    }
+  };
+  await visit(root, "");
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+/**
+ * Keep the journal a run wrote, in the run's own evidence bundle, before `restore` deletes it.
+ *
+ * The removal below is deliberate and stays (see `backupBodyProgramJournal`): a leftover program makes the next
+ * run's Mod open `RecoveryRequired` and refuse every `program_submit`. But it also destroyed the only durable
+ * record of what the programs DID, and the bundle kept no copy - so measured 2026-10-25 a run reported
+ * `programOutcomes: [{observed:false, dispatched:null}]` for three accepted programs while `programStatus` in the
+ * same result carried `code:"found", state:"failed"` with real node outcomes, and reconstructing the run needed
+ * the Mod log read by hand.
+ *
+ * By contract this never changes what `restore` does on failure: anything that goes wrong here - no bundle path, a
+ * bundle that cannot be written, a copy that does not match its source - is recorded in the marker and the removal
+ * proceeds, so evidence capture can never block a run. The record names the absolute directory, the file count and
+ * a sha256 per file, so "the archive holds what was live" is a comparison rather than a claim.
+ */
+async function archiveBodyProgramJournal(scopePath, evidenceDir) {
+  if (!(await exists(scopePath))) return journalArchiveRecord({ reason: "no_live_journal" });
+  if (typeof evidenceDir !== "string" || evidenceDir.length === 0)
+    return journalArchiveRecord({ reason: "no_bundle_path" });
+  if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute" });
+  const directory = join(evidenceDir, JOURNAL_ARCHIVE_DIRECTORY);
+  // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
+  // claims an archive nobody can read. Refused as a refusal rather than trusted.
+  const containment = relative(resolve(scopePath), resolve(directory));
+  if (!containment.startsWith("..") && !isAbsolute(containment))
+    return journalArchiveRecord({ reason: "bundle_inside_journal_scope", directory });
+  try {
+    const live = await journalFileDigests(scopePath);
+    // The archive directory is ours and inside the bundle, so it is replaced rather than merged: a stale file
+    // beside a fresh copy would make `fileCount` describe two different runs at once.
+    await rm(directory, { recursive: true, force: true });
+    await cp(scopePath, directory, { recursive: true });
+    const copied = await journalFileDigests(directory);
+    if (JSON.stringify(copied) !== JSON.stringify(live)) throw new Error("journal_archive_hash_mismatch");
+    return journalArchiveRecord({ reason: null, directory, files: copied });
+  } catch (error) {
+    return journalArchiveRecord({
+      reason: "copy_failed",
+      directory,
+      detail: String(error?.message ?? error).slice(0, 200),
+    });
+  }
 }
 
 async function restoreManagedFiles(context, backup, removeBackup) {

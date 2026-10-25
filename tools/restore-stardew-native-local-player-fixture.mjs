@@ -13,6 +13,12 @@ const required = (name) => {
   if (!value) throw new Error(`missing_${name.slice(2)}`);
   return value;
 };
+// An absent flag is an answer, not an error: a caller with no evidence bundle still restores, and the
+// fixture records `archived: false, reason: no_bundle_path` rather than guessing where a copy should go.
+const optional = (name) => {
+  const at = process.argv.indexOf(name);
+  return at >= 0 ? process.argv[at + 1] : undefined;
+};
 try {
   process.stdout.write(
     `${JSON.stringify(
@@ -21,6 +27,7 @@ try {
         modsPath: required("--mods-path"),
         releaseDir: required("--release-dir"),
         backupName: required("--backup-name"),
+        evidenceDir: optional("--evidence-dir"),
       }),
     )}\n`,
   );

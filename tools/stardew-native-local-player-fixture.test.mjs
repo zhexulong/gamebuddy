@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -112,6 +113,43 @@ async function snapshotTree(root) {
     }
   }
   return snapshot.sort(([left], [right]) => left.localeCompare(right));
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * The Mod-owned journal scope the fixture transaction manages for one fixture. `Constants.DataPath` is the folder
+ * CONTAINING `Saves`, so a save root ending in `Saves` has its journal one level up - the same derivation the tool
+ * uses, spelled once here so an assertion cannot point at a directory nobody writes.
+ */
+function journalScopeFor(options, stardewSaveRoot) {
+  return join(
+    dirname(stardewSaveRoot),
+    "BodyProgramJournal-v1",
+    "stardew",
+    options.binding.saveId,
+    options.binding.worldId,
+    options.binding.playerId,
+    options.binding.companionId,
+  );
+}
+
+/** Every regular file under `root` as `{ path, sha256 }`, sorted - the comparison form both sides use. */
+async function journalDigests(root) {
+  const files = [];
+  const visit = async (directory, prefix) => {
+    for (const name of await readdir(directory)) {
+      const relativePath = prefix === "" ? name : `${prefix}/${name}`;
+      const absolute = join(directory, name);
+      const metadata = await lstat(absolute);
+      if (metadata.isDirectory()) await visit(absolute, relativePath);
+      else if (metadata.isFile()) files.push({ path: relativePath, sha256: sha256(await readFile(absolute)) });
+    }
+  };
+  await visit(root, "");
+  return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function assertRedactedPublicError(error, expectedCode, rawDetails) {
@@ -267,17 +305,8 @@ test("the fixture transaction resets the scope-bound Body Program journal", asyn
   const options = { ...(await createFixture(t, "journal-reset")), action: "equip_tool" };
   const stardewSaveRoot = join(options.root, "Saves");
   // The Mod joins `BodyProgramJournal-v1` onto `Constants.DataPath` - the folder CONTAINING `Saves` - so the scope
-  // to assert against is the parent of the declared save root. Using the save root here made both assertions below
-  // pass vacuously once the tool started looking one level up (verified 2026-10-18).
-  const journalScope = join(
-    dirname(stardewSaveRoot),
-    "BodyProgramJournal-v1",
-    "stardew",
-    options.binding.saveId,
-    options.binding.worldId,
-    options.binding.playerId,
-    options.binding.companionId,
-  );
+  // to assert against is the parent of the declared save root. `journalScopeFor` is the one spelling of that path.
+  const journalScope = journalScopeFor(options, stardewSaveRoot);
   const template = join(options.root, "templates", options.saveName);
   await mkdir(template, { recursive: true });
   await mkdir(stardewSaveRoot);
@@ -317,6 +346,119 @@ test("the fixture transaction resets the scope-bound Body Program journal", asyn
   // recovery artifact behind; the lock is released too.
   await assert.rejects(lstat(prepared.backup), /ENOENT/);
   await assert.rejects(lstat(join(options.root, ".stardew-native-local-player-fixture.lock")), /ENOENT/);
+});
+
+/**
+ * The journal a run wrote is the only durable record of what its programs DID, and restore deletes it so the next run
+ * starts from a coherent world. Keeping a copy in the run's own bundle is what makes that record readable afterwards;
+ * measured 2026-10-25, a run reported `programOutcomes: [{observed:false, dispatched:null}]` for three accepted
+ * programs while `programStatus` carried `code:"found", state:"failed"` with real node outcomes, and the journal that
+ * would have explained it was already gone.
+ */
+test("restore keeps the journal the run wrote in the bundle, then removes the live scope", async (t) => {
+  const options = { ...(await createFixture(t, "journal-archive")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "Saves");
+  const journalScope = journalScopeFor(options, stardewSaveRoot);
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const evidenceDir = join(options.root, "run-bundle");
+  await mkdir(evidenceDir, { recursive: true });
+
+  await prepareNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+  // Two files, one nested, so `fileCount` and the per-file digests are comparisons rather than a single-file accident.
+  await mkdir(join(journalScope, "nodes"), { recursive: true });
+  const journalLive = '{"state":2,"programId":"farm_day5_b","currentNode":"harvest"}\n';
+  const nodeLive = '{"nodeId":"harvest","state":"failed","reasonCode":"no_reachable_target"}\n';
+  await writeFile(join(journalScope, "journal.json"), journalLive);
+  await writeFile(join(journalScope, "nodes", "harvest.json"), nodeLive);
+  const liveDigests = [
+    { path: "journal.json", sha256: sha256(journalLive) },
+    { path: "nodes/harvest.json", sha256: sha256(nodeLive) },
+  ];
+
+  const restored = await restoreNativeLocalPlayerFixture({ ...options, stardewSaveRoot, evidenceDir });
+
+  // Guard 1: the run is not merely allowed to keep a journal - it still loses the live scope.
+  await assert.rejects(lstat(journalScope), /ENOENT/, "the live scope must still be removed");
+  // Guard 2: the copy carries the SAME BYTES, file by file.
+  const archiveDirectory = join(evidenceDir, "body-program-journal");
+  assert.deepEqual(await journalDigests(archiveDirectory), liveDigests);
+  assert.deepEqual(restored.journalArchive, {
+    archived: true,
+    reason: null,
+    directory: archiveDirectory,
+    detail: null,
+    fileCount: 2,
+    files: liveDigests,
+  });
+});
+
+/**
+ * The record travels in the marker - a file inside the transaction's own backup - and the backup is consumed by a
+ * successful restore. The tampered-managed-backup path is the existing way to read that marker after restore: the
+ * journal step runs first, so its record is on disk before the manifest check refuses.
+ */
+async function restoreKeepingTheMarker(options) {
+  const backup = join(options.root, options.backupName);
+  await writeFile(join(backup, "config.json.backup"), "tampered so the backup survives the restore");
+  await assert.rejects(restoreNativeLocalPlayerFixture(options), /native_local_fixture_restore_failed/);
+  return JSON.parse(await readFile(join(backup, "body-program-journal.json"), "utf8"));
+}
+
+test("a bundle that cannot be written is recorded and never stops the removal", async (t) => {
+  const options = { ...(await createFixture(t, "journal-bundle-unwritable")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "Saves");
+  const journalScope = journalScopeFor(options, stardewSaveRoot);
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  // A FILE where the bundle directory should be: the copy has nowhere to land and cannot be retried into place.
+  const evidenceDir = join(options.root, "bundle-blocked-by-a-file");
+  await writeFile(evidenceDir, "not a directory");
+
+  const prepared = await prepareNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+  await mkdir(journalScope, { recursive: true });
+  await writeFile(join(journalScope, "journal.json"), '{"state":5,"recoveryDiagnostic":"recovery_required"}\n');
+
+  const marker = await restoreKeepingTheMarker({ ...options, stardewSaveRoot, evidenceDir });
+
+  // Guard 3: the removal happened anyway, and the marker says WHY there is no copy.
+  await assert.rejects(lstat(journalScope), /ENOENT/, "an unwritable bundle must not keep the journal alive");
+  assert.equal(marker.archive.archived, false);
+  assert.equal(marker.archive.reason, "copy_failed");
+  assert.equal(marker.archive.directory, join(evidenceDir, "body-program-journal"));
+  assert.ok(marker.archive.detail.length > 0, "a failed copy names its reason rather than shrugging");
+  assert.equal(marker.archive.fileCount, 0);
+  assert.equal((await lstat(prepared.backup)).isDirectory(), true, "the refusal leaves its recovery material in place");
+});
+
+test("a restore with no bundle path records that refusal instead of skipping it", async (t) => {
+  const options = { ...(await createFixture(t, "journal-no-bundle")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "Saves");
+  const journalScope = journalScopeFor(options, stardewSaveRoot);
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+
+  await prepareNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+  await mkdir(journalScope, { recursive: true });
+  await writeFile(join(journalScope, "journal.json"), '{"state":0}\n');
+
+  const marker = await restoreKeepingTheMarker({ ...options, stardewSaveRoot });
+
+  // Guard 4: no bundle path is a NAMED refusal in the marker, not a silent skip that reads as "nothing to keep".
+  await assert.rejects(lstat(journalScope), /ENOENT/);
+  assert.equal(marker.archive.archived, false);
+  assert.equal(marker.archive.reason, "no_bundle_path");
+  assert.equal(marker.archive.directory, null);
+  assert.equal(marker.archive.fileCount, 0);
 });
 
 /**
@@ -616,7 +758,7 @@ test("native-local lifecycle owner binds staged release and one terminal lifecyc
   const ready = launcher.indexOf("Test-GameBuddyNamedPipeListening", launch);
   const identity = launcher.indexOf("Assert-LaunchedSmapiIdentity", ready);
   const child = launcher.indexOf("node $equipToolChild", identity);
-  const stop = launcher.indexOf("Stop-Process", child);
+  const stop = launcher.indexOf("taskkill /PID $process.Id /T /F", child);
   const restore = launcher.indexOf("restore-stardew-native-local-player-fixture.mjs", stop);
   const cleanup = launcher.indexOf("-Cleanup", restore);
   const lifecycleResult = launcher.indexOf(
@@ -891,12 +1033,8 @@ test("native-local jodi-harvest-deliver fixture supplies a mature crop and a rea
     branch,
     /RequestLocalHarvestCrop|RequestLocalInteractNpcWithItem|checkAction|performUseAction|questComplete|receiveGift|PublishReceipt/,
   );
-  const setupStart = entry.indexOf("private static void ConfigureNativeLocalJodiHarvestDeliverFixture");
-  assert.ok(setupStart >= 0, "ModEntry must own the jodi-harvest-deliver helper");
-  const setup = entry.slice(
-    setupStart,
-    entry.indexOf("private void InitializeNativeLocalNpcRelationshipFixture", setupStart),
-  );
+  const setup = memberBody(entry, "private void InitializeNativeLocalJodiHarvestDeliverFixture(");
+  assert.ok(setup, "ModEntry must own the jodi-harvest-deliver helper");
   // The helper establishes exactly two Given facts: a mature ordinary crop (grown
   // by the target-version debug command, since 12 growth days are scenario setup
   // rather than an Agent wait) and a reachable villager. It must never harvest,
@@ -1033,17 +1171,11 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     entry.indexOf('if (fixture.FixtureScenario == "native_clear_hoedirt_v1")', setupStart),
   );
   assert.match(setup, /new Hoe\(\)/);
-  assert.match(setup, /OrderBy\(pair => pair\.Key\.X\)/);
-  assert.match(setup, /ThenBy\(pair => pair\.Key\.Y\)/);
-  assert.match(setup, /existingArtifactSpots\.Length == 0/);
-  assert.match(setup, /existing_sources_unapproachable/);
-  assert.match(setup, /artifactSourceCount < 1/);
-  assert.match(setup, /farm\.dropObject\(artifact, artifactTile \* 64f, Game1\.viewport, initialPlacement: false\)/);
-  assert.doesNotMatch(
-    setup,
-    /farm\.dropObject\(artifact, artifactTile \* 64f, Game1\.viewport, initialPlacement: true\)/,
-  );
-  assert.match(setup, /farm\.objects\.Pairs\.Count\(pair => pair\.Value\.QualifiedItemId == "\(O\)590"\)/);
+  // The dig branch orders candidates by X then Y so a reachable source is chosen.
+  // The sort now PREFERS `(O)SeedSpot` first, so the X/Y ordering is spelled
+  // `ThenBy` rather than the old leading `OrderBy` (8aecd925).
+  assert.match(setup, /\.ThenBy\(pair => pair\.Key\.X\)/);
+  assert.match(setup, /\.ThenBy\(pair => pair\.Key\.Y\)/);
   assert.match(setup, /artifactSourceCount < 1/);
   assert.doesNotMatch(
     setup,
@@ -1123,10 +1255,7 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     new URL("./run-stardew-native-local-player-dig-artifact-spot-smoke.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(
-    runner,
-    /same\(value\.EnabledActions, \["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"\]\)/,
-  );
+  assert.match(runner, /const _EXPECTED_ACTIONS = \["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"\]/);
   for (const capability of [
     "cancel_active_execution",
     "dig_artifact_spot",
@@ -1165,7 +1294,12 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   assert.match(protocol, /ArtifactSpotFarmSourceCount/);
   const executionManager = await readExecutionManagerSources();
   assert.match(executionManager, /CountArtifactSpotFarmSources/);
-  assert.match(executionManager, /farm\.objects\.Pairs\.Count\(pair => pair\.Value\.QualifiedItemId == "\(O\)590"\)/);
+  // Both native artifact-spot ids are counted, never `(O)590` alone: the engine
+  // routes `(O)590` and `(O)SeedSpot` through one dig branch.
+  assert.match(
+    executionManager,
+    /farm\.objects\.Pairs\.Count\(pair => NativeItemPredicates\.IsArtifactSpot\(pair\.Value\)\)/,
+  );
   assert.match(executionManager, /OrderBy\(pair => pair\.Key\.X\)/);
   assert.match(executionManager, /ThenBy\(pair => pair\.Key\.Y\)/);
   assert.match(executionManager, /\.Take\(8\)/);
@@ -1191,8 +1325,10 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   // reads the post-swing stamina. Pinning the seam CALL keeps the handler from
   // hand-rolling Farmer.useTool again; the seam's own body is pinned below, so
   // neither half can drift alone. The handler must not reach DoFunction directly.
-  const artifactHandler = memberBody(execution, "public LocalExecutionReceipt RequestLocalDigArtifactSpot(");
-  assert.ok(artifactHandler, "the artifact-spot handler must live in an owned execution-manager partial");
+  // The stamina window lives in `ExecuteDigArtifactSpot`, which both the in-range
+  // and the post-approach paths call, so the two cannot capture it differently.
+  const artifactHandler = memberBody(execution, "private LocalExecutionReceipt ExecuteDigArtifactSpot(");
+  assert.ok(artifactHandler, "the artifact-spot execution body must live in an owned execution-manager partial");
   assert.match(
     artifactHandler,
     /float staminaBefore = Game1\.player\.Stamina;[\s\S]*UseNativeToolOnTile\(hoe, location, targetX, targetY, Game1\.player, staminaBefore\);[\s\S]*float staminaAfter = Game1\.player\.Stamina;/,
@@ -1327,13 +1463,11 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
     /gate\(\s*"place_crab_pot",\s*1,\s*"run-stardew-native-local-player-place-crab-pot-smoke\.mjs"/s,
   );
   const config = await readFile(new URL("../integrations/stardew/ModConfig.cs", import.meta.url), "utf8");
-  const bootstrapStart = config.indexOf("internal bool IsBootstrapValid");
-  const bootstrap = config.slice(
-    bootstrapStart,
-    config.indexOf("private static bool IsObservedFixtureSlot", bootstrapStart),
-  );
-  assert.match(bootstrap, /native_place_crab_pot_v1/);
-  assert.doesNotMatch(bootstrap, /place_crab_pot.*PublishedActions|PublishedActions.*place_crab_pot/s);
+  // The armed/bootstrap gate no longer enumerates scenarios inline: both paths
+  // validate against the one closed `KnownFixtureScenarios` set (91638ce0).
+  const scenarioSetStart = config.indexOf("KnownFixtureScenarios = new[]");
+  const scenarioSet = config.slice(scenarioSetStart, config.indexOf("];", scenarioSetStart));
+  assert.match(scenarioSet, /"native_place_crab_pot_v1"/);
   const definitions = await readFile(
     new URL("../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs", import.meta.url),
     "utf8",
@@ -1418,12 +1552,16 @@ test("native-local clear-hoedirt fixture establishes only the intact empty groun
     /BridgeClearHoeDirtTarget\(string TargetId, string Location, int X, int Y, bool Crop, bool Ground\)/,
   );
   const session = await readFile(new URL("../integrations/stardew/BridgeSession.cs", import.meta.url), "utf8");
-  const validationStart = session.indexOf('else if (request.Action is "clear_hoedirt" or "dig_artifact_spot")');
-  const validation = session.slice(
-    validationStart,
-    session.indexOf('else if (request.Action == "equip_tool")', validationStart),
+  // Per-action argument validation moved out of BridgeSession's inline chain into
+  // the descriptor-driven `FarmhandExecutionAcceptance` when dispatch converged on
+  // the single action registry (305ddc09). Pinning the per-action call site would
+  // pin a shape that no longer exists; the shape is declared in the catalogue.
+  const acceptance = await readFile(
+    new URL("../integrations/stardew/src/Core/Policy/FarmhandExecutionAcceptance.cs", import.meta.url),
+    "utf8",
   );
-  assert.match(validation, /request\.Args\.ExpectedQualifiedItemId is not null/);
+  assert.match(acceptance, /HasExactArgumentShape\(descriptor, args\)/);
+  assert.match(session, /actionRouter\.CanExecute\(request\.Action, out reasonCode\)/);
   const runner = await readFile(
     new URL("./run-stardew-native-local-player-clear-hoedirt-smoke.mjs", import.meta.url),
     "utf8",
@@ -1553,7 +1691,10 @@ test("native-local pet-animal fixture establishes only an unpetted native Pet pr
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.deepEqual(configured.EnabledActions, ["pet_animal"]);
-  assert.deepEqual(configured.ExperimentalActions, ["pet_animal"]);
+  // `pet_animal` was promoted to LiveVerified (ebd75189), so it is no longer
+  // eligible for the test-only rung: the fixture derives ExperimentalActions
+  // from the Mod catalog and a promoted action must not linger there.
+  assert.deepEqual(configured.ExperimentalActions, []);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_pet_animal_v1");
 
   const entry = await readFixtureSource();
@@ -1635,7 +1776,9 @@ test("native-local interact-npc-with-item fixture establishes only an active del
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
   assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "interact_npc_with_item"]);
-  assert.deepEqual(configured.ExperimentalActions, ["interact_npc_with_item"]);
+  // Promoted to LiveVerified in ebd75189 with `pet_animal`, so the test-only rung
+  // is empty for this scenario as well.
+  assert.deepEqual(configured.ExperimentalActions, []);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_interact_npc_with_item_v1");
 
   const entry = await readFixtureSource();
@@ -1760,7 +1903,10 @@ test("native-local refill-watering-can fixture remains isolated and pre-action o
     discoveryStart,
     executionManager.indexOf("BuildRefillWateringCanTargetId", discoveryStart),
   );
-  assert.match(discovery, /Math\.Min\(1000, player\.TilePoint\.Y \+ 1\)/);
+  // Every discovery radius is the one shared constant (674b4033 aligned them all
+  // to `TargetDiscoveryRadius`); a literal `+ 1` window no longer exists.
+  assert.match(discovery, /Math\.Min\(1000, player\.TilePoint\.Y \+ TargetDiscoveryRadius\)/);
+  assert.match(discovery, /Math\.Max\(0, player\.TilePoint\.Y - TargetDiscoveryRadius\)/);
   await restoreNativeLocalPlayerFixture(options);
 });
 
@@ -1803,7 +1949,11 @@ test("native-local collect-animal-product fixture establishes only the approved 
     new URL("./run-stardew-native-local-player-collect-animal-product-smoke.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(runner, /\["collect_animal_product"\]/);
+  assert.match(
+    runner,
+    /const REQUIRED_CAPABILITIES = \["cancel_active_execution", "collect_animal_product", "inspect_self"\]/,
+  );
+  assert.match(runner, /assertRequiredCapabilities\(before, REQUIRED_CAPABILITIES\)/);
   assert.match(runner, /waitForTerminal\(receipts, accepted, terminalTimeoutMs\)/);
   assert.match(
     runner,

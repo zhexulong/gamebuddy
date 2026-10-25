@@ -313,6 +313,10 @@ await new Promise((resolve) => {
       ...(LEGACY_LADDER === null ? {} : { GAMEBUDDY_AGENT_LADDER: LEGACY_LADDER }),
       GAMEBUDDY_RUNTIME_ROOT: process.env.GAMEBUDDY_RUNTIME_ROOT ?? path.join(process.env.LOCALAPPDATA, "GameBuddy"),
       GAMEBUDDY_RESULT_FILE: resultPath,
+      // Where the fixture archives the body-program journal before restore deletes it. The capture directory is
+      // the run's own, so an evidence copy can never land in a guessed place - and a run that ends before the
+      // bundle exists simply records `archived: false, reason: no_bundle_path`.
+      GAMEBUDDY_EVIDENCE_DIR: path.dirname(resultPath),
       // The slot this run replayed from, published so a failure dump can say where to return to. Without it the
       // repro plan has no slot to name and the bundle contract refuses it (measured 2026-10-16).
       GAMEBUDDY_DAY_START_SLOT: saveName,
@@ -359,6 +363,10 @@ run([
   releaseDir,
   "--backup-name",
   backupName,
+  // The run's own directory: the fixture archives the body-program journal here before deleting the live
+  // scope, so what the programs did survives the restore instead of existing only in a log.
+  "--evidence-dir",
+  path.dirname(resultPath),
 ]);
 console.log("fixture transaction restored");
 
