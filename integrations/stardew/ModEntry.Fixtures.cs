@@ -4177,10 +4177,8 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             // be placed, then refused the whole day with `home_unreachable:what=field;door=66,15;target=56,11;
             // component_tiles=123`. Both predicates are right about their own question - the bug was using one to
             // choose and the other to judge.
-            bool CountsAsBlocker(Point probe) =>
-                farm.objects.ContainsKey(new Vector2(probe.X, probe.Y))
-                || farm.terrainFeatures.ContainsKey(new Vector2(probe.X, probe.Y));
-            if (!IsReachableFromStartPessimistic(farm, start, target, CountsAsBlocker))
+            
+            if (!IsReachableFromStart(farm, start, target))
                 continue;
             // A placement must not isolate a prop already on the ground. Protecting only the door left the
             // earlier props exposed: stones were placed outward from the start, each one fine on its own, until
