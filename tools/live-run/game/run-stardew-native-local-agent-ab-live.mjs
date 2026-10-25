@@ -556,6 +556,8 @@ markPhase("bridgeConnectedMs");
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
 // happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
 const bridgeDisconnections = [];
+const ledger = createLedger({ now: () => Date.now() });
+
 ledger.record("run.start");
 // The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
 // only the flat count reads as "nothing had happened" on a run whose work all went through programs.
@@ -592,10 +594,6 @@ client.onDiagnostic?.((diagnostic) => {
   console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
 const factLog = [];
-// One clock, one ledger. Every wait this run could be sitting inside gets a boundary here, so a duration is a
-// subtraction rather than an inference - which is what the previous run could not do (`actionCadence` reported
-// all three phases as zero, and `acceptMs` was the whole accept path rather than the provider's own latency).
-const ledger = createLedger({ now: () => Date.now() });
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
 const loggedFactLines = new Set();
