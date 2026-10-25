@@ -112,8 +112,13 @@ public sealed class FarmhandActionSurfaceExportTests
 
         foreach (JsonElement action in root.GetProperty("actions").EnumerateArray())
         {
-            action.EnumerateObject().Select(property => property.Name)
-                .Should().Equal("actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition");
+            // `approach` is present only on the actions that declare it (WhenWritingNull), so the two key sets
+            // are asserted separately rather than by widening one list - a widened list would stop noticing when
+            // an action gained or lost a precondition.
+            string[] declaredApproach = action.TryGetProperty("approach", out _)
+                ? new[] { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition", "approach" }
+                : new[] { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition" };
+            action.EnumerateObject().Select(property => property.Name).Should().Equal(declaredApproach);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");
             action.GetProperty("postcondition").EnumerateObject().Select(property => property.Name)
