@@ -32,7 +32,7 @@ const path = require("node:path");
 const CHAT_CONTRACT = "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$";
 const PLATFORM_CONTRACT =
   "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$";
-const COMPOSED_ROOT = "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$";
+const COMPOSED_ROOT = "^dialogue-web/src/components/(ComposedReferenceGameApp\\.tsx|use-composed-bootstrap\\.ts)$";
 const SURFACE = "^dialogue-web/src/components/[^/]*Surface\\.tsx$";
 const SURFACE_SUPPORT =
   "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|chat-model-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|GamePlayerSettings|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$";

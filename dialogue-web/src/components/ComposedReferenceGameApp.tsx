@@ -6,27 +6,24 @@ import {
   type BrowserDraftV1,
   type BrowserEventV1,
   type BrowserMessageV1,
-  type BrowserTurnV1,
-  createReferencePipelineApi,
   TavernProblemError,
-  TavernProtocolError,
 } from "../reference-pipeline-api";
 import {
-  applyStatus,
   createReferencePipelineSession,
   type PendingSubmission,
   pendingSubmission,
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
-import {
-  createComposedReferenceGameBrowserApi,
-  ComposedReferenceGameProblemError,
-  ComposedReferenceGameProtocolError,
-  type ComposedReferenceGameBrowserRootV1,
-} from "../composed-reference-game-browser-api";
+import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView } from "../composed-problem-view";
 import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
-import { newIdempotencyKey, type ReadyView, type ViewState } from "./composed-reference-game-view";
+import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
+import {
+  type ComposedPreviewV1,
+  TERMINAL_TURN_STATES,
+  terminalTurn,
+  useComposedBootstrap,
+} from "./use-composed-bootstrap";
 import { AppBar } from "./AppBar";
 import { ChatSurface } from "./ChatSurface";
 import { GameSurface } from "./GameSurface";
@@ -46,28 +43,9 @@ import {
   CHAT_PANEL,
   GAME_PANEL,
   MEMORY_PANEL,
-  PANEL_PARAM,
   SETTINGS_PANEL,
   useSurfaceRoute,
 } from "../composed-surface-route";
-
-/**
- * The Host admits one provider invocation under a fixed 120 s ceiling
- * (`PROVIDER_INVOCATION_ADMISSION_DEADLINE_MS` in the production coordinator).
- * The fallback poll must outlast that ceiling: a client budget that expires
- * first abandons a turn the Host still believes is running and leaves the
- * content-free pending record set, which locks the composer forever.
- */
-const HOST_TURN_ADMISSION_CEILING_MS = 120_000;
-const POLL_FIRST_MS = 250;
-const POLL_INTERVAL_MS = 1_000;
-const POLL_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000] as const;
-const MAX_POLL_ATTEMPTS = Math.ceil(HOST_TURN_ADMISSION_CEILING_MS / POLL_INTERVAL_MS) + 10;
-const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
-
-function terminalTurn(turn: BrowserTurnV1 | null): boolean {
-  return turn !== null && TERMINAL_TURN_STATES.has(turn.state);
-}
 
 /**
  * Same-origin composed reference-game shell. The composed root is the only
@@ -75,10 +53,6 @@ function terminalTurn(turn: BrowserTurnV1 | null): boolean {
  * client remains the sole Chat mutation/events client.
  */
 export function ComposedReferenceGameApp() {
-  const composedApiRef = useRef(createComposedReferenceGameBrowserApi());
-  const tavernApiRef = useRef(createReferencePipelineApi());
-  const [view, setView] = useState<ViewState>({ kind: "loading" });
-  const viewRef = useRef<ViewState>({ kind: "loading" });
   const [inputText, setInputText] = useState("");
   // The composer's own field is the single authoring buffer for both the next
   // message and the durable draft (see the seeding effect below); the ref is
@@ -88,7 +62,7 @@ export function ComposedReferenceGameApp() {
     inputTextRef.current = text;
     setInputText(text);
   };
-  const [preview, setPreview] = useState<Readonly<{ turnHandle: string; text: string }> | null>(null);
+  const [preview, setPreview] = useState<ComposedPreviewV1 | null>(null);
   // The chat mutation currently in flight. The submit button already has its own
   // gate; swipe and regenerate had none, so a double click issued two admitted
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
@@ -110,10 +84,6 @@ export function ComposedReferenceGameApp() {
   // seeding effect below); what stays here is the closed outcome line its
   // Save/Discard report through.
   const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
-  // Set when the fallback poll spends its whole budget without an authoritative
-  // settlement: the pending record is then cleared and this line says the turn
-  // failed rather than silently leaving the composer disabled.
-  const [pollFailure, setPollFailure] = useState(false);
   // A created Chat whose chosen opening could not be committed. The Chat itself is durable and the
   // player is landed in it either way, so this is the one fact left to state: it opens on the
   // default opening. It clears when another switch lands.
@@ -132,16 +102,6 @@ export function ComposedReferenceGameApp() {
   // keeping the previous chat's text.
   const seededDraftRef = useRef<Readonly<{ chat: string | null; revision: number; text: string }> | null>(null);
   const localeRef = useRef<Locale>(resolveLocale());
-  const cancelledRef = useRef(false);
-  const pollActiveRef = useRef(false);
-  // True only while a live event-stream connection is open, and true once that
-  // stream has failed while the current turn was in flight. The 250 ms/1000 ms
-  // fallback poll exists for a turn no stream is delivering, so a healthy stream
-  // suspends it instead of running a second channel over the same turn - and a
-  // stream that failed for this turn is not trusted for it again, even after it
-  // reconnects, so a flapping stream cannot starve the fallback of a window.
-  const streamLiveRef = useRef(false);
-  const streamFailedRef = useRef(false);
   const eventSourceRef = useRef<{ close(): void } | null>(null);
   // Bumped after the Host commits a turn-level Chat switch. The mounted identity
   // is new, so the live event subscription must reconnect on the new conversation
@@ -195,62 +155,26 @@ export function ComposedReferenceGameApp() {
     }),
   );
 
-  const commit = useCallback((next: ViewState): void => {
-    viewRef.current = next;
-    setView(next);
-  }, []);
-
-  const labels = () => messages(view.kind === "ready" ? view.locale : localeRef.current);
-
   useEffect(() => {
     applyDocumentLocale(localeRef.current);
   }, []);
 
   const { shownSurface, openPanelOf } = useSurfaceRoute();
 
-  useEffect(() => {
-    cancelledRef.current = false;
-    let active = true;
-    void (async () => {
-      try {
-        const params = new URLSearchParams(window.location.hash.slice(1));
-        const bootToken = params.get("boot");
-        const restoredPanel = params.get(PANEL_PARAM);
-        const root =
-          bootToken === null
-            ? await composedApiRef.current.readState()
-            : await composedApiRef.current.bootstrap(bootToken);
-        if (bootToken !== null) {
-          const url = new URL(window.location.href);
-          // The one-time boot token is stripped from the fragment; a panel the
-          // URL already names survives the rewrite.
-          url.hash =
-            restoredPanel === null
-              ? "profile=composed-reference-game"
-              : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
-          window.history.replaceState(null, "", url.toString());
-        }
-        const draft = await tavernApiRef.current.readDraft();
-        if (
-          root.chat.chat === null ||
-          draft.revision !== root.chat.chat.draft.revision ||
-          (draft.text !== null) !== root.chat.chat.draft.present
-        ) {
-          throw new ReferencePipelineSessionError("state_reconciliation_required");
-        }
-        if (!active) return;
-        const session = createReferencePipelineSession(root.chat);
-        setPreview(null);
-        commit({ kind: "ready", root, session, draft, locale: localeRef.current });
-      } catch (error) {
-        if (active) commit(problemView(error, messages(localeRef.current)));
-      }
-    })();
-    return () => {
-      active = false;
-      cancelledRef.current = true;
-    };
-  }, [commit]);
+  const {
+    view,
+    viewRef,
+    composedApiRef,
+    tavernApiRef,
+    commit,
+    labels,
+    cancelledRef,
+    streamLiveRef,
+    streamFailedRef,
+    pollFailure,
+    setPollFailure,
+    startPolling,
+  } = useComposedBootstrap(localeRef, setPreview);
 
   const eventStreamEpoch =
     view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
@@ -442,124 +366,6 @@ export function ComposedReferenceGameApp() {
       closeSource();
     };
   }, [view.kind, commit, eventStreamEpoch]);
-
-  /**
-   * The draft a poll hop must project, taken from the composed snapshot the hop
-   * has already read. `/state` carries the durable draft's revision and presence,
-   * so a snapshot that agrees with the draft this surface already holds needs no
-   * `/draft` read at all; the route is read on the one hop where the text itself
-   * has moved. The compare-and-swap below is the same one the per-hop read used to
-   * perform after the fact, so nothing is trusted that was not reconciled.
-   */
-  const resolvePollDraft = async (
-    held: BrowserDraftV1,
-    chat: Readonly<{ draft: Readonly<{ revision: number; present: boolean }> }>,
-  ): Promise<BrowserDraftV1> => {
-    if (held.revision === chat.draft.revision && (held.text !== null) === chat.draft.present) return held;
-    const draft = await tavernApiRef.current.readDraft();
-    if (draft.revision !== chat.draft.revision || (draft.text !== null) !== chat.draft.present)
-      throw new ReferencePipelineSessionError("state_reconciliation_required");
-    return draft;
-  };
-
-  const startPolling = (): void => {
-    if (pollActiveRef.current) return;
-    // A turn trusts the stream afresh: only a failure that happened while this
-    // turn was in flight counts against it.
-    streamFailedRef.current = false;
-    pollActiveRef.current = true;
-    let attempts = 0;
-    const schedule = (delayMs: number): void => {
-      if (cancelledRef.current) {
-        pollActiveRef.current = false;
-        return;
-      }
-      window.setTimeout(() => void tick(), delayMs);
-    };
-    const tick = async (): Promise<void> => {
-      if (cancelledRef.current) {
-        pollActiveRef.current = false;
-        return;
-      }
-      const current = viewRef.current;
-      if (current.kind !== "ready" || current.session.pending === null) {
-        pollActiveRef.current = false;
-        return;
-      }
-      // The stream is the live channel and this poll is only its fallback, so a
-      // hop costs nothing while the stream is open and has not failed for this
-      // turn: the authoritative reread it would perform is the stream's own job.
-      // An open stream that never settles burns the same budget an HTTP hop does,
-      // so silence past the budget resumes the poll rather than leaving the
-      // composer locked behind a dead channel.
-      if (streamLiveRef.current && !streamFailedRef.current && attempts < MAX_POLL_ATTEMPTS) {
-        attempts += 1;
-        schedule(POLL_INTERVAL_MS);
-        return;
-      }
-      attempts += 1;
-      if (attempts > MAX_POLL_ATTEMPTS) {
-        pollActiveRef.current = false;
-        // No authoritative settlement arrived inside the budget. Drop the
-        // content-free pending record so the composer - and Stop, for a turn the
-        // snapshot still marks cancellable - work again, and report the failure.
-        commit({ ...current, session: current.session.withPending(null) });
-        setPollFailure(true);
-        return;
-      }
-      const pending = current.session.pending;
-      try {
-        const root = await composedApiRef.current.readState();
-        if (root.chat.chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
-        const draft = await resolvePollDraft(current.draft, root.chat.chat);
-        let session = current.session.applySnapshot(root.chat);
-        if (session.pending !== null) {
-          const status = await tavernApiRef.current.readSubmissionStatus({
-            apiVersion: 1,
-            idempotencyKey: pending.idempotencyKey,
-            selectionGeneration: pending.selectionGeneration,
-          });
-          session = session.withPending(applyStatus(session.pending, status).pending);
-        }
-        const next = { kind: "ready" as const, root, session, draft, locale: current.locale };
-        if (terminalTurn(root.chat.chat?.turn ?? null)) {
-          // The authoritative turn is settled; a pending record for it is spent
-          // whatever an out-of-date submission status still says, and keeping it
-          // is what would leave the composer disabled forever.
-          commit(session.pending === null ? next : { ...next, session: session.withPending(null) });
-          pollActiveRef.current = false;
-          return;
-        }
-        commit(next);
-        if (session.pending === null) {
-          pollActiveRef.current = false;
-          return;
-        }
-        schedule(POLL_INTERVAL_MS);
-      } catch (error) {
-        if (cancelledRef.current) {
-          pollActiveRef.current = false;
-          return;
-        }
-        if (
-          error instanceof ReferencePipelineSessionError ||
-          error instanceof TavernProtocolError ||
-          (error instanceof TavernProblemError && !error.retryable) ||
-          error instanceof ComposedReferenceGameProtocolError ||
-          (error instanceof ComposedReferenceGameProblemError && !error.retryable)
-        ) {
-          commit(problemView(error, messages(current.locale)));
-          pollActiveRef.current = false;
-          return;
-        }
-        const backoff =
-          POLL_BACKOFF_MS[Math.min(attempts, POLL_BACKOFF_MS.length) - 1] ??
-          POLL_BACKOFF_MS[POLL_BACKOFF_MS.length - 1];
-        schedule(backoff);
-      }
-    };
-    schedule(POLL_FIRST_MS);
-  };
 
   /**
    * Begin the durable half of a turn-starting Chat mutation: the profile must

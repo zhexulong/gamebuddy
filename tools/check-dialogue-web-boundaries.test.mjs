@@ -28,7 +28,7 @@ const config = require(configPath);
 const ZONES = {
   chatContract: "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
   platformContract: "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$",
-  composedRoot: "^dialogue-web/src/components/ComposedReferenceGameApp\\.tsx$",
+  composedRoot: "^dialogue-web/src/components/(ComposedReferenceGameApp\\.tsx|use-composed-bootstrap\\.ts)$",
   surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
   surfaceSupport:
     "^dialogue-web/src/((game-(lifecycle-controls|presentation)|composed-problem-view|composed-surface-route|chat-model-route|pi-settings-model)\\.ts|components/(CharacterCardImport|CharactersPanel|CharactersSurfacePanel|CompanionInspectorDrawer|GameDiagnosticsDisclosure|GameStatePanel|StardewInstallationDiscovery|SurfaceModelSettings|composed-reference-game-view|management-panels|management-surface-panels|GamePlayerSettings|character-domain-labels|memory-notebook-labels|png-character-card|turn-failure-text)\\.tsx?)$",
