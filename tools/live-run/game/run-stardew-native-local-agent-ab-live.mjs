@@ -1577,6 +1577,9 @@ function buildCapabilityAudit({
  * SETTLES with no `advance_day`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
  * the turn budget, so the run budget stays the hard stop.
  */
+// The hour the engine's evening has arrived: 22:00, the hour the scenario prompt names. A judged value, so it lives
+// in one place rather than being spelled 2200 wherever it is compared.
+const SLEEP_HOUR_MINUTES = 22 * 60;
 const MULTIDAY_NIGHT_TIMEOUT_MS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_NIGHT_TIMEOUT_MS ?? "", 10);
   if (Number.isInteger(requested) && requested > 0) return requested;
@@ -1963,6 +1966,28 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // turn (measured 2026-10-17: the first multi-day run had the loop observing from t=0, and the bridge closed
   // 15s in) and would ALSO be unable to tell "the companion has not slept yet" from "the companion will not
   // sleep". Waiting for the dispatch - bounded, and against the day's own settlement - gives both.
+  // `waitForNightToBegin` uses this to tell "the day is spent" from "the turn ended while the day is still running".
+  //
+  // The evidence is the Mod's own readiness line, which now publishes `game_time` and `clock_rate_ms`: the engine's
+  // clock, not the harness's clock, and not a guess about what a model meant. Without that line the answer is
+  // `unknown`, and `unknown` is reported as itself rather than being rounded into a verdict about the companion.
+  const readWorldClock = () => {
+    try {
+      const lines = readFileSync(MOD_LOG_PATH(), "utf8")
+        .split("\n")
+        .filter((line) => line.includes("DEBUG-native-local-readiness"));
+      const last = lines.at(-1) ?? "";
+      const time = last.match(/game_time=(\d{3,4})/);
+      if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null });
+      const timeOfDay = Number(time[1]);
+      // The sleep hour, not an arbitrary one: `advance_day` is what the lifecycle accepts, and the companion cannot
+      // reasonably be expected to sleep before the engine's own evening. 22:00 is the hour the scenario names.
+      const minutes = Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100);
+      return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay });
+    } catch (error) {
+      return Object.freeze({ spent: false, unknown: true, timeOfDay: null, reason: String(error?.message ?? error) });
+    }
+  };
   const waitForNightToBegin = async () => {
     let daySettled = false;
     void dayTurnSettled.then(() => {
@@ -1975,7 +2000,20 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       }
       const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
       if (dispatched !== undefined) return null;
-      if (daySettled) return "companion_did_not_sleep";
+      // A settled day turn is NOT a companion who refused to sleep, and calling it that was the oldest mistake in this
+      // watcher. Measured 2026-10-25: the turn settled after 468 s with the world at 15:00 and the companion saying
+      // \"太阳落山前要是还不行，我先把碎石和土块收拾利索\" - she intended to keep working, and a turn ends when the model
+      // believes its reply is finished, not when the day is. The run then reported `companion_did_not_sleep`, which
+      // reads as a judgement about her behaviour and was a fact about the turn boundary.
+      //
+      // So the settle keeps the watch waiting while the WORLD still has a day to run. It only concludes when the world
+      // itself says the day is spent - past the sleep hour with no `advance_day`, or no longer running at all - which
+      // is the fact this watcher was always trying to observe.
+      if (daySettled) {
+        const worldClock = readWorldClock();
+        if (worldClock.spent) return "companion_did_not_sleep";
+        if (worldClock.unknown) return "day_turn_settled_before_night:clock_unknown";
+      }
       // Before the harness's own bound: has the WORLD stopped? A stalled heartbeat is a different finding from
       // "the companion has not slept yet", and it is the one that has silently ended most of the multi-day runs.
       const liveness = sampleModHeartbeat();
