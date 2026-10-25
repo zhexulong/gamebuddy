@@ -334,7 +334,14 @@ class JournalLog {
   }
 
   public async close(): Promise<void> {
-    await this.#handle.close().catch(() => undefined);
+    // A journal whose handle will not close may still be open for the next writer, and this file is the one
+    // that has to be readable after a crash. Silence here made "closed" and "could not close" the same fact
+    // on the recovery path itself - the class this whole gate exists for.
+    await this.#handle.close().catch((error: unknown) => {
+      process.stderr.write(
+        `[recovery-journal] close failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
+      );
+    });
   }
 
   #storeRecord(encoded: EncodedRecord<StardewLogicalActionRecoveryRecord>): void {
@@ -406,17 +413,29 @@ class JournalLog {
         writtenByteCount += Buffer.byteLength(source, "utf8");
         await handle.sync();
       } finally {
+        // The body's own error is the one worth raising; a close failure here would replace it.
+        // The body's own error is the one worth raising; a close failure here would replace it.
         await handle.close().catch(() => undefined);
       }
       if (!(await this.isCurrent())) {
         // Another writer appended while this rewrite was being prepared. Those lines are
         // durable facts, so fold them in and rewrite again rather than replace them.
+        // A leftover temporary file costs disk, not correctness: the reload below re-reads the journal.
         await rm(temporary, { force: true }).catch(() => undefined);
         await this.reload();
         this.#evictSettled();
         continue;
       }
-      await this.#handle.close().catch(() => undefined);
+      // The compaction's atomic replace: this handle must be closed before the rename, or it keeps pointing at
+      // the file that is about to stop being the journal. A silent failure here would leak the handle onto an
+      // orphaned inode and the next append would land in a file nobody reads - so it is reported, and the
+      // rename proceeds only because the caller's other recovery paths already treat a broken journal as
+      // isolatable (see the unreadable-document path below).
+      await this.#handle.close().catch((error: unknown) => {
+        process.stderr.write(
+          `[recovery-journal] close before rename failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
+        );
+      });
       await rename(temporary, this.#path);
       this.#handle = await open(this.#path, "a");
       this.#appendedLines = 0;
@@ -846,6 +865,7 @@ async function repairTornTail(path: string, source: string): Promise<string> {
     await handle.truncate(Buffer.byteLength(repaired, "utf8"));
     await handle.sync();
   } finally {
+    // The body's own error is the one worth raising; a close failure here would replace it.
     await handle.close().catch(() => undefined);
   }
   return repaired;
@@ -857,6 +877,7 @@ async function quarantineLegacy(path: string): Promise<void> {
   try {
     await rename(path, aside);
   } catch {
+    // A leftover temporary file costs disk, not correctness: the isolation path below renames the journal.
     await rm(path, { force: true }).catch(() => undefined);
   }
 }
