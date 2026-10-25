@@ -60,7 +60,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
@@ -362,7 +362,7 @@ export function foreignMagicContextStore({ runtimeRoot, env = process.env }) {
   const store = resolve(configured);
   // `relative` is case-insensitive on win32, which is the platform a run's store path is spelled on.
   const relation = relative(root, store);
-  const inside = relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
+  const inside = relation === "" || !(relation.startsWith("..") || isAbsolute(relation));
   return inside ? null : `foreign_magic_context_store:${configured}`;
 }
 
@@ -596,7 +596,8 @@ async function readListingModelIds(response) {
   } catch {
     return null;
   }
-  const list = Array.isArray(value?.data) ? value.data : Array.isArray(value?.models) ? value.models : null;
+  const candidates = [value?.data, value?.models].filter(Array.isArray);
+  const list = candidates[0] ?? null;
   if (list === null) return null;
   const ids = list
     .slice(0, PROVIDER_CATALOG_MAX_MODELS)
@@ -849,7 +850,7 @@ function probeEventReason(meta) {
  */
 function probeBreachReason(event, meta) {
   if (event.code !== PROBE_ISOLATION_BREACH_CODE || event.kind !== PROBE_KIND) return undefined;
-  if (!isPlainObject(meta) || !AUDIT_PROBE_DISTANCES.includes(meta.distance))
+  if (!(isPlainObject(meta) && AUDIT_PROBE_DISTANCES.includes(meta.distance)))
     return "event_probe_breach_distance_missing";
   if (meta.dimension !== PROBE_BREACH_DIMENSION) return "event_probe_breach_dimension_invalid";
   return undefined;
@@ -920,7 +921,7 @@ export function validateAuditTrace(trace) {
     return Object.freeze({ ok: false, reasonCode: "trace_run_id_invalid" });
   const startedAtMs = typeof trace.startedAt === "string" ? Date.parse(trace.startedAt) : Number.NaN;
   const completedAtMs = typeof trace.completedAt === "string" ? Date.parse(trace.completedAt) : Number.NaN;
-  if (!Number.isFinite(startedAtMs) || !Number.isFinite(completedAtMs))
+  if (!(Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)))
     return Object.freeze({ ok: false, reasonCode: "trace_timestamp_invalid" });
   if (completedAtMs < startedAtMs) return Object.freeze({ ok: false, reasonCode: "trace_timestamp_order_invalid" });
   if (trace.surface !== AUDIT_SURFACE) return Object.freeze({ ok: false, reasonCode: "trace_surface_invalid" });
@@ -1255,7 +1256,7 @@ export function classifyGateMarkerFailures(stderr) {
  * companion presentation.
  */
 export function projectStateSnapshot(snapshot) {
-  if (!isPlainObject(snapshot) || !isPlainObject(snapshot.chat)) return undefined;
+  if (!(isPlainObject(snapshot) && isPlainObject(snapshot.chat))) return undefined;
   if (!Number.isSafeInteger(snapshot.selection?.generation)) return undefined;
   const turn = snapshot.chat.turn ?? null;
   const transcript = Array.isArray(snapshot.chat.transcript) ? snapshot.chat.transcript : [];
@@ -1933,7 +1934,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   };
 
   let unsettled = 0;
-  let unsettledTurnIndexes = [];
+  const unsettledTurnIndexes = [];
   let durableTerminal;
   const runTurn = async ({ cancel, message = SUBMIT_PROMPT_TEXT }) => {
     activeTurnIndex += 1;
@@ -2081,8 +2082,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   if (durableTerminal === undefined) environment.collectionReason ??= "no_durable_terminal_state";
   else {
     const reloaded = await readStateSnapshot({ origin, client, recorder });
-    if (!reloaded.ok) environment.boundaryReason ??= reloaded.reasonCode;
-    else {
+    if (reloaded.ok) {
       const comparison = compareReloadSnapshot(durableTerminal, reloaded.projection);
       if (comparison.consistent)
         recorder.record("recovery", "harness", "reload.settled", {
@@ -2090,7 +2090,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
           generation: reloaded.projection.selectionGeneration,
         });
       else recorder.record("recovery", "harness", "reload.mismatch", { reason: comparison.reason });
-    }
+    } else environment.boundaryReason ??= reloaded.reasonCode;
   }
 
   // Observation-gap reporting: a missing marker is announced, never silently
