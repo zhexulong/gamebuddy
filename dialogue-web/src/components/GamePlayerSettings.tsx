@@ -20,10 +20,25 @@ import {
  * it is the group whose change reaches a RUNNING game: the Mod re-reads its action
  * policy from the config every 120 ticks. The co-op night floor is offered beside it
  * with its own, different sentence, because it is read once at embodiment
- * initialisation and a shared promise would be false for one of them. The world
- * identity fields (farm name, player name, favourite thing) are not here at all: the
- * Mod consumes them from a one-shot creation form at the main menu, so a field for
- * them could not rename a world that already exists.
+ * initialisation and a shared promise would be false for one of them.
+ *
+ * The world identity fields (farm name, player name, favourite thing) are not here
+ * at all, and that is a finding rather than an omission. The farm name is written
+ * once, in `WorldCreationBootstrap.CreateNewWorld` (`WorldCreationBootstrap.cs:250`),
+ * on the branch that drives the game's own new-game entry; the branch that enters a
+ * world this request already created writes nothing to the save. The game itself has
+ * exactly one farm-name writer a player can reach - the new-game form's
+ * `farmnameBox`, which is drawn only for `Source.NewGame`/`Source.HostNewFarm`
+ * (`CharacterCustomization.cs:485`) - and the post-creation character screen the
+ * Wizard's shrine opens explicitly hides that box (`CharacterCustomization.cs:1118`)
+ * while its farm-name write stays guarded by `if (farmnameBoxCC.visible)`
+ * (`CharacterCustomization.cs:2849`). So no field here could rename a world that
+ * already exists, and a control that appeared to try would be a dead switch.
+ *
+ * What a player gets instead is one sentence, always rendered, saying when the name
+ * is chosen. It sits outside the loaded/unavailable branch on purpose: the fact is
+ * about the game, not about whether this Host could reach the settings route, so a
+ * player who came here looking for a rename learns the truth either way.
  *
  * Saving is a revision compare-and-swap, exactly like every other settings surface
  * in this product. A save that lost the race is not a fault: the field list is
@@ -215,6 +230,13 @@ export function GamePlayerSettings({
           </div>
         </>
       )}
+
+      {/* The one thing a player would come to this section looking for and not
+          find. Rendered unconditionally: it is a fact about the created world, not
+          about this route, so it must not disappear with the route. */}
+      <p className="surface-model-settings-hint" data-settings-note="world-name">
+        {labels.gameSettingsWorldNameNote}
+      </p>
     </section>
   );
 }

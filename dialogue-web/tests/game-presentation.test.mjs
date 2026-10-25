@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { messages } from "../src/i18n.ts";
 import {
   authorityLabel,
@@ -98,6 +101,36 @@ test("every typed game fact renders a localized player outcome, never the raw en
       assert.notEqual(value, state, `${locale} installation ${state} is rendered raw`);
     }
   }
+});
+
+test("the Game settings section says when the world's name is chosen, in both languages", () => {
+  // The finding this pins: the farm name is written once, by `CreateNewWorld`
+  // (`WorldCreationBootstrap.cs:250`), and the game's only player-reachable
+  // farm-name writer is the new-game form's box, which the post-creation screen
+  // hides (`CharacterCustomization.cs:1118`, guarded write at `:2849`). So the
+  // settings surface may not offer a rename - and must instead say so once.
+  const en = messages("en");
+  const zh = messages("zh-CN");
+  assert.ok(en.gameSettingsWorldNameNote.trim().length > 0, "the English note is empty");
+  assert.ok(zh.gameSettingsWorldNameNote.trim().length > 0, "the Chinese note is empty");
+  assert.notEqual(zh.gameSettingsWorldNameNote, en.gameSettingsWorldNameNote, "the note is not translated");
+  // Each locale names the thing it is about, so the sentence cannot drift into a
+  // generic hint that a player would skim past.
+  assert.match(en.gameSettingsWorldNameNote, /farm/iu);
+  assert.match(zh.gameSettingsWorldNameNote, /农场/u);
+  // The section reads the key, so it is not declared-and-unread (i18n.7's rule
+  // applied to this one sentence, where the finding lives).
+  const component = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "src", "components", "GamePlayerSettings.tsx"),
+    "utf8",
+  );
+  assert.ok(component.includes("labels.gameSettingsWorldNameNote"), "the settings section does not render the note");
+  // Rendered outside the loaded/unavailable branch: a player who opens the section
+  // on a build that cannot reach the settings route still learns the fact.
+  assert.ok(
+    component.indexOf("data-settings-note=\"world-name\"") > component.indexOf("labels.gameSettingsSave"),
+    "the note must sit after the settings form, not inside the branch that a failed read replaces",
+  );
 });
 
 test("the two shipped locales are both really translated", () => {
