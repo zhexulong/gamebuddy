@@ -2372,6 +2372,9 @@ client.execute = async (request) => {
   // execution. A review of this metric could not separate "the game is slow" from "the agent is slow" because the
   // data had only one number, and that number meant neither of the two things it was read as.
   const dispatchedAtMs = Date.now();
+  // The same boundary the ledger needs, stamped where the run already measures its own dispatch. Without this the
+  // ledger saw thirteen receipts and two dispatches, so the wait it could compute covered two of thirteen actions.
+  ledger.record("world.dispatch", { via: "flat", action: request?.action ?? null });
   // Recorded here because this IS the moment a replay has to return to: the world as the actor saw it right
   // before it acted. After teardown the bridge has cleared its state, so this is the only chance.
   rememberObservation();
