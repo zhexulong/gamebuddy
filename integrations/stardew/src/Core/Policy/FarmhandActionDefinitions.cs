@@ -31,6 +31,23 @@ public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyL
 /// handler requires to be the current tool, and whose value half is the upgrade-level requirement
 /// (<see cref="FarmhandResourceTemplateValue.AnyUpgrade"/> / <see cref="FarmhandResourceTemplateValue.BasicOnly"/>).</summary>
 public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandResourceTemplateValue Value);
+
+/// <summary>
+/// Where the actor's body must be before an action can happen.
+///
+/// Declared beside the claims but deliberately NOT a claim: `embodied_actor` and `tool:&lt;category&gt;` say what the
+/// action OCCUPIES for its duration, and a spatial precondition says where the body must already be. Folding the
+/// second into the first would give a resource claim two meanings, and the Host's projection reads claims as
+/// resources.
+///
+/// Why it exists: measured 2026-10-25, the companion submitted a one-node program `enter_exit(3,12)` while it was in
+/// bed at `FarmHouse(9,9)`. The Mod refused with `door_out_of_range` - correctly - and the companion learned the
+/// precondition only by being refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. A
+/// refusal that teaches is worse than a shape that says so.
+/// </summary>
+/// <param name="Relation">The surface's own word for the relationship, e.g. `adjacent`.</param>
+/// <param name="WithinTiles">How far away that relationship allows, or null when the surface states no distance.</param>
+public sealed record FarmhandActionApproachRequirement(string Relation, int? WithinTiles);
 /// <summary>Action-specific typed binding metadata owned exclusively by Mod registration.</summary>
 public sealed record FarmhandActionObservationBindingDescriptor(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
@@ -40,7 +57,7 @@ public sealed record FarmhandActionObservationBindingDescriptor(string Type, int
 /// absolute deadline at admission time (watchdog authority decision
 /// 2026-09-20). `navigate_to_destination` declares an action-specific 10-minute
 /// budget matching its ordinary-pipeline deadline ceiling.</remarks>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs);
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
@@ -183,7 +200,11 @@ public static class FarmhandActionCatalog
         E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.LiveVerified),
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
-        E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
+        // `enter_exit` resolves a warp from (x,y) and refuses when the actor is more than one tile from it
+// (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
+// door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
+// learned the precondition only by being refused. Declared here so `plan_shape` can say it instead.
+E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer")) with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage()), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering

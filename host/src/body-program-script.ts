@@ -31,6 +31,28 @@ type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly 
  * nothing about a tool for that action, which the companion is told by name (`tool_requirement_undeclared`) instead of
  * being left to guess a slot from tool order.
  */
+/**
+ * Where the actor must stand before an action can happen.
+ *
+ * Separate from `toolRequirement` on purpose: a claim says what the action OCCUPIES (`embodied_actor`,
+ * `tool:scythe`), and a spatial precondition says where the BODY must be. Folding the second into the first would
+ * make a resource claim mean two different things.
+ *
+ * Why it exists: measured 2026-10-25, the companion submitted a one-node program `enter_exit(3,12)` while it was in
+ * bed at `FarmHouse (9,9)`. The Mod refused with `door_out_of_range` - correctly - and the companion only learned the
+ * precondition by being refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. A refusal that
+ * teaches is worse than a shape that says so.
+ */
+type PublishedPlanApproachRequirement =
+  | Readonly<{
+      declared: true;
+      /** The surface's own word for the relationship the actor must have with the target. */
+      relation: string;
+      /** How many tiles away that relationship allows, or `null` when the surface states no distance. */
+      withinTiles: number | null;
+    }>
+  | Readonly<{ declared: false; reasonCode: "approach_requirement_undeclared" }>;
+
 type PublishedPlanToolRequirement =
   | Readonly<{
       declared: true;
@@ -58,6 +80,8 @@ export type PublishedPlanAction = Readonly<{
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
   /** The tool the surface requires for this action, or the surface's silence - never a Host-side guess. */
   toolRequirement: PublishedPlanToolRequirement;
+  /** Where the actor must stand before this action can happen, or the surface's silence. */
+  approachRequirement: PublishedPlanApproachRequirement;
 }>;
 
 /**
@@ -193,6 +217,7 @@ export function planActionsFromRegistrations(
         outputFacts: Object.freeze(declaredOutputFactsOf(registration)),
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
         toolRequirement: declaredToolRequirementOf(registration),
+        approachRequirement: declaredApproachRequirementOf(registration),
       }),
     );
   }
@@ -264,6 +289,24 @@ const TOOL_UPGRADE_LEVELS: Readonly<
  * present, so the companion can tell "the surface does not say" from a tool it was told about, and the Host never
  * fabricates a category from an action id.
  */
+/**
+ * Reads the spatial precondition straight off the registration's descriptor.
+ *
+ * An action whose descriptor carries no `approach` answers `approach_requirement_undeclared` - the field is
+ * present, so the companion can tell "the surface does not say" from "stand anywhere". The Host never derives a
+ * precondition from an action id.
+ */
+function declaredApproachRequirementOf(registration: ActionRegistration): PublishedPlanApproachRequirement {
+  const approach = registration.descriptor?.approach;
+  if (approach === undefined)
+    return Object.freeze({ declared: false as const, reasonCode: "approach_requirement_undeclared" as const });
+  return Object.freeze({
+    declared: true as const,
+    relation: approach.relation,
+    withinTiles: typeof approach.withinTiles === "number" ? approach.withinTiles : null,
+  });
+}
+
 function declaredToolRequirementOf(registration: ActionRegistration): PublishedPlanToolRequirement {
   const claims = declaredResourceClaimsOf(registration);
   const claim = claims.find(

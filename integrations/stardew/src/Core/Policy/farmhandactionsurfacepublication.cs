@@ -21,7 +21,12 @@ public sealed record FarmhandActionDescriptorProjection(
     FarmhandActionResourceTemplate ResourceTemplate,
     string Effect,
     FarmhandActionPostcondition Postcondition,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Always)] long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Always)] long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs,
+    /// <summary>
+    /// Where the body must already stand, or null when this action declares no such precondition. Omitted from the
+    /// JSON when null, so an action that declares nothing keeps the exact wire shape it had before.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionApproachRequirementProjection? Approach = null
 );
 
 /// <summary>
@@ -40,6 +45,12 @@ public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandAction
 public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
 public sealed record FarmhandActionPostcondition(string Name);
 
+/// <summary>
+/// Where the body must stand before the action can happen, in the Mod's own words. Published because a
+/// precondition the Mod enforces and never declares can only be learned by being refused - measured
+/// 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
+/// </summary>
+public sealed record FarmhandActionApproachRequirementProjection(string Relation, int? WithinTiles);
 /// <summary>Exact descriptor envelope exported by the Mod.</summary>
 public sealed record FarmhandActionDescriptorArtifact(
     string Schema,
@@ -95,7 +106,10 @@ public static class FarmhandActionSurfacePublication
             new FarmhandActionResourceTemplate(resourceClaims),
             descriptor.Effect,
             new FarmhandActionPostcondition(descriptor.Postcondition),
-            WatchdogMs: descriptor.WatchdogMs);
+            WatchdogMs: descriptor.WatchdogMs,
+            Approach: descriptor.Approach is { } approach
+                ? new FarmhandActionApproachRequirementProjection(approach.Relation, approach.WithinTiles)
+                : null);
     }
 
     private static void ValidateIdentity(string value, string name)

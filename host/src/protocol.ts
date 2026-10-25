@@ -1407,6 +1407,12 @@ export type ActionRegistrationDescriptor = Readonly<{
    * sleep.
    */
   watchdogMs?: number;
+  /**
+   * Where the body must already stand, in the Mod's own words, or absent when this action declares no such
+   * precondition. Published because one the Mod enforces and never declares can only be learned by being
+   * refused: measured 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
+   */
+  approach?: Readonly<{ relation: string; withinTiles: number | null }>;
   postcondition?: string | Readonly<{ name: string }>;
 }>;
 
