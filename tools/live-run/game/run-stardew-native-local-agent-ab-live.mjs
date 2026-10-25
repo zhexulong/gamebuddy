@@ -3848,12 +3848,17 @@ async function writeRunBundle({
     gameSessionId,
     "run-trace.json",
   );
-  const runTracePresent = existsSync(runTracePath);
-  const runTraceRecord = Object.freeze({
-    path: runTracePath,
-    present: runTracePresent,
-    reason: runTracePresent ? null : "product_did_not_flush_run_trace",
-  });
+  // Presence is decided at the moment the package is WRITTEN, not here: `flushRunTrace` is the last step of
+  // `close()`, so a check made while this object is being built answers a question about the past - which is why a run
+  // whose trace exists on disk (35 KB at the time it was reported) published `product_did_not_flush_run_trace`.
+  const runTraceRecordAtAssembly = () => {
+    const present = existsSync(runTracePath);
+    return Object.freeze({
+      path: runTracePath,
+      present,
+      reason: present ? null : "product_did_not_flush_run_trace",
+    });
+  };
 
   const bundle = {
     schemaVersion: 1,
@@ -3945,7 +3950,7 @@ async function writeRunBundle({
     executionTrace: result.executionTrace,
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
-    runTrace: runTraceRecord,
+    runTrace: runTraceRecordAtAssembly(),
     programTrace: { path: PROGRAM_TRACE_FILE, records: (programRows ?? []).length },
     // Three waits a reader can act on, each from the same clock: the provider's own latency, the game's own work,
     // and the gap between them. An unfinished pair is reported as `open` rather than as a zero.
