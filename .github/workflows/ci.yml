@@ -120,6 +120,13 @@ jobs:
       # This builds only the browser's contributor-quality bundle; ordinary CI
       # has no authority to assemble a Host production generation.
       - run: pnpm --filter @gamebuddy/dialogue-web build
+      # The two native helper pairs must exist before the frontend's static zone runs: the parity table in
+      # `dialogue-web/tests/parity-model-selection.test.mjs` constructs the real Chat runtime, and that runtime
+      # builds a `createBuildWindowsStaleLockReclaimer`, which refuses with
+      # `windows_stale_lock_reclaimer_unavailable` when `native/**/.dist` is absent. These are the same two
+      # builders, in the same order, that this job already ran before `pnpm test`.
+      - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
+      - run: node host/scripts/build-windows-reparse-inspector.mjs
       # The three frontend gate zones, named explicitly. dialogue-web's own `test`
       # is only its static zone and root `pnpm test` runs the vendored and
       # companion-host suites, so an aggregate command leaves the artifact and
@@ -140,9 +147,9 @@ jobs:
       # `windows_stale_lock_reclaimer_unavailable` when `native/**/.dist` is
       # absent - measured as `pnpm test`'s first failure once the mounted hang was
       # fixed and this step finally executed (the job had never reached it before).
-      # These are the same two builders, in the same order, that
-      # release-windows.yml runs before its own `pnpm --dir host test`; the SDK
-      # comes from global.json, exactly as that job's setup-dotnet does.
+      # The same two builders already ran above, before the frontend zones (the parity table builds the
+      # real runtime too); these are idempotent rebuilds kept here so `pnpm test` does not depend on that
+      # ordering, and the SDK comes from global.json, exactly as release-windows.yml's setup-dotnet does.
       - run: node host/scripts/build-windows-stale-lock-reclaimer.mjs
       - run: node host/scripts/build-windows-reparse-inspector.mjs
       - uses: actions/setup-dotnet@v4
@@ -232,16 +239,21 @@ jobs:
         with:
           node-version: 24.13.0
           cache: pnpm
-      # `build:test` reaches the production path, and that path builds the Magic Context fork with bun.
       - uses: oven-sh/setup-bun@v2
-      - run: pnpm install --frozen-lockfile
-      # `build:test` reaches the production artifact path, which builds the Magic Context fork with bun and
-      # links `vendor/pi-koe`'s own build. Neither dependency is installed by `pnpm install` (a submodule has
-      # its own lockfile), and without them the build died on
-      # `Cannot find package 'esbuild' imported from vendor/pi-koe/scripts/build-release-artifact.mjs`.
+        with:
+          bun-version: 1.4.2
+      # The same prerequisite chain the `host` job runs, in the same order - and the order is the point.
+      # `build:test` compiles the test project, which imports `@gamebuddy/voice-protocol`; that package is a
+      # `file:` dependency into `vendor/pi-koe`, a submodule with its own lockfile and a gitignored `dist/`.
+      # The root `pnpm install` snapshots the `file:` dependency into the pnpm store *at resolution time*, so
+      # the protocol package has to be BUILT before that install runs, or the snapshot has no `dist/` and the
+      # compile fails with `Cannot find module '@gamebuddy/voice-protocol'`.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
+      - run: pnpm run build
+        working-directory: vendor/pi-koe/packages/voice-protocol
+      - run: pnpm install --frozen-lockfile
       # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test
