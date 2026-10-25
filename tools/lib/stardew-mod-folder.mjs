@@ -18,6 +18,8 @@
  * `tools/check-stardew-mod-folder-name.mjs` asserts the three places agree, so
  * the name can be changed in one place without a silent split.
  */
+import { readFileSync } from "node:fs";
+
 export const STARDEW_MOD_FOLDER = "GameBuddy";
 
 /**
@@ -31,8 +33,16 @@ export const STARDEW_MOD_FOLDER = "GameBuddy";
  * This is a DEFAULT the fixture seeds into a config it creates. `bridgePipeNameFor` still reads the
  * config as the authority once it exists, so a config that names a different pipe is honoured and any
  * disagreement stays visible.
+ *
+ * The value is READ from `integrations/stardew/config.example.json` rather than spelled a second time,
+ * because that file is the name's owner (tools/lib/duplicated-authority.mjs) and a hand-written copy
+ * here is the drift that gate exists to catch - it was a hardcoded pipe name in the ladder
+ * orchestrator, disagreeing with the config, that surfaced 150 s later as
+ * `stardew_pipe_not_listening`.
  */
-export const STARDEW_BRIDGE_PIPE_NAME = "gamebuddy-stardew";
+export const STARDEW_BRIDGE_PIPE_NAME = JSON.parse(
+  readFileSync(new URL("../../integrations/stardew/config.example.json", import.meta.url), "utf8"),
+).PipeName;
 
 /**
  * Every directory that would make SMAPI load this mod twice: the agreed name and
