@@ -232,11 +232,13 @@ jobs:
         with:
           node-version: 24.13.0
           cache: pnpm
+      # `build:test` reaches the production path, and that path builds the Magic Context fork with bun.
+      - uses: oven-sh/setup-bun@v2
       - run: pnpm install --frozen-lockfile
-      # The test artifact is built from the same production path the `host` job uses, and that path reaches
-      # `vendor/pi-koe`'s own build (which needs its dependencies installed here too). Without these two steps
-      # the build died on `Cannot find package 'esbuild' imported from
-      # vendor/pi-koe/scripts/build-release-artifact.mjs`.
+      # `build:test` reaches the production artifact path, which builds the Magic Context fork with bun and
+      # links `vendor/pi-koe`'s own build. Neither dependency is installed by `pnpm install` (a submodule has
+      # its own lockfile), and without them the build died on
+      # `Cannot find package 'esbuild' imported from vendor/pi-koe/scripts/build-release-artifact.mjs`.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
