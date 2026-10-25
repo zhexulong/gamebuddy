@@ -118,7 +118,7 @@ export type BrowserDraftV1 = Readonly<{
 }>;
 
 /** One item of the mount's bindable World Info library, as the projection carries it. */
-export type WorldInfoItemV1 = Readonly<{
+type WorldInfoItemV1 = Readonly<{
   handle: string;
   title: string;
   summary: string | null;
@@ -131,7 +131,7 @@ export type WorldInfoItemV1 = Readonly<{
  * at that revision. One projection of one read, so the revision always describes the
  * items beside it.
  */
-export type WorldInfoStateV1 = Readonly<{
+type WorldInfoStateV1 = Readonly<{
   state: (typeof WORLD_INFO_STATES)[number];
   revision: string;
   items: readonly WorldInfoItemV1[];

@@ -15,8 +15,8 @@ import { dirname } from "node:path";
 /** The one clock every span in a run is measured on: monotonic milliseconds. */
 export type RunTraceClock = () => number;
 
-export type RunTraceAttribute = string | number | boolean | null;
-export type RunTraceAttributes = Readonly<Record<string, RunTraceAttribute>>;
+type RunTraceAttribute = string | number | boolean | null;
+type RunTraceAttributes = Readonly<Record<string, RunTraceAttribute>>;
 
 export type RunTraceSpan = Readonly<{
   traceId: string;
@@ -133,7 +133,7 @@ export function createRunTrace(traceId: string, options: Readonly<{ now?: RunTra
  * One span as a Chrome-trace complete event. `ts`/`dur` are microseconds, which is what the Chrome trace format and
  * Perfetto both read; `pid`/`tid` only place the span on a track (a run is one process and one thread here).
  */
-export type ChromeTraceEvent = Readonly<{
+type ChromeTraceEvent = Readonly<{
   ph: "X";
   ts: number;
   dur: number;

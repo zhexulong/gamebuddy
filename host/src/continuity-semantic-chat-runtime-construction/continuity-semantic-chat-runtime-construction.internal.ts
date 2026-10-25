@@ -79,7 +79,7 @@ export type ChatRuntimeConstructionOptions = Readonly<{
  * mount opens either way (a store defect is reported by the Settings surface that owns it), and this
  * translation is the Chat surface's own answer rather than a rule the other surfaces share.
  */
-export type ExactChatRuntimeModelSelection = Readonly<{
+type ExactChatRuntimeModelSelection = Readonly<{
   modelConfig: CompanionModelConfig | null;
   modelProfileRevision: number;
 }>;

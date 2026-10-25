@@ -48,7 +48,7 @@ import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 const finding = (code, detail) => ({ code, detail });
 
 /** Actions whose scenario/runner wiring decides whether a harness run can start at all. */
-export const HARNESS_ACTIONS = Object.freeze([
+const HARNESS_ACTIONS = Object.freeze([
   "respond_level_up",
   "respond_level_up_branch",
   "hold_absorption",
@@ -67,7 +67,7 @@ const NATIVE_SCENARIO = /"(native_[a-z0-9_]+_v\d+)"/u;
  * dispatch blocks that build each world. A scenario named by neither is refused before it can arm, which is the
  * silent failure this check exists to catch. Composed names are not a thing here: the switch compares literals.
  */
-export function scenariosAcceptedByMod(modSources) {
+function scenariosAcceptedByMod(modSources) {
   const accepted = new Map();
   for (const { file, source } of modSources) {
     source.split("\n").forEach((line, index) => {
@@ -80,7 +80,7 @@ export function scenariosAcceptedByMod(modSources) {
 }
 
 /** The world each published gate arms, keyed by action id: the run plan's own record of its fixture scenario. */
-export const PUBLISHED_FIXTURE_SCENARIOS = new Map(
+const PUBLISHED_FIXTURE_SCENARIOS = new Map(
   STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => gate.fixtureScenario !== null).map((gate) => [
     gate.actionId,
     gate.fixtureScenario,
@@ -108,7 +108,7 @@ const write = (path, contents, mtime) => {
  *
  * Each variant is the GOOD tree plus exactly one defect, so the preflight's FIRST failure names the defect.
  */
-export function materializePreflightTree(baseDir, variant) {
+function materializePreflightTree(baseDir, variant) {
   const hostRoot = join(baseDir, "host");
   const modRoot = join(baseDir, "mod");
   const modsPath = join(baseDir, "mods");
@@ -302,7 +302,7 @@ export function checkExperimentalRunners({
  * or per-rule outcome list - i.e. it enumerates the rules it can report red. Found by running every gate on
  * 2026-10-20; `checkGateFalsifiers` runs each of them again and reads the report it prints.
  */
-export const GATES_WITH_FALSIFIER = Object.freeze([
+const GATES_WITH_FALSIFIER = Object.freeze([
   "check-evidence-bundle.mjs",
   "check-game-historian-rubric.mjs",
   "check-live-run-failure-dump.mjs",
@@ -320,7 +320,7 @@ const GATE_RUN_TIMEOUT_MS = 120_000;
  * Run a gate the way an operator does - its own default, no-argument, offline invocation - and return what it
  * printed. The report on stdout is the artifact this suite reads; a gate's source text is not.
  */
-export function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_MS } = {}) {
+function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_MS } = {}) {
   const result = spawn(process.execPath, [path], { cwd: dirname(path), encoding: "utf8", timeout: timeoutMs });
   return {
     timedOut: result.error?.code === "ETIMEDOUT",
@@ -337,7 +337,7 @@ export function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_T
  * a non-empty `checks` list, or an explicit offline `mode` for a gate whose one judgement is the whole run. A
  * gate that prints a human sentence, or nothing, has no report - whatever its source happens to mention.
  */
-export function selfVerificationReport(stdout) {
+function selfVerificationReport(stdout) {
   const OUTCOME = new Set(["passed", "failed", "blocked"]);
   for (const line of String(stdout).split("\n").reverse()) {
     const trimmed = line.trim();
@@ -375,7 +375,7 @@ function describeRun(result) {
  * lives in its own `check-*.test.mjs` is excused because the project rule is "the falsifier is part of the gate's own
  * test" (design/research/live-run-throughput.md, Tier 5 item 11), and the suite's own run confirms it.
  */
-export const GATES_WITHOUT_FALSIFIER = Object.freeze([
+const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-ci-coverage.mjs",
     reason:
@@ -493,14 +493,6 @@ export function checkGateFalsifiers({
 // ---------------------------------------------------------------------------------------------------
 // The suite: run all five checks, in order.
 // ---------------------------------------------------------------------------------------------------
-
-export const CONFORMANCE_CHECKS = Object.freeze([
-  "preflight_synthetic_trees",
-  "scenario_mod_acceptance",
-  "runner_resolution",
-  "experimental_runner_inventory",
-  "gate_falsifiers",
-]);
 
 /** The `ModEntry.Fixtures*.cs` partials, each with its repo-relative path, so a finding can cite file+line. */
 export function readModFixtureSources(repoRoot) {

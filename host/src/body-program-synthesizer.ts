@@ -30,12 +30,12 @@ type BodyProgramArgument = SynthesizedBodyProgramNode["arguments"][string];
 type BodyProgramArguments = SynthesizedBodyProgramNode["arguments"];
 
 /** One program as the caller submits it: `{ nodes }` only, the caller names the `programId`. */
-export type SynthesizedBodyProgram = Readonly<{ nodes: readonly SynthesizedBodyProgramNode[] }>;
+type SynthesizedBodyProgram = Readonly<{ nodes: readonly SynthesizedBodyProgramNode[] }>;
 
 /** Why one instance family of the intent is absent from this turn's programs. */
-export type UncompilableReason = "lifecycle_not_published" | "capability_not_enabled" | `target_unresolved:${string}`;
+type UncompilableReason = "lifecycle_not_published" | "capability_not_enabled" | `target_unresolved:${string}`;
 
-export type UncompilableFamily = Readonly<{
+type UncompilableFamily = Readonly<{
   family: string;
   actionId: string;
   reason: UncompilableReason;
@@ -64,7 +64,7 @@ export type SynthesizedPrograms = Readonly<{
   uncompilable: readonly UncompilableFamily[];
 }>;
 
-export type SynthesizeRefusal = Readonly<{ ok: false; reasonCode: string }>;
+type SynthesizeRefusal = Readonly<{ ok: false; reasonCode: string }>;
 
 export type SynthesizeResult = SynthesizedPrograms | SynthesizeRefusal;
 

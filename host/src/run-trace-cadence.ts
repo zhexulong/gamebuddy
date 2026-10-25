@@ -9,7 +9,7 @@ import { RUN_SPAN_NAMES, type RunTraceSpan } from "./run-trace.js";
  * held, so the same questions stay answerable without a second instrument.
  */
 
-export type DurationSummary = Readonly<{ median: number | null; max: number | null; sum: number }>;
+type DurationSummary = Readonly<{ median: number | null; max: number | null; sum: number }>;
 
 export type ActionCadenceSummary = Readonly<{
   actions: number;

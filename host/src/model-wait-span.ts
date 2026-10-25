@@ -14,7 +14,7 @@ import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
  * present. It does not guess where a wait started from elsewhere in the run.
  */
 
-export type ModelWaitEvent = Readonly<{
+type ModelWaitEvent = Readonly<{
   /** `message_start` / `message_end` for an assistant message; `tool_result` when a tool returns. */
   type: "message_start" | "message_end" | "tool_result";
   /** Present for message events; `assistant` opens and closes a turn. */
@@ -23,7 +23,7 @@ export type ModelWaitEvent = Readonly<{
   atMs: number;
 }>;
 
-export type ModelWaitSpan = Readonly<{ name: string; startMs: number; endMs: number | null }>;
+type ModelWaitSpan = Readonly<{ name: string; startMs: number; endMs: number | null }>;
 
 export type ModelWaitTracker = Readonly<{
   /** Feed one Pi event. Returns a completed span when this event closes a wait, else null. */

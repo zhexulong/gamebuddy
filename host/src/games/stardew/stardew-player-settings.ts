@@ -31,13 +31,13 @@ import { readStrictJsonFile } from "../../strict-json-reader.js";
  *    (`ModEntry.cs` `ConfigureLifecycleMinimumFarmers`), so a change takes effect
  *    the next time the world loads - not while a world is running.
  */
-export const STARDEW_PLAYER_SETTINGS_SCHEMA_VERSION = 1 as const;
+const STARDEW_PLAYER_SETTINGS_SCHEMA_VERSION = 1 as const;
 
 /** Bound on a family id, matching the Mod catalog's own action/family id shape. */
-export const STARDEW_ACTION_FAMILY_ID_PATTERN = /^[a-z][a-z0-9_]{1,127}$/u;
+const STARDEW_ACTION_FAMILY_ID_PATTERN = /^[a-z][a-z0-9_]{1,127}$/u;
 
 /** The most families one record may deny: the catalog's whole declared set fits well inside it. */
-export const STARDEW_DENIED_FAMILY_LIMIT = 64;
+const STARDEW_DENIED_FAMILY_LIMIT = 64;
 
 /** The single root-level path of the record: one path, one authority. */
 export function stardewPlayerSettingsPath(runtimeRoot: string): string {

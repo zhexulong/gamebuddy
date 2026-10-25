@@ -35,7 +35,7 @@ import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 export const GAMEPLAY_TASK_DELEGATE_BUDGET_MS = 45_000;
 
 /** Named terminal result for a delegation that outlived its budget. */
-export const GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED = "delegate_budget_exhausted";
+const GAMEPLAY_TASK_DELEGATE_BUDGET_EXHAUSTED = "delegate_budget_exhausted";
 
 /** Gameplay workers are deliberately pinned independently from the dialogue model. */
 export const GAMEPLAY_SUBAGENT_MODEL_CONFIG = Object.freeze({

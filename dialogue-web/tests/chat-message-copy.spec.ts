@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { messages } from "../src/i18n";
+
 /**
  * Copying one message.
  *
@@ -445,11 +447,10 @@ test("both catalogues carry the control and both outcomes, and neither is a key 
   await expect(chinesePage.locator('[data-testid="message-copy-notice"]').first()).toHaveCount(1);
   const chineseNotice = await chinesePage.locator('[data-testid="message-copy-notice"]').first().textContent();
   // The failure sentence is not reachable through the UI (it needs a refused clipboard), so it is read
-  // from the same module the surface renders from.
-  const chineseFailed = await chinesePage.evaluate(async () => {
-    const catalogue = (await import("/src/i18n.ts")) as { messages: (locale: string) => Record<string, string> };
-    return catalogue.messages("zh-CN").copyNoticeFailed;
-  });
+  // from the same module the surface renders from - imported relatively, as `chat-surface-voice.spec.ts`
+  // already reads its labels. The in-page `import("/src/i18n.ts")` that stood here resolved only through
+  // Vite's dev-server base URL, so nothing reading the spec's imports could find the module.
+  const chineseFailed = messages("zh-CN").copyNoticeFailed;
   await chineseContext.close();
 
   console.log(`MEASURE copy words: en ${JSON.stringify(english)} zh ${JSON.stringify(chinese)} ${chineseNotice}`);

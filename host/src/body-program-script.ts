@@ -19,7 +19,7 @@ import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protoc
  */
 
 /** One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set. */
-export type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
+type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
 
 /**
  * The tool one action must be holding, as the surface itself declares it, or the surface's silence.
@@ -31,7 +31,7 @@ export type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: re
  * nothing about a tool for that action, which the companion is told by name (`tool_requirement_undeclared`) instead of
  * being left to guess a slot from tool order.
  */
-export type PublishedPlanToolRequirement =
+type PublishedPlanToolRequirement =
   | Readonly<{
       declared: true;
       category: string;
@@ -75,7 +75,7 @@ type PlanArgument = PlanNode["arguments"][string];
 export type PlanScriptRequest = Readonly<{ script: string }>;
 
 /** The action a refused builder call named, and the arguments and claims the published surface requires for it. */
-export type PlanArgumentRequirement = Readonly<{
+type PlanArgumentRequirement = Readonly<{
   actionId: string;
   requiredArguments: readonly PlanArgumentShape[];
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
@@ -302,7 +302,7 @@ export function legalPlanActionIds(actions: readonly PublishedPlanAction[]): rea
   return Object.freeze(actions.slice(0, MAX_LISTED_PLAN_IDS).map((action) => action.actionId));
 }
 
-export function legalPlanFamilies(actions: readonly PublishedPlanAction[]): readonly string[] {
+function legalPlanFamilies(actions: readonly PublishedPlanAction[]): readonly string[] {
   return Object.freeze([...new Set(actions.map((action) => action.familyId))].slice(0, MAX_LISTED_PLAN_IDS));
 }
 

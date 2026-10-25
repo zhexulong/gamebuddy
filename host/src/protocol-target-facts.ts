@@ -28,7 +28,7 @@ export const TOOL_CATEGORY_VALUES: ReadonlySet<string> = new Set([
 ]);
 
 /** The category a tool the Mod has no word for reports, instead of the nearest-looking guess. */
-export const UNKNOWN_TOOL_CATEGORY = "unknown";
+const UNKNOWN_TOOL_CATEGORY = "unknown";
 
 export function isToolSlotFact(value: unknown): boolean {
   return (

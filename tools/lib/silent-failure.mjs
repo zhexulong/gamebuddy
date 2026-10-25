@@ -90,7 +90,7 @@ const EXCLUDED_DIRECTORIES = new Set([
 const MAX_SCANNED_BYTES = 2 * 1024 * 1024;
 
 /** The gate's own module spells the shapes on purpose; its test plants them on purpose. */
-export const GATE_PATHS = Object.freeze(["tools/lib/silent-failure.mjs", "tools/lib/silent-failure.test.mjs"]);
+const GATE_PATHS = Object.freeze(["tools/lib/silent-failure.mjs", "tools/lib/silent-failure.test.mjs"]);
 
 /** A function whose name says it exists to produce a fact. */
 const OBSERVING_NAME =
@@ -137,9 +137,6 @@ const KEYWORDS = new Set([
   "case",
 ]);
 
-/** A `return` that hands back a value. */
-const VALUED_RETURN = /(?<![.\w$])return\s+(?![;\s])/u;
-
 const CATCH_CLAUSE = /catch\s*(?:\([^)]*\))?\s*\{/gu;
 const RETURN_STATEMENT = /(?<![.\w$])return\b[^;{}]*;?/gu;
 
@@ -164,7 +161,7 @@ function hasScannedExtension(name) {
 }
 
 /** A committed test may assert that a failure stays silent; a fixture is a stand-in, not a reporter. */
-export function isTestPath(path) {
+function isTestPath(path) {
   return (
     /\.test-support\.[a-z]+$/u.test(path) ||
     /\.test\.[a-z]+$/u.test(path) ||
@@ -178,7 +175,7 @@ export function isTestPath(path) {
  * match index still points at the same place in the original text. Without it a
  * `"catch {"` inside a doc comment reads as code.
  */
-export function blank(text) {
+function blank(text) {
   const out = text.split("");
   const size = text.length;
   const previousSignificant = (at) => {
@@ -251,7 +248,7 @@ export function blank(text) {
 }
 
 /** Every `{...}` pair in a blanked text, plus an opening-brace to closing-brace lookup. */
-export function braces(blanked) {
+function braces(blanked) {
   const pairs = [];
   const stack = [];
   for (let index = 0; index < blanked.length; index += 1) {
@@ -295,7 +292,7 @@ function matchingOpenParen(text, close) {
  * list so a destructured or defaulted parameter cannot be mistaken for the header.
  * Returns `{ name, header }` or `null` when the brace opens an anonymous block.
  */
-export function functionAt(blanked, open) {
+function functionAt(blanked, open) {
   let cursor = skipSpaceBackwards(blanked, open - 1);
   // Skip a TypeScript return type (`): Promise<T> {`).
   if (blanked[cursor] !== ")") {
@@ -333,7 +330,7 @@ export function functionAt(blanked, open) {
 }
 
 /** The nearest enclosing named function, skipping anonymous control blocks. */
-export function enclosingFunction(blanked, pairs, index) {
+function enclosingFunction(blanked, pairs, index) {
   const candidates = pairs
     .filter((pair) => pair.open < index && index < pair.close)
     .sort((left, right) => right.open - left.open);
@@ -353,7 +350,7 @@ export function enclosingFunction(blanked, pairs, index) {
 }
 
 /** The names a function takes, so a guard on them can be told from a guard on the world. */
-export function parameterNames(parameters) {
+function parameterNames(parameters) {
   const names = new Set();
   for (const part of parameters.split(",")) {
     const match = /^\s*(?:\.\.\.)?\s*([A-Za-z_$][\w$]*)/u.exec(part);
@@ -523,7 +520,7 @@ function listSourceFiles(repoRoot) {
  * the reason nothing is missing there, the exact source text it waives
  * (`witness`), and how many sites in that function it waives (`sites`).
  */
-export const DECLARED = Object.freeze([
+const DECLARED = Object.freeze([
   // The catch reports the failure in the shape of the answer: readable:false is a
   // distinct fact from gameExecutable:false, which is the whole point of the field.
   Object.freeze({
