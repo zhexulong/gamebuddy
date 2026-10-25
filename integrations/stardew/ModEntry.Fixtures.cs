@@ -3409,7 +3409,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         Vector2? standingTile = null;
         for (int index = 0; index < 4; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_weed_spot_missing");
             StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
@@ -3421,7 +3421,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             standingTile ??= spot.Value.StandingTile;
         }
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
@@ -3435,7 +3435,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
         for (int index = 0; index < STONE_COUNT; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
@@ -3450,7 +3450,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         int plantedCrops = 0;
         for (int index = 0; index < 4; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_crop_spot_missing");
             StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
@@ -4015,6 +4015,38 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         // this fixture should rely on either.
         return verdict is ReachabilityVerdict assessed && !assessed.TargetEnclosed;
     }
+
+    /// <summary>
+    /// The same flood as <see cref="IsReachableFromStart"/>, except the caller decides what blocks a tile.
+    ///
+    /// Two predicates were being used for one question. `IsWalkableTile` asks the engine's collision test with
+    /// `pathfinding: true`, which does not treat a stone as blocking; the composed multi-day assertion treats the
+    /// fixture's own placements as blockers, because the fixture is what put them there. Choosing props with the
+    /// first and judging the world with the second meant the props could land in a piece of the farm the assertion
+    /// then refused - with every individual step looking correct. This is the version placement uses, so both
+    /// sides ask the same question.
+    /// </summary>
+    private static bool IsReachableFromStartPessimistic(GameLocation farm, Vector2 start, Vector2 standing, Func<Point, bool> countsAsBlocker)
+    {
+        Point startTile = new((int)start.X, (int)start.Y);
+        Point standingTile = new((int)standing.X, (int)standing.Y);
+        if (startTile == standingTile)
+            return true;
+        var layer = farm.map.Layers[0];
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            startTile,
+            standingTile,
+            tile =>
+                tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && !countsAsBlocker(tile)
+                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)),
+            maxVisited: 8000,
+            findClosestReachable: true);
+        return verdict is { TargetEnclosed: false };
+    }
     /// <summary>
     /// An OPEN tile for the play session to start on: passable and unoccupied itself, with all four cardinal
     /// neighbours passable and unoccupied. Measured reason: the Farm's corner where the origin-scan placed the
@@ -4067,12 +4099,14 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// </summary>
     /// <summary>
     /// How many stones the play-session world carries. Six, not ten: the stamina story needs "more than a
-    /// handful" (6 x 4 = 24 of the ~270 a morning holds, against an audited baseline of three), and ten left
+    /// handful" - but the count is bounded by geometry, not by stamina: with the strict predicate every prop
+    /// also consumes a standable neighbour, so four stones plus four weeds, four crops and a grass still fit
+    /// while six do not (measured 2026-10-24: stone_spot_missing after the predicate was unified).
     /// the walkable graph too fragmented to keep every prop's approach open.
     /// </summary>
-    private const int STONE_COUNT = 6;
+    private const int STONE_COUNT = 4;
 
-    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start)
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start, Vector2? mustRemainReachable = null)
     {
         int width = farm.map.Layers[0].LayerWidth;
         int height = farm.map.Layers[0].LayerHeight;
@@ -4091,8 +4125,48 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             // standable neighbour is inside the actor's component can still be walled off from it, and the
             // fail-closed check after placement then refuses the world for a prop this search should never
             // have chosen (measured 2026-10-24: prop_unreachable_from_home:58,9).
+            // The composed-world assertion counts this fixture's own placements as blockers, so placement must
+            // ask the same question. `IsWalkableTile` runs the engine's collision test with `pathfinding: true`, which
+            // does NOT treat a stone as blocking - so a prop could be chosen on a tile the assertion then called
+            // unreachable, with no single step looking wrong. Measured 2026-10-24: the props were placed, then
+            // `home_unreachable:what=field` refused the world.
             if (!IsReachableFromStart(farm, start, target))
                 continue;
+            // The composed-world assertion treats this fixture's own placements as blockers; placement therefore
+            // has to ask the same question, or a prop gets chosen on a tile the assertion then calls unreachable.
+            //
+            // `IsWalkableTile` runs the engine's collision test with `pathfinding: true`, which does NOT treat a
+            // stone as blocking; the assertion's predicate does. That difference is what let 6 stones and 4 crops
+            // be placed, then refused the whole day with `home_unreachable:what=field;door=66,15;target=56,11;
+            // component_tiles=123`. Both predicates are right about their own question - the bug was using one to
+            // choose and the other to judge.
+            bool CountsAsBlocker(Point probe) =>
+                farm.objects.ContainsKey(new Vector2(probe.X, probe.Y))
+                || farm.terrainFeatures.ContainsKey(new Vector2(probe.X, probe.Y));
+            if (!IsReachableFromStartPessimistic(farm, start, target, CountsAsBlocker))
+                continue;
+            // A placement must not sever the route the session depends on. The start was chosen while the
+            // farm was clean, so it could reach the door; a stone between them breaks that promise without any
+            // single choice looking wrong, and the composed-world assertion then refuses the whole day
+            // (measured 2026-10-24: home_unreachable:what=field;door=66,15;target=56,11;component_tiles=123).
+            //
+            // Checked by simulating the placement's effect: an actor can no longer WALK THROUGH the target, so the
+            // route must survive with the target treated as blocked.
+            if (mustRemainReachable is { } anchor
+                && IsReachableFromStart(farm, start, anchor))
+            {
+                // Temporarily treat the candidate as solid, ask the question, then restore. The world is the only
+                // authority here, so the check has to be against the world as it will be.
+                StardewValley.Object? displaced = null;
+                if (farm.objects.TryGetValue(target, out StardewValley.Object? existing))
+                {
+                    displaced = existing;
+                    farm.objects.Remove(target);
+                }
+                bool survives = IsReachableFromStart(farm, start, anchor);
+                if (displaced is not null) farm.objects[target] = displaced;
+                if (!survives) continue;
+            }
             Vector2[] cardinal =
             {
                 target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
