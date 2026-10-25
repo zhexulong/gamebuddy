@@ -849,13 +849,6 @@ public sealed partial class ModEntry : Mod
             this.farmhandProvisioner.OnScopeVerified = this.PersistVerifiedFarmhandScope;
     }
 
-    private void PersistVerifiedFarmhandScope(FarmhandVerifiedScope scope)
-    {
-        this.config = this.config.WithVerifiedScope(scope.SaveId, scope.WorldId, scope.PlayerId, this.config.NativeLocalPlayerFixture);
-        this.Helper.WriteConfig(this.config);
-        this.Monitor.Log($"GameBuddy recorded the verified shared-world scope (save={scope.SaveId}, world={scope.WorldId}, player={scope.PlayerId}) so a bridge client can declare it.", LogLevel.Info);
-    }
-
     private void TryInitializeEmbodiment()
     {
         if (this.embodimentInitialized || this.hostRoleConfigured || this.provisioningConfigurationRejected)
@@ -2776,31 +2769,6 @@ public sealed partial class ModEntry : Mod
 
     private delegate bool TryBridgeRequest<TRequest, TResponse>(BridgeEnvelope<TRequest> request, out BridgeEnvelope<TResponse>? response, out string reasonCode);
     private static bool IsOpaqueRequestId(string value) => value.Length is >= 1 and <= 64 && value.All(character => (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
-
-    private sealed class SmapiGlobalDataPersistence : IModGlobalDataPersistence
-    {
-        private readonly IDataHelper data;
-
-        internal SmapiGlobalDataPersistence(IDataHelper data)
-        {
-            this.data = data ?? throw new ArgumentNullException(nameof(data));
-        }
-
-        public FarmhandExecutionJournalState? Read(string key) => this.data.ReadGlobalData<FarmhandExecutionJournalState>(key);
-
-        public bool TryWrite(string key, FarmhandExecutionJournalState state)
-        {
-            try
-            {
-                this.data.WriteGlobalData(key, state);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-    }
 
     private sealed class ScreenEmbodimentState
     {
