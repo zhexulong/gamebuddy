@@ -231,6 +231,14 @@ export function useComposedBootstrap(
           session = session.withPending(applyStatus(session.pending, status).pending);
         }
         const next = { kind: "ready" as const, root, session, draft, locale: current.locale };
+        // Three awaits just happened (`readState`, `resolvePollDraft`, `readSubmissionStatus`) and the surface can
+        // unmount or switch away inside any of them. The catch below answers that for the failure path; this answers
+        // it for the success path, so a poll that lands after teardown does not commit state to a component that is
+        // gone. It sits before the first `commit` rather than inside each branch so both exits are covered.
+        if (cancelledRef.current) {
+          pollActiveRef.current = false;
+          return;
+        }
         if (terminalTurn(root.chat.chat?.turn ?? null)) {
           // The authoritative turn is settled; a pending record for it is spent
           // whatever an out-of-date submission status still says, and keeping it
