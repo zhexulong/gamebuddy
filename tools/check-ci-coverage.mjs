@@ -78,6 +78,12 @@ const REGISTER = Object.freeze([
     detail: "counts call sites in the gitignored decompiled tree; a checkout reports 0 files and fails",
   },
   {
+    script: "check:live-run-isolation",
+    reason: "environment",
+    detail:
+      "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install at D:/Steam/...; a checkout has neither, so it exits 1 with live_run_isolation_source_profile_config_missing",
+  },
+  {
     script: "check:stardew-native-multiplayer-sensitivity",
     reason: "environment",
     detail: "reads the gitignored decompiled tree; it also reports 2 seam-call mismatches where the tree exists",
