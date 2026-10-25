@@ -114,9 +114,29 @@ test("runner check imports the runner and reports one that starts on import", ()
     const findings = checkRunnerResolution({ actionIds: ["till_soil"], resolve: () => stub, toolsDir: stubTools });
     assert.deepEqual(
       findings.map((entry) => entry.code),
-      ["runner_missing_cli"],
+      ["runner_import_failed"],
     );
     assert.match(findings[0].detail, /import printed: session started/u);
+
+    // The three failures the probe can see are told apart, because each sends the reader somewhere else: a
+    // missing test artifact is a build step, a missing package is an install step, and a runner that starts
+    // a session on import is a defect in the runner. Reporting all three as "missing cli" is what sent a
+    // CI reader to the wrong file on 2026-10-25.
+    const stubs = {
+      artifact:
+        "throw new Error('live_run_artifact_stale:artifact_missing - rebuild with: cd host && pnpm build:test');\n",
+      package: "await import('no-such-package-anywhere');\n",
+    };
+    for (const [expected, source] of [
+      ["runner_artifact_not_built", stubs.artifact],
+      ["runner_missing_cli", stubs.package],
+    ]) {
+      writeFileSync(join(stubTools, stub), source);
+      const codes = checkRunnerResolution({ actionIds: ["till_soil"], resolve: () => stub, toolsDir: stubTools }).map(
+        (entry) => entry.code,
+      );
+      assert.deepEqual(codes, [expected]);
+    }
 
     // The control: a runner whose CLI really is gated imports silently and passes.
     writeFileSync(join(stubTools, stub), 'if (import.meta.main) process.stdout.write("session started\\n");\n');

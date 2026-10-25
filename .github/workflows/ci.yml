@@ -208,20 +208,30 @@ jobs:
   # Which gates run, and which do not, is DERIVED from package.json on every run by
   # `tools/check-ci-coverage.mjs` - not written out here. Every `check:*` / `audit:*` / `lint*` /
   # `typecheck*` / `report:*` script that no other job names lands in this job's `--run` set, so a
-  # new gate is live in CI by being named like one. The job installs nothing on purpose: the set it
-  # runs reads sources. A gate that needs the installed workspace, the game, the decompiled tree,
-  # the `design/` mount or a built generation is named with its reason (and its measurement) in
-  # that file, and its verdict fails if such an entry goes stale - runs in a workflow anyway, or is
-  # no longer a script. Splitting the gates off the `host` job keeps them out of its 43-step serial
-  # chain, where a red step early hides everything behind it.
+  # new gate is live in CI by being named like one. The job installs the workspace and builds the
+  # test artifact because two gates in that derived set are not source-only: `check:harness-conformance`
+  # probes native-local runners through `host/dist-test`, and `check:perf-budget` benches against it.
+  # Without them the derived set fails on a fresh checkout for a reason that has nothing to do with
+  # the change under test - the failure read `runner_missing_cli` and `artifact_missing` on 2026-10-25.
+  # A gate that needs the game, the decompiled tree, the `design/` mount or a live generation is named
+  # with its reason (and its measurement) in that file, and its verdict fails if such an entry goes
+  # stale. Splitting the gates off the `host` job keeps them out of its 43-step serial chain, where a
+  # red step early hides everything behind it.
   gates:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
+      # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
+      - run: pnpm --dir host build:test
+        timeout-minutes: 15
       - run: node tools/check-ci-coverage.mjs
       - run: node tools/check-ci-coverage.mjs --run
       # The totality audit's full finding list, kept per run so "is this getting better?" has an answer that is not a

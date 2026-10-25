@@ -165,11 +165,18 @@ export function importsWithoutStarting(path, { spawn = spawnSync, timeoutMs = RU
     encoding: "utf8",
     timeout: timeoutMs,
   });
+  // One line was not enough to tell the failures apart: a throw puts the file URL on the first line and the
+  // message below it, so "import exited 1: file:///…" said nothing about why. Collapsing the whole excerpt
+  // keeps `import printed:` readable (stdout is one line in practice) while making a thrown reason visible -
+  // which is what lets a caller tell a missing build artifact from a missing package.
   const excerpt = (text) =>
     String(text ?? "")
       .trim()
-      .split("\n")[0]
-      ?.slice(0, 200) ?? "";
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line !== "")
+      .join(" | ")
+      .slice(0, 400);
   if (result.error?.code === "ETIMEDOUT") return { ok: false, detail: `import did not return in ${timeoutMs}ms` };
   if (result.status !== 0)
     return { ok: false, detail: `import exited ${String(result.status)}: ${excerpt(result.stderr)}` };

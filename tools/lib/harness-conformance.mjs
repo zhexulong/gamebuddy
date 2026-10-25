@@ -258,7 +258,20 @@ export function checkRunnerResolution({
       continue;
     }
     const imported = probe(path);
-    if (!imported.ok) findings.push(finding("runner_missing_cli", `${actionId} -> ${runner}: ${imported.detail}`));
+    if (!imported.ok)
+      findings.push(
+        finding(
+          // The probe imports the runner for real, so its failure modes are not one thing. A missing test
+          // artifact and a missing dependency both surface here, and reporting either as a missing CLI sends
+          // whoever reads it to the wrong file: the artifact is a build step, the CLI is an install step.
+          /artifact_missing|artifact_older_than_inputs|live_run_artifact_stale/u.test(String(imported.detail))
+            ? "runner_artifact_not_built"
+            : /ERR_MODULE_NOT_FOUND|Cannot find (?:package|module)/u.test(String(imported.detail))
+              ? "runner_missing_cli"
+              : "runner_import_failed",
+          `${actionId} -> ${runner}: ${imported.detail}`,
+        ),
+      );
   }
   return findings;
 }
