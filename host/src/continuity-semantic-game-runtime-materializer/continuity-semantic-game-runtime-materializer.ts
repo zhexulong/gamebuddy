@@ -514,8 +514,19 @@ function assertFreshBodyProgramPreflight(
   if (
     Array.isArray(request.nodes) &&
     request.nodes.some((node) => !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId))
-  )
-    throw new Error("body_program_preflight_rejected");
+  ) {
+    // Name the actions, not just the refusal.
+    //
+    // Measured 2026-10-25 (`night4`): 31 of 49 `plan_work` calls came back `body_program_preflight_rejected`, and the
+    // code named neither the node nor the action. The companion could not tell a lifecycle restriction from a typo in
+    // its own script, so it retried the same shape four and five times - the loop a specific message exists to shorten.
+    // `allowed` is the catalogue this connection really offers, so the refusal can say what was refused AND what was
+    // possible, without the caller having to reverse-engineer it.
+    const refused = request.nodes
+      .filter((node) => !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId))
+      .map((node) => (isRecord(node) && typeof node.actionId === "string" ? node.actionId : "<no_action_id>"));
+    throw new Error(`body_program_preflight_rejected:${refused.join(",")}:allowed=${[...allowed].sort().join(",")}`);
+  }
 }
 
 function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPolicyIdentity {
