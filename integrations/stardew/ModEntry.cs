@@ -849,38 +849,9 @@ public sealed partial class ModEntry : Mod
             this.farmhandProvisioner.OnScopeVerified = this.PersistVerifiedFarmhandScope;
     }
 
-    /// <summary>Rebuild the config around a live scope, preserving every other field (an object initializer silently drops every field it does not list).</summary>
-    private ModConfig RebuildConfigWithLiveScope(string saveId, string worldId, string playerId, NativeLocalPlayerFixtureConfig? nativeLocalPlayerFixture)
-    {
-        return new ModConfig
-        {
-            EnableLocalBridge = this.config.EnableLocalBridge,
-            PipeName = this.config.PipeName,
-            BridgeToken = this.config.BridgeToken,
-            SaveId = saveId,
-            WorldId = worldId,
-            PlayerId = playerId,
-            CompanionId = this.config.CompanionId,
-            WindowMode = this.config.WindowMode,
-            PresentationLocale = this.config.PresentationLocale,
-            NativeLocalPlayerFixture = nativeLocalPlayerFixture,
-            FarmhandProvisioningProbe = this.config.FarmhandProvisioningProbe,
-            SleepModalProbe = this.config.SleepModalProbe,
-            SleepLifecycle = this.config.SleepLifecycle,
-            AdvanceDayMinimumOnlineFarmers = this.config.AdvanceDayMinimumOnlineFarmers,
-            HostFarmhandProvisioning = this.config.HostFarmhandProvisioning,
-            HostAutomation = this.config.HostAutomation,
-            WorldCreation = this.config.WorldCreation,
-            FarmhandProvisioner = this.config.FarmhandProvisioner,
-            DeniedActions = new List<string>(this.config.DeniedActions),
-            DeniedActionFamilies = new List<string>(this.config.DeniedActionFamilies),
-            ExperimentalActions = new List<string>(this.config.ExperimentalActions),
-        };
-    }
-
     private void PersistVerifiedFarmhandScope(FarmhandVerifiedScope scope)
     {
-        this.config = this.RebuildConfigWithLiveScope(scope.SaveId, scope.WorldId, scope.PlayerId, this.config.NativeLocalPlayerFixture);
+        this.config = this.config.WithVerifiedScope(scope.SaveId, scope.WorldId, scope.PlayerId, this.config.NativeLocalPlayerFixture);
         this.Helper.WriteConfig(this.config);
         this.Monitor.Log($"GameBuddy recorded the verified shared-world scope (save={scope.SaveId}, world={scope.WorldId}, player={scope.PlayerId}) so a bridge client can declare it.", LogLevel.Info);
     }

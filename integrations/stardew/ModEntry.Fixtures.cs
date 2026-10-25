@@ -214,16 +214,12 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy rejected native-local-player fixture bootstrap completion because observed native save identity differs from the requested isolated fixture name.", LogLevel.Error);
             return;
         }
-        NativeLocalPlayerFixtureConfig completedFixture = new()
-        {
-            Enable = true,
-            LogicalSaveName = requestedFilteredName,
-            ObservedSaveSlot = observedSlot,
-            TimeoutSeconds = fixture.TimeoutSeconds,
-            FixtureScenario = fixture.FixtureScenario,
-            Bootstrap = new NativeLocalPlayerFixtureBootstrapConfig { Enable = false, SaveName = requestedFilteredName, PlayerName = bootstrap.PlayerName },
-        };
-        this.config = this.RebuildConfigWithLiveScope(
+        // Only the bootstrap is disarmed; every other fixture field the profile
+        // already carries (including the navigation fixture's private target
+        // label) survives, because the rebuild is a copy with three overrides and
+        // not a field-by-field reconstruction.
+        NativeLocalPlayerFixtureConfig completedFixture = fixture.WithObservedBootstrapCompletion(requestedFilteredName, observedSlot, bootstrap.PlayerName);
+        this.config = this.config.WithVerifiedScope(
             Game1.uniqueIDForThisGame.ToString(),
             Game1.MasterPlayer.UniqueMultiplayerID.ToString(),
             Game1.player.UniqueMultiplayerID.ToString(),

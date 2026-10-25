@@ -1,7 +1,12 @@
 namespace GameBuddy.Stardew;
 
-/// <summary>Local-only pipe is opt-in and authenticated; no defaults expose a bridge.</summary>
-public sealed class ModConfig
+/// <summary>
+/// Local-only pipe is opt-in and authenticated; no defaults expose a bridge.
+/// A record so the scope persist below can rebuild it with <c>with { … }</c> instead of
+/// listing its fields by hand: SMAPI's <c>WriteConfig</c> replaces config.json whole, so
+/// a hand-written rebuild silently resets every field it forgets.
+/// </summary>
+public sealed record ModConfig
 {
     public bool EnableLocalBridge { get; init; }
     public string PipeName { get; init; } = "gamebuddy-stardew";
@@ -122,9 +127,24 @@ public sealed class ModConfig
         && BridgeToken.Length is >= 16 and <= 256
         && new BridgeScope("stardew", SaveId, WorldId, PlayerId, CompanionId).IsValid;
 
+    /// <summary>
+    /// The config the Mod writes back after it observes a live scope, as a copy with only
+    /// the scope replaced. That matters because <c>Helper.WriteConfig</c> replaces
+    /// config.json whole: a rebuild that listed fields by hand would reset every field it
+    /// did not remember, so the copy form is the one that keeps a field added later.
+    /// </summary>
+    internal ModConfig WithVerifiedScope(string saveId, string worldId, string playerId, NativeLocalPlayerFixtureConfig? nativeLocalPlayerFixture) =>
+        this with
+        {
+            SaveId = saveId,
+            WorldId = worldId,
+            PlayerId = playerId,
+            NativeLocalPlayerFixture = nativeLocalPlayerFixture,
+        };
+
 }
 
-public sealed class NativeLocalPlayerFixtureConfig
+public sealed record NativeLocalPlayerFixtureConfig
 {
     public bool Enable { get; init; }
     /// <summary>Logical name returned after target-version native load.</summary>
@@ -142,6 +162,20 @@ public sealed class NativeLocalPlayerFixtureConfig
     /// records the observed slot/scope and disables it before opening bridge.
     /// </summary>
     public NativeLocalPlayerFixtureBootstrapConfig? Bootstrap { get; init; }
+
+    /// <summary>
+    /// The fixture after a one-shot bootstrap completed: the native save identity is
+    /// recorded and the bootstrap is disarmed. A copy with three overrides rather than a
+    /// field-by-field reconstruction, because the whole config replaces config.json and
+    /// the navigation fixture's private target label must survive the same write.
+    /// </summary>
+    internal NativeLocalPlayerFixtureConfig WithObservedBootstrapCompletion(string filteredSaveName, string observedSlot, string bootstrapPlayerName) =>
+        this with
+        {
+            LogicalSaveName = filteredSaveName,
+            ObservedSaveSlot = observedSlot,
+            Bootstrap = new NativeLocalPlayerFixtureBootstrapConfig { Enable = false, SaveName = filteredSaveName, PlayerName = bootstrapPlayerName },
+        };
 
     /// <summary>
     /// The closed set of fixture scenarios this build understands. Kept in one
