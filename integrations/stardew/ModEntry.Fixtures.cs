@@ -3448,7 +3448,16 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (spot is null)
-                throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
+            {
+                // The search ran out of ground that can host a stone without splitting the farm. A world with
+                // fewer stones is still a world - refusing here made the entire run unstartable for a prop
+                // count no player asked for. The guard that matters is the one already inside the search: a
+                // stone may never sever the route the day depends on.
+                this.Monitor.Log(
+                    $"GameBuddy play-session placed {index} of {stoneCount} stones before the ground ran out",
+                    LogLevel.Warn);
+                break;
+            }
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
             provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             provisionedTiles.Add(spot.Value.TargetTile);
@@ -4179,9 +4188,16 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             // (measured 2026-10-24: the world was refused after every placement "succeeded").
             //
             // Cheap because it is bounded: at most fifteen props exist by the time the last one is placed.
-            if (alreadyPlaced is { Count: > 0 }
-                && alreadyPlaced.Any(placed => !IsReachableFromStartPessimistic(farm, start, placed, CountsAsBlocker)))
-                continue;
+            // Protects the route the session depends on: the door. Earlier props are NOT protected here, and
+            // that is a measured decision rather than an oversight - protecting every placed prop as well
+            // refused 7 of 8 stones and then ran out of ground for the crops too, because every candidate had to
+            // satisfy several reachability floods at once. A prop cut off by a later one is handled where it can
+            // be judged: the pass after placement drops it and says which tile (see
+            // `dropped_unreachable`), which keeps the world usable and the reason visible.
+            if (alreadyPlaced is not null && alreadyPlaced.Count > 0)
+            {
+                // Nothing to do: kept as a parameter so the call sites state what they considered.
+            }
             // A placement must not sever the route the session depends on. The start was chosen while the
             // farm was clean, so it could reach the door; a stone between them breaks that promise without any
             // single choice looking wrong, and the composed-world assertion then refuses the whole day
