@@ -51,6 +51,7 @@ import { readStrictJsonFile } from "../../../strict-json-reader.js";
 import { readStardewPlayerSettings } from "../stardew-player-settings.js";
 import {
   projectStardewModActionPolicy,
+  readStardewModPresentationLocale,
   writeStardewModActionPolicyIntoConfig,
   type StardewModActionPolicyProjection,
 } from "../stardew-mod-action-policy-projection.js";
@@ -2674,17 +2675,25 @@ async function stageAiClientProfile(
 
         const manifestPath = join(material.sessionDirectory, "stardew-farmhand-manifest.json");
         await verifySafePathBoundary(manifestPath, transactionDirectory);
-        // The player's own action consent, projected from the durable record into the
-        // config the Mod actually reads. The AI-client profile is the one whose reader
-        // gates the Agent surface: `TryInitializeEmbodiment` publishes
-        // `EnabledActionSet` and the co-op night floor from THIS document, while the
-        // Player Host profile only validates its own policy. This document is authored
-        // whole (it is created exclusive, and every key in it is the composer's), so
-        // the three player-owned keys are written as ordinary members here; a LIVE
-        // edit merges them into the same document instead, because by then it carries
-        // whatever the Mod's own WriteConfig left in it.
-        const playerSettings = await readStardewPlayerSettings(dirname(dirname(transactionDirectory)));
-        const actionPolicy = projectStardewModActionPolicy(playerSettings);
+        // The player's own action consent and companion language, projected from
+        // their durable records into the config the Mod actually reads. The AI-client
+        // profile is the one whose reader gates the Agent surface: `TryInitializeEmbodiment`
+        // publishes `EnabledActionSet` and the co-op night floor from THIS document,
+        // while the Player Host profile only validates its own policy. This document
+        // is authored whole (it is created exclusive, and every key in it is the
+        // composer's), so the player-owned keys are written as ordinary members here;
+        // a LIVE edit merges them into the same document instead, because by then it
+        // carries whatever the Mod's own WriteConfig left in it.
+        //
+        // `PresentationLocale` is the one member that is conditional: it is written
+        // only when the player has chosen a companion language, because its absence
+        // is what tells the Mod to present in the live game locale.
+        const runtimeRoot = dirname(dirname(transactionDirectory));
+        const playerSettings = await readStardewPlayerSettings(runtimeRoot);
+        const actionPolicy = projectStardewModActionPolicy(
+          playerSettings,
+          await readStardewModPresentationLocale(runtimeRoot),
+        );
         const aiClientConfig = JSON.stringify({
           EnableLocalBridge: true,
           PipeName: pipeName,
@@ -2694,6 +2703,9 @@ async function stageAiClientProfile(
           PlayerId: admission.manifest.farmhandId,
           CompanionId: admission.manifest.companionId,
           ActionPolicyVersion: 1,
+          ...(actionPolicy.PresentationLocale === undefined
+            ? {}
+            : { PresentationLocale: actionPolicy.PresentationLocale }),
           DeniedActions: actionPolicy.DeniedActions,
           DeniedActionFamilies: actionPolicy.DeniedActionFamilies,
           AdvanceDayMinimumOnlineFarmers: actionPolicy.AdvanceDayMinimumOnlineFarmers,

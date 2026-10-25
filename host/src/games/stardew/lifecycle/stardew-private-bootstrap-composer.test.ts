@@ -23,6 +23,7 @@ import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
 import { consumeOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.internal.js";
 import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
 import { StardewPlayerSettingsStore } from "../stardew-player-settings.js";
+import { PlayerPreferenceStore, playerPreferencePath } from "../../../settings/player-preference-store.js";
 import { projectStardewModActionPolicy } from "../stardew-mod-action-policy-projection.js";
 import {
   bindStardewPrivateBootstrapOwnerTestSupport,
@@ -4923,6 +4924,44 @@ test("the player's stored action policy reaches the config the Mod reads", async
   // Everything the composer owns beside them is untouched.
   assert.equal(config.BridgeToken, "test-bridge-token-0123456789");
   assert.equal(config.EnableLocalBridge, true);
+});
+
+/**
+ * The companion language has one configuration point (the Tavern language
+ * setting), and the Mod was reading a config key nobody wrote: it fell back to
+ * the live game locale, so a player who chose English and plays in Chinese got
+ * Chinese lines - or, worse, a presentation the Mod refused as a locale
+ * mismatch. The bootstrap now projects the player's own choice.
+ */
+test("the player's chosen companion language reaches the config the Mod presents from", async () => {
+  const fixture = await prepareMaterializedAiClientFixture({}, async (runtimeRoot) => {
+    await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).update(0, {
+      action: "setLocale",
+      locale: "en-US",
+    });
+  });
+  const transaction = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const config = JSON.parse(
+    await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(config.PresentationLocale, "en-US");
+  // The projection adds a key; it does not change the ones already proven.
+  assert.deepEqual(config.DeniedActionFamilies, []);
+  assert.equal(config.BridgeToken, "test-bridge-token-0123456789");
+});
+
+/**
+ * A player who never chose a language must keep today's behaviour exactly: the key
+ * is absent from the document, and the Mod's own resolution order (configured
+ * locale, else the live game locale) decides.
+ */
+test("a player with no chosen language gets no PresentationLocale at all", async () => {
+  const fixture = await prepareMaterializedAiClientFixture();
+  const transaction = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const config = JSON.parse(
+    await readFile(join(transaction, "ai-client", "Mods", "GameBuddy", "config.json"), "utf8"),
+  ) as Record<string, unknown>;
+  assert.equal(Object.hasOwn(config, "PresentationLocale"), false);
 });
 
 test("a live save reaches the owned attempt's config and leaves its credentials alone", async () => {

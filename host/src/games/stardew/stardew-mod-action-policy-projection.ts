@@ -1,13 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile, withPathLock } from "../../path-lock.js";
 import { readStrictJsonFile } from "../../strict-json-reader.js";
+import { readStoredCompanionLocale } from "../../settings/player-preference-store.js";
 import type { StardewPlayerSettings } from "./stardew-player-settings.js";
 
 /**
- * The three `ModConfig` fields the player's record becomes, and the merge that
- * puts them into a `config.json` without touching anything else in it.
+ * The `ModConfig` fields the player's records become, and the merge that puts
+ * them into a `config.json` without touching anything else in it.
  *
- * Two facts shape this module.
+ * Two records feed this module, and each stays the sole owner of its fields:
+ * `stardew-player-settings.json` supplies the action policy and the co-op night
+ * floor, and `settings/player-preference.json` supplies the companion language
+ * the Mod presents in. Neither is copied here - both are read at projection time
+ * and neither is written.
+ *
+ * Three facts shape this module.
  *
  * First, the Mod's config document is not this Host's to own. It carries the
  * bridge credentials, the provisioning session token and dozens of fixture
@@ -26,6 +33,13 @@ import type { StardewPlayerSettings } from "./stardew-player-settings.js";
  * not a failure the player caused, and the durable record is what makes the
  * answer survive either way.
  *
+ * Third, `PresentationLocale` is present only when the player has chosen a
+ * companion language. When they have not, the key is absent and the Mod's own
+ * resolution order - configured locale, else the live game locale
+ * (`ModEntry.ResolvePresentationLocale`) - stays in charge. The Host never
+ * invents a language here: an unreadable preference record leaves the key out
+ * for the same reason the Mod has a fallback at all.
+ *
  * `DeniedActions` is written as an empty list rather than omitted. The record has
  * no per-action denials - the surface switches whole families - and an absent key
  * would make the Mod's own reader fall back to its default while the file's
@@ -36,6 +50,8 @@ export type StardewModActionPolicyProjection = Readonly<{
   DeniedActions: readonly string[];
   DeniedActionFamilies: readonly string[];
   AdvanceDayMinimumOnlineFarmers: number;
+  /** Absent leaves the Mod's own live-game-locale fallback in charge. */
+  PresentationLocale?: string;
 }>;
 
 /** The keys this module owns in the Mod's config document. */
@@ -45,20 +61,46 @@ const OWNED_CONFIG_KEYS = Object.freeze([
   "AdvanceDayMinimumOnlineFarmers",
 ] as const);
 
+/**
+ * The player's chosen companion language, read from the record's single
+ * authority at projection time, or undefined when they never chose one.
+ *
+ * This is the same read the Game runtime and the Chat surface already resolve
+ * their own locale through, so the Mod's presentation language and the Agent's
+ * session language can no longer be two independent answers. A record that is
+ * unreadable or corrupt yields undefined rather than a guess: the caller then
+ * leaves `PresentationLocale` out of the document, and the Mod falls back to the
+ * live game locale exactly as it does for a player who never chose.
+ */
+export async function readStardewModPresentationLocale(runtimeRoot: string): Promise<string | undefined> {
+  try {
+    return await readStoredCompanionLocale(runtimeRoot);
+  } catch {
+    return undefined;
+  }
+}
+
 export function projectStardewModActionPolicy(
   settings: Pick<StardewPlayerSettings, "deniedActionFamilies" | "advanceDayMinimumOnlineFarmers">,
+  presentationLocale?: string,
 ): StardewModActionPolicyProjection {
   return Object.freeze({
     DeniedActions: Object.freeze([]) as unknown as readonly string[],
     DeniedActionFamilies: Object.freeze([...settings.deniedActionFamilies]),
     AdvanceDayMinimumOnlineFarmers: settings.advanceDayMinimumOnlineFarmers,
+    ...(presentationLocale === undefined ? {} : { PresentationLocale: presentationLocale }),
   });
 }
 
 /**
- * Sets the three owned keys in an already-serialized Mod config document and
- * leaves every other key alone. `existing` is the document's own object, so the
- * caller decides whether it came from disk or from the composer's own staging.
+ * Sets the owned keys in an already-serialized Mod config document and leaves
+ * every other key alone. `existing` is the document's own object, so the caller
+ * decides whether it came from disk or from the composer's own staging.
+ *
+ * `PresentationLocale` is written only when the projection carries it. An absent
+ * locale must leave the document without the key - that absence IS the answer,
+ * and the Mod's fallback reads it - and a live action-policy save, which says
+ * nothing about language, must not erase what a bootstrap authored.
  */
 export function mergeStardewModActionPolicy(
   existing: Readonly<Record<string, unknown>>,
@@ -66,6 +108,7 @@ export function mergeStardewModActionPolicy(
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
   for (const key of OWNED_CONFIG_KEYS) merged[key] = policy[key];
+  if (policy.PresentationLocale !== undefined) merged.PresentationLocale = policy.PresentationLocale;
   return merged;
 }
 

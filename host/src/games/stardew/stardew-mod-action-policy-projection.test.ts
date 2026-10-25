@@ -9,8 +9,10 @@ import { createBuildWindowsStaleLockReclaimer } from "../../windows-stale-lock-r
 import {
   mergeStardewModActionPolicy,
   projectStardewModActionPolicy,
+  readStardewModPresentationLocale,
   writeStardewModActionPolicyIntoConfig,
 } from "./stardew-mod-action-policy-projection.js";
+import { PlayerPreferenceStore, playerPreferencePath } from "../../settings/player-preference-store.js";
 
 bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 
@@ -54,7 +56,7 @@ const COMPOSER_CONFIG = Object.freeze({
   },
 });
 
-test("the projection names exactly the three fields the record becomes", () => {
+test("the projection names exactly the three fields the settings record becomes, and no locale", () => {
   const policy = projectStardewModActionPolicy({
     deniedActionFamilies: ["farming_crops", "animals_pets"],
     advanceDayMinimumOnlineFarmers: 2,
@@ -72,8 +74,7 @@ test("the projection names exactly the three fields the record becomes", () => {
  * token and every fixture field the composer wrote survive a player save. A
  * projection that rebuilt the document from the record would erase all of them,
  * and the Mod would then fail to connect at the next launch.
- */
-test("merging leaves every key the composer wrote exactly as it was", () => {
+ */ test("merging leaves every key the composer wrote exactly as it was", () => {
   const merged = mergeStardewModActionPolicy(COMPOSER_CONFIG, {
     DeniedActions: [],
     DeniedActionFamilies: ["npc_social"],
@@ -128,6 +129,69 @@ test("an absent config is skipped, not an error", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("merging into a document without a chosen language leaves the key absent", () => {
+  const merged = mergeStardewModActionPolicy(COMPOSER_CONFIG, {
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    AdvanceDayMinimumOnlineFarmers: 1,
+  });
+  // Absence is the answer: it is what makes the Mod present in the live game
+  // locale, so a merge must not fill the key with a placeholder either.
+  assert.equal(Object.hasOwn(merged, "PresentationLocale"), false);
+});
+
+/**
+ * A live action-policy save says nothing about language, so it must not erase a
+ * locale the bootstrap authored into the same document - and a projection that
+ * carries a locale must set it.
+ */
+test("a projection with no locale leaves the document's authored locale alone", () => {
+  const authored = { ...COMPOSER_CONFIG, PresentationLocale: "en-US" };
+  const merged = mergeStardewModActionPolicy(authored, {
+    DeniedActions: [],
+    DeniedActionFamilies: ["npc_social"],
+    AdvanceDayMinimumOnlineFarmers: 1,
+  });
+  assert.equal(merged.PresentationLocale, "en-US");
+
+  const withLocale = mergeStardewModActionPolicy(authored, {
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    AdvanceDayMinimumOnlineFarmers: 1,
+    PresentationLocale: "zh-CN",
+  });
+  assert.equal(withLocale.PresentationLocale, "zh-CN");
+});
+
+async function withPreference(run: (root: string) => Promise<void>): Promise<void> {
+  const root = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-stardew-presentation-locale-"));
+  try {
+    await run(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("the presentation locale is read from the preference record, never invented", async () => {
+  await withPreference(async (root) => {
+    // Nobody chose: there is no locale to project, and the Mod keeps its own
+    // live-game-locale fallback.
+    assert.equal(await readStardewModPresentationLocale(root), undefined);
+
+    await new PlayerPreferenceStore(playerPreferencePath(root)).update(0, { action: "setLocale", locale: "en-US" });
+    assert.equal(await readStardewModPresentationLocale(root), "en-US");
+  });
+});
+
+test("an unreadable preference record yields no locale rather than a guess", async () => {
+  await withPreference(async (root) => {
+    const path = playerPreferencePath(root);
+    await mkdir(join(root, "settings"), { recursive: true });
+    await writeFile(path, "{ not a record", "utf8");
+    assert.equal(await readStardewModPresentationLocale(root), undefined);
+  });
 });
 
 test("a document this module cannot merge into is refused, not replaced", async () => {
