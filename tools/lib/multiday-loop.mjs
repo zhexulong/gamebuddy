@@ -29,7 +29,7 @@ import {
 const POLL_INTERVAL_MS = 250;
 
 /** How many times ONE menu type may be dismissed before its persistence is a named stop. */
-export const MAX_DISMISS_ATTEMPTS = 3;
+const MAX_DISMISS_ATTEMPTS = 3;
 
 /**
  * Does this dismissal's receipt say the ENGINE owns completing the close?
