@@ -1334,9 +1334,50 @@ test("enforces the generic mounted-turn facade, coordinator, authority, store, a
       assert.ok(report.violations.some((item) => item.kind === "invalid_provider_start_implementation"));
     },
   );
-  // The voice surface legitimately added one optional trailing argument. Keep the
-  // widened shape pinned: the fourth argument must be threaded through the exact
-  // admission chain (not consumed before it), and any further widening fails.
+  // The facade may carry any number of optional values, because the vocabulary it forwards is owned by
+  // the execution ledger, not by this gate - the speech sink and the pacing choice each arrived as a
+  // trailing parameter. What the gate owns is THREADING: every trailing parameter reaches the ledger in
+  // order. So a widened-and-threaded signature passes, and a widened-but-unthreaded one still fails.
+  await withFixture(
+    {
+      ...intended,
+      [providerStart]: [
+        'import { startMountedAttempt, consumeMountedAttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
+        'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
+        'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
+        'import { runMountedProviderStartLedger, type NativeChatPreviewPublisher, type NativeChatSpeechSink } from "./p4-provider-start-execution.js";',
+        "export async function startMountedChatProvider(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, previewPublisher?: NativeChatPreviewPublisher, speechSink?: NativeChatSpeechSink) {",
+        "  return await startMountedAttempt(manifest, lease, invocation => consumeMountedAttemptInvocationAdmission(invocation, scope => runMountedProviderStartLedger(scope, previewPublisher, speechSink)));",
+        "}",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
+    },
+  );
+  // The exact shape `host/src/tavern/chat-provider-start.ts` carries today: four optional trailing values.
+  // It is a passing case, not a tolerated one - the rule must cover the file the product ships.
+  await withFixture(
+    {
+      ...intended,
+      [providerStart]: [
+        'import { startMountedAttempt, consumeMountedAttemptInvocationAdmission } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";',
+        'import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";',
+        'import type { HostDeploymentManifest } from "../deployment-manifest.js";',
+        'import { runMountedProviderStartLedger, type NativeChatPacingChoice, type NativeChatPreviewPublisher, type NativeChatSpeechSink } from "./p4-provider-start-execution.js";',
+        "export async function startMountedChatProvider(manifest: HostDeploymentManifest, lease: MountedChatRuntimeLease, previewPublisher?: NativeChatPreviewPublisher, speechSink?: NativeChatSpeechSink, pacing?: NativeChatPacingChoice) {",
+        "  return await startMountedAttempt(manifest, lease, invocation => consumeMountedAttemptInvocationAdmission(invocation, scope => runMountedProviderStartLedger(scope, previewPublisher, speechSink, pacing)));",
+        "}",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
+    },
+  );
+  // A trailing parameter the ledger never receives is the real shortcut: the facade would accept a value
+  // and silently drop it. This is the case the widened rule still refuses.
   await withFixture(
     {
       ...intended,

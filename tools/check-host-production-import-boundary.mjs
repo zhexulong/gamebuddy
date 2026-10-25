@@ -55,6 +55,16 @@ const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mount
 const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
 const CLAIM_COORDINATOR_IMPORTS = new Set(["claimMountedAttempt", "consumeMountedAttemptAdmission"]);
 const PROVIDER_START_COORDINATOR_IMPORTS = new Set(["startMountedAttempt", "consumeMountedAttemptInvocationAdmission"]);
+/**
+ * The provider start's only fixed parameters: the ones `startMountedAttempt` itself receives.
+ *
+ * Everything after them is an optional value the facade FORWARDS to the execution ledger, so the list
+ * cannot be a hand-maintained table of names - every legitimate new forward (the speech sink, the
+ * pacing choice) would otherwise need a gate edit, and the gate would be pinned to a shape it does
+ * not actually own. Threading is checked from the call below instead: the ledger receives exactly
+ * the trailing parameters, in order, so an unforwarded widening still fails.
+ */
+const PROVIDER_START_REQUIRED_PARAMETERS = Object.freeze(["manifest", "lease"]);
 const MOUNTED_STORE_IMPORTS = new Set([
   "acceptMountedPlayerMessage",
   "claimMountedAttempt",
@@ -613,16 +623,16 @@ function isExactProviderStartImplementation(source) {
     implementation.name?.text !== "startMountedChatProvider" ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
     !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
-    implementation.parameters.length < 2 ||
-    implementation.parameters.length > 4 ||
+    implementation.parameters.length < PROVIDER_START_REQUIRED_PARAMETERS.length ||
     implementation.parameters.some(
       (parameter, index) =>
         parameter.name.kind !== ts.SyntaxKind.Identifier ||
-        parameter.name.getText(file) !== ["manifest", "lease", "previewPublisher", "speechSink"][index] ||
         parameter.initializer !== undefined ||
         parameter.dotDotDotToken !== undefined ||
-        (index < 2 && parameter.questionToken !== undefined) ||
-        (index >= 2 && parameter.questionToken === undefined) ||
+        (index < PROVIDER_START_REQUIRED_PARAMETERS.length
+          ? parameter.questionToken !== undefined ||
+            parameter.name.getText(file) !== PROVIDER_START_REQUIRED_PARAMETERS[index]
+          : parameter.questionToken === undefined) ||
         (parameter.modifiers?.length ?? 0) !== 0,
     ) ||
     implementation.body === undefined ||
@@ -681,7 +691,7 @@ function isExactProviderStartImplementation(source) {
     ts.isIdentifier(scopeCallback.body.arguments[0]) &&
     scopeCallback.body.arguments[0].text === scope &&
     implementation.parameters
-      .slice(2)
+      .slice(PROVIDER_START_REQUIRED_PARAMETERS.length)
       .every(
         (parameter, offset) =>
           ts.isIdentifier(scopeCallback.body.arguments[offset + 1]) &&
