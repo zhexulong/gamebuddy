@@ -351,10 +351,10 @@ const SCENARIO_PROMPTS = Object.freeze({
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     zh: (day) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代：东头那片地该收拾了，杂草和石头都清一清，你看着办。把这片收拾完，天黑就回屋睡觉，明天接着来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `玩家去镇上了，临走时交代：东头那片地该收拾了，杂草和石头都清一清，你看着办。把这片收拾完，天黑就回屋睡觉，明天接着来。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `The player has gone into town, and on the way out they said the east patch needs clearing - weeds and rocks - and left the how to you. Once that is done, go inside and sleep when it gets dark, and we pick it up tomorrow. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `The player has gone into town, and on the way out they said the east patch needs clearing - weeds and rocks - and left the how to you. Once that is done, go inside and sleep when it gets dark, and we pick it up tomorrow. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
