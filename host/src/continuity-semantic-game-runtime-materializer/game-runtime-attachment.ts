@@ -52,10 +52,16 @@ export async function createGameRuntimeAttachment(
     recoveryAttachment?: GameRuntimeRecoveryAttachment;
   }>,
 ): Promise<GameCompanionRuntimeAttachment> {
-  const modelConfig = requireSelectedModelConfig(
-    await resolveSurfaceModelSelection({ runtimeRoot: input.runtimeRoot, agentDir: input.agentDir, surface: "game" }),
-    GAME_MODEL_CONFIGURATION_UNAVAILABLE,
-  );
+  // The refusal below names no directory, so a missing connection, an invalid document and a lookup in the
+  // wrong place all read alike. Print the directory and the outcome, once, when the surface is about to refuse.
+  const gameSelection = await resolveSurfaceModelSelection({
+    runtimeRoot: input.runtimeRoot,
+    agentDir: input.agentDir,
+    surface: "game",
+  });
+  if (gameSelection.status !== "selected")
+    process.stderr.write(`[game-model] status=${gameSelection.status} agentDir=${input.agentDir}\n`);
+  const modelConfig = requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE);
   const recoveryAttachment = input.recoveryAttachment;
   const recoveryFields =
     recoveryAttachment === undefined
