@@ -4021,8 +4021,12 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   // The bar's `active` state follows the shell's own `shownSurface`, which is restored from the URL after the
   // boot read settles. A fixed sleep raced it on CI: the panel painted, the entry said `current=page`, and the
   // `More` trigger had not taken the folded state yet. Waiting for the state itself, not for a duration.
+  // The bar's `active` state follows the shell's own `shownSurface`, restored from the URL once the boot read settles,
+  // and the `More` trigger takes the folded entry's state one render after the entry itself. A fixed sleep expired
+  // between those two steps on CI - `Memory{active=true}` beside `More{active=false}` - so this waits for the fact the
+  // assertion is about, on the element that has to carry it.
   await expect
-    .poll(async () => (await readBar()).entries.find((entry) => entry.name === "Memory")?.active ?? false)
+    .poll(async () => (await readBar()).trigger?.active ?? false)
     .toBe(true);
   await page.waitForTimeout(200);
 
