@@ -4021,12 +4021,18 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   // The bar's `active` state follows the shell's own `shownSurface`, which is restored from the URL after the
   // boot read settles. A fixed sleep raced it on CI: the panel painted, the entry said `current=page`, and the
   // `More` trigger had not taken the folded state yet. Waiting for the state itself, not for a duration.
-  // The bar's `active` state follows the shell's own `shownSurface`, restored from the URL once the boot read settles,
-  // and the `More` trigger takes the folded entry's state one render after the entry itself. A fixed sleep expired
-  // between those two steps on CI - `Memory{active=true}` beside `More{active=false}` - so this waits for the fact the
-  // assertion is about, on the element that has to carry it.
+  // Both facts have to hold before the snapshot is taken: the folded entry is the surface in view, and the trigger
+  // reports it. Waiting for the trigger alone timed out on CI because the two are read from the same render - when the
+  // entry is not yet the current one, neither is true, and the loop was watching the shadow instead of the cause.
   await expect
-    .poll(async () => (await readBar()).trigger?.active ?? false)
+    .poll(
+      async () => {
+        const sampled = await readBar();
+        const folded = sampled.entries.filter((entry) => entry.active);
+        return folded.length > 0 && (sampled.trigger?.active ?? false);
+      },
+      { message: "the folded entry is current and the trigger carries it" },
+    )
     .toBe(true);
   await page.waitForTimeout(200);
 
