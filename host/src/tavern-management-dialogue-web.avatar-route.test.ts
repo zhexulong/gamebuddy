@@ -231,7 +231,8 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
-          persona: null, paced: false,
+          persona: null,
+          paced: false,
         };
       },
       async update() {
@@ -242,7 +243,8 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           consent: "revoked" as const,
           decidedAtMs: 1,
           outputDevice: null,
-          persona: null, paced: false,
+          persona: null,
+          paced: false,
         };
       },
     }),
