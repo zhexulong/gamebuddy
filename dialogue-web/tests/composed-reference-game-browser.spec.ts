@@ -4018,6 +4018,12 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   await page.mouse.move(1, 700);
   await page.goto(`/#profile=composed-reference-game&panel=memory&boot=${token}`);
   await expect(page.getByTestId("memory-surface")).toBeVisible();
+  // The bar's `active` state follows the shell's own `shownSurface`, which is restored from the URL after the
+  // boot read settles. A fixed sleep raced it on CI: the panel painted, the entry said `current=page`, and the
+  // `More` trigger had not taken the folded state yet. Waiting for the state itself, not for a duration.
+  await expect
+    .poll(async () => (await readBar()).entries.find((entry) => entry.name === "Memory")?.active ?? false)
+    .toBe(true);
   await page.waitForTimeout(200);
 
   const narrow = await readBar();
