@@ -667,7 +667,10 @@ internal sealed class FarmhandExecutionJournal
         (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
         || (character >= '0' && character <= '9') || character is '_' or '-');
 
-    private static bool IsValidReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
+    // Internal rather than private so the Mod's own test project can assert an emitted reason
+    // code against the validator that will judge it, instead of against a second copy of the
+    // pattern that could drift from this one.
+    internal static bool IsValidReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
         (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
         || (character >= '0' && character <= '9') || character is '_' or '-' or ':');
 

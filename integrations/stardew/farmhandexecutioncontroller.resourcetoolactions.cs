@@ -4,6 +4,7 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Tools;
 using StardewValley.Characters;
+using GameBuddy.Stardew.Core;
 
 namespace GameBuddy.Stardew;
 
@@ -1077,11 +1078,48 @@ internal sealed partial class ExecutionManager
         long requestedDeadlineMs)
     {
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
+        // WHERE the actor stands is decided BEFORE the walk is committed.
+        //
+        // This used to hand the target tile itself to the native finder with
+        // `adjacentArrival`, i.e. ask it to discover one of the eight neighbours for us: a
+        // four-way search, hard-capped at 10 000 expansions, that on a large farm exhausts
+        // and answers `no_native_path` for a target whose free approach was two steps away.
+        // Measured 2026-10-25: five such refusals in one run, one of them followed by a
+        // 57-second gap between the refusal and the next executable action.
+        //
+        // The two predicates are separate because they answer different questions: "is this tile
+        // free" and "is it in the actor's own walkable component".
+        Func<(int X, int Y), bool> isStandable = tile =>
+            StardewBodyController.IsWalkableTile(location, Game1.player, new Vector2(tile.X, tile.Y));
+        (int X, int Y) actor = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+        (int X, int Y)? standingTile = SelectToolApproachTile(
+            (targetX, targetY),
+            actor,
+            isStandable,
+            // An undecided component (the flood exceeded its budget) must not be read as
+            // "nothing is reachable": that would refuse a walk the planner would have made.
+            // Undecided keeps the geometry deciding and lets the finder answer.
+            StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } component
+                ? tile => component(new Vector2(tile.X, tile.Y))
+                : _ => true);
+        if (standingTile is null)
+        {
+            // Nothing is dispatched: no walk is committed for a placement the actor cannot
+            // reach, so the refusal arrives before the engine spends its search budget.
+            (string refusalCode, string refusalEvidence) = DescribeNoReachableApproach(
+                (targetX, targetY), actor, isStandable);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
+        }
+        (int X, int Y) goal = standingTile.Value;
         LocalMoveSpec approach = new(
             executionId,
             requestId,
-            new Vector2(targetX, targetY),
-            true,
+            new Vector2(goal.X, goal.Y),
+            // Exact arrival on the chosen tile, not adjacency to it: the tile is standable and
+            // reachable by construction, so a plan to it exists, and finishing anywhere in its
+            // ring could leave the actor Chebyshev-2 from the target — outside the native
+            // interaction radius this walk exists to satisfy.
+            false,
             this.revision,
             this.tick + deadlineTicks,
             requestedDeadlineMs);
@@ -1121,7 +1159,7 @@ internal sealed partial class ExecutionManager
             ExecutionState.Accepted,
             "accepted",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;

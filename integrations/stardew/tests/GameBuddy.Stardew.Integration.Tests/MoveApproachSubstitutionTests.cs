@@ -41,6 +41,9 @@ public class MoveApproachSubstitutionTests
         return candidate => allowed.Contains(candidate);
     }
 
+    /// <summary>Everything is walkable-to: the cases below are about geometry, not walls.</summary>
+    private static Func<Vector2, bool> Anywhere() => _ => true;
+
     [Fact]
     public void ArrivalAlreadySatisfied_IsRecognisedForAnExactRequestOnTheTile()
     {
@@ -73,7 +76,7 @@ public class MoveApproachSubstitutionTests
         // Only the far side is standable, so the substitution is not "the first
         // candidate" -- it is the only legal interaction position.
         Func<Vector2, bool> standable = StandableAt(new Vector2(10f, 11f));
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 20f), standable)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 20f), standable, Anywhere())
             .Should().Be(new Vector2(10f, 11f));
     }
 
@@ -85,10 +88,10 @@ public class MoveApproachSubstitutionTests
             new Vector2(9f, 10f),
             new Vector2(10f, 11f));
         // Actor below the target: the tile under it is nearer than the one left of it.
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 12f), standable)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 12f), standable, Anywhere())
             .Should().Be(new Vector2(10f, 11f));
         // Actor to the left: the preference reverses.
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(7f, 10f), standable)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(7f, 10f), standable, Anywhere())
             .Should().Be(new Vector2(9f, 10f));
     }
 
@@ -103,7 +106,7 @@ public class MoveApproachSubstitutionTests
             new Vector2(10f, 11f));
         // All four are equidistant from (10,10): the first candidate of the declared
         // order (left, right, up, down) wins, so the choice cannot drift between runs.
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 10f), standable)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 10f), standable, Anywhere())
             .Should().Be(new Vector2(9f, 10f));
     }
 
@@ -116,7 +119,7 @@ public class MoveApproachSubstitutionTests
         // whose own comment records that the native click path stops on any Chebyshev-1
         // tile -- so a diagonal standing tile is a legal place to act from.
         Func<Vector2, bool> diagonalOnly = StandableAt(new Vector2(9f, 9f));
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(5f, 5f), diagonalOnly)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(5f, 5f), diagonalOnly, Anywhere())
             .Should().Be(new Vector2(9f, 9f));
 
         // Cardinals still win when both are standable and equally distant: the declared
@@ -124,7 +127,7 @@ public class MoveApproachSubstitutionTests
         Func<Vector2, bool> cardinalAndDiagonal = StandableAt(
             new Vector2(9f, 10f),
             new Vector2(11f, 11f));
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 10f), cardinalAndDiagonal)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(10f, 10f), cardinalAndDiagonal, Anywhere())
             .Should().Be(new Vector2(9f, 10f));
     }
 
@@ -174,7 +177,7 @@ public class MoveApproachSubstitutionTests
     public void ApproachSelection_ReturnsNullWhenNothingAroundTheTargetIsStandable()
     {
         Vector2 target = new(10f, 10f);
-        ExecutionManager.SelectStandingApproachTile(target, new Vector2(1f, 1f), _ => false)
+        ExecutionManager.SelectStandingApproachTile(target, new Vector2(1f, 1f), _ => false, Anywhere())
             .Should().BeNull();
     }
 

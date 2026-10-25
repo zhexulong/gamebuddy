@@ -950,6 +950,35 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
+    /// The actor's walkable component as a membership predicate for one tile, or <c>null</c> when the probe
+    /// exceeded its budget and therefore makes no claim.
+    ///
+    /// <para>
+    /// This is the reachability half of choosing where to stand, kept separate from standability because they
+    /// are different questions: a tile can be free and still be walled off from where the actor is. Null means
+    /// "undecided" and the caller must let the native planner decide rather than treat it as "nothing is
+    /// reachable", which would refuse a walk the engine would have made.
+    /// </para>
+    /// </summary>
+    internal static Func<Vector2, bool>? BuildWalkableComponent(GameLocation? location, Farmer? actor, int budget = ReachabilityProbeLimit)
+    {
+        if (actor is null || location?.map is null || location.map.Layers.Count == 0)
+            return null;
+        var layer = location.map.Layers[0];
+        HashSet<Point>? reachable = ReachableTiles(
+            new Point((int)actor.Tile.X, (int)actor.Tile.Y),
+            budget,
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && IsWalkableTile(location, actor, new Vector2(tile.X, tile.Y)));
+        if (reachable is null)
+            return null;
+        return tile => reachable.Contains(new Point((int)tile.X, (int)tile.Y));
+    }
+
+    /// <summary>
     /// A lookup for one observation: "can the actor act on this tile?" — it can stand on it or beside it, which is
     /// what every interaction's reach means. Returns <c>null</c> when the component exceeded the probe budget, so the
     /// observation publishes undecided rather than guessing.

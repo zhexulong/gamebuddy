@@ -6,6 +6,7 @@ using StardewValley.Menus;
 using StardewValley.GameData.Minecarts;
 using StardewValley.Tools;
 using StardewValley.Characters;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Navigation;
@@ -79,7 +80,10 @@ internal sealed partial class ExecutionManager
             Vector2? approach = SelectStandingApproachTile(
                 targetTile,
                 Game1.player.Tile,
-                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate));
+                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate),
+                // The actor's OWN walkable component, not just "is this tile free".
+                StardewBodyController.BuildWalkableComponent(Game1.player.currentLocation, Game1.player)
+                    ?? (_ => true));
             if (approach is not null)
             {
                 effectiveTarget = approach.Value;
@@ -137,53 +141,80 @@ internal sealed partial class ExecutionManager
         return accepted;
     }
 
+    /// <summary>The refusal a placement with no reachable standing tile reports, and nothing else does.</summary>
+    internal const string NoReachableApproachReasonCode = "no_reachable_approach";
+
     /// <summary>
-    /// The deterministic standable neighbour of a destination tile, as pure
-    /// arithmetic over a standability predicate so its choice is directly
-    /// testable (the same reason <c>AssessReachability</c> takes a predicate).
+    /// Where a tool-family action stands, decided BEFORE any walk is committed, as arithmetic
+    /// over two predicates so the choice is testable without a world.
     ///
-    /// The whole Chebyshev-1 ring is considered — cardinals first, then diagonals —
-    /// because that is exactly the neighbourhood the rest of the Mod already treats as
-    /// "adjacent": the arrival predicate (<see cref="IsArrivalDelta"/>) accepts the
-    /// full ring when adjacency is allowed, and every interaction admission gates on
-    /// <c>IsTileWithinChebyshevRadius(..., 1)</c>, whose own comment records that the
-    /// native click path "stops on any Chebyshev-1 tile and the subsequent tool call
-    /// re-enters". A cardinal-only search was stricter than both and cost real
-    /// refusals on a densely cropped field, where only a diagonal tile was free.
+    /// The two facts that used to be one: a neighbour can be standable and still be walled off
+    /// from the actor, and picking it commits a walk the engine then answers with
+    /// `no_native_path` after spending its whole search budget. Measured 2026-10-25: five such
+    /// refusals in one run and one 57-second gap before the next executable action.
     ///
-    /// The nearest candidate to the actor wins; equidistant candidates keep the
-    /// declared order, so the choice cannot drift between runs (a run-to-run diff must
-    /// mean something).
+    /// Null is the honest answer: this placement has no approach, which the caller must report
+    /// through <see cref="DescribeNoReachableApproach"/> rather than dispatch.
     /// </summary>
-    internal static Vector2? SelectStandingApproachTile(Vector2 targetTile, Vector2 actorTile, Func<Vector2, bool> isStandable)
+    internal static (int X, int Y)? SelectToolApproachTile(
+        (int X, int Y) target,
+        (int X, int Y) actor,
+        Func<(int X, int Y), bool> isStandable,
+        Func<(int X, int Y), bool> isReachable) =>
+        ApproachTileSelector.Select(target, actor, isStandable, isReachable);
+
+    /// <summary>
+    /// The refusal for a placement with no reachable standing tile: the code an agent can branch
+    /// on, plus the evidence a reader needs to see WHY.
+    ///
+    /// The code names the tile pair with COLONS. The wire's reasonCode alphabet is `[a-z0-9_:-]`
+    /// (`protocol/bridge-v1.schema.json`, `FarmhandExecutionJournal.IsValidReasonCode`), so a
+    /// comma would make the receipt fail validation instead of reporting the refusal; the
+    /// human-facing pair still appears in the evidence as `target=x,y`.
+    ///
+    /// It also keeps two different facts apart: a free neighbour the actor cannot walk to is a
+    /// wall (`standable_neighbour=unreachable`), and no free neighbour at all is geometry
+    /// (`standable_neighbour=none`). Neither is `target_out_of_reach`, which stays what a FAILED
+    /// ROUTE to a tile that does exist reports.
+    /// </summary>
+    internal static (string Code, string Evidence) DescribeNoReachableApproach(
+        (int X, int Y) target,
+        (int X, int Y) actor,
+        Func<(int X, int Y), bool> isStandable)
     {
-        Vector2[] candidates =
-        {
-            targetTile + new Vector2(-1f, 0f),
-            targetTile + new Vector2(1f, 0f),
-            targetTile + new Vector2(0f, -1f),
-            targetTile + new Vector2(0f, 1f),
-            targetTile + new Vector2(-1f, -1f),
-            targetTile + new Vector2(1f, -1f),
-            targetTile + new Vector2(-1f, 1f),
-            targetTile + new Vector2(1f, 1f),
-        };
-        Vector2? best = null;
-        float bestDistance = float.MaxValue;
-        foreach (Vector2 candidate in candidates)
-        {
-            if (!isStandable(candidate))
-                continue;
-            float distance = Math.Abs(candidate.X - actorTile.X) + Math.Abs(candidate.Y - actorTile.Y);
-            // Strict `<` only: equidistant candidates keep the declared candidate
-            // order (left, right, up, down), so the choice is deterministic without a
-            // second ordering rule to reason about.
-            if (best is not null && distance >= bestDistance)
-                continue;
-            best = candidate;
-            bestDistance = distance;
-        }
-        return best;
+        bool anyStandable = ApproachTileSelector.Select(target, actor, isStandable, _ => true) is not null;
+        return (
+            $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}",
+            $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={(anyStandable ? "unreachable" : "none")}");
+    }
+
+    /// <summary>
+    /// The deterministic approach tile for a destination the actor cannot stand on: the
+    /// rule itself is <see cref="ApproachTileSelector.Select"/>, so the choice made here and
+    /// the choice made before a tool-family walk cannot disagree.
+    ///
+    /// The caller supplies BOTH predicates because only it knows how to ask the game:
+    /// <paramref name="isStandable"/> is one answer and <paramref name="isReachable"/> is
+    /// another (the actor's own walkable component). An unreachable-but-standable tile is the
+    /// case this exists for — picking it commits a walk the engine then answers with
+    /// `no_native_path`.
+    ///
+    /// A <paramref name="isReachable"/> that cannot answer (the flood exceeded its budget) is
+    /// passed as `_ =&gt; true`, which leaves the geometry to decide and the native finder to
+    /// rule — an undecided component must not be read as "nothing is reachable".
+    /// </summary>
+    internal static Vector2? SelectStandingApproachTile(
+        Vector2 targetTile,
+        Vector2 actorTile,
+        Func<Vector2, bool> isStandable,
+        Func<Vector2, bool> isReachable)
+    {
+        (int X, int Y)? pick = ApproachTileSelector.Select(
+            ((int)targetTile.X, (int)targetTile.Y),
+            ((int)actorTile.X, (int)actorTile.Y),
+            tile => isStandable(new Vector2(tile.X, tile.Y)),
+            tile => isReachable(new Vector2(tile.X, tile.Y)));
+        return pick is { } chosen ? new Vector2(chosen.X, chosen.Y) : null;
     }
 
     /// <summary>
