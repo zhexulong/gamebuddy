@@ -45,18 +45,26 @@ function repoRelative(ref) {
 
 /** Whether git ignores this path, i.e. it is a build output rather than repository content. */
 function isBuildOutput(ref) {
-  try {
-    execFileSync("git", ["check-ignore", "--quiet", "--no-index", repoRelative(ref)], {
-      cwd: root,
-      windowsHide: true,
-      stdio: "ignore",
-    });
-    return true;
-  } catch (error) {
-    // Exit 1 is "not ignored"; only a missing exit code is a run failure.
-    if (error?.status === 1) return false;
-    throw new Error(`could not ask git what it ignores: ${error?.message ?? error}`);
+  // A directory pattern in .gitignore (`dist/`) only matches a path that exists as a directory: git answers
+  // "not ignored" for `host/dist` when the build has not run, and "ignored" for the same path once it has.
+  // That made this gate pass on a developer's machine (artifacts present) and fail on a fresh checkout
+  // (`.:build:player-distribution -> host/dist`), which reads as a phantom script entry rather than as a
+  // build output. Asking about the directory form as well makes the answer independent of the artifact.
+  const candidates = [repoRelative(ref), `${repoRelative(ref)}/`];
+  for (const candidate of candidates) {
+    try {
+      execFileSync("git", ["check-ignore", "--quiet", "--no-index", candidate], {
+        cwd: root,
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      return true;
+    } catch (error) {
+      // Exit 1 is "not ignored"; only a missing exit code is a run failure.
+      if (error?.status !== 1) throw new Error(`could not ask git what it ignores: ${error?.message ?? error}`);
+    }
   }
+  return false;
 }
 
 function resolveRef(rootDir, ref) {

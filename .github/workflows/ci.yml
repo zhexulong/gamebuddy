@@ -233,6 +233,13 @@ jobs:
           node-version: 24.13.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The test artifact is built from the same production path the `host` job uses, and that path reaches
+      # `vendor/pi-koe`'s own build (which needs its dependencies installed here too). Without these two steps
+      # the build died on `Cannot find package 'esbuild' imported from
+      # vendor/pi-koe/scripts/build-release-artifact.mjs`.
+      - run: bun install --cwd vendor/magic-context --frozen-lockfile
+      - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test
