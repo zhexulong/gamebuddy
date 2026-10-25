@@ -266,8 +266,11 @@ test("the player gives a companion a picture, and the new picture is on screen a
   const hero = await section.locator(".avatar").boundingBox();
   console.log(`[companion-avatar] hero box=${JSON.stringify(hero)}`);
   expect(hero, "her picture is laid out").not.toBeNull();
-  expect(hero!.width, "her picture is drawn at hero size, not the 28 px row size").toBe(128);
-  expect(hero!.height, "and it is square").toBe(128);
+  // `boundingBox()` is fractional: a 128 px plate lays out at 127.99993896484375 under CI's device scale, which made an
+  // exact comparison a coin flip. The assertion's purpose is "hero, not the 28 px row plate", so it keeps that
+  // distinction and rounds the sub-pixel away - `Math.round(127.9999...)` is 128, and the row plate is 28.
+  expect(Math.round(hero!.width), "her picture is drawn at hero size, not the 28 px row size").toBe(128);
+  expect(Math.round(hero!.height), "and it is square").toBe(128);
   // The upload control's own geometry is unchanged by that: the same control, measured with the hero
   // beside it and with the 28 px plate the row used before - the plate being the only difference -
   // keeps exactly its own box. So the hero costs the drawer height and never the control's width, and
