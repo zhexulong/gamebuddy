@@ -94,7 +94,7 @@ export const GATE_PATHS = Object.freeze(["tools/lib/silent-failure.mjs", "tools/
 
 /** A function whose name says it exists to produce a fact. */
 const OBSERVING_NAME =
-  /^(?:re|un)?(?:report|probe|census|observ|diagnos|classif|inspect|measure|survey|attest|advertis|announce|telemetr)/iu;
+  /^(?:re|un)?(?:report|probe|census|observ|diagnos|classif|inspect|measure|survey|attest|advertis|announce|telemetr|flush|close|dispose|shutdown|teardown)/iu;
 
 /** A call that leaves a mark a later reader can find. */
 const OBSERVABLE_SINK =
@@ -593,6 +593,75 @@ export const DECLARED = Object.freeze([
     reason: "a false negative only causes a start attempt, whose failure is reported",
     witness: "return false;",
     sites: 1,
+  }),
+  // Closing a launch that was ALREADY rejected. The validation error is the fact worth keeping, and a
+  // cleanup failure here would replace it with a less useful one; the caller already knows the launch was
+  // refused. Two sites because revoke and close each get their own catch, deliberately: one failing must
+  // not skip the other.
+  Object.freeze({
+    kind: "silent-catch",
+    path: "host/src/continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.ts",
+    symbol: "closeRejectedReceiptBackedLaunch",
+    reason: "cleanup of an already-rejected launch; the validation failure being raised is the fact the caller needs",
+    witness: "/* preserve validation failure */",
+    sites: 2,
+  }),
+  // Idempotence, not a swallowed failure: closing something already closed is the requested outcome, so there
+  // is nothing to report. Two sites, both the same idea - the store is already closed, and the connection was
+  // never opened. Listed rather than exempted by pattern, because "already done" and "could not do it" look
+  // identical in source and only a reader can tell them apart.
+  Object.freeze({
+    kind: "early-return",
+    path: "host/src/tavern/chat-thread-store.ts",
+    symbol: "closeConnection",
+    reason: "idempotence: a second close, or a close with no connection, has nothing to do and nothing to report",
+    witness: "if (closed) return;",
+    sites: 2,
+  }),
+  // Same idempotence, different frame: this one announces once per sink.
+  Object.freeze({
+    kind: "early-return",
+    path: "tools/lib/stardew-fixture-roots.mjs",
+    symbol: "announceStardewFixtureRoots",
+    reason: "announces once per sink; a repeated call has nothing new to say",
+    witness: "if (announcedSinks.has(sink)) return;",
+    sites: 1,
+  }),
+  // A socket close during teardown, where the socket was already dropped by the browser.
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-run/core/browser-evidence.mjs",
+    symbol: "close",
+    reason: "closing an already-closed socket; the capture's own failures are reported through its summary",
+    witness: "/* already closed */",
+    sites: 1,
+  }),
+  // Both capture closers report the failure INSIDE the frozen summary they return, which is the artifact.
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs",
+    symbol: "closeCapture",
+    reason: "reports the failure in the returned capture summary (failures: summary.failures), not on a log line",
+    witness: 'schema: "gamebuddy_live_run_capture/v1"',
+    sites: 1,
+  }),
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-run/memory/run-memory-live-loop.mjs",
+    symbol: "closeIntoReport",
+    reason: "reports the failure in the returned capture summary (failures: summary.failures), not on a log line",
+    witness: 'schema: "gamebuddy_live_run_capture/v1"',
+    sites: 1,
+  }),
+  // Teardown after a verdict has already been read. Replacing that verdict with a close error would hide the
+  // result the run exists to produce; the pid is reported separately by the surviving-process path.
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/run-stardew-lifecycle-cold-session.mjs",
+    symbol: "disposeSession",
+    reason: "best-effort teardown after the verdict; a close error must not replace the verdict already read",
+    witness: "// Teardown is best-effort: a failed close must not replace the verdict already read.",
+    sites: 2,
   }),
 ]);
 

@@ -1888,7 +1888,15 @@ export function createChatThreadStore(
     if (db === undefined) return;
     try {
       db.close();
-    } catch {}
+    } catch (error) {
+      // A database that will not close has not necessarily flushed. Swallowing this left a reader unable to
+      // tell "closed cleanly" from "close threw and we moved on", on the one handle that owns every durable
+      // chat row. Reporting it keeps the caller's flow (close is not allowed to fail the caller) while making
+      // the failure findable.
+      process.stderr.write(
+        `[chat-thread-store] close failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
+      );
+    }
   }
 
   function withDb<T>(fn: (db: DatabaseSync) => T): T {
