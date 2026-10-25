@@ -145,7 +145,16 @@ internal sealed class LocalPipeBridge : IDisposable
                     PipeWorkerTerminalKind kind = ReferenceEquals(completed, reader)
                         ? PipeWorkerTerminalKind.ReaderEnded
                         : PipeWorkerTerminalKind.WriterEnded;
-                    Interlocked.CompareExchange(ref this.workerTerminal, new PipeWorkerTerminal(generation, kind), null);
+                    // WHY the worker ended, not only which one.
+                    //
+                    // Measured 2026-10-25: a run's bridge closed at in-game 22:00, the game kept logging for minutes
+                    // afterwards, and nothing anywhere said why the peer went away - the terminal record carried the
+                    // kind and dropped the one thing that would answer it. `completed` already holds it: a fault has
+                    // an exception, a cancelled task says so, and a clean finish is its own answer.
+                    Interlocked.CompareExchange(
+                        ref this.workerTerminal,
+                        new PipeWorkerTerminal(generation, kind, DescribeWorkerTerminal(completed)),
+                        null);
                 }
                 connectionCancellation.Cancel();
                 try { await Task.WhenAll(reader, writer).ConfigureAwait(false); }
@@ -169,6 +178,23 @@ internal sealed class LocalPipeBridge : IDisposable
         }
     }
 
+    /// <summary>
+    /// Why a worker task ended, in one word or one exception name. `Task.WhenAny` returns the task, and the task already
+    /// holds the answer: a fault carries an exception, a cancellation says so, a clean finish is its own answer. The
+    /// record used to drop all three and keep only which worker stopped, which left the 2026-10-25 disconnect with no
+    /// stated cause anywhere in any artifact.
+    /// </summary>
+    private static string DescribeWorkerTerminal(Task task)
+    {
+        if (task.IsFaulted)
+        {
+            Exception? inner = task.Exception?.InnerException ?? task.Exception;
+            return inner is null ? "faulted" : $"{inner.GetType().Name}:{inner.Message}";
+        }
+        if (task.IsCanceled) return "cancelled";
+        return "completed";
+    }
+
     private async Task ReadLoopAsync(Stream stream, long generation, CancellationToken cancellationToken)
     {
         long windowStartMs = Environment.TickCount64;
@@ -187,11 +213,19 @@ internal sealed class LocalPipeBridge : IDisposable
                 requestsInWindow = 0;
             }
             if (++requestsInWindow > MaximumInboundRequestsPerSecond)
-                throw new InvalidDataException("bridge_inbound_rate_limited");
+            {
+                // Name the numbers: the code alone said "rate limited" and nothing said by how much, which is why the
+                // disconnect of 2026-10-25 took a reconstruction from diagnostics to understand. 32 frames arrived in
+                // one second against a limit of 32, and the reader threw, and the bridge was reported closed with no
+                // cause attached.
+                throw new InvalidDataException(
+                    $"bridge_inbound_rate_limited:frames={requestsInWindow}:limit={MaximumInboundRequestsPerSecond}");
+            }
             if (Interlocked.Increment(ref this.inboundCount) > MaximumQueuedMessages)
             {
                 Interlocked.Decrement(ref this.inboundCount);
-                throw new InvalidDataException("bridge_inbound_rate_limited");
+                throw new InvalidDataException(
+                    $"bridge_inbound_queue_full:queued={MaximumQueuedMessages}");
             }
             this.inbound.Enqueue(new PipeInbound(generation, json));
             Interlocked.Increment(ref this.inboundFramesEnqueued);
@@ -346,7 +380,7 @@ internal sealed class LocalPipeBridge : IDisposable
 
 internal sealed record PipeInbound(long Generation, string Json);
 internal sealed record PipeOutbound(long Generation, string Json, PipeOutboundCompletion? Completion = null);
-internal sealed record PipeWorkerTerminal(long Generation, PipeWorkerTerminalKind Kind);
+internal sealed record PipeWorkerTerminal(long Generation, PipeWorkerTerminalKind Kind, string Reason = "unstated");
 internal enum PipeWorkerTerminalKind { ReaderEnded, WriterEnded }
 
 internal sealed class PipeOutboundCompletion

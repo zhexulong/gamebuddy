@@ -1808,8 +1808,8 @@ public sealed partial class ModEntry : Mod
 
         if (state.LocalPipeBridge.TryConsumeWorkerTerminal(out PipeWorkerTerminal terminal))
             this.MonitorNativeChatIngress(terminal.Kind == PipeWorkerTerminalKind.ReaderEnded
-                ? "ai_player_control_pipe_reader_ended"
-                : "ai_player_control_pipe_writer_ended");
+                ? $"ai_player_control_pipe_reader_ended:{terminal.Reason}"
+                : $"ai_player_control_pipe_writer_ended:{terminal.Reason}");
 
         long generation = state.LocalPipeBridge.CurrentGeneration;
         if (state.LastBridgeGeneration != generation)
