@@ -103,6 +103,7 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
+import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
@@ -1330,6 +1331,14 @@ async function runAgentTurn(text, tools) {
   );
   for (let i = 0; i < turnWaitSeconds; i++) {
     await new Promise((r) => setTimeout(r, 1000));
+    // A dead transport is not a turn to wait for. Measured 2026-10-25: the pipe closed at in-game 22:00, in the same
+    // second the companion was deciding to go to bed; the harness waited out the rest of the evening while the world ran
+    // on to a 2:00 AM pass-out, and the run reported `companion_did_not_sleep` - the CONSEQUENCES of the transport loss,
+    // attributed to her behaviour.
+    const transportLoss = shouldAbandonTurnForTransport(bridgeDisconnections);
+    if (transportLoss.abandon) {
+      return { status: "failed", turn, error: transportLoss.reasonCode };
+    }
     try {
       if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
     } catch {}
