@@ -178,9 +178,10 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   expect(cabinConfirmRequests).toBe(1);
   await expect(panel).not.toContainText(cabinChoiceHandle);
   await expect(panel).not.toContainText("cabinId");
-  // What must never appear here is wire vocabulary or an internal identity, not an ordinary English word: the
-  // guide's own hint reads "Gets the companion ready to play in this session", which `/ready|connected/i` matched
-  // too - a false positive that pinning the surface's copy made inevitable. The identifiers are the invariant.
+  // The concern here is that the panel leaks wire vocabulary or an internal identity, not that it may never use an
+  // ordinary English word: the guide's own hint says "Gets the companion ready to play in this session", which the
+  // earlier `/ready|connected/i` also matched - a false positive that pinning the surface's copy made inevitable.
+  // The identifiers are what must never appear.
   await expect(panel).not.toContainText(/\bready[a-z]*Id\b|\bconnected[A-Z]\w*/u);
   await expect(panel).not.toContainText(/cabin_choice_|attestation_|handoff_/u);
   // The one-time boot token is gone and the profile marker is kept; the drawer
@@ -2312,7 +2313,7 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
   memories = [];
   await surface.getByRole("textbox", { name: "Memory content" }).fill(refusedContent);
   await surface.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(surface.getByRole("status")).toContainText("Operation failed.");
+  await expect(surface.getByRole("status")).toContainText("The chat state could not be safely reconciled.");
   await expect.poll(() => reads).toBe(3);
   await expect(surface.getByText(refusedContent, { exact: true })).toHaveCount(0);
   await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
@@ -3516,8 +3517,8 @@ test("the conversation column is the transcript and the composer, with the model
       contentType: "application/json",
       body: JSON.stringify({
         apiVersion: 1,
-        chat: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
-        game: { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" },
+        chat: { revision: 1, thinkingLevel: "medium" },
+        game: { revision: 1, thinkingLevel: "medium" },
         recommendedModels: [
           {
             providerId: "cpa-oai",
@@ -3912,6 +3913,218 @@ test("the 400px strip folds its trailing peers behind one More and gives the com
   expect(wide.wrapper?.width).toBe(0);
   // The trigger does not exist where nothing folds.
   expect(await page.getByRole("button", { name: "More", exact: true }).count()).toBe(0);
+});
+
+/**
+ * The current peer surface is marked by a shape, not only by a colour.
+ *
+ * At 1440 the bar is the whole of "where am I": the surface's own `<h2>` is
+ * clipped away, so a player's only on-screen answer is the nav entry carrying
+ * `aria-current="page"`. What that entry had was colour - `--accent` instead of
+ * `--text-secondary`, `--surface-raised` instead of transparent,
+ * `--border-strong` instead of transparent - and a state that is three colour
+ * steps apart from its peers is invisible to a colour-blind player and to a
+ * low-contrast theme. The bar (`.nav-button.active { box-shadow: inset 0 -2px 0 0
+ * currentColor }`, style.css) is the channel that does not depend on colour, and
+ * being `currentColor` it adds no colour step to the sheet.
+ *
+ * The bar and not an absolutely positioned `::after`: a pseudo element needs
+ * `position: relative` on the entry and declares `bottom` on it, which turns the
+ * entry's own `transition: all` into a motion site
+ * (`tests/reduced-motion-gate.test.mjs`) and owes a reduced-motion escape for a
+ * bar that never moves. An inset shadow is paint, and it costs the entry no box,
+ * so the 400 px strip's measured widths are what they were.
+ *
+ * The readings quoted below are this same journey, mounted, with the pointer
+ * parked away from the bar, taken from a run with the one rule reverted:
+ *
+ *  - 1440, Chat current - before: `box-shadow: none`, identical to Game's, and the
+ *    two differed only in colour - `color: rgb(200, 120, 125)` vs
+ *    `rgb(200, 192, 182)`, `background: rgb(32, 29, 29)` vs `rgba(0, 0, 0, 0)`,
+ *    `border-color: rgba(255, 255, 255, 0.15)` vs `rgba(0, 0, 0, 0)` - with
+ *    `font-weight: 500` on both. After: `rgb(200, 120, 125) 0px -2px 0px 0px
+ *    inset` against Game's `none`. So the assertion below is exactly the one
+ *    that failed before.
+ *  - 400, Memory current (one of the four folded peers) - before: `Memory` and
+ *    the `More` trigger both read `box-shadow: none`, and the trigger carried no
+ *    `active` state (`class="nav-button app-bar-more-trigger"`), so the strip said
+ *    nothing about which of the four was showing. After: both read
+ *    `rgb(200, 120, 125) 0px -2px 0px 0px inset` while the other five entries
+ *    read `none`.
+ *
+ * Each assertion, and the failure it catches:
+ *  - the selected entry draws the bar and a non-current sibling does not:
+ *    catches a state that is still colour-only;
+ *  - the bar is painted in the entry's own `color`: catches a bar that quietly
+ *    introduced a second accent (or a hardcoded one);
+ *  - `aria-current="page"` stays on exactly one entry and never on the trigger:
+ *    catches the visual state drifting away from the accessible one, and a
+ *    disclosure claiming to be the page;
+ *  - the trigger carries the state only while the current surface is folded
+ *    inside it: catches a `More` that is always lit (which would be the same
+ *    "nothing on screen tells you" one state over) and one that never is;
+ *  - a hovered entry draws no bar, and a keyboard-focused one draws the sheet's
+ *    gold ring instead of it: catches the bar leaking out of the selected state,
+ *    which would make hover, focus and current indistinguishable from each other.
+ *  - hover and the current entry keep the SAME raised paint (`rgb(32, 29, 29)`
+ *    on both) and differ only in colour: that is the bar with no bar, and it is
+ *    why the bar - not a fourth colour - is what has to separate them.
+ */
+test("the current peer surface is marked by a shape in the bar, at both widths and through the More disclosure", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+  await page.route("**/api/tavern/v1/chats", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, chats: [] }) }),
+  );
+
+  const readBar = () =>
+    page.evaluate(() => {
+      const read = (node: HTMLElement) => {
+        const entry = getComputedStyle(node);
+        return {
+          name: node.getAttribute("aria-label"),
+          current: node.getAttribute("aria-current"),
+          active: node.classList.contains("active"),
+          color: entry.color,
+          background: entry.backgroundColor,
+          weight: entry.fontWeight,
+          outline: `${entry.outlineWidth} ${entry.outlineStyle} ${entry.outlineColor}`,
+          bar: entry.boxShadow,
+        };
+      };
+      const entries = [...document.querySelectorAll<HTMLElement>(".app-bar-actions .nav-button")];
+      const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
+      return {
+        entries: entries.map(read),
+        trigger: trigger === null ? null : { ...read(trigger), expanded: trigger.getAttribute("aria-expanded") },
+        triggerDrawn: trigger !== null && trigger.getBoundingClientRect().width > 0,
+      };
+    });
+  /** No bar: the entry paints no shadow at all. */
+  const unmarked = "none";
+
+  // The strip this product lives in: Memory is one of the four peers that fold
+  // behind `More` at 400 px, so the trigger is the only thing on screen that can
+  // report it.
+  await page.setViewportSize({ width: 400, height: 720 });
+  await page.mouse.move(1, 700);
+  await page.goto(`/#profile=composed-reference-game&panel=memory&boot=${token}`);
+  await expect(page.getByTestId("memory-surface")).toBeVisible();
+  await page.waitForTimeout(200);
+
+  const narrow = await readBar();
+  const narrowCurrent = narrow.entries.filter((entry) => entry.current === "page");
+  console.log(
+    `[nav-current] 400 memory: ${narrow.entries
+      .map((entry) => `${entry.name}{current=${entry.current ?? "-"} active=${entry.active} bar=${entry.bar}}`)
+      .join(" ")}`,
+  );
+  expect(narrow.triggerDrawn, "the strip folds at 400 px").toBe(true);
+  expect(narrow.trigger?.name).toBe("More");
+  expect(narrowCurrent.map((entry) => entry.name)).toEqual(["Memory"]);
+  expect(narrowCurrent[0]!.bar, "the folded current entry draws the bar itself").not.toBe(unmarked);
+  expect(narrow.trigger?.current, "the disclosure is not the page").toBeNull();
+  expect(narrow.trigger?.active, "the trigger carries the folded current surface's state").toBe(true);
+  expect(narrow.trigger?.bar, "the trigger reports the surface it is hiding").toBe(narrowCurrent[0]!.bar);
+  // Everything else - the rail's own two visible entries and the three peers
+  // that are not current - draws nothing: the bar is the selection's alone.
+  for (const entry of narrow.entries.filter((candidate) => !candidate.active))
+    expect(entry.bar, `${entry.name} is not current and must not draw the bar`).toBe(unmarked);
+
+  // Returning to a surface the rail shows directly releases the trigger: a
+  // `More` that stayed lit would be the same "nothing tells you" one state over.
+  await page.locator('.app-bar-actions .nav-button[aria-label="Chat"]').click();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await page.mouse.move(1, 700);
+  await page.waitForTimeout(200);
+  const narrowChat = await readBar();
+  console.log(
+    `[nav-current] 400 chat: ${narrowChat.entries
+      .map((entry) => `${entry.name}{current=${entry.current ?? "-"} active=${entry.active} bar=${entry.bar}}`)
+      .join(" ")}`,
+  );
+  expect(narrowChat.trigger?.current, "selecting a rail surface does not mark the disclosure").toBeNull();
+  expect(narrowChat.trigger?.active, "Chat is on the rail, so nothing folded is current").toBe(false);
+  expect(narrowChat.trigger?.bar).toBe(unmarked);
+  expect(narrowChat.entries.filter((entry) => entry.current === "page").map((entry) => entry.name)).toEqual(["Chat"]);
+
+  // The wide bar, where the entry's own word is the only other thing that could
+  // say where the player is.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.mouse.move(1, 890);
+  await page.waitForTimeout(200);
+
+  const wide = await readBar();
+  const currentWide = wide.entries.filter((entry) => entry.current === "page");
+  const selected = currentWide[0]!;
+  const sibling = wide.entries.find((entry) => entry.name === "Game")!;
+  console.log(
+    `[nav-current] 1440 chat: ${wide.entries
+      .map((entry) => `${entry.name}{current=${entry.current ?? "-"} color=${entry.color} weight=${entry.weight} bar=${entry.bar}}`)
+      .join(" ")}`,
+  );
+  expect(wide.triggerDrawn, "the trigger is no box on a wide bar").toBe(false);
+  expect(currentWide.map((entry) => entry.name), "exactly one peer reports the page").toEqual(["Chat"]);
+  expect(selected.bar, "the current entry draws a bar a sibling does not").not.toBe(unmarked);
+  // An inset shadow along the bottom edge, painted in the entry's own colour.
+  expect(selected.bar, "the bar is inset, so it costs the entry no box").toContain("inset");
+  expect(selected.bar, "the bar is the entry's own colour, not a new palette step").toContain(selected.color);
+  expect(sibling.bar, "a non-current sibling in the same row draws no bar").toBe(unmarked);
+
+  // Hover and focus keep their own channels and never draw the bar.
+  await page.hover('.app-bar-actions .nav-button[aria-label="Game"]');
+  await page.waitForTimeout(200);
+  const hovered = (await readBar()).entries.find((entry) => entry.name === "Game")!;
+  await page.locator('.app-bar-actions .nav-button[aria-label="Game"]').focus();
+  // Keyboard focus has its own channel - the sheet's `:focus-visible` ring - and
+  // a programmatic `.focus()` is not it, so the ring is measured the way a
+  // keyboard player reaches the rail: by tabbing to it.
+  for (let hop = 0; hop < 8; hop += 1) {
+    await page.keyboard.press("Tab");
+    if (
+      await page.evaluate(() => {
+        const node = document.activeElement;
+        return (
+          node instanceof HTMLElement && node.classList.contains("nav-button") && node.getAttribute("aria-current") === null
+        );
+      })
+    )
+      break;
+  }
+  // The ring is a transitioned property (`transition: all` on the entry), so the
+  // reading is taken once it has settled.
+  await page.waitForTimeout(200);
+  const tabbed = await page.evaluate(() => {
+    const node = document.activeElement;
+    if (!(node instanceof HTMLElement) || !node.classList.contains("nav-button")) return null;
+    const style = getComputedStyle(node);
+    return {
+      name: node.getAttribute("aria-label"),
+      current: node.getAttribute("aria-current"),
+      outline: `${style.outlineWidth} ${style.outlineStyle} ${style.outlineColor}`,
+      bar: style.boxShadow,
+    };
+  });
+  console.log(
+    `[nav-current] 1440 states: hovered Game color=${hovered.color} bg=${hovered.background} bar=${hovered.bar}; tabbed ${tabbed?.name} outline=${tabbed?.outline} bar=${tabbed?.bar}`,
+  );
+  expect(hovered.bar, "a hovered entry is not the current one").toBe(unmarked);
+  // Hover and the current entry share one raised paint, so on a colour-blind
+  // player's screen the bar is the only thing that separates them - which is
+  // exactly why a hover must never draw it.
+  expect(hovered.background, "hover paints the same raised surface the current entry keeps").toBe(selected.background);
+  expect(hovered.color, "hover and current differ in colour, and only the bar survives that").not.toBe(selected.color);
+  expect(tabbed, "Tab reaches the bar's own entries").not.toBeNull();
+  expect(tabbed?.current, "a non-current entry is what the ring is measured on").toBeNull();
+  expect(tabbed?.outline, "the keyboard-focused entry draws the focus ring").toContain("solid");
+  expect(tabbed?.bar, "focus is not the current state").toBe(unmarked);
 });
 
 /**
@@ -4536,7 +4749,7 @@ test("a chat with no durable draft lets the player save the first one from the c
   });
   await expect(row).toBeVisible();
   await expect(row).toContainText("Unsaved draft");
-  await expect(row.getByRole("status")).toContainText("Operation failed.");
+  await expect(row.getByRole("status")).toContainText("The conversation moved on since the page read it, so your change was not applied. Reload the chat to see the current state, then try again.");
   await expect(row).not.toContainText("Saved draft");
   await expect(discard).toHaveCount(0);
 });
@@ -4966,7 +5179,7 @@ test("Chats surface switches the mounted conversation on click and refuses a sta
   const readsBefore = listReads;
   await surface.getByTestId("chat-item").nth(2).getByTestId("chat-select").click();
   await expect.poll(() => selectRequests).toBe(1);
-  await expect(surface.getByRole("status")).toContainText("Operation failed.");
+  await expect(surface.getByRole("status")).toContainText("The conversation moved on since the page read it, so your change was not applied. Reload the chat to see the current state, then try again.");
   await expect.poll(() => listReads).toBeGreaterThan(readsBefore);
 
   // An idle switch: the Host switches the mounted conversation in process and answers `switched`, and
@@ -5645,8 +5858,9 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   // The durable title the list projects: the rename route's read-back is the only thing that moves it.
   let targetTitle = "Second conversation";
   let targetTitleRevision = 1;
-  let chatProfile = { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" };
-  const gameProfile = { revision: 1, modelId: "deepseek-v4", thinkingLevel: "medium" };
+  // A profile names the level its surface reasons at: the model belongs to the active connection.
+  let chatProfile = { revision: 1, thinkingLevel: "medium" };
+  const gameProfile = { revision: 1, thinkingLevel: "medium" };
   const profileWrites: unknown[] = [];
   const titleWrites: unknown[] = [];
   const projected = () => ({
@@ -5681,9 +5895,9 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
       return route.fulfill(
         jsonOk({ apiVersion: 1, chat: chatProfile, game: gameProfile, recommendedModels }),
       );
-    const body = route.request().postDataJSON() as { modelId: string; thinkingLevel: string };
+    const body = route.request().postDataJSON() as { thinkingLevel: string };
     profileWrites.push(route.request().postDataJSON());
-    chatProfile = { revision: chatProfile.revision + 1, modelId: body.modelId, thinkingLevel: body.thinkingLevel };
+    chatProfile = { revision: chatProfile.revision + 1, thinkingLevel: body.thinkingLevel };
     return route.fulfill(jsonOk({ apiVersion: 1, chat: chatProfile, game: gameProfile, recommendedModels }));
   });
   await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
