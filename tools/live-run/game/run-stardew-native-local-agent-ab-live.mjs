@@ -102,6 +102,18 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
+// The per-turn account: what each turn dispatched and how the night it ended resolved. Appended turn by turn so a run
+// that dies still says which of the three worlds it was in (never slept / receipt lost / slept and mis-read).
+import {
+  createTurnLedger,
+  crossingsFromTurnLedger,
+  nightTurnFacts,
+  readTurnLedger,
+  reconcileExecutionTraces,
+  summarizeTurnLedger,
+  TURN_LEDGER_FILE,
+  turnLedgerRow,
+} from "./turn-ledger.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
@@ -3349,9 +3361,22 @@ try {
     await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]);
     if (!voiceChild.killed) voiceChild.kill("SIGKILL");
   }
-  await runtime?.close().catch(() => {});
+  // Teardown must not decide whether the run's own evidence exists, but a silent teardown decides it by
+  // accident: `flushRunTrace` is the last step of `close()`, and an empty catch here meant the trace file
+  // was never written in 2425 runs while every one of them produced a manifest beside it. Nothing failed
+  // loudly enough to notice.
+  //
+  // The failure is recorded rather than thrown: a run whose teardown could not write its trace is still a
+  // run whose other evidence is worth keeping, and the refusal belongs in the artifact, not in a crash.
+  let teardownFailure = null;
+  await runtime?.close().catch((error) => {
+    teardownFailure = error instanceof Error ? error.message : String(error);
+  });
   await binding.close().catch(() => {});
   client.close("agent_ab_complete");
+  if (teardownFailure !== null) {
+    process.stderr.write(`[teardown] runtime close reported: ${teardownFailure.slice(0, 200)}\n`);
+  }
 }
 /**
  * Reads what the runtime actually mounted versus what the product placed for
