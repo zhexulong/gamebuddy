@@ -1,7 +1,7 @@
 {
   "note": "Diagnostic print sites per production host/src file. Update deliberately, in its own commit, when a new bounded operational record is added.",
-  "revision": "945aa9ce",
-  "total": 42,
+  "revision": "8a804906",
+  "total": 43,
   "counts": {
     "bootstrap/entry/desktop-host-entry.internal.ts": 1,
     "companion-loop.ts": 1,
@@ -9,6 +9,7 @@
     "composition/desktop-presentation-admission-owner.ts": 1,
     "continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.ts": 1,
     "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts": 1,
+    "continuity-semantic-game-runtime-materializer/game-runtime-attachment.ts": 1,
     "continuity-semantic-game-runtime-materializer/game-runtime-context-assembly.ts": 1,
     "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts": 5,
     "gameplay-task-subagent.ts": 2,
