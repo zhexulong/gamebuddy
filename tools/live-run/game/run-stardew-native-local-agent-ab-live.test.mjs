@@ -1702,6 +1702,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   // The count identity is published by the crashed path too: three flat frames and no observed program is three rows.
   assert.deepEqual(result.executionTrace, {
     ok: true,
+    sumsAgree: true,
     flat: 3,
     program: 0,
     programDispatches: 0,
@@ -1816,7 +1817,16 @@ test("an error that escapes the run still publishes the work it had already reco
   );
   assert.deepEqual(
     published.executionTrace,
-    { ok: true, flat: 3, program: 0, programDispatches: 0, rows: 3, expectedRows: 3, unobservedPrograms: 0 },
+    {
+      ok: true,
+      sumsAgree: true,
+      flat: 3,
+      program: 0,
+      programDispatches: 0,
+      rows: 3,
+      expectedRows: 3,
+      unobservedPrograms: 0,
+    },
     "the trace counts are the trace's own, on this path too",
   );
   assert.equal(published.revision, 42, "the bridge facts it received are published with it");
@@ -1845,7 +1855,17 @@ test("an unobserved program is not a program that dispatched nothing", async () 
     eventsQuery: async () => ({ code: "not_found", events: [], nextCursor: 0 }),
   });
   assert.deepEqual(failing, [
-    { programId: "p_unreadable", accepted: true, observed: false, dispatched: null, executions: [], nodeOutcomes: [] },
+    {
+      programId: "p_unreadable",
+      accepted: true,
+      observed: false,
+      // The reason, not just the fact: a read that threw is not a program that did nothing, and this field is what
+      // tells them apart without searching a log by hand.
+      observation: "read_failed:bridge_disconnected",
+      dispatched: null,
+      executions: [],
+      nodeOutcomes: [],
+    },
   ]);
   assert.equal(failing[0].dispatched, null, "an unobserved program must not read as dispatched: 0");
 

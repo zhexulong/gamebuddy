@@ -2429,22 +2429,28 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
   for (const submission of submissions) {
     const programId = typeof submission?.programId === "string" ? submission.programId : null;
     const accepted = submission?.accepted === true;
-    const unobserved = Object.freeze({
-      programId,
-      accepted,
-      observed: false,
-      dispatched: null,
-      executions: [],
-      nodeOutcomes: [],
-    });
+    // One shape per REASON, because the reasons are not the same fact. `dispatched: null` keeps meaning "not
+    // measured" and never zero, and `observation` says which of the three happened - so a reader does not have to
+    // search the Mod log by hand to find out. Measured 2026-10-25: eleven accepted-but-unobserved programs, and
+    // the only way to argue about any of them was exactly that.
+    const unobserved = (observation) =>
+      Object.freeze({
+        programId,
+        accepted,
+        observed: false,
+        observation,
+        dispatched: null,
+        executions: [],
+        nodeOutcomes: [],
+      });
     if (programId === null) {
-      records.push(unobserved);
+      records.push(unobserved("no_program_id"));
       continue;
     }
     try {
       const status = await statusQuery(programId);
       if (status?.code !== "found" || status.snapshot === null) {
-        records.push(unobserved);
+        records.push(unobserved(accepted ? "accepted_but_unknown_to_mod" : "rejected_by_mod"));
         continue;
       }
       const events = [];
@@ -2483,8 +2489,8 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
           ),
         }),
       );
-    } catch {
-      records.push(unobserved);
+    } catch (error) {
+      records.push(unobserved(`read_failed:${(error instanceof Error ? error.message : String(error)).slice(0, 80)}`));
     }
   }
   return Object.freeze(records);
