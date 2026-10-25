@@ -277,8 +277,14 @@ public static class BodyProgramJournalPersistence
               // A node that was skipped needs a reason UPSTREAM, unless the program itself ended as Failed - then the
               // program-level fact is the reason, which is what lets an abandoned program close its never-attempted nodes
               // instead of leaving them Pending (and therefore the program still having work, which is the poison).
+              //
+              // `Failed` is in the ancestor set for the same reason it is in that exception: a node whose dependency
+              // failed can never be attempted, exactly as when the dependency was rejected. Without it, propagating
+              // skipped to the dependents of a failed node produced a document this same validator refused - the
+              // asymmetry moved rather than closed.
               if (node.State == BodyProgramNodeState.SkippedDependency && programState != BodyProgramState.Failed
-                  && !HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedOrRecoveryAncestor, state => state is BodyProgramNodeState.Rejected or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned)) return true;
+                  && programState != BodyProgramState.Cancelled
+                  && !HasAncestorIn(descriptor.NodeId, byId, nodes, rejectedOrRecoveryAncestor, state => state is BodyProgramNodeState.Rejected or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)) return true;
           }
           return false;
       }

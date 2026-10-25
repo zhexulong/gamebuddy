@@ -452,14 +452,22 @@ public sealed class BodyProgramAuthorityTests
 
          OpenBodyProgramJournalAuthority reopened = Open(store, policy: () => Policy("policy-b", 2));
          BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? restartValidationReason).Should().BeTrue(restartValidationReason);
-         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+         // The dependents are closed now, so nothing is left mid-flight for the restart fence to recover: a
+         // program that failed cleanly reopens Opened. RecoveryRequired is for work that was in the air.
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
         BodyProgramJournalProgram program = reopened.Snapshot.Programs.Single();
-        program.State.Should().Be(BodyProgramState.RecoveryRequired);
+         // A cleanly failed program keeps its own terminal state; only work that was in the air is fenced.
+         program.State.Should().Be(outcome == BodyProgramNodeOutcome.Failed ? BodyProgramState.Failed : BodyProgramState.Cancelled);
          BodyProgramJournalNode terminal = program.Nodes.Single(node => node.NodeId == "first");
          terminal.State.Should().Be(outcome == BodyProgramNodeOutcome.Failed ? BodyProgramNodeState.Failed : BodyProgramNodeState.Cancelled);
          terminal.ExecutionBinding.Should().NotBeNull();
          terminal.GrantId.Should().BeNull();
-         program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.Pending);
+         // `second` depends on `first`, so a terminal failure owes it a terminal answer. It used to stay
+         // `Pending` for ever: `HasExecutableWork` is "Pending AND all DependsOn Succeeded", which can never
+         // hold again once `first` failed, so the program kept a node that no run could ever advance. The
+         // persistence layer's own comment calls that shape the poison, and the multi-day run of 2026-10-25
+         // produced it from one `door_out_of_range`.
+         program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.SkippedDependency);
     }
     [Fact]
     public void ReopenRejectsPersistedFactWithTamperedOutputKind()

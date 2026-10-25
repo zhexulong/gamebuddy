@@ -25,6 +25,11 @@ public sealed class ModEntryFixtureBoundaryTests
     {
         "TryInitializeNativeLocalPlayerFixture", "TryBootstrapNativeLocalPlayerFixture",
         "IsReachableFromStart",
+        // The strict twin, added 2026-10-25: the composed-world assertion counts the fixture's own
+        // placements as blockers, so placement has to ask the same question it will be judged by.
+        "IsReachableFromStartPessimistic",
+        // Measures the walkable component a start belongs to, so a pocket is refused before props are placed.
+        "WalkableComponentSize",
         // The shared binding resolution the scenario helpers share: it belongs to this partial like every other fixture
         // member, so the boundary rule registers it rather than exempting the file.
         "ResolveBoundFarmhandId",

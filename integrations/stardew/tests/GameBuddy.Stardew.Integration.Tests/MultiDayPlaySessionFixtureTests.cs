@@ -99,7 +99,10 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
 
         // ...and the world does contain work that spends the morning it really has.
         string fixture = ReadFixtureSource();
-        fixture.Should().Contain("for (int index = 0; index < 10; index += 1)");
+        // The counts come from the ground now, not from a literal: `stoneCount` is derived so that a farm with less
+        // walkable room still arms. Pinning "10" here would re-introduce the fixed budget this whole change removed,
+        // so the assertion names the shape instead - a loop over a count, plus the seed the crops are planted with.
+        fixture.Should().Contain("for (int index = 0; index < stoneCount; index += 1)");
         fixture.Should().Contain("cauliflowerSeedId, 8");
     }
 

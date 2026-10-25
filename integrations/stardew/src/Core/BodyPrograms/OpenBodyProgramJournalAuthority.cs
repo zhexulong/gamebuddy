@@ -440,13 +440,53 @@ public sealed class OpenBodyProgramJournalAuthority
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
-         updated = updated with { State = result.Outcome switch
+         // A failed node owes its dependents the same terminal answer a rejected one does.
+         //
+         // Measured 2026-10-25: `exit_house` was dispatched while the actor was still six tiles from the door, the
+         // native call refused with `door_out_of_range`, and this node became Failed. Its dependents were never
+         // touched, so they stayed Pending - and `HasExecutableWork` is "a Pending node whose DependsOn are all
+         // Succeeded", which no longer holds for anything. The program then recomputed to Failed with unnamed
+         // Pending nodes still inside it: the shape the persistence layer's own comment calls the poison.
+         //
+         // `Rejected` already computes this closure; the asymmetry was that only one of the two terminals did.
+         BodyProgramJournalNode[] skippedOnFailure =
+             result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled
+                 ? FailedDependents
+                     .Compute(
+                         updated.Program.Nodes.Select(descriptor => (descriptor.NodeId, descriptor.DependsOn.ToArray())).ToArray(),
+                         new[] { node.NodeId },
+                         nodeId => updated.Nodes.First(candidate => candidate.NodeId == nodeId).State.ToString())
+                     .Select(nodeId => updated.Nodes.First(candidate => candidate.NodeId == nodeId) with
+                     {
+                         State = BodyProgramNodeState.SkippedDependency,
+                         NodeAttempt = 0,
+                         AdmissionAttempt = 0,
+                         GrantId = null,
+                         ExecutionBinding = null,
+                         ReceiptId = null,
+                         Evidence = null,
+                         PostconditionVerification = null,
+                         RecoveryDiagnostic = null,
+                         RejectionCode = null,
+                         ClaimOwnership = null,
+                     })
+                     .ToArray()
+                 : Array.Empty<BodyProgramJournalNode>();
+         // The skip and the program state are decided together, on one node set: applying them in either
+         // order leaves an intermediate document the validator refuses - skipped-on-Active, or a program
+         // still counted as having executable work because its dependents had not been closed yet.
+         BodyProgramJournalProgram withSkips = updated;
+         foreach (BodyProgramJournalNode skippedNode in skippedOnFailure) withSkips = ReplaceNode(withSkips, skippedNode);
+         updated = withSkips with { State = result.Outcome switch
          {
              BodyProgramNodeOutcome.Cancelled => BodyProgramState.Cancelled,
              BodyProgramNodeOutcome.Uncertain => BodyProgramState.RecoveryRequired,
-             _ => RecomputeProgramState(updated),
+             _ => RecomputeProgramState(withSkips),
          } };
-        if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program!.Program.ProgramId, "node_completed", node.NodeId, node.NodeAttempt))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.PersistenceWriteFailed);
+         BodyProgramJournalState settled = AppendEvent(ReplaceProgram(this.state, updated), program!.Program.ProgramId, "node_completed", node.NodeId, node.NodeAttempt);
+         foreach (BodyProgramJournalNode skippedNode in skippedOnFailure)
+             settled = AppendEvent(settled, program!.Program.ProgramId, "node_skipped", skippedNode.NodeId, 0);
+         if (!TryPersist(settled)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         if (result.Outcome == BodyProgramNodeOutcome.Uncertain) this.OpenStatus = BodyProgramJournalOpenStatus.RecoveryRequired;
         return BodyProgramControllerResult.Success(result);
     }

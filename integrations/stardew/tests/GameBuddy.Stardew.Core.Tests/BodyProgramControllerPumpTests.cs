@@ -212,7 +212,10 @@ public sealed class BodyProgramControllerPumpTests
 
         BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
         status.State.Should().Be(BodyProgramState.Failed);
-        status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.Pending);
+        // `load` depends on `inspect`, so the failure owes it a terminal answer rather than leaving it
+        // Pending for ever. What this case is really pinning is that it was never DISPATCHED - the assertion
+        // below says so - and the state is now honest about why.
+        status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.SkippedDependency);
         admission.Sent.Should().ContainSingle(challenge => challenge.NodeId == "inspect");
         admission.Sent.Should().NotContain(challenge => challenge.NodeId == "load");
     }
