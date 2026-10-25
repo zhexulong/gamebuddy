@@ -151,7 +151,7 @@ const playerPreferenceStore = Object.freeze({
       consent: "undecided" as const,
       decidedAtMs: null,
       outputDevice: null,
-      persona: null,
+      persona: null, paced: false,
     };
   },
   async update(_expectedRevision: number, _update: PlayerPreferenceUpdate) {
@@ -162,7 +162,7 @@ const playerPreferenceStore = Object.freeze({
       consent: "revoked" as const,
       decidedAtMs: 1,
       outputDevice: null,
-      persona: null,
+      persona: null, paced: false,
     };
   },
 });

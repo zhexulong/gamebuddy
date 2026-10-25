@@ -2182,7 +2182,7 @@ test("the voice persona is the same bounded shape on the wire and in the store, 
   assert.equal(read.Check(preference("soft-maid")), false);
   assert.equal(read.Check(preference("a".repeat(33))), false);
   assert.equal(
-    read.Check({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
+    read.Check({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null , paced: false}),
     false,
     "the persona is a required member of the frozen read shape",
   );

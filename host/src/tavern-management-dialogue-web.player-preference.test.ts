@@ -210,7 +210,7 @@ test("both settings surfaces read and write ONE record under ONE revision", asyn
       consent: "undecided",
       decidedAtMs: null,
       outputDevice: null,
-      persona: null,
+      persona: null, paced: false,
     });
     assert.deepEqual(Object.keys(voice0).sort(), [
       "consent",

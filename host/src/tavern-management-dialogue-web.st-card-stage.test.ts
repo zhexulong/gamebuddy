@@ -211,7 +211,7 @@ async function stageFixmounted(root: string) {
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
-          persona: null,
+          persona: null, paced: false,
         };
       },
       async update() {
@@ -222,7 +222,7 @@ async function stageFixmounted(root: string) {
           consent: "revoked" as const,
           decidedAtMs: 1,
           outputDevice: null,
-          persona: null,
+          persona: null, paced: false,
         };
       },
     }),
