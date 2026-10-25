@@ -221,9 +221,9 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
       listMemories: async (input) => {
         if (input.continuityId !== manifest.principal.continuityId) throw new Error("gamebuddy_memory_continuity_mismatch");
         return [
-          { sourceType: "historian", stateToken: "tok_abc_original", content: "  The farmer  loves  blueberries.   ", category: "semantic", status: "active" },
-          { sourceType: "historian", stateToken: "tok_xyz_original", content: "Mira is a forest spirit.", category: "interaction", status: "permanent" },
-          { sourceType: "historian", stateToken: "tok_789_original", content: "Old quest notes.", category: "semantic", status: "archived" },
+          { playerAuthored: false, stateToken: "tok_abc_original", content: "  The farmer  loves  blueberries.   ", category: "semantic", status: "active" },
+          { playerAuthored: false, stateToken: "tok_xyz_original", content: "Mira is a forest spirit.", category: "interaction", status: "permanent" },
+          { playerAuthored: false, stateToken: "tok_789_original", content: "Old quest notes.", category: "semantic", status: "archived" },
         ];
       },
       // Chapters: this stub holds none - a valid history for a continuity before its first fold.
@@ -271,14 +271,14 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
   assert.equal(results.leakedRaw, false);
   assert.equal(results.contentLeak, true);
   assert.equal(results.stableRevision, true);
-    assert.equal(results.schemaOk, true);
-    // Every fixture row is a system-written row, so the projection must call it the companion's - the
-    // mapping is the whole point of carrying provenance at all.
-    assert.deepEqual(results.origins, ["companion", "companion", "companion"]);
-    // Exposure is exactly the bounded player-managed browser DTO, nothing else.
-    for (const keys of results.exposedKeys as readonly (readonly string[])[]) {
-      assert.deepEqual(keys, ["category", "content", "handle", "origin", "pinned", "status", "title"]);
-    }
+  assert.equal(results.schemaOk, true);
+  // Every fixture row is a system-written row, so the projection must call it the companion's - the
+  // mapping is the whole point of carrying provenance at all.
+  assert.deepEqual(results.origins, ["companion", "companion", "companion"]);
+  // Exposure is exactly the bounded player-managed browser DTO, nothing else.
+  for (const keys of results.exposedKeys as readonly (readonly string[])[]) {
+    assert.deepEqual(keys, ["category", "content", "handle", "origin", "pinned", "status", "title"]);
+  }
   assert.equal(results.projectionRevisionLen, 43);
   assert.equal((results.afterClose as { ok: boolean }).ok, false);
   assert.equal(results.continuityId, "continuity_01");
@@ -290,6 +290,7 @@ test("mounted memory service projects every injected Memory row and fingerprints
     let changed = false;
     const stub = Object.freeze({
       listMemories: async () => Array.from({ length: 800 }, (_, i) => ({
+        playerAuthored: false,
         stateToken: "tok_" + i,
         content: changed && i === 500 ? "changed row 500" : "row " + i,
         category: i % 2 === 0 ? "semantic" : "interaction",
@@ -316,12 +317,21 @@ test("mounted memory service projects every injected Memory row and fingerprints
   `);
   const first = results.first as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
   const same = results.same as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
-  const changedRead = results.changedRead as { memories: ReadonlyArray<{ content: string }>; projectionRevision: string };
+  const changedRead = results.changedRead as {
+    memories: ReadonlyArray<{ content: string }>;
+    projectionRevision: string;
+  };
   assert.equal(first.memories.length, 800);
   assert.equal(same.memories.length, 800);
   assert.equal(changedRead.memories.length, 800);
-  assert.equal(first.memories.some((memory) => memory.content === "row 500"), true);
-  assert.equal(changedRead.memories.some((memory) => memory.content === "changed row 500"), true);
+  assert.equal(
+    first.memories.some((memory) => memory.content === "row 500"),
+    true,
+  );
+  assert.equal(
+    changedRead.memories.some((memory) => memory.content === "changed row 500"),
+    true,
+  );
   assert.equal(results.firstSchemaOk, true);
   assert.equal(results.changedSchemaOk, true);
   assert.equal(first.projectionRevision, same.projectionRevision);
@@ -379,15 +389,60 @@ test("mounted memory service reads the exact embedded runtime's vendor Memory pa
   );
 });
 
+test("a memory the player writes through the panel reads as the player's, and the companion's own reads as hers", async () => {
+  const results = await mounted(`
+    // The panel's create, over the real vendor store: this is the row the defect made indistinguishable
+    // from the companion's own, because the store records it as an agent-path write.
+    const service = createMemoryManagementService({ manifest, lease, profile });
+    const before = await service.read();
+    const written = await service.mutate({
+      apiVersion: 1,
+      operation: "create",
+      expectedProjectionRevision: before.projectionRevision,
+      content: "I told her: the farmer likes blueberries.",
+    });
+    // The companion's side of the same projection, carried by a store row with no player authority
+    // behind it. The real authoring path for it is the fork's own test (a historian/agent write), which
+    // asserts the field this mapping reads; here the question is only what the Host tells the player.
+    const companionRow = Object.freeze({
+      listMemories: async () => [{
+        playerAuthored: false,
+        stateToken: "tok_companion",
+        content: "She remembers: the mill opens at nine.",
+        category: "semantic",
+        status: "active",
+      }],
+      listChapters: async () => [],
+    });
+    const companionService = createMemoryManagementService({ manifest, lease, profile }, companionRow);
+    const companionRead = await companionService.read();
+    process.stdout.write(JSON.stringify({
+      written: written.memories.map((memory) => ({ content: memory.content, origin: memory.origin })),
+      reread: (await service.read()).memories.map((memory) => ({ content: memory.content, origin: memory.origin })),
+      companion: companionRead.memories.map((memory) => ({ content: memory.content, origin: memory.origin })),
+    }));
+    await companionService.close();
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  // The defect: this read was ["companion"], so the panel said "She remembers this" about the player's
+  // own sentence and the "I told her this" filter chip was always empty.
+  assert.deepEqual(results.reread, [{ content: "I told her: the farmer likes blueberries.", origin: "player" }]);
+  // The mutation's own reread agrees with the next read, so the row does not change author on the way out.
+  assert.deepEqual(results.written, results.reread);
+  assert.deepEqual(results.companion, [{ content: "She remembers: the mill opens at nine.", origin: "companion" }]);
+});
+
 test("mounted memory service mutates only after projection CAS and always returns a fresh safe reread", async () => {
   const results = await mounted(`
-    let rows = [{ sourceType: "historian", stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
+    let rows = [{ playerAuthored: false, stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
     const writes = [];
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async ({ content }) => {
         writes.push({ operation: "create", content });
-        rows = [...rows, { sourceType: "historian", stateToken: "tok_created", content, category: "semantic", status: "active" }];
+        rows = [...rows, { playerAuthored: true, stateToken: "tok_created", content, category: "semantic", status: "active" }];
       },
       update: async ({ stateToken, content }) => {
         writes.push({ operation: "update", stateToken, content });
@@ -420,7 +475,12 @@ test("mounted memory service mutates only after projection CAS and always return
     { operation: "update", stateToken: "tok_created", content: "Updated" },
     { operation: "archive", stateToken: "tok_updated" },
   ]);
-  assert.equal((results.archived as { memories: Array<{ content: string; status: string }> }).memories.find((row) => row.content === "Updated")?.status, "archived");
+  assert.equal(
+    (results.archived as { memories: Array<{ content: string; status: string }> }).memories.find(
+      (row) => row.content === "Updated",
+    )?.status,
+    "archived",
+  );
   assert.equal((results.stale as { ok: boolean }).ok, false);
   assert.match((results.stale as { error: string }).error, /memory_mutation_conflict/);
 });
@@ -431,7 +491,7 @@ test("mounted memory service rejects concurrent creates sharing the same project
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async ({ content }) => {
-        rows = [...rows, { sourceType: "historian", stateToken: "tok_" + content, content, category: "semantic", status: "active" }];
+        rows = [...rows, { playerAuthored: true, stateToken: "tok_" + content, content, category: "semantic", status: "active" }];
       },
       update: async () => { throw new Error("unexpected update"); },
       archive: async () => { throw new Error("unexpected archive"); },
@@ -470,12 +530,12 @@ test("mounted memory service rejects concurrent creates sharing the same project
 
 test("mounted memory service maps a vendor CAS conflict to 409 without a stale success projection", async () => {
   const results = await mounted(`
-    let rows = [{ sourceType: "historian", stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
+    let rows = [{ playerAuthored: false, stateToken: "tok_original", content: "Original", category: "semantic", status: "active" }];
     const stub = Object.freeze({
       listMemories: async () => rows,
       create: async () => { throw new Error("unexpected create"); },
       update: async () => {
-        rows = [{ sourceType: "historian", stateToken: "tok_newer", content: "Concurrent writer won", category: "semantic", status: "active" }];
+        rows = [{ playerAuthored: false, stateToken: "tok_newer", content: "Concurrent writer won", category: "semantic", status: "active" }];
         throw new Error("Memory state token was not found or is stale");
       },
       archive: async () => { throw new Error("unexpected archive"); },
@@ -553,6 +613,7 @@ test("mounted memory service rejects malformed or oversized vendor content befor
   const results = await mounted(`
     const oversizedStub = Object.freeze({
       listMemories: async () => [{
+        playerAuthored: false,
         stateToken: "tok_oversized",
         content: "x".repeat(4097),
         category: "semantic",
@@ -577,6 +638,7 @@ test("mounted memory service retains all rows when the projected set exceeds 200
     const { TavernBrowserValidatorsV1 } = await import(contractUrl);
     const largeStub = Object.freeze({
       listMemories: async () => Array.from({ length: 201 }, (_, i) => ({
+        playerAuthored: false,
         stateToken: "tok_" + i,
         content: "row " + i,
         category: "semantic",
@@ -603,6 +665,7 @@ test("mounted memory service uses fixed category labels that never derive from c
   const results = await mounted(`
     const longStub = Object.freeze({
       listMemories: async () => [{
+        playerAuthored: false,
         stateToken: "tok_long",
         content: "player-private-content-" + "x".repeat(1000),
         category: "semantic",
@@ -645,9 +708,7 @@ test("a failed read reports one bounded reason on stderr: no stack, no unbounded
   `);
   assert.match((results.mismatch as { error: string }).error, /memory_read_unavailable/);
   assert.match((results.truncated as { error: string }).error, /memory_read_storage_unavailable/);
-  const reasons = (results.stderr as string)
-    .split("\n")
-    .filter((line) => line.startsWith("[memory] read failed: "));
+  const reasons = (results.stderr as string).split("\n").filter((line) => line.startsWith("[memory] read failed: "));
   assert.equal(reasons.length, 2);
   // The vendor message's newline is collapsed, so one failure is exactly one line and never a stack.
   assert.match(
@@ -662,7 +723,7 @@ test("a failed mutation reports one bounded reason on stderr", async () => {
   const results = await mounted(`
     const incomplete = Object.freeze({
       listMemories: async () => [{
-        sourceType: "historian",
+        playerAuthored: false,
         stateToken: "tok_original",
         content: "Original",
         category: "semantic",
@@ -689,8 +750,13 @@ test("a failed mutation reports one bounded reason on stderr", async () => {
   assert.match((results.outcome as { error: string }).error, /memory_read_service_unavailable/);
   // The client still sees only the canonical code; the reason that distinguishes this from a
   // storage outage is the one bounded line on the diagnostic channel, and nothing else.
-  assert.equal(
-    (results.stderr as string).trimEnd(),
-    "[memory] mutation failed: memory_read_service_unavailable",
-  );
+  //
+  // The child's stderr is shared with the other channels a mounted runtime writes to (the
+  // narrative-gate reporter, for one), so this selects the memory channel's own lines exactly as
+  // the read test above does. The force is unchanged: exactly one bounded memory-mutation line,
+  // and it carries the reason.
+  const reasons = (results.stderr as string)
+    .split("\n")
+    .filter((line) => line.startsWith("[memory] mutation failed: "));
+  assert.deepEqual(reasons, ["[memory] mutation failed: memory_read_service_unavailable"]);
 });

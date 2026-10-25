@@ -65,8 +65,7 @@ export function createMemoryManagementService(
     options.lease.chatSurfaceSessionId,
   ).runtimeCwd;
   const mutationEnabled =
-    options.profile.routeIds.includes("memory.mutate") &&
-    options.profile.operationIds.includes("memory.mutate");
+    options.profile.routeIds.includes("memory.mutate") && options.profile.operationIds.includes("memory.mutate");
   const lease = options.lease;
   const identityProfile = options.lease.runtimeSession?.profile;
   if (!identityProfile) throw unavailable();
@@ -130,8 +129,7 @@ export function createMemoryManagementService(
         (row.status !== "sealed" && row.status !== "edited" && row.status !== "deleted")
       )
         throw unavailable();
-      const span =
-        row.startDate === row.endDate ? row.startDate : `${row.startDate}\u2192${row.endDate}`;
+      const span = row.startDate === row.endDate ? row.startDate : `${row.startDate}\u2192${row.endDate}`;
       return Object.freeze({
         handle: projectChapterHandle(row.chapterId),
         title: typeof row.title === "string" && row.title.length > 0 ? row.title : "Chapter",
@@ -144,14 +142,14 @@ export function createMemoryManagementService(
       });
     });
 
-
   const projectRows = (rows: readonly MemoryRowView[], chapters: readonly MemoryChapterV1[]): MemoryReadV1 => {
     const memories: MemoryItemV1[] = rows.map((row) => {
       if (
         typeof row.stateToken !== "string" ||
         !isMemoryContent(row.content) ||
         (row.category !== "semantic" && row.category !== "interaction") ||
-        (row.status !== "active" && row.status !== "permanent" && row.status !== "archived")
+        (row.status !== "active" && row.status !== "permanent" && row.status !== "archived") ||
+        typeof row.playerAuthored !== "boolean"
       )
         throw unavailable();
       return Object.freeze({
@@ -160,10 +158,14 @@ export function createMemoryManagementService(
         content: row.content,
         category: row.category,
         status: row.status,
-        // The product's own vocabulary, mapped once here: the store says `historian | agent |
-        // dreamer | user`, and the player only needs to know whose memory it is. Everything that is
-        // not the player's own writing is the companion's, including her own `ctx_memory` writes.
-        origin: row.sourceType === "user" ? ("player" as const) : ("companion" as const),
+        // The product's own vocabulary, mapped once here: the store answers whether the player's own
+        // writing stands in this row, and the player only needs to know whose memory it is.
+        //
+        // That answer is the store's player-authority stamp, not `sourceType`: a player typing in the
+        // panel is stored as `sourceType: "agent"` because the write arrives through the command
+        // facade, and the store reserves `"user"` for a dashboard entry that does not exist. Reading
+        // the write path is what made every player-written row read as the companion's.
+        origin: row.playerAuthored ? ("player" as const) : ("companion" as const),
         pinned: row.status === "permanent",
       });
     });
@@ -198,7 +200,7 @@ export function createMemoryManagementService(
       assertOpen();
       inFlight += 1;
       try {
-      return projectRows(await readRows(), projectChapters(await readChapters()));
+        return projectRows(await readRows(), projectChapters(await readChapters()));
       } catch (error) {
         throw mapReadError(error);
       } finally {
@@ -262,7 +264,12 @@ export function createMemoryManagementService(
                   const row = rows.find((candidate) => projectHandle(candidate.stateToken) === command.handle);
                   if (row === undefined) throw conflict();
                   if (command.operation === "update")
-                    await vendor.update({ continuityId, ...profileBinding, stateToken: row.stateToken, content: command.content });
+                    await vendor.update({
+                      continuityId,
+                      ...profileBinding,
+                      stateToken: row.stateToken,
+                      content: command.content,
+                    });
                   else await vendor.archive({ continuityId, ...profileBinding, stateToken: row.stateToken });
                 }
                 assertOpen();
@@ -346,7 +353,8 @@ function mapReadError(error: unknown): Error {
 
 function mapMutationError(error: unknown): Error {
   process.stderr.write(`[memory] mutation failed: ${boundedReason(error)}\n`);
-  if (error instanceof Error && /memory_(?:read_service_unavailable|mutation_conflict)/.test(error.message)) return error;
+  if (error instanceof Error && /memory_(?:read_service_unavailable|mutation_conflict)/.test(error.message))
+    return error;
   const message = error instanceof Error ? error.message : "";
   if (/storage|sqlite|eio|enoent/i.test(message)) return new Error("memory_read_storage_unavailable");
   if (/conflict|stale|not.?found|missing/i.test(message)) return conflict();
