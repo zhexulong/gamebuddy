@@ -3,6 +3,7 @@
     ".": {
       "entry": [
         "tools/*.mjs",
+        "tools/perf/*.bench.mjs",
         "tools/lib/stardew-csharp-syntax-structural-canary.mjs",
         "tools/live-run/**/*.mjs",
         "tools/lib/chat-run-audit.mjs!",
