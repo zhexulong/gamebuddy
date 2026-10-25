@@ -292,12 +292,24 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
       }
     }
     for (const menu of dismissible) {
-      if (menu.dismissReceipt?.reasonCode !== "modal_dismissed" || menu.dismissReceipt?.state !== "succeeded") {
-        violations.push(
-          violation(`shipping_menu_not_dismissed:${String(menu.dismissReasonCode ?? "no_receipt")}`, `${where}.menus`),
-        );
-      } else {
-        shoppingMenuDismissals += 1;
+      for (const menu of dismissible) {
+        // Either the published action dismissed it (the old shape) or it was HELD and then went away (the current one:
+        // `SleepAndAdvanceDayLifecycle` commits it, so the loop never clicks and can have no receipt). The baseline asks
+        // whether the summary was cleared, not which component typed the receipt - insisting on the former made every run
+        // red the moment the ownership moved, and would have called a correctly-cleared menu a failure.
+        const dismissedByAction =
+          menu.dismissReceipt?.reasonCode === "modal_dismissed" && menu.dismissReceipt?.state === "succeeded";
+        const committedByLifecycle = menu.decision === "wait" && menu.clearedAt !== undefined;
+        if (!dismissedByAction && !committedByLifecycle) {
+          violations.push(
+            violation(
+              `shipping_menu_not_dismissed:${String(menu.dismissReasonCode ?? "no_receipt")}`,
+              `${where}.menus`,
+            ),
+          );
+        } else {
+          shoppingMenuDismissals += 1;
+        }
       }
     }
 

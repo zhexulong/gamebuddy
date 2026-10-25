@@ -347,3 +347,30 @@ test("the evidence projection reads both live shapes the receipts carry", () => 
   });
   assert.equal(viaObject.advanced, true);
 });
+
+// After the shipping summary moved into the night lifecycle, no run could satisfy the baseline: it demanded a
+// dismissal receipt the loop no longer produces, so every night was `shipping_menu_not_dismissed:no_receipt` while the
+// menu had in fact been cleared. The baseline asks whether the summary was CLEARED, not who typed the receipt.
+test("a summary cleared by the lifecycle counts as cleared", () => {
+  const result = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({ menus: [{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1234 }] }),
+      DAY({ day: 2, menus: [{ menuType: "ShippingMenu", decision: "wait", clearedAt: 5678 }] }),
+    ],
+  });
+  assert.equal(result.shoppingMenuDismissals, 2, `violations=${JSON.stringify(codes(result))}`);
+});
+
+test("a summary that was held and never cleared is still a violation", () => {
+  // The property that must survive the relaxation: waiting is not itself evidence, and this is the case that would
+  // catch a gate relaxed into uselessness.
+  const result = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [DAY({ menus: [{ menuType: "ShippingMenu", decision: "wait" }] }), DAY({ day: 2, menus: [] })],
+  });
+  assert.ok(
+    codes(result).some((code) => String(code).startsWith("shipping_menu_not_dismissed")),
+    `an uncleared summary must be refused; got ${JSON.stringify(codes(result))}`,
+  );
+});

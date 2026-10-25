@@ -142,6 +142,12 @@ export async function watchRollover(
     const dayNow = typeof snapshot?.dayOfMonth === "number" ? snapshot.dayOfMonth : null;
     const menuType = readHeldMenu(snapshot);
     const decision = decideHeldMenu(menuType);
+    // A menu that was HELD and is now gone was closed by whoever owns it. That is the only observation the harness has
+    // for the shipping summary now that the night lifecycle commits it: the loop does not click, so a receipt would be a
+    // fiction, but "it was there and now it is not" is a fact the world hands over for free.
+    for (const entry of menus) {
+      if (entry.clearedAt === undefined && entry.menuType !== menuType) entry.clearedAt = now();
+    }
     if (menuType !== null && !menus.some((entry) => entry.menuType === menuType)) {
       menus.push({ menuType, decision: decision.kind });
     }
