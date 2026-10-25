@@ -299,7 +299,10 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         // The engine's OWN transition state, which is what a night stalls in: `new_day` is `Game1.NewDay`'s flag,
         // `game_mode` moves through the loading/playing modes, and the fade alpha proves whether the fade is
         // advancing. All three are plain reads, and a stall here is not something the Mod's own phases can show.
-        string engineState = $";new_day={Game1.newDay.ToString().ToLowerInvariant()};game_mode={Game1.gameMode};saving={Game1.game1.IsSaving.ToString().ToLowerInvariant()};fade={Game1.fadeToBlackAlpha.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}";
+        // The clock RATE belongs beside the clock itself: 471 s of wall time bought 540 in-game minutes on the run of
+        // 2026-10-25 when the engine's own rate says it should have bought 673, and nothing in any artifact said why.
+        // With the rate published, that question is arithmetic instead of inference.
+        string engineState = $";new_day={Game1.newDay.ToString().ToLowerInvariant()};game_mode={Game1.gameMode};saving={Game1.game1.IsSaving.ToString().ToLowerInvariant()};fade={Game1.fadeToBlackAlpha.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)};clock_rate_ms={Game1.realMilliSecondsPerGameMinute};game_time={Game1.timeOfDay};paused={Game1.paused.ToString().ToLowerInvariant()};freeze_controls={Game1.freezeControls.ToString().ToLowerInvariant()}";
         this.Monitor.Log($"[DEBUG-native-local-readiness] state={state}{engineState};location={Game1.player.currentLocation?.NameOrUniqueName ?? "unknown"};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};can_move={Game1.player.CanMove};event_up={Game1.eventUp};menu={Game1.activeClickableMenu?.GetType().Name ?? "none"}.", LogLevel.Trace);
     }
 
