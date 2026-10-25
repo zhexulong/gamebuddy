@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
+import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
@@ -555,6 +556,7 @@ markPhase("bridgeConnectedMs");
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
 // happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
 const bridgeDisconnections = [];
+ledger.record("run.start");
 // The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
 // only the flat count reads as "nothing had happened" on a run whose work all went through programs.
 let lastKnownProgramDispatches = 0;
@@ -590,6 +592,10 @@ client.onDiagnostic?.((diagnostic) => {
   console.error("BRIDGE_DIAGNOSTIC", JSON.stringify(entry));
 });
 const factLog = [];
+// One clock, one ledger. Every wait this run could be sitting inside gets a boundary here, so a duration is a
+// subtraction rather than an inference - which is what the previous run could not do (`actionCadence` reported
+// all three phases as zero, and `acceptMs` was the whole accept path rather than the provider's own latency).
+const ledger = createLedger({ now: () => Date.now() });
 /** Exact serialized bridge entries already printed, so a contract-legal
  * redelivery of the same transition does not read as a second action. */
 const loggedFactLines = new Set();
@@ -823,7 +829,11 @@ function toolTimingInvariant({ calls, frames }) {
   });
 }
 
-function readToolTiming(sessionJsonlPath, { executionTraceFlat, unboundReason = "no_session_record" } = {}) {
+function readToolTiming(
+  sessionJsonlPath,
+  { executionTraceFlat, unboundReason = "no_session_record" } = {},
+  ledger = null,
+) {
   const frames = Number.isInteger(executionTraceFlat) ? executionTraceFlat : null;
   // ONE shape for "no timing published": `byCategory` and `longest` are null, not empty categories, because an empty
   // category reads as a measured zero and a zero is a number a reader quotes. `reason` is the only thing to read.
@@ -857,6 +867,7 @@ function readToolTiming(sessionJsonlPath, { executionTraceFlat, unboundReason = 
       for (const part of Array.isArray(message.content) ? message.content : []) {
         if (part?.type !== "toolCall") continue;
         pending.set(part.id, { category: toolTimingCategory(part.name), startedAtMs: atMs });
+        ledger?.record("tool.start", { tool: part.name ?? null, category: toolTimingCategory(part.name) });
       }
       continue;
     }
@@ -864,6 +875,7 @@ function readToolTiming(sessionJsonlPath, { executionTraceFlat, unboundReason = 
     const call = pending.get(message.toolCallId);
     if (call === undefined) continue;
     pending.delete(message.toolCallId);
+    ledger?.record("tool.settled", { tool: call.category });
     if (call.category === undefined) continue;
     const durationMs = atMs - call.startedAtMs;
     if (durationMs < 0) continue;
@@ -1000,6 +1012,7 @@ const onCompanionTextPresented = (text, locale) => {
   const elapsedMs = turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs;
   const committedAtMs = Date.now();
   presentationPieces.push(Object.freeze({ index: presentationPieces.length, text, locale, elapsedMs }));
+  ledger.record("present.visible", { index: presentationPieces.length - 1 });
   // The absolute commit moment, kept in a SIDE array on purpose: `pieces` keeps its published shape (several tests pin
   // it), while a reader still gets the moment each piece landed on the run clock. Without it the silence audit can only
   // answer `not established`, which is what it had to do for every run before this.
@@ -1096,6 +1109,9 @@ client.onFact((fact) => {
       }
     })();
     factLog.push(entry);
+    // The same listener that records the fact also stamps the ledger: a receipt is one boundary on the run's
+    // own clock, so the wait it ends is a subtraction rather than an inference.
+    if (entry.type === "execution_receipt") ledger.record("world.settled", { reasonCode: entry.reasonCode ?? null });
     if (serialized === null) {
       // A payload the recorder cannot serialize must not take the SESSION down with it. The bridge treats any
       // throw from a fact listener as a fatal transport fault and closes it (`fact_listener_failed`), so an
@@ -2507,6 +2523,8 @@ async function sampleProgramOutcomes() {
 const originalProgramSubmit = client.programSubmit.bind(client);
 client.programSubmit = async (program) => {
   if (program?.programId !== undefined) agentProgramId = program.programId;
+  // Stamped BEFORE the await: the wait the ledger measures is the Mod's, not the transport's.
+  ledger.record("world.dispatch", { via: "program", programId: program?.programId ?? null });
   const submit = await originalProgramSubmit(program);
   if (submit?.snapshot?.programId !== undefined) agentProgramId = submit.snapshot.programId;
   programSubmissions.push(
@@ -3376,6 +3394,7 @@ try {
     teardownFailure = error instanceof Error ? error.message : String(error);
   });
   await binding.close().catch(() => {});
+  ledger.record("run.end");
   client.close("agent_ab_complete");
   if (teardownFailure !== null) {
     process.stderr.write(`[teardown] runtime close reported: ${teardownFailure.slice(0, 200)}\n`);
@@ -3890,6 +3909,19 @@ async function writeRunBundle({
     // concluding the run dispatched nothing.
     runTrace: runTraceRecord,
     programTrace: { path: PROGRAM_TRACE_FILE, records: (programRows ?? []).length },
+    // Three waits a reader can act on, each from the same clock: the provider's own latency, the game's own work,
+    // and the gap between them. An unfinished pair is reported as `open` rather than as a zero.
+    // The provider's own three boundaries are NOT recorded, and that is stated rather than left as a zero: the runner
+    // has no provider callback (`after_provider_response` never fires - the vendor expects a numeric status this Pi
+    // does not send), so `provider.request`/`first_token`/`done` have no observation point here. A reader sees an
+    // empty ledger for them and knows why, instead of reading zeroes as "the provider was instant".
+    unavailable: Object.freeze(["provider.request", "provider.first_token", "provider.done"]),
+    waits: Object.freeze({
+      provider: ledgerSummary(ledgerSpans(ledger.entries(), "provider.request", "provider.first_token")),
+      world: ledgerSummary(ledgerSpans(ledger.entries(), "world.dispatch", "world.settled")),
+      tool: ledgerSummary(ledgerSpans(ledger.entries(), "tool.start", "tool.settled")),
+    }),
+    ledger: ledger.snapshot(),
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
   // cross-checks the file against the manifest).
