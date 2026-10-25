@@ -734,9 +734,37 @@ function isSymbolValueExpression(expression) {
   );
 }
 
+/**
+ * The named, single-purpose exception for a sandbox that builds an isolated context and DELETES the
+ * capabilities it withholds.
+ *
+ * That is the one mechanism a plan-script sandbox has, and it is the shape the computed-global rule
+ * forbids - so the rule stays fail-closed and a file opts in BY NAME, with a reason the report prints.
+ * A bare marker is not an exception (a reasonless exemption is the silent pass again), and the delete
+ * requirement is checked at the syntax node, so a declared file still cannot READ a computed global.
+ */
+const GLOBAL_STRIP_DECLARATION = /(?:\/\/|\/\*|\*)\s*global-strip-sandbox:\s*(\S.*?)\s*(?:\*\/)?$/;
+function globalStripSandboxDeclarations(source) {
+  const declarations = [];
+  source.split("\n").forEach((text, index) => {
+    const matched = GLOBAL_STRIP_DECLARATION.exec(text.trim());
+    if (matched !== null) declarations.push({ line: index + 1, reason: matched[1] });
+  });
+  return declarations;
+}
+
 function staticReferences(source) {
   const result = [];
   const all = tokens(source);
+  // A sandbox that builds a fresh `node:vm` context and DELETES the capabilities
+  // it withholds writes exactly the shape the computed-global rule forbids, on
+  // purpose. The rule stays fail-closed; a file may opt in by name, on the
+  // stripping line or the two above it, with a reason the report prints.
+  const globalStripDeclarations = globalStripSandboxDeclarations(source);
+  const consumedGlobalStrips = new Set();
+  const permittedGlobalStrips = [];
+  const globalStripDeclarationFor = (line) =>
+    globalStripDeclarations.filter((declaration) => declaration.line <= line && declaration.line >= line - 2).at(-1);
   const erasedTypeOffsets = erasedImportTypeOffsets(source);
   const ast = ts.createSourceFile("production-source.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   // A computed `globalThis[...]` can reach the string-keyed `process`/`global`
@@ -903,6 +931,12 @@ function staticReferences(source) {
             : true;
         return false;
       })();
+    // Only the delete itself is the withholding mechanism. Reading a computed
+    // global member is an acquisition, and nothing here may excuse one.
+    const isGlobalStrip =
+      node.parent !== undefined &&
+      ts.isDeleteExpression(node.parent) &&
+      (hasComputedGlobalMember || hasComputedGlobalProcessMember);
     if (
       propertyName === "getBuiltinModule" ||
       globalSelfAliasAcquisition ||
@@ -912,12 +946,15 @@ function staticReferences(source) {
       isTransparentProcessAliasAcquisition ||
       isReflectGet ||
       isObjectDescriptorOnProcess
-    )
-      result.push({
-        kind: "dynamic_require",
-        specifier: null,
-        line: file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1,
-      });
+    ) {
+      const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
+      const declaration = isGlobalStrip ? globalStripDeclarationFor(line) : undefined;
+      if (declaration === undefined) result.push({ kind: "dynamic_require", specifier: null, line });
+      else {
+        consumedGlobalStrips.add(declaration.line);
+        permittedGlobalStrips.push({ line, reason: declaration.reason });
+      }
+    }
     ts.forEachChild(node, inspectRuntimeLoaders);
   };
   const file = ast;
@@ -1167,7 +1204,15 @@ function staticReferences(source) {
     const close = matchingToken(all, index + 1, "{", "}");
     if (close >= 0) exportedBindings.push(...importedBindings(all, index + 1, close));
   }
-  return { references: result, tokens: all, exportedBindings };
+  return {
+    references: result,
+    tokens: all,
+    exportedBindings,
+    permittedGlobalStrips,
+    staleGlobalStripDeclarations: globalStripDeclarations
+      .filter((declaration) => !consumedGlobalStrips.has(declaration.line))
+      .map((declaration) => declaration.line),
+  };
 }
 
 function isWithin(base, target) {
@@ -1300,6 +1345,7 @@ export function checkHostProductionImportBoundary({
   const pending = [];
   const visited = new Set();
   const violations = [];
+  const permittedGlobalStrips = [];
   if (configError)
     violations.push(
       violation("invalid_production_artifact_config", "host/production-artifact.config.json", null, 1, configError),
@@ -1335,6 +1381,20 @@ export function checkHostProductionImportBoundary({
       continue;
     }
     const parsed = staticReferences(source);
+    for (const strip of parsed.permittedGlobalStrips)
+      permittedGlobalStrips.push({ importer: display(root, importer), line: strip.line, reason: strip.reason });
+    // A declaration that no longer excuses a delete is the same silent pass in the other direction:
+    // the strip it was written for is gone, so the marker must go with it.
+    for (const line of parsed.staleGlobalStripDeclarations)
+      violations.push(
+        violation(
+          "stale_global_strip_declaration",
+          display(root, importer),
+          null,
+          line,
+          "global_strip_sandbox_declaration_excuses_no_delete",
+        ),
+      );
     for (const reference of parsed.references) {
       const shownImporter = display(root, importer);
       if (reference.kind === "dynamic_import") {
@@ -1673,6 +1733,9 @@ export function checkHostProductionImportBoundary({
     verdict: violations.length === 0 ? "passed" : "blocked",
     roots: absoluteRoots.map((path) => display(root, path)),
     inspectedFiles: [...visited].map((path) => display(root, path)).sort(),
+    declaredGlobalStrips: permittedGlobalStrips.sort((left, right) =>
+      `${left.importer}:${left.line}`.localeCompare(`${right.importer}:${right.line}`),
+    ),
     violations,
   };
 }

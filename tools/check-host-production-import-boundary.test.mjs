@@ -873,6 +873,103 @@ test("allows a symbol-keyed globalThis property, but stays fail-closed on unknow
   );
 });
 
+test("admits a declared global-strip sandbox by name and reason, and refuses every lower bound of that declaration", async () => {
+  const shape = { "host/src/farmhand-companion-preview.ts": "export {};\n" };
+  // A sandbox that builds an isolated context and DELETES the capabilities it withholds writes the exact
+  // computed-global shape the rule forbids. This is the honest form of that mechanism: the delete is
+  // named on its own line, with the reason the report prints.
+  const strip = [
+    'const global = runInContext("globalThis", context) as Record<string, unknown>;',
+    "// global-strip-sandbox: deletes the withheld capabilities from the fresh context's own global",
+    "for (const name of ABSENT) delete global[name];",
+  ].join("\n");
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": strip,
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.equal(report.verdict, "passed", JSON.stringify(report.violations));
+      assert.deepEqual(report.declaredGlobalStrips, [
+        {
+          importer: "host/src/main.ts",
+          line: 3,
+          reason: "deletes the withheld capabilities from the fresh context's own global",
+        },
+      ]);
+    },
+  );
+  // Without the declaration the same delete is the violation it always was.
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": strip.replace(
+        "// global-strip-sandbox: deletes the withheld capabilities from the fresh context's own global\n",
+        "",
+      ),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(
+        report.violations.map(({ kind, line }) => ({ kind, line })),
+        [{ kind: "unresolved_dynamic_require", line: 2 }],
+      );
+      assert.deepEqual(report.declaredGlobalStrips, []);
+    },
+  );
+  // A reasonless marker is not an exception.
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": strip.replace(
+        "// global-strip-sandbox: deletes the withheld capabilities from the fresh context's own global",
+        "// global-strip-sandbox:",
+      ),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(
+        report.violations.map(({ kind, line }) => ({ kind, line })),
+        [{ kind: "unresolved_dynamic_require", line: 3 }],
+      );
+    },
+  );
+  // The exception covers withholding, never acquisition: a declared file that READS a computed global
+  // still fails, or the marker would be a general licence to acquire what the rule exists to catch.
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": `${strip}\nconst leaked = global[name];\nvoid leaked;`,
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(
+        report.violations.map(({ kind, line }) => ({ kind, line })),
+        [{ kind: "unresolved_dynamic_require", line: 4 }],
+      );
+    },
+  );
+  // A declaration whose strip disappeared excuses nothing and must not linger: that is the silent pass
+  // in the other direction.
+  await withFixture(
+    {
+      ...shape,
+      "host/src/main.ts": [
+        "// global-strip-sandbox: deletes the withheld capabilities from the fresh context's own global",
+        "export const context = 1;",
+      ].join("\n"),
+    },
+    (root) => {
+      const report = checkHostProductionImportBoundary({ root, roots });
+      assert.deepEqual(
+        report.violations.map(({ kind, line }) => ({ kind, line })),
+        [{ kind: "stale_global_strip_declaration", line: 1 }],
+      );
+    },
+  );
+});
+
 test("does not mistake private methods named require for CommonJS ingress, but follows private require bindings", async () => {
   await withFixture(
     {

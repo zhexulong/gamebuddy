@@ -375,6 +375,7 @@ export function compilePlanScript(
     codeGeneration: { strings: false, wasm: false },
   });
   const global = runInContext("globalThis", context) as Record<string, unknown>;
+  // global-strip-sandbox: this deletes the withheld capabilities from the fresh context's own global, so a script that reaches one resolves to nothing
   for (const name of ABSENT_PLAN_GLOBALS) delete global[name];
 
   try {
