@@ -2309,6 +2309,9 @@ const programSubmissions = [];
 let programOutcomes = Object.freeze([]);
 // Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
 let programOutcomesAtTeardown = null;
+// How many submissions existed when the journal was read. A program submitted later did not fail to be observed -
+// it arrived after the harness looked, and that is a different fact from "the Mod did not know it".
+let programOutcomesReadAtSubmissionCount = null;
 // Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
 // capture directory it opened): null until then, so a failure at either step still publishes what came before it.
 let runtimeRoot = null;
@@ -3266,6 +3269,7 @@ try {
   // `read_failed:bridge_not_authenticated` for sixteen programs whose receipts had settled all night.
   try {
     programOutcomesAtTeardown = await sampleProgramOutcomes();
+    programOutcomesReadAtSubmissionCount = programSubmissions.length;
   } catch (error) {
     process.stderr.write(
       `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
@@ -3930,6 +3934,9 @@ async function writeRunBundle({
     // so the failed run - the one where "the batch ran nothing" matters most - reads the same `dispatched`/`observed`
     // facts as a passed one.
     programOutcomes,
+    // The submission count the journal read covered. Anything above it was submitted after the read - a fact about
+    // timing, not about the program.
+    programOutcomesReadAtSubmissionCount,
     // THE INVARIANT, published where the trace is written: a run's execution rows are `executionTrace.flat` request
     // frames in `actionTrace.jsonl` PLUS `executionTrace.program` journal executions in `programTrace.jsonl`, and the
     // program half is the sum of the observed programs' `dispatched` counts. `executionTrace.ok` is that identity
