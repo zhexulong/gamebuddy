@@ -1386,7 +1386,17 @@ async function runAgentTurn(text, tools) {
   // the old boundary the runner stopped waiting at the first settle, so an interrupted turn could never
   // recover - the very gap this extension exists to expose. It is confined to the self-directed scenario so the
   // single-goal scenarios keep their exact turn semantics.
-  if (SCENARIO === "morning_routine")
+  // Self-directed scenarios keep listening after the first settle, because a settle is not the end of the play.
+  //
+  // Measured 2026-10-25 (`night1`): at in-game 22:00 the companion received the milestone, thought "Time is 2200 …
+  // Should I sleep?", and answered with a LINE of text. Its turn then settled - `stopReason: "stop"`, no errors - and
+  // because this gate named only `morning_routine`, nothing in the harness could ever deliver another turn. It had the
+  // action available (`advance_day` was in all 97 advertised capabilities and it simply never called it), the world
+  // ran on to the 2:00 AM pass-out, and the run recorded `companion_did_not_sleep`.
+  //
+  // A scripted single-goal rung is different: there, one settle IS the end of what it was asked to do, so those keep
+  // their exact semantics.
+  if (SCENARIO === "morning_routine" || SCENARIO === "multiday_routine")
     turn = await waitForSessionQuiet(turn, { dispatchesBeforeTurn, timeoutMs: turnWaitSeconds * 1000 });
   turn.steerObserved =
     agentProgramId !== null ||
