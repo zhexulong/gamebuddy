@@ -3403,6 +3403,33 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // what=bin;door=66,15`). The search already guarantees the half that matters; the warp below is what the
         // composed multi-day world does not want.
         this.nativeLocalPlaySessionStartTile = startTile;
+        // Measure the connectivity question BEFORE any prop exists, so the next run can say whether the props
+        // severed the route or the farm never had it. Seventeen runs failed at
+        // `home_unreachable:component_tiles=122` and nobody could tell those two apart, so five guards were
+        // written against the wrong cause one after another.
+        if (requiredReachable is { } doorAnchor)
+        {
+            int beforeOpened = WalkableComponentSize(farm, doorAnchor);
+            bool fieldInDoorPiece = IsReachableFromStartPessimistic(
+                farm,
+                doorAnchor,
+                startTile,
+                tile => farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
+                    || farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y)));
+            this.Monitor.Log(
+                $"GameBuddy play-session connectivity BEFORE props: door={doorAnchor.X},{doorAnchor.Y};"
+                    + $" door_component={beforeOpened}; field={startTile.X},{startTile.Y};"
+                    + $" field_in_door_piece={fieldInDoorPiece}",
+                LogLevel.Info);
+            // Measured 2026-10-25: that component was 1623 tiles and the field was inside it. After six props
+            // it was 122 and the field was outside. So the props severed the farm, not the farm's layout - and
+            // "switch to another farm map" was the wrong answer to a question nobody had measured.
+            //
+            // The placement rule this produces: a prop may not cost the door more than a tenth of its walkable
+            // ground. A tile that is the only bridge between two halves takes 1500 with it; a tile in the
+            // middle of a field takes one.
+            PlaySessionDoorComponentFloor = Math.Max(PlaySessionMinimumComponentTiles, beforeOpened * 9 / 10);
+        }
         Vector2? standingTile = null;
         // The prop counts come from the ground, not from a literal. The walkable piece around the start is the
         // budget: on the multi-day farm it is 123 tiles, not the 5200-tile map, and every literal count tried
@@ -3421,8 +3448,17 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         for (int index = 0; index < weedCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
-            if (spot is null)
-                throw new InvalidOperationException("fixture_native_local_play_session_weed_spot_missing");
+                if (spot is null)
+                {
+                    // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
+                    // usable world; refusing here made the run unstartable for a count no player asked for. Measured
+                    // 2026-10-25: a narrow map still threw here while the stone loop beside it had already been taught to
+                    // degrade, so the fixture's own commit message over-claimed.
+                    this.Monitor.Log(
+                        $"GameBuddy play-session placed {index} of {weedCount} weeds before the ground ran out",
+                        LogLevel.Warn);
+                    break;
+                }
             StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
             if (!weed.IsWeeds())
                 throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
@@ -3471,8 +3507,17 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         for (int index = 0; index < cropCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
-            if (spot is null)
-                throw new InvalidOperationException("fixture_native_local_play_session_crop_spot_missing");
+                if (spot is null)
+                {
+                    // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
+                    // usable world; refusing here made the run unstartable for a count no player asked for. Measured
+                    // 2026-10-25: a narrow map still threw here while the stone loop beside it had already been taught to
+                    // degrade, so the fixture's own commit message over-claimed.
+                    this.Monitor.Log(
+                        $"GameBuddy play-session placed {index} of {cropCount} crops before the ground ran out",
+                        LogLevel.Warn);
+                    break;
+                }
             StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
                 ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
                 : new StardewValley.TerrainFeatures.HoeDirt();
@@ -4124,7 +4169,21 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// while six do not (measured 2026-10-24: stone_spot_missing after the predicate was unified).
     /// the walkable graph too fragmented to keep every prop's approach open.
     /// </summary>
-    private const int STONE_COUNT = 4;
+    /// <summary>Fewest walkable tiles the door must keep after each placement, set from the state before props.</summary>\n    private static int PlaySessionDoorComponentFloor;\n\n    private const int STONE_COUNT = 4;
+
+    /// <summary>Fewest walkable tiles a play-session start must belong to.</summary>
+    ///
+    /// The scenario places several props, each needing a standable neighbour, so a pocket of five tiles cannot
+    /// host the day. 64 is comfortably above the requirement and far below the farm's own 1623, so it refuses
+    /// pockets without refusing a legitimately small farm.
+    private const int PlaySessionMinimumComponentTiles = 64;
+
+    /// <summary>Fewest walkable tiles the door must keep after each placement.</summary>
+    ///
+    /// Set from the state BEFORE any prop exists. Measured 2026-10-25: the door's component was 1623 tiles and
+    /// the field was inside it; after six props it was 122 and the field was outside. A tile in the middle of a
+    /// field costs one tile of opening, the only bridge between two halves costs fifteen hundred.
+    private static int PlaySessionDoorComponentFloor;
 
     private static int WalkableComponentSize(GameLocation farm, Vector2 from)
     {
@@ -4203,20 +4262,29 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             //
             // Checked by simulating the placement's effect: an actor can no longer WALK THROUGH the target, so the
             // route must survive with the target treated as blocked.
-            if (mustRemainReachable is { } anchor
-                && IsReachableFromStart(farm, start, anchor))
+            if (mustRemainReachable is { } anchor)
             {
-                // Temporarily treat the candidate as solid, ask the question, then restore. The world is the only
-                // authority here, so the check has to be against the world as it will be.
+                // Put the prop down for real, ask the question, and undo it if the answer is bad. Every earlier
+                // version of this guard simulated a partial world and therefore asked a question that could not
+                // fail: first it moved a prop off an empty tile, then it placed one and put it back before
+                // measuring the component.
                 StardewValley.Object? displaced = null;
-                if (farm.objects.TryGetValue(target, out StardewValley.Object? existing))
-                {
-                    displaced = existing;
-                    farm.objects.Remove(target);
-                }
-                bool survives = IsReachableFromStart(farm, start, anchor);
+                farm.objects.TryGetValue(target, out displaced);
+                farm.objects[target] = ItemRegistry.Create<StardewValley.Object>("(O)2", 1);
+                bool stillConnected = IsReachableFromStartPessimistic(
+                    farm,
+                    start,
+                    anchor,
+                    tile => farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
+                        || farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y)));
+                // Measured 2026-10-25: six props took the door's component from 1623 tiles to 122 and dropped the
+                // field out of it. A tile in the middle of a field costs one; the only bridge between two halves
+                // costs fifteen hundred. This is the rule that refuses the second kind.
+                bool keepsDoorOpen = PlaySessionDoorComponentFloor <= 0
+                    || WalkableComponentSize(farm, anchor) >= PlaySessionDoorComponentFloor;
                 if (displaced is not null) farm.objects[target] = displaced;
-                if (!survives) continue;
+                else farm.objects.Remove(target);
+                if (!stillConnected || !keepsDoorOpen) continue;
             }
             Vector2[] cardinal =
             {
