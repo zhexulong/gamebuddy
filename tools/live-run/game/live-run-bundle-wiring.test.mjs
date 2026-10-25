@@ -156,7 +156,10 @@ test("a transport that dies mid-run is recorded, and is its own verdict", () => 
   // the reason code alone would not say how far in it happened.
   assert.match(SOURCE, /const bridgeDisconnections = \[\];/);
   assert.match(SOURCE, /client\.onConnectionFact\(\(fact\) => \{/);
-  assert.match(SOURCE, /dispatchesSoFar: actionTrace\.length,/);
+  assert.match(SOURCE, /flatDispatchesSoFar: actionTrace\.length,/);
+  // The total must include the program half, or a program-path run reports "nothing had happened" beside its own
+  // thirteen dispatches - measured 2026-10-25.
+  assert.match(SOURCE, /dispatchesSoFar: actionTrace\.length \+ \(lastKnownProgramDispatches \?\? 0\),/);
   assert.match(SOURCE, /console\.error\("BRIDGE_DISCONNECTED", JSON\.stringify\(entry\)\);/);
   // The verdict arm sits before `silent`: a dead pipe explains silence, so it must not be reported as silence.
   // Both are arms of ONE derivation now (the multi-day assessment joined it), so the order is read where the

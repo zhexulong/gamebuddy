@@ -555,13 +555,22 @@ markPhase("bridgeConnectedMs");
 // `bridge_disconnected:local_close`, and nothing recorded what the Mod was told or how far into the run it
 // happened (measured 2026-10-16, and twice before on the retired rung-6 runs).
 const bridgeDisconnections = [];
+// The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
+// only the flat count reads as "nothing had happened" on a run whose work all went through programs.
+let lastKnownProgramDispatches = 0;
 client.onConnectionFact((fact) => {
   if (fact?.state !== "disconnected") return;
   const entry = Object.freeze({
     reasonCode: fact.reasonCode ?? null,
     atMs: Date.now(),
     elapsedMs: Date.now() - phaseTimings.runStartedAtMs,
-    dispatchesSoFar: actionTrace.length,
+    // FLAT rows only - the half the flat trace knows about. Named for what it counts: the field used to be
+    // called `dispatchesSoFar` and published 0 on a run with thirteen program dispatches, because it measured
+    // one of two halves and called itself the total.
+    flatDispatchesSoFar: actionTrace.length,
+    // The total this run dispatched, whichever path carried it. A program-path run legitimately has
+    // `flatDispatchesSoFar: 0` beside a large total; that is the truth rather than a contradiction.
+    dispatchesSoFar: actionTrace.length + (lastKnownProgramDispatches ?? 0),
   });
   bridgeDisconnections.push(entry);
   console.error("BRIDGE_DISCONNECTED", JSON.stringify(entry));
@@ -3638,6 +3647,10 @@ async function buildRunResult({
   // `dispatched` counts of 1-4 published a trace of ZERO rows, and nobody could tell from the artifact.
   const programRows = programExecutionRows(programOutcomes);
   const executionTrace = executionTraceInvariant({ actionTrace, programOutcomes, programRows });
+  // The disconnect record reads this, and it is only knowable here: a run whose work all went through programs has
+  // `flat: 0` and a large program count, so a disconnect that reported the flat half alone said "nothing had
+  // happened" beside its own dispatches.
+  lastKnownProgramDispatches = executionTrace.programDispatches;
   if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
   // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
   // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
@@ -3762,6 +3775,26 @@ async function writeRunBundle({
   // The window mode the RUNNER observes (the launcher exports it), and the facts a non-headless run must carry.
   const observedWindowMode = process.env.GAMEBUDDY_WINDOW_MODE ?? "visible";
   const headlessWindowMode = observedWindowMode === "hidden" || observedWindowMode === "background";
+  // The product writes its own span trace at
+  // `<runtimeRoot>/contexts/<identityKey>/surface-sessions/<gameSessionId>/run-trace.json`, during teardown
+  // (`flushRunTrace`, the last step of `close()`). Recorded so a reader can open it without knowing that layout,
+  // and so its ABSENCE is a stated fact: before the silent-catch fix it was missing in all 2425 runs and nothing
+  // could tell that apart from a trace that was merely empty.
+  const runTracePath = join(
+    runtimeRoot,
+    "contexts",
+    identityKey(identity),
+    "surface-sessions",
+    gameSessionId,
+    "run-trace.json",
+  );
+  const runTracePresent = existsSync(runTracePath);
+  const runTraceRecord = Object.freeze({
+    path: runTracePath,
+    present: runTracePresent,
+    reason: runTracePresent ? null : "product_did_not_flush_run_trace",
+  });
+
   const bundle = {
     schemaVersion: 1,
     run: {
@@ -3849,6 +3882,7 @@ async function writeRunBundle({
     executionTrace: result.executionTrace,
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
+    runTrace: runTraceRecord,
     programTrace: { path: PROGRAM_TRACE_FILE, records: (programRows ?? []).length },
   };
   // The timeline record COUNT is the fact log's length, so the on-disk file must match it (the validator
