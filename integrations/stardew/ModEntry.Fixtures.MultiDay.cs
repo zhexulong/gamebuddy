@@ -292,10 +292,22 @@ public sealed partial class ModEntry
         // correctly reports as no milestone at all - so the branch world could never satisfy the gate it exists for
         // (measured: `milestone_not_projected:0` with `pendingLevelUpChoices: []`, combat left at 4).
         const int PendingLevelUpSkill = 4;
-        int pendingLevelUpLevel = armProfessionMilestone ? MilestoneLevel : 6;
-        player.newLevels.Add(new Point(PendingLevelUpSkill, pendingLevelUpLevel));
-        if (player.newLevels.Count != 1)
-            throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up_not_armed:{player.newLevels.Count}");
+        // Only the BRANCH Given arms a pending level-up, and it arms a REAL milestone.
+        //
+        // This used to arm `(4, 6)` in the ordinary world too, described as seen rather than hidden. Level 6 is an
+        // ordinary level with one legal answer, so the queue entry pushed a LevelUpMenu with nothing to choose: the
+        // product's own projection reported `pendingLevelUpChoices: []`, and `respond_level_up` could not satisfy it.
+        // Measured 2026-10-25 on every multi-day run - the companion said it outright: "得你自己点一下选技能，不然睡不下去".
+        //
+        // The paragraph above this method has always claimed "No LevelUpMenu, ever" for this world. Now the code agrees
+        // with it: nothing is queued unless a scenario asked for a milestone.
+        if (armProfessionMilestone)
+        {
+            player.newLevels.Add(new Point(PendingLevelUpSkill, MilestoneLevel));
+            if (player.newLevels.Count != 1)
+                throw new InvalidOperationException(
+                    $"fixture_native_local_multi_day_pending_level_up_not_armed:{player.newLevels.Count}");
+        }
 
         // (4b) The mastery side effect of five maxed skills, recorded rather than left to be discovered.
         //
