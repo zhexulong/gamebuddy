@@ -75,6 +75,7 @@ test("two flat dispatches and one three-node program are five rows, each saying 
   assert.equal(invariant.ok, true, "the identity holds: 2 flat + 3 program executions = 5 rows");
   assert.deepEqual(invariant, {
     ok: true,
+    sumsAgree: true,
     flat: 2,
     program: 3,
     programDispatches: 3,
@@ -121,7 +122,10 @@ test("a program whose journal could not be read contributes no rows and does not
     programOutcomes,
     programRows,
   });
-  assert.equal(invariant.ok, true, "an unobserved program must not fail the identity");
+  // An unreadable program is absent evidence, not a measured zero: the observed sums still agree, and `ok` now says
+  // whether the trace is COMPLETE - which it is not, because something was never looked at.
+  assert.equal(invariant.sumsAgree, true, "an unobserved program must not fail the arithmetic");
+  assert.equal(invariant.ok, false, "but a trace that never saw a program is not a complete trace");
   assert.equal(invariant.rows, 2);
   assert.equal(invariant.expectedRows, 2);
   assert.equal(invariant.programDispatches, 1, "only the observed program's count is in the sum");

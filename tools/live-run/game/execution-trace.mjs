@@ -77,14 +77,25 @@ export function executionTraceInvariant({ actionTrace, programOutcomes, programR
     0,
   );
   const program = Array.isArray(programRows) ? programRows.length : 0;
+  const unobservedPrograms = (programOutcomes ?? []).filter((outcome) => outcome?.observed !== true).length;
   return Object.freeze({
-    ok: program === programDispatches,
+    // Two facts, both required. The first was there: every OBSERVED program's executions are in the trace. The
+    // second is not the same question and was missing: a program the Mod reported but the trace never saw is
+    // absent evidence, and calling that a complete trace is how 14 programs could vanish behind `ok: true`.
+    // Complete means both: the observed programs' executions are all present, AND nothing was left unobserved.
+    // The first alone is not completeness - it is completeness OF WHAT WE COULD READ, which is how fourteen
+    // programs vanished behind `ok: true` on 2026-10-25 while`unobservedPrograms` said 14.
+    ok: program === programDispatches && unobservedPrograms === 0,
+    // Kept separate so a reader can tell "the numbers agree" from "we saw everything". A program whose journal
+    // could not be read still contributes no rows and does not make the observed sums disagree; it is simply
+    // absent evidence, and this field is where that lives.
+    sumsAgree: program === programDispatches,
     flat,
     program,
     programDispatches,
     rows: flat + program,
     expectedRows: flat + programDispatches,
-    unobservedPrograms: (programOutcomes ?? []).filter((outcome) => outcome?.observed !== true).length,
+    unobservedPrograms,
   });
 }
 
