@@ -306,7 +306,6 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-evidence-bundle.mjs",
   "check-game-historian-rubric.mjs",
   "check-live-run-failure-dump.mjs",
-  "check-live-run-isolation.mjs",
   "check-live-run-multiday-baseline.mjs",
   "check-live-run-silence.mjs",
   "check-stardew-fixture-action-coverage.mjs",
@@ -382,6 +381,11 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "compares two inventories (gate scripts vs workflow invocation); its falsifier needs synthetic inventories, which is real work rather than a flag - recorded here so the gap is visible instead of silent",
   },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
+  {
+    gate: "check-live-run-isolation.mjs",
+    reason:
+      "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install; on a checkout it exits 1 before printing a report, which is why it is not a gate whose default run self-verifies",
+  },
   { gate: "check-commit-staging.mjs", reason: "reads the git index; no offline rule set" },
   { gate: "check-crab-pot-output-fixture-contract.mjs", reason: "requires --contract input" },
   { gate: "check-dependency-risk.mjs", reason: "static report; falsifier in check-dependency-risk.test.mjs" },
