@@ -3,6 +3,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ExecutionCorrelationOwner, ExecutionDispatchObserver } from "./execution-correlation-ledger.js";
 import type { FarmhandPolicyIdentity } from "./protocol.js";
 import type { GameConnection } from "./game-connection.js";
+import { PLAN_ACTION_LIFECYCLES } from "./body-program-script.js";
 
 /** Host-owned companion and world facts bound to one authenticated integration connection. */
 export type IntegrationIdentityBinding = Readonly<{
@@ -250,7 +251,9 @@ export function createIntegrationActionCatalog(
         !isRegistration(registration) ||
         seen.has(registration.actionId) ||
         !actionIds.has(registration.actionId) ||
-        registration.lifecycle !== "published" ||
+        // The same set the plan compiler and the Mod catalog use. Narrowing it here refused plans one layer above had
+        // already approved, which cost a full reasoning round per refused plan.
+        !PLAN_ACTION_LIFECYCLES.includes(registration.lifecycle) ||
         registration.kind === "read_only" ||
         !capabilitySet.has(registration.actionId) ||
         deniedActions.has(registration.actionId) ||

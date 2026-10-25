@@ -144,7 +144,7 @@ const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string
  * (`visibleActionsFromModCatalog`, host/src/action-registry.ts), so a builder narrower than either would refuse
  * plans the Mod accepts.
  */
-const PLAN_ACTION_LIFECYCLES: readonly string[] = Object.freeze(["published", "live_verified"]);
+export const PLAN_ACTION_LIFECYCLES: readonly string[] = Object.freeze(["published", "live_verified"]);
 
 /**
  * What a plan script may not name, refused before it runs.
