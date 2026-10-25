@@ -1959,7 +1959,9 @@ test("the Settings surface moves the companion voice persona through the consent
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]).toEqual({ expectedRevision: 2, action: "setPersona", persona: "energetic_youth" });
   await expect(select).toHaveValue("gentle_maid");
-  await expect(surface.getByRole("status")).toContainText("settings_revision_conflict");
+  await expect(surface.getByRole("status")).toContainText(
+    "The conversation moved on since the page read it",
+  );
 
   // The resolved default is named in the interface's own language too, and moving
   // the interface language does not touch the picked persona: the option label is
@@ -2486,7 +2488,7 @@ test("a stale edit and a refused delete each reach the player with their own cod
   const attempted = library.requests.updates[0] as { item: { expectedRevision: number } };
   expect(attempted.item.expectedRevision, "the edit CASes on the revision it read").toBe(3);
   await expect(panel.locator(".error-banner")).toContainText(
-    "The world book could not be saved. (world_info_revision_conflict)",
+    "The conversation moved on since the page read it",
   );
   // A refusal never looks like a save: the form stays open with what was typed.
   await expect(draft).toBeVisible();
@@ -2500,7 +2502,7 @@ test("a stale edit and a refused delete each reach the player with their own cod
   await forestRow.locator("[data-world-book-confirm-yes]").click();
   await expect.poll(() => library.requests.deletes.length).toBe(1);
   await expect(panel.locator(".error-banner")).toContainText(
-    "The world book could not be deleted. (world_info_in_use)",
+    "The conversation in use reads this World Info entry, so it cannot be deleted",
   );
   await expect(panel.getByText("Cindersap Forest", { exact: true })).toBeVisible();
 });

@@ -34,7 +34,21 @@ const chat = {
     transcript: [],
     draft: { revision: 0, present: false },
     turn: null,
-    worldInfo: null,
+    // The library is read from this projection, not from `/world-info`: the panel stopped calling that route
+    // when the two halves were reconciled onto one read.
+    worldInfo: {
+      state: "none",
+      revision: `${"B".repeat(42)}A`,
+      items: [
+        {
+          handle: `${"W".repeat(42)}A`,
+          title: "Pelican Town",
+          summary: "A valley town, and the people in it.",
+          selected: false,
+          pending: false,
+        },
+      ],
+    },
   },
   memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
   eventStream: null,

@@ -357,16 +357,13 @@ test("defect 2: a cabin read with no session reads as the prerequisite, not a fa
 test("defect 3: the advanced configuration block is localised and speaks to the player", async ({ page }) => {
   await mountShell(page);
   await openSurface(page, "游戏", "game-surface");
-  const block = page.locator(".surface-advanced-settings");
-  await expect(block).toBeVisible();
-  const text = ((await block.innerText()) ?? "").replace(/\s+/gu, " ").trim();
-  console.log(`[defect-3] advanced block: ${JSON.stringify(text)}`);
-
-  expect(text, "the block's own title is the surface's language").toContain(ZH.advancedTitle);
-  expect(text, "no English sentence survives in a Chinese surface").not.toMatch(/[A-Za-z] [a-z]+ [a-z]+ [a-z]+/u);
-  expect(text, "the block says which settings it holds").toContain(ZH.advancedSettings);
-  expect(text, "the block says why it is not editable from here").toContain(ZH.advancedNotEditable);
-  expect(text, "the block never explains the product's own internals to the player").not.toMatch(/Host|路由|models\.json|Pi/u);
+  // The section that used to sit here rendered from a second catalogue and explained the product's own internals
+  // ("not editable here", which upstream file format it is). It was deleted rather than fixed; what a later
+  // change must not do is bring it back with either defect.
+  const gone = page.locator(".surface-advanced-settings");
+  await expect(gone, "the deleted advanced block does not render").toHaveCount(0);
+  const surfaceText = (await page.getByTestId("game-surface").innerText()) ?? "";
+  expect(surfaceText, "and no English section survives on a Chinese surface").not.toMatch(/\bAdvanced\b/u);
 });
 
 // --- defect 4 -----------------------------------------------------------------
@@ -465,9 +462,12 @@ test("defect 4: the settled surface does not carry a generic loading line", asyn
   await mountShell(page, { discoveryCandidates: [] });
   await openSurface(page, "游戏", "game-surface");
   await expect(installationPanel(page)).toHaveAttribute("data-state", "no-candidates");
-  // The model block renders its section only once its own read has settled.
-  await expect(page.locator(".surface-advanced-settings")).toBeVisible();
-  await expect(page.locator(".surface-model-settings")).toContainText("模型 ID");
+  await mountShell(page, { discoveryCandidates: [] });
+  await openSurface(page, "游戏", "game-surface");
+  await expect(installationPanel(page)).toHaveAttribute("data-state", "no-candidates");
+  // The block this used to wait for was deleted; the model block is the one that still settles here, and its own
+  // read is what used to leave a generic loading line behind.
+  await expect(page.locator('.surface-model-settings[data-surface="game"]')).toContainText("思考强度");
   const surfaceText = (await page.getByTestId("game-surface").innerText()) ?? "";
   console.log(`[defect-4] settled surface carries the generic loading line: ${surfaceText.includes(ZH.genericLoading)}`);
   expect(surfaceText, "no block still claims to be loading once every read has settled").not.toContain(ZH.genericLoading);
