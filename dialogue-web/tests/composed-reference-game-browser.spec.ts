@@ -4691,7 +4691,7 @@ test("a chat with no durable draft lets the player save the first one from the c
     if (refuseNextSave || route.request().method() === "DELETE") {
       // A refused save, and the authoritative re-read that follows it: the
       // durable draft the surface must take instead is older and empty.
-      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "chat_draft_revision_conflict" }) });
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "draft_conflict" }) });
       durable = { apiVersion: 1, revision: 3, text: null };
       snapshotDraft = { revision: 3, present: false };
       return;

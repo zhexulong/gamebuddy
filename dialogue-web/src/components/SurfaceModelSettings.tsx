@@ -117,11 +117,25 @@ export function SurfaceModelSettings({
       </label>
 
       {/*
-       * No model suggestion list here. A model id is chosen where the endpoint that serves it is
-       * configured (the connection form, which offers both the curated ids and whatever that
-       * endpoint itself listed), and this surface cannot set one: it reasons at a level, through
-       * the connection the player activated.
+       * A read-only list of what this endpoint offers. A model id is still chosen where the endpoint that
+       * serves it is configured (the connection form), and this surface cannot set one: it reasons at a
+       * level, through the connection the player activated. But which models that connection serves is a
+       * fact the player asked to see, and two providers can serve the same id - so the chips name the
+       * provider's own label and nothing here is clickable, which is the difference between "here is what
+       * is available" and "pick one for this surface".
        */}
+      <div className="surface-model-recommended" data-surface-model-recommended>
+        <p className="surface-model-recommended-label">{labels.modelProfilesRecommended}</p>
+        {recommendedFor(profiles, surface).map((entry) => (
+          <span
+            key={`${entry.providerId}/${entry.modelId}`}
+            className="surface-model-chip"
+            title={`${entry.providerLabel} (${entry.providerId})`}
+          >
+            {`${entry.modelId} · ${entry.providerLabel}`}
+          </span>
+        ))}
+      </div>
 
       <div className="surface-model-actions">
         <button type="button" className="small-button" disabled={saving} onClick={() => void apply()}>

@@ -3415,7 +3415,10 @@
     margin: 0;
   }
 
-  .surface-model-recommended > span {
+  /* The caption over the chips is a paragraph, not a bare span: the chips themselves are spans (they are
+     read-only text now, not buttons), and `> span` then selected the caption and both chips at once. */
+  .surface-model-recommended > p {
+    margin: 0;
     font-size: 12px;
     /* The caption over the suggestion chips ("Suggested models") introduces
        controls the player can use, so it is live text. It read

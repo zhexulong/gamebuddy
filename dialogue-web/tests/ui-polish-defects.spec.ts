@@ -434,7 +434,7 @@ test("defect 1: the CJK beat drops the faux italic without gaining weight", asyn
  * Measured in the mounted shell before the change, each resolved against the
  * effective background the runtime contrast gate uses: `.message-author` (the
  * name over a companion's bubble), `.section-subtitle` (a surface's own section
- * heading) and `.surface-model-recommended > span` (the caption over the
+ * heading) and `.surface-model-recommended > p` (the caption over the
  * suggestion chips) all computed `rgb(144, 135, 126)` = `--text-disabled`
  * (`#90877e`) at 12 px - 5.57:1 on the canvas (`#0c0b0b`), and 4.74:1 on the
  * card tone (`#201d1d`) the author line can also sit on. After: all three read
@@ -465,8 +465,8 @@ test("the author line, a section heading and the suggestion caption read the liv
   await expect(page.getByTestId("chat-model-drawer")).toBeVisible();
   const [caption] = await (async () => {
     // The popout's own profile read must settle before the caption exists.
-    await expect(page.locator(".surface-model-recommended > span")).toBeVisible();
-    return sampleContrast(page, [".surface-model-recommended > span"]);
+    await expect(page.locator(".surface-model-recommended > p")).toBeVisible();
+    return sampleContrast(page, [".surface-model-recommended > p"]);
   })();
   // The popout is a drawer over the conversation, so it has to be closed before
   // the app bar behind its backdrop is reachable.
