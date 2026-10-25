@@ -43,7 +43,10 @@ public static class PropCapacity
 
         // A tenth of the piece, so several tiles of walkable ground survive between placements and the
         // corridor the day depends on cannot be fenced off.
-        int budget = Math.Max(1, componentTiles / 10);
+        // Measured, not guessed: on the 122-tile multi-day piece, ~12 props severed the door from the work
+        // (component_tiles went 123 -> 122 and the field dropped out of it). A corridor needs several tiles of
+        // slack per prop, so a twentieth is the budget that leaves the farm walkable.
+        int budget = Math.Max(1, componentTiles / 20);
 
         return Math.Min(budget, Ceiling);
     }

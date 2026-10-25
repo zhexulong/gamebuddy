@@ -44,10 +44,11 @@ public sealed class PropCapacityTests
     [Fact]
     public void TheMeasuredMultiDayFarmIsInsideTheBudget()
     {
-        // component_tiles=123 was measured on the multi-day farm, and every literal count tried against it
-        // either starved the day or failed to place. Whatever this returns must be placeable there.
+        // Measured, not assumed: on a 122-tile piece the props severed the door from the work
+        // (`component_tiles` went 123 -> 122 and the field dropped out of the component). A budget that leaves
+        // the farm walkable is a handful, not a dozen - and the first version of this assertion guessed 8.
         int capacity = PropCapacity.For(componentTiles: 123);
-        capacity.Should().BeGreaterOrEqualTo(8, "the 123-tile piece is the one the scenario actually runs on");
+        capacity.Should().BeInRange(4, 8, "a 122-tile piece keeps its corridor with a handful of props");
     }
 
     [Fact]
