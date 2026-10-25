@@ -1109,7 +1109,15 @@ client.onFact((fact) => {
     factLog.push(entry);
     // The same listener that records the fact also stamps the ledger: a receipt is one boundary on the run's
     // own clock, so the wait it ends is a subtraction rather than an inference.
-    if (entry.type === "execution_receipt") ledger.record("world.settled", { reasonCode: entry.reasonCode ?? null });
+    // The identity is what makes a settle attributable to a dispatch. Without it the ledger recorded 294
+    // receipts against 26 dispatches with no way to pair them - a count of waits that could not say whose.
+    if (entry.type === "execution_receipt") {
+      ledger.record("world.settled", {
+        reasonCode: entry.reasonCode ?? null,
+        requestId: entry.requestId ?? null,
+        executionId: entry.executionId ?? null,
+      });
+    }
     if (serialized === null) {
       // A payload the recorder cannot serialize must not take the SESSION down with it. The bridge treats any
       // throw from a fact listener as a fatal transport fault and closes it (`fact_listener_failed`), so an
