@@ -63,7 +63,7 @@ const mountPreamble = `
     managementStateFacade: facade,
     managementService,
     worldInfoService,
-    playerPreferenceStore: Object.freeze({ read: async () => ({ revision: 0, locale: null, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }), update: async () => { throw new Error("preference_not_used"); } }),
+    playerPreferenceStore: Object.freeze({ read: async () => ({ revision: 0, locale: null, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null, paced: false }), update: async () => { throw new Error("preference_not_used"); } }),
     profile,
     bootstrapToken: token,
   });
