@@ -591,7 +591,11 @@ function publishedSlotOfCategory(
   const withinRequirement = matches.filter((entry) =>
     satisfiesUpgradeRequirement(entry.upgradeLevel ?? 0, requirement),
   );
-  const ranked = withinRequirement.length > 0 ? withinRequirement : matches;
+  // A tool of the right category that is the WRONG upgrade level is not a candidate. Choosing one made the plan
+  // compile and the Mod refuse the node later with `tool_upgrade_insufficient` - a compile-time fact spent as a
+  // runtime round trip. The caller reports it by name instead (see `publishedSlotOfCategory` callers).
+  if (withinRequirement.length === 0 && matches.length > 0) return null;
+  const ranked = withinRequirement;
   let best: Readonly<{ slot: number; upgradeLevel: number }> | undefined;
   for (const entry of ranked) {
     const level = entry.upgradeLevel ?? 0;

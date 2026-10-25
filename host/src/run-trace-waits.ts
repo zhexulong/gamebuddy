@@ -37,8 +37,18 @@ export function deriveModelWaits(
     .map((s) => ({ startMs: s.startMs, endMs: s.endMs as number }))
     .sort((a, b) => a.startMs - b.startMs);
 
+  // Everything that is provably NOT the model deciding. `mod.execute` belongs here and was missing: it is the
+  // game doing the work, and leaving it out meant a gap that contained real world execution could still be
+  // reported as model time. Nested spans are harmless here - only overlap is asked about, never summed.
   const others = spans.filter(
-    (s) => s.endMs !== null && (s.name === RUN_WAIT_NAMES.body || s.name === RUN_WAIT_NAMES.harness),
+    (s) =>
+      s.endMs !== null &&
+      (s.name === RUN_WAIT_NAMES.body ||
+        s.name === RUN_WAIT_NAMES.harness ||
+        s.name === RUN_SPAN_NAMES.modExecute ||
+        s.name === RUN_SPAN_NAMES.bridgeCall ||
+        s.name === RUN_SPAN_NAMES.admission ||
+        s.name === RUN_SPAN_NAMES.journalWrite),
   ) as readonly Readonly<{ name: string; startMs: number; endMs: number }>[];
 
   const waits: DerivedWait[] = [];

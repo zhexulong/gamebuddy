@@ -45,6 +45,15 @@ export function createModelWaitTracker(): ModelWaitTracker {
         return null;
       }
 
+      if (event.type === "message_start" && event.role !== "assistant") {
+        // The player spoke (or a tool message opened): whatever settles next, this settle is no longer the
+        // start of the model's wait. Leaving it in place made an inserted player turn, or a run left idle
+        // overnight, accumulate as "the model was thinking" - measured on a run where a single assistant
+        // message arrived hours after the last tool result.
+        settledAtMs = null;
+        return null;
+      }
+
       if (event.type === "message_start" && event.role === "assistant") {
         if (settledAtMs === null) return null; // the player spoke: not the model's wait
         open = { name: RUN_WAIT_NAMES.model, startMs: settledAtMs, endMs: event.atMs };

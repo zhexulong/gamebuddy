@@ -427,15 +427,24 @@ class JournalLog {
         continue;
       }
       // The compaction's atomic replace: this handle must be closed before the rename, or it keeps pointing at
-      // the file that is about to stop being the journal. A silent failure here would leak the handle onto an
-      // orphaned inode and the next append would land in a file nobody reads - so it is reported, and the
-      // rename proceeds only because the caller's other recovery paths already treat a broken journal as
-      // isolatable (see the unreadable-document path below).
-      await this.#handle.close().catch((error: unknown) => {
+      // the file that is about to stop being the journal.
+      // The rename MUST NOT proceed if the handle is still open.
+      //
+      // On Windows an unclosed handle makes `rename` throw EPERM/EBUSY, so "report and carry on" did not degrade
+      // gracefully - it moved the failure onto a line that reads like normal flow, and the process died there.
+      // A compaction that cannot release its handle is a compaction that cannot happen: leave the log alone,
+      // drop the temporary, reopen and let the next append take the ordinary path.
+      try {
+        await this.#handle.close();
+      } catch (error: unknown) {
+        await rm(temporary, { force: true }).catch(() => undefined);
         process.stderr.write(
-          `[recovery-journal] close before rename failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
+          `[recovery-journal] compaction abandoned: close before rename failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}\n`,
         );
-      });
+        this.#handle = await open(this.#path, "a");
+        await this.#captureSignature();
+        return;
+      }
       await rename(temporary, this.#path);
       this.#handle = await open(this.#path, "a");
       this.#appendedLines = 0;
