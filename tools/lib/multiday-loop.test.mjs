@@ -9,7 +9,6 @@ import {
   closeIsEngineCommitted,
   classifyActorHold,
   decideHeldMenu,
-  MAX_DISMISS_ATTEMPTS,
   readHeldMenu,
   runMultiDayLoop,
   watchRollover,

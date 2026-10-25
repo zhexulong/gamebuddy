@@ -47,18 +47,6 @@ export function closeIsEngineCommitted(receipt) {
   return /clearing=true|close_effect=engine_shipping_commit/u.test(text);
 }
 
-/**
- * Wait one poll for a close the engine owns.
- *
- * Returns true only when the harness's own deadline has passed - the bounded, named outcome - so the loop keeps its
- * shape: wait, re-observe, and let the crossing check decide.
- */
-async function committedCloseStalled({ now, deadline, sleep, pollIntervalMs }) {
-  if (now() >= deadline) return true;
-  await sleep(pollIntervalMs);
-  return false;
-}
-
 /** The menu the actor is held by, in the shape the Mod reports it. */
 export function readHeldMenu(snapshot) {
   if (snapshot === null || typeof snapshot !== "object") return null;
@@ -131,7 +119,6 @@ export async function watchRollover(
   const menus = [];
   const attempts = new Map();
   // Menu types whose close the ENGINE is completing: waited for, never re-sent.
-  const committed = new Set();
   const deadline = now() + timeoutMs;
   for (;;) {
     const aborted = abort === null ? null : abort();
