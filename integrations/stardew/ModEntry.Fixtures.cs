@@ -1,4 +1,5 @@
 using System.Reflection;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
@@ -3407,9 +3408,23 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // composed multi-day world does not want.
         this.nativeLocalPlaySessionStartTile = startTile;
         Vector2? standingTile = null;
-        for (int index = 0; index < 4; index += 1)
+        // The prop counts come from the ground, not from a literal. The walkable piece around the start is the
+        // budget: on the multi-day farm it is 123 tiles, not the 5200-tile map, and every literal count tried
+        // against it either starved the day or refused the world after succeeding at every single placement.
+        //
+        // One measurement, three counts: stones take the largest share because they are the work; weeds and
+        // crops take a share each so the day has variety; the grass stays a single prop because it is scenery
+        // the session inspects rather than consumes.
+        int propBudget = PropCapacity.For(WalkableComponentSize(farm, startTile));
+        if (propBudget <= 0)
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_world_too_small:{startTile.X},{startTile.Y}");
+        int weedCount = Math.Max(1, propBudget / 4);
+        int stoneCount = Math.Max(1, propBudget / 2);
+        int cropCount = Math.Max(1, propBudget / 4);
+        for (int index = 0; index < weedCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_weed_spot_missing");
             StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
@@ -3421,7 +3436,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             standingTile ??= spot.Value.StandingTile;
         }
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
@@ -3433,9 +3448,9 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
         // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
         // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
-        for (int index = 0; index < STONE_COUNT; index += 1)
+        for (int index = 0; index < stoneCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_stone_spot_missing");
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
@@ -3448,9 +3463,9 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // thing in sight. Each one is validated as harvestable here: a crop that is not ready would
         // silently give the session a target the audit cannot explain.
         int plantedCrops = 0;
-        for (int index = 0; index < 4; index += 1)
+        for (int index = 0; index < cropCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_crop_spot_missing");
             StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
@@ -4106,7 +4121,24 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
     /// </summary>
     private const int STONE_COUNT = 4;
 
-    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start, Vector2? mustRemainReachable = null)
+    private static int WalkableComponentSize(GameLocation farm, Vector2 from)
+    {
+        var layer = farm.map.Layers[0];
+        HashSet<Point>? tiles = StardewBodyController.ReachableTiles(
+            new Point((int)from.X, (int)from.Y),
+            Math.Max(8000, layer.LayerWidth * layer.LayerHeight),
+            tile =>
+                tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)));
+        // An unknown size is treated as large: the placement guards still refuse a prop that cannot be walked
+        // to, so an over-generous budget cannot arm an unusable world - it can only make the search try harder.
+        return tiles?.Count ?? int.MaxValue;
+    }
+
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start, IReadOnlyList<Vector2>? alreadyPlaced = null, Vector2? mustRemainReachable = null)
     {
         int width = farm.map.Layers[0].LayerWidth;
         int height = farm.map.Layers[0].LayerHeight;
@@ -4144,6 +4176,15 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 farm.objects.ContainsKey(new Vector2(probe.X, probe.Y))
                 || farm.terrainFeatures.ContainsKey(new Vector2(probe.X, probe.Y));
             if (!IsReachableFromStartPessimistic(farm, start, target, CountsAsBlocker))
+                continue;
+            // A placement must not isolate a prop already on the ground. Protecting only the door left the
+            // earlier props exposed: stones were placed outward from the start, each one fine on its own, until
+            // the field's walkable piece had shrunk to nine tiles and the door could no longer reach the work
+            // (measured 2026-10-24: the world was refused after every placement "succeeded").
+            //
+            // Cheap because it is bounded: at most fifteen props exist by the time the last one is placed.
+            if (alreadyPlaced is { Count: > 0 }
+                && alreadyPlaced.Any(placed => !IsReachableFromStartPessimistic(farm, start, placed, CountsAsBlocker)))
                 continue;
             // A placement must not sever the route the session depends on. The start was chosen while the
             // farm was clean, so it could reach the door; a stone between them breaks that promise without any
