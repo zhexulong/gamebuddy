@@ -102,18 +102,6 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
-// The per-turn account: what each turn dispatched and how the night it ended resolved. Appended turn by turn so a run
-// that dies still says which of the three worlds it was in (never slept / receipt lost / slept and mis-read).
-import {
-  createTurnLedger,
-  crossingsFromTurnLedger,
-  nightTurnFacts,
-  readTurnLedger,
-  reconcileExecutionTraces,
-  summarizeTurnLedger,
-  TURN_LEDGER_FILE,
-  turnLedgerRow,
-} from "./turn-ledger.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
@@ -1094,7 +1082,7 @@ client.onFact((fact) => {
     const serialized = (() => {
       try {
         return JSON.stringify(entry);
-      } catch (error) {
+      } catch {
         return null;
       }
     })();
