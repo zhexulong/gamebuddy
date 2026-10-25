@@ -2299,6 +2299,8 @@ const actionTrace = [];
 const programSubmissions = [];
 /** The per-program execution records, filled at assembly time so every result path publishes the same answer. */
 let programOutcomes = Object.freeze([]);
+// Filled before teardown, so the builder publishes what the programs did rather than when the harness asked.
+let programOutcomesAtTeardown = null;
 // Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
 // capture directory it opened): null until then, so a failure at either step still publishes what came before it.
 let runtimeRoot = null;
@@ -3352,6 +3354,8 @@ try {
     bridgeFacts: factLog,
     authenticated: client.state.authenticated,
     revision: client.state.snapshot?.revision,
+    // The journal read taken before the bridge closed; without it this path asks a shut door.
+    programOutcomesAtTeardown,
   });
   console.log(JSON.stringify(result, null, 2));
 } catch (error) {
@@ -3374,6 +3378,8 @@ try {
     state: "blocked",
     error: errorMessage,
     ...failureDumpEvidence(errorMessage),
+    // The journal read taken before the bridge closed; without it this path asks a shut door.
+    programOutcomesAtTeardown,
   });
   console.error("RUNNER_CRASH", JSON.stringify({ error: result.error }));
   console.log(JSON.stringify(result, null, 2));
@@ -3390,6 +3396,18 @@ try {
   //
   // The failure is recorded rather than thrown: a run whose teardown could not write its trace is still a
   // run whose other evidence is worth keeping, and the refusal belongs in the artifact, not in a crash.
+  // Read the Mod's journal BEFORE the bridge closes. Doing it inside the builder meant several exit paths asked
+  // after teardown and were told `bridge_not_authenticated` - so the artifact recorded when the harness looked
+  // rather than what the program did. This is the last moment the answer exists.
+  try {
+    programOutcomesAtTeardown = await sampleProgramOutcomes();
+  } catch (error) {
+    // A read that fails here is still a fact about the RUN, not about the program: keep it visible by name.
+    process.stderr.write(
+      `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
+    );
+  }
+
   let teardownFailure = null;
   await runtime?.close().catch((error) => {
     teardownFailure = error instanceof Error ? error.message : String(error);
@@ -3666,7 +3684,11 @@ async function buildRunResult({
   // Read the Mod's own journal NOW, once per run: this is assembly time, so the per-program execution facts are
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
   // binding `writeRunBundle` reads, so both result paths publish the same read without a second query.
-  programOutcomes = await sampleProgramOutcomes();
+  // The caller hands in the read it took BEFORE teardown when it has one - the bridge is closed by the time the
+  // builder runs on several paths, and asking again can only produce `bridge_not_authenticated`, which says nothing
+  // about the program. Falling back to a live read keeps the paths that assemble while the bridge is still up.
+  const carried = evidence.programOutcomesAtTeardown;
+  programOutcomes = carried ?? (await sampleProgramOutcomes());
   // The executions those programs dispatched, as trace rows, and the count identity they have to satisfy together with
   // the flat request frames: rows == flat dispatches + the observed programs' `dispatched` counts. Published on the
   // result because this identity is the one that was silently broken - a run with 22 submissions and program
