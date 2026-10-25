@@ -3259,6 +3259,18 @@ try {
   });
   // One assembly for EVERY exit path (see buildRunResult): what this path observed goes in as evidence, and the
   // builder owns what the result publishes.
+  //
+  // The journal is read HERE, once, because this is the last point that is true for both the pass and the fail
+  // path and it is before the single `runtime.close()` in the finally. Reading it in the finally handed both
+  // assembly sites `null`, and the builder then fell back to asking a bridge that was already shut -
+  // `read_failed:bridge_not_authenticated` for sixteen programs whose receipts had settled all night.
+  try {
+    programOutcomesAtTeardown = await sampleProgramOutcomes();
+  } catch (error) {
+    process.stderr.write(
+      `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
+    );
+  }
   const result = await buildRunResult({
     // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
     // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
@@ -3404,18 +3416,6 @@ try {
   //
   // The failure is recorded rather than thrown: a run whose teardown could not write its trace is still a
   // run whose other evidence is worth keeping, and the refusal belongs in the artifact, not in a crash.
-  // Read the Mod's journal BEFORE the bridge closes. Doing it inside the builder meant several exit paths asked
-  // after teardown and were told `bridge_not_authenticated` - so the artifact recorded when the harness looked
-  // rather than what the program did. This is the last moment the answer exists.
-  try {
-    programOutcomesAtTeardown = await sampleProgramOutcomes();
-  } catch (error) {
-    // A read that fails here is still a fact about the RUN, not about the program: keep it visible by name.
-    process.stderr.write(
-      `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
-    );
-  }
-
   let teardownFailure = null;
   await runtime?.close().catch((error) => {
     teardownFailure = error instanceof Error ? error.message : String(error);
