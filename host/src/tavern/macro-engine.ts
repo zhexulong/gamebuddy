@@ -37,21 +37,18 @@ export function macroTable(
 }
 
 /**
- * The locale's own word for the player, used when nothing names them: a zh run
- * says 你, every other locale says you.
+ * The word `{{user}}` stands for when nothing names the player.
  *
- * This default is a SECOND PERSON pronoun, never a noun, because the macro
- * stands for the player *being addressed* - the person the companion is
- * speaking to in this scene - and a card's own prose says `{{user}}` wherever it
- * would say "you" to that person. A noun (玩家, "the player") reads as a third
- * party the companion is talking about, which is exactly what the shipped
- * card's `post_history_instructions` forbids her to do (「严禁使用“她”等第三…」):
- * 与玩家一同从都市迁居 told a companion to speak about the player while the
- * card told her to speak to them. A nickname, when the player has one, still
- * wins over any word - see `macroTable`.
+ * SillyTavern substitutes the macro for the player's persona name and never adapts it to grammar, so a card that writes
+ * `{{user}} is late` reads `Mira is late`. A pronoun cannot do that job in English: `you is late` is what a card written in
+ * the third person turns into, because the sentence's own verb was chosen for a noun. So the unnamed fallback is a noun in
+ * English (`the player`) and 你 in Chinese, where no inflection disagrees with it.
+ *
+ * The noun does read as a third party, which the shipped card forbids her to use for the *player she addresses*. That is
+ * why a name always wins over this word - see `macroTable` - and why the preset companion supplies one.
  */
 function playerReferenceWord(locale: string | undefined): string {
-  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "you";
+  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "the player";
 }
 
 /**
