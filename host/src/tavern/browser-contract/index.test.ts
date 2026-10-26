@@ -54,11 +54,14 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "world-info.create",
       "world-info.update",
       "world-info.delete",
+      "world-info.import",
       "settings.voice.read",
       "settings.voice.consent",
       "settings.voice.devices",
       "settings.language.read",
       "settings.language.update",
+      "settings.delivery.read",
+      "settings.delivery.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",
@@ -92,6 +95,7 @@ test("Tavern Browser v1 provides a bounded, unmounted Chat Core registry", () =>
       "chat.archive",
       "chat.restore",
       "chat.trash",
+      "chat.export",
     ],
   );
   assert.ok(TavernBrowserContractV1.routes.every((route) => route.path.startsWith("/api/tavern/v1/")));
@@ -1272,6 +1276,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       "application/json",
     ],
     [
+      "world-info.import",
+      "POST",
+      "/api/tavern/v1/world-info/import",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
       "settings.voice.read",
       "GET",
       "/api/tavern/v1/settings/voice-preference",
@@ -1331,6 +1349,34 @@ test("every route freezes the exact security, binding, and success policy matrix
       "settings.language.update",
       "PUT",
       "/api/tavern/v1/settings/language",
+      "browser_session",
+      "same-origin",
+      "required",
+      "none",
+      ["x-csrf-token"],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "settings.delivery.read",
+      "GET",
+      "/api/tavern/v1/settings/delivery",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      [],
+      200,
+      "application/json",
+    ],
+    [
+      "settings.delivery.update",
+      "PUT",
+      "/api/tavern/v1/settings/delivery",
       "browser_session",
       "same-origin",
       "required",
@@ -1803,6 +1849,20 @@ test("every route freezes the exact security, binding, and success policy matrix
       200,
       "application/json",
     ],
+    [
+      "chat.export",
+      "GET",
+      "/api/tavern/v1/chat/export",
+      "browser_session",
+      "same-origin",
+      "none",
+      "none",
+      [],
+      [],
+      ["chatHandle"],
+      200,
+      "application/json",
+    ],
   ];
   assert.deepEqual(
     TavernBrowserContractV1.routes.map((route) => [
@@ -2182,7 +2242,7 @@ test("the voice persona is the same bounded shape on the wire and in the store, 
   assert.equal(read.Check(preference("soft-maid")), false);
   assert.equal(read.Check(preference("a".repeat(33))), false);
   assert.equal(
-    read.Check({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null , paced: false}),
+    read.Check({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null }),
     false,
     "the persona is a required member of the frozen read shape",
   );
@@ -2197,4 +2257,32 @@ test("the voice persona is the same bounded shape on the wire and in the store, 
   assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: "a".repeat(33) }), false);
   assert.equal(write.Check({ expectedRevision: 1, action: "setPersona" }), false);
   assert.equal(write.Check({ expectedRevision: 1, action: "setPersona", persona: null, extra: true }), false);
+});
+
+test("the delivery preference is a strict two-key pair on both sides of the wire", () => {
+  // The read and the command are each exactly their own key set: an unknown key
+  // is refused on both, so the browser cannot send a pacing parameter the Host
+  // does not store and the Host cannot reply with a second field.
+  const read = TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema;
+  assert.equal(read.Check({ revision: 0, paced: false }), true);
+  assert.equal(read.Check({ revision: 3, paced: true }), true);
+  assert.equal(read.Check({ revision: 0, paced: "false" }), false);
+  assert.equal(read.Check({ revision: 0 }), false);
+  assert.equal(read.Check({ revision: 0, paced: false, chunkMs: 40 }), false);
+
+  const write = TavernBrowserValidatorsV1.TavernDeliveryPreferenceCommandV1Schema;
+  assert.equal(write.Check({ expectedRevision: 0, paced: true }), true);
+  assert.equal(write.Check({ expectedRevision: 0, paced: false }), true);
+  // The command names the revision it read, exactly like language and voice; a
+  // reply-shaped `revision` is not the command's key.
+  assert.equal(write.Check({ revision: 0, paced: true }), false);
+  assert.equal(write.Check({ expectedRevision: 0, paced: true, extra: true }), false);
+  assert.equal(write.Check({ expectedRevision: 0 }), false);
+  assert.equal(write.Check({ expectedRevision: -1, paced: true }), false);
+  assert.deepEqual(
+    Object.keys(
+      (TavernBrowserContractV1.schemas.TavernDeliveryPreferenceV1Schema as { properties: object }).properties,
+    ).sort(),
+    ["paced", "revision"],
+  );
 });
