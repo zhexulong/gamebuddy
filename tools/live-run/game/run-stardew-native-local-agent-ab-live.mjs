@@ -1599,6 +1599,9 @@ function buildCapabilityAudit({
 // The hour the engine's evening has arrived: 22:00, the hour the scenario prompt names. A judged value, so it lives
 // in one place rather than being spelled 2200 wherever it is compared.
 const SLEEP_HOUR_MINUTES = 22 * 60;
+
+// A day contains turns; this bounds how many, for the harness only. It is not a limit on the day.
+const MAX_TURNS_PER_DAY = Number(process.env.GAMEBUDDY_MULTIDAY_MAX_TURNS_PER_DAY ?? 40);
 const MULTIDAY_NIGHT_TIMEOUT_MS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_NIGHT_TIMEOUT_MS ?? "", 10);
   if (Number.isInteger(requested) && requested > 0) return requested;
@@ -2936,6 +2939,14 @@ try {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     return typeof entry === "function" ? entry(day) : entry;
   };
+
+  // What the harness says when it offers the same day again. Deliberately carries no instruction: anything
+  // stronger ("do not stop until you sleep") would ask the model to opt into a structural guarantee, which is the
+  // mistake this change undoes.
+  const promptForDayContinuation = (day) =>
+    localeKey === "zh"
+      ? `（第 ${String(day)} 天还在继续。你还在地里。接着做。）`
+      : `(Day ${String(day)} is still going. Carry on.)`;
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
