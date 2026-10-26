@@ -20,6 +20,14 @@
   - *One unit, one commit, the moment it is green*; explicit pathspec every time, and read the hook's printed staged set. Never `restore`/`checkout --`/`stash`/`clean` another lane's uncommitted work; foreign hunks go to their owner or through the private index.
   - *Confirm the revision before comparing anything*; a clean worktree is not evidence.
   - *Every new assertion must be seen red once* on a real injected violation.
+  - *Diagnose by executing, not by reading*: a probe that calls the real function with real inputs settles in
+    seconds what reading the predicate cannot settle at all. A diagnostic that re-implements the logic can disagree
+    with it, and then it is worse than none - it sends you to a layer where the defect is not. When a value is
+    "present" but not taking effect, find the layer that decides and ask it, outside in: the deciding layer is often
+    a shape test above the predicate everyone is reading.
+  - *A check's boundary is what it reads*: when a gate is green and the defect is real, ask what it reads before
+    what it checks. A gate that tests a substring, a file it never loads, or a variable declared after its own
+    insertion point will stay green through the defect it exists for - which is why the red case comes first.
   - *No fact gets two spellings*: derive from the union/descriptor/constant and assert equality.
   - *Fix the owning layer, not the call site* (one mapper, not twenty-four; the producer, not a downstream stripper).
   - *A destructive action carries no effect the player cannot foresee*; if it leaves data unreachable, fix reachability rather than delete to tidy up.
