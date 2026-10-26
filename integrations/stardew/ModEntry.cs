@@ -1287,22 +1287,6 @@ public sealed partial class ModEntry : Mod
         // its own markers make the difference visible.
         this.LogStageOnce("program_pump", force: nativeLocalState.BodyProgramController is not null);
         nativeLocalState.BodyProgramController?.Update();
-        // A surviving settlement menu blocks every action, and the only path that used to close it needed a
-        // dispatched `advance_day` - which the menu itself prevents. Close it here, on the tick where it stands in
-        // the way. It carries no decision: its own close hook commits the ledger.
-        if (Game1.activeClickableMenu is StardewValley.Menus.ShippingMenu strandedSummary)
-        {
-            System.Reflection.MethodInfo? commit = typeof(StardewValley.Menus.ShippingMenu).GetMethod(
-                "okClicked",
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-            if (commit is null)
-                this.LogStageOnce("shipping_summary_commit_unavailable", force: true);
-            else
-            {
-                commit.Invoke(strandedSummary, null);
-                this.LogStageOnce("shipping_summary_committed_by_tick", force: true);
-            }
-        }
         this.LogStageOnce("program_pump_done");
             // Every Mod-side step of this lane now prints its own marker, so the LAST line of a frozen log names either the
         // step that never returned or `idle_between_ticks` - which means the Mod finished its tick and the hang is in
