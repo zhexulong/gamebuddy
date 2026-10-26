@@ -4000,7 +4000,10 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
           bar: entry.boxShadow,
         };
       };
-      const entries = [...document.querySelectorAll<HTMLElement>(".app-bar-actions .nav-button")];
+      // Every nav control the bar renders, including the ones the `More` disclosure holds: the folded entries are
+      // `renderEntry`'d inside `.app-bar-more-menu`, not inside `.app-bar-actions`, so a selector rooted at the
+      // actions row alone never sees them and `entries` was always missing the four folded peers.
+      const entries = [...document.querySelectorAll<HTMLElement>(".app-bar .nav-button:not(.app-bar-more-trigger)")];
       const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
       return {
         entries: entries.map(read),
