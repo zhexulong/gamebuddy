@@ -1,8 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using FluentAssertions;
 using Microsoft.Xna.Framework;
+using Netcode;
+using StardewValley;
+using StardewValley.Network;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -210,4 +214,207 @@ public class MoveApproachSubstitutionTests
         // Chebyshev, the metric the flood minimises.
         StardewBodyController.FormatReachableHint(new Point(30, 40), new Point(35, 55)).Should().Be("closest=30,40;closest_distance=15");
     }
+
+    // ---- one tile, one rule ---------------------------------------------------------------
+
+    /*
+     * The two predicates used to be two different answers about one tile: `IsWalkableTile` asked the engine's
+     * collision test with `pathfinding: true`, while `IsStandableTile` asked `isTilePassable` plus a
+     * `StopsStanding` occupancy mask. They could disagree, and the architecture spec (§3.2.1, 「谓词绝对同源」)
+     * says one predicate must decide both.
+     *
+     * `StopsStanding` cannot answer the boulder case at all: resource clumps live under
+     * `CollisionMask.TerrainFeatures` (`GameLocation.cs:7385-7392`), which the mask deliberately excludes so
+     * that grass and tilled soil stop being obstacles (cbf76421). So the old standable reading reported TRUE for
+     * a boulder's own tile -- the exact tile the planner refuses. These cases are behavioural: a real
+     * `GameLocation`, real terrain features, a real `Farmer` bounding box.
+     */
+
+    [Fact]
+    public void AHoeDirtWithNoCrop_IsBothWalkableAndStandable()
+    {
+        // The live symptom that motivated the mask fix: the tile a farmer would naturally stand on next to a
+        // rock, once hoed. Standing among terrain features is the job; it must not be refused here.
+        using var harness = TileHarness.Create();
+        harness.PlaceTerrain(new Vector2(5f, 5f), new StardewValley.TerrainFeatures.HoeDirt());
+
+        Vector2 tile = new(5f, 5f);
+        StardewBodyController.IsWalkableTile(harness.Location, harness.Actor, tile).Should().BeTrue(
+            "the planner walks onto tilled soil");
+        StardewBodyController.IsStandableTile(harness.Location, harness.Actor, tile).Should().BeTrue(
+            "tilled soil is a place to stand, not an obstacle");
+    }
+
+    [Fact]
+    public void ABoulderOwnTile_IsNeitherWalkableNorStandable()
+    {
+        // The tile the agent wants to break. No mask membership can express this: a clump is stored under
+        // `terrainFeatures`, the collection the mask has to ignore. Only the native step test refuses it.
+        using var harness = TileHarness.Create();
+        harness.Location.resourceClumps.Add(
+            new StardewValley.TerrainFeatures.ResourceClump(148, 2, 2, new Vector2(9f, 9f)));
+
+        Vector2 tile = new(9f, 9f);
+        StardewBodyController.IsWalkableTile(harness.Location, harness.Actor, tile).Should().BeFalse(
+            "the planner does not step onto a boulder");
+        StardewBodyController.IsStandableTile(harness.Location, harness.Actor, tile).Should().BeFalse(
+            "and neither may we: this used to answer true, because the mask that ignores terrain features "
+            + "also hides the clumps that live there");
+    }
+
+    [Fact]
+    public void EveryStandableTileIsAlsoWalkable()
+    {
+        // The contract the spec names (§3.2.1, 「谓词绝对同源」): a tile may never be "standable but not passable",
+        // because the approach selector would then hand the native finder a destination it refuses. This is
+        // checked across a whole farm corner, not just the two cases above.
+        //
+        // The reverse is deliberately NOT asserted: an NPC's tile is walkable-through and not standable, which is
+        // a real state and the reason the two entry points survive as separate names.
+        using var harness = TileHarness.Create();
+        harness.PlaceTerrain(new Vector2(5f, 5f), new StardewValley.TerrainFeatures.HoeDirt());
+        harness.PlaceTerrain(new Vector2(6f, 5f), new StardewValley.TerrainFeatures.Grass());
+        harness.Location.resourceClumps.Add(
+            new StardewValley.TerrainFeatures.ResourceClump(148, 2, 2, new Vector2(9f, 9f)));
+
+        for (int x = 0; x < 12; x++)
+        {
+            for (int y = 0; y < 12; y++)
+            {
+                Vector2 tile = new(x, y);
+                bool walkable = StardewBodyController.IsWalkableTile(harness.Location, harness.Actor, tile);
+                bool standable = StardewBodyController.IsStandableTile(harness.Location, harness.Actor, tile);
+                if (standable)
+                {
+                    walkable.Should().BeTrue(
+                        $"tile {x},{y} is standable, so the planner must be able to walk there");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void TheActorsOwnTile_StaysStandableAndWalkable()
+    {
+        // The one tile whose native collision answer cannot be trusted: it reports the actor's own footprint.
+        using var harness = TileHarness.Create();
+
+        Vector2 own = harness.Actor.Tile;
+        StardewBodyController.IsWalkableTile(harness.Location, harness.Actor, own).Should().BeTrue();
+        StardewBodyController.IsStandableTile(harness.Location, harness.Actor, own).Should().BeTrue();
+    }
+
+    [Fact]
+    public void AMissingActor_IsRefusedByBoth()
+    {
+        // The honest refusal: with no actor there is no body to stand, and neither reading may claim otherwise.
+        using var harness = TileHarness.Create();
+        Vector2 tile = new(5f, 5f);
+
+        StardewBodyController.IsWalkableTile(harness.Location, null, tile).Should().BeFalse();
+        StardewBodyController.IsStandableTile(harness.Location, null, tile).Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A real headless farm corner: a 16x16 map with the two layers the engine's collision test reads, a farmer
+    /// with a real 48x32 bounding box, and the <c>Game1</c> statics that test dereferences.
+    ///
+    /// <para>
+    /// The statics are the reason this is disposable: <c>NetPosition.Get</c> reads <c>Game1.HostPaused</c> and
+    /// <c>Farmer.GetBoundingBox</c> reads <c>netMount</c>, so they must be seeded or every read throws. The whole
+    /// assembly already runs without parallelization (AssemblyInfo.cs), so restoring them on dispose is sufficient.
+    /// </para>
+    /// </summary>
+    private sealed class TileHarness : IDisposable
+    {
+        private readonly Game1? gameBefore;
+        private readonly Farmer? playerBefore;
+        private readonly object? worldStateBefore;
+
+        /// <summary>
+        /// Captures the statics BEFORE <see cref="Create"/> seeds them. Saving them inside <c>Create</c> after
+        /// seeding would save this harness's own values and restore them as "the previous state", leaving every
+        /// later test in the assembly reading a probe farmer that was disposed minutes ago.
+        /// </summary>
+        private TileHarness()
+        {
+            this.gameBefore = Game1.game1;
+            this.playerBefore = Game1.player;
+            this.worldStateBefore = typeof(Game1)
+                .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
+                .GetValue(null);
+            this.Location = null!;
+            this.Actor = null!;
+        }
+
+        public GameLocation Location { get; private set; }
+
+        public Farmer Actor { get; private set; }
+
+        public static TileHarness Create()
+        {
+            var harness = new TileHarness();
+
+            var root = (NetRoot<NetWorldState>)System.Runtime.Serialization.FormatterServices
+                .GetUninitializedObject(typeof(NetRoot<NetWorldState>));
+            root.Value = new NetWorldState();
+            typeof(Game1)
+                .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
+                .SetValue(null, root);
+            if (Game1.game1 is null)
+                Game1.game1 = (Game1)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(Game1));
+
+            GameLocation location = new();
+            var map = new xTile.Map();
+            map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            location.map = map;
+            location.IsFarm = true;
+            SetField(location, "name", new NetString("ProbeFarm"));
+
+            var sprite = (FarmerSprite)System.Runtime.Serialization.FormatterServices
+                .GetUninitializedObject(typeof(FarmerSprite));
+            SetField(sprite, "spriteWidth", new NetInt(16));
+            SetField(sprite, "spriteHeight", new NetInt(32));
+            SetField(sprite, "tempSpriteHeight", -1);
+
+            var actor = (Farmer)System.Runtime.Serialization.FormatterServices.GetUninitializedObject(typeof(Farmer));
+            var reference = new NetRef<AnimatedSprite> { Value = sprite };
+            SetField(actor, "position", new NetPosition());
+            SetField(actor, "currentLocationRef", new NetLocationRef());
+            SetField(actor, "netMount", new NetRef<StardewValley.Characters.Horse>());
+            SetField(actor, "sprite", reference);
+            // Sits on 3,3 with the engine's own 48x32 farmer box.
+            actor.position.Set(new Vector2(3 * 64 + 8, 3 * 64));
+            actor.currentLocation = location;
+            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
+
+            harness.Location = location;
+            harness.Actor = actor;
+            return harness;
+        }
+
+        public void PlaceTerrain(Vector2 tile, StardewValley.TerrainFeatures.TerrainFeature feature)
+        {
+            feature.Location = this.Location;
+            feature.Tile = tile;
+            this.Location.terrainFeatures[tile] = feature;
+        }
+
+        private static void SetField(object target, string name, object value) =>
+            target.GetType()
+                .GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(target, value);
+
+        public void Dispose()
+        {
+            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, this.playerBefore);
+            typeof(Game1)
+                .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
+                .SetValue(null, this.worldStateBefore);
+            Game1.game1 = this.gameBefore!;
+        }
+    }
 }
+
+

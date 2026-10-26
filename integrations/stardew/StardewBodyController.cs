@@ -570,14 +570,6 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
-    /// Can the actor stand on this tile? The same predicate the native planner uses
-    /// (<c>isCollidingPosition</c> with <c>pathfinding: true</c> and collision effects
-    /// skipped), so "the planner can walk there" and "we may substitute an approach
-    /// there" cannot disagree. A stricter, object-occupancy test would refuse tiles the
-    /// farmer can legally walk on -- a cropped HoeDirt is exactly that, and the Mod's own
-    /// reachability probe already reports those as reachable (probe_says_reachable=true).
-    /// </summary>
-    /// <summary>
     /// The planner's own step set: cardinal only (`PathFindController.cs:45-51`). Shared so the reachability
     /// flood and the cardinal-neighbour tests cannot drift from the graph the native finder actually searches.
     /// </summary>
@@ -592,16 +584,21 @@ internal sealed class StardewBodyController
         new(0, -1), new(1, 0), new(0, 1), new(-1, 0),
     };
 
-    internal static bool IsWalkableTile(GameLocation location, Farmer? actor, Vector2 tile)
-    {
-        if (actor is null || !location.isTileOnMap(tile))
-            return false;
-        // The actor's own tile is walkable by definition: they are standing on it, and
-        // asking the collision test about the character's own footprint is the one case
-        // where its answer cannot be trusted to mean "someone else is in the way".
-        if (actor.Tile == tile)
-            return true;
-        return !location.isCollidingPosition(
+    /// <summary>
+    /// THE tile-admission rule. This file asks "may the body be on this tile?" in exactly one place, because the
+    /// engine asks it in exactly one place: <c>PathFindController</c> admits a step only when this same call is false
+    /// (<c>PathFindController.cs:222</c>, on a 62x62 box at <c>tile * 64 + 1</c>, with <c>pathfinding: true</c>).
+    ///
+    /// <para>
+    /// Why it has to be this call and not a cheaper reading: <c>isTilePassable</c> reads the map's Back and Buildings
+    /// layers and nothing else, so it answers "passable ground" about a tile holding a boulder, a chest or a chair,
+    /// and it counts a trellis crop as open ground the planner refuses. Two readings of one tile meant "the planner
+    /// will walk there" and "we may stand there" could both be true and disagree. Collision <i>effects</i> are
+    /// skipped because this is a question, not a step: asking must not shake a crop or shove an animal.
+    /// </para>
+    /// </summary>
+    private static bool IsPlannerAdmissibleTile(GameLocation location, Farmer actor, Vector2 tile) =>
+        !location.isCollidingPosition(
             new Microsoft.Xna.Framework.Rectangle((int)tile.X * 64 + 1, (int)tile.Y * 64 + 1, 62, 62),
             Game1.viewport,
             actor is Farmer,
@@ -610,38 +607,61 @@ internal sealed class StardewBodyController
             actor,
             pathfinding: true,
             skipCollisionEffects: true);
+
+    /// <summary>
+    /// The on-map and own-tile guards both entry points share. The actor's own tile is admitted without asking the
+    /// collision test: they are already standing on it, and the one thing that question reliably reports about your
+    /// own tile is your own footprint.
+    /// </summary>
+    private static bool IsTileAdmittedForBody(GameLocation location, Farmer actor, Vector2 tile) =>
+        location.isTileOnMap(tile)
+        && (actor.Tile == tile || IsPlannerAdmissibleTile(location, actor, tile));
+
+    /// <summary>
+    /// "The planner will walk there" -- the traversal reading, for choosing a walk.
+    /// </summary>
+    internal static bool IsWalkableTile(GameLocation location, Farmer? actor, Vector2 tile)
+    {
+        return actor is not null && IsTileAdmittedForBody(location, actor, tile);
     }
 
     /// <summary>
-    /// The standable-tile test shared by the move handler and this controller: on
-    /// the map, natively passable, and not occupied by anything else. The actor's
-    /// own tile counts as standable -- it is where they already are. This is the
-    /// stricter, OBJECT-occupancy reading, kept for evidence: it says "the tile is
-    /// free", which is a different (and more demanding) fact than
-    /// <see cref="IsWalkableTile"/>'s "the planner will walk there".
+    /// What actually stops a farmer standing on a tile, over and above the native step test.
+    ///
+    /// <para>
+    /// Two things keep this list narrow. <c>CollisionMask.All</c> (255) includes <c>TerrainFeatures</c>, where grass,
+    /// tilled soil and crops live, so a full mask reported ordinary farm ground as "occupied", the approach ring
+    /// around a rock lost its near face, and the companion walked round the far side of a rock to break it. Standing
+    /// among terrain features is the job; the scythe and the hoe exist for them.
+    /// </para>
+    /// <para>
+    /// The second is that this list is a SECOND PASS, never the rule. A resource clump -- the boulder, stump and
+    /// hollow-log family -- is stored in <c>terrainFeatures</c>, which is exactly what the list must ignore, so no
+    /// mask membership can refuse a boulder's own tile. <see cref="IsPlannerAdmissibleTile"/> refuses it, because the
+    /// planner will not step onto it either. This layer exists only for the occupants that test can still admit: it
+    /// checks the tile itself rather than a 62x62 box, and it honours the natives' own passability (a floor path, a
+    /// torch or a doorway is occupied and still walkable).
+    /// </para>
     /// </summary>
-            /// <summary>
-            /// What actually stops a farmer standing on a tile.
-            ///
-            /// `CollisionMask.All` (255) includes `TerrainFeatures`, which is where grass, tilled soil and crops live - so this
-            /// used to report "occupied" for ordinary farm ground and the approach ring around a rock lost its near face. Standing
-            /// among terrain features is the job; the scythe and the hoe exist for them.
-            /// </summary>
-            private const CollisionMask StopsStanding =
-                CollisionMask.Buildings
-                | CollisionMask.Characters
-                | CollisionMask.Furniture
-                | CollisionMask.Objects
-                | CollisionMask.LocationSpecific;
+    private const CollisionMask StopsStanding =
+        CollisionMask.Buildings
+        | CollisionMask.Characters
+        | CollisionMask.Furniture
+        | CollisionMask.Objects
+        | CollisionMask.LocationSpecific;
 
+    /// <summary>
+    /// "The body may stop here": the same rule as <see cref="IsWalkableTile"/>, plus the occupants that native
+    /// step test can still admit. Because admission is required first, a standable tile is always a walkable one --
+    /// the two can no longer disagree about a tile the planner would refuse, which is the state that made the
+    /// approach selector hand the finder a destination it would not enter.
+    /// </summary>
     internal static bool IsStandableTile(GameLocation location, Farmer? actor, Vector2 tile)
     {
-        if (!location.isTileOnMap(tile))
+        if (actor is null || !IsTileAdmittedForBody(location, actor, tile))
             return false;
-        if (actor is not null && actor.Tile == tile)
-            return true;
-        return location.isTilePassable(tile)
-            && !location.IsTileOccupiedBy(tile, StopsStanding, CollisionMask.None, false);
+        return actor.Tile == tile
+            || !location.IsTileOccupiedBy(tile, StopsStanding, ignorePassables: StopsStanding, useFarmerTile: false);
     }
 
     /// <summary>
