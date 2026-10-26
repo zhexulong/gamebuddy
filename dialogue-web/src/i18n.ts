@@ -297,7 +297,7 @@ const en = {
   // channel of its own, and a preselected entry would be a claim that it does.
   connectionProviderNone: "Choose a provider…",
   connectionActivationNotice:
-    "Connection activated. It applies from your next conversation; one already in progress is not switched.",
+    "Connection activated. The next message you send uses it, including in this conversation while it is idle.",
   connectionProvider: "Provider",
   connectionRecommended: "recommended",
   connectionEscapeHatch: "OpenAI-compatible endpoint",
@@ -1196,7 +1196,7 @@ const zh: Messages = {
   connectionNeedsYourKey:
     "还没有连接，所以她暂时没有可用的模型来回答。请自备：在下方选择渠道和它提供的模型，填入你在该渠道的 API Key，保存并测试。GameBuddy 本身不提供任何端点。",
   connectionProviderNone: "请选择渠道……",
-  connectionActivationNotice: "连接已启用。从下次开始对话时生效；正在进行的会话不会被切换。",
+  connectionActivationNotice: "连接已启用。你发的下一条消息就走它，包括当前这个会话（只要它处于空闲状态）。",
   connectionProvider: "渠道",
   connectionRecommended: "推荐",
   connectionEscapeHatch: "OpenAI 兼容端点",
