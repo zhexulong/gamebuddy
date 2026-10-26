@@ -4019,7 +4019,11 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   // report it.
   await page.setViewportSize({ width: 400, height: 720 });
   await page.mouse.move(1, 700);
-  await page.goto(`/#profile=composed-reference-game&panel=memory&boot=${token}`);
+  // Reached the way a player reaches it, not through the hash: the shell restores a surface from `panel=` only for the
+  // ids it knows, and this journey spent four attempts waiting for a `Memory` entry that never became current.
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-surface")).toBeVisible();
   // The bar's `active` state follows the shell's own `shownSurface`, which is restored from the URL after the
   // boot read settles. A fixed sleep raced it on CI: the panel painted, the entry said `current=page`, and the
