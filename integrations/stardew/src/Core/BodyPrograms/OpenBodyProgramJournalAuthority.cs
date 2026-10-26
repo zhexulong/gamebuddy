@@ -195,7 +195,12 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramSubmitResult Submit(ActionProgramCandidate candidate, IReadOnlySet<string>? restrictiveActionIds = null)
     {
-        if (!IsMutable) return new(BodyProgramSubmitCode.Quarantined, Rejected("authority_unavailable", null, "/"), null);
+        // Re-evaluate a closed authority before refusing. A submit is the one moment we know a caller is alive and
+        // waiting, so it is the right place to check whether the state that closed us has since aged out. Without this,
+        // `quarantined` was permanent for the session and told the caller nothing it could act on - measured 2026-10-26,
+        // 37 consecutive refusals that all read `authority_unavailable` while one expired node dispatch was the cause.
+        if (!IsMutable) this.HealAgedRecovery();
+        if (!IsMutable) return new(BodyProgramSubmitCode.Quarantined, Rejected(RecoveryUnavailableCode(this.OpenStatus), null, "/"), null);
         BodyProgramVerificationReport verification = Verify(candidate, restrictiveActionIds);
         if (!verification.Accepted || verification.CanonicalProgram is null) return new(BodyProgramSubmitCode.Rejected, verification, null);
         BodyProgramPolicyIdentity policy = ObservePolicy();
@@ -527,6 +532,9 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, updated), program.Program.ProgramId, "node_settled", node.NodeId, node.NodeAttempt)))
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         this.OpenStatus = BodyProgramJournalOpenStatus.RecoveryRequired;
+        // Printed because this one assignment closes the authority for the rest of the session: every later submit
+        // answers `quarantined`, and until now nothing said the authority had closed or why.
+        Console.Error.WriteLine($"[GameBuddy-authority] open_status={this.OpenStatus}");
         return BodyProgramControllerResult.Success(SnapshotFor(this.state.Programs.Single(item => item.Program.ProgramId == program.Program.ProgramId)));
     }
 
@@ -612,6 +620,12 @@ public sealed class OpenBodyProgramJournalAuthority
     private void AbandonAgedUnknownDispatches()
     {
         if (this.OpenStatus != BodyProgramJournalOpenStatus.RecoveryRequired) return;
+        // ONE writer for abandonment, called from both the journal-open path and every controller update.
+        //
+        // It used to run only at open. That is not a scheduling detail: `RecoveryRequired` is precisely the status in
+        // which the controller's `Update()` is the only thing still running, so an open-only heal meant a session that
+        // entered recovery could never leave it - measured 2026-10-26, a single expired `move_to_tile` dispatch kept
+        // the save answering `quarantined` for 13+ minutes with `abandoned` event count still zero.
         long now = this.nowMs();
         foreach (BodyProgramJournalProgram program in this.state.Programs.ToArray())
         {
@@ -627,6 +641,31 @@ public sealed class OpenBodyProgramJournalAuthority
             Console.WriteLine($"[GameBuddy-body-program-abandoned] program={program.Program.ProgramId};nodes={string.Join(',', unknown.Select(node => node.NodeId))};dispatchAgeMs={youngestAgeMs};reason={RecoveryAbandonReasonCode}");
         }
     }
+
+    /// <summary>
+    /// The controller's per-tick re-evaluation of an authority that closed itself.
+    ///
+    /// Called before a submit is refused, so a caller gets a real answer instead of a permanent `quarantined`. It makes
+    /// no claim on behalf of the unknown node: it abandons only what has already outlived the lifecycle watchdog, which
+    /// is the same rule the open path applies, just evaluated when it can still help.
+    /// </summary>
+    internal void HealAgedRecovery() => this.AbandonAgedUnknownDispatches();
+
+    /// <summary>
+    /// Why an immutable authority refused a submission, phrased so the caller can tell the two apart.
+    ///
+    /// `authority_unavailable` used to cover both, and it is the reason a model spent 37 attempts rewriting its own
+    /// script: a save-wide recovery state read to it exactly like "your program is malformed". The wire only accepts
+    /// `[a-z0-9_:-]`, so the distinction is carried in the code rather than in the message.
+    /// </summary>
+    private static string RecoveryUnavailableCode(BodyProgramJournalOpenStatus openStatus) => openStatus switch
+    {
+        BodyProgramJournalOpenStatus.RecoveryRequired => "authority_recovery_pending",
+        BodyProgramJournalOpenStatus.Corrupt => "authority_journal_corrupt",
+        BodyProgramJournalOpenStatus.PersistenceReadFailed => "authority_journal_unreadable",
+        BodyProgramJournalOpenStatus.PersistenceWriteFailed => "authority_journal_unwritable",
+        _ => "authority_unavailable",
+    };
 
     /// <summary>
     /// Re-entry gate the controller performs for a bound Running node before
@@ -903,6 +942,7 @@ internal static class BodyProgramVerifier
             : code.StartsWith("invalid_arguments", StringComparison.Ordinal) ? BodyProgramFailedPrecondition.ArgumentShape
             : BodyProgramFailedPrecondition.ProgramShape,
     };
+
     /// <summary>
     /// Names the offending action inside the reason code. The wire accepts only `[a-z0-9_:-]` reason
     /// codes, so an action id outside that alphabet keeps the bare code and is named in the message

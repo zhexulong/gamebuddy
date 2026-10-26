@@ -1230,6 +1230,58 @@ public sealed class BodyProgramAuthorityTests
     }
 
     [Fact]
+    public void ASubmitReevaluatesAClosedAuthoritySoOneExpiredDispatchCannotDisableTheSession()
+    {
+        // The live shape, measured 2026-10-26: one `move_to_tile` dispatch expired mid-run, the controller settled it
+        // to RecoveryRequired, and every later submit in that SAME session answered `quarantined`. The journal-open
+        // heal never ran again, because opening happens once and the controller was never even composed for a
+        // RecoveryRequired status - so the only writer able to clear the status had been removed from the process.
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, now: () => now);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        long dispatchedDeadlineMs = authority.Status("program").Snapshot!.Nodes.Single().DerivedDeadlineMs!.Value;
+
+        // Mid-session settlement, no reopen: this is the state the companion sat in.
+        authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        authority.Submit(Program("while_fresh")).Code.Should().Be(BodyProgramSubmitCode.Quarantined,
+            "a dispatch that has not aged out may still be recoverable, so the refusal stands");
+
+        // Past the bound, still without reopening anything: the next submit must be the moment it heals.
+        now = dispatchedDeadlineMs + OpenBodyProgramJournalAuthority.RecoveryAbandonAgeMs + 1;
+        authority.Submit(Program("after_aging")).Code.Should().Be(BodyProgramSubmitCode.Accepted,
+            "the state that closed the authority has aged out, and a caller is alive asking");
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+        authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "abandoned");
+    }
+
+    [Fact]
+    public void ARefusalNamesTheRecoveryStateInsteadOfBlamingTheSubmission()
+    {
+        // 37 consecutive refusals read `authority_unavailable` while one expired dispatch was the cause, and the model
+        // responded by rewriting its script each time. A save-wide state and a malformed program are different facts
+        // and the caller has to be able to tell them apart.
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, now: () => now);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+        authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
+
+        BodyProgramSubmitResult refused = authority.Submit(Program("anything"));
+
+        refused.Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        refused.Verification.Diagnostics.Should().ContainSingle().Which.Code.Should().Be("authority_recovery_pending",
+            "the refusal must name the recovery state, not the caller's program");
+    }
+
+    [Fact]
     public void OpenLeavesAFreshUnknownDispatchUntouchedBecauseTheCrashMayStillBeRecovering()
     {
         var store = new MemoryStore();

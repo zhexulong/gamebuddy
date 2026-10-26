@@ -2711,7 +2711,24 @@ public sealed partial class ModEntry : Mod
     /// publication. The journal authority observes it on the owner thread, so
     /// any capability/policy change quarantines stale submissions.
     /// </summary>
-    internal static bool ShouldComposeBodyProgramController(BodyProgramJournalOpenStatus openStatus) => openStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened;
+    /// <summary>
+    /// Whether the program controller is composed for this open status.
+    ///
+    /// <para>
+    /// `RecoveryRequired` is in the set. It used to be excluded, and that exclusion was the whole bug: a
+    /// `RecoveryRequired` journal is exactly the one that needs the controller's `Update()` loop, because that loop is
+    /// the only thing that runs the aged-out abandonment that clears the status. Refusing to compose it removed the
+    /// only writer able to heal the state it was refusing to work in, so one expired node dispatch disabled the save's
+    /// program routes until the game restarted - measured 2026-10-26, `move_to_tile` node n04 of
+    /// `plan_285_35ecf38667989229`, 37 consecutive `quarantined` submissions and the companion unable to walk to bed.
+    /// </para>
+    /// <para>
+    /// The statuses that stay out are the ones with no write to make: a corrupt or unreadable journal, and a write that
+    /// already failed. Composing a controller for those would promise a mutation the store has just refused.
+    /// </para>
+    /// </summary>
+    internal static bool ShouldComposeBodyProgramController(BodyProgramJournalOpenStatus openStatus) =>
+        openStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened or BodyProgramJournalOpenStatus.RecoveryRequired;
 
     private static BodyProgramPolicyIdentity GetBodyProgramPolicyIdentity(FarmhandCapabilityPublication publication)
     {
