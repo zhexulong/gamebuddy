@@ -2922,9 +2922,14 @@ try {
   // Two facts make it true: the clock is past the sleep hour, or `advance_day` settled - the only thing that actually
   // crosses a night. An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
   const daySpent = () => {
-    const clock = readWorldClock();
-    if (clock.unknown) return false;
-    if (clock.spent) return true;
+    // The snapshot first: it is the Mod's own publish of the clock and it arrives on every observation, whereas
+    // the readiness line is printed only when the actor is blocked in a way worth reporting.
+    const snapshotTime = client.state?.snapshot?.timeOfDay;
+    if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
+      const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
+      if (minutes >= SLEEP_HOUR_MINUTES) return true;
+    }
+    // The only thing that actually crosses a night.
     return actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null);
   };
   const promptForDay = (day) => {
