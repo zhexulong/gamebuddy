@@ -32,20 +32,23 @@ export type SurfaceViewProps = Readonly<{
   children: ReactNode;
 }>;
 
-export function SurfaceView({
-  title,
-  testId,
-  icon: Icon,
-  className,
-  restoreFocusTo,
-  children,
-}: SurfaceViewProps) {
+export function SurfaceView({ title, testId, icon: Icon, className, restoreFocusTo, children }: SurfaceViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     headingRef.current?.focus();
     return () => {
-      restoreFocusTo?.current?.focus();
+      // A folded nav entry lives inside the `More` disclosure, which is `display: none` while closed - and `focus()` on
+      // a node that is not rendered does nothing, so the focus fell to `document.body` and a keyboard or screen-reader
+      // user restarted from the top of the page. Handing it back asks whether the target can actually take focus first,
+      // and falls back to the control that owns the folded group, which is on screen.
+      const target = restoreFocusTo?.current;
+      if (target !== null && target !== undefined && target.isConnected && target.offsetParent !== null) {
+        target.focus();
+        return;
+      }
+      const foldedOwner = document.querySelector<HTMLElement>(".app-bar-more-trigger");
+      foldedOwner?.focus();
     };
   }, [restoreFocusTo]);
 
