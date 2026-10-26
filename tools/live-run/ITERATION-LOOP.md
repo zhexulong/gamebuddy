@@ -44,3 +44,33 @@ Anything else is a defect, and the loop continues.
 
 `crossings >= 2` with `dayRecords[i].cause` naming `sleep` or `pass_out`, and `terminal` reached through the engine -
 not a harness verdict, not a timeout. The run's own `result.json` must say so.
+
+## Clear the debris a killed run leaves
+
+A killed run does not just cost a run. It leaves four things that make the NEXT run fail for reasons unrelated to any
+code change, and each of them reports as something else:
+
+- **a fixture lock** - a *directory*, not a file, beside the fixture root. The next `prepare` refuses, the launcher says
+  `no_launch`, and that reads like a launch failure.
+- **`*.orphaned-*` backups** - the next `restore` finds more than one candidate and refuses.
+- **the recovery journal**, which is cumulative per scope. Admission records are never evicted; when it passes its budget
+  every later write throws `recovery_journal_budget_exceeded`, which surfaces as an admission that waits for ever. Clear it
+  when admission starts failing with no visible cause - 811 records had accumulated this way.
+- **a `host/dist-test` older than `host/src`**, which the runner refuses with `live_run_artifact_stale`. Correct, but it
+  reads like a harness bug until you have seen it once.
+
+So step 3 of the loop is not "stop stray processes", it is **make the fixture and the journal clean**, and step 1 is not
+"build the Mod" but **build both what the game loads and what the runner imports**.
+
+## A diagnostic is not an answer until it has run
+
+The three answers above have to come from executing something, not from reading the code and reasoning about it. The most
+expensive mistake of 2026-10-26 was three diagnostics in a row that paraphrased the logic instead of calling it; all three
+were confidently wrong, and one sent thirty rounds of work to a layer where the defect was not.
+
+Cheapest form that works, and it needs no game:
+
+    node .tmp/probe.mjs   # import the deployed module, feed it the real inputs, print the result
+
+And every gate added to keep a defect out gets a falsifier before it is trusted: reintroduce the defect, watch it go red,
+revert. An unobserved failure is decoration, not a check.
