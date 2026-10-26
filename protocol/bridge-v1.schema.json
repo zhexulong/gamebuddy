@@ -2320,6 +2320,15 @@
             "null"
           ]
         },
+        "currentToolSlot": {
+          "description": "The farmer's active tool slot (Farmer.CurrentToolIndex), or null when no tool is held. The tool-family actions take a slot that must equal this index, so it cannot be judged statically.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 11
+        },
         "inventorySlots": {
           "type": "integer",
           "minimum": 0,

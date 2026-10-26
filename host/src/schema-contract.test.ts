@@ -1528,6 +1528,13 @@ function patternWitness(pattern: string): string {
     // A group would need a real regex witness. Refusing loudly keeps an unsupported pattern from
     // silently shrinking this suite's coverage.
     if (body[index] === "(") throw new Error(`unsupported schema pattern: ${pattern}`);
+    // A quantifier applies to whatever preceded it, so it consumes no character of its own. Emitting it verbatim
+    // made every  pattern produce a witness containing  - valid for neither side - which the suite then
+    // reported as the Host refusing what the schema declares.
+    if (body[index] === "+" || body[index] === "*" || body[index] === "?") {
+      index += 1;
+      continue;
+    }
     out += body[index];
     index += 1;
   }
