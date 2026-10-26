@@ -257,9 +257,12 @@ test("the attachment builder keeps its named refusal for a Game surface it canno
   // cannot read (asserted above), and this surface's named gate for a root with no model - the
   // reachable case now that no model is shipped. Neither may be replaced by an invented default.
   //
-  // The attachment no longer re-derives the precedence: it asks the one owner of that rule and maps
-  // its outcome. This asserts the delegation itself, so a second copy of "which provider and model"
-  // cannot reappear here and drift from the Chat and the Preview the way it did once.
+  // The behaviour is asserted below (a root with no model refuses with this surface's own code). What is
+  // pinned here is the *delegation*, because the failure this guards against is a second copy of "which
+  // provider and model" appearing in this file and drifting from the Chat and the Preview. That is a fact
+  // about which function the file asks, not about the shape of the expression that calls it - an earlier
+  // version matched `requireSelectedModelConfig(await resolveSurfaceModelSelection(`, which broke the
+  // moment the call was split across a `const` and said nothing about behaviour.
   const source = await readFile(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
@@ -267,8 +270,14 @@ test("the attachment builder keeps its named refusal for a Game surface it canno
     ),
     "utf8",
   );
-  assert.match(source, /requireSelectedModelConfig\(\s*await resolveSurfaceModelSelection\(/);
-  assert.match(source, /surface: "game"/);
+  assert.match(source, /from "..\/settings\/model-selection\.js"/, "it asks the one owner of the rule");
+  assert.match(source, /resolveSurfaceModelSelection\(\{?/, "and calls that owner");
+  assert.match(source, /surface: "game"/, "naming its own surface");
+  assert.match(
+    source,
+    /requireSelectedModelConfig\(\s*\w+,\s*GAME_MODEL_CONFIGURATION_UNAVAILABLE\)/,
+    "and maps the outcome onto this surface's named refusal",
+  );
   assert.match(source, /GAME_MODEL_CONFIGURATION_UNAVAILABLE = "game_runtime_model_configuration_unavailable"/);
   assert.doesNotMatch(source, /new TavernConnectionStore/, "the attachment reads no connection of its own");
   assert.doesNotMatch(source, /new ModelProfileStore/, "the attachment reads no surface profile of its own");
