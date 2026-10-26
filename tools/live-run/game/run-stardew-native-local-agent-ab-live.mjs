@@ -1970,6 +1970,59 @@ async function watchNightThroughPassOut({
  * recorded - so "the menu was cleared" is a product fact rather than an inference from the run having
  * finished.
  */
+// WAIT FOR THE NIGHT TO BEGIN before watching it.
+//
+// The night starts when the companion dispatches `advance_day`, which happens somewhere inside its day. A
+// watcher that started observing from the first second of the day would poll the world at 4 Hz for the whole
+// turn (measured 2026-10-17: the first multi-day run had the loop observing from t=0, and the bridge closed
+// 15s in) and would ALSO be unable to tell "the companion has not slept yet" from "the companion will not
+// sleep". Waiting for the dispatch - bounded, and against the day's own settlement - gives both.
+// `waitForNightToBegin` uses this to tell "the day is spent" from "the turn ended while the day is still running".
+//
+// The evidence is the Mod's own readiness line, which now publishes `game_time` and `clock_rate_ms`: the engine's
+// clock, not the harness's clock, and not a guess about what a model meant. Without that line the answer is
+// `unknown`, and `unknown` is reported as itself rather than being rounded into a verdict about the companion.
+const readWorldClock = () => {
+  // The snapshot first, the log only as a fallback.
+  //
+  // This used to read `DEBUG-native-local-readiness` lines exclusively, and that line is printed only when the Mod finds
+  // the actor blocked in a way worth reporting: a run where the companion is free from start to finish emits none.
+  // Measured 2026-10-26 (`adm4`): zero `game_time=` lines in the whole SMAPI log, so the watcher answered
+  // `day_turn_settled_before_night:clock_unknown` and could not tell "the day ran out of turns" from "the day ran out
+  // of daylight". The snapshot is the Mod's own publish of the same fact and it arrives on every observation.
+  const snapshotTime = client.state?.snapshot?.timeOfDay;
+  if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
+    const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
+    return Object.freeze({
+      spent: minutes >= SLEEP_HOUR_MINUTES,
+      unknown: false,
+      timeOfDay: snapshotTime,
+      source: "snapshot",
+    });
+  }
+  try {
+    const lines = readFileSync(MOD_LOG_PATH(), "utf8")
+      .split("\n")
+      .filter((line) => line.includes("DEBUG-native-local-readiness"));
+    const last = lines.at(-1) ?? "";
+    const time = last.match(/game_time=(\d{3,4})/);
+    if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null, source: "none" });
+    const timeOfDay = Number(time[1]);
+    // The sleep hour, not an arbitrary one: `advance_day` is what the lifecycle accepts, and the companion cannot
+    // reasonably be expected to sleep before the engine's own evening. 22:00 is the hour the scenario names.
+    const minutes = Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100);
+    return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay, source: "readiness" });
+  } catch (error) {
+    return Object.freeze({
+      spent: false,
+      unknown: true,
+      timeOfDay: null,
+      source: "none",
+      reason: String(error?.message ?? error),
+    });
+  }
+};
+
 async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = {}) {
   const traceStart = actionTrace.length;
   const observeQuietly = async () => {
@@ -1979,58 +2032,6 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // A rollover's fade legitimately refuses an observation for a frame or two; the cached projection is
       // the current truth in that window.
       return client.state?.snapshot ?? null;
-    }
-  };
-  // WAIT FOR THE NIGHT TO BEGIN before watching it.
-  //
-  // The night starts when the companion dispatches `advance_day`, which happens somewhere inside its day. A
-  // watcher that started observing from the first second of the day would poll the world at 4 Hz for the whole
-  // turn (measured 2026-10-17: the first multi-day run had the loop observing from t=0, and the bridge closed
-  // 15s in) and would ALSO be unable to tell "the companion has not slept yet" from "the companion will not
-  // sleep". Waiting for the dispatch - bounded, and against the day's own settlement - gives both.
-  // `waitForNightToBegin` uses this to tell "the day is spent" from "the turn ended while the day is still running".
-  //
-  // The evidence is the Mod's own readiness line, which now publishes `game_time` and `clock_rate_ms`: the engine's
-  // clock, not the harness's clock, and not a guess about what a model meant. Without that line the answer is
-  // `unknown`, and `unknown` is reported as itself rather than being rounded into a verdict about the companion.
-  const readWorldClock = () => {
-    // The snapshot first, the log only as a fallback.
-    //
-    // This used to read `DEBUG-native-local-readiness` lines exclusively, and that line is printed only when the Mod finds
-    // the actor blocked in a way worth reporting: a run where the companion is free from start to finish emits none.
-    // Measured 2026-10-26 (`adm4`): zero `game_time=` lines in the whole SMAPI log, so the watcher answered
-    // `day_turn_settled_before_night:clock_unknown` and could not tell "the day ran out of turns" from "the day ran out
-    // of daylight". The snapshot is the Mod's own publish of the same fact and it arrives on every observation.
-    const snapshotTime = client.state?.snapshot?.timeOfDay;
-    if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
-      const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
-      return Object.freeze({
-        spent: minutes >= SLEEP_HOUR_MINUTES,
-        unknown: false,
-        timeOfDay: snapshotTime,
-        source: "snapshot",
-      });
-    }
-    try {
-      const lines = readFileSync(MOD_LOG_PATH(), "utf8")
-        .split("\n")
-        .filter((line) => line.includes("DEBUG-native-local-readiness"));
-      const last = lines.at(-1) ?? "";
-      const time = last.match(/game_time=(\d{3,4})/);
-      if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null, source: "none" });
-      const timeOfDay = Number(time[1]);
-      // The sleep hour, not an arbitrary one: `advance_day` is what the lifecycle accepts, and the companion cannot
-      // reasonably be expected to sleep before the engine's own evening. 22:00 is the hour the scenario names.
-      const minutes = Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100);
-      return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay, source: "readiness" });
-    } catch (error) {
-      return Object.freeze({
-        spent: false,
-        unknown: true,
-        timeOfDay: null,
-        source: "none",
-        reason: String(error?.message ?? error),
-      });
     }
   };
   const waitForNightToBegin = async () => {
@@ -2924,14 +2925,14 @@ try {
   //
   // Two facts make it true: the clock is past the sleep hour, or `advance_day` settled - the only thing that actually
   // crosses a night. An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
+  // Whether the in-game DAY is spent, answered by the engine and never by a turn boundary.
+  //
+  // readWorldClock is the one place that decides what the world clock is, so this asks it rather than repeating it.
+  // An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
   const daySpent = () => {
-    // The snapshot first: it is the Mod's own publish of the clock and it arrives on every observation, whereas
-    // the readiness line is printed only when the actor is blocked in a way worth reporting.
-    const snapshotTime = client.state?.snapshot?.timeOfDay;
-    if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
-      const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
-      if (minutes >= SLEEP_HOUR_MINUTES) return true;
-    }
+    const clock = readWorldClock();
+    if (clock.unknown) return false;
+    if (clock.spent) return true;
     // The only thing that actually crosses a night.
     return actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null);
   };
