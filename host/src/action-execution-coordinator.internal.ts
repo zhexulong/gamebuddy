@@ -12,9 +12,9 @@ import type { GameConnection } from "./game-connection.js";
 import type { BodyNodeAdmissionChallenge, BodyNodeAdmissionGrant, ExecutionReceipt } from "./protocol.js";
 import { ReceiptReplayLedger } from "./receipt-replay.js";
 import { RUN_SPAN_NAMES, type RunTrace, type RunTraceSpanHandle } from "./run-trace.js";
-import {
-  type HostNodeAdmissionRecord,
-  type StardewLogicalActionRecoveryJournal,
+import type {
+  HostNodeAdmissionRecord,
+  StardewLogicalActionRecoveryJournal,
 } from "./stardew-logical-action-recovery-journal.js";
 
 /**
@@ -101,13 +101,12 @@ export class HostNodeAdmissionService {
       const saved = await this.journal.recordAdmission(Object.freeze({ challenge, state: "grant_issued", grant }));
       return Object.freeze({ result: "granted", grant: saved.grant! });
     } catch (error) {
-      // The thrown cause is the most informative one available: it is the validator crashing, not deciding.
+      // The thrown cause is the most informative one available: it is the validator crashing, not deciding. A grant is
+      // never returned unless its exact tuple was durably journaled, so this is the whole failure branch.
       return Object.freeze({
         result: "unavailable",
         code: `admission_unavailable:validator_threw:${String((error as Error)?.message ?? error).slice(0, 80)}`,
       });
-      // A grant is never returned unless its exact tuple was durably journaled.
-      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
   }
 
@@ -323,7 +322,7 @@ function canonicalStableJson(value: unknown): string {
 
 /** Adapter-owned optional capability lookup; absent adapters keep polling. */
 export function executionWakeSourceFor(connection: unknown): ExecutionWakeSource | undefined {
-  if (!isRecord(connection) || !isRecord(connection.executionWakeSource)) return undefined;
+  if (!(isRecord(connection) && isRecord(connection.executionWakeSource))) return undefined;
   const source = connection.executionWakeSource;
   return typeof source.onExecutionWake === "function" ? (source as ExecutionWakeSource) : undefined;
 }
