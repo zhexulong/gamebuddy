@@ -620,6 +620,20 @@ internal sealed class StardewBodyController
     /// free", which is a different (and more demanding) fact than
     /// <see cref="IsWalkableTile"/>'s "the planner will walk there".
     /// </summary>
+            /// <summary>
+            /// What actually stops a farmer standing on a tile.
+            ///
+            /// `CollisionMask.All` (255) includes `TerrainFeatures`, which is where grass, tilled soil and crops live - so this
+            /// used to report "occupied" for ordinary farm ground and the approach ring around a rock lost its near face. Standing
+            /// among terrain features is the job; the scythe and the hoe exist for them.
+            /// </summary>
+            private const CollisionMask StopsStanding =
+                CollisionMask.Buildings
+                | CollisionMask.Characters
+                | CollisionMask.Furniture
+                | CollisionMask.Objects
+                | CollisionMask.LocationSpecific;
+
     internal static bool IsStandableTile(GameLocation location, Farmer? actor, Vector2 tile)
     {
         if (!location.isTileOnMap(tile))
@@ -627,7 +641,7 @@ internal sealed class StardewBodyController
         if (actor is not null && actor.Tile == tile)
             return true;
         return location.isTilePassable(tile)
-            && !location.IsTileOccupiedBy(tile, (CollisionMask)255, (CollisionMask)0, false);
+            && !location.IsTileOccupiedBy(tile, StopsStanding, CollisionMask.None, false);
     }
 
     /// <summary>
