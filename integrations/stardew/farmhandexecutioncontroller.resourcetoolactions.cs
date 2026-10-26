@@ -711,6 +711,24 @@ internal sealed partial class ExecutionManager
         // seam a holding player executes; no menu, no direct world write,
         // and every swing runs the native damage/debris path.
         const int maximumSwingCount = 12;
+        // The stamina floor, checked BEFORE the first swing.
+        //
+        // The loop below cannot know how many swings it will need - a stump falls when its health reaches zero,
+        // not when a budget says so - so the worst case it is willing to spend is the cap itself, and that is what
+        // gets priced. Refusing when the worst case does not fit is the honest answer: the alternative is letting
+        // the actor swing through to the engine's -15 pass-out, which halves next day's stamina and ends a multi-day
+        // routine outright (`Game1.cs:6452`).
+        ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
+            Game1.player.Stamina,
+            ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, axe.IsEfficient) * maximumSwingCount);
+        if (!stamina.Allowed)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                stamina.ReasonCode,
+                $"target={targetX},{targetY};tree_type={treeType};{stamina.Evidence};swings_worst_case={maximumSwingCount}");
+
         int swingCount = 0;
         float staminaBefore = Game1.player.Stamina;
         while (tree.health.Value > 0f && swingCount < maximumSwingCount)
@@ -866,6 +884,16 @@ internal sealed partial class ExecutionManager
             // safety cap is reached, or the tuft leaves an unhandled state. Every swing
             // runs the native grass path (sound, shake, sprites, deductions).
             const int maximumSwingCount = 8;
+            ToolStaminaVerdict grassStamina = ToolStaminaGuard.Check(
+                Game1.player.Stamina,
+                ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, weapon.IsEfficient) * maximumSwingCount);
+            if (!grassStamina.Allowed)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    grassStamina.ReasonCode,
+                    $"target={targetX},{targetY};{grassStamina.Evidence};swings_worst_case={maximumSwingCount}");
             int swingCount = 0;
             bool removed = false;
             while (!removed && swingCount < maximumSwingCount)
@@ -961,6 +989,19 @@ internal sealed partial class ExecutionManager
             // bounded safety cap is reached, or the weed leaves an unhandled
             // state. Every swing runs the native damage/debris path.
             const int maximumSwingCount = 8;
+            // Scythe work is free (`PerSwingCharge` returns 0 for a scythe-like tool only when efficient), but the
+            // guard is still asked: a future tool change that starts charging must not silently skip the floor, and
+            // the answer costs nothing when the charge is zero.
+            ToolStaminaVerdict weedStamina = ToolStaminaGuard.Check(
+                Game1.player.Stamina,
+                ToolStaminaGuard.PerSwingCharge(Game1.player.FarmingLevel, weapon.IsEfficient) * maximumSwingCount);
+            if (!weedStamina.Allowed)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    weedStamina.ReasonCode,
+                    $"target={targetX},{targetY};{weedStamina.Evidence};swings_worst_case={maximumSwingCount}");
             int swingCount = 0;
             bool handled = false;
             bool removed = false;
