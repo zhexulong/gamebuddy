@@ -214,7 +214,17 @@ export type GameIntegrationAdapter = Readonly<{
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const TOOL_NAME_PREFIX = /^[a-z][a-z0-9_-]{0,31}_$/;
 const VERSION = /^[A-Za-z0-9_.-]{1,64}$/;
-const LIFECYCLES = new Set<IntegrationActionLifecycle>(["published", "experimental", "diagnostic", "planned"]);
+// "live_verified" belongs here. This set answers "is this a lifecycle at all" and it runs BEFORE the admission
+// predicate, so a real lifecycle missing from it discards the registration one layer above every clause that would
+// have admitted it. Measured 2026-10-26: 95 registrations in, 26 out, every survivor "published"; cut_weeds and
+// dismiss_modal never reached the predicate at all.
+const LIFECYCLES = new Set<IntegrationActionLifecycle>([
+  "published",
+  "live_verified",
+  "experimental",
+  "diagnostic",
+  "planned",
+]);
 
 /**
  * Build the Host-local concrete adapter inventory for one integration. It can
