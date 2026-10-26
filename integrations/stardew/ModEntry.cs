@@ -1060,6 +1060,7 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy body program journal opened for this scope; program_submit/status/events routes are live.", LogLevel.Info);
         }
         state.BodyProgramController = farmhandBodyProgramController;
+        farmhandBodyProgramController!.Diagnostics = detail => this.Monitor.Log(detail, LogLevel.Debug);
         state.LastPublishedCatalogRevision = state.CapabilityPublication.CapabilityRevision;
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);

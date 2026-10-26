@@ -47,6 +47,14 @@ public sealed class FarmhandBodyProgramController
 {
     private readonly OpenBodyProgramJournalAuthority authority;
     private readonly IBodyProgramAdmissionTransport? admission;
+
+    /// <summary>
+    /// Where this pump reports why it declined to start a node. Null is allowed: the Core assembly has no logger, and
+    /// the Mod wires this to SMAPI's. Without it a silent early-return is indistinguishable from a pump that never ran.
+    /// </summary>
+    public Action<string>? Diagnostics { get; set; }
+
+    private void Diagnose(string detail) => this.Diagnostics?.Invoke($"[GameBuddy-body-program] {detail}");
     private readonly IBodyProgramNodeExecutor? executor;
     // Dispatch tuple every subset pass (admission, policy, deadline, exact
     // binding) has acknowledged. A node whose last Execute returned the null
@@ -169,10 +177,15 @@ public sealed class FarmhandBodyProgramController
             BodyProgramControllerResult<NodeAdmissionChallenge> started = this.authority.TryCreateAdmissionChallenge(programId);
             if (!started.IsSuccess)
             {
-                Console.WriteLine($"[GameBuddy-body-program-diagnostic] challenge_not_created;program={programId};code={started.Code}");
+                this.Diagnose($"challenge_not_created;program={programId};code={started.Code}");
                 return;
             }
-            if (!this.authority.IsLifecycleOpen) return;
+            if (!this.authority.IsLifecycleOpen)
+            {
+                this.Diagnose($"lifecycle_closed_before_send;program={programId}");
+                return;
+            }
+            this.Diagnose($"sending;program={programId};node={started.Value!.NodeId}");
             this.admission!.Send(started.Value!);
             if (!this.authority.IsLifecycleOpen) return;
         }
