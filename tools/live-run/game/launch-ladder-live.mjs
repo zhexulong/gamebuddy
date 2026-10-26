@@ -67,7 +67,9 @@ const windowMode = normalizeLiveRunWindowMode(process.env.GAMEBUDDY_LADDER_WINDO
 const action = option("action", "play_session");
 const label = option("label", "");
 const gameDir = option("game", process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley");
-const modsPath = option("mods", process.env.GAMEBUDDY_STARDEW_MODS_DIR ?? path.join(gameDir, "Mods"));
+// resolve(), for the same reason as releaseDir: the fixture refuses relative paths with
+// `native_local_fixture_absolute_paths_required`, and an env override can be relative.
+const modsPath = path.resolve(option("mods", process.env.GAMEBUDDY_STARDEW_MODS_DIR ?? path.join(gameDir, "Mods")));
 // Both fixture roots come from the single shared resolver
 // (tools/lib/stardew-fixture-roots.mjs). The defaults are the historical paths;
 // GAMEBUDDY_STARDEW_PROFILE_ROOT / GAMEBUDDY_STARDEW_FIXTURE_ROOT point one
