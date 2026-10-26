@@ -184,7 +184,11 @@ const CONSUMERS = Object.freeze([
   },
   {
     id: "game",
-    /** A Game runtime with no model is not a degraded session but a dead one, so it refuses. */
+    /**
+     * A Game surface builds without a model and carries none, the same way a Chat opens without one: the runtime
+     * derives `model === undefined` from the omission and the request that needs a model is what refuses. Reaching
+     * "model" therefore means the attachment actually carried one, not merely that construction succeeded.
+     */
     async ask(value) {
       try {
         const attachment = await createGameRuntimeAttachment({
@@ -193,7 +197,9 @@ const CONSUMERS = Object.freeze([
           gameplayWorkerEnabled: false,
           hostBindingFactory: () => undefined,
         });
-        return { reach: "model", ...attachment.modelConfig };
+        return attachment.modelConfig === undefined
+          ? { reach: "no_model", answer: "mounts-without-a-model" }
+          : { reach: "model", ...attachment.modelConfig };
       } catch (error) {
         return { reach: "no_model", answer: error.message };
       }
@@ -236,7 +242,7 @@ const STATES = Object.freeze([
     /** The fresh-install state: each surface says so in its own words. */
     refusals: Object.freeze({
       chat: "mounts-without-a-model",
-      game: "game_runtime_model_configuration_unavailable",
+      game: "mounts-without-a-model",
       preview: "farmhand_preview_model_configuration_unavailable",
     }),
   },
