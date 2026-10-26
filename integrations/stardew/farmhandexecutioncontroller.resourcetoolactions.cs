@@ -1090,7 +1090,10 @@ internal sealed partial class ExecutionManager
         // The two predicates are separate because they answer different questions: "is this tile
         // free" and "is it in the actor's own walkable component".
         Func<(int X, int Y), bool> isStandable = tile =>
-            StardewBodyController.IsWalkableTile(location, Game1.player, new Vector2(tile.X, tile.Y));
+            // OBJECT occupancy, not walkability. `IsWalkableTile` asks whether an actor may cross a tile, and a rock is an
+            // object on a walkable tile - so it answered yes for the rock's own tile and the approach walk stood ON the target.
+            // Measured 2026-10-26: 28 of 28 approach receipts read `tile === target`.
+            StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y));
         (int X, int Y) actor = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
         (int X, int Y)? standingTile = SelectToolApproachTile(
             (targetX, targetY),
