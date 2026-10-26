@@ -8,6 +8,8 @@ import { readWorldBook, type WorldBook } from "../worldbook.js";
 import type { TavernArtifactStore } from "./artifact-store.js";
 import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
 import { readCompanionCardExtensions } from "./card-extensions.js";
+import { readCompanionCardMetadata } from "./card-metadata.js";
+import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import {
   type CompanionCardExport,
   type CompanionCardFormat,
@@ -117,6 +119,8 @@ export function createCompanionCardExportService(
       const greetings = await readGreetingsOrThrow(options, tavernPaths.companionRoot);
       const worldBook = await readWorldBookOrThrow(runtimePaths.runtimeCwd);
       const extensions = await readCardExtensionsOrThrow(options, tavernPaths.companionRoot);
+      const preservedFields = await readCardMetadataOrThrow(options, tavernPaths.companionRoot);
+      const postHistoryInstructions = await readPostHistoryOrThrow(options, tavernPaths.companionRoot);
       const records: CompanionCardRecords = {
         name,
         ...(profile?.persona === undefined ? {} : { persona: profile.persona }),
@@ -128,6 +132,8 @@ export function createCompanionCardExportService(
           : { openings: greetings.variants.map((variant) => Object.freeze({ text: variant.text })) }),
         worldBook,
         ...(extensions === null ? {} : { extensions }),
+        ...(preservedFields === null ? {} : { preservedFields }),
+        ...(postHistoryInstructions === null ? {} : { postHistoryInstructions }),
       };
       const card = exportCompanionCard(records);
       if (format === "json")
@@ -211,6 +217,41 @@ async function readWorldBookOrThrow(runtimeCwd: string): Promise<WorldBook | nul
     return await readWorldBook(path);
   } catch {
     throw new Error("companion_world_book_unreadable");
+  }
+}
+
+/**
+ * The author fields this product does not interpret, or `null` when the card wrote none.
+ *
+ * Same contract as `extensions`: absence is ordinary and writes no field, and a present record that cannot be read
+ * fails closed rather than exporting her without the author's own notes, tags, name and version.
+ */
+async function readCardMetadataOrThrow(
+  options: Readonly<{ store: TavernArtifactStore }>,
+  companionRoot: string,
+): Promise<Readonly<Record<string, unknown>> | null> {
+  try {
+    return await readCompanionCardMetadata(options.store, companionRoot);
+  } catch {
+    throw new Error("companion_record_unreadable");
+  }
+}
+
+/**
+ * The card's own closing direction, or `null` when it wrote none.
+ *
+ * It travels the same road as `extensions` in the other direction - the import keeps it as her record and the
+ * materialization publishes it - and this is the half that writes it back, so a card that a player imported and
+ * re-exported still ends her replies the way its author meant.
+ */
+async function readPostHistoryOrThrow(
+  options: Readonly<{ store: TavernArtifactStore }>,
+  companionRoot: string,
+): Promise<string | null> {
+  try {
+    return await readCompanionPostHistoryInstructions(options.store, companionRoot);
+  } catch {
+    throw new Error("companion_record_unreadable");
   }
 }
 

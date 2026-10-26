@@ -15,6 +15,7 @@ import { type CompanionIdentity, identityKey, resolveRuntimePaths } from "../run
 import { join } from "node:path";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { writeCompanionCardExtensions } from "./card-extensions.js";
+import { writeCompanionCardMetadata } from "./card-metadata.js";
 import { companionAvatarPath, writeAvatarFile } from "./companion-avatar/index.js";
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
@@ -78,6 +79,8 @@ type ProvisionedCardMaterial = Readonly<{
   extensions?: Readonly<Record<string, unknown>>;
   /** The card's own closing direction, kept as her own record when it wrote one. */
   postHistoryInstructions?: string;
+  /** The card's fields this product does not interpret, kept as her own record. */
+  preservedFields?: Readonly<Record<string, unknown>>;
 }>;
 
 /**
@@ -193,6 +196,7 @@ export async function provisionNewCompanion(
       ...(candidate.postHistoryInstructions === undefined
         ? {}
         : { postHistoryInstructions: candidate.postHistoryInstructions }),
+      ...(candidate.preservedFields === undefined ? {} : { preservedFields: candidate.preservedFields }),
     }),
   );
 }
@@ -293,6 +297,15 @@ async function provisionNewCompanionNamespace(
           new TavernArtifactStore(paths.root),
           tavernPaths.companionRoot,
           card.postHistoryInstructions,
+        );
+      // The fields the card wrote that this product does not interpret, kept so the export can write them back.
+      // The compatibility manifest calls them `preserved_opaque`; until this record existed that was a
+      // classification with nothing behind it, and an author's notes, tags, name and version were lost at import.
+      if (card?.preservedFields !== undefined)
+        await writeCompanionCardMetadata(
+          new TavernArtifactStore(paths.root),
+          tavernPaths.companionRoot,
+          card.preservedFields,
         );
       // The reviewed card's own picture, written where the avatar face reads it.
       // The companion's root is created here if the card carried neither a

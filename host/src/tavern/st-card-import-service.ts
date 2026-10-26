@@ -254,6 +254,11 @@ function candidateFromReport(importId: string, report: StCardImportReport, sourc
     // `extensions` it rides outside the reviewed-field list: it is not a field of
     // hers, and no reader renders it.
     ...(value.postHistoryInstructions === undefined ? {} : { postHistoryInstructions: value.postHistoryInstructions }),
+    // The card's fields this product does not interpret, carried into the persisted candidate so the confirm
+    // step can give them a home: they become the companion's own `card-metadata.json` and the export writes them
+    // back unchanged. Outside the reviewed-field list for the same reason as the two above - they are the
+    // author's facts about the card, not fields of hers.
+    ...(value.preservedFields === undefined ? {} : { preservedFields: value.preservedFields }),
   });
 }
 function reportFromDecode(

@@ -44,6 +44,18 @@ export type CompanionCardRecords = Readonly<{
    * writes no `extensions` field rather than an empty object.
    */
   extensions?: Readonly<Record<string, unknown>>;
+  /**
+   * The author fields this product does not interpret (`creator_notes`, `tags`, `creator`,
+   * `character_version`, and whatever else the format allows), as her own `card-metadata.json` holds
+   * them. Absent is ordinary: the card she came from wrote none, so no field is written.
+   */
+  preservedFields?: Readonly<Record<string, unknown>>;
+  /**
+   * The card's own `post_history_instructions`, as her own record holds it. Absent when the card
+   * wrote none, and then no field is written - "the card said nothing" stays distinguishable from an
+   * empty string.
+   */
+  postHistoryInstructions?: string;
 }>;
 
 /** One entry of a V2/V3 `character_book`, under the spec's own field names. */
@@ -152,6 +164,14 @@ export function buildCompanionCard(records: CompanionCardRecords): TavernCardV3 
       ...(records.characterVoice === undefined ? {} : { system_prompt: records.characterVoice.text }),
       ...(book === undefined ? {} : { character_book: book }),
       ...(records.extensions === undefined ? {} : { extensions: records.extensions }),
+      // The card's own closing direction, written back where its author put it.
+      ...(records.postHistoryInstructions === undefined
+        ? {}
+        : { post_history_instructions: records.postHistoryInstructions }),
+      // The author fields this product does not interpret, written back verbatim. They go last and they go
+      // shallowly: a field named here was the card's, not ours, so an interpreted field of the same name wins
+      // and a genuinely unknown one comes back out unchanged.
+      ...(records.preservedFields ?? {}),
     }),
   });
 }

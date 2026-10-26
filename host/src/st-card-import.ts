@@ -92,6 +92,12 @@ export type StCardImportCandidate = Readonly<{
    * as instructions and never executed.
    */
   extensions?: Readonly<Record<string, unknown>>;
+  /**
+   * The card's fields this product does not interpret, carried verbatim (bounded and deep-frozen) so the
+   * service can keep them as her own `card-metadata.json` and the export can write them back. This is where
+   * the compatibility manifest's `preserved_opaque` classification is performed rather than merely reported.
+   */
+  preservedFields?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
   /**
    * The card's own `character_book.scan_depth`, when it declared a usable one.
@@ -133,6 +139,8 @@ export type StCardImportPreview = Readonly<{
   postHistoryInstructions?: string;
   /** The card's open-by-design `extensions` object, carried inert and verbatim. */
   extensions?: Readonly<Record<string, unknown>>;
+  /** The card's fields this product does not interpret, carried inert and verbatim. */
+  preservedFields?: Readonly<Record<string, unknown>>;
   worldBookCandidates: readonly WorldBookEntry[];
   /** The card's own `character_book.scan_depth`, when it declared a usable one. */
   worldBookScanDepth?: number;
@@ -310,11 +318,19 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
   const dispositions: StCardImportDisposition[] = accepted.map((field) =>
     disposition(field, "accepted_typed", "bounded_inert_candidate"),
   );
+  // The fields this product does not interpret are now actually kept, not only classified. `preserved_opaque` was a
+  // disposition with no record behind it: the import reported that the author's `creator_notes`, `tags`, `creator` and
+  // `character_version` were preserved while keeping none of their text. The value is the card's own, copied verbatim,
+  // bounded by one constant and frozen, so the export can write it back unchanged.
+  const preservedFields: Record<string, unknown> = {};
   for (const field of Object.keys(data).sort()) {
-    if (isExecutableControlField(field))
+    if (isExecutableControlField(field)) {
       dispositions.push(disposition(field, "dropped_unsupported", "executable_or_prompt_control_field"));
-    else if (!accepted.includes(field) && field !== "spec")
-      dispositions.push(disposition(field, "preserved_opaque", "not_interpreted"));
+      continue;
+    }
+    if (accepted.includes(field) || field === "spec") continue;
+    dispositions.push(disposition(field, "preserved_opaque", "not_interpreted"));
+    preservedFields[field] = data[field];
   }
   return Object.freeze({
     source,
@@ -327,6 +343,7 @@ function reportFromValue(value: Record<string, unknown>, source: "json" | "png")
         ? {}
         : { postHistoryInstructions: preview.postHistoryInstructions }),
       ...(preview.extensions === undefined ? {} : { extensions: preview.extensions }),
+      ...(Object.keys(preservedFields).length === 0 ? {} : { preservedFields: Object.freeze(preservedFields) }),
       worldBookCandidates: preview.worldBookCandidates,
       ...(preview.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: preview.worldBookScanDepth }),
     }),

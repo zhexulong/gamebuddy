@@ -26,6 +26,8 @@ import { decodeStCard } from "../st-card-import.js";
 import { pngCardFile } from "../test-support/png-card.test-support.js";
 import { companionAvatarPath, readAvatarFile } from "./companion-avatar/index.js";
 import { readCompanionCardExtensions } from "./card-extensions.js";
+import { readCompanionCardMetadata } from "./card-metadata.js";
+import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
 
@@ -83,6 +85,10 @@ type ReadRecords = Readonly<{
   worldBook: WorldBook | null;
   /** The card's open-by-design `extensions` object, as her own record holds it. */
   extensions: Readonly<Record<string, unknown>> | null;
+  /** The author fields this product does not interpret, as her own record holds them. */
+  preservedFields: Readonly<Record<string, unknown>> | null;
+  /** The card's closing direction, as her own record holds it. */
+  postHistoryInstructions: string | null;
 }>;
 
 async function readRecords(root: string, identity: CompanionIdentity): Promise<ReadRecords> {
@@ -108,6 +114,8 @@ async function readRecords(root: string, identity: CompanionIdentity): Promise<R
     openings: Object.freeze(greetings?.variants.map((variant) => variant.text) ?? []),
     worldBook,
     extensions: await readCompanionCardExtensions(store, tavernPaths.companionRoot),
+    preservedFields: await readCompanionCardMetadata(store, tavernPaths.companionRoot),
+    postHistoryInstructions: await readCompanionPostHistoryInstructions(store, tavernPaths.companionRoot),
   });
 }
 
@@ -347,6 +355,122 @@ test("the shipped card's game extensions survive a round trip through the compan
       `extensions round-trip card=${JSON.stringify(extensionsOf(exported.card)).length} chars ` +
         `record=${JSON.stringify(firstRecords.extensions).length} chars`,
     );
+  } finally {
+    threads?.close?.();
+    await cleanupTestRoot(root);
+  }
+});
+
+test("the author's own notes, tags, name and version survive the round trip, and the closing direction with them", async (t) => {
+  // A card the way an author actually writes one: standard metadata outside the interpreted fields, plus the
+  // post_history_instructions this product already accepted at import - and until now never wrote back.
+  const authored = {
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      name: "Wrenna",
+      description: "A beekeeper with opinions about weather.",
+      personality: "Dry, patient.",
+      scenario: "A wet afternoon in the shed.",
+      first_mes: "Mind the frames, they are heavier than they look.",
+      mes_example: "",
+      creator_notes: "Written for a slow campaign. Please keep her quiet.",
+      tags: ["slice-of-life", "beekeeping"],
+      creator: "somebody@example.invalid",
+      character_version: "2.4.1",
+      post_history_instructions: "End on something small and physical.",
+      character_book: { entries: [] },
+    },
+  };
+
+  const root = await canonicalTestRoot("tavern-card-export-metadata-");
+  let threads: ReturnType<typeof createChatThreadStore> | undefined;
+  try {
+    const store = new TavernArtifactStore(root);
+    const identity = {
+      playerId: "player-metadata",
+      companionId: "seed-metadata",
+      continuityId: "seed-metadata-continuity",
+    };
+    const seedPaths = resolveTavernPaths(resolveRuntimePaths(identity, root), identity);
+    const importService = new StCardImportService(store, seedPaths);
+    const staged = await importService.import("authored_card", JSON.stringify(authored));
+    const eligible = staged.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("authored_card", { reviewedFields: eligible, approvedAtMs: 1 });
+    threads = createChatThreadStore(root, "d".repeat(64));
+    const first = await provisionNewCompanion(
+      root,
+      identity.playerId,
+      staged.candidate.artifact,
+      await importService.confirmedReview("authored_card"),
+      threads,
+    );
+    const firstRecords = await readRecords(root, first.identity);
+    // The import performed the classification it reports rather than only naming it.
+    assert.deepEqual(firstRecords.preservedFields, {
+      creator: "somebody@example.invalid",
+      creator_notes: "Written for a slow campaign. Please keep her quiet.",
+      tags: ["slice-of-life", "beekeeping"],
+      character_version: "2.4.1",
+    });
+    assert.equal(firstRecords.postHistoryInstructions, "End on something small and physical.");
+
+    const cardHandle = "Y".repeat(43);
+    const cardOf = (records: ReadRecords, companion: typeof first) =>
+      createCompanionCardExportService({
+        store,
+        runtimeRoot: root,
+        playerId: identity.playerId,
+        resolveCompanion: async (requested) =>
+          requested === cardHandle
+            ? Object.freeze({
+                companionId: companion.identity.companionId,
+                continuityId: companion.identity.continuityId!,
+                name: records.name,
+              })
+            : null,
+      });
+    const exported = await cardOf(firstRecords, first).read(cardHandle, "json");
+    if (exported === null || exported.format !== "json") throw new Error("expected the JSON form of the card");
+    const dataOf = (card: string): Record<string, unknown> =>
+      (JSON.parse(card) as { data: Record<string, unknown> }).data;
+
+    // Every author field comes back out, by its own name, unchanged.
+    const out = dataOf(exported.card);
+    assert.equal(out.creator_notes, authored.data.creator_notes);
+    assert.deepEqual(out.tags, authored.data.tags);
+    assert.equal(out.creator, authored.data.creator);
+    assert.equal(out.character_version, authored.data.character_version);
+    assert.equal(out.post_history_instructions, authored.data.post_history_instructions);
+    // And the interpreted fields did not get shadowed by the preserved copy.
+    assert.equal(out.name, authored.data.name);
+    assert.equal(out.description, authored.data.description);
+
+    // Feed the card's own bytes back through the real import path: the round trip is a fixed point.
+    const secondStage = await importService.import("authored_round_trip", exported.card);
+    const secondEligible = secondStage.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await importService.recordReview("authored_round_trip", { reviewedFields: secondEligible, approvedAtMs: 2 });
+    const second = await provisionNewCompanion(
+      root,
+      identity.playerId,
+      secondStage.candidate.artifact,
+      await importService.confirmedReview("authored_round_trip"),
+      threads,
+    );
+    const secondRecords = await readRecords(root, second.identity);
+    assert.deepEqual(secondRecords.preservedFields, firstRecords.preservedFields);
+    assert.equal(secondRecords.postHistoryInstructions, firstRecords.postHistoryInstructions);
+
+    const exportedAgain = await cardOf(secondRecords, second).read(cardHandle, "json");
+    if (exportedAgain === null || exportedAgain.format !== "json")
+      throw new Error("expected the JSON form of the card");
+    assert.equal(JSON.stringify(dataOf(exportedAgain.card)), JSON.stringify(out));
+
+    t.diagnostic(`author metadata round-trip fields=${Object.keys(out).sort().join(",")}`);
   } finally {
     threads?.close?.();
     await cleanupTestRoot(root);
