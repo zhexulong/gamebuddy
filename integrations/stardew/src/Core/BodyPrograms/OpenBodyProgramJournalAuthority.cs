@@ -776,7 +776,15 @@ public sealed class OpenBodyProgramJournalAuthority
     }
     private bool DescriptorMatchesLive(VerifiedBodyProgramNode node) => this.catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
         && BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) && BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, this.scope);
-    private bool IsMutable => this.IsLifecycleOpen && (this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened);
+    /// <summary>
+    /// Whether the journal will accept a write right now.
+    ///
+    /// Internal rather than private because the controller has to ask it BEFORE asking
+    /// <see cref="RevalidateRunningDispatch"/>: that method answers <c>RecoveryRequired</c> as its first line whenever this
+    /// is false, and a caller that read that answer as "the dispatch failed" would settle every bound node to
+    /// RecoveryRequired and record a diagnostic that only describes its own consequence.
+    /// </summary>
+    internal bool IsMutable => this.IsLifecycleOpen && (this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened);
     private void ThrowIfLifecycleUnavailable()
     {
         BodyProgramAuthorityLifecycleState lifecycle;
