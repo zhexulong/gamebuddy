@@ -1991,20 +1991,43 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // clock, not the harness's clock, and not a guess about what a model meant. Without that line the answer is
   // `unknown`, and `unknown` is reported as itself rather than being rounded into a verdict about the companion.
   const readWorldClock = () => {
+    // The snapshot first, the log only as a fallback.
+    //
+    // This used to read `DEBUG-native-local-readiness` lines exclusively, and that line is printed only when the Mod finds
+    // the actor blocked in a way worth reporting: a run where the companion is free from start to finish emits none.
+    // Measured 2026-10-26 (`adm4`): zero `game_time=` lines in the whole SMAPI log, so the watcher answered
+    // `day_turn_settled_before_night:clock_unknown` and could not tell "the day ran out of turns" from "the day ran out
+    // of daylight". The snapshot is the Mod's own publish of the same fact and it arrives on every observation.
+    const snapshotTime = client.state?.snapshot?.timeOfDay;
+    if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
+      const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
+      return Object.freeze({
+        spent: minutes >= SLEEP_HOUR_MINUTES,
+        unknown: false,
+        timeOfDay: snapshotTime,
+        source: "snapshot",
+      });
+    }
     try {
       const lines = readFileSync(MOD_LOG_PATH(), "utf8")
         .split("\n")
         .filter((line) => line.includes("DEBUG-native-local-readiness"));
       const last = lines.at(-1) ?? "";
       const time = last.match(/game_time=(\d{3,4})/);
-      if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null });
+      if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null, source: "none" });
       const timeOfDay = Number(time[1]);
       // The sleep hour, not an arbitrary one: `advance_day` is what the lifecycle accepts, and the companion cannot
       // reasonably be expected to sleep before the engine's own evening. 22:00 is the hour the scenario names.
       const minutes = Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100);
-      return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay });
+      return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay, source: "readiness" });
     } catch (error) {
-      return Object.freeze({ spent: false, unknown: true, timeOfDay: null, reason: String(error?.message ?? error) });
+      return Object.freeze({
+        spent: false,
+        unknown: true,
+        timeOfDay: null,
+        source: "none",
+        reason: String(error?.message ?? error),
+      });
     }
   };
   const waitForNightToBegin = async () => {
