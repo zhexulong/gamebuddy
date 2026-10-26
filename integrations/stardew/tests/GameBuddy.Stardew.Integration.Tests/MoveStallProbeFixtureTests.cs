@@ -41,27 +41,44 @@ public class MoveStallProbeFixtureTests
 
     private static string ModEntrySource()
     {
-        // ModEntry is a partial class: the fixture/automation methods these pins
-        // inspect live in ModEntry.Fixtures.cs since the mechanical split. The
-        // pins protect source facts in the merged type, so the source under pin
-        // is the concatenation of both partial files, in declaration order.
-        string entry = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.cs")));
-        string fixturesPath = Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs");
-        string fixtures = File.Exists(RepositorySourcePath(fixturesPath))
-            ? File.ReadAllText(RepositorySourcePath(fixturesPath))
-            : string.Empty;
-        // MethodBody/IndexOf scans only need the containing file; duplicating the
-        // usings/namespace header is harmless for substring matching but would break
-        // brace-balance extraction, so strip the fixtures header, keeping only the
-        // partial-class body between its first '{' and last '}'.
-        if (fixtures.Length > 0)
-        {
-            int open = fixtures.IndexOf('{');
-            int close = fixtures.LastIndexOf('}');
-            if (open >= 0 && close > open)
-                fixtures = fixtures.Substring(open + 1, close - open - 1);
-        }
-        return entry + "\n" + fixtures;
+        // ModEntry is a partial class spread over many files (ModEntry.cs plus everything matching
+        // ModEntry.*.cs). The pins below protect source facts in the MERGED type, so the source under
+        // pin is every partial file concatenated.
+        //
+        // This used to name ModEntry.cs and ModEntry.Fixtures.cs by hand. Commit 48c5831a then moved the
+        // tick instrumentation - including IsMoveStallLineWalkable - into ModEntry.Instrumentation.cs and
+        // did not update this list, so two pins here have been failing ever since: they were looking for a
+        // method in files that no longer contained it. Naming files again would just wait for the next
+        // split, so the set is DERIVED from the directory instead: adding a partial file is now
+        // sufficient for it to be scanned, and removing one cannot leave a stale entry behind.
+        string[] partialPaths = Directory
+            .GetFiles(
+                Path.GetDirectoryName(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.cs")))!,
+                "ModEntry*.cs")
+            .OrderBy(path => Path.GetFileName(path) == "ModEntry.cs" ? 0 : 1)
+            .ThenBy(path => Path.GetFileName(path), StringComparer.Ordinal)
+            .ToArray();
+        if (partialPaths.Length == 0)
+            throw new FileNotFoundException("no ModEntry*.cs partial files found");
+        System.Text.StringBuilder merged = new();
+        foreach (string partialPath in partialPaths)
+            merged.Append('\n').Append(ClassBody(File.ReadAllText(partialPath), Path.GetFileName(partialPath)));
+        return merged.ToString();
+    }
+
+    /// <summary>
+    /// The text inside one file's <c>partial class ModEntry</c>, without its usings/namespace header.
+    /// Duplicating headers would break the brace-balance extraction in {@link MethodBody}, so every file
+    /// contributes only its class body. A file that declares no ModEntry body contributes its whole text
+    /// after its first '{' and before its last '}', which is what the single file this replaced did.
+    /// </summary>
+    private static string ClassBody(string source, string fileName)
+    {
+        int open = source.IndexOf('{');
+        int close = source.LastIndexOf('}');
+        if (open < 0 || close <= open)
+            throw new InvalidOperationException($"{fileName} has no class body to scan");
+        return source.Substring(open + 1, close - open - 1);
     }
 
     /// <summary>
