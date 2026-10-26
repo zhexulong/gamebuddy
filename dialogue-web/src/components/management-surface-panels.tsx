@@ -763,22 +763,13 @@ export function ChatsSurfacePanel({
               );
               return (
                 <div key={variant.optionId} role="listitem">
-                  {/* One card per opening, and the card is the whole of it: the reading area is a
-                      button that commits this opening, the whole opening continues the same card's
-                      prose once it is asked for, and the reveal sits in the card's own footer row.
-                      The reveal is NOT inside the reading button - a button inside a button is not a
-                      control tree any browser honours - so the reading area opens the card's body
-                      and the footer row closes it. */}
+                  {/* One card per opening, and the card itself is a container rather than a control: it
+                      reads, and the two things a player can do with it sit in its own footer row. Clicking
+                      the prose used to commit the opening, which meant a reader who only wanted to see the
+                      rest of it started a conversation instead - and on a phone, selecting text did the same.
+                      The prose is now inert text, and both verbs are buttons. */}
                   <div className="opening-option-card" data-testid="opening-option-card">
-                    <button
-                      type="button"
-                      className="opening-option"
-                      data-testid="opening-option"
-                      onClick={() => {
-                        setPickerOpen(false);
-                        void createChat(index);
-                      }}
-                    >
+                    <div className="opening-option" data-testid="opening-option">
                       <span className="opening-option-name" data-testid="opening-option-name">
                         {name}
                       </span>
@@ -793,8 +784,8 @@ export function ChatsSurfacePanel({
                         testId="opening-option-line"
                         text={preview.spoken}
                       />
-                    </button>
-                    {/* The card is one control, and its text is exactly what the choice turns on:
+                    </div>
+                    {/* The card's text is exactly what the choice turns on:
                         one line of beat and two of speech. A real opening runs past that - the
                         companion's own third opening is a paragraph - and a player choosing a
                         scene they will live in should be able to read it first. */}
@@ -810,6 +801,17 @@ export function ChatsSurfacePanel({
                     {/* The reveal names the opening it belongs to: three cards in one drawer mean
                         three controls whose visible word alone cannot say which one they open. */}
                     <div className="opening-option-footer">
+                      <button
+                        type="button"
+                        className="opening-option-commit small-button"
+                        data-testid="opening-option-commit"
+                        onClick={() => {
+                          setPickerOpen(false);
+                          void createChat(index);
+                        }}
+                      >
+                        {labels.openingUse}
+                      </button>
                       <button
                         type="button"
                         className="opening-option-expand small-button"

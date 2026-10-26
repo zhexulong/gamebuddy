@@ -282,7 +282,7 @@ test("creates the Chat on the opening the player picked", async ({ page }) => {
     "It is past midnight and the lamp is still lit. The house has gone quiet around you, and the kettle is cold on the stove.",
   ]);
 
-  await picker.getByTestId("opening-option").nth(1).click();
+  await picker.getByTestId("opening-option-commit").nth(1).click();
 
   // The player lands in the Chat the control created, and its message zero is the
   // opening they picked - the whole of it, not just the line the chooser showed.
@@ -341,7 +341,7 @@ test("says the Chat was created on the default opening when the choice is refuse
   await openChats(page);
 
   await page.getByTestId("new-chat").click();
-  await page.getByTestId("opening-option").nth(2).click();
+  await page.getByTestId("opening-option-commit").nth(2).click();
 
   // The Chat exists and the player is in it - a refused opening is not an
   // abandoned creation - and the conversation reads the opening it really has.
@@ -373,7 +373,7 @@ test("closes on Escape and gives focus back to the control that opened it", asyn
   // Choosing from the keyboard starts the Chat on the focused option's opening.
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("opening-picker")).toBeVisible();
-  const option = page.getByTestId("opening-option").nth(2);
+  const option = page.getByTestId("opening-option-commit").nth(2);
   await option.focus();
   await expect(option).toBeFocused();
   await page.keyboard.press("Enter");
@@ -493,7 +493,7 @@ test("the player can read a whole opening before choosing it", async ({ page }) 
   }
 
   // And choosing it still creates the Chat on that opening.
-  const picked = picker.getByTestId("opening-option").nth(2);
+  const picked = picker.getByTestId("opening-option-commit").nth(2);
   await picked.click();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText("You are not alone in the house.");
 });
