@@ -283,10 +283,24 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
             case ExecutionState.Cancelled:
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null);
+            case ExecutionState.Uncertain:
+                // `Uncertain` is a TERMINAL the action minted: it ran, and its own postcondition could not confirm the
+                // effect. It is not "still running".
+                //
+                // Leaving it in `default` made the executor answer `null` = "keep waiting", so the node stayed
+                // bound-Running forever while the ledger replayed the same receipt for the same RequestId. Every one of
+                // the eleven `... ? Succeeded : Uncertain` returns in the tool families could reach this - including the
+                // bounded swing loops that give up at their cap. Uncertain is exactly the outcome that must NOT be
+                // retried (the side effect may already exist), so it settles the node as the unknown it is.
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null);
+            case ExecutionState.PartiallySucceeded:
+                // Also terminal, and also previously fell through to `null`. The swing loops no longer mint it
+                // (`clear_debris` now swings to removal inside one request), but crafting and cooking still do, and a
+                // partial success is a settled fact about this attempt - not an invitation to wait.
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
             default:
-                // Accepted / Running / MeaningfulProgress / Blocked / Invalidated /
-                // PartiallySucceeded — the native body has not reached a terminal
-                // state for this exact tuple; remain bound-Running.
+                // Accepted / Running / MeaningfulProgress / Blocked / Invalidated - the native body has not reached a
+                // terminal state for this exact tuple; remain bound-Running.
                 return null;
         }
     }
