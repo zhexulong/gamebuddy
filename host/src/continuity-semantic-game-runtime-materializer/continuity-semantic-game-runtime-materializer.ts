@@ -525,7 +525,23 @@ function assertFreshBodyProgramPreflight(
     const refused = request.nodes
       .filter((node) => !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId))
       .map((node) => (isRecord(node) && typeof node.actionId === "string" ? node.actionId : "<no_action_id>"));
-    throw new Error(`body_program_preflight_rejected:${refused.join(",")}:allowed=${[...allowed].sort().join(",")}`);
+    // The predicate's INPUTS, not just its verdict.
+    //
+    // The refusal above named the action and the allowed set, and that was still not enough: `cut_weeds` is
+    // `live_verified`, has a Host adapter, is in `enabledActionIds`, and `plan_shape` returns its full descriptor - yet
+    // `visible` does not contain it. Every clause checkable statically should admit it, so the difference is in what
+    // this call actually received, and one line of evidence ends the guessing.
+    const registrations = state.registrations ?? [];
+    const inputs = refused.map((actionId) => {
+      const present = registrations.some((entry) => entry.actionId === actionId);
+      const registration = registrations.find((entry) => entry.actionId === actionId);
+      const enabled = (state.enabledActionIds ?? []).includes(actionId);
+      const denied = (mountedPolicy?.deniedActions ?? []).includes(actionId);
+      return `${actionId}{present=${String(present)},lifecycle=${registration?.lifecycle ?? "none"},kind=${registration?.kind ?? "none"},identityVersion=${String(registration?.identityVersion ?? "none")},enabled=${String(enabled)},denied=${String(denied)}}`;
+    });
+    throw new Error(
+      `body_program_preflight_rejected:${refused.join(",")}:allowed=${[...allowed].sort().join(",")}:registrations=${String(registrations.length)}:inputs=${inputs.join(";")}`,
+    );
   }
 }
 
@@ -676,16 +692,21 @@ export function createHostGameRuntimeMaterializer(
           }),
         );
         const bodyProgramAdmission = new HostNodeAdmissionService(recoveryJournal, (challenge) => {
+          // Three different failures shared one code, so the Mod could only answer "unavailable" and the model could only
+          // retry. Measured 2026-10-26: every program that reached admission came back unavailable in the same second it was
+          // sent, and the cause was unreadable from either end.
           if (execution.connection.executionGate?.executable !== true)
-            return { result: "unavailable", code: "admission_unavailable" };
+            return { result: "unavailable", code: "admission_unavailable:gate_not_executable" };
           let state: IntegrationStateView;
           try {
             state = execution.connection.module.readState(execution.connection);
           } catch {
-            return { result: "unavailable", code: "admission_unavailable" };
+            return { result: "unavailable", code: "admission_unavailable:read_state_threw" };
           }
-          if (!isStateView(state) || !state.connected || state.registrations === undefined)
-            return { result: "unavailable", code: "admission_unavailable" };
+          if (!isStateView(state)) return { result: "unavailable", code: "admission_unavailable:state_malformed" };
+          if (!state.connected) return { result: "unavailable", code: "admission_unavailable:not_connected" };
+          if (state.registrations === undefined)
+            return { result: "unavailable", code: "admission_unavailable:no_registrations" };
           assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
           const visible = execution.connection.module.actionCatalog.visibleActions(
             state.registrations,

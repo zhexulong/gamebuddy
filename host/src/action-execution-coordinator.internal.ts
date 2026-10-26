@@ -49,7 +49,9 @@ export type ActionExecutionAdmission = IntegrationDispatchAdmission &
 type HostNodeAdmissionDecision =
   | Readonly<{ result: "granted"; attachmentGeneration: string; policyRevision: string }>
   | Readonly<{ result: "rejected"; code: string }>
-  | Readonly<{ result: "unavailable"; code: "admission_unavailable" }>;
+  // `string`, not the single literal: an unavailable admission had ONE code for five different causes, so the Mod
+  // could only answer "unavailable" and the model could only retry. Naming the cause is the whole point.
+  | Readonly<{ result: "unavailable"; code: string }>;
 
 export type HostNodeAdmissionValidator = (
   challenge: BodyNodeAdmissionChallenge,
