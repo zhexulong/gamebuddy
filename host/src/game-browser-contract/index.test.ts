@@ -1179,5 +1179,8 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "StardewCabinChoicesV1Schema",
     "StardewCabinConfirmCommandV1Schema",
     "StardewCabinConfirmResultV1Schema",
+    "StardewPlayerSettingsCommandV1Schema",
+    "StardewPlayerSettingsReadCommandV1Schema",
+    "StardewPlayerSettingsV1Schema",
   ]);
 });
