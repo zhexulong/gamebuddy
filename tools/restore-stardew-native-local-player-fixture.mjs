@@ -7,7 +7,9 @@ for (let index = 2; index < process.argv.length; index += 2) {
   if (!(key?.startsWith("--") && value && !values.has(key))) throw new Error("invalid_native_local_fixture_arguments");
   values.set(key, value);
 }
-if (process.argv.length !== 10) throw new Error("invalid_native_local_fixture_arguments");
+// Four required pairs, plus the optional `--evidence-dir`. An exact length cannot express that, and it
+// refused the launcher's own call - so every run failed in teardown after doing all of its work.
+if (values.size !== 4 && values.size !== 5) throw new Error("invalid_native_local_fixture_arguments");
 const required = (name) => {
   const value = values.get(name);
   if (!value) throw new Error(`missing_${name.slice(2)}`);
