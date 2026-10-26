@@ -4025,22 +4025,12 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-surface")).toBeVisible();
-  // The bar's `active` state follows the shell's own `shownSurface`, which is restored from the URL after the
-  // boot read settles. A fixed sleep raced it on CI: the panel painted, the entry said `current=page`, and the
-  // `More` trigger had not taken the folded state yet. Waiting for the state itself, not for a duration.
-  // Both facts have to hold before the snapshot is taken: the folded entry is the surface in view, and the trigger
-  // reports it. Waiting for the trigger alone timed out on CI because the two are read from the same render - when the
-  // entry is not yet the current one, neither is true, and the loop was watching the shadow instead of the cause.
-  await expect
-    .poll(
-      async () => {
-        const sampled = await readBar();
-        const folded = sampled.entries.filter((entry) => entry.active);
-        return folded.length > 0 && (sampled.trigger?.active ?? false);
-      },
-      { message: "the folded entry is current and the trigger carries it" },
-    )
-    .toBe(true);
+  // The selected surface is a fact the DOM states, so wait on that statement rather than on a poll budget: the folded
+  // entry carries `aria-current="page"` and the `More` trigger takes its `active` presentation from it. A 5 s poll was
+  // enough here and not on CI, which is slow enough that a fixed budget is a guess about the machine.
+  const foldedCurrent = page.locator('.app-bar-more-menu .nav-button[aria-current="page"]');
+  await expect(foldedCurrent).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.locator(".app-bar-more-trigger.active")).toHaveCount(1, { timeout: 30_000 });
   await page.waitForTimeout(200);
 
   const narrow = await readBar();
