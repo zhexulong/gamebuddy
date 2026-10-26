@@ -116,7 +116,11 @@ async function prepare(
       return () => current++;
     })(),
   );
-  const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+  const creation = createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() {
+      return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
   await creation.createExplicit({
     chatThreadId: "thread_01",
     companionId: "companion_01",
@@ -130,9 +134,9 @@ async function prepare(
     text: "Hello",
     locale: "en-US",
     idempotencyKey: "abcdefghijklmnopqrstuv",
-      expectedDraftRevision: 0,
-      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
-   });
+    expectedDraftRevision: 0,
+    authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+  });
   if (target === "accepted_queued") return { store, attemptId: "" };
   const claimed = await claimMountedAttempt(binding);
   const attemptId = claimed.attempt.attemptId;
@@ -471,18 +475,17 @@ test("cancel authority: the widened not_started exit still rejects the fabricate
       db.prepare(
         "INSERT INTO tavern_messages (thread_id, message_id, append_ordinal, role, kind, text, occurred_at_ms, parent_id, active_swipe_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       ).run("thread_01", "response_planted_01", 1, "companion", "response", "Impossible.", at + 3, null, 0);
-      db.prepare("INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)").run(
-        "thread_01",
-        "response_planted_01",
-        0,
-        "Impossible.",
-      );
-      db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?)").run(
+      db.prepare(
+        "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
+      ).run("thread_01", "response_planted_01", 0, "Impossible.");
+      // Six columns since schema v7 added `truncated`; a positional INSERT has to match the table it is planting into.
+      db.prepare("INSERT INTO tavern_turn_presentations VALUES (?, ?, ?, ?, ?, ?)").run(
         turnId,
         "response_planted_01",
         "response_planted_01",
         0,
         at + 3,
+        0,
       );
       db.prepare("INSERT OR REPLACE INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
         turnId,

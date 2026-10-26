@@ -761,6 +761,9 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               // This bridge published no tool claim for the action, so the answer says the surface is silent rather
               // than leaving the field out and letting the companion read silence as "no tool involved".
               toolRequirement: { declared: false, reasonCode: "tool_requirement_undeclared" },
+              // The same shape for the other pre-execution precondition: where the body has to stand. `57cd0af0` made
+              // it declarable, and an action whose definitions do not declare it says so instead of staying silent.
+              approachRequirement: { declared: false, reasonCode: "approach_requirement_undeclared" },
             },
           ],
           // What a `slot` argument holds, answered once per shape rather than left to tool order.

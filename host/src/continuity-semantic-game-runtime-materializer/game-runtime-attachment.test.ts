@@ -195,19 +195,18 @@ test("an unarmed Game runtime attachment carries the player's own provider and m
  * connection is no model: the attachment refuses rather than inventing one, and the level the store
  * still owns travels to the surface that will use it once a connection exists.
  */
-test("a Game root with no activated connection has no model and refuses by name", async () => {
+test("a Game root with no activated connection has no model, and the attachment says so by omission", async () => {
   const value = await gameRoot("game-runtime-attachment-default-", undefined);
-  await assert.rejects(
-    () =>
-      createGameRuntimeAttachment({
-        runtimeRoot: value.runtimeRoot,
-        agentDir: value.agentDir,
-        gameplayWorkerEnabled: true,
-        hostBindingFactory,
-      }),
-    /game_runtime_model_configuration_unavailable/,
-  );
-  // The store itself still answers: it owns the level, and the refusal is not a store failure.
+  // The surface still constructs: a fresh install opens and can be read, exactly as the Chat surface does, and only a
+  // request that needs a model refuses. What this asserts is that no model is invented on the way through.
+  const attachment = await createGameRuntimeAttachment({
+    runtimeRoot: value.runtimeRoot,
+    agentDir: value.agentDir,
+    gameplayWorkerEnabled: true,
+    hostBindingFactory,
+  });
+  assert.equal(attachment.modelConfig, undefined, "no model is invented, and none is carried");
+  // The store itself still answers: it owns the level, and its answer is not a model.
   assert.equal(
     (await new ModelProfileStore(join(value.runtimeRoot, "settings", "model-profiles.json")).read("game"))
       .thinkingLevel,
@@ -318,18 +317,16 @@ test("every Game runtime attachment the builder returns names a provider and a m
     true,
     "an attachment carries a model",
   );
-  // The other half of the same invariant: with no connection there is no attachment at all.
+  // The other half of the same invariant: with no connection the attachment carries no model configuration at all. It
+  // is built (a fresh root opens and reads, as on the Chat surface) but nothing is invented on the way through.
   const bare = await gameRoot("game-runtime-attachment-model-less-fresh-", profile);
-  await assert.rejects(
-    () =>
-      createGameRuntimeAttachment({
-        runtimeRoot: bare.runtimeRoot,
-        agentDir: bare.agentDir,
-        gameplayWorkerEnabled: false,
-        hostBindingFactory,
-      }),
-    /game_runtime_model_configuration_unavailable/,
-  );
+  const bareAttachment = await createGameRuntimeAttachment({
+    runtimeRoot: bare.runtimeRoot,
+    agentDir: bare.agentDir,
+    gameplayWorkerEnabled: false,
+    hostBindingFactory,
+  });
+  assert.equal(bareAttachment.modelConfig, undefined, "no model is invented for a root with no connection");
 });
 
 test("an active player connection is the Game surface's provider and model, and the Game keeps its own thinking level", async () => {

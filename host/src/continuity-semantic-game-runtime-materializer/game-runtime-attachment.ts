@@ -59,9 +59,19 @@ export async function createGameRuntimeAttachment(
     agentDir: input.agentDir,
     surface: "game",
   });
-  if (gameSelection.status !== "selected")
-    process.stderr.write(`[game-model] status=${gameSelection.status} agentDir=${input.agentDir}\n`);
-  const modelConfig = requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE);
+  // A root with no model still constructs: the Chat surface already works that way (a fresh install opens, reads and
+  // holds a draft, and only a send refuses), and a Game surface that cannot even be built for the same reason made the
+  // two surfaces disagree about what "no model" means. Only that state is omitted here.
+  //
+  // `unreadable` is not the same fact and keeps refusing: a connection document this process cannot parse is a broken
+  // configuration, not an absent one, and telling a player to bring a connection they already brought is the wrong
+  // instruction. The one owner of the rule distinguishes the two, so this surface does too.
+  const modelConfig =
+    gameSelection.status === "selected"
+      ? requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE)
+      : gameSelection.status === "no_model"
+        ? undefined
+        : requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE);
   const recoveryAttachment = input.recoveryAttachment;
   const recoveryFields =
     recoveryAttachment === undefined
@@ -76,7 +86,7 @@ export async function createGameRuntimeAttachment(
           ...(recoveryAttachment.recoveryPort === undefined ? {} : { recoveryPort: recoveryAttachment.recoveryPort }),
         });
   return Object.freeze({
-    modelConfig,
+    ...(modelConfig === undefined ? {} : { modelConfig }),
     gameplaySubagentEnabled: input.gameplayWorkerEnabled,
     hostBindingFactory: input.hostBindingFactory,
     ...recoveryFields,
