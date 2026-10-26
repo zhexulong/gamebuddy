@@ -127,10 +127,12 @@ namespace GameBuddy.Stardew;
 // actionable again; the clearance never runs INSTEAD of the letter's own exit, which is
 // what would discard the attachment.
 //
-// DISCOVERY does not hardcode a coordinate. The mailbox is a Buildings-layer Action
-// tile; this action walks the location's own map layer and reads the tile's own `Action`
-// property with the same reader `enter_exit` uses (`ReadBuildingsLayerAction`), matching
-// the selector the native case switches on. The published identity binds the location,
+// DISCOVERY is location-scoped, not reach-scoped. The mailbox is a fixed landmark of the
+// farm exactly like the shipping bin (`DiscoverShippingBinTargets`), so "the actor is on
+// the farm" is the whole visibility rule; the Chebyshev-1 window below is the CLAIM's own
+// reach, and it is bridged by walking, never by hiding the landmark. Binding discovery to
+// the execution radius was the defect: a companion could only see a mailbox it was already
+// standing next to, so in normal play the action was never offered at all. The published identity binds the location,
 // the tile, the pending count AND the head letter id, so "the mailbox whose next letter
 // is X" is the identity a request names and a request that has already been served is
 // refused (`mail_target_changed`) instead of silently claiming the NEXT letter. The head
@@ -138,10 +140,17 @@ namespace GameBuddy.Stardew;
 // consumer echoes, exactly as `BuildAnimalDoorTargetId` binds the door state.
 //
 // FAILURE MODES: no mailbox selector on that tile (`mailbox_not_found`), the published
-// identity no longer describes the live mailbox (`mail_target_changed`), the actor never
-// reached it (`mail_claim_out_of_range`), there is nothing left to claim
-// (`mailbox_empty`), the native call threw (`mail_claim_native_exception`), it ran
+// identity no longer describes the live mailbox (`mail_target_changed`), the actor was
+// outside the claim's reach when the claim ran -- a walk that could not be planned, or a
+// body that ran without arriving (`mail_claim_out_of_range`) -- there is nothing left to
+// claim (`mailbox_empty`), the native call threw (`mail_claim_native_exception`), it ran
 // without the observed claim (`mail_claim_not_observed`), and success (`mail_claimed`).
+//
+// APPROACH. Being far from the mailbox is not a refusal: the request validates everything
+// that does not depend on position and then walks the actor into the native Chebyshev-1
+// window, the same shape `chop_tree_source`, `chop_stump` and `withdraw_silo_hay` use. The
+// arrival re-runs `ResolveMailboxTarget`, so a letter claimed by someone else during the
+// walk refuses `mail_target_changed` instead of silently opening the next one.
 internal sealed partial class ExecutionManager
 {
     /// <summary>The `(O)688` Warp Totem: Farm destination map, read from
@@ -156,8 +165,8 @@ internal sealed partial class ExecutionManager
     /// so the actor always stands beside it rather than on it.
     /// </summary>
     internal const int PanNativeReachTiles = 2;
-    /// <summary>The claim own reach, used by BOTH the discovery filter and the execution check so a published
-    /// mailbox is one a claim will accept.</summary>
+    /// <summary>The claim's own native reach. This is an EXECUTION distance only: discovery publishes the
+    /// mailbox from anywhere on the farm, and a request from outside this window walks to it first.</summary>
     internal const int MailboxClaimReachTiles = 1;
 
     /// <summary>
@@ -624,6 +633,10 @@ internal sealed partial class ExecutionManager
     /// tile advertises none, and the count is published even when it is zero so "there is
     /// a mailbox here and nothing to claim" stays distinguishable from "there is no
     /// mailbox here".
+    ///
+    /// The actor's DISTANCE from the mailbox is deliberately not part of this question: the
+    /// mailbox does not move and does not stop existing because the companion is across the
+    /// farm, and the claim closes the gap by walking.
     /// </summary>
     internal static IReadOnlyList<BridgeMailboxTarget> DiscoverMailboxTargets(Farmer player)
     {
@@ -643,10 +656,8 @@ internal sealed partial class ExecutionManager
             {
                 if (!IsMailboxTile(location, x, y))
                     continue;
-                // Publish radius = execution radius (the claim requires Chebyshev 1), so a mailbox the
-                // Agent can see in the list is one the claim will accept from where it is standing.
-                if (!IsTileWithinChebyshevRadius(player, x, y, MailboxClaimReachTiles))
-                    continue;
+                // No radius filter: a mailbox is a fixed landmark of this farm, so it is visible from
+                // every tile of the farm. A claim from outside `MailboxClaimReachTiles` walks in.
                 result.Add(new BridgeMailboxTarget(
                     BuildMailboxTargetId(location, x, y, pending, head),
                     location.NameOrUniqueName,
@@ -708,6 +719,9 @@ internal sealed partial class ExecutionManager
     /// opened finish the way its own exit path does, so the letter's `%item` attachment
     /// is delivered rather than discarded. See the file header for the split between the
     /// claim's world write and the attachment.
+    ///
+    /// This is the request path only: it decides everything that does not depend on the
+    /// actor's position and then either walks the actor into reach or runs the claim body.
     /// </summary>
     public LocalExecutionReceipt RequestLocalClaimMailAttachment(
         string requestId,
@@ -723,6 +737,54 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
+        Farmer player = Game1.player;
+        GameLocation location = player.currentLocation;
+        MailboxTargetResolution resolution = ResolveMailboxTarget(location, targetX, targetY, expectedTargetId);
+        if (!resolution.Accepted)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
+        // Position-independent, so it does not wait for a walk: an empty mailbox is refused where the actor stands.
+        if (resolution.PendingCount == 0)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "mailbox_empty",
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};pending=0");
+
+        // Outside the native claim reach, walk in rather than refuse. The target identity and the pending
+        // count are re-checked by the execution body on arrival, which is where a letter taken during the
+        // walk is refused instead of the next one being opened.
+        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, MailboxClaimReachTiles))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "claim_mail_attachment",
+                location,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClaimMailAttachment(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteClaimMailAttachment(executionId, requestId, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// The claim body. Re-validates the published mailbox identity and the native reach
+    /// before anything is written, because an approach leg may have taken several ticks and
+    /// the queue -- which is half of that identity -- can have moved meanwhile. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteClaimMailAttachment(
+        string executionId,
+        string requestId,
+        int targetX,
+        int targetY,
+        string expectedTargetId)
+    {
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
         MailboxTargetResolution resolution = ResolveMailboxTarget(location, targetX, targetY, expectedTargetId);

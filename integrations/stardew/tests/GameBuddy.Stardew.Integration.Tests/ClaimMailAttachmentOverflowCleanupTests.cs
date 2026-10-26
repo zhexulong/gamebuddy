@@ -43,23 +43,28 @@ public sealed class ClaimMailAttachmentOverflowCleanupTests
     {
         string source = ReadHandlerSource();
         string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalClaimMailAttachment(");
-        string bodyCode = StripLineComments(body);
+        // The claim lives in its own member so the in-range path and the post-approach path run
+        // one copy of it; the residual detector is part of that body.
+        string executed = MethodBody(source, "private LocalExecutionReceipt ExecuteClaimMailAttachment(");
+        string executedCode = StripLineComments(executed);
 
-        bodyCode.Should().Contain(
+        executedCode.Should().Contain(
             "Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu",
             "the residual can already be the active menu");
-        bodyCode.Should().Contain(
+        executedCode.Should().Contain(
             "Game1.nextClickableMenu",
             "the letter's own exit queues its overflow into Game1.nextClickableMenu, where an active-menu-only detector cannot see it");
         // The detector must read the QUEUE and filter it to the overflow kind - a bare count would clear any
         // queued menu, not just this action's residual (parent narrowing replaced `Count > 0` with an
         // ItemGrabMenu filter to honor that).
-        bodyCode.Should().Contain(
+        executedCode.Should().Contain(
             "Game1.nextClickableMenu.Any(menu => menu is StardewValley.Menus.ItemGrabMenu)",
             "the queue check must be for the overflow kind, not any queued menu");
-        bodyCode.Should().NotContain(
+        executedCode.Should().NotContain(
             "bool claimOverflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;",
             "the active-menu-only detector never fires for the queued overflow the defect leaves behind");
+        // The request path must not grow a second copy of the residual story: geometry only.
+        body.Should().NotContain("claimOverflowPending", "the residual is the claim body's business, not the walk's");
     }
 
     /// <summary>
@@ -72,9 +77,9 @@ public sealed class ClaimMailAttachmentOverflowCleanupTests
     {
         string source = ReadHandlerSource();
         string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalClaimMailAttachment(");
-        string bodyCode = StripLineComments(body);
+        string executed = MethodBody(source, "private LocalExecutionReceipt ExecuteClaimMailAttachment(");
 
-        string guard = MethodBody(body, "if (claimOverflowPending)");
+        string guard = MethodBody(executed, "if (claimOverflowPending)");
         guard.Should().Contain(
             "Game1.exitActiveMenu();",
             "an active residual menu is closed through the same native step shop_purchase uses");
@@ -82,16 +87,16 @@ public sealed class ClaimMailAttachmentOverflowCleanupTests
             "Game1.nextClickableMenu.Clear();",
             "the queued overflow the letter leaves behind is otherwise drained into the active menu on the next tick and freezes the actor");
 
-        int delivery = body.IndexOf("openedLetter.exitThisMenu();", StringComparison.Ordinal);
-        int clearance = body.IndexOf("if (claimOverflowPending)", StringComparison.Ordinal);
+        int delivery = executed.IndexOf("openedLetter.exitThisMenu();", StringComparison.Ordinal);
+        int clearance = executed.IndexOf("if (claimOverflowPending)", StringComparison.Ordinal);
         delivery.Should().BeGreaterThanOrEqualTo(0, "the letter must still finish through its own exit path");
         clearance.Should().BeGreaterThan(
             delivery,
             "the residual is only cleared after the letter's own exit delivered the attachment");
 
         // The clearance reports itself through the key the Host already knows, and adds none.
-        body.Should().Contain("collection_overflow_pending={claimOverflowPending");
-        bodyCode.Should().NotContain("overflow_cleaned");
+        executed.Should().Contain("collection_overflow_pending={claimOverflowPending");
+        StripLineComments(executed).Should().NotContain("overflow_cleaned");
     }
 
     private static string ReadHandlerSource() =>

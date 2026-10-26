@@ -189,29 +189,43 @@ public sealed class ItemTileActionTests
     {
         string source = ReadHandlerSource();
         string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalClaimMailAttachment(");
-        string bodyCode = StripLineComments(body);
+        // The claim body is its own member so the in-range path and the post-approach path run
+        // ONE copy of it (the shape every other tile action in this file set has).
+        string executed = MethodBody(source, "private LocalExecutionReceipt ExecuteClaimMailAttachment(");
+        string executedCode = StripLineComments(executed);
 
         foreach (string failureCode in ClaimMailAttachmentReasonCodes)
             StripLineComments(source).Should().Contain($"\"{failureCode}\"", $"the action must be able to report {failureCode}");
 
         // The native verb, and the native exit step that runs the letter's own
         // cleanupBeforeExit (which hands its itemsToGrab to the player).
-        body.Should().Contain("location.mailbox();");
-        body.Should().Contain("openedLetter.exitThisMenu();");
+        executed.Should().Contain("location.mailbox();");
+        executed.Should().Contain("openedLetter.exitThisMenu();");
         // The residual cleanup runs ONLY after that delivery and ONLY under the overflow
         // guard: Game1.exitActiveMenu() INSTEAD of exitThisMenu would discard the
         // attachment, and an unguarded close would evict a menu the claim never opened.
-        bodyCode.Should().Contain("if (claimOverflowPending)");
-        bodyCode.Should().Contain("Game1.exitActiveMenu()");
-        bodyCode.Should().Contain("Game1.nextClickableMenu.Clear()");
+        executedCode.Should().Contain("if (claimOverflowPending)");
+        executedCode.Should().Contain("Game1.exitActiveMenu()");
+        executedCode.Should().Contain("Game1.nextClickableMenu.Clear()");
 
         // The decision is the OBSERVED queue write, re-read after the call.
-        int nativeCall = body.IndexOf("location.mailbox();", StringComparison.Ordinal);
-        int queueReRead = body.IndexOf("pendingAfter = Game1.mailbox.Count", StringComparison.Ordinal);
-        int decision = body.IndexOf("bool claimed = removed && recorded", StringComparison.Ordinal);
+        int nativeCall = executed.IndexOf("location.mailbox();", StringComparison.Ordinal);
+        int queueReRead = executed.IndexOf("pendingAfter = Game1.mailbox.Count", StringComparison.Ordinal);
+        int decision = executed.IndexOf("bool claimed = removed && recorded", StringComparison.Ordinal);
         nativeCall.Should().BeGreaterThanOrEqualTo(0);
         queueReRead.Should().BeGreaterThan(nativeCall, "the queue must be re-read after the native claim");
         decision.Should().BeGreaterThan(queueReRead, "the decision must follow the re-read");
+
+        // The request path decides geometry only: it never performs the claim itself, and it
+        // reaches the one body through BOTH branches (the walk and the in-range path), so the
+        // two paths cannot drift into two copies of the contract.
+        body.Should().NotContain(
+            "location.mailbox();",
+            "the native claim belongs to the shared execution body, not to the path that decides where to stand");
+        body.Should().Contain("this.TryBeginToolApproach(", "a mailbox out of reach is walked to, not refused");
+        body.Should().Contain("\"claim_mail_attachment\"", "the approach names the real action id, not an internal phase");
+        body.Should().Contain("this.ExecuteClaimMailAttachment(arrivalExecutionId, arrivalRequestId", "the arrival branch runs the shared body");
+        body.Should().Contain("return this.ExecuteClaimMailAttachment(executionId, requestId", "the in-range branch runs the same body");
 
         // The identity binds the pending count and the head letter, and the head letter id
         // is hashed INTO the opaque id rather than published.
@@ -222,6 +236,12 @@ public sealed class ItemTileActionTests
         string discovery = MethodBody(source, "internal static IReadOnlyList<BridgeMailboxTarget> DiscoverMailboxTargets(");
         discovery.Should().Contain("location.map?.GetLayer(\"Buildings\")");
         discovery.Should().Contain("IsMailboxTile(location, x, y)");
+        // And it is presence-scoped, not reach-scoped: the mailbox is a fixed landmark of the farm,
+        // so a filter on the CLAIM's reach would publish it only to a companion already standing
+        // next to it - which is exactly the defect that made the action unreachable in play.
+        StripLineComments(discovery).Should().NotContain(
+            "MailboxClaimReachTiles",
+            "the claim's radius is an execution distance; hiding the landmark behind it is what made the mailbox invisible");
         string predicate = MethodBody(source, "internal static bool IsMailboxTile(");
         // The predicate must NOT scan map data for a Mailbox action: the repository's own content
         // probe over all 563 maps shows Maps/Farm declares exactly one action property
