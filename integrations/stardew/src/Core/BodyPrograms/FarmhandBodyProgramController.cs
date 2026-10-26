@@ -233,7 +233,11 @@ public sealed class FarmhandBodyProgramController
             BodyNodeAdmissionResult? admissionResult = this.admission!.TryTakeResult(programId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt);
             if (!this.authority.IsLifecycleOpen) return;
             if (admissionResult is null) continue;
-            if (admissionResult is BodyNodeAdmissionUnavailableResult) continue;
+            if (admissionResult is BodyNodeAdmissionUnavailableResult unavailable)
+            {
+                this.Diagnose($"admission_unavailable;program={programId};node={node.NodeId};reason=unavailable_without_code");
+                continue;
+            }
             if (admissionResult is BodyNodeAdmissionRejectedResult rejected)
             {
                 this.authority.TryRejectAdmission(rejected.Challenge, rejected.Code);
@@ -241,7 +245,11 @@ public sealed class FarmhandBodyProgramController
             }
             if (admissionResult is not BodyNodeAdmissionGrantedResult granted || this.executor is null) continue;
             BodyProgramControllerResult<HostAdmissionGrant> consumed = this.authority.TryConsumeHostGrant(granted.Grant);
-            if (!consumed.IsSuccess || consumed.Value is null) continue;
+            if (!consumed.IsSuccess || consumed.Value is null)
+            {
+                this.Diagnose($"grant_not_consumed;program={programId};node={node.NodeId};code={consumed.Code}");
+                continue;
+            }
             this.RunAdmittedNode(consumed.Value);
         }
     }
