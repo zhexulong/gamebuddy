@@ -2024,7 +2024,7 @@ function validateBodyNodeAdmissionResult(value: Record<string, unknown>): string
     if (
       typeof value.code !== "string" ||
       !isReasonCode(value.code) ||
-      (value.result === "unavailable" && value.code !== "admission_unavailable")
+      (value.result === "unavailable" && !value.code.startsWith("admission_unavailable"))
     )
       return "invalid_body_node_admission_result";
     const { result: _result, code: _code, ...challenge } = value;
