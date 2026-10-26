@@ -65,42 +65,47 @@ test("model profiles start from the shipped thinking level and hold no model of 
 });
 
 /**
- * A profile written by the build that still had a model id loads, and the stale member is dropped.
+ * A profile written by another build loads, and the surface's own provider/model survives with it.
  *
- * The premise this protects: a player upgrading in place must not meet
- * `invalid_model_profile_store` because of a field the product no longer reads. The member is
- * dropped rather than preserved - it can only disagree with the connection that really decides the
- * model - and it disappears from disk at the first save rather than on read.
+ * The premise this protects has changed with the field: `modelId` is a live member again - the surface's own override
+ * of the active connection - so a document that carries it must load *with* it rather than dropping it. What is still
+ * refused is a half-stated selection, which is the shape that cannot be resolved.
  */
-test("a document still carrying the retired modelId loads, and the field is gone from the projection", async () => {
+test("a document carrying a surface's own provider and model loads, and the pair survives the projection", async () => {
   await withStore(async (path, store) => {
     await mkdir(join(path, ".."), { recursive: true });
     await writeFile(
       path,
       JSON.stringify({
         schemaVersion: 1,
-        chat: { revision: 4, modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
-        game: { revision: 2, modelId: "qwen2.5-coder:7b", thinkingLevel: "max" },
+        chat: { revision: 4, modelId: "deepseek-v4.1-flash", providerId: "cpa-oai", thinkingLevel: "low" },
+        game: { revision: 2, modelId: "qwen2.5-coder:7b", providerId: "ollama", thinkingLevel: "max" },
       }),
     );
     assert.deepEqual(await store.read("chat"), {
       surface: "chat",
       revision: 4,
       thinkingLevel: "low",
+      modelId: "deepseek-v4.1-flash",
+      providerId: "cpa-oai",
     } satisfies ModelProfile);
     const saved = await store.update("chat", 4, { thinkingLevel: "xhigh" });
-    assert.deepEqual(saved, { surface: "chat", revision: 5, thinkingLevel: "xhigh" } satisfies ModelProfile);
-    // The write is what drops it, on BOTH surfaces: the store serialises the document it validated,
-    // and that document has no model id in it. A stale member can only disagree with the connection
-    // that really decides the model, so it is not carried forward.
+    // An update that names no model keeps the surface's own override: changing how much she reasons is not a reason to
+    // drop the model the player pinned for this surface.
+    assert.deepEqual(saved, {
+      surface: "chat",
+      revision: 5,
+      thinkingLevel: "xhigh",
+      modelId: "deepseek-v4.1-flash",
+      providerId: "cpa-oai",
+    } satisfies ModelProfile);
+    // The game surface never had an override, so its entry stays as the other build wrote it - including its revision -
+    // until a save touches it: reading is not writing.
     const written = JSON.parse(await (await import("node:fs/promises")).readFile(path, "utf8")) as {
       chat: Record<string, unknown>;
       game: Record<string, unknown>;
     };
-    assert.deepEqual(Object.keys(written.chat).sort(), ["revision", "thinkingLevel"]);
-    assert.deepEqual(Object.keys(written.game).sort(), ["revision", "thinkingLevel"]);
-    // Reading alone is not writing: the un-saved surface kept its revision and its file entry until
-    // a save touches it.
+    assert.deepEqual(Object.keys(written.chat).sort(), ["modelId", "providerId", "revision", "thinkingLevel"]);
     assert.equal(written.game.revision, 2);
   });
 });
@@ -130,12 +135,35 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
   await withStore(async (path, store) => {
     await assert.rejects(store.update("chat", 0, { thinkingLevel: "" } as never), /invalid_model_profile_update/);
     await assert.rejects(store.update("chat", 0, { thinkingLevel: "3 high" } as never), /invalid_model_profile_update/);
-    // A model id is not a field of this record at all any more.
+    // A model without the provider that serves it is not a selection: the pair is written together or not at all.
     await assert.rejects(
       store.update("chat", 0, { modelId: "deepseek-v4.1-flash", thinkingLevel: "high" } as never),
       /invalid_model_profile_update/,
     );
-    assert.equal((await store.read("chat")).revision, 0);
+    // And a provider with no model names nothing to run.
+    await assert.rejects(
+      store.update("chat", 0, { providerId: "cpa-oai", thinkingLevel: "high" } as never),
+      /invalid_model_profile_update/,
+    );
+    // Both together are the override, and they are accepted.
+    const overridden = await store.update("chat", 0, {
+      modelId: "deepseek-v4.1-flash",
+      providerId: "cpa-oai",
+      thinkingLevel: "high",
+    });
+    assert.equal(overridden.modelId, "deepseek-v4.1-flash");
+    assert.equal(overridden.providerId, "cpa-oai");
+    // Clearing both removes the override and leaves the surface on the active connection.
+    const cleared = await store.update("chat", overridden.revision, {
+      modelId: null,
+      providerId: null,
+      thinkingLevel: "high",
+    });
+    assert.equal(cleared.modelId, undefined);
+    assert.equal(cleared.providerId, undefined);
+    // Two writes happened, so the revision moved twice; what the assertion is about is that the rejected updates above
+    // wrote nothing, which the intermediate state already showed.
+    assert.equal((await store.read("chat")).revision, cleared.revision);
 
     await mkdir(join(path, ".."), { recursive: true });
     await writeFile(

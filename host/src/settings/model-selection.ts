@@ -75,6 +75,24 @@ export async function resolveSurfaceModelSelection(input: SurfaceModelSelectionI
 function selectModel(activeConnection: ActiveConnectionRead, profile: ModelProfile): ModelSelectionOutcome {
   const modelProfileRevision = profile.revision;
   if (activeConnection.status === "unreadable") return Object.freeze({ status: "unreadable", modelProfileRevision });
+  // The surface's own provider/model, when the player gave it one, takes over for that surface alone. Absent is the
+  // ordinary state and falls through to the active connection, which stays the authority for the whole product - a
+  // cascading default, so a player who configured one connection is never asked to configure it again per surface.
+  const override =
+    profile.providerId !== undefined && profile.modelId !== undefined
+      ? Object.freeze({ providerId: profile.providerId, modelId: profile.modelId })
+      : null;
+  if (override !== null) {
+    return Object.freeze({
+      status: "selected",
+      modelConfig: Object.freeze({
+        provider: override.providerId,
+        modelId: override.modelId,
+        thinkingLevel: profile.thinkingLevel,
+      }),
+      modelProfileRevision,
+    });
+  }
   if (activeConnection.status === "none") return Object.freeze({ status: "no_model", modelProfileRevision });
   return Object.freeze({
     status: "selected",

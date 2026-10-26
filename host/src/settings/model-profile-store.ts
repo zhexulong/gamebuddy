@@ -20,20 +20,43 @@ import { readStrictJsonFile } from "../strict-json-reader.js";
 
 /** Bound for a player-typed thinking level: a short token, never arbitrary text. */
 const THINKING_LEVEL_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
+/** The bounds the connection form's own fields carry, so a profile cannot hold an id the form would reject. */
+const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+function isModelId(value: unknown): value is string {
+  return typeof value === "string" && MODEL_ID_PATTERN.test(value);
+}
+function isProviderId(value: unknown): value is string {
+  return typeof value === "string" && PROVIDER_ID_PATTERN.test(value);
+}
 
 export type ModelProfileSurface = "chat" | "game";
 export type ModelProfile = Readonly<{
   surface: ModelProfileSurface;
   revision: number;
   thinkingLevel: string;
+  /**
+   * This surface's own provider/model, when the player gave it one.
+   *
+   * Absent is the ordinary state and means "use the active connection": one connection is the authority for the whole
+   * product, so a player who configured it once is not asked to configure it again for a second surface. Present, it
+   * overrides the connection for that surface alone - which is the only way to run the companion on one model in Chat
+   * and a cheaper or more literal one in the Game, where she reasons before she acts.
+   */
+  modelId?: string;
+  providerId?: string;
 }>;
 export type ModelProfileUpdate = Readonly<{
   thinkingLevel: string;
+  modelId?: string | null;
+  providerId?: string | null;
 }>;
 type StoredProfiles = Readonly<{ schemaVersion: 1; chat: StoredProfile; game: StoredProfile }>;
 type StoredProfile = Readonly<{
   revision: number;
   thinkingLevel: string;
+  modelId?: string;
+  providerId?: string;
 }>;
 
 export class ModelProfileRevisionConflict extends Error {
@@ -59,8 +82,17 @@ export class ModelProfileStore {
     if (!isSurface(surface) || !isRevision(expectedRevision) || !isUpdate(update))
       throw new Error("invalid_model_profile_update");
     return this.mutate(surface, expectedRevision, (current) => ({
-      ...current,
       thinkingLevel: update.thinkingLevel,
+      // The override is written only when the update states it. Naming neither keeps whatever this surface held - changing
+      // how much she reasons is not a reason to drop the model the player pinned here - and naming both as `null` clears
+      // it, which is the only way back to the active connection.
+      ...(update.modelId === undefined && update.providerId === undefined
+        ? current.modelId === undefined || current.providerId === undefined
+          ? {}
+          : { modelId: current.modelId, providerId: current.providerId }
+        : update.modelId === null || update.providerId === null
+          ? {}
+          : { modelId: update.modelId, providerId: update.providerId }),
     }));
   }
 
@@ -73,7 +105,16 @@ export class ModelProfileStore {
       const profiles = await this.load();
       const current = profiles[surface];
       if (current.revision !== expectedRevision) throw new ModelProfileRevisionConflict();
-      const next: StoredProfile = Object.freeze({ ...change(current), revision: current.revision + 1 });
+      // The persisted order is the order `freezeProfile` reads back with, because the readback check compares the two
+      // documents as JSON text. Spelling it out here keeps that true without depending on the key order a caller's
+      // object literal happened to have - which is exactly how this broke once.
+      const changed = change(current);
+      const next: StoredProfile = Object.freeze({
+        revision: current.revision + 1,
+        thinkingLevel: changed.thinkingLevel,
+        ...(changed.modelId === undefined ? {} : { modelId: changed.modelId }),
+        ...(changed.providerId === undefined ? {} : { providerId: changed.providerId }),
+      });
       const persisted: StoredProfiles = Object.freeze({ ...profiles, [surface]: next });
       await writeAtomically(this.path, persisted);
       const readBack = await this.load();
@@ -105,7 +146,13 @@ const DEFAULT_PROFILES: StoredProfiles = Object.freeze({
 });
 
 function project(surface: ModelProfileSurface, profile: StoredProfile): ModelProfile {
-  return Object.freeze({ surface, revision: profile.revision, thinkingLevel: profile.thinkingLevel });
+  return Object.freeze({
+    surface,
+    revision: profile.revision,
+    thinkingLevel: profile.thinkingLevel,
+    ...(profile.modelId === undefined ? {} : { modelId: profile.modelId }),
+    ...(profile.providerId === undefined ? {} : { providerId: profile.providerId }),
+  });
 }
 function validateStored(value: unknown): StoredProfiles {
   if (
@@ -128,22 +175,36 @@ function validateStored(value: unknown): StoredProfiles {
  */
 function validStoredProfile(value: unknown): value is Record<string, unknown> {
   if (!record(value)) return false;
-  const keys = Object.keys(value).filter((key) => key !== "modelId");
-  return (
-    isRevision(value.revision) &&
-    isThinkingLevel(value.thinkingLevel) &&
-    keys.length === 2 &&
-    keys.every((key) => key === "revision" || key === "thinkingLevel")
-  );
+  const known = ["revision", "thinkingLevel", "modelId", "providerId"];
+  if (!Object.keys(value).every((key) => known.includes(key))) return false;
+  if (!isRevision(value.revision) || !isThinkingLevel(value.thinkingLevel)) return false;
+  if (value.modelId !== undefined && !isModelId(value.modelId)) return false;
+  if (value.providerId !== undefined && !isProviderId(value.providerId)) return false;
+  // A model without its provider is not a selection this product can resolve, and a provider without a model names
+  // nothing to run.
+  return (value.modelId === undefined) === (value.providerId === undefined);
 }
 function freezeProfile(value: Record<string, unknown>): StoredProfile {
   return Object.freeze({
     revision: value.revision as number,
     thinkingLevel: value.thinkingLevel as string,
+    ...(value.modelId === undefined ? {} : { modelId: value.modelId as string }),
+    ...(value.providerId === undefined ? {} : { providerId: value.providerId as string }),
   });
 }
 function isUpdate(value: unknown): value is ModelProfileUpdate {
-  return record(value) && isThinkingLevel(value.thinkingLevel) && Object.keys(value).length === 1;
+  if (!record(value) || !isThinkingLevel(value.thinkingLevel)) return false;
+  const known = ["thinkingLevel", "modelId", "providerId"];
+  if (!Object.keys(value).every((key) => known.includes(key))) return false;
+  const model = value.modelId;
+  const provider = value.providerId;
+  // Neither mentioned: only the level changes, and the surface keeps whatever override it had.
+  if (model === undefined && provider === undefined) return true;
+  if (model !== null && !isModelId(model)) return false;
+  if (provider !== null && !isProviderId(provider)) return false;
+  if (model === undefined || provider === undefined) return false;
+  // Set together, or cleared together. A half-stated pair names nothing this product can resolve.
+  return (model === null) === (provider === null);
 }
 function isThinkingLevel(value: unknown): value is string {
   return typeof value === "string" && THINKING_LEVEL_PATTERN.test(value);
