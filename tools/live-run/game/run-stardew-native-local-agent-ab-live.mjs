@@ -29,6 +29,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
+import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
@@ -349,12 +350,22 @@ const SCENARIO_PROMPTS = Object.freeze({
     // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
     // over, by dispatching its own `advance_day`. The loop never ends a night for it - the prompt is where
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
+    //
+    // The last clause exists because the previous wording named a CLOCK ("when it gets dark") and left the
+    // authority implicit. Measured 2026-10-26: two runs had the companion at the bedside reasoning "Advancing
+    // day is a big action... it may be the player's prerogative... I'll ask nothing, just state" - it announced
+    // going to bed and dispatched nothing, then passed out at 02:00. The reluctance was not a bug in the model:
+    // ending a shared world's day IS normally the player's call, and nothing here had said it was not.
     zh: (day) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代：东头那片地该收拾了，杂草和石头都清一清，你看着办。把这片收拾完，天黑就回屋睡觉，明天接着来。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `玩家去镇上了，临走时交代：东头那片地该收拾了，杂草和石头都清一清，你看着办。把这片收拾完，天黑就回屋睡觉，明天接着来。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）` +
+      `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。` +
+      `${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
     en: (day) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `The player has gone into town, and on the way out they said the east patch needs clearing - weeds and rocks - and left the how to you. Once that is done, go inside and sleep when it gets dark, and we pick it up tomorrow. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `The player has gone into town, and on the way out they said the east patch needs clearing - weeds and rocks - and left the how to you. Once that is done, go inside and sleep when it gets dark, and we pick it up tomorrow. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ` +
+      `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. ` +
+      `${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1596,9 +1607,21 @@ function buildCapabilityAudit({
  * SETTLES with no `advance_day`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
  * the turn budget, so the run budget stays the hard stop.
  */
-// The hour the engine's evening has arrived: 22:00, the hour the scenario prompt names. A judged value, so it lives
-// in one place rather than being spelled 2200 wherever it is compared.
-const SLEEP_HOUR_MINUTES = 22 * 60;
+// The engine's own pass-out hour: at 26:00 the actor collapses and the day rolls over by itself
+// (`Game1.cs:6452-6460`, `timeOfDay >= 2600 || player.stamina <= -15f`). This is the LAST moment a night can
+// still be the companion's own; anything earlier is a judged value rather than a native fact.
+//
+// `readWorldClock().spent` used to compare against 22:00 and the night watcher answered `companion_did_not_sleep`
+// the moment a settled turn found the clock past it. Measured 2026-10-26: the companion reached 22:00, said
+// "Time to sleep ... let me observe first then advance_day", and the watcher had already called it a refusal - a
+// verdict about the harness's hour, reported as a verdict about her behaviour, arriving before the dispatch it had
+// announced. The sleep hour is therefore the engine's, not the scenario's.
+const PASS_OUT_MINUTES = 26 * 60;
+
+// When the harness stops offering the generic "carry on" and names the clock instead. Not a sleep order: the
+// engine's own evening has visibly arrived (`Game1` switches to the night sky at 19:00), so a companion still
+// working needs to be told what time it is, not told what to do.
+const LATE_DAY_MINUTES = 19 * 60;
 
 // A day contains turns; this bounds how many, for the harness only. It is not a limit on the day.
 const MAX_TURNS_PER_DAY = Number(process.env.GAMEBUDDY_MULTIDAY_MAX_TURNS_PER_DAY ?? 40);
@@ -1994,7 +2017,8 @@ const readWorldClock = () => {
   if (Number.isInteger(snapshotTime) && snapshotTime > 0) {
     const minutes = Math.floor(snapshotTime / 100) * 60 + (snapshotTime % 100);
     return Object.freeze({
-      spent: minutes >= SLEEP_HOUR_MINUTES,
+      spent: minutes >= PASS_OUT_MINUTES,
+      minutes,
       unknown: false,
       timeOfDay: snapshotTime,
       source: "snapshot",
@@ -2006,12 +2030,17 @@ const readWorldClock = () => {
       .filter((line) => line.includes("DEBUG-native-local-readiness"));
     const last = lines.at(-1) ?? "";
     const time = last.match(/game_time=(\d{3,4})/);
-    if (time === null) return Object.freeze({ spent: false, unknown: true, timeOfDay: null, source: "none" });
+    if (time === null)
+      return Object.freeze({ spent: false, minutes: null, unknown: true, timeOfDay: null, source: "none" });
     const timeOfDay = Number(time[1]);
-    // The sleep hour, not an arbitrary one: `advance_day` is what the lifecycle accepts, and the companion cannot
-    // reasonably be expected to sleep before the engine's own evening. 22:00 is the hour the scenario names.
     const minutes = Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100);
-    return Object.freeze({ spent: minutes >= SLEEP_HOUR_MINUTES, unknown: false, timeOfDay, source: "readiness" });
+    return Object.freeze({
+      spent: minutes >= PASS_OUT_MINUTES,
+      minutes,
+      unknown: false,
+      timeOfDay,
+      source: "readiness",
+    });
   } catch (error) {
     return Object.freeze({
       spent: false,
@@ -2929,16 +2958,25 @@ try {
   //
   // readWorldClock is the one place that decides what the world clock is, so this asks it rather than repeating it.
   // An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
-  // Whether the NIGHT has been crossed - which is the only reason to stop offering turns.
+  // Whether the NIGHT has been crossed — asked about THIS DAY, not about the run.
   //
-  // Reaching 22:00 is not it. A turn can run the whole afternoon and end at 22:00 (measured 2026-10-26: one turn,
-  // 116 tool calls, the day's work done, ending with "Time to sleep ... Let me observe first then advance_day" and no
-  // next round). Asking "is it late" ended the loop exactly when the companion needed one more turn.
-  const nightCrossed = () => {
-    if (actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null)) return true;
+  // Reaching 22:00 is not it (measured 2026-10-26: a turn ended at 22:00 announcing "Time to sleep ... let me
+  // advance_day" and the loop stopped a round short). Nor is a dispatch from an EARLIER day: `actionTrace` holds
+  // the whole run, so the previous predicate answered "already crossed" on day 2 before it had done anything —
+  // which is why `nextDayAccomplishedActionIds` came back empty and the baseline named
+  // `next_day_produced_no_farm_work`. Nor is a fresh 06:00 (the multi-day fixture resets the clock to 600 every
+  // morning, and an absolute `<= 620` read that as a rollover).
+  //
+  // The rule now lives in `multiday-day-scope.mjs`, scoped by a value captured when the day starts, and it is
+  // falsified there against this exact shape.
+  const nightCrossedIn = (scope) => {
     const clock = readWorldClock();
-    // A rollover moves the clock back to the morning; an unreadable clock is not a rollover.
-    return !clock.unknown && clock.timeOfDay !== null && clock.timeOfDay <= 620;
+    return nightCrossedInScope({
+      scope,
+      trace: actionTrace,
+      clock,
+      dayOfMonth: client.state?.snapshot?.dayOfMonth ?? null,
+    });
   };
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
@@ -2952,6 +2990,15 @@ try {
     localeKey === "zh"
       ? `（第 ${String(day)} 天还在继续。你还在地里。接着做。）`
       : `(Day ${String(day)} is still going. Carry on.)`;
+  // Offered when the world clock says this day's work hours are over but the night has NOT been crossed.
+  // Measured 2026-10-26: a turn ended at 22:00 with the companion saying "Time to sleep ... let me observe first
+  // then advance_day"; the next turn it was given was the generic "carry on", which reads as "keep farming".
+  // The harness still takes no decision: it states the clock and the one action that ends a day, and leaves
+  // whether to take it to the companion.
+  const promptForLateDay = (day) =>
+    localeKey === "zh"
+      ? `（第 ${String(day)} 天，天已经黑了。该收工就收工：想睡就回床上躺下，这一天才算过去；还想接着干也行。）`
+      : `(Day ${String(day)}, and it is late - the sky is dark. If you are done, go to bed and sleep and the day ends; if you want to keep working, that is yours to choose.)`;
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
@@ -2980,9 +3027,21 @@ try {
           // companion, and it never tells it to sleep: the companion's own dispatch of `advance_day` is the only thing that
           // crosses the night, which is the behaviour this scenario exists to observe.
           let turns = 0;
-          while (!nightCrossed()) {
+          const dayScope = dayScopeFrom({
+            clock: readWorldClock(),
+            dayOfMonth: client.state?.snapshot?.dayOfMonth ?? null,
+            traceIndex: actionTrace.length,
+          });
+          while (!nightCrossedIn(dayScope)) {
             turns += 1;
-            const walked = await runAgentTurn(turns === 1 ? promptForDay(day) : promptForDayContinuation(day), tools);
+            const clock = readWorldClock();
+            const prompt =
+              turns === 1
+                ? promptForDay(day)
+                : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
+                  ? promptForLateDay(day)
+                  : promptForDayContinuation(day);
+            const walked = await runAgentTurn(prompt, tools);
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
             sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));

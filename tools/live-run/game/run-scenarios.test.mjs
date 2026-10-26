@@ -232,8 +232,13 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   const block = prompts.slice(at, prompts.indexOf("}),", at));
   // The assertions are about what the MODEL READS, so they run on the template lines rather than the whole
   // block: the block's comments legitimately discuss `advance_day` (that is documentation, not prompt text).
-  const templateLines = block.split("\n").filter((line) => line.includes("${PRESENCE_PARAGRAPH_"));
-  assert.equal(templateLines.length, 2, "both locales must carry the presence paragraph in their template");
+  //
+  // The template lines are EVERY backtick line between the locale keys, not only the one carrying
+  // `${PRESENCE_PARAGRAPH_`. Narrowing it to that single line is how this test went blind: the prompt legitimately
+  // grew to several concatenated lines (2026-10-26) and the old reading then checked one line of it while the rest
+  // went unread - a green gate over an input list narrower than the thing it guards.
+  const templateLines = block.split("\n").filter((line) => /^\s*`/.test(line) && !line.trimStart().startsWith("//"));
+  assert.ok(templateLines.length >= 2, "both locales must be present as template lines");
   const promptText = templateLines.join("\n");
   assert.match(promptText, /(你看着办|由你决定)/u, "the Chinese prompt must hand the day over with its task");
   assert.match(
@@ -247,6 +252,15 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   // indoors" belongs. Measured 2026-10-17/18: the coaching was there, and a reviewer graded it over-encoding.
   assert.doesNotMatch(promptText, /advance_day/u, "the prompt must not name the tool");
   assert.doesNotMatch(promptText, /农舍|farmhouse/u, "the prompt must not prescribe the step");
+  // The same rule for the prompt the loop offers LATER in the day, which is outside `SCENARIO_PROMPTS` and was
+  // therefore unread by the assertions above. It states the clock and hands the decision over; naming the tool
+  // there would be the same coaching one layer along.
+  const latePrompt = RUNNER.slice(
+    RUNNER.indexOf("const promptForLateDay"),
+    RUNNER.indexOf("let status = null;", RUNNER.indexOf("const promptForLateDay")),
+  );
+  assert.ok(latePrompt.length > 0, "the late-day prompt must exist for this assertion to read it");
+  assert.doesNotMatch(latePrompt, /advance_day|move_to_tile|stardew_/u, "the late-day prompt must not name a tool");
   // The night stays the companion's own decision, so the loop never dispatches one: `advance_day` appears only as
   // the receipt it reads back.
   const watcher = RUNNER.slice(
