@@ -13,7 +13,7 @@
  * not be automated: an IDEAL run reports `blocked` when the companion simply chose not to sleep, and a script cannot tell
  * that from a defect.
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -120,7 +120,9 @@ if (!dryRun && RUNTIME_ROOT !== null) {
   const fixtures = path.join(RUNTIME_ROOT, "stardew-fixtures");
   if (fs.existsSync(fixtures)) {
     for (const name of fs.readdirSync(fixtures)) {
-      if (!name.includes(".lock") && !name.includes("orphaned")) continue;
+      // Two things this loop removes: a lock a killed run left behind, and an orphaned fixture directory. Keeping one of
+      // them and removing everything else is the point, so the condition is "neither" rather than two negations.
+      if (!(name.includes(".lock") || name.includes("orphaned"))) continue;
       fs.rmSync(path.join(fixtures, name), { recursive: true, force: true });
       removed.push(`fixture ${name}`);
     }
