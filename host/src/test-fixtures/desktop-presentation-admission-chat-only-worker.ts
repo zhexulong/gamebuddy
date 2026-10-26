@@ -52,11 +52,11 @@ const fakeFacade = Object.freeze({
       // reader supplied to construction surfaces as the additive snapshot field.
       voice: voiceSurfaceObservedByFacade === true ? Object.freeze({ state: "ready" }) : null,
     }),
-      readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: "Saved draft" }),
-      // The real facade owns its store and releases it on close; the composition
-      // owner's close chain calls this, so the fixture must model it.
-      close: async () => undefined,
-    });
+  readDraft: async () => Object.freeze({ apiVersion: 1, revision: 1, text: "Saved draft" }),
+  // The real facade owns its store and releases it on close; the composition
+  // owner's close chain calls this, so the fixture must model it.
+  close: async () => undefined,
+});
 
 function inspector() {
   return createTestWindowsReparseInspector(() => {
@@ -81,11 +81,7 @@ async function artifactFixture(withManifest = true): Promise<{ hostArtifactRoot:
   await mkdir(join(root, "assets"), { recursive: true });
   if (withManifest) {
     const script = Buffer.from("console.log('shell');\n", "utf8");
-    await writeFile(
-      join(root, "index.html"),
-      '<!doctype html><script src="/assets/app-abcdef12.js"></script>',
-      "utf8",
-    );
+    await writeFile(join(root, "index.html"), '<!doctype html><script src="/assets/app-abcdef12.js"></script>', "utf8");
     await writeFile(join(root, "assets", "app-abcdef12.js"), script);
     await writeFile(
       join(root, "tavern-browser-artifact-manifest.json"),
@@ -154,9 +150,18 @@ const fakeDomainService = Object.freeze({
   discardDraft: async () => {
     throw new Error("unused_draft_discard");
   },
-  read: async () => {
-    throw new Error("unused_read");
-  },
+  read: async () =>
+    Object.freeze({
+      selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
+      companionDisplayName: "Mira",
+      companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
+      title: "Exact Chat",
+      transcript: Object.freeze([]),
+      draft: Object.freeze({ revision: 1, text: null }),
+      turn: null,
+      operations: base.operations,
+      eventStream: null,
+    }),
   mutate: async () => {
     throw new Error("unused_mutate");
   },
@@ -183,70 +188,84 @@ const fakeDomainService = Object.freeze({
 
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href,
-    {
-      namedExports: {
-        createReferencePipelineStateFacade: async (
-          _manifest: unknown,
-          _lease: unknown,
-          profile: { readonly profileId?: string } | undefined,
-          stream: unknown,
-          voiceSurface: unknown,
-        ) => {
-          if (scenario === "facade-failure") throw constructionFailure;
-          counts.facadeCreated += 1;
-          tavernProfileIdObservedByFacade = profile?.profileId ?? null;
-          facadeSawSharedStream = stream === eventStream;
-          // The optional voice reader is handed through to the facade; when it
-          // is present the fake facade projects the additive snapshot field.
-          voiceSurfaceObservedByFacade =
-            typeof voiceSurface === "function" && voiceSurface()?.state === "ready";
-          return fakeFacade;
-        },
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "reference-pipeline-state.js")).href, {
+    namedExports: {
+      createReferencePipelineStateFacade: async (
+        _manifest: unknown,
+        _lease: unknown,
+        profile: { readonly profileId?: string } | undefined,
+        stream: unknown,
+        voiceSurface: unknown,
+      ) => {
+        if (scenario === "facade-failure") throw constructionFailure;
+        counts.facadeCreated += 1;
+        tavernProfileIdObservedByFacade = profile?.profileId ?? null;
+        facadeSawSharedStream = stream === eventStream;
+        // The optional voice reader is handed through to the facade; when it
+        // is present the fake facade projects the additive snapshot field.
+        voiceSurfaceObservedByFacade = typeof voiceSurface === "function" && voiceSurface()?.state === "ready";
+        return fakeFacade;
       },
     },
-  );
-  await mock.module(
-    pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href,
-    {
-      namedExports: {
-        createChatPipelineService: (options: {
-          readonly profile?: { readonly profileId?: string };
-          readonly eventStream?: unknown;
-        }) => {
-          counts.serviceCreated += 1;
-          tavernProfileIdObservedByService = options?.profile?.profileId ?? null;
-          serviceSawSharedStream = options?.eventStream === eventStream;
-          return Object.freeze({
-            submitAfterResponseCommit: async () => {
-              throw new Error("unused_submit");
-            },
-            readSubmissionStatus: async () => {
-              throw new Error("unused_status");
-            },
-            cancel: async () => {
-              throw new Error("unused_cancel");
-            },
-            close: async () => {
-              counts.serviceClosed += 1;
-            },
-          });
-        },
+  });
+  await mock.module(pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-pipeline-service.js")).href, {
+    namedExports: {
+      createChatPipelineService: (options: {
+        readonly profile?: { readonly profileId?: string };
+        readonly eventStream?: unknown;
+      }) => {
+        counts.serviceCreated += 1;
+        tavernProfileIdObservedByService = options?.profile?.profileId ?? null;
+        serviceSawSharedStream = options?.eventStream === eventStream;
+        return Object.freeze({
+          submitAfterResponseCommit: async () => {
+            throw new Error("unused_submit");
+          },
+          readSubmissionStatus: async () => {
+            throw new Error("unused_status");
+          },
+          cancel: async () => {
+            throw new Error("unused_cancel");
+          },
+          close: async () => {
+            counts.serviceClosed += 1;
+          },
+        });
       },
     },
-  );
-  for (const [relativePath, builder] of [
-    [join("tavern", "chat-management", "chat-management-service.js"), "createChatManagementService"],
-    [join("tavern", "memory-management", "memory-management.js"), "createMemoryManagementService"],
+  });
+  const chatSnapshot = async () =>
+    Object.freeze({
+      selection: Object.freeze({ chatHandle: handle, generation: 1, stateRevision: handle }),
+      companionDisplayName: "Mira",
+      companionHandle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
+      title: "Exact Chat",
+      transcript: Object.freeze([]),
+      draft: Object.freeze({ revision: 1, text: null }),
+      turn: null,
+      operations: base.operations,
+      eventStream: null,
+    });
+  const worldInfoState = async () =>
+    Object.freeze({ state: "none" as const, revision: `${"E".repeat(42)}A`, items: Object.freeze([]) });
+  const memoryState = async () => Object.freeze({ revision: `${`F`.repeat(42)}A`, entries: Object.freeze([]) });
+  const connectionState = async () =>
+    Object.freeze({ active: null, connections: Object.freeze([]), revision: `${"G".repeat(42)}A` });
+
+  // Each domain gets the shape its own `read` projects: the composed root reads the world-info library as well as the
+  // Chat snapshot, and one stub cannot answer both.
+  for (const [relativePath, builder, reader] of [
+    [join("tavern", "chat-management", "chat-management-service.js"), "createChatManagementService", chatSnapshot],
+    [join("tavern", "memory-management", "memory-management.js"), "createMemoryManagementService", memoryState],
     [
       join("tavern", "world-info-binding", "world-info-binding-management-service.js"),
       "createWorldInfoBindingManagementService",
+      worldInfoState,
     ],
-    [join("tavern", "connection-service.js"), "createTavernConnectionService"],
+    [join("tavern", "connection-service.js"), "createTavernConnectionService", connectionState],
   ] as const) {
     await mock.module(pathToFileURL(join(moduleDirectory, "..", relativePath)).href, {
-      namedExports: { [builder]: () => fakeDomainService },
+      namedExports: { [builder]: () => Object.freeze({ ...fakeDomainService, read: reader }) },
     });
   }
   await mock.module(
@@ -261,6 +280,7 @@ async function main(): Promise<void> {
   eventStream = createChatEventStream();
   const observations: Record<string, unknown> = {
     scenario,
+    shellRefusal: null as string | null,
   };
   let admission: Awaited<ReturnType<typeof startChatOnlyPresentationAdmission>> | undefined;
   try {
@@ -296,7 +316,11 @@ async function main(): Promise<void> {
         admission.launchUrl === `${origin}/#profile=composed-reference-game&boot=${bootstrapToken}`;
       const shell = await fetch(`${origin}/`);
       observations.shellStatus = shell.status;
-      observations.shellServesArtifact = (await shell.text()).includes("app-abcdef12.js");
+      // A non-200 here is the whole failure, and the body is what names the reason: the static surface has several
+      // refusals and they were indistinguishable from the status alone.
+      const shellBody = await shell.text();
+      if (shell.status !== 200) observations.shellRefusal = shellBody.slice(0, 400);
+      observations.shellServesArtifact = shellBody.includes("app-abcdef12.js");
       // The one app bootstraps through the composed broker; the nested Chat
       // projection still carries the reference Chat Core profile identity.
       const bootstrap = await fetch(`${origin}/api/composed-reference-game/v1/bootstrap`, {
@@ -305,6 +329,7 @@ async function main(): Promise<void> {
         body: JSON.stringify({ apiVersion: 1, bootstrapToken }),
       });
       observations.bootstrapStatus = bootstrap.status;
+      observations.bootstrapCause = bootstrap.headers.get("x-gamebuddy-bootstrap-cause");
       if (bootstrap.status === 200) {
         const root = (await bootstrap.json()) as {
           chat: { build: { profileId: string }; voice?: { state: string } | null };

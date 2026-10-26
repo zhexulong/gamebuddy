@@ -44,6 +44,8 @@ type PresentationAdmissionObservations = Readonly<{
   errorMessage?: string;
   launchUrlMatchesToken?: boolean;
   shellStatus?: number;
+  shellRefusal?: string | null;
+  bootstrapCause?: string | null;
   shellServesArtifact?: boolean;
   bootstrapStatus?: number;
   composedProfileId?: string;
@@ -79,8 +81,10 @@ type ChatOnlyPresentationAdmissionObservations = Readonly<{
   propagatedOriginalFailure?: boolean;
   errorMessage?: string;
   launchUrlMatchesToken?: boolean;
+  shellRefusal?: string | null;
   shellStatus?: number;
   shellServesArtifact?: boolean;
+  bootstrapCause?: string | null;
   bootstrapStatus?: number;
   profileId?: string;
   voiceStateObserved?: string | null;
@@ -155,9 +159,16 @@ function runFixture(
       rejectResult(new Error(`${kind}_admission_fixture_timeout:${scenario}`));
     }, 30_000);
     timeout.unref();
-    child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", (error) => { clearTimeout(timeout); rejectResult(error); });
+    child.stdout.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectResult(error);
+    });
     child.once("close", (code) => {
       clearTimeout(timeout);
       if (code !== 0) {
@@ -202,11 +213,11 @@ test("presentation admission owner serves the composed reference-game shell over
   // real listener, and the launch URL carries the composed profile marker plus
   // the one-time bootstrap token.
   assert.equal(observed.launchUrlMatchesToken, true);
-  assert.equal(observed.shellStatus, 200);
+  assert.equal(observed.shellStatus, 200, "the shell answers; refusal: " + String(observed.shellRefusal ?? "none"));
   assert.equal(observed.shellServesArtifact, true);
   // The composed broker reaches both lanes: the Chat snapshot and the game
   // state of the supplied projection, under the composed profile identity.
-  assert.equal(observed.bootstrapStatus, 200);
+  assert.equal(observed.bootstrapStatus, 200, "bootstrap answers; cause: " + String(observed.bootstrapCause ?? "none"));
   assert.equal(observed.composedProfileId, "gamebuddy.composed.reference-game");
   assert.equal(observed.chatProfileId, "gamebuddy.chat-core.reference-pipeline");
   assert.equal(observed.gameProfileId, "gamebuddy.game.preview");
@@ -229,11 +240,15 @@ test("presentation admission owner serves the composed reference-game shell over
   // A management route the composed shell answered 404 for until now is served,
   // from the injected service, under the composed broker's own session.
   assert.equal(observed.managementChatsStatus, 200);
-  const chatsBody = observed.managementChatsBody as
-    | { apiVersion?: number; chats?: readonly { title?: string; status?: string }[] }
-    | null;
+  const chatsBody = observed.managementChatsBody as {
+    apiVersion?: number;
+    chats?: readonly { title?: string; status?: string }[];
+  } | null;
   assert.equal(chatsBody?.apiVersion, 1);
-  assert.deepEqual(chatsBody?.chats?.map((chat) => [chat.title, chat.status]), [["Exact Chat", "active"]]);
+  assert.deepEqual(
+    chatsBody?.chats?.map((chat) => [chat.title, chat.status]),
+    [["Exact Chat", "active"]],
+  );
   // The lifecycle owner's bind sink received the broker's admission issuer.
   assert.equal(observed.issuerBoundBeforeClose, true);
   // Closing once (twice requested) closes the one listener and drains the Chat
@@ -287,9 +302,12 @@ test("chat-only presentation entry point serves the one composed shell without a
   // its nested Chat snapshot; there is no game profile anywhere in this surface,
   // and the additive v1 voice surface projects through the real facade +
   // composed bootstrap route (mic icon lights up in the browser).
-  assert.equal(observed.bootstrapStatus, 200);
+  assert.equal(observed.bootstrapStatus, 200, "bootstrap answers; cause: " + String(observed.bootstrapCause ?? "none"));
   assert.equal(observed.profileId, "gamebuddy.chat-core.reference-pipeline");
-  assert.equal((observed as ChatOnlyPresentationAdmissionObservations & { voiceStateObserved?: string | null }).voiceStateObserved, "ready");
+  assert.equal(
+    (observed as ChatOnlyPresentationAdmissionObservations & { voiceStateObserved?: string | null }).voiceStateObserved,
+    "ready",
+  );
   // Closing once (twice requested) closes the one listener and drains the Chat
   // pipeline service through its delegated handler exactly once. The entry point
   // never touches the mounted lease or any facade, and it created no Game owner.
