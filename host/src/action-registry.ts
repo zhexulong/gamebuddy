@@ -358,7 +358,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter(
     "dismiss_modal",
     "Dismiss a dialog",
-    "Close an informational native dialogue (a DialogueBox with no pending question) through the native closeDialogue path, without side effects on the rest of the world.",
+    "Clear a native menu that is holding the character, through the same close path the menu itself uses. Covers an informational dialogue with no pending question, and the day-end settlement summary (ShippingMenu) that a rollover leaves on screen - the two menus whose close commits nothing to the world. A question dialogue is `answer_dialogue`, and a level-up is `respond_level_up`.",
     ["dialogue", "modal"],
   ),
   actionAdapter(
