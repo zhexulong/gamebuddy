@@ -60,7 +60,7 @@ export type HostNodeAdmissionValidator = (
 export type HostNodeAdmissionResult =
   | Readonly<{ result: "granted"; grant: BodyNodeAdmissionGrant }>
   | Readonly<{ result: "rejected"; code: string }>
-  | Readonly<{ result: "unavailable"; code: "admission_unavailable" }>;
+  | Readonly<{ result: "unavailable"; code: string }>;
 
 export class HostNodeAdmissionService {
   public constructor(
@@ -87,8 +87,8 @@ export class HostNodeAdmissionService {
     } catch {
       return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }
-    if (decision.result === "unavailable")
-      return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
+    // The validator named the cause; replacing it here is what made five different failures indistinguishable.
+    if (decision.result === "unavailable") return Object.freeze({ result: "unavailable", code: decision.code });
     if (decision.result === "rejected") return this.#reject(challenge, decision.code);
     const grant: BodyNodeAdmissionGrant = Object.freeze({
       ...challenge,
@@ -100,7 +100,12 @@ export class HostNodeAdmissionService {
     try {
       const saved = await this.journal.recordAdmission(Object.freeze({ challenge, state: "grant_issued", grant }));
       return Object.freeze({ result: "granted", grant: saved.grant! });
-    } catch {
+    } catch (error) {
+      // The thrown cause is the most informative one available: it is the validator crashing, not deciding.
+      return Object.freeze({
+        result: "unavailable",
+        code: `admission_unavailable:validator_threw:${String((error as Error)?.message ?? error).slice(0, 80)}`,
+      });
       // A grant is never returned unless its exact tuple was durably journaled.
       return Object.freeze({ result: "unavailable", code: "admission_unavailable" });
     }

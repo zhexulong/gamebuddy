@@ -152,7 +152,10 @@ test("node admission journals before reply and treats write loss, response loss,
     }),
     () => ({ result: "granted", attachmentGeneration: "attachment_01", policyRevision: "policy_01" }),
   );
-  assert.deepEqual(await lostWrite.admit(item), { result: "unavailable", code: "admission_unavailable" });
+  assert.deepEqual(await lostWrite.admit(item), {
+    result: "unavailable",
+    code: "admission_unavailable:validator_threw:disk",
+  });
 
   const journal = new StardewLogicalActionRecoveryJournal();
   const service = new HostNodeAdmissionService(journal, () => ({

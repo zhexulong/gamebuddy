@@ -155,7 +155,7 @@ export type BodyNodeAdmissionGrant = BodyNodeAdmissionChallenge &
 export type BodyNodeAdmissionResult =
   | (BodyNodeAdmissionGrant & Readonly<{ result: "granted" }>)
   | (BodyNodeAdmissionChallenge & Readonly<{ result: "rejected"; code: string }>)
-  | (BodyNodeAdmissionChallenge & Readonly<{ result: "unavailable"; code: "admission_unavailable" }>);
+  | (BodyNodeAdmissionChallenge & Readonly<{ result: "unavailable"; code: string }>);
 
 export type BodyNodeAdmissionChallengeHandler = (
   challenge: BodyNodeAdmissionChallenge,
