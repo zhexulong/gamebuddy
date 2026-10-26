@@ -219,9 +219,15 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
      * file and the budget - and with the killed child's captured output kept. One spelling for both
      * the first attempt and the retry: a second budget kill must still read the same way.
      */
-    const describeRunFailure = (path, message, budgetMs, childOutput) =>
+    const describeRunFailure = (path, message, budgetMs, childOutput, silentForMs) =>
       message.startsWith("test_supervisor_timeout:")
-        ? runnerError("test_file_timeout", `${relativePath(path)}:budget_ms=${budgetMs}${childOutput}`)
+        ? runnerError(
+            "test_file_timeout",
+            // `silent_for_ms` is the reading that distinguishes a stalled file from a slow one: an age close to
+            // the budget means nothing has been printed since the child started, and a small age means the child
+            // was still reporting when the budget ended. Without it the two read identically.
+            `${relativePath(path)}:budget_ms=${budgetMs}:silent_for_ms=${silentForMs ?? "unknown"}${childOutput}`,
+          )
         : new Error(message);
     const failures = new Array(batch.length);
     let nextIndex = 0;
@@ -246,10 +252,17 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
     // between "this file hung" (named, bounded) and silence; it is deliberately far
     // above the slowest legitimate test (tens of seconds).
     const budgetMs = Math.min(fileRemainingMs, perFileMs);
+    // The child's own last sign of life. `reportHeartbeat` already prints it; keeping the timestamp is what lets the
+    // failure say how long the file had been silent for.
+    let lastHeartbeatAtMs = now();
+    const heartbeat = reportHeartbeat(`${batchLabel}:file=${relativePath(path)}`);
     try {
       await run([path], {
         timeoutMs: budgetMs,
-        onHeartbeat: reportHeartbeat(`${batchLabel}:file=${relativePath(path)}`),
+        onHeartbeat: (beat) => {
+          lastHeartbeatAtMs = now();
+          heartbeat(beat);
+        },
       });
     } catch (error) {
       // Only a child the supervisor had to KILL is a budget expiry. Anything else - a non-zero
@@ -262,7 +275,12 @@ export function chunkTestFiles(paths, batchSize = DEFAULT_TEST_BATCH_SIZE) {
         // message carries its bounded output after the first newline, and without it a budget
         // expiry is a name and a number with no clue what the file was doing when it was killed.
         const childOutput = message.includes("\n") ? message.slice(message.indexOf("\n")) : "";
-        failures[index] = { path, budgetMs, error: describeRunFailure(path, message, budgetMs, childOutput) };
+        const silentForMs = Math.max(0, now() - lastHeartbeatAtMs);
+        failures[index] = {
+          path,
+          budgetMs,
+          error: describeRunFailure(path, message, budgetMs, childOutput, silentForMs),
+        };
         // A batch stops at its first failure unless the caller asked to see everything. The
         // remaining files in the batch are still run under `--keep-going`, which exists because
         // this machine's environmental failures were costing whole batches of information.
