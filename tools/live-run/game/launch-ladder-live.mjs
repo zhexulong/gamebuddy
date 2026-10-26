@@ -42,6 +42,9 @@ const option = (name, fallback = null) => {
   return index >= 0 && args[index + 1] !== undefined ? args[index + 1] : fallback;
 };
 
+// A value that is present but blank is the same as absent: an empty path is not a path.
+const nonEmpty = (value) => (typeof value === "string" && value.trim() !== "" ? value : null);
+
 const LEGACY_LADDER = option("ladder", null);
 const LEGACY_SCENARIO_BY_LADDER = Object.freeze({
   0: "morning_routine",
@@ -66,10 +69,17 @@ const scenario = (() => {
 const windowMode = normalizeLiveRunWindowMode(process.env.GAMEBUDDY_LADDER_WINDOW_MODE ?? "hidden");
 const action = option("action", "play_session");
 const label = option("label", "");
-const gameDir = option("game", process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley");
+const gameDir =
+  nonEmpty(option("game", null)) ??
+  nonEmpty(process.env.GAMEBUDDY_STARDEW_GAME_DIR) ??
+  "D:/Steam/steamapps/common/Stardew Valley";
 // resolve(), for the same reason as releaseDir: the fixture refuses relative paths with
 // `native_local_fixture_absolute_paths_required`, and an env override can be relative.
-const modsPath = path.resolve(option("mods", process.env.GAMEBUDDY_STARDEW_MODS_DIR ?? path.join(gameDir, "Mods")));
+// An EMPTY env var is not an answer: `??` only falls back on null/undefined, so a blank
+// GAMEBUDDY_STARDEW_MODS_DIR became an empty argument and the fixture refused the whole run in 65 seconds.
+const modsPath = path.resolve(
+  nonEmpty(option("mods", null)) ?? nonEmpty(process.env.GAMEBUDDY_STARDEW_MODS_DIR) ?? path.join(gameDir, "Mods"),
+);
 // Both fixture roots come from the single shared resolver
 // (tools/lib/stardew-fixture-roots.mjs). The defaults are the historical paths;
 // GAMEBUDDY_STARDEW_PROFILE_ROOT / GAMEBUDDY_STARDEW_FIXTURE_ROOT point one
@@ -188,6 +198,7 @@ try {
     "--backup-name",
     backupName,
   ]);
+  console.log("[recover] args=" + JSON.stringify([fixtureRoot, modsPath, releaseDir, backupName]));
   console.log("[recover] leftover fixture transaction restored before preparing");
 } catch (error) {
   // No leftover, or one this lane does not own: preparing will refuse with its own named reason.
