@@ -208,6 +208,45 @@ test("tend_crops compiles each dry crop and each harvestable into paired nodes, 
   assert.deepEqual(nodes[5]!.arguments.x, { type: "integer", canonicalValue: "20" });
 });
 
+/**
+ * A batch that spans both ends of the farm must be walked one side to its end before turning back;
+ * sorting by distance from the snapshot tile instead alternates east/west every step and turns this
+ * test red. The snapshot sits mid-farm because a target tile is a non-negative coordinate.
+ */
+test("targets at both ends of the farm are chained one side first, never interleaved", () => {
+  const programs = programsOf(
+    synthesizePrograms(
+      snapshot({
+        tile: { x: 50, y: 50 },
+        enabledActionIds: ["move_to_tile", "water_crop"],
+        cropTargets: [
+          crop("crop_east_near", 59, 50),
+          crop("crop_west_far", 40, 50),
+          crop("crop_east_far", 60, 50),
+          crop("crop_west_near", 41, 50),
+        ],
+      }),
+      "tend_crops",
+      { programActionIds: PROGRAM_ACTION_IDS, maxPrograms: 1 },
+    ),
+  );
+  const visits = programs.programs[0]!.nodes.filter((node) => node.actionId === "water_crop").map((node) => ({
+    targetId: canonical(node, "expectedTargetId"),
+    x: Number(canonical(node, "x")),
+  }));
+  // Both near ends sit 9 tiles from the snapshot, so the targetId fallback picks the east first.
+  assert.deepEqual(
+    visits.map((visit) => visit.targetId),
+    ["crop_east_near", "crop_east_far", "crop_west_near", "crop_west_far"],
+  );
+  const sides = visits.map((visit) => Math.sign(visit.x - 50));
+  assert.equal(
+    sides.filter((side, index) => index > 0 && side !== sides[index - 1]).length,
+    1,
+    `the walk changed side more than once: ${JSON.stringify(visits)}`,
+  );
+});
+
 test("an empty instance set refuses per intent by name", () => {
   const cases: readonly (readonly [MacroIntentId, string])[] = [
     ["tend_crops", "nothing_to_water"],
@@ -265,7 +304,7 @@ test("seventeen instances split into 16 + 1 and report the undelivered remainder
     [16, 1],
   );
   assert.equal(secondTurn.remaining, 0);
-  // The tail keeps the same nearest-first order: instance 16 is the farthest tile.
+  // The tail keeps the chained order, and instance 16 is the farthest tile either way.
   assert.equal(canonical(secondTurn.programs[1]!.nodes[0]!, "expectedTargetId"), "debris_16");
 });
 

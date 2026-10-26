@@ -18,8 +18,10 @@ import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protoc
  * - every argument value comes from the snapshot's own target entry, and a value the snapshot does
  *   not publish is refused by name instead of guessed.
  *
- * Order is deterministic: nearest-first by Chebyshev tile distance from the actor, then target id,
- * then action id.
+ * Order is deterministic: chained nearest neighbour by Chebyshev tile distance - each step takes the
+ * nearest remaining target to the previously selected one, starting from the actor's tile - then
+ * target id, then action id. Ranking every target against the actor's tile instead makes a batch
+ * that spans both ends of the farm alternate east/west and walk the body across the map every step.
  */
 
 /** The closed set of set-level verbs a caller may ask for. */
@@ -313,12 +315,7 @@ export function synthesizePrograms(
   )
     return refuse(`synthesizer_cap_unsatisfiable:${instances.length}`);
 
-  const ordered = [...instances].sort(
-    (left, right) =>
-      tileDistance(snapshot.tile, left.target) - tileDistance(snapshot.tile, right.target) ||
-      compareText(left.target.targetId, right.target.targetId) ||
-      compareText(left.family.actionId, right.family.actionId),
-  );
+  const ordered = chainNearestNeighbour(instances, snapshot.tile);
 
   const programs: SynthesizedBodyProgram[] = [];
   let delivered = 0;
@@ -466,6 +463,37 @@ function bodyProgramNode(
   dependsOn: readonly string[],
 ): SynthesizedBodyProgramNode {
   return Object.freeze({ nodeId: nodeId_, actionId, arguments: arguments_, dependsOn, bindings: {} });
+}
+
+/**
+ * Walks the instance set as a route: the first step is the nearest target to `origin`, and every
+ * later step is the nearest remaining target to the one just selected. Each selection is total
+ * because equal distances fall back to target id and then action id.
+ */
+function chainNearestNeighbour(
+  instances: readonly CompiledInstance[],
+  origin: Readonly<{ x: number; y: number }>,
+): readonly CompiledInstance[] {
+  const remaining = [...instances];
+  const ordered: CompiledInstance[] = [];
+  let from: Readonly<{ x: number; y: number }> = origin;
+  while (remaining.length > 0) {
+    let nearest = 0;
+    for (let index = 1; index < remaining.length; index++) {
+      const candidate = remaining[index]!;
+      const best = remaining[nearest]!;
+      const closer =
+        tileDistance(from, candidate.target) - tileDistance(from, best.target) ||
+        compareText(candidate.target.targetId, best.target.targetId) ||
+        compareText(candidate.family.actionId, best.family.actionId);
+      if (closer < 0) nearest = index;
+    }
+    const selected = remaining[nearest]!;
+    remaining.splice(nearest, 1);
+    ordered.push(selected);
+    from = selected.target;
+  }
+  return ordered;
 }
 
 /** Chebyshev: the radius the Mod's own target discovery bounds every family with. */
