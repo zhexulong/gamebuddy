@@ -532,6 +532,22 @@ test("the reveal is drawn inside its own card, at 1440x900 and 400x800", async (
       // one before it.
       const reveal = picker.getByTestId("opening-option-expand").nth(index);
       if ((await reveal.getAttribute("aria-expanded")) !== "true") await reveal.click();
+      // Expanding inserts the full text, and the card's box only grows once the browser has laid it out. Reading the
+      // geometry straight after the click measured the pre-layout box whenever the machine was busy - the card said
+      // `aria-expanded="true"` while its own height was still the clamped one. Wait for the box to be tall enough to
+      // hold the reveal before measuring it.
+      await expect
+        .poll(
+          () =>
+            page.evaluate((position) => {
+              const card = document.querySelectorAll<HTMLElement>("[data-testid='opening-option-card']")[position];
+              const expand = card?.querySelector<HTMLElement>("[data-testid='opening-option-expand']");
+              if (card === undefined || expand === null || expand === undefined) return -1;
+              return Math.round(card.getBoundingClientRect().bottom - expand.getBoundingClientRect().bottom);
+            }, index),
+          { message: `option ${index} has laid out its expanded reading`, timeout: 10_000 },
+        )
+        .toBeGreaterThanOrEqual(0);
       await expect(picker.getByTestId("opening-option-full")).toHaveCount(1);
 
       const measured = await page.evaluate((position) => {
