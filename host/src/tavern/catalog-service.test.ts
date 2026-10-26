@@ -665,8 +665,8 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
     { char: "Kohaku" },
   );
   const content = catalog.stableSources[0]?.content ?? "";
-  assert.match(content, /the player arrives at the valley\./);
-  assert.match(content, /Kohaku and you share the farm\./);
+  assert.match(content, /User arrives at the valley\./);
+  assert.match(content, /Kohaku and User share the farm\./);
   // The entry the macro set cannot fully render is dropped, not published.
   assert.doesNotMatch(content, /unknown_macro/);
   assert.doesNotMatch(content, /\{\{/u);
@@ -1210,7 +1210,7 @@ test("buildGameSurfaceAuthoredCatalog mounts the companion's scenario as Tier 2 
   assert.equal(scenarioSource?.revision, "2");
   // Rendered through the run's macro table: never a raw `{{user}}`/`{{char}}`.
   assert.match(scenarioSource?.content ?? "", /Kohaku left the city/u);
-  assert.match(scenarioSource?.content ?? "", /beside the player\./u);
+  assert.match(scenarioSource?.content ?? "", /beside User\./u);
   assert.doesNotMatch(scenarioSource?.content ?? "", /\{\{/u);
   // The book's own stable source and the per-turn volatile layer keep their exact
   // bytes and total order keys: the scenario only ADDS a stable source.

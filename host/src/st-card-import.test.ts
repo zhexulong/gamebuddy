@@ -148,10 +148,7 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
 
   const profile = candidateToIdentityProfile(preview, 1, "en-US");
   // {{char}} → the card's own name (not the player reference).
-  assert.equal(
-    profile.persona?.core,
-    "Macro Rae keeps a small amethyst on the nightstand, a gift the player gave her.",
-  );
+  assert.equal(profile.persona?.core, "Macro Rae keeps a small amethyst on the nightstand, a gift User gave her.");
   // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
   assert.equal(profile.examples?.[0]?.companion, "Macro Rae always wins at Journey of the Prairie King.");
   assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
@@ -201,8 +198,8 @@ test("a card's {{user}} renders in the run's own language, and never as a raw ma
 
   // The same card in an English run reads naturally, in English.
   const english = candidateToIdentityProfile(preview, 1, "en-US");
-  assert.equal(english.persona?.core, "the player的农场搭档。");
-  assert.equal(english.examples?.[0]?.user, "the player把工具递过去。");
+  assert.equal(english.persona?.core, "User的农场搭档。");
+  assert.equal(english.examples?.[0]?.user, "User把工具递过去。");
 });
 
 test("a card that writes no interaction/expression material carries no persona dimension, and never English Host prose", () => {
@@ -266,7 +263,7 @@ test("imported character-book entries are macro-rendered and an unrenderable ent
   assert.equal(preview.worldBookCandidates.length, 1);
   const entry = preview.worldBookCandidates[0]!;
   assert.equal(entry.title, "Farm pact");
-  assert.equal(entry.content, "Macro Rae and the player share the farm.");
+  assert.equal(entry.content, "Macro Rae and User share the farm.");
   assert.doesNotMatch(entry.content, /\{\{/u);
   assert.doesNotMatch(entry.title, /\{\{/u);
 });

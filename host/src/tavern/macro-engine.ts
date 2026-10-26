@@ -4,15 +4,48 @@
  * emitted verbatim and is not rendered again.
  */
 export function renderMacros(text: string, vars: MacroTable): string {
-  const char = vars.char ?? "";
-  const user = vars.user ?? "";
-  return text.replace(/\{\{char\}\}|<BOT>|\{\{user\}\}|<USER>/giu, (macro) => {
-    return macro.toLowerCase() === "{{char}}" || macro.toLowerCase() === "<bot>" ? char : user;
+  return text.replace(MACRO_PATTERN, (macro) => {
+    const key = macro
+      .toLowerCase()
+      .replace(/^<|>$/gu, "")
+      .replace(/^\{\{|\}\}$/gu, "");
+    switch (key) {
+      case "char":
+      case "bot":
+        return vars.char ?? "";
+      case "user":
+        return vars.user ?? "";
+      // The card's own prose, which SillyTavern exposes as macros and authors use inside world-book entries. They are
+      // the companion's own text, so resolving them reads nothing the catalogue did not already carry - and without them
+      // an entry that mentions `{{scenario}}` was dropped entirely by catalog-service's unrendered-macro rule.
+      case "scenario":
+        return vars.scenario ?? macro;
+      case "personality":
+        return vars.personality ?? macro;
+      case "description":
+        return vars.description ?? macro;
+      // Time and date are deliberately NOT rendered here. They change every turn, and this text is part of the cached
+      // stable prefix: substituting them would re-fold the prefix on each turn and break the byte stability the cache
+      // depends on. An entry that needs the clock asks for it in the volatile layer, where the same macros are rendered
+      // against the turn's own facts.
+      default:
+        return macro;
+    }
   });
 }
 
 /** The macro table one rendered companion text is produced with. */
-export type MacroTable = Readonly<{ char: string; user: string }>;
+export type MacroTable = Readonly<{
+  char: string;
+  user: string;
+  /** The card's own prose, so `{{scenario}}` and its siblings resolve rather than dropping the entry that used them. */
+  scenario?: string;
+  personality?: string;
+  description?: string;
+}>;
+
+/** Every macro spelling this engine recognises, in either brace or angle form. */
+const MACRO_PATTERN = /\{\{[a-z_]+\}\}|<BOT>|<USER>/giu;
 
 /**
  * The one macro table for a rendered companion text, and the one place the
@@ -27,12 +60,22 @@ export type MacroTable = Readonly<{ char: string; user: string }>;
  * player.
  */
 export function macroTable(
-  input: Readonly<{ char: string; user?: string | null | undefined; locale?: string | undefined }>,
+  input: Readonly<{
+    char: string;
+    user?: string | null | undefined;
+    locale?: string | undefined;
+    scenario?: string | undefined;
+    personality?: string | undefined;
+    description?: string | undefined;
+  }>,
 ): MacroTable {
   const named = typeof input.user === "string" ? input.user.trim() : "";
   return Object.freeze({
     char: input.char,
     user: named.length > 0 ? named : playerReferenceWord(input.locale),
+    ...(input.scenario === undefined ? {} : { scenario: input.scenario }),
+    ...(input.personality === undefined ? {} : { personality: input.personality }),
+    ...(input.description === undefined ? {} : { description: input.description }),
   });
 }
 
@@ -48,7 +91,12 @@ export function macroTable(
  * why a name always wins over this word - see `macroTable` - and why the preset companion supplies one.
  */
 function playerReferenceWord(locale: string | undefined): string {
-  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "the player";
+  // SillyTavern substitutes the player's persona *name*, and a persona always has one - an unnamed player falls back to
+  // the name "User" there. A name is a noun, so a card written in the third person still agrees with its own verb
+  // ("User is late"), which neither a pronoun ("you is late") nor a description ("the player is late", and the shipped
+  // card forbids speaking of the player that way) can do. Chinese keeps 你: it has no inflection to disagree with, and
+  // addressing the player directly is what the card asks for.
+  return typeof locale === "string" && locale.toLowerCase().startsWith("zh") ? "你" : "User";
 }
 
 /**

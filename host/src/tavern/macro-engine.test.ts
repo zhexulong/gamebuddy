@@ -27,14 +27,14 @@ test("renderMacros uses empty strings for empty variables", () => {
 });
 
 test("renderWorldBookText resolves the player reference and leaves an unknown character name unrendered", () => {
-  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku" }), "you and Kohaku farm.");
+  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku" }), "User and Kohaku farm.");
   // No known character name: `{{char}}` stays so the caller drops the entry
   // instead of blanking it.
-  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: null }), "you and {{char}} farm.");
+  assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: null }), "User and {{char}} farm.");
 });
 
 test("hasUnrenderedMacro detects only a surviving macro", () => {
-  assert.equal(hasUnrenderedMacro("the player and Kohaku farm."), false);
+  assert.equal(hasUnrenderedMacro("User and Kohaku farm."), false);
   assert.equal(hasUnrenderedMacro("a {{char}} placeholder"), true);
   assert.equal(hasUnrenderedMacro("single { braces } are fine"), false);
 });
@@ -49,8 +49,8 @@ test("hasUnrenderedMacro detects only a surviving macro", () => {
 test("the macro table renders the player in the run's locale, not in an English constant", () => {
   assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "你");
   assert.equal(macroTable({ char: "琥珀", locale: "zh-Hant-TW" }).user, "你");
-  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "you");
-  assert.equal(macroTable({ char: "Kohaku" }).user, "you");
+  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "User");
+  assert.equal(macroTable({ char: "Kohaku" }).user, "User");
   // A name a caller actually has wins over any word.
   assert.equal(macroTable({ char: "琥珀", user: "Alex", locale: "zh-CN" }).user, "Alex");
   assert.equal(macroTable({ char: "琥珀", user: "   ", locale: "zh-CN" }).user, "你");
@@ -68,13 +68,13 @@ test("{{user}} resolves to the player being addressed, never to a third-person n
     assert.equal(/玩家|the player/u.test(word), false, `locale ${String(locale)} must not use a third-person noun`);
   }
   assert.equal(macroTable({ char: "琥珀", locale: "zh-CN" }).user, "你");
-  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "you");
+  assert.equal(macroTable({ char: "Kohaku", locale: "en-US" }).user, "User");
 });
 
 test("renderWorldBookText renders the player word from the locale it is given", () => {
   assert.equal(renderWorldBookText("{{user}} and {{char}}耕田", { char: "琥珀", locale: "zh-CN" }), "你 and 琥珀耕田");
   assert.equal(
     renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku", locale: "en-US" }),
-    "you and Kohaku farm.",
+    "User and Kohaku farm.",
   );
 });
