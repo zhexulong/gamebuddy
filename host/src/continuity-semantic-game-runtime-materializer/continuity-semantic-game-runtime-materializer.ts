@@ -68,6 +68,7 @@ import {
   type GameVoicePresentationAttachment,
 } from "../voice-gateway-client.js";
 import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
+import { isTerminalProgramStatus, waitForTerminalProgramStatus } from "../program-status-wait.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -101,12 +102,12 @@ function createBodyProgramTools(
   revealReaders: () => void,
   runTrace: RunTrace,
 ): readonly ToolDefinition[] {
-  const invoke = async <TResult>(
+  const withPort = async <TResult>(
     request: Record<string, unknown>,
     validateRequest: (value: Record<string, unknown>) => string | null,
     validateResult: (value: Record<string, unknown>) => string | null,
     call: (port: BodyProgramPort) => Promise<TResult>,
-  ) => {
+  ): Promise<TResult> => {
     if (validateRequest(request) !== null) throw new Error("invalid_body_program_tool_arguments");
     const record = bodyProgramConsumers.get(consumer);
     if (record === undefined || !record.available) throw new Error("action_program_runtime_unavailable");
@@ -114,16 +115,18 @@ function createBodyProgramTools(
     try {
       const result = await call(record.port);
       if (!isRecord(result) || validateResult(result) !== null) throw new Error("body_program_protocol_invalid");
-      const details = Object.freeze(result);
-      return Object.freeze({
-        content: [{ type: "text" as const, text: JSON.stringify(details) }],
-        details,
-      });
+      return Object.freeze(result) as TResult;
     } finally {
       record.active -= 1;
       if (!record.available && record.active === 0) record.drained?.();
     }
   };
+  const invoke = async <TResult>(
+    request: Record<string, unknown>,
+    validateRequest: (value: Record<string, unknown>) => string | null,
+    validateResult: (value: Record<string, unknown>) => string | null,
+    call: (port: BodyProgramPort) => Promise<TResult>,
+  ) => toolResult(await withPort(request, validateRequest, validateResult, call), null);
   // ONE submission path. The raw program tool and the routine tool both hand their candidate here,
   // so a routine can never reach the Mod by a route a model-authored program cannot.
   const submitProgram = async (request: BodyProgramCandidateRequest) => {
@@ -265,7 +268,7 @@ function createBodyProgramTools(
         // The siblings described themselves with their own names, which is zero information (measured: an agent
         // reading this list could not tell what any of the three was for).
         description:
-          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped.",
+          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened.",
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -273,7 +276,16 @@ function createBodyProgramTools(
         parameters: bodyProgramToolParameters("stardew_action_program_status"),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramStatusRequest(params)) throw new Error("invalid_body_program_tool_arguments");
-          return invoke(params, validateStatusRequest, validateBodyProgramStatusResult, (port) => port.status(params));
+          const { waitMs } = params as { waitMs?: number };
+          const request = { programId: params.programId };
+          const read = () =>
+            withPort(request, validateStatusRequest, validateBodyProgramStatusResult, (port) => port.status(request));
+          const first = await read();
+          // Omitted or zero keeps the old behaviour exactly: one read, return. Only a caller that asked to wait
+          // pays for the loop, so no existing path gets slower or starts blocking.
+          if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(first)) return toolResult(first, null);
+          const waited = await waitForTerminalProgramStatus(read, waitMs);
+          return toolResult(waited.result, waited.waited);
         },
       }),
     ),
@@ -387,7 +399,7 @@ function isBodyProgramCandidateRequest(value: unknown): value is BodyProgramCand
   return isRecord(value) && validateBodyProgramCandidateRequest(value) === null;
 }
 
-function isBodyProgramStatusRequest(value: unknown): value is BodyProgramStatusRequest {
+function isBodyProgramStatusRequest(value: unknown): value is BodyProgramStatusRequest & { waitMs?: number } {
   return isRecord(value) && validateStatusRequest(value) === null;
 }
 
@@ -446,7 +458,20 @@ function bodyProgramToolParameters(name: string) {
       { additionalProperties: false },
     );
   if (name === "stardew_action_program_status")
-    return Type.Object({ programId: opaque }, { additionalProperties: false });
+    return Type.Object(
+      {
+        programId: opaque,
+        waitMs: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            maximum: 30_000,
+            description:
+              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running.",
+          }),
+        ),
+      },
+      { additionalProperties: false },
+    );
   return Type.Object(
     {
       programId: opaque,
@@ -593,7 +618,13 @@ function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdenti
 }
 
 function validateStatusRequest(value: Record<string, unknown>): string | null {
-  return hasExactKeys(value, ["programId"]) && isOpaque(value.programId) ? null : "invalid_body_program_request";
+  const allowed = Object.hasOwn(value, "waitMs") ? ["programId", "waitMs"] : ["programId"];
+  if (!hasExactKeys(value, allowed) || !isOpaque(value.programId)) return "invalid_body_program_request";
+  if (!Object.hasOwn(value, "waitMs")) return null;
+  const waitMs = value.waitMs;
+  return typeof waitMs === "number" && Number.isSafeInteger(waitMs) && waitMs >= 0 && waitMs <= 30_000
+    ? null
+    : "invalid_body_program_request";
 }
 function validateEventsRequest(value: Record<string, unknown>): string | null {
   return hasExactKeys(value, ["programId", "cursor", "pageSize"]) &&
@@ -623,6 +654,20 @@ function projectBodyNodeAdmissionResult(
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const actual = Object.keys(value);
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
+/**
+ * One tool result, with the wait's own outcome BESIDE the payload, not inside it.
+ *
+ * `waited` is `null` for a plain read, so a caller can tell "I did not wait" from "I waited and it was still
+ * running" - the distinction the poll loop existed to express and a fixed `running` reply hides.
+ */
+function toolResult<TDetails>(details: TDetails, waited: Readonly<{ reachedTerminal: boolean }> | null) {
+  const published = (waited === null ? details : { ...(details as Record<string, unknown>), waited }) as TDetails;
+  return Object.freeze({
+    content: [{ type: "text" as const, text: JSON.stringify(published) }],
+    details: published,
+  });
 }
 export type HostGameRuntimeMaterializerOptions = Readonly<{
   gameOperationalGateNonceSha256?: string;
