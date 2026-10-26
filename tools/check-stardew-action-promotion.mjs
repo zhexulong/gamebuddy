@@ -20,6 +20,7 @@ export function validatePromotionSources({
   executionManager,
   farmhandActionRouter,
   registry,
+  integrationAdapter,
   gameTools,
   protocol,
   schema,
@@ -27,6 +28,23 @@ export function validatePromotionSources({
   snapshotTargetField = STARDEW_SNAPSHOT_TARGET_FIELD,
 }) {
   const failures = [];
+  // The Host's admission vocabulary is the boundary of everything downstream: a lifecycle it does not recognise is
+  // discarded as a malformed registration BEFORE the admission predicate, so no predicate clause can rescue it.
+  // Measured 2026-10-26: the set omitted "live_verified", 95 registrations became 26 visible, and cut_weeds and
+  // dismiss_modal were unreachable for a night of runs.
+  //
+  // Read the SET, not the file. A substring test passes on the type alias at the top of the same file, which names
+  // every lifecycle - so it can never fail, and the gate's own falsifier proved that.
+  const admissionVocabularies = [
+    ...String(integrationAdapter).matchAll(/LIFECYCLES\s*=\s*new Set<[^>]*>\(\[([^\]]*)\]\)/gu),
+  ];
+  if (admissionVocabularies.length === 0) failures.push("admission_vocabulary_not_found");
+  for (const vocabulary of admissionVocabularies) {
+    const declared = new Set([...vocabulary[1].matchAll(/"([a-z_]+)"/gu)].map((entry) => entry[1]));
+    for (const lifecycle of descriptorEligibleLifecycles) {
+      if (!declared.has(lifecycle)) failures.push(`admission_vocabulary_missing:${lifecycle}`);
+    }
+  }
   const definitions = parseModDefinitions(farmhandActionDefinitions);
   const hostEntries = parseHostEntries(registry);
   const routes = parseExplicitRoutes(gameTools);
@@ -51,7 +69,9 @@ export function validatePromotionSources({
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
       bridgeSession,
-      definitions.filter((definition) => descriptorEligibleLifecycles.has(definition.lifecycle)).map((definition) => definition.actionId),
+      definitions
+        .filter((definition) => descriptorEligibleLifecycles.has(definition.lifecycle))
+        .map((definition) => definition.actionId),
     ),
   );
   if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
@@ -74,7 +94,8 @@ export function validatePromotionSources({
       // The Host only inventories a concrete typed adapter. It deliberately
       // does not duplicate Mod-owned family, identity-version, or lifecycle.
       const descriptor = descriptors.filter((entry) => entry.actionId === definition.actionId);
-      if (descriptor.length !== 1 && definition.actionId !== "navigate_to_destination") failures.push(`published_missing_gate_descriptor:${definition.actionId}`);
+      if (descriptor.length !== 1 && definition.actionId !== "navigate_to_destination")
+        failures.push(`published_missing_gate_descriptor:${definition.actionId}`);
       else if (descriptor[0] && descriptor[0].identityVersion !== definition.identityVersion)
         failures.push(`gate_identity_drift:${definition.actionId}`);
       const targetField = definition.needsTarget ? snapshotTargetField[definition.actionId] : undefined;
@@ -126,11 +147,11 @@ export function validatePromotionSources({
     const toolCount = routes.visibility.filter((actionId) => actionId === host.actionId).length;
     if (toolCount !== 1) failures.push(`host_tool_count:${host.actionId}:${toolCount}`);
   }
+  // A gate descriptor is a promise that this action has a live-run gate, so it
+  // requires at least `live_verified`. `published` also qualifies: publication
+  // is a strictly later rung on the same ladder. `experimental` never qualifies,
+  // which is what keeps an unverified action from carrying a descriptor.
   for (const id of descriptorIds)
-    // A gate descriptor is a promise that this action has a live-run gate, so it
-    // requires at least `live_verified`. `published` also qualifies: publication
-    // is a strictly later rung on the same ladder. `experimental` never qualifies,
-    // which is what keeps an unverified action from carrying a descriptor.
     if (!definitions.some((entry) => entry.actionId === id && descriptorEligibleLifecycles.has(entry.lifecycle)))
       failures.push(`gate_descriptor_not_published:${id}`);
   return { failures, definitions, hostEntries };
@@ -146,9 +167,7 @@ function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
     source,
   )
     ? []
-    : expectedActionIds.map(
-        (actionId) => `bridge_hello_registration_advertisement_missing:${actionId}`,
-      );
+    : expectedActionIds.map((actionId) => `bridge_hello_registration_advertisement_missing:${actionId}`);
 }
 function parseModDefinitions(source) {
   const body = source.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
@@ -161,7 +180,7 @@ function parseModDefinitions(source) {
       actionId: match[1],
       familyId: match[2],
       identityVersion: Number(match[3]),
-      lifecycle: (match[4] === "LiveVerified" ? "live_verified" : (match[4] ?? "published").toLowerCase()),
+      lifecycle: match[4] === "LiveVerified" ? "live_verified" : (match[4] ?? "published").toLowerCase(),
       kind: "execution",
     });
   }
@@ -179,7 +198,14 @@ function parseModDefinitions(source) {
       const chunk = nextMatch >= 0 ? body.slice(start, start + 1 + nextMatch) : body.slice(start);
       const isExperimental = chunk.includes("FarmhandActionLifecycle.Experimental");
       const isLiveVerified = chunk.includes("FarmhandActionLifecycle.LiveVerified");
-      definitions.push({ actionId, familyId, identityVersion: 1, lifecycle: isLiveVerified ? "live_verified" : isExperimental ? "experimental" : "published", kind: "execution", needsTarget: /new FarmhandActionArgument\("expectedTargetId"/.test(chunk) });
+      definitions.push({
+        actionId,
+        familyId,
+        identityVersion: 1,
+        lifecycle: isLiveVerified ? "live_verified" : isExperimental ? "experimental" : "published",
+        kind: "execution",
+        needsTarget: /new FarmhandActionArgument\("expectedTargetId"/.test(chunk),
+      });
     }
   }
   return definitions;
@@ -246,9 +272,7 @@ function parseExplicitRoutes(gameTools) {
   // counts only when its `action` id is immediately followed by its `toArgs`
   // projector, preserving the old per-tool shape checks.
   const tools = [
-    ...gameTools.matchAll(
-      /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g,
-    ),
+    ...gameTools.matchAll(/makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g),
   ].map((entry) => ({ visibleAction: entry[1], adapterAction: entry[1] }));
   // Loop-mounted families (e.g. the facility actions built with
   // `for (const action of ["dress_mannequin", ...] as const)`) do not repeat the
@@ -361,9 +385,10 @@ function validateRouterBoundary(bridgeSession, router) {
   if (handlerLookup < 0) failures.push("router_missing_handler_lookup");
   if (handlerExecution < 0) failures.push("router_missing_handler_execution");
 
-
-  const tryExecute =
-    bridgeSession.slice(bridgeSession.indexOf("internal bool TryExecute("), bridgeSession.indexOf("internal bool TryQueryExecutionReceipt("));
+  const tryExecute = bridgeSession.slice(
+    bridgeSession.indexOf("internal bool TryExecute("),
+    bridgeSession.indexOf("internal bool TryQueryExecutionReceipt("),
+  );
   const structuralGuard = tryExecute.indexOf(
     "if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;",
   );
@@ -398,6 +423,9 @@ async function main() {
     machineHandler: resolve(ROOT, "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"),
     resourceHandler: resolve(ROOT, "integrations/stardew/Handlers/ResourceToolActionHandler.cs"),
     registry: resolve(ROOT, "host/src/action-registry.ts"),
+    // The Host's ADMISSION vocabulary lives here, and it is a third copy of the same set. It was not read, so a
+    // lifecycle missing from it discarded 66 actions before any admission clause ran (2026-10-26).
+    integrationAdapter: resolve(ROOT, "host/src/game-integration-adapter.ts"),
     gameTools: resolve(ROOT, "host/src/game-tools.ts"),
     protocol: resolve(ROOT, "host/src/protocol.ts"),
     schema: resolve(ROOT, "protocol/bridge-v1.schema.json"),
