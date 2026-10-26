@@ -4030,10 +4030,19 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   // last reading, so a failure on a slower machine leaves the state in the log instead of only the expectation.
   const readFoldedBar = () =>
     page.evaluate(() => {
-      const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
-      const folded = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu .nav-button")];
+      const triggers = [...document.querySelectorAll<HTMLElement>(".app-bar-more-trigger")];
+      const menus = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu")];
+      const bars = [...document.querySelectorAll<HTMLElement>(".app-bar")];
+      const trigger = triggers[0] ?? null;
+      const folded = [...(menus[0]?.querySelectorAll<HTMLElement>(".nav-button") ?? [])];
       const triggerClass = trigger === null ? null : trigger.className;
       return {
+        // The count is the question: one render pass cannot produce a folded entry with `active` beside a trigger without
+        // it, since both read the same `foldedEntries`. Two bars in the document can.
+        barCount: bars.length,
+        triggerCount: triggers.length,
+        menuCount: menus.length,
+        triggerClasses: triggers.map((node) => node.className),
         triggerClass,
         active: triggerClass !== null && /(^|\s)active(\s|$)/.test(triggerClass),
         folded: folded.map((node) => ({
