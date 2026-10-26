@@ -244,6 +244,15 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
       "the named-pipe coordinator must be declared exclusive",
     );
 
+    // And the Player Host lifecycle file, for the same reason measured again on 2026-10-26: 117 tests pass alone in
+    // 34.5 s, while in a two-file batch it reported 21 and then went silent for 27 minutes - `silent_for_ms` showed
+    // silence rather than work, so the fix is grouping and not a larger budget.
+    assert.equal(
+      exclusiveGroupsFor("dist-test/stardew-production-lifecycle-coordinator.internal.test.js").length,
+      1,
+      "the Player Host lifecycle file must be declared exclusive",
+    );
+
     let inFlight = 0;
     let mostConcurrent = 0;
     const exclusiveOverlap = [];
@@ -634,7 +643,10 @@ test("keep-going reports every failing file instead of the first batch's", async
         if (batch[0] !== "b.test.js") throw new Error(`test_runner_failed:code=1:signal=none\nAssertionError: ${batch[0]}`);
       },
     }),
-    /test_suite_failed:2 file\(s\): a\.test\.js, c\.test\.js/u,
+    // The message spells each failing file relative to the host root, so a bare fixture name comes back as `../a.test.js`.
+    // The assertion names that spelling rather than the bare name: `relativePath` is what the operator reads, and pinning
+    // the bare form only held while the fixture happened to resolve from a different root.
+    /test_suite_failed:2 file\(s\): \.\.\/a\.test\.js, \.\.\/c\.test\.js/u,
   );
   assert.deepEqual(keptCalls, ["a.test.js", "b.test.js", "c.test.js"], "keep-going runs the later batches too");
 });

@@ -48,6 +48,15 @@ export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
     name: "named-pipe-real-time-coordinator",
     pattern: /gameplay-task-subagent\.test\.js$/u,
   }),
+  Object.freeze({
+    // The same signature, measured 2026-10-26 on CI: 117 tests pass alone in 34.5 s, and in a two-file batch the
+    // file reported 21 tests and then went silent for 27 minutes with no heartbeat and no failing test. It drives
+    // the real Player Host and a real named-pipe bridge, so its round trips degrade under company exactly as the
+    // group above does. Grouped by the runner rather than slowed by a bigger budget, because the reading that
+    // distinguished the two - `silent_for_ms` - showed silence, not work.
+    name: "stardew-player-host-lifecycle",
+    pattern: /stardew-production-lifecycle-coordinator\.internal\.test\.js$/u,
+  }),
 ]);
 
 /** The declared exclusive groups a path belongs to, identified by its `dist-test`-relative shape. */
