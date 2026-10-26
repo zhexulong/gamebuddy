@@ -14,6 +14,7 @@ import {
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
+import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace.js";
 import {
@@ -148,8 +149,13 @@ export function createStardewObservationTools(
           refreshError = String(error instanceof Error ? error.message : String(error));
         }
       }
-      const snapshot = integration.state.snapshot;
-      const available = state.connected && snapshot !== null;
+      const observed = integration.state.snapshot;
+      const available = state.connected && observed !== null;
+      // The admitted snapshot is the whole published world. What the model is HANDED is bounded to
+      // the facts an action is dispatched with (see `boundObservedSnapshot`); the bridge, the
+      // connection state and the plan tool all keep reading the untouched snapshot.
+      const bounded = available ? boundObservedSnapshot(observed) : null;
+      const snapshot = bounded === null ? null : bounded.snapshot;
       // The model-facing text carries the actionable cause, not one opaque
       // sentence. A trace shows the Agent polling this tool 32 times with the
       // same uninformative reply after the bridge had gone away, because the
@@ -185,6 +191,9 @@ export function createStardewObservationTools(
                 ? "available_cached_after_failed_refresh"
                 : "available_cached"
             : unavailableReason,
+          // Operator evidence that the bound ran and what it cost. Deliberately NOT in the payload: the
+          // provider sends text blocks only, so a byte count there would never reach the model.
+          observationBudget: bounded === null ? null : bounded.budget,
           snapshotJson: available ? JSON.stringify(snapshot) : null,
         },
       };
