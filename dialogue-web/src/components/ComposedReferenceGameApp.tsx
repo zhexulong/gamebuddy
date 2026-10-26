@@ -590,9 +590,8 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -620,9 +619,8 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -655,9 +653,8 @@ export function ComposedReferenceGameApp() {
       await rereadChat();
       startPolling();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -709,9 +706,8 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -760,9 +756,8 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -791,9 +786,8 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
-      await rereadChat().catch(() => {
-        commit(problemView(error, messages(current.locale)));
-      });
+      commit(problemView(error, messages(current.locale)));
+      await rereadChat().catch(() => undefined);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
