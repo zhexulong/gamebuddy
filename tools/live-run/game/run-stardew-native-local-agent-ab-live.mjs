@@ -2929,12 +2929,16 @@ try {
   //
   // readWorldClock is the one place that decides what the world clock is, so this asks it rather than repeating it.
   // An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
-  const daySpent = () => {
+  // Whether the NIGHT has been crossed - which is the only reason to stop offering turns.
+  //
+  // Reaching 22:00 is not it. A turn can run the whole afternoon and end at 22:00 (measured 2026-10-26: one turn,
+  // 116 tool calls, the day's work done, ending with "Time to sleep ... Let me observe first then advance_day" and no
+  // next round). Asking "is it late" ended the loop exactly when the companion needed one more turn.
+  const nightCrossed = () => {
+    if (actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null)) return true;
     const clock = readWorldClock();
-    if (clock.unknown) return false;
-    if (clock.spent) return true;
-    // The only thing that actually crosses a night.
-    return actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null);
+    // A rollover moves the clock back to the morning; an unreadable clock is not a rollover.
+    return !clock.unknown && clock.timeOfDay !== null && clock.timeOfDay <= 620;
   };
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
@@ -2976,7 +2980,7 @@ try {
           // companion, and it never tells it to sleep: the companion's own dispatch of `advance_day` is the only thing that
           // crosses the night, which is the behaviour this scenario exists to observe.
           let turns = 0;
-          while (!daySpent()) {
+          while (!nightCrossed()) {
             turns += 1;
             const walked = await runAgentTurn(turns === 1 ? promptForDay(day) : promptForDayContinuation(day), tools);
             if (walked.status !== null) status = walked.status;
