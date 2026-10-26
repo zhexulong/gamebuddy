@@ -4025,12 +4025,29 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-surface")).toBeVisible();
-  // The selected surface is a fact the DOM states, so wait on that statement rather than on a poll budget: the folded
-  // entry carries `aria-current="page"` and the `More` trigger takes its `active` presentation from it. A 5 s poll was
-  // enough here and not on CI, which is slow enough that a fixed budget is a guess about the machine.
-  const foldedCurrent = page.locator('.app-bar-more-menu .nav-button[aria-current="page"]');
-  await expect(foldedCurrent).toHaveCount(1, { timeout: 30_000 });
-  await expect(page.locator(".app-bar-more-trigger.active")).toHaveCount(1, { timeout: 30_000 });
+  // The selected surface is a fact the DOM states, so read it once and assert on what was read. Two separate locator
+  // waits could not explain themselves when they disagreed on CI; this one prints the trigger's class list and the
+  // folded entries' current flags, so a CI-only failure names the state instead of only the expectation.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
+          const folded = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu .nav-button")];
+          const triggerClass = trigger === null ? null : trigger.className;
+          return {
+            triggerClass,
+            active: triggerClass !== null && /(^|\s)active(\s|$)/.test(triggerClass),
+            folded: folded.map((node) => ({
+              name: node.getAttribute("aria-label"),
+              current: node.getAttribute("aria-current"),
+              className: node.className,
+            })),
+          };
+        }),
+      { timeout: 30_000 },
+    )
+    .toMatchObject({ active: true });
   await page.waitForTimeout(200);
 
   const narrow = await readBar();
