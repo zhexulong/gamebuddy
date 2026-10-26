@@ -95,6 +95,13 @@ export function AppBar({
   const foldAt = fold?.from ?? entries.length;
   const visibleEntries = entries.slice(0, foldAt);
   const foldedEntries = entries.slice(foldAt);
+  // The disclosure is all the player sees of a folded entry, so it takes the
+  // current state of the entry it is hiding: on a 400 px strip four peers are
+  // inside it, and a `More` that looked the same on all four would say nothing
+  // about which surface is occupying the main region. The trigger carries the
+  // `active` presentation only - never `aria-current`, which would claim the
+  // disclosure itself is the page - and its own `aria-expanded` is untouched.
+  const foldedActive = foldedEntries.some((entry) => entry.active);
   const morePanelId = useId();
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -188,11 +195,11 @@ export function AppBar({
           // One row of peers on a wide bar; one `More` on a 400 px strip. The
           // panel's entries are the same controls, named the same way, and they
           // leave the strip the width its companion block needs.
-          <div className="app-bar-more" ref={moreRef}>
+          <div className="app-bar-more" ref={moreRef} data-folded-active={foldedActive ? "true" : "false"}>
             <button
               ref={moreTriggerRef}
               type="button"
-              className="nav-button app-bar-more-trigger"
+              className={foldedActive ? "nav-button app-bar-more-trigger active" : "nav-button app-bar-more-trigger"}
               aria-expanded={moreOpen}
               aria-controls={morePanelId}
               aria-label={fold?.label}

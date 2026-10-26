@@ -4033,10 +4033,14 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
       const triggers = [...document.querySelectorAll<HTMLElement>(".app-bar-more-trigger")];
       const menus = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu")];
       const bars = [...document.querySelectorAll<HTMLElement>(".app-bar")];
+      const moreWrap = document.querySelector<HTMLElement>(".app-bar-more");
       const trigger = triggers[0] ?? null;
       const folded = [...(menus[0]?.querySelectorAll<HTMLElement>(".nav-button") ?? [])];
       const triggerClass = trigger === null ? null : trigger.className;
       return {
+        // `data-folded-active` is what the component computed; `triggerClass` is what reached the DOM. If they disagree
+        // the render and the commit disagree, which is a React-level question, not a selector one.
+        computedFoldedActive: moreWrap?.getAttribute("data-folded-active") ?? null,
         // The count is the question: one render pass cannot produce a folded entry with `active` beside a trigger without
         // it, since both read the same `foldedEntries`. Two bars in the document can.
         barCount: bars.length,
