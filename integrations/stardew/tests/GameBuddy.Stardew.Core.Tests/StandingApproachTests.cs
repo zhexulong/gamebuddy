@@ -35,7 +35,7 @@ public sealed class StandingApproachTests
         var reachable = Open(10, 10);
 
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            target: (5, 5),
+            targetTiles: new[] { (5, 5) },
             actor: (5, 8),
             isStandable: t => standable.Contains(t),
             isReachable: t => reachable.Contains(t));
@@ -51,7 +51,7 @@ public sealed class StandingApproachTests
         var reachable = new HashSet<(int X, int Y)> { (5, 4) };
 
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            target: (5, 5),
+            targetTiles: new[] { (5, 5) },
             actor: (5, 3),
             isStandable: t => standable.Contains(t),
             isReachable: t => reachable.Contains(t));
@@ -66,7 +66,7 @@ public sealed class StandingApproachTests
         var reachable = new HashSet<(int X, int Y)>();
 
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            target: (5, 5),
+            targetTiles: new[] { (5, 5) },
             actor: (0, 0),
             isStandable: t => standable.Contains(t),
             isReachable: t => reachable.Contains(t));
@@ -80,8 +80,8 @@ public sealed class StandingApproachTests
         var standable = Open(10, 10);
         var reachable = Open(10, 10);
 
-        var first = ApproachTileSelector.Select((5, 5), (5, 5), t => standable.Contains(t), t => reachable.Contains(t));
-        var again = ApproachTileSelector.Select((5, 5), (5, 5), t => standable.Contains(t), t => reachable.Contains(t));
+        var first = ApproachTileSelector.Select(new[] { (5, 5) }, (5, 5), t => standable.Contains(t), t => reachable.Contains(t));
+        var again = ApproachTileSelector.Select(new[] { (5, 5) }, (5, 5), t => standable.Contains(t), t => reachable.Contains(t));
 
         again.Should().Be(first, "the same world must choose the same tile, or a run-to-run diff means nothing");
     }
@@ -94,7 +94,7 @@ public sealed class StandingApproachTests
         var reachable = new HashSet<(int X, int Y)> { (6, 6) };
 
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            target: (5, 5),
+            targetTiles: new[] { (5, 5) },
             actor: (8, 8),
             isStandable: t => standable.Contains(t),
             isReachable: t => reachable.Contains(t));
@@ -109,7 +109,7 @@ public sealed class StandingApproachTests
         var reachable = Open(10, 10);
 
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            target: (5, 5),
+            targetTiles: new[] { (5, 5) },
             actor: (5, 5),
             isStandable: t => standable.Contains(t),
             isReachable: t => reachable.Contains(t));

@@ -41,29 +41,58 @@ public static class ApproachTileSelector
     /// Null is the honest answer here: it means this placement has no approach, which the caller must
     /// report as a structured refusal rather than committing a walk that cannot arrive.
     /// </summary>
+    /// <summary>
+    /// The nearest tile beside ANY tile of the target that the actor can stand on AND walk to, or null.
+    ///
+    /// The target is a SET of occupied tiles, not one. A 2x2 `ResourceClump` (a big rock or a stump) occupies four, and
+    /// the caller used to pass only its top-left anchor - so the eight neighbours of the anchor could never include the
+    /// tile a farmer standing SOUTH of the rock occupies, (X, Y + 2). Measured 2026-10-26: an actor arriving from the
+    /// south had no legal candidate in the ring at all and was forced around to the north face, which is the reported
+    /// "it walked round behind the rock".
+    ///
+    /// Among candidates the nearest to the actor wins, and a candidate that sits BEHIND the target - farther from the
+    /// actor than the target is - loses ties to one on the near side. That is a preference, not a rule: when the near
+    /// face is walled off the far face is still chosen, because a distant approach beats no approach.
+    /// </summary>
     public static (int X, int Y)? Select(
-        (int X, int Y) target,
+        IReadOnlyList<(int X, int Y)> targetTiles,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
         Func<(int X, int Y), bool> isReachable)
     {
+        if (targetTiles is null || targetTiles.Count == 0) return null;
+
+        // Standing on the target is not approaching it: a rock, a crop or a machine occupies the tile, and the actor
+        // works from beside it. Every occupied tile is excluded, not just the anchor.
+        HashSet<(int X, int Y)> occupied = new(targetTiles);
+        (int X, int Y) anchor = targetTiles[0];
+
         (int X, int Y)? best = null;
         int bestDistance = int.MaxValue;
+        bool bestIsBehind = true;
 
-        foreach ((int dx, int dy) in NeighbourOffsets)
+        foreach ((int X, int Y) occupiedTile in occupied)
         {
-            (int X, int Y) candidate = (target.X + dx, target.Y + dy);
-            // Standing on the target is not approaching it: a rock, a crop or a machine occupies the
-            // tile, and the actor works from beside it.
-            if (candidate == target) continue;
-            if (!isStandable(candidate)) continue;
-            if (!isReachable(candidate)) continue;
+            foreach ((int dx, int dy) in NeighbourOffsets)
+            {
+                (int X, int Y) candidate = (occupiedTile.X + dx, occupiedTile.Y + dy);
+                if (occupied.Contains(candidate)) continue;
+                if (!isStandable(candidate)) continue;
+                if (!isReachable(candidate)) continue;
 
-            int distance = Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y);
-            if (best is not null && distance >= bestDistance) continue;
+                int distance = Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y);
+                // Behind means: travelling away from the anchor on the way to the candidate.
+                bool behind =
+                    Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y)
+                    > Math.Abs(anchor.X - actor.X) + Math.Abs(anchor.Y - actor.Y);
+                // Strictly better distance wins; equal distance prefers the near face.
+                if (best is not null && (distance > bestDistance || (distance == bestDistance && !(bestIsBehind && !behind))))
+                    continue;
 
-            best = candidate;
-            bestDistance = distance;
+                best = candidate;
+                bestDistance = distance;
+                bestIsBehind = behind;
+            }
         }
 
         return best;

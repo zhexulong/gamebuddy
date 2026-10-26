@@ -161,8 +161,19 @@ internal sealed partial class ExecutionManager
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
         Func<(int X, int Y), bool> isReachable) =>
-        ApproachTileSelector.Select(target, actor, isStandable, isReachable);
+        ApproachTileSelector.Select(new[] { target }, actor, isStandable, isReachable);
 
+    /// <summary>
+    /// The same choice for a target that occupies several tiles - a 2x2 ResourceClump (big rock, stump) or any other
+    /// multi-tile obstacle. Passing only the anchor made the far face unreachable by construction: the tile a farmer
+    /// standing south of a 2x2 rock occupies is two rows below the anchor, outside the anchor's eight-neighbour ring.
+    /// </summary>
+    internal static (int X, int Y)? SelectToolApproachTile(
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> targetTiles,
+        (int X, int Y) actor,
+        Func<(int X, int Y), bool> isStandable,
+        Func<(int X, int Y), bool> isReachable) =>
+        ApproachTileSelector.Select(targetTiles, actor, isStandable, isReachable);
     /// <summary>
     /// The refusal for a placement with no reachable standing tile: the code an agent can branch
     /// on, plus the evidence a reader needs to see WHY.
@@ -182,7 +193,7 @@ internal sealed partial class ExecutionManager
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable)
     {
-        bool anyStandable = ApproachTileSelector.Select(target, actor, isStandable, _ => true) is not null;
+        bool anyStandable = ApproachTileSelector.Select(new[] { target }, actor, isStandable, _ => true) is not null;
         return (
             $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}",
             $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={(anyStandable ? "unreachable" : "none")}");
@@ -210,7 +221,7 @@ internal sealed partial class ExecutionManager
         Func<Vector2, bool> isReachable)
     {
         (int X, int Y)? pick = ApproachTileSelector.Select(
-            ((int)targetTile.X, (int)targetTile.Y),
+            new[] { ((int)targetTile.X, (int)targetTile.Y) },
             ((int)actorTile.X, (int)actorTile.Y),
             tile => isStandable(new Vector2(tile.X, tile.Y)),
             tile => isReachable(new Vector2(tile.X, tile.Y)));
