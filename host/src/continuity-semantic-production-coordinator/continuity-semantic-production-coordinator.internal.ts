@@ -1542,7 +1542,23 @@ export async function deleteMountedChatMessage(
       ? await store.readTranscriptEntryBinding(record.chatThreadId, input.messageId)
       : [];
   const entryId = boundEntryOnActivePath(runtimeSession.session, bound);
-  if (entryId === null) throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
+  // Three different facts all used to answer `null` here, and they are not the same fact:
+  //
+  //   no binding at all      - the row exists in the store and the model never saw it. That is what a turn
+  //                            that died at the provider leaves behind; there is nothing on the model's side
+  //                            to omit, so deleting the row is complete rather than partial.
+  //   every binding off-path- the row was in the model's context once and the branch moved past it. The
+  //                            store row is still the player's, but omitting nothing would leave the model
+  //                            reading a line the player asked to remove.
+  //   several on-path        - it cannot be proven which entry is the row the player named.
+  //
+  // Only the first is safe to complete without touching the session. The other two keep refusing, because
+  // there the delete would be a lie about what the model still holds.
+  const neverBound = bound.length === 0;
+  if (entryId === null && !neverBound) throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
+  // The row the model never saw: deleting it is the whole job, and there is nothing on the session side to omit.
+  if (entryId === null)
+    return await store.deleteTranscriptMessage!(record.transitionAuthority.authority, record.chatThreadId, input);
   let deleted: import("../pi-session-variant-branch.internal.js").PiTranscriptDeleteResult;
   try {
     deleted = deletePiTranscriptEntry(runtimeSession.session, entryId);
