@@ -1035,6 +1035,8 @@ public sealed partial class ModEntry : Mod
         state.PlayerControlReplayGuard = state.BridgeSession is null ? null : new PlayerControlReplayGuard();
         state.LocalPipeBridge = state.BridgeSession is null ? null : new LocalPipeBridge(this.config.PipeName);
         state.BridgeSession?.SetPipeBridge(state.LocalPipeBridge);
+        // SMAPI is the only log anyone reads here; the admission decisions go to it rather than to a discarded console.
+        if (state.BridgeSession is not null) state.BridgeSession.Diagnostics = detail => this.Monitor.Log(detail, LogLevel.Debug);
         if (bodyProgramAuthority is not null
             && ShouldComposeBodyProgramController(bodyProgramAuthority.OpenStatus)
             && state.BridgeSession is not null)

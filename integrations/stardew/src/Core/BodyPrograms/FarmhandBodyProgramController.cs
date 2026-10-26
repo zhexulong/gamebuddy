@@ -54,7 +54,21 @@ public sealed class FarmhandBodyProgramController
     /// </summary>
     public Action<string>? Diagnostics { get; set; }
 
-    private void Diagnose(string detail) => this.Diagnostics?.Invoke($"[GameBuddy-body-program] {detail}");
+    /// <summary>Last time each diagnostic key was reported, so a per-frame condition cannot flood the log.</summary>
+    private readonly Dictionary<string, long> diagnosticsLastReportedMs = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Reports a pump decision, throttled per key. Measured 2026-10-26: the unthrottled version emitted 58 412 lines in
+    /// five minutes and a 10 MB log, burying every other marker in the file it was added to make readable.
+    /// </summary>
+    private void Diagnose(string detail)
+    {
+        if (this.Diagnostics is null) return;
+        long now = Environment.TickCount64;
+        if (this.diagnosticsLastReportedMs.TryGetValue(detail, out long last) && now - last < 2_000) return;
+        this.diagnosticsLastReportedMs[detail] = now;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
     private readonly IBodyProgramNodeExecutor? executor;
     // Dispatch tuple every subset pass (admission, policy, deadline, exact
     // binding) has acknowledged. A node whose last Execute returned the null
