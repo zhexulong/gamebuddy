@@ -942,14 +942,43 @@ string? bodyProgramUnavailableReason = null,
 
     void IBodyProgramAdmissionTransport.Send(NodeAdmissionChallenge challenge)
     {
-        if (challenge is null || !IsAuthenticated(this.authenticatedGeneration, out _) || this.pipeBridge is null)
+        // Every failure below used to return silently, and the consequence was measured on 2026-10-25: twenty-two nodes
+        // sat in `AwaitingHostAdmission`, the Host received zero challenges, and nothing anywhere said why. The
+        // companion diagnosed it from the outside - "the door action keeps sitting in awaiting_host_admission ... The
+        // host isn't processing new actions" - while four separate return points inside this method were dropping the
+        // frame without a word.
+        if (challenge is null)
+        {
+            Console.WriteLine("[GameBuddy-admission] send_skipped;reason=no_challenge");
             return;
+        }
+
+        if (!IsAuthenticated(this.authenticatedGeneration, out _) || this.pipeBridge is null)
+        {
+            Console.WriteLine(
+                $"[GameBuddy-admission] send_skipped;reason=not_authenticated_or_no_pipe;program={challenge.ProgramId};node={challenge.NodeId}");
+            return;
+        }
+
         string correlationId = Guid.NewGuid().ToString("N");
         if (!TryCreateBodyNodeAdmissionChallenge(this.authenticatedGeneration, challenge, correlationId, out string json))
+        {
+            Console.WriteLine(
+                $"[GameBuddy-admission] send_skipped;reason=challenge_not_serialisable;program={challenge.ProgramId};node={challenge.NodeId}");
             return;
+        }
+
         this.pendingBodyProgramAdmissions[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = correlationId;
         if (!this.pipeBridge.TryEnqueueOutbound(this.authenticatedGeneration, json))
+        {
             this.pendingBodyProgramAdmissions.Remove((challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt));
+            Console.WriteLine(
+                $"[GameBuddy-admission] send_skipped;reason=enqueue_failed;program={challenge.ProgramId};node={challenge.NodeId}");
+            return;
+        }
+
+        Console.WriteLine(
+            $"[GameBuddy-admission] sent;program={challenge.ProgramId};node={challenge.NodeId};attempt={challenge.NodeAttempt}");
     }
 
     BodyNodeAdmissionResult? IBodyProgramAdmissionTransport.TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
