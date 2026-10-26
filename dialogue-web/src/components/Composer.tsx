@@ -74,6 +74,7 @@ export function Composer({
   isGenerating,
   canStop,
   disabled,
+  sendUnavailable = false,
   labels,
   voice,
   draftActions,
@@ -97,6 +98,15 @@ export function Composer({
    */
   canStop: boolean;
   disabled?: boolean;
+  /**
+   * True when a send would have no model to reach - the surface's `ChatModelRoute` says `none`.
+   *
+   * It locks the send button and leaves the field writable: the player can compose and keep a draft
+   * while they go and bring a connection, and the surface's own standing sentence says so above this
+   * row. Locking the field instead would take away the one thing that still works, and letting the
+   * send through is what left a no-model turn in the transcript as a dead exchange.
+   */
+  sendUnavailable?: boolean;
   labels: Messages;
   /** Additive optional voice surface; absent null renders no mic icon. */
   voice?: VoiceSurfaceStateV1 | null;
@@ -145,7 +155,7 @@ export function Composer({
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!isGenerating && value.trim() && !disabled) {
+      if (!isGenerating && value.trim() && !disabled && !sendUnavailable) {
         onSend();
       }
     }
@@ -287,7 +297,7 @@ export function Composer({
               type="button"
               className="composer-button send-button"
               onClick={onSend}
-              disabled={disabled || !value.trim()}
+              disabled={disabled || sendUnavailable || !value.trim()}
               title={labels.send}
               aria-label={labels.send}
             >

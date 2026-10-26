@@ -183,6 +183,7 @@ export function ChatSurface({
         isGenerating={isGenerating}
         canStop={canStop}
         disabled={disabled}
+        sendUnavailable={modelRoute.kind === "none"}
         labels={labels}
         voice={voice}
         settingsAction={settingsAction}
