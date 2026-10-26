@@ -414,7 +414,8 @@ test.describe("B: the connection section is the first thing in Settings", () => 
     // section a player must act on is on the screen they land on.
     const connectionBox = await page.getByTestId("settings-surface").locator("[data-connection-settings]").boundingBox();
     expect(connectionBox!.y).toBeGreaterThanOrEqual(0);
-    expect(connectionBox!.y + connectionBox!.height).toBeLessThan(VIEWPORT.height);
+    // Rounded, because `boundingBox()` is fractional: an element that ends exactly at the fold can measure a hair past it.
+    expect(Math.round(connectionBox!.y + connectionBox!.height)).toBeLessThan(VIEWPORT.height);
   });
 
   test("every control and data hook the connection group had is still there", async ({ page }) => {
