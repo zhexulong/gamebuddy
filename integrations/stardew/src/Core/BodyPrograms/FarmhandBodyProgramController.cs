@@ -235,7 +235,7 @@ public sealed class FarmhandBodyProgramController
             if (admissionResult is null) continue;
             if (admissionResult is BodyNodeAdmissionUnavailableResult unavailable)
             {
-                this.Diagnose($"admission_unavailable;program={programId};node={node.NodeId};reason=unavailable_without_code");
+                this.Diagnose($"admission_unavailable;program={programId};node={node.NodeId};reason={unavailable.Code ?? "null_from_wire"}");
                 continue;
             }
             if (admissionResult is BodyNodeAdmissionRejectedResult rejected)
@@ -346,7 +346,19 @@ public sealed class FarmhandBodyProgramController
             if (boundGrant.ProgramId != programId || !this.authority.IsLifecycleOpen) continue;
             NodeExecutionBinding? execution = boundGrant.ExecutionBinding;
             if (execution is null || this.recentlyDispatched.Contains(execution.ExecutionId) || !this.boundRunning.ContainsKey(execution.ExecutionId)) continue;
-            if (!this.authority.IsLifecycleOpen || this.authority.RevalidateRunningDispatch(boundGrant, execution) != BodyProgramControllerResultCode.Succeeded)
+            // "The authority is no longer writable" is not "this dispatch failed".
+            //
+            // `RevalidateRunningDispatch` answers `RecoveryRequired` as its FIRST line whenever the authority is not
+            // mutable, and this block used to read that answer as a mid-run gate change, settle the node to
+            // RecoveryRequired, and record `mid_run_revalidation_failed`. That made the diagnostic a record of its own
+            // consequence: once anything closed the authority, every bound node in it "failed" the same way, one per
+            // tick, each "confirming" the state it was created by. Measured 2026-10-26 on `plan_1307_59cb6e9dca78c4d6`,
+            // whose n02 is a plain `pickup_item`.
+            //
+            // The honest action when the authority is closed is to do nothing: the node is still bound, its executor is
+            // still whoever owns it, and nothing here knows that it failed. Stopping is reversible; settling is not.
+            if (!this.authority.IsMutable) return;
+            if (this.authority.RevalidateRunningDispatch(boundGrant, execution) != BodyProgramControllerResultCode.Succeeded)
             {
                 if (!this.authority.IsLifecycleOpen) return;
                 // The mid-run gate changed (deadline/policy/stop): settle the
