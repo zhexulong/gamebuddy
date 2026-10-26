@@ -40,7 +40,7 @@ internal sealed partial class ExecutionManager
         // are validated above (position-independent), the world is re-validated
         // after the approach settles (inside the closure), and the walk uses the
         // arrival predicate.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -108,7 +108,7 @@ internal sealed partial class ExecutionManager
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsOneHitBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
         // 5.2: out of the native radius, walk in rather than refuse. Position-independent
         // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -202,7 +202,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
         // Position-independent checks are done; the target is re-validated after the
         // walk inside the closure, because the world can change while walking.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -281,7 +281,7 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
         // Position-independent checks are done; the target is re-validated after the walk.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -348,7 +348,7 @@ internal sealed partial class ExecutionManager
         // Physical: tilling drives the Hoe.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
             return admissionRefusal;
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             // Distinguish "wrong tile" from "right tile, too far to act on". A
             // non-diggable tile means pick a different target and stays refused at any
@@ -666,7 +666,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
         // 5.2: out of the native radius, walk in rather than refuse. Position-independent
         // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -770,7 +770,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "weed_target_changed", $"target={targetX},{targetY}");
         // 5.2: out of the native radius, walk in rather than refuse. Position-independent
         // checks above; the target is re-validated after the walk inside the closure.
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -815,7 +815,7 @@ internal sealed partial class ExecutionManager
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? probeFeature) || probeFeature is not StardewValley.TerrainFeatures.Grass probeGrass
             || !string.Equals(BuildGrassTargetId(location, targetX, targetY, probeGrass), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "grass_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(
                 requestId,
@@ -1101,8 +1101,20 @@ internal sealed partial class ExecutionManager
             // OBJECT occupancy, not walkability. `IsWalkableTile` asks whether an actor may cross a tile, and a rock is an
             // object on a walkable tile - so it answered yes for the rock's own tile and the approach walk stood ON the target.
             // Measured 2026-10-26: 28 of 28 approach receipts read `tile === target`.
-            StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y));
+            //
+            // A warp tile is not standable EITHER, and that is the one place design §3.1.1 forbids it: crossing one
+            // is legal and `enter_exit` targeting one is legal, but an actor who buffers here is warped the moment
+            // its box reaches the tile - so a step-out that chose one would teleport the companion instead of
+            // moving it half a step. Excluding it from THIS predicate keeps the rule in one place: every walk this
+            // seam dispatches stops somewhere a body may actually stop.
+            StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
+            && !IsWarpBufferTile(location, tile);
         (int X, int Y) actor = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+        // The hollow ring: the actor is standing ON the target, so there is no tile to swing at - the swing would
+        // land on the body's own tile. A step-out is the correction, and its destination is chosen by the same
+        // selector as any other approach. Single-tile targets only: a multi-tile footprint needs "the actor stands on
+        // ANY occupied tile", which is a separate change with its own acceptance.
+        bool actorOnTarget = footprint.Count == 1 && actor == footprint[0];
         (int X, int Y)? standingTile = SelectToolApproachTile(
             footprint,
             actor,
@@ -1115,6 +1127,21 @@ internal sealed partial class ExecutionManager
                 : _ => true);
         if (standingTile is null)
         {
+            if (actorOnTarget)
+            {
+                // Acceptance (b): nowhere to step out. Every ring tile is occupied or is a warp buffer, so the honest
+                // answer is a refusal that names the HOLLOW RING. It must not be `no_reachable_approach` (which would
+                // tell the agent the target is unreachable while it is in fact underfoot) and it must not be a forced
+                // move onto an occupied or warping tile.
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "hollow_ring_no_step_out",
+                    DescribeNoReachableApproach(anchor, actor, isStandable, footprint).Evidence
+                        + ";hollow_ring=true;step_out=none");
+            }
+
             // Nothing is dispatched: no walk is committed for a placement the actor cannot
             // reach, so the refusal arrives before the engine spends its search budget.
             (string refusalCode, string refusalEvidence) = DescribeNoReachableApproach(
@@ -1176,13 +1203,18 @@ internal sealed partial class ExecutionManager
         string reached = footprint.Count == 1
             ? string.Empty
             : $";anchor={anchor.X},{anchor.Y};reached=footprint";
+        // A step-out is advertised as one. Both ends are named, so a reader can tell a correction from a walk that
+        // happened to begin beside the target - and so the L1 fixture can assert the actor actually moved.
+        string steppedOut = actorOnTarget
+            ? $";stepped_out_from={actor.X},{actor.Y};stepped_out_to={goal.X},{goal.Y}"
+            : string.Empty;
         LocalExecutionReceipt accepted = new(
             executionId,
             requestId,
             ExecutionState.Accepted,
             "accepted",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}{reached}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}{reached}{steppedOut}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
@@ -1252,6 +1284,21 @@ internal sealed partial class ExecutionManager
                 $"target={specification.TargetX},{specification.TargetY};distance={ChebyshevDistance(Game1.player, specification.TargetX, specification.TargetY).ToString(CultureInfo.InvariantCulture)};reach=1;approach=did_not_arrive");
             this.Remember(short_);
             this.AddTrace(short_);
+            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            return;
+        }
+
+        // The hollow ring again, now that the walk is over. Reach alone cannot answer this: distance ZERO is
+        // inside the native radius, so a step-out that did not move - a blocked ring resolved by a superseded
+        // walk, an actor shoved back onto the target by a passing NPC - would be admitted and swing at its own
+        // feet. The step-out either moved the body or this refuses by the name of that failure.
+        if (IsToolTargetUnderActor(Game1.player, specification.TargetX, specification.TargetY))
+        {
+            this.revision++;
+            LocalExecutionReceipt unmoved = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "hollow_ring_step_out_failed", this.revision,
+                $"target={specification.TargetX},{specification.TargetY};tile={FormatTile(Game1.player.Tile)};reach=1;approach=did_not_arrive;hollow_ring=true;step_out=failed");
+            this.Remember(unmoved);
+            this.AddTrace(unmoved);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             return;
         }

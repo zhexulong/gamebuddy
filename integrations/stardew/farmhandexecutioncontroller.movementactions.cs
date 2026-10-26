@@ -145,6 +145,44 @@ internal sealed partial class ExecutionManager
     internal const string NoReachableApproachReasonCode = "no_reachable_approach";
 
     /// <summary>
+    /// The hollow ring: a tool swing's target tile must not be the tile the actor is standing on.
+    ///
+    /// <para>
+    /// <c>UseNativeToolOnTile</c> names the target tile's pixel centre directly, and every tool family gates
+    /// execution on the native Chebyshev-1 radius. Distance ZERO satisfies that gate, so an actor standing ON the
+    /// target was admitted to swing at its own feet - the Hoe re-tilling the tile the actor occupies, the Axe
+    /// counting the tile in front of the facing while the receipt reported the named one. Design §3.1.1 states the
+    /// rule (「工具挥击的**目标格**不得等于**身体格**」) and requires the correction to be a native position change
+    /// under body ownership, recorded as <c>stepped_out_from</c> / <c>stepped_out_to</c>.
+    /// </para>
+    /// <para>
+    /// This answers only that question. Reach, target identity and tool ownership are separate facts with their own
+    /// refusals; folding any of them in here would make this predicate say "not underfoot" for the one case it
+    /// exists for.
+    /// </para>
+    /// </summary>
+    internal static bool IsToolTargetUnderActor(Farmer player, int targetX, int targetY) =>
+        player.Tile.X == targetX && player.Tile.Y == targetY;
+
+    /// <summary>
+    /// Whether a tile warps the actor who STOPS on it - the one place design §3.1.1 forbids standing.
+    ///
+    /// <para>
+    /// The rule is three-way, not a ban: a <c>TouchAction Warp</c> tile is legal to CROSS (the native
+    /// <c>PathFindController</c> has its own door and warp branches, and an A* that read these tiles as
+    /// impassable would cut every doorway out of the map) and it is legal as an <c>enter_exit</c> target. Only
+    /// buffering there is forbidden, because the engine warps the moment the body's box reaches it - so a step-out
+    /// that landed on one would teleport the companion instead of moving it half a step.
+    /// </para>
+    /// <para>
+    /// Asked of the location's own warp table rather than of the map's <c>TouchAction</c> property so it answers the
+    /// same thing the engine will do. An NPC-only warp does not move the companion and so is not a buffer.
+    /// </para>
+    /// </summary>
+    internal static bool IsWarpBufferTile(GameLocation location, (int X, int Y) tile) =>
+        location.warps.Any(warp => !warp.npcOnly.Value && warp.X == tile.X && warp.Y == tile.Y);
+
+    /// <summary>
     /// Where a tool-family action stands, decided BEFORE any walk is committed, as arithmetic
     /// over two predicates so the choice is testable without a world.
     ///
