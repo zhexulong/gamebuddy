@@ -77,7 +77,10 @@ const modsPath = option("mods", process.env.GAMEBUDDY_STARDEW_MODS_DIR ?? path.j
 const fixtureRoots = resolveStardewFixtureRoots({ fixturesRoot: option("root", null) });
 const fixtureRoot = fixtureRoots.fixturesRoot;
 announceStardewFixtureRoots(fixtureRoots);
-const releaseDir = option("release", path.join(repo, "integrations", "stardew", "bin", "Release", "net6.0"));
+// resolve(), not join(): the fixture refuses relative paths with
+// `native_local_fixture_absolute_paths_required`, so a relative --release silently broke the restore half of
+// every run while the run itself looked healthy.
+const releaseDir = path.resolve(repo, option("release", "integrations/stardew/bin/Release/net6.0"));
 const saveName = option("save", "GameBuddyFixtureNavigation_447088730");
 const backupName = option("backup", `native-local-${action.replaceAll("_", "-")}-fixture-backup`);
 const templateName = option("template", saveName);
