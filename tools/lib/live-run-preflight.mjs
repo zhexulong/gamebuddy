@@ -136,6 +136,10 @@ const fixtureChecks = (fixtureRoot, saveName) => {
   const checks = [
     check("fixture_root_has_no_orphan_backups", orphans.length === 0, `${String(orphans.length)} orphaned entr(ies)`),
     check("fixture_lock_free", !lock, lock ? "a fixture transaction is still held" : "free"),
+    // The recovery journal is cumulative per scope and admission records are never evicted. Once it passes its budget
+    // every admission write throws, and the companion experiences that as a node that waits for ever - no code it can
+    // read, no retry that helps. 811 records had accumulated by 2026-10-26 and clearing them made the same build work.
+    recoveryJournalCheck(fixtureRoot),
   ];
   if (saveName !== null && saveName !== undefined) {
     const template = join(fixtureRoot, "templates", saveName);
@@ -299,6 +303,53 @@ const runnerCheck = (action) => {
 };
 
 /** Runs every check in order; `ok` is true only when all pass, and `firstFailure` is what a caller prints. */
+/**
+ * Whether the recovery journal under this fixture root's runtime has room left.
+ *
+ * The journal lives at `<runtimeRoot>/stardew-recovery/<identity>/<player>/<companion>/`, and `stardew-fixtures` is a
+ * sibling of `stardew-recovery` inside that same root. Budget is 1 MB by default (`DEFAULT_MAX_BYTES`), and admitted
+ * records are never evicted - so the only recovery is to clear it, which this check can name but must not do.
+ */
+const recoveryJournalCheck = (fixtureRoot) => {
+  const budgetBytes = 1024 * 1024;
+  const runtimeRoot = fixtureRoot === null || fixtureRoot === undefined ? null : resolve(fixtureRoot, "..");
+  if (runtimeRoot === null) return check("recovery_journal_within_budget", true, "no fixture root to derive it from");
+
+  const journals = [];
+  const walk = (dir, depth) => {
+    if (depth > 6) return;
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, depth + 1);
+        continue;
+      }
+      if (!entry.name.includes("recovery-journal")) continue;
+      try {
+        journals.push({ path: full, size: statSync(full).size });
+      } catch {
+        /* unreadable is not over budget */
+      }
+    }
+  };
+  walk(join(runtimeRoot, "stardew-recovery"), 0);
+
+  const over = journals.filter((entry) => entry.size >= budgetBytes);
+  return check(
+    "recovery_journal_within_budget",
+    over.length === 0,
+    over.length === 0
+      ? `${String(journals.length)} journal(s) within budget`
+      : `${String(over.length)} journal(s) at or over ${String(budgetBytes)} bytes: ${over.map((entry) => `${entry.path} (${String(entry.size)})`).join(", ")} - clear it; admission will hang otherwise`,
+  );
+};
+
 export function preflightLiveRun(options) {
   const {
     modsPath,
