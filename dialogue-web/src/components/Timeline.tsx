@@ -23,6 +23,7 @@ export function Timeline({
   preview = null,
   onSwipe,
   onRegenerate,
+  onContinue,
   onOpeningVariant,
   onRewind,
   onRewindConfirm,
@@ -71,10 +72,11 @@ export function Timeline({
     regenerateVariant: string;
     /**
      * The line a reply carries when the generation that wrote it stopped at the model's length
-     * ceiling. It names the Regenerate control on the same row, so it is not a separate word for
-     * a separate action.
+     * ceiling, and the continuation its own row offers beside it.
      */
     chatReplyCutOff: string;
+    chatContinue: string;
+    chatContinueHint: string;
     /** The catalogue's words for the Host's own greeting-variant labels. */
     openingVariantDefault: string;
     openingVariantAlternate: string;
@@ -110,6 +112,11 @@ export function Timeline({
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
   onRegenerate?: (messageHandle: string) => void;
+  /**
+   * Asks her to keep writing from where the length ceiling stopped her. Present only for the row the note above names, so
+   * the control and the sentence cannot disagree about whether this reply was cut off.
+   */
+  onContinue?: ((messageHandle: string) => void) | undefined;
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
   /**
@@ -378,6 +385,7 @@ export function Timeline({
               onDeleteCancel={onDeleteCancel === undefined ? undefined : handleDeleteCancel}
               deleteArmed={deleteArmedHandle === message.handle}
               truncatedNote={message.handle === truncatedHandle ? labels.chatReplyCutOff : null}
+              onContinue={message.handle === truncatedHandle ? onContinue : undefined}
               removedCount={transcript.length - message.order}
             />
           ))}

@@ -403,7 +403,9 @@ const en = {
   // on that reply and names the Regenerate control on the same row. It is NOT one of the failure
   // lines above and never reads as one - the reply is real and on screen, it is just a prefix - and
   // the Host publishes the fact from the model's own stop reason, never from the text.
-  chatReplyCutOff: "Her reply was cut off by the model's length limit. Regenerate for a complete one.",
+  chatReplyCutOff: "Her reply stopped at the model's length limit. Continue it, or regenerate for a fresh one.",
+  chatContinue: "Continue",
+  chatContinueHint: "Ask her to keep writing from where she stopped.",
   // The rewind control: a message's own strip, one button, and what pressing it will remove. A
   // rewind is destructive and has no undo, so the arm states the consequence and only the confirm
   // sends it - the same shape the Chats row's archive/trash uses. The owner's later ruling
@@ -1285,7 +1287,9 @@ const zh: Messages = {
   // 她的回复被截断了，而能改变这件事的是玩家：这句话就落在那条回复上，并点名同一行的「重新生成」。
   // 它不属于上面的失败文案，读起来也不像失败——回复是真实存在的、就在屏幕上，只是写了一半。
   // Host 依据模型自己的停止原因发布这个事实，绝不从文字里推测。
-  chatReplyCutOff: "她的回复写到长度上限就被截断了。点「重新生成」可以得到完整的一条。",
+  chatReplyCutOff: "她的回复写到长度上限就停下了。可以让她接着写，或重新生成一条。",
+  chatContinue: "继续写",
+  chatContinueHint: "让她从停下的地方接着说。",
   // 回退控件：消息自己的操作条上一个按钮，并说清按下去会删掉什么。回退不可撤销，所以先确认再发送，与
   // 会话行上的归档/删除同一形状。主人后来的裁定（2026-10-20）就是这里的措辞：回退**保留**它点名的那条
   // 消息、只删掉其后的内容（与 Pi、SillyTavern 一致），所以数目是这条之后的条数，玩家自己那一行也是合法
