@@ -1608,6 +1608,24 @@ export function hasExactKeys(value: Record<string, unknown>, allowedKeys: readon
   return keys.length === allowedKeys.length && keys.every((key) => allowedKeys.includes(key));
 }
 
+/**
+ * The exact set, plus a named set of keys that may be present but need not be.
+ *
+ * A shape that grew one optional field used to force a choice between `hasExactKeys` (which refuses the new field) and
+ * `keys.every(includes)` (which stops noticing any unexpected field at all). This keeps both properties: the required
+ * set is exact, and the allowance is enumerated rather than implied.
+ */
+export function hasExactKeysOrOptional(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): boolean {
+  const keys = Object.keys(value);
+  return (
+    required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key))
+  );
+}
+
 export function isOpaqueId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   hasExactKeys,
+  hasExactKeysOrOptional,
   hasOnlyKeys,
   isAnimalDoorTargetFact,
   isAnimalProductTargetFact,
@@ -4066,8 +4067,11 @@ function isBodyProgramStatusSnapshot(value: unknown): boolean {
 function isBodyProgramNodeStatus(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"]) &&
+    // The exact set is asserted as before, plus the ONE optional key the Mod may add. A node without it must still
+    // validate, so the allowance is "these keys, and possibly this one of them" rather than a loosened shape.
+    hasExactKeysOrOptional(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"], ["rejectionCode"]) &&
     isOpaqueId(value.nodeId) &&
+    (value.rejectionCode === undefined || value.rejectionCode === null || isReasonCode(value.rejectionCode)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
