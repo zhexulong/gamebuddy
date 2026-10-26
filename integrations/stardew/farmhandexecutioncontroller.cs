@@ -1659,12 +1659,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
             bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.Stack;
             bool targetGone = target is null;
+            // ONE evidence shape, and it is the Host's: `hasPickupItemCompletionEvidence` requires exactly these nine keys
+            // (host/src/stardew-game-integration-adapter.ts:3239-3253). A second shape - which is what my earlier fix wrote - let
+            // the Mod mint `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
+            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
             if (approachSettled && targetGone && inventoryGained)
             {
                 this.activeItemPickup = null;
                 this.revision++;
                 LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_picked_up", this.revision,
-                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
+                    pickupEvidence);
                 this.Remember(receipt);
                 this.AddTrace(receipt);
                 this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
@@ -1687,9 +1691,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (inventoryGained)
                 {
                     LocalExecutionReceipt picked = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_picked_up", this.revision,
-                        $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};"
-                            + $"item={specification.QualifiedItemId};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};"
-                            + "target_gone=false;evidence=inventory");
+                            pickupEvidence);
                     this.Remember(picked);
                     this.AddTrace(picked);
                     this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
