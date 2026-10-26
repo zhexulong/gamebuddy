@@ -1100,7 +1100,14 @@ export function GameSurface({
           confirmCabin: (choice) => void handleCabinConfirmation(choice),
         }}
       />
-      <StardewInstallationDiscovery api={composedApi} labels={labels} />
+      <StardewInstallationDiscovery
+        api={composedApi}
+        labels={labels}
+        // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
+        // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
+        // the folder had been accepted, and only a reload cleared it.
+        onAdmitted={() => void rereadGame()}
+      />
       {/* The Game Agent's own model settings, on the Game surface (design/
           architecture/product-surfaces.md); the Host stores this half of
           settings/profiles separately from Chat's. */}

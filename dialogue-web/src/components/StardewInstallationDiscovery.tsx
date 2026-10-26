@@ -26,6 +26,13 @@ type Props = {
     | "openStardewInstallationPicker"
   >;
   labels: Messages;
+  /**
+   * Called once an installation is admitted. The panel owns the admission; the surface above it owns the guide that says
+   * what to do next, and that guide reads the Host's `prerequisites` - which only changes after this. Without the
+   * callback the panel said "confirmed" while the step above it still asked the player to choose a folder, and the only
+   * way out was a full reload.
+   */
+  onAdmitted?: () => void;
 };
 
 /**
@@ -94,7 +101,7 @@ type Pending = "none" | "scan" | "action";
  */
 const isConfirmableCandidate = (status: StardewInstallationCandidateV1["status"]): boolean =>
   status === "candidate" || status === "admission_required";
-export function StardewInstallationDiscovery({ api, labels }: Props) {
+export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
@@ -200,12 +207,14 @@ export function StardewInstallationDiscovery({ api, labels }: Props) {
         // the player's installation had just been accepted).
         await read(true);
         if (mounted.current) setState("confirmed");
+        onAdmitted?.();
         return;
       }
       if (kind === "picker" && "status" in result) {
         if (result.status === "accepted" || result.status === "registered") {
           await read(true);
           if (mounted.current) setState("confirmed");
+          onAdmitted?.();
           return;
         }
       }
