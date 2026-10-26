@@ -2917,6 +2917,16 @@ try {
   const localeKey = COMPANION_LOCALE === "zh-CN" ? "zh" : "en";
   // The multi-day scenario's per-day prompt is a FUNCTION (it carries the day number), so the single-goal
   // path below stays a string and only this branch calls it.
+  // Whether the in-game DAY is spent, answered by the engine and never by a turn boundary.
+  //
+  // Two facts make it true: the clock is past the sleep hour, or `advance_day` settled - the only thing that actually
+  // crosses a night. An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
+  const daySpent = () => {
+    const clock = readWorldClock();
+    if (clock.unknown) return false;
+    if (clock.spent) return true;
+    return actionTrace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null);
+  };
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     return typeof entry === "function" ? entry(day) : entry;
@@ -2944,10 +2954,24 @@ try {
         const settled = deferred();
         dayTurnSettled = settled.promise;
         try {
-          const walked = await runAgentTurn(promptForDay(day), tools);
-          if (walked.status !== null) status = walked.status;
-          agentTurnResult = walked.turn;
-          sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
+          // A day contains turns, not one turn. The loop asks the ENGINE whether the day is spent - never the turn
+          // boundary - and keeps offering turns while the clock still has day left in it. It does not end a turn for the
+          // companion, and it never tells it to sleep: the companion's own dispatch of `advance_day` is the only thing that
+          // crosses the night, which is the behaviour this scenario exists to observe.
+          let turns = 0;
+          while (!daySpent()) {
+            turns += 1;
+            const walked = await runAgentTurn(turns === 1 ? promptForDay(day) : promptForDayContinuation(day), tools);
+            if (walked.status !== null) status = walked.status;
+            agentTurnResult = walked.turn;
+            sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
+            // A turn that never settled will not settle differently for the next one; the reason is already recorded.
+            if (walked.settled !== true) break;
+            if (turns >= MAX_TURNS_PER_DAY) {
+              process.stderr.write(`[multiday] day ${String(day)}: turn budget reached (${String(turns)})\n`);
+              break;
+            }
+          }
           // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
           // the "the companion kept working" half of the baseline, and it is computed from the trace rather than
           // from the companion's prose.
