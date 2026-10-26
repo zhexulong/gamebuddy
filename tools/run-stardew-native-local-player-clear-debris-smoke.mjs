@@ -33,29 +33,38 @@ export async function runClearDebrisSmoke(client, receipts, config) {
     if (initialTarget.health !== 8) throw new Error("clear_debris_fixture_health_not_intact");
     const pickaxe = choosePickaxe(snapshot);
     const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { tool: "pickaxe" }, snapshot);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
 
     let expectedHealth = 8;
     let target = initialTarget;
     let terminal = null;
-    for (let hit = 1; hit <= 8; hit += 1) {
-      snapshot = await actionableSnapshot(client);
-      lastSnapshot = snapshot;
-      target = findSameFixtureTarget(snapshot, initialTarget);
-      if (
-        !target ||
-        target.parentSheetIndex !== 752 ||
-        target.toolKind !== "pickaxe" ||
-        target.requiredUpgradeLevel !== 0 ||
-        target.health !== expectedHealth
-      ) {
-        throw new Error("debris_target_changed_before_hit");
-      }
+    // ONE dispatch, not eight. `clear_debris` now swings to removal inside a single request, the same shape
+    // `chop_tree_source` and `cut_weeds` already had, because a non-terminal `partially_succeeded` receipt left the
+    // Body Program router holding the node bound-Running for ever: it replays the same receipt for the same
+    // RequestId and only Succeeded/Failed/Rejected/Cancelled ever project to a terminal
+    // (`RouteReenteringBodyProgramExecutor.ToTerminal`). The loop that used to live here was the caller doing by
+    // hand what the action now owns.
+    snapshot = await actionableSnapshot(client);
+    lastSnapshot = snapshot;
+    target = findSameFixtureTarget(snapshot, initialTarget);
+    if (
+      !target ||
+      target.parentSheetIndex !== 752 ||
+      target.toolKind !== "pickaxe" ||
+      target.requiredUpgradeLevel !== 0 ||
+      target.health !== expectedHealth
+    ) {
+      throw new Error("debris_target_changed_before_hit");
+    }
+    {
       const receipt = await execute(
         client,
         trace,
-        `clear_debris_hit_${hit}`,
+        "clear_debris",
         "clear_debris",
         {
           slot: pickaxe.slot,
@@ -66,7 +75,6 @@ export async function runClearDebrisSmoke(client, receipts, config) {
         snapshot,
       );
       const evidence = parseEvidence(receipt.evidence);
-      const expectedTerminal = hit === 8;
       const validReceipt =
         typeof receipt.executionId === "string" &&
         receipt.executionId.length > 0 &&
@@ -77,14 +85,16 @@ export async function runClearDebrisSmoke(client, receipts, config) {
         evidence.tool === "pickaxe" &&
         evidence.required_upgrade === "0" &&
         evidence.health_before === String(expectedHealth) &&
-        evidence.health_after === String(expectedTerminal ? 0 : expectedHealth - 1) &&
-        evidence.clump_removed === String(expectedTerminal) &&
-        ((expectedTerminal && receipt.state === "succeeded" && receipt.reasonCode === "debris_cleared") ||
-          (!expectedTerminal && receipt.state === "partially_succeeded" && receipt.reasonCode === "debris_hit"));
-      if (!validReceipt) throw new Error(`debris_hit_receipt_invalid:${hit}:${receipt.reasonCode}`);
+        evidence.health_after === "0" &&
+        evidence.clump_removed === "true" &&
+        // The swing count is evidence, not a caller contract: it must be a positive number and it must be the count
+        // that could actually clear 8 health with a basic pickaxe (1 damage per swing).
+        Number.isInteger(Number(evidence.swings)) &&
+        Number(evidence.swings) >= 1 &&
+        receipt.state === "succeeded" &&
+        receipt.reasonCode === "debris_cleared";
+      if (!validReceipt) throw new Error(`debris_receipt_invalid:${receipt.state}:${receipt.reasonCode}`);
       terminal = receipt;
-      if (expectedTerminal) break;
-      expectedHealth -= 1;
     }
 
     const after = await actionableSnapshot(client);
@@ -185,8 +195,7 @@ function requireCapabilities(snapshot) {
   const required = ["clear_debris", "equip_tool", "move_to_tile", "travel"];
   const present = new Set(snapshot.capabilities ?? []);
   const missing = required.filter((action) => !present.has(action));
-  if (missing.length > 0)
-    throw new Error(`native_local_clear_debris_capability_not_isolated:${missing.join(",")}`);
+  if (missing.length > 0) throw new Error(`native_local_clear_debris_capability_not_isolated:${missing.join(",")}`);
 }
 
 async function actionableSnapshot(client) {

@@ -2005,7 +2005,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.clear_debris,
         label: "Clear Stardew Debris",
         description:
-          "Clear one live adjacent ResourceClump with the equipped Axe or Pickaxe. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A clump that needs several hits returns partially_succeeded/debris_hit per hit until the final hit returns succeeded/debris_cleared; drops and pickup are separate actions.",
+          "Clear one live ResourceClump with the equipped Axe or Pickaxe, walking to it first when it is out of reach. slot, x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). One call swings until the clump is gone and returns succeeded/debris_cleared, or uncertain/debris_not_cleared when the bounded swing cap could not finish it; drops and pickup are separate actions.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),

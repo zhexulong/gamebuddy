@@ -113,23 +113,24 @@ function createFakeClient({ landingTile = FIRST_APPROACH, removeOnLastHit = true
           y: FIXTURE_TARGET.y,
           expectedTargetId: FIXTURE_TARGET.targetId,
         });
-        const terminalHit = target.health === 1;
-        const healthAfter = terminalHit ? 0 : target.health - 1;
+        // ONE request clears the clump. The action owns the swing loop now (`ExecuteClearDebris`), because a
+        // non-terminal `partially_succeeded` left the Body Program node bound-Running for ever.
+        const healthAfter = 0;
         client.state.snapshot = {
           ...current,
           revision: current.revision + 1,
-          debrisTargets: terminalHit && removeOnLastHit ? [] : [{ ...target, health: healthAfter }],
+          debrisTargets: removeOnLastHit ? [] : [{ ...target, health: healthAfter }],
         };
         const receipt = {
           ...accepted,
           revision: client.state.snapshot.revision,
-          state: terminalHit ? "succeeded" : "partially_succeeded",
-          reasonCode: terminalHit ? "debris_cleared" : "debris_hit",
+          state: "succeeded",
+          reasonCode: "debris_cleared",
           evidence: {
             detail:
               `location=${client.state.snapshot.location};target=${target.targetId};tile=${target.x},${target.y};` +
               `parent=752;tool=pickaxe;required_upgrade=0;health_before=${target.health};health_after=${healthAfter};` +
-              `clump_removed=${terminalHit}`,
+              `swings=${target.health};clump_removed=true`,
           },
         };
         receipts.push(receipt);
@@ -141,30 +142,29 @@ function createFakeClient({ landingTile = FIRST_APPROACH, removeOnLastHit = true
   return { client, receipts };
 }
 
-test("clear-debris runner clears the frozen 8-health fixture clump through shared dispatch and terminal correlation", async () => {
+test("clear-debris runner clears the frozen 8-health fixture clump in one dispatch", async () => {
   const { client, receipts } = createFakeClient();
   const result = await runClearDebrisSmoke(client, receipts, validConfig());
   assert.equal(result.state, "passed");
   assert.equal(result.reasonCode, "debris_cleared");
   assert.equal(result.receipt.state, "succeeded");
   assert.equal(result.receipt.reasonCode, "debris_cleared");
-  assert.match(result.receipt.evidence.detail, /clump_removed=true/);
+  assert.match(result.receipt.evidence.detail, /clump_removed=true/u);
   assert.equal(result.target.targetId, FIXTURE_TARGET.targetId);
   assert.equal(result.freshPostcondition.targetGone, true);
   assert.equal(result.after.debrisTargets, 0);
-  assert.equal(result.trace.length, 11);
+  // travel, travel_terminal, equip, clear_debris. One clear, not eight: the action owns the swing loop, and a
+  // non-terminal partially_succeeded receipt used to leave the Body Program node bound-Running for ever.
+  assert.equal(result.trace.length, 4);
   assert.equal(result.trace[0].phase, "travel");
   assert.equal(result.trace[1].phase, "travel_terminal");
   assert.equal(result.trace[2].phase, "equip_pickaxe");
-  for (let hit = 1; hit <= 8; hit += 1) {
-    const entry = result.trace[2 + hit];
-    assert.equal(entry.phase, `clear_debris_hit_${hit}`);
-    assert.equal(entry.receipt.state, hit === 8 ? "succeeded" : "partially_succeeded");
-    assert.equal(entry.receipt.reasonCode, hit === 8 ? "debris_cleared" : "debris_hit");
-    assert.match(entry.receipt.evidence.detail, new RegExp(`health_before=${9 - hit}`));
-    assert.match(entry.receipt.evidence.detail, new RegExp(`health_after=${hit === 8 ? 0 : 8 - hit}`));
-    assert.match(entry.receipt.evidence.detail, new RegExp(`clump_removed=${hit === 8}`));
-  }
+  assert.equal(result.trace[3].phase, "clear_debris");
+  assert.equal(result.trace[3].receipt.state, "succeeded");
+  assert.equal(result.trace[3].receipt.reasonCode, "debris_cleared");
+  assert.match(result.trace[3].receipt.evidence.detail, /health_before=8/u);
+  assert.match(result.trace[3].receipt.evidence.detail, /health_after=0/u);
+  assert.match(result.trace[3].receipt.evidence.detail, /clump_removed=true/u);
 });
 
 test("clear-debris runner moves to the bounded fixture approach when travel lands off-approach", async () => {
@@ -174,7 +174,9 @@ test("clear-debris runner moves to the bounded fixture approach when travel land
   const phases = result.trace.map((entry) => entry.phase);
   assert.ok(phases.includes("move_to_clear_debris_fixture_anchor"));
   assert.ok(phases.includes("move_to_clear_debris_fixture_anchor_terminal"));
-  assert.equal(result.trace.length, 13);
+  // 13 before the action owned its swing loop, 6 after: travel, travel_terminal, one move_to_tile pair, equip,
+  // and one clear_debris request instead of eight.
+  assert.equal(result.trace.length, 6);
 });
 
 test("clear-debris runner reports blocked when the postcondition target persists", async () => {
@@ -187,8 +189,8 @@ test("clear-debris runner reports blocked when the postcondition target persists
 
 test("clear-debris runner rejects a non-frozen action policy before any request", async () => {
   const bad = validConfig();
-    // Deny an action this run requires: under deny-by-exception that is the only
-    // way the config can narrow the surface, and the shared validator refuses it.
-    bad.DeniedActions = ["clear_debris"];
-    await assert.rejects(runClearDebrisSmoke({}, [], bad), /native_fixture_policy_denies_required/);
+  // Deny an action this run requires: under deny-by-exception that is the only
+  // way the config can narrow the surface, and the shared validator refuses it.
+  bad.DeniedActions = ["clear_debris"];
+  await assert.rejects(runClearDebrisSmoke({}, [], bad), /native_fixture_policy_denies_required/);
 });

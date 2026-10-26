@@ -843,17 +843,52 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        StardewValley.TerrainFeatures.ResourceClump? clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
+        if (clump is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_target_changed", $"target={targetX},{targetY}");
+        // ResourceClumps span multiple tiles. The reach test is the one the native swing actually needs - one Chebyshev
+        // step from ANY footprint tile - while the opaque clump-origin identity stays the freshness binding.
+        //
+        // This used to be `IsDebrisTargetWithinPlayerRadius`, which is the DISCOVERY radius (six steps). Six steps is
+        // not a tool's reach: `UseNativeToolOnTile` swings at a named tile and the native tool families act on a
+        // Chebyshev-1 neighbour, so an actor six tiles away was admitted and swung at nothing. A clump 3-6 tiles away
+        // is neither in reach nor refused - it is walked to, which is what this leg is for.
+        if (!IsDebrisFootprintWithinChebyshev(Game1.player, clump, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "clear_debris",
+                location,
+                ((int)clump.Tile.X, (int)clump.Tile.Y),
+                DebrisFootprint(clump),
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearDebris(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteClearDebris(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes clear_debris against the current world, re-validating the tool and the clump because an approach leg may
+    /// have taken several ticks - the clump can be felled, damaged or replaced while the actor walks. One native hit per
+    /// request; the postcondition is read from the live clump, not assumed.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteClearDebris(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.TerrainFeatures.ResourceClump? clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out int clumpIndex);
+        StardewValley.TerrainFeatures.ResourceClump? clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         if (clump is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_target_changed", $"target={targetX},{targetY}");
-        // ResourceClumps span multiple tiles. Require an ordinary one-tile
-        // interaction radius from any footprint tile, while retaining the
-        // opaque clump-origin identity as the freshness binding.
-        if (!IsDebrisTargetWithinPlayerRadius(clump, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        if (!IsDebrisFootprintWithinChebyshev(Game1.player, clump, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach", $"target={targetX},{targetY};reach=1;approach=did_not_arrive");
         if (!IsValidDebrisTool(clump, tool, out string toolKind, out int requiredUpgrade))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_tool_unavailable", $"target={targetX},{targetY};parent={clump.parentSheetIndex.Value}");
 
@@ -863,6 +898,7 @@ internal sealed partial class ExecutionManager
         Game1.player.CurrentToolIndex = slot;
         float staminaBefore = Game1.player.Stamina;
         string activeToolKind;
+        int swingCount = 0;
         try
         {
             if (Game1.player.CurrentTool is not Tool activeTool)
@@ -875,11 +911,27 @@ internal sealed partial class ExecutionManager
                 _ => "tool",
             };
             Vector2 hitTile = clump.Tile;
-            UseNativeToolOnTile(activeTool, location, (int)hitTile.X, (int)hitTile.Y, Game1.player, staminaBefore);
-            // Tool.endUsing normally advances this native swing identity after
-            // the animation. This direct game-thread adapter advances it after
-            // the one bounded native hit so a retry is a distinct swing.
-            activeTool.swingTicker++;
+            // A 2x2 boulder carries 4 health and a stump more, while one native swing removes one point. A single
+            // `UseNativeToolOnTile` therefore leaves the clump standing, and reporting that as a non-terminal
+            // `PartiallySucceeded` was a deadlock rather than progress: the router maps only Succeeded/Failed/Rejected/
+            // Cancelled to a terminal, everything else stays bound-Running forever while the ledger replays the SAME
+            // receipt for the SAME RequestId (`RouteReenteringBodyProgramExecutor.ToTerminal`, default branch). So keep
+            // swinging the same equipped tool on the same clump until it falls, exactly as `chop_tree_source` does for a
+            // stump and `cut_weeds` does for a two-health weed - the repeated native seam a holding player executes.
+            //
+            // The cap is the same shape as its siblings (cut_weeds 8, chop_tree_source 12) and exists so a target the
+            // tool cannot damage ends in a named refusal instead of an endless loop.
+            const int maximumSwingCount = 16;
+            StardewValley.TerrainFeatures.ResourceClump? standing = clump;
+            while (standing is not null && standing.health.Value > 0f && swingCount < maximumSwingCount)
+            {
+                UseNativeToolOnTile(activeTool, location, (int)hitTile.X, (int)hitTile.Y, Game1.player, staminaBefore);
+                // Tool.endUsing normally advances this native swing identity after the animation. This direct game-thread
+                // adapter advances it after each bounded native hit so every swing is a distinct one.
+                activeTool.swingTicker++;
+                swingCount++;
+                standing = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
+            }
         }
         finally
         {
@@ -899,17 +951,23 @@ internal sealed partial class ExecutionManager
             expectedStaminaCost = (Game1.player.CurrentTool is Tool pickForCost && pickForCost.IsEfficient) ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
         else if (activeToolKind == "hoe")
             expectedStaminaCost = (Game1.player.CurrentTool is Tool hoeForCost && hoeForCost.IsEfficient) ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+        expectedStaminaCost *= swingCount;
 
         StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         float healthAfter = remaining?.health.Value ?? 0f;
         bool cleared = remaining is null;
+        // A clump that survives the bounded swing cap ends `Uncertain`, the same shape `cut_weeds` and
+        // `chop_tree_source` use when their postcondition cannot be reached. It must NOT end `PartiallySucceeded`:
+        // that state is non-terminal to the Body Program router, which keeps the node bound-Running and replays the
+        // same receipt for the same RequestId for ever. "I could not finish this" is a fact the caller can act on;
+        // "still running" is a hang.
         LocalExecutionReceipt receipt = new(
             executionId,
             requestId,
-            cleared ? ExecutionState.Succeeded : ExecutionState.PartiallySucceeded,
-            cleared ? "debris_cleared" : "debris_hit",
+            cleared ? ExecutionState.Succeeded : ExecutionState.Uncertain,
+            cleared ? "debris_cleared" : "debris_not_cleared",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};clump_removed={cleared.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed={cleared.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -924,7 +982,7 @@ internal sealed partial class ExecutionManager
             Point tile = new((int)clump.Tile.X, (int)clump.Tile.Y);
             string targetId = BuildDebrisTargetId(location, index, clump);
             // Identity matching is deliberately independent from player range.
-            // The caller applies the footprint-aware radius predicate after it
+            // The caller applies the footprint-aware reach predicate after it
             // resolves this exact source-bound object, so discovery and
             // execution cannot disagree for multi-tile ResourceClumps.
             if (tile.X == targetX && tile.Y == targetY && string.Equals(targetId, expectedTargetId, StringComparison.Ordinal))
@@ -941,6 +999,38 @@ internal sealed partial class ExecutionManager
         string raw = $"{location.NameOrUniqueName}:{index}:{(int)clump.Tile.X},{(int)clump.Tile.Y}:{clump.parentSheetIndex.Value}:{clump.width.Value}x{clump.height.Value}";
         return $"debris_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
+
+    /// <summary>
+    /// Every tile a ResourceClump occupies, from the same origin-plus-extent reading the target identity and the
+    /// discovery radius already use (<c>clump.Tile</c> plus <c>width</c>/<c>height</c>): a 2x2 big rock or stump is four
+    /// tiles, not the one its anchor names.
+    /// </summary>
+    internal static System.Collections.Generic.IReadOnlyList<(int X, int Y)> DebrisFootprint(StardewValley.TerrainFeatures.ResourceClump clump)
+    {
+        int left = (int)clump.Tile.X;
+        int top = (int)clump.Tile.Y;
+        int width = clump.width.Value;
+        int height = clump.height.Value;
+        var tiles = new (int X, int Y)[width * height];
+        int index = 0;
+        for (int offsetX = 0; offsetX < width; offsetX++)
+            for (int offsetY = 0; offsetY < height; offsetY++)
+                tiles[index++] = (left + offsetX, top + offsetY);
+        return tiles;
+    }
+
+    /// <summary>
+    /// Whether the actor is within <paramref name="radius"/> Chebyshev steps of ANY tile the clump occupies, which is
+    /// the reach a native tool swing needs: it lands on a tile one step from where the farmer stands.
+    ///
+    /// Deliberately not <c>IsDebrisTargetWithinPlayerRadius</c>: that one answers the DISCOVERY question ("may this
+    /// clump be offered") over <c>TargetDiscoveryRadius</c> = 6, and reusing it as the execution gate admitted a swing
+    /// from six tiles away at a tile the swing could not reach.
+    /// </summary>
+    internal static bool IsDebrisFootprintWithinChebyshev(Farmer player, StardewValley.TerrainFeatures.ResourceClump clump, int radius) =>
+        DebrisFootprint(clump).Any(tile =>
+            Math.Abs(tile.X - (int)player.Tile.X) <= radius
+            && Math.Abs(tile.Y - (int)player.Tile.Y) <= radius);
 
     /// <summary>
     /// Harvest exactly one ready Scythe-method crop (e.g. wheat/amaranth)

@@ -191,12 +191,47 @@ internal sealed partial class ExecutionManager
     internal static (string Code, string Evidence) DescribeNoReachableApproach(
         (int X, int Y) target,
         (int X, int Y) actor,
-        Func<(int X, int Y), bool> isStandable)
+        Func<(int X, int Y), bool> isStandable,
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)>? footprint = null)
     {
-        bool anyStandable = ApproachTileSelector.Select(new[] { target }, actor, isStandable, _ => true) is not null;
-        return (
-            $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}",
-            $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={(anyStandable ? "unreachable" : "none")}");
+        // The standable-neighbour fact is asked of the WHOLE footprint when there is one: a free tile on the south
+        // face of a 2x2 clump is a standable neighbour the anchor's own ring never contains, and answering `none`
+        // there would call a reachable placement unreachable.
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> tiles = footprint ?? new[] { target };
+        bool anyStandable = ApproachTileSelector.Select(tiles, actor, isStandable, _ => true) is not null;
+        string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={(anyStandable ? "unreachable" : "none")}";
+        if (footprint is not null)
+            evidence += $";footprint={footprint.Count}";
+        return ($"{NoReachableApproachReasonCode}:{target.X}:{target.Y}", evidence);
+    }
+
+    /// <summary>
+    /// The footprint tile a chosen standing tile reaches, which is the tile every later reach test must use.
+    ///
+    /// A 2x2 `ResourceClump` at (5,5) is reached from (5,7) - the tile a farmer standing SOUTH of it occupies - but
+    /// (5,7) is Chebyshev-2 from the anchor (5,5). Measuring the arrival against the anchor therefore refuses a walk
+    /// that arrived exactly where it was sent. The tile actually reached is (5,6), one step from (5,7) and inside the
+    /// footprint.
+    ///
+    /// Nearest footprint tile wins, and an equidistant set is decided by lowest y then lowest x, so one world state
+    /// always yields one tile. Totality matters here: the selector only ever returns a tile beside an occupied tile,
+    /// so the nearest footprint tile is at Chebyshev-1 by construction and no fallback branch is needed.
+    /// </summary>
+    internal static (int X, int Y) SelectReachTile(
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> footprint,
+        (int X, int Y) standing)
+    {
+        (int X, int Y) best = footprint[0];
+        int bestDistance = Math.Max(Math.Abs(best.X - standing.X), Math.Abs(best.Y - standing.Y));
+        foreach ((int X, int Y) tile in footprint)
+        {
+            int distance = Math.Max(Math.Abs(tile.X - standing.X), Math.Abs(tile.Y - standing.Y));
+            if (distance > bestDistance) continue;
+            if (distance == bestDistance && (tile.Y > best.Y || (tile.Y == best.Y && tile.X > best.X))) continue;
+            best = tile;
+            bestDistance = distance;
+        }
+        return best;
     }
 
     /// <summary>

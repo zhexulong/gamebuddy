@@ -1632,8 +1632,20 @@ test("native-local clear-debris fixture establishes one intact native resource c
       requestStart,
     ),
   );
-  assert.match(request, /IsDebrisTargetWithinPlayerRadius\(clump, Game1\.player\)/);
+  // The reach gate is the tool's own reach, measured against the WHOLE footprint: one Chebyshev step from any tile
+  // the clump occupies. It used to be `IsDebrisTargetWithinPlayerRadius`, which answers the DISCOVERY question over
+  // six steps - so an actor six tiles away was admitted and swung at a tile the swing could not reach, and a clump 3-6
+  // tiles away was neither walked to nor refused.
+  assert.match(request, /IsDebrisFootprintWithinChebyshev\(Game1\.player, clump, 1\)/);
+  assert.match(request, /TryBeginToolApproach\(/);
+  assert.match(executionManager, /internal static bool IsDebrisFootprintWithinChebyshev/);
+  assert.match(
+    executionManager,
+    /internal static System\.Collections\.Generic\.IReadOnlyList<\(int X, int Y\)> DebrisFootprint/,
+  );
+  // Discovery keeps its own radius, and the two must not be the same call.
   assert.match(executionManager, /private static bool IsDebrisTargetWithinPlayerRadius/);
+  assert.doesNotMatch(request, /if \(!IsDebrisTargetWithinPlayerRadius\(clump, Game1\.player\)\)/);
   const findTarget = executionManager.slice(
     executionManager.indexOf("private static StardewValley.TerrainFeatures.ResourceClump? FindDebrisTarget"),
     executionManager.indexOf("private static string BuildDebrisTargetId"),
@@ -1652,9 +1664,17 @@ test("native-local clear-debris fixture establishes one intact native resource c
   assert.match(runner, /\["move_to_tile", "travel", "equip_tool", "clear_debris"\]/);
   assert.match(runner, /initialTarget\.health !== 8/);
   assert.match(runner, /target\.health !== expectedHealth/);
-  assert.match(runner, /for \(let hit = 1; hit <= 8; hit \+= 1\)/);
-  assert.match(runner, /receipt\.state === "partially_succeeded" && receipt\.reasonCode === "debris_hit"/);
-  assert.match(runner, /receipt\.state === "succeeded" && receipt\.reasonCode === "debris_cleared"/);
+  // ONE clear_debris dispatch, not eight. A non-terminal `partially_succeeded` receipt left the Body Program node
+  // bound-Running for ever (the router only projects Succeeded/Failed/Rejected/Cancelled), so the action owns the
+  // swing loop and the caller names one request.
+  assert.match(runner, /receipt\.state === "succeeded"/u);
+  assert.match(runner, /receipt\.reasonCode === "debris_cleared"/u);
+  // The transition, not the word: the runner explains the old behaviour in a comment, and a check that forbade the
+  // word would forbid the explanation too. What must not exist is a receipt COMPARED against those states.
+  assert.doesNotMatch(runner, /receipt\.state === "partially_succeeded"/u);
+  assert.doesNotMatch(runner, /receipt\.reasonCode === "debris_hit"/u);
+  assert.doesNotMatch(runner, /for \(let hit = 1; hit <= 8; hit \+= 1\)/u);
+  assert.match(runner, /Number\(evidence\.swings\) >= 1/u);
   assert.match(runner, /evidence\.health_before === String\(expectedHealth\)/);
   assert.match(runner, /connectWithRetry\(config, 15_000\)/);
   assert.match(runner, /error\.code === "ENOENT"/);

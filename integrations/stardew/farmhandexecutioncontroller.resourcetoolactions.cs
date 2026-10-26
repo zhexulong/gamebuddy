@@ -1052,26 +1052,34 @@ internal sealed partial class ExecutionManager
     /// planned at all.
     /// </summary>
     /// <summary>
-    /// Begins an approach leg for an action that found itself outside the native
-    /// interaction radius, and returns the honest `Accepted` receipt.
+    /// Begins an approach leg for an action that found itself outside the native interaction radius, and returns the
+    /// honest `Accepted` receipt. Works for a target of one tile or of several.
     ///
-    /// The action has already validated everything that does not depend on position
-    /// (its tool, its target identity), so this only owns the geometry and the
-    /// ownership bookkeeping. `onArrival` runs later, from the completion pass, and
-    /// mints the action's terminal.
+    /// The action has already validated everything that does not depend on position (its tool, its target identity),
+    /// so this owns only the geometry and the ownership bookkeeping. `onArrival` runs later from the completion pass
+    /// and mints the action's terminal; it must re-validate, because the walk can take several ticks.
+    ///
+    /// <para>
+    /// <paramref name="footprint"/> is the full occupied tile set and is used for exactly ONE decision: which tile the
+    /// actor stands on. The anchor alone was not enough, because a 2x2 clump at (5,5) is worked from (5,7) - the tile
+    /// a farmer standing SOUTH of it occupies - and that tile is outside the anchor's eight-neighbour ring, so the
+    /// south face was unreachable by construction and the walk went round behind the obstacle.
+    /// </para>
+    /// <para>
+    /// The walk is dispatched to the footprint tile the chosen standing tile reaches, not to the anchor, because
+    /// arrival is re-checked against the native Chebyshev-1 interaction radius. From (5,7) the tile reached is (5,6);
+    /// measured against the anchor (5,5) the same arrival reads Chebyshev-2 and is refused `target_out_of_reach`
+    /// after a walk that landed exactly where it was sent.
+    /// </para>
     /// </summary>
     /// <param name="actionId">The wire action id, republished in snapshots.</param>
-    /// <param name="onArrival">
-    /// Receives (executionId, requestId) and runs the action's terminal step. It must
-    /// re-validate the tool and the target, because the walk can take several ticks.
-    /// </param>
     private LocalExecutionReceipt TryBeginToolApproach(
         string requestId,
         string executionId,
         string actionId,
         GameLocation location,
-        int targetX,
-        int targetY,
+        (int X, int Y) anchor,
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> footprint,
         string expectedTargetId,
         Func<string, string, LocalExecutionReceipt> onArrival,
         long nowMs,
@@ -1096,7 +1104,7 @@ internal sealed partial class ExecutionManager
             StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y));
         (int X, int Y) actor = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
         (int X, int Y)? standingTile = SelectToolApproachTile(
-            (targetX, targetY),
+            footprint,
             actor,
             isStandable,
             // An undecided component (the flood exceeded its budget) must not be read as
@@ -1110,10 +1118,16 @@ internal sealed partial class ExecutionManager
             // Nothing is dispatched: no walk is committed for a placement the actor cannot
             // reach, so the refusal arrives before the engine spends its search budget.
             (string refusalCode, string refusalEvidence) = DescribeNoReachableApproach(
-                (targetX, targetY), actor, isStandable);
+                anchor, actor, isStandable, footprint);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
         }
         (int X, int Y) goal = standingTile.Value;
+        // The tile the arrival must be measured against: for a single-tile target the target itself, so every existing
+        // caller dispatches exactly the coordinate it always did. See SelectReachTile for why a multi-tile target's
+        // anchor is the wrong measurement.
+        (int X, int Y) reach = footprint.Count == 1 ? footprint[0] : SelectReachTile(footprint, goal);
+        int targetX = reach.X;
+        int targetY = reach.Y;
         LocalMoveSpec approach = new(
             executionId,
             requestId,
@@ -1156,17 +1170,50 @@ internal sealed partial class ExecutionManager
         }
 
         string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture);
+        // `tile` is the footprint tile the arrival is measured against, which for a multi-tile target is not the
+        // anchor the caller named. Say so here rather than leaving a reader to wonder why the two differ; the
+        // anchor inside `target` is the opaque clump identity's own business.
+        string reached = footprint.Count == 1
+            ? string.Empty
+            : $";anchor={anchor.X},{anchor.Y};reached=footprint";
         LocalExecutionReceipt accepted = new(
             executionId,
             requestId,
             ExecutionState.Accepted,
             "accepted",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}{reached}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
     }
+
+    /// <summary>
+    /// The one-tile form every other family calls: the target is its own footprint. Written after the multi-tile body
+    /// so the body the approach tests locate by its own signature stays the first match in this file.
+    /// </summary>
+    private LocalExecutionReceipt TryBeginToolApproach(
+        string requestId,
+        string executionId,
+        string actionId,
+        GameLocation location,
+        int targetX,
+        int targetY,
+        string expectedTargetId,
+        Func<string, string, LocalExecutionReceipt> onArrival,
+        long nowMs,
+        long requestedDeadlineMs) =>
+        this.TryBeginToolApproach(
+            requestId,
+            executionId,
+            actionId,
+            location,
+            (targetX, targetY),
+            new[] { (targetX, targetY) },
+            expectedTargetId,
+            onArrival,
+            nowMs,
+            requestedDeadlineMs);
 
     /// <summary>
     /// Completes a tool-family approach: re-validates the world and then runs the
