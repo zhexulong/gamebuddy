@@ -155,6 +155,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      # `pnpm test`'s receipt-parity case runs `dotnet test` over GameBuddy.Stardew.Core.Tests, which targets
+      # net6.0. global.json selects the 8.0 SDK for the build, and the hosted runner no longer carries a 6.0
+      # runtime - so without this the test host refuses to start with only 8.x present. The stardew-scaffold job
+      # already installs it for the same reason; this job reached the step for the first time once the earlier
+      # failures were fixed.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 6.0.x
       # The host suite's receipt-parity case shells out to `dotnet test --no-restore` over
       # GameBuddy.Stardew.Core.Tests, so those projects must be restored first - the same
       # restore the stardew-scaffold job runs before its C# suites. Without it the case fails
