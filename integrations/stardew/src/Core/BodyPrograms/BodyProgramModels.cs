@@ -213,7 +213,9 @@ public sealed record HostAdmissionGrant(string ProgramId, string NodeId, int Nod
 public abstract record BodyNodeAdmissionResult;
 public sealed record BodyNodeAdmissionGrantedResult(HostAdmissionGrant Grant) : BodyNodeAdmissionResult;
 public sealed record BodyNodeAdmissionRejectedResult(NodeAdmissionChallenge Challenge, string Code) : BodyNodeAdmissionResult;
-public sealed record BodyNodeAdmissionUnavailableResult(NodeAdmissionChallenge Challenge) : BodyNodeAdmissionResult;
+// `Code` is optional so an older Host that sends none still works, and present whenever the Host named a cause:
+// five different failures used to share one word, which is why a run could spend a day retrying.
+public sealed record BodyNodeAdmissionUnavailableResult(NodeAdmissionChallenge Challenge, string? Code = null) : BodyNodeAdmissionResult;
 
 public enum BodyProgramJournalReadStatus { Empty, Present, ReadFailed }
 public sealed record BodyProgramJournalReadResult(BodyProgramJournalReadStatus Status, string? Payload);

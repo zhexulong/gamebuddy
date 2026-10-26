@@ -196,7 +196,7 @@ public sealed class BridgeSessionPublicationTests
         SeedPendingAdmission(session, challenge);
         transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeNull();
 
-        BodyNodeAdmissionResult result = new BodyNodeAdmissionUnavailableResult(challenge);
+        BodyNodeAdmissionResult result = new BodyNodeAdmissionUnavailableResult(challenge, "admission_unavailable");
         var inbound = new BridgeEnvelope<BodyNodeAdmissionResult>(BridgeProtocol.Version, "result_message_1", "admission_correlation_1", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "body_node_admission_result", result);
         session.TryDepositBodyNodeAdmissionResult(generation, inbound, out string depositReason).Should().BeTrue(depositReason);
         transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt).Should().BeEquivalentTo(result);
@@ -220,7 +220,7 @@ public sealed class BridgeSessionPublicationTests
         NodeAdmissionChallenge challenge = new("program_1", "node_1", 1, 1, 1, 1, new("policy_1", 1), "move_to_tile", new Dictionary<string, BodyProgramCanonicalValue>(), new Dictionary<string, string>(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 10_000);
         IBodyProgramAdmissionTransport transport = session;
         SeedPendingAdmission(session, challenge);
-        var result = new BodyNodeAdmissionUnavailableResult(challenge);
+        var result = new BodyNodeAdmissionUnavailableResult(challenge, "admission_unavailable");
         var stale = new BridgeEnvelope<BodyNodeAdmissionResult>(BridgeProtocol.Version, "result_message_2", "admission_correlation_1", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope, "body_node_admission_result", result);
         session.TryDepositBodyNodeAdmissionResult(generation + 1, stale, out _).Should().BeFalse();
         var wrongCorrelation = stale with { CorrelationId = "admission_correlation_2" };
@@ -382,7 +382,7 @@ public sealed class BridgeSessionPublicationTests
         WaitForInboundCount(pipeBridge, 1);
         InvokeDrainMailbox(modEntry, state);
         transport.TryTakeResult(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)
-            .Should().BeEquivalentTo(new BodyNodeAdmissionUnavailableResult(challenge), "the mailbox deposit must still land through the decoupled classification");
+            .Should().BeEquivalentTo(new BodyNodeAdmissionUnavailableResult(challenge, "admission_unavailable"), "the mailbox deposit must still land through the decoupled classification");
         AssertNoMailboxWireResponse(pipeBridge, client);
 
         // Wrong-correlation admission: the session guard rejects without a wire reply.

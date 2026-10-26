@@ -287,11 +287,11 @@ public static class BridgeProtocol
         }
         if (resultValue is not ("rejected" or "unavailable") || !payload.TryGetProperty("code", out JsonElement code)
             || code.ValueKind != JsonValueKind.String || !IsReasonCode(code.GetString())
-            || (resultValue == "unavailable" && code.GetString() != "admission_unavailable")) return false;
+            || (resultValue == "unavailable" && !(code.GetString() ?? string.Empty).StartsWith("admission_unavailable", StringComparison.Ordinal))) return false;
         if (!IsValidAdmissionPayload(payload, false, out object? challenge, true) || challenge is not NodeAdmissionChallenge nodeChallenge) return false;
         core = resultValue == "rejected"
             ? new BodyNodeAdmissionRejectedResult(nodeChallenge, code.GetString()!)
-            : new BodyNodeAdmissionUnavailableResult(nodeChallenge);
+            : new BodyNodeAdmissionUnavailableResult(nodeChallenge, code.GetString());
         return true;
     }
 
