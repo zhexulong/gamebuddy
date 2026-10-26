@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { visibleActionsFromModCatalog } from "./action-registry.js";
 import type { GameConnection } from "./game-connection.js";
-import type { ExecutionReceipt } from "./protocol.js";
+import type { IntegrationActionRegistration } from "./game-integration-adapter.js";
+import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
@@ -1333,4 +1335,126 @@ test("exact authentication rejects structural copies and forged scopes that no l
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.descriptor.integrationId, "stardew");
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionIdForToolName("stardew_move_to_tile"), "move_to_tile");
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.isCancellationTool("stardew_cancel"), false);
+});
+
+/**
+ * The Stardew catalog has ONE visibility definition, and it is `visibleActionsFromModCatalog`.
+ *
+ * Measured 2026-10-26 against the deployed modules, one and the same `advance_day` registration came back
+ * visible from the generic catalogue and refused from the strict predicate. The strict predicate is the
+ * authority (design/architecture/game-action-model.md: `live_verified` is the visibility gate, `published`
+ * is the review gate, `experimental` is an explicit opt-in), so this table pins every shape the Mod can
+ * really publish — the ones the two definitions used to disagree on, and the one they always agreed on.
+ *
+ * Each case asserts BOTH that the two definitions agree AND what they agree on, so the table cannot be
+ * satisfied by making both refuse everything.
+ */
+test("the Stardew catalog and the Mod-catalog predicate answer every registration shape identically", () => {
+  // The Mod's own `Lifecycle()` descriptor for advance_day (FarmhandActionDefinitions.cs:554-563): no
+  // arguments, the embodied-actor claim, a write effect and the day-advanced postcondition.
+  const completeDescriptor = {
+    arguments: [],
+    outputFacts: {},
+    resourceTemplate: { claims: [{ key: "embodied_actor", value: "scope_player" }] },
+    effect: "write" as const,
+    postcondition: { name: "day_advanced" },
+    watchdogMs: 600_000,
+  };
+  // A descriptor the Mod could publish if the action grew an argument. It is still a valid descriptor, so
+  // the generic catalogue happily admits it; the Host's tool schema for the action cannot be built from
+  // it, which is what the completeness gate exists to notice.
+  const driftedDescriptor = { ...completeDescriptor, arguments: [{ name: "hour", type: "integer" }] };
+
+  const base = {
+    actionId: "advance_day",
+    familyId: "world_lifecycle",
+    identityVersion: 1,
+    kind: "execution" as const,
+  };
+
+  // The registration object carries the descriptor as an extra own property, exactly as the Mod's
+  // hello_ack projection hands it over; the port's declared type predates the field. Every case below
+  // goes through this one builder so the wire shape has a single spelling.
+  type WireRegistration = IntegrationActionRegistration & {
+    readonly descriptor?: ActionRegistration["descriptor"];
+  };
+  const wire = (
+    registration: IntegrationActionRegistration,
+    descriptor: ActionRegistration["descriptor"],
+  ): WireRegistration => ({ ...registration, ...(descriptor === undefined ? {} : { descriptor }) });
+
+  const cases: ReadonlyArray<
+    readonly [
+      label: string,
+      registration: IntegrationActionRegistration,
+      descriptor: ActionRegistration["descriptor"],
+      admitted: boolean,
+    ]
+  > = [
+    ["live_verified with a complete descriptor", { ...base, lifecycle: "live_verified" }, completeDescriptor, true],
+    ["live_verified with no descriptor", { ...base, lifecycle: "live_verified" }, undefined, false],
+    ["published with a drifted descriptor", { ...base, lifecycle: "published" }, driftedDescriptor, false],
+    ["experimental with a complete descriptor", { ...base, lifecycle: "experimental" }, completeDescriptor, true],
+    [
+      "an identityVersion this build cannot execute",
+      { ...base, identityVersion: 2, lifecycle: "live_verified" },
+      completeDescriptor,
+      false,
+    ],
+  ];
+
+  for (const [label, registration, descriptor, admitted] of cases) {
+    const registrationWire = wire(registration, descriptor);
+    const capabilities = [registration.actionId];
+
+    const catalog = STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog
+      .visibleActions([registrationWire], capabilities)
+      .map((entry) => entry.actionId);
+    const shared = visibleActionsFromModCatalog([registrationWire as ActionRegistration], capabilities).map(
+      (entry) => entry.actionId,
+    );
+
+    assert.deepEqual(catalog, shared, `${label}: the catalogue must answer exactly as the shared predicate does`);
+    assert.deepEqual(
+      catalog,
+      admitted ? [registration.actionId] : [],
+      `${label}: expected ${admitted ? "admission" : "refusal"}`,
+    );
+  }
+
+  // The search surface is the same projection, so it must refuse and admit with it.
+  assert.deepEqual(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.searchVisibleActions(
+      [wire({ ...base, lifecycle: "published" }, driftedDescriptor)],
+      [base.actionId],
+      "advance_day",
+    ),
+    [],
+  );
+});
+
+test("a registration shape the wire cannot deliver is refused by name, not projected as invisible", () => {
+  const visibleActions = (registration: IntegrationActionRegistration) =>
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.visibleActions([registration], ["advance_day"]);
+  const base = {
+    actionId: "advance_day",
+    familyId: "world_lifecycle",
+    identityVersion: 1,
+    kind: "execution" as const,
+  };
+
+  // Both extra lifecycles the port's type admits and `isValidActionRegistrations` never lets through.
+  for (const lifecycle of ["planned", "diagnostic"] as const)
+    assert.throws(
+      () => visibleActions({ ...base, lifecycle }),
+      new RegExp(`integration_registration_lifecycle_unsupported:advance_day:${lifecycle}`),
+      lifecycle,
+    );
+
+  // The port makes `kind` optional; the wire never omits it. A registration without one cannot be
+  // answered, so it says so instead of reading as an action this Host does not offer.
+  assert.throws(
+    () => visibleActions({ ...base, lifecycle: "live_verified", kind: undefined } as never),
+    /integration_registration_kind_unsupported:advance_day:undefined/,
+  );
 });
