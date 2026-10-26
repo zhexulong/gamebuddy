@@ -4025,29 +4025,36 @@ test("the current peer surface is marked by a shape in the bar, at both widths a
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("button", { name: "Memory", exact: true }).click();
   await expect(page.getByTestId("memory-surface")).toBeVisible();
-  // The selected surface is a fact the DOM states, so read it once and assert on what was read. Two separate locator
-  // waits could not explain themselves when they disagreed on CI; this one prints the trigger's class list and the
-  // folded entries' current flags, so a CI-only failure names the state instead of only the expectation.
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
-          const folded = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu .nav-button")];
-          const triggerClass = trigger === null ? null : trigger.className;
-          return {
-            triggerClass,
-            active: triggerClass !== null && /(^|\s)active(\s|$)/.test(triggerClass),
-            folded: folded.map((node) => ({
-              name: node.getAttribute("aria-label"),
-              current: node.getAttribute("aria-current"),
-              className: node.className,
-            })),
-          };
-        }),
-      { timeout: 30_000 },
-    )
-    .toMatchObject({ active: true });
+  // A CI-only disagreement cannot be diagnosed from `expected 1, received 0`, so this loops itself and prints the whole
+  // reading every attempt: the trigger's class list and each folded entry's own flags. The assertion then runs on the
+  // last reading, so a failure on a slower machine leaves the state in the log instead of only the expectation.
+  const readFoldedBar = () =>
+    page.evaluate(() => {
+      const trigger = document.querySelector<HTMLElement>(".app-bar-more-trigger");
+      const folded = [...document.querySelectorAll<HTMLElement>(".app-bar-more-menu .nav-button")];
+      const triggerClass = trigger === null ? null : trigger.className;
+      return {
+        triggerClass,
+        active: triggerClass !== null && /(^|\s)active(\s|$)/.test(triggerClass),
+        folded: folded.map((node) => ({
+          name: node.getAttribute("aria-label"),
+          current: node.getAttribute("aria-current"),
+          className: node.className,
+        })),
+      };
+    });
+
+  let foldedBar = await readFoldedBar();
+  for (let attempt = 0; attempt < 60 && !foldedBar.active; attempt += 1) {
+    console.log(`[folded-bar ${attempt}] ${JSON.stringify(foldedBar)}`);
+    await page.waitForTimeout(500);
+    foldedBar = await readFoldedBar();
+  }
+  console.log(`[folded-bar final] ${JSON.stringify(foldedBar)}`);
+  expect(foldedBar.folded.some((entry) => entry.current === "page"), "a folded entry is the selected surface").toBe(
+    true,
+  );
+  expect(foldedBar.active, "the trigger carries the folded current surface's state").toBe(true);
   await page.waitForTimeout(200);
 
   const narrow = await readBar();
