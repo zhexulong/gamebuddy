@@ -7,6 +7,7 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Objects;
 using StardewValley.Tools;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew;
@@ -410,6 +411,18 @@ internal sealed partial class ExecutionManager
         // bounded and stops the moment the object is gone, so a request never leaves a
         // half-removed object behind as a claimed success.
         const int maximumSwingCount = 12;
+        // The stamina floor, before the first swing. A SupplyCrate carries its own hit budget
+        // (`Object.cs:1192-1304`), so the loop cannot know how many swings it will take and prices its own cap.
+        ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
+            Game1.player.Stamina,
+            ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, tool!.IsEfficient) * maximumSwingCount);
+        if (!stamina.Allowed)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                stamina.ReasonCode,
+                $"target={targetX},{targetY};item={itemId};{stamina.Evidence};swings_worst_case={maximumSwingCount}");
         int swingCount = 0;
         try
         {
@@ -559,6 +572,18 @@ internal sealed partial class ExecutionManager
         // keeps swinging until the container is gone — the postcondition this action
         // reports, never the seam's own `false`.
         const int maximumSwingCount = 12;
+        // Same floor as remove_placed_item: a container carries its own hit budget (`BreakableContainer.cs:120`),
+        // so the loop prices its cap rather than guessing the real count.
+        ToolStaminaVerdict containerStamina = ToolStaminaGuard.Check(
+            Game1.player.Stamina,
+            ToolStaminaGuard.PerSwingCharge(Game1.player.MiningLevel, tool!.IsEfficient) * maximumSwingCount);
+        if (!containerStamina.Allowed)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                containerStamina.ReasonCode,
+                $"target={targetX},{targetY};item={itemId};{containerStamina.Evidence};swings_worst_case={maximumSwingCount}");
         int swingCount = 0;
         try
         {
