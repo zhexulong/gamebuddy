@@ -402,9 +402,10 @@ test("the chooser's geometry at 1440x900 and 400x800", async ({ page }) => {
     await expect(picker).toBeVisible();
     const box = await picker.boundingBox();
     expect(box).not.toBeNull();
-    // The chooser stays inside the region it opens over.
-    expect(box!.width).toBeLessThanOrEqual(viewport.width);
-    expect(box!.height).toBeLessThanOrEqual(viewport.height);
+    // The chooser stays inside the region it opens over. `boundingBox()` is fractional - a 400 px region measured
+    // 400.0000305175781 here - so the comparison rounds, as the hero-plate assertion does for the same reason.
+    expect(Math.round(box!.width)).toBeLessThanOrEqual(viewport.width);
+    expect(Math.round(box!.height)).toBeLessThanOrEqual(viewport.height);
 
     const lines: number[] = [];
     const boxes: { width: number; height: number }[] = [];
