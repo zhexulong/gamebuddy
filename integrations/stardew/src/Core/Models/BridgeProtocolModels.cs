@@ -1039,10 +1039,20 @@ public sealed record BridgeBodyProgramSubmitVerification(
 );
 
 public sealed record BridgeBodyProgramNodeStatus(
-    string NodeId,
-    string State,
-    int NodeAttempt,
-    int AdmissionAttempt
+string NodeId,
+string State,
+int NodeAttempt,
+int AdmissionAttempt,
+/// <summary>
+/// Why this node holds its current state, when the authority recorded a reason.
+///
+/// <para>
+/// Measured 2026-10-26: the companion's programs all ended `rejected` or `recovery_required` and the Host's admission
+/// refused the challenge; the code was written onto the node itself (`RejectionCode`) but this projection dropped it, so
+/// the model saw a bare state with no cause and retried the same shape four times. Omitted when null so an unrejected
+/// node keeps the wire shape it had.
+/// </para>
+string? RejectionCode = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

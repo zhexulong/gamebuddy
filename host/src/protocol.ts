@@ -1466,6 +1466,8 @@ type BodyProgramNodeStatus = Readonly<{
   state: string;
   nodeAttempt: number;
   admissionAttempt: number;
+  /** Why the node holds this state, when the Mod recorded a reason. Absent when there is none. */
+  rejectionCode?: string | null;
 }>;
 type BodyProgramStatusSnapshot = Readonly<{
   programId: string;
