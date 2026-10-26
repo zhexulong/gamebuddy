@@ -1,4 +1,5 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -894,6 +895,41 @@ internal sealed partial class ExecutionManager
 
         int parentSheetIndex = clump.parentSheetIndex.Value;
         float healthBefore = clump.health.Value;
+
+        // The stamina red line, checked BEFORE the first swing.
+        //
+        // Nothing gated on stamina before this: the engine does not refuse a swing for lack of it, it lets stamina run
+        // negative and then faints the actor (`Game1.cs:6452`, `stamina <= -15f`), and a faint halves next day's
+        // stamina. For a companion running a multi-day routine that is not a local defeat, it is the end of the
+        // routine. So estimate what THIS clump will actually cost and refuse if the actor cannot pay it and still
+        // stand.
+        //
+        // The estimate is derived, not guessed: `ResourceClump.performToolAction` removes
+        // `Math.Max(1f, (upgradeLevel + 1) * 0.75f)` per swing (`ResourceClump.cs:147`), and the tool families charge
+        // `2 - skillLevel * 0.1` per swing (`farmhandexecutioncontroller.resourcetoolactions.cs`, the shared
+        // `expected_stamina_cost` formula this file already reports). An efficient enchantment charges nothing.
+        float damagePerSwing = Math.Max(1f, (tool.UpgradeLevel + 1) * 0.75f);
+        int swingsRequired = Math.Max(1, (int)Math.Ceiling(clump.health.Value / damagePerSwing));
+        float perSwingStamina = tool.IsEfficient
+            ? 0f
+            : 2f - (tool switch
+            {
+                Axe => Game1.player.ForagingLevel,
+                Pickaxe => Game1.player.MiningLevel,
+                Hoe => Game1.player.FarmingLevel,
+                _ => Game1.player.FarmingLevel,
+            } * 0.1f);
+        ClearStaminaVerdict stamina = ClearStaminaGuard.Check(
+            Game1.player.Stamina,
+            Math.Max(0f, perSwingStamina) * swingsRequired);
+        if (!stamina.Allowed)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                stamina.ReasonCode,
+                $"target={targetX},{targetY};parent={parentSheetIndex};{stamina.Evidence};swings_required={swingsRequired};per_swing={perSwingStamina.ToString("0.####", CultureInfo.InvariantCulture)}");
+
         int previousSlot = Game1.player.CurrentToolIndex;
         Game1.player.CurrentToolIndex = slot;
         float staminaBefore = Game1.player.Stamina;

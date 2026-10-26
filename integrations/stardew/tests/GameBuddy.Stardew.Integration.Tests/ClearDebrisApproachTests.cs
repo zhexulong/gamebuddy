@@ -190,6 +190,49 @@ public sealed class ClearDebrisApproachTests
         body.Should().Contain("footprint.Count == 1\n            ? string.Empty");
     }
 
+    // ---- the stamina red line is checked BEFORE the first swing ------------------
+
+    [Fact]
+    public void TheClearDebrisStaminaGuardRunsBeforeAnySwing()
+    {
+        // Nothing gated on stamina before this. The engine does not refuse a swing for lack of it - it lets stamina
+        // run negative and faints the actor (Game1.cs:6452, `stamina <= -15f`), and a faint halves next day's
+        // stamina. For a companion running a multi-day routine that is the end of the routine, so the refusal must
+        // arrive BEFORE the world is touched: an actor that is too tired must not have swung even once.
+        string body = MethodBody(Read(FarmingConstructionActions), "private LocalExecutionReceipt ExecuteClearDebris(");
+
+        int guard = body.IndexOf("ClearStaminaGuard.Check", StringComparison.Ordinal);
+        int firstSwing = body.IndexOf("UseNativeToolOnTile", StringComparison.Ordinal);
+        guard.Should().BeGreaterThanOrEqualTo(0, "the stamina precondition must exist");
+        firstSwing.Should().BeGreaterThanOrEqualTo(0, "the swing is the thing being guarded");
+        guard.Should().BeLessThan(firstSwing, "a guard that runs after the first swing has already spent the stamina");
+
+        // The refusal is named and carries its numbers, so "too tired to break this" is distinguishable from "stuck".
+        body.Should().Contain("stamina.ReasonCode");
+        body.Should().Contain("swings_required=");
+        body.Should().Contain("per_swing=");
+    }
+
+    [Fact]
+    public void TheStaminaEstimateComesFromTheNativeDamageAndChargeFormulas()
+    {
+        // A guessed cost would be worse than none: it would refuse affordable clears and authorise fainting ones. Both
+        // inputs are the engine's own numbers - `ResourceClump.performToolAction` removes
+        // `Math.Max(1f, (upgradeLevel + 1) * 0.75f)` per swing (ResourceClump.cs:147), and the tool families charge
+        // `2 - skillLevel * 0.1`. Tying the source text to those formulas is what keeps the estimate from drifting
+        // back into a magic constant.
+        string body = MethodBody(Read(FarmingConstructionActions), "private LocalExecutionReceipt ExecuteClearDebris(");
+
+        body.Should().Contain("Math.Max(1f, (tool.UpgradeLevel + 1) * 0.75f)",
+            "the damage per swing is the native formula, not a guess");
+        body.Should().Contain("clump.health.Value / damagePerSwing",
+            "the swing count is derived from the live clump health");
+        body.Should().Contain("2f - (tool switch",
+            "the per-swing charge is the skill-scaled formula the tool families already report");
+        body.Should().Contain("tool.IsEfficient",
+            "an efficient enchantment charges nothing, so a clear with one is always affordable");
+    }
+
     // -------------------------------------------------------------------------
 
     private static int Chebyshev((int X, int Y) left, (int X, int Y) right) =>
