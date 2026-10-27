@@ -28,7 +28,36 @@ public sealed class TargetPublicationOrderTests
         "DiscoverRockSourceTargets",
         "DiscoverWeedTargets",
         "DiscoverClearHoeDirtTargets",
+        "DiscoverCropTargets",
+        "DiscoverHarvestTargets",
+        "DiscoverForageTargets",
+        "DiscoverTreeChopSourceTargets",
+        "DiscoverTreeStumpTargets",
     };
+
+    // THE REST OF THE DISCOVERY LAYER IS DELIBERATELY ABSENT, and this is the record of the survey that decided
+    // it, so the next audit does not re-litigate them. The line between the two groups is whether the Agent
+    // FILTERS the list before acting:
+    //
+    //   walking order - every published member is already eligible (the `Where` above the `Take` selected them)
+    //                   and the action's arguments have the same shape for all of them, so the list is a work
+    //                   queue and the Agent dispatches one action per member in the order it received them;
+    //   set membership - which member to touch is decided by that member's own published state, so the Agent
+    //                   reads the list as a set and picks one, and the order it arrived in is never a route.
+    //
+    // Set membership, left alone on purpose:
+    //   DiscoverMachineTargets        `loadInputSlot` / `collectOutputReady` / `minutesUntilReady` decide which
+    //                                 keg, so `machine_load` and `machine_collect_output` copy their arguments
+    //                                 from one chosen entry; the others are alternatives, not a queue.
+    //   DiscoverPetTargets            `stationary` + `pettedToday` decide (protocol.ts: "a wandering pet will not
+    //                                 be where it was when you observed it"); petting is once per pet per day.
+    //   DiscoverSiloTargets           the silo the actor is standing at; `hay` is the reading, not a target rank.
+    //   DiscoverMannequinTargets      one decorated object the Agent walks up to, and `dress_mannequin` needs the
+    //                                 matching wearable slot for that object.
+    //   DiscoverSignTargets           same shape: `hasDisplayItem` decides, and the item slot is the Agent's own.
+    //   DiscoverTreeChopResultTargets no action consumes this list at all - it is the postcondition readback of a
+    //                                 chop-tree-source strike (`treeChopSourceTargets 1->0`, result `0->1`), so its
+    //                                 order cannot become a walk.
 
     [Fact]
     public void EveryWalkingOrderListIsOrderedBeforeItIsCapped()

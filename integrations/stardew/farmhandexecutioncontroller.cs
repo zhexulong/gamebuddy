@@ -2819,7 +2819,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
             return Array.Empty<BridgeTreeChopSourceTarget>();
 
-        return location.terrainFeatures.Pairs
+        return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
                 && !tree.stump.Value
                 && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
@@ -2828,7 +2828,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && tree.health.Value == 1f
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
             .Take(64)
             .Select(pair =>
             {
@@ -2887,12 +2887,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
             return Array.Empty<BridgeTreeStumpTarget>();
 
-        return location.terrainFeatures.Pairs
+        return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
                 && tree.stump.Value
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
             .Take(16)
             .Select(pair =>
             {
@@ -3805,8 +3805,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeForageTarget>();
-        return location.objects.Pairs
-            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
+        return NearestFirst(location.objects.Pairs
+            .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
             .Take(64)
             .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack))
             .ToArray();
@@ -4130,14 +4130,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeHarvestTarget>();
-        return location.terrainFeatures.Pairs
+        return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
                 && !dirt.crop.forageCrop.Value
                 && dirt.readyForHarvest()
                 && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(64)
             .Select(pair =>
             {
@@ -4161,11 +4161,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCropTarget>();
-        return location.terrainFeatures.Pairs
+        return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
                 && dirt.needsWatering()
                 && !dirt.isWatered()
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(64)
             .Select(pair =>
             {
