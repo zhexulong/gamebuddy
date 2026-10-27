@@ -37,4 +37,24 @@ public static class ClearingEvidence
 
         return $"clear_to_reach={string.Join(",", parts)};clear_tiles={plan.Clear.Count};clear_cost={plan.Cost}";
     }
+
+    /// <summary>
+    /// The same plan, plus where the actor must stand and which single tile it will hit first.
+    ///
+    /// The tile list alone leaves the caller with the hard part: a rock is removed from an adjacent tile, and
+    /// that tile is often not where the actor already is. Measured on a live run, an Agent holding
+    /// `clear_to_reach=rock@53,14` re-aimed at neighbouring tiles and described the result as a maze - it had
+    /// been told the price but not the step.
+    ///
+    /// Only the head is resolved, because the executor clears one obstacle and then re-plans against a world
+    /// that has changed. `remaining_clears` reports the whole idea's size without authorising a chain.
+    /// </summary>
+    public static string? DescribeFirstStep(FirstClearStep step, Func<(int X, int Y), string?> kindAt)
+    {
+        if (!step.Reachable || step.BlockerTile is not { } blocker || step.ApproachTile is not { } approach)
+            return null;
+
+        string kind = kindAt(blocker) ?? "unknown";
+        return $"clear_step={kind}@{blocker.X},{blocker.Y};stand_at={approach.X},{approach.Y};remaining_clears={step.RemainingClears}";
+    }
 }

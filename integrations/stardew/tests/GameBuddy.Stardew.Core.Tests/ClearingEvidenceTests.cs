@@ -62,4 +62,53 @@ public sealed class ClearingEvidenceTests
         ClearingEvidence.Describe(plan, KindAt)
             .Should().Be("clear_to_reach=unknown@9,9;clear_tiles=1;clear_cost=7");
     }
+
+
+    // ---- the first STEP, not just the price -----------------------------------
+
+    [Fact]
+    public void TheFirstStepNamesWhereToStandAndWhatToHit()
+    {
+        // The tile list tells a caller the price of the job. It does not tell it where to stand, and a rock is
+        // removed from an adjacent tile - which is the part a live Agent could not work out, so it re-aimed at
+        // neighbours and described the result as a maze.
+        var kind = new Dictionary<(int X, int Y), string> { [(2, 0)] = "rock" };
+        var step = new FirstClearStep(true, (2, 0), (1, 0), 1, "approach_found");
+
+        ClearingEvidence.DescribeFirstStep(step, tile => kind.TryGetValue(tile, out string? name) ? name : null)
+            .Should().Be("clear_step=rock@2,0;stand_at=1,0;remaining_clears=1");
+    }
+
+    [Theory]
+    [InlineData("blocker_unapproachable_without_another_clear")]
+    [InlineData("approach_search_budget_exhausted")]
+    public void AnUnresolvableStepSaysNothingRatherThanNamingATileToStandOn(string reason)
+    {
+        // Null, not a partial string: a caller that receives `stand_at` will walk there, and walking to a tile
+        // the planner could not verify is worse than being told nothing.
+        ClearingEvidence.DescribeFirstStep(
+                new FirstClearStep(false, null, null, 0, reason),
+                KindAt)
+            .Should().BeNull();
+
+        // AND the case the first version of this test missed: a step that is unreachable yet still carries
+        // coordinates - which is what a caller reusing a partially-built step would produce. The refusal has to
+        // come from `Reachable`, not merely from the coordinates being null.
+        ClearingEvidence.DescribeFirstStep(
+                new FirstClearStep(false, (2, 0), (1, 0), 1, reason),
+                KindAt)
+            .Should().BeNull("an unreachable step must not name a tile to stand on, even if it has one");
+    }
+
+    [Fact]
+    public void TheStepCarriesTheWholeIdeasSizeWithoutAuthorisingAChain()
+    {
+        // Five tiles must go. The step resolves the head only; `remaining_clears` lets the caller see the whole
+        // job while nothing here approves a second clear, because the world changes after the first.
+        var kind = new Dictionary<(int X, int Y), string> { [(4, 4)] = "weed" };
+        var step = new FirstClearStep(true, (4, 4), (3, 4), 5, "approach_found");
+
+        ClearingEvidence.DescribeFirstStep(step, tile => kind.TryGetValue(tile, out string? name) ? name : null)
+            .Should().Be("clear_step=weed@4,4;stand_at=3,4;remaining_clears=5");
+    }
 }
