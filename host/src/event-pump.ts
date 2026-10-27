@@ -88,6 +88,25 @@ export const MAX_PENDING_SEMANTIC_EVENTS = 512;
 export const MAX_PENDING_LIFECYCLE = 128;
 export const MAX_PENDING_WORLD_FACTS = 32;
 
+/**
+ * How many characters one delivered batch may serialize to.
+ *
+ * The windows above bound the COUNT of pending facts. They do not bound the SIZE, and the two are not the
+ * same constraint: on 2026-10-27 a twelve-minute multiday run accumulated 685 facts - 417 semantic events
+ * and 260 execution receipts, comfortably inside the 512-entry windows - which serialized to 1,037,822
+ * characters. The model answered `input: 373915, output: 1, stopReason: "length"` and then produced no
+ * further action for the rest of the run, while the companion stood in the farmhouse with
+ * `can_move=True; navigate=idle`.
+ *
+ * 120_000 is roughly 30k tokens of batch on its own, leaving room for the prompt, the conversation and the
+ * model's output inside any context window this product runs on. It is also four times the largest HEALTHY
+ * batch observed in that run (ordinary ones were 8-60k characters), so it never splits a delivery that
+ * already worked.
+ *
+ * Overflow is not dropped: `takeBatch` puts it back and the next flush delivers it.
+ */
+export const MAX_BATCH_BYTES = 120_000;
+
 export interface CompanionTurnSink {
   /**
    * Deliver one batch. The return value is how the turn ended; an adapter that cannot observe it returns
@@ -179,6 +198,30 @@ export class CompanionEventPump {
     if (previous === undefined || fact.revision >= previous.revision) destination.set(key, frozen);
   }
 
+  /**
+   * Put a fact back in the window it came from, without re-running admission.
+   *
+   * Used only by `takeBatch` when a batch had to be split to fit the byte bound. These facts were
+   * already admitted and may be older than what is in the window now, so re-admitting them would let an
+   * older fact evict a newer one - the opposite of what the bound is for.
+   */
+  #readmit(fact: WorldFact): void {
+    const destination =
+      fact.kind === "execution_receipt"
+        ? this.#receipts
+        : fact.kind === "semantic_event"
+          ? this.#semanticEvents
+          : fact.kind === "world_fact"
+            ? this.#worldFacts
+            : this.#lifecycle;
+    const key =
+      fact.kind === "world_fact"
+        ? worldFactKey(fact)
+        : isProgressSemanticEvent(fact)
+          ? progressSemanticEventKey(fact)
+          : fact.correlationId;
+    if (!destination.has(key)) destination.set(key, fact);
+  }
   public enqueuePlayerInput(input: PlayerInput): void {
     if (input.text.length === 0)
       throw new Error(input.source === "voice_final" ? "empty_final_voice_input" : "empty_player_input");
@@ -256,47 +299,79 @@ export class CompanionEventPump {
     const worldFacts = [...this.#worldFacts.values()].sort(compareWorldFacts);
     this.#worldFacts.clear();
     const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts];
-    const triggers = facts.filter((fact) => !isHeldFact(fact));
     // takeBatch is called only when input/fact triggering is already known.
     // Hold is represented by retaining latest state in the pump, never by an
     // empty Pi delivery.
     const disposition = inputs.length > 0 ? "steer" : "follow_up";
     const batchId = randomUUID();
-    const triggerEventIds = Object.freeze([
-      ...inputs.map((input) => input.eventId ?? input.inputId),
-      ...triggers.map(factEventId),
-    ]);
     const batchInputs = Object.freeze(inputs);
-    const batchFacts = Object.freeze([...(snapshot === undefined ? [] : [snapshot]), ...facts]);
     const normalizedInputs = batchInputs.map((input) => normalizeInput(input));
-    const normalizedFacts = batchFacts.map((fact) => normalizeFact(fact));
-    const events = [...normalizedInputs, ...normalizedFacts].sort(compareEvents);
-    // Serialize before delivery, rather than rebuilding on retry: callers own
-    // arbitrary nested payload objects and may mutate them while a sink awaits.
-    // The complete authoritative payload remains available to Host consumers;
-    // only the model-facing worldFacts projection is narrowed here.
-    const deliveredFacts = batchFacts.map((fact) => {
-      const projection = fact.contextProjection;
-      if (projection === undefined) return fact;
-      const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
-      return Object.freeze({ ...factWithoutProjection, payload: projection });
-    });
-    const serialized = JSON.stringify({
-      kind: "gamebuddy_fact_batch",
-      batchId,
-      disposition,
-      triggerEventIds,
-      playerInputs: batchInputs,
-      worldFacts: deliveredFacts,
-      events,
-    });
+
+    // Fit the batch to MAX_BATCH_BYTES by dropping the OLDEST facts, and hand back whatever did not fit.
+    //
+    // The windows above bound how many facts the pump holds, not how large a delivery is. Measured
+    // 2026-10-27: 685 facts inside those windows serialized to 1,037,822 characters, the model answered
+    // `input: 373915, output: 1, stopReason: "length"`, and the run produced no further action.
+    //
+    // Oldest-first because a later fact describes a later world: keeping the beginning of a long turn
+    // while the companion has moved on is a summary of somewhere it is no longer standing.
+    const compose = (chosen: readonly WorldFact[], triggersForBatch: readonly WorldFact[]) => {
+      const batchFacts = Object.freeze([...(snapshot === undefined ? [] : [snapshot]), ...chosen]);
+      const deliveredFacts = batchFacts.map((fact) => {
+        const projection = fact.contextProjection;
+        if (projection === undefined) return fact;
+        const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
+        return Object.freeze({ ...factWithoutProjection, payload: projection });
+      });
+      const events = [...normalizedInputs, ...deliveredFacts.map((fact) => normalizeFact(fact))].sort(compareEvents);
+      const serialized = JSON.stringify({
+        kind: "gamebuddy_fact_batch",
+        batchId,
+        disposition,
+        triggerEventIds: Object.freeze([
+          ...inputs.map((input) => input.eventId ?? input.inputId),
+          ...triggersForBatch.map(factEventId),
+        ]),
+        playerInputs: batchInputs,
+        worldFacts: deliveredFacts,
+        events,
+      });
+      return Object.freeze({
+        batchFacts,
+        serialized,
+        triggerEventIds: Object.freeze([
+          ...inputs.map((input) => input.eventId ?? input.inputId),
+          ...triggersForBatch.map(factEventId),
+        ]),
+      });
+    };
+
+    let chosen = facts;
+    let composed = compose(
+      chosen,
+      chosen.filter((fact) => !isHeldFact(fact)),
+    );
+    while (composed.serialized.length > MAX_BATCH_BYTES && chosen.length > 1) {
+      chosen = chosen.slice(1);
+      composed = compose(
+        chosen,
+        chosen.filter((fact) => !isHeldFact(fact)),
+      );
+    }
+
+    // Anything left out goes back where it came from, so the next flush delivers it. Re-inserted
+    // directly rather than through `enqueueFact`: these facts were already admitted, and re-running
+    // admission would evict a newer fact to make room for an older one.
+    const dropped = facts.slice(0, facts.length - chosen.length);
+    for (const fact of dropped) this.#readmit(fact);
+
     return Object.freeze({
       batchId,
       disposition,
-      triggerEventIds,
+      triggerEventIds: composed.triggerEventIds,
       inputs: batchInputs,
-      facts: batchFacts,
-      serialized,
+      facts: composed.batchFacts,
+      serialized: composed.serialized,
     });
   }
 
