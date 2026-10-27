@@ -2948,12 +2948,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeWeedTarget>();
-        return location.objects.Pairs
+        return NearestFirst(location.objects.Pairs
             .Where(pair => pair.Value is not null
                 && pair.Value.IsWeeds()
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(16)
             .Select(pair => new BridgeWeedTarget(
                 BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
@@ -3125,9 +3125,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
-        return location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
+        return NearestFirst(location.terrainFeatures.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)
             && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
-            && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
+            && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)), player)
             .Take(8).Select(pair => new BridgeClearHoeDirtTarget(BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
     }
 
@@ -3332,7 +3332,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeRockSourceTarget>();
-        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsOneHitBreakableStone(pair.Value))
+        // ORDER BEFORE THE CAP.
+        //
+        // `location.objects.Pairs` is a Dictionary's hash buckets, so "the first eight" was eight arbitrary rocks - and
+        // the Agent walks them in the order it is given. That is the pendulum the chain-nearest-neighbour work was
+        // written for, except that work sits in `synthesizePrograms`, which has NO production caller: the Agent uses
+        // `stardew_plan_work` and reads these targets directly. Measured 2026-10-27, an audit of the chain-fixed run
+        // found the published order was hash order and the Host-side ordering was never reached.
+        //
+        // Nearest-first because the list IS the walking order for a caller that consumes it sequentially; X/Y breaks
+        // ties so the same world always yields the same list. The cap stays eight - only which eight changes.
+        // Nearest first, then cap: `objects.Pairs` is hash-bucket order, so "the first eight" was eight arbitrary
+        // rocks and the Agent walked them in that order. `NearestFirst` carries the reason.
+        return NearestFirst(location.objects.Pairs
+            .Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsOneHitBreakableStone(pair.Value)), player)
             .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
@@ -3703,6 +3716,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         return Math.Max(Math.Abs(targetX - (int)player.Tile.X), Math.Abs(targetY - (int)player.Tile.Y));
     }
+    /// <summary>
+    /// Order dictionary-backed targets before a cap truncates them, nearest first.
+    ///
+    /// `location.objects.Pairs`, `terrainFeatures.Pairs` and the rest are Dictionary hash buckets: iteration order is
+    /// an implementation detail of the runtime, not a spatial fact. Taking "the first N" of them publishes N arbitrary
+    /// targets, and a caller that walks the list in the order it was given crosses the farm between consecutive
+    /// targets. Measured 2026-10-27 on the chain-fixed run: the published rock order was hash order, and the Host-side
+    /// nearest-neighbour ordering never ran because it lives in a function with no production caller.
+    ///
+    /// Nearest-first, then X, then Y. The last two are not decoration: without them two equidistant rocks would keep
+    /// whatever order the dictionary produced, and an identical world could yield a different program each run.
+    ///
+    /// The CAP is unchanged everywhere this is used - only which entries fall inside it.
+    /// </summary>
+    private static IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> NearestFirst<T>(
+        IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> pairs, Farmer player) =>
+        pairs.OrderBy(pair => ChebyshevDistance(player, (int)pair.Key.X, (int)pair.Key.Y))
+            .ThenBy(pair => pair.Key.X)
+            .ThenBy(pair => pair.Key.Y);
 
     /// <summary>
     /// The one diggable-tile predicate shared by discovery and tilling preconditions,
