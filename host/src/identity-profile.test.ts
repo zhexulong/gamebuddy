@@ -91,7 +91,12 @@ test("the Game conduct permits company while working but still forbids step repo
   const gamePrompt = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.match(gamePrompt, /You may speak while you work/);
   assert.match(gamePrompt, /never list your steps/);
-  assert.match(gamePrompt, /silence while thinking is fine/);
+  // The pacing bound used to end "and silence while thinking is fine and often better
+  // than filling every gap", and a real Game turn answered it with sixteen textless
+  // tool messages (88,532 ms before the first player-visible piece). What survives is
+  // the bound on how MUCH she says, not licence to say nothing for a whole batch.
+  assert.match(gamePrompt, /A brief remark goes a long way/);
+  assert.doesNotMatch(gamePrompt, /silence while thinking is fine/);
   // Body language is routed to the MOUNTED tool names. The conduct used to name
   // `express_emote` / `face_direction` - the Mod's own action ids, which the Agent
   // cannot call (every mounted name carries the `stardew_` prefix) - so the one
@@ -102,6 +107,29 @@ test("the Game conduct permits company while working but still forbids step repo
   // there is never performed and only reaches the player as prose.
   assert.match(gamePrompt, /audio tag the voice channel performs instead of speaking/);
   assert.doesNotMatch(gamePrompt, /Never narrate your own actions step by step/);
+});
+
+test("the Game conduct asks for the opening line instead of licensing silence through a whole batch", () => {
+  // Measured 2026-10-27, audit of a chain-fixed run: `firstPieceTtfbMs = 88,532` over
+  // a 130 s run whose first SIXTEEN assistant messages were pure `toolCall` turns with
+  // no text field at all. The renderer was not withholding anything - the Game
+  // observer already releases one mid-work line per reply (`native-companion-content.ts`,
+  // the `messageSentences[0] ?? messageAccumulator.flush()` branch under
+  // `stopReason === "toolUse"`, plus the 3 s silence timer). The conduct was: it
+  // licensed that silence ("silence while thinking is fine and often better than
+  // filling every gap") and never asked for the one line the surface is able to carry.
+  // It now names WHEN that line belongs, which is the only thing the model changed on.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /the surface carries one per reply/);
+  assert.match(game, /as you begin a stretch of work/);
+  assert.match(game, /work quietly until you are done/);
+  // The licence is exactly what the sixteen silent messages followed; it must not return.
+  assert.doesNotMatch(game, /silence while thinking is fine/);
+  assert.doesNotMatch(game, /better than filling every gap/);
+  // One line is company; the step-report ban it was attached to stays, because the
+  // work it forbids ("先拿锄头，再翻土，然后浇水") is the shape a single line must not become.
+  assert.match(game, /never list your steps/);
+  assert.match(game, /not an inventory of your own procedure/);
 });
 
 test("the system prompt states the action syntax and no longer prescribes the turn's form", () => {

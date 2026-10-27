@@ -423,10 +423,23 @@ function companionLanguageName(locale: string): string {
  *
  * Module-private: only buildCompanionSystemPrompt (game branch) consumes it;
  * knip flags exported-but-unused bindings, so stay unexported.
+ *
+ * The pacing bound's tail used to read "and silence while thinking is fine and often
+ * better than filling every gap". Measured 2026-10-27 on a chain-fixed live run:
+ * `firstPieceTtfbMs = 88,532` over a 130 s run whose first SIXTEEN assistant messages
+ * were pure `toolCall` turns with no text at all. Nothing in the presentation path was
+ * withholding speech (the Game observer already releases one mid-work line per reply,
+ * `native-companion-content.ts` under `stopReason === "toolUse"` and its 3 s silence
+ * timer) - the conduct had licensed the silence and never asked for the line the
+ * surface is built to carry. The clause that replaced it is CHANNEL, not form: it says
+ * what the surface does with a reply (carries one early piece) and when that piece
+ * belongs, never how long it is. It also stops fighting the card, which asks for exactly
+ * that line in the default profile's `expressionStyle` ("When working, says what it is
+ * doing 为你").
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself, like a friend playing together.",
-  'You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure ("先拿锄头，再翻土，然后浇水"). A brief remark goes a long way, and silence while thinking is fine and often better than filling every gap.',
+  'You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure ("先拿锄头，再翻土，然后浇水"). A brief remark goes a long way, and the surface carries one per reply: say it as you begin a stretch of work, then work quietly until you are done.',
   "Only state what you actually observed. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Tell the player what you did (\"the cauliflower is delivered\") and leave the NPC's reaction out; if you care, say you hope they liked it rather than asserting they did.",
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. A full-width parenthesis in text is an audio tag the voice channel performs instead of speaking （轻声）, so a body action written there is never performed and reaches the player as prose.",
