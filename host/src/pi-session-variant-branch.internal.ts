@@ -474,6 +474,29 @@ function uniqueAppendedEntry(appended: readonly SessionEntry[], matches: (messag
  * every recorded entry is off the path has no contribution left to remove, so both answer `null` -
  * the caller refuses rather than omitting an entry it cannot prove is the row the player named.
  */
+/**
+ * Whether the model's session holds a line with this role and text.
+ *
+ * A delete needs this because the absence of a binding record is two different facts: a row the session never received (a turn that
+ * died at the provider) and a row the session holds with no record saying which entry carries it (a turn driven without one). The
+ * first can be removed from the store alone; the second cannot, because the model would go on reading a line the player deleted.
+ *
+ * Text is compared, not identity, because there is no binding to identify it by - that is the situation being diagnosed.
+ */
+export function sessionHoldsTranscriptRow(
+  session: PiVariantBranchSession,
+  row: Readonly<{ role: string; text: string }>,
+): boolean {
+  const wanted = row.text.trim();
+  if (wanted.length === 0) return false;
+  const wantedRole = row.role === "player" ? "player" : "companion";
+  return branchMessageEntries(session).some((entry) => {
+    const role = entry.player !== null ? "player" : "companion";
+    const text = (entry.player ?? entry.reply ?? "").trim();
+    return role === wantedRole && text === wanted;
+  });
+}
+
 export function boundEntryOnActivePath(
   session: PiVariantBranchSession,
   boundEntryIds: readonly string[],

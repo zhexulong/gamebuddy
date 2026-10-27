@@ -58,6 +58,7 @@ import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/co
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
+import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
 import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
@@ -1728,12 +1729,7 @@ async function projectHistorianModelForConstruction(
   );
   const model = `${config.provider}/${config.modelId}`;
   try {
-    const projection = await import("./magic-context-historian-projection.internal.js");
-    await projection.projectHistorianModel({
-      runtimeCwd,
-      model,
-      thinkingLevel: config.thinkingLevel,
-    });
+    await projectHistorianModel({ runtimeCwd, model, thinkingLevel: config.thinkingLevel });
   } catch (error) {
     process.stderr.write(
       `[historian] the model projection was not updated: ${error instanceof Error ? error.message : String(error)}\n`,

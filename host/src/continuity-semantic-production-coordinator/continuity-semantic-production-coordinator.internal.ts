@@ -55,6 +55,7 @@ import {
   deletePiTranscriptEntry,
   editPiTranscriptEntry,
   rewindPiTranscriptTail,
+  sessionHoldsTranscriptRow,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
 import { identityKey, type CompanionModelConfig, type RuntimeSession } from "../runtime.js";
@@ -1554,11 +1555,23 @@ export async function deleteMountedChatMessage(
   //
   // Only the first is safe to complete without touching the session. The other two keep refusing, because
   // there the delete would be a lie about what the model still holds.
-  const neverBound = bound.length === 0;
-  if (entryId === null && !neverBound) throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
-  // The row the model never saw: deleting it is the whole job, and there is nothing on the session side to omit.
-  if (entryId === null)
+  if (entryId === null) {
+    // No usable binding. Two different facts answer that, and they are not the same fact:
+    //
+    //   the session never received this line  - what a turn that died at the provider leaves. Nothing on the model's side has to be
+    //                                          omitted, so deleting the row completes the job.
+    //   the session holds it, unlabelled     - a turn driven without a binding. The store cannot say which entry carries it, so
+    //                                          removing the row would leave the model reading a line the player deleted.
+    //
+    // The session is the authority for the second question, so it is asked directly rather than inferred from the absence of a
+    // record.
+    const sessionHoldsIt = sessionHoldsTranscriptRow(runtimeSession.session, {
+      role: target.kind === "player" ? "player" : "companion",
+      text: target.text,
+    });
+    if (sessionHoldsIt) throw new SemanticProductionCoordinatorError("chat_delete_binding_unavailable");
     return await store.deleteTranscriptMessage!(record.transitionAuthority.authority, record.chatThreadId, input);
+  }
   let deleted: import("../pi-session-variant-branch.internal.js").PiTranscriptDeleteResult;
   try {
     deleted = deletePiTranscriptEntry(runtimeSession.session, entryId);
