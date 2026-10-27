@@ -75,8 +75,51 @@ public static class ToolStaminaGuard
     public static float PerSwingCharge(int skillLevel, bool efficient) =>
         efficient ? 0f : Math.Max(0f, 2f - (skillLevel * 0.1f));
 
+    /// <summary>
+    /// Which skill prices a swing of this tool family.
+    ///
+    /// The engine charges the skill the tool belongs to (`Axe` -> Foraging, `Pickaxe` -> Mining,
+    /// `Hoe`/watering/harvesting -> Farming). Named here rather than repeated at each call site, because a
+    /// tool family that priced itself with the wrong skill would produce a plausible-looking estimate that
+    /// is silently wrong - and the estimate is the only thing standing between the actor and a faint.
+    /// </summary>
+    public static ToolStaminaSkill SkillFor(ToolStaminaFamily family) => family switch
+    {
+        ToolStaminaFamily.Axe => ToolStaminaSkill.Foraging,
+        ToolStaminaFamily.Pickaxe => ToolStaminaSkill.Mining,
+        _ => ToolStaminaSkill.Farming,
+    };
+
+    /// <summary>
+    /// The whole pre-flight estimate for a swing loop, from the numbers the caller actually has.
+    ///
+    /// One function so the pre-flight and the receipt's `expected_stamina_cost` cannot drift, and so a
+    /// test can assert the arithmetic without a live game: `swings` is the loop's cap (the worst case it
+    /// is willing to spend) and the actor's stamina is the budget.
+    /// </summary>
+    public static float EstimatedCost(int swingCount, int skillLevel, bool efficient) =>
+        PerSwingCharge(skillLevel, efficient) * Math.Max(0, swingCount);
+
     private static string Format(float value) =>
         value.ToString("0.####", CultureInfo.InvariantCulture);
+}
+
+/// <summary>The tool families whose swings this guard prices.</summary>
+public enum ToolStaminaFamily
+{
+    Axe,
+    Pickaxe,
+    Hoe,
+    Scythe,
+    WateringCan,
+}
+
+/// <summary>The skills the engine charges tool work against.</summary>
+public enum ToolStaminaSkill
+{
+    Foraging,
+    Mining,
+    Farming,
 }
 
 /// <summary>

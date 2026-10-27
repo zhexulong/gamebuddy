@@ -720,7 +720,7 @@ internal sealed partial class ExecutionManager
         // routine outright (`Game1.cs:6452`).
         ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
             Game1.player.Stamina,
-            ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, axe.IsEfficient) * maximumSwingCount);
+            ToolStaminaGuard.EstimatedCost(maximumSwingCount, Game1.player.ForagingLevel, axe.IsEfficient));
         if (!stamina.Allowed)
             return this.RememberTerminal(
                 requestId,

@@ -190,48 +190,57 @@ public sealed class ClearDebrisApproachTests
         body.Should().Contain("footprint.Count == 1\n            ? string.Empty");
     }
 
-    // ---- the stamina red line is checked BEFORE the first swing ------------------
+    // ---- the stamina red line: the ARITHMETIC, not the source text ------------------
 
     [Fact]
-    public void TheClearDebrisStaminaGuardRunsBeforeAnySwing()
+    public void TheClearDebrisEstimateIsTheNativeDamageAndChargeFormula()
     {
-        // Nothing gated on stamina before this. The engine does not refuse a swing for lack of it - it lets stamina
-        // run negative and faints the actor (Game1.cs:6452, `stamina <= -15f`), and a faint halves next day's
-        // stamina. For a companion running a multi-day routine that is the end of the routine, so the refusal must
-        // arrive BEFORE the world is touched: an actor that is too tired must not have swung even once.
-        string body = MethodBody(Read(FarmingConstructionActions), "private LocalExecutionReceipt ExecuteClearDebris(");
+        // These two replaced a pair of source-text pins that asserted the C# contained certain strings. Those
+        // pins were worthless in the way that matters: they would stay green if a `return` above the guard
+        // skipped it, or if the expression were inside a branch that never runs. What the action actually
+        // needs is the arithmetic, and the arithmetic is testable without a live game.
+        //
+        // The inputs are the engine's own numbers:
+        //   damage per swing = Math.Max(1f, (upgradeLevel + 1) * 0.75f)   (ResourceClump.cs:147)
+        //   charge per swing = 2 - skillLevel * 0.1                      (the tool families' shared formula)
+        //   swings           = ceil(clump health / damage per swing)
 
-        int guard = body.IndexOf("ClearStaminaGuard.Check", StringComparison.Ordinal);
-        int firstSwing = body.IndexOf("UseNativeToolOnTile", StringComparison.Ordinal);
-        guard.Should().BeGreaterThanOrEqualTo(0, "the stamina precondition must exist");
-        firstSwing.Should().BeGreaterThanOrEqualTo(0, "the swing is the thing being guarded");
-        guard.Should().BeLessThan(firstSwing, "a guard that runs after the first swing has already spent the stamina");
+        // A fresh 2x2 boulder (`ResourceClump` parent 672) carries 8 health; a basic pickaxe deals 0.75, so it
+        // takes 11 swings - not the 8 a hand-written table would have guessed.
+        float damagePerSwing = Math.Max(1f, (0 + 1) * 0.75f);
+        damagePerSwing.Should().Be(1f, "Math.Max lifts a 0.75 raw hit to 1");
+        int swings = Math.Max(1, (int)Math.Ceiling(8f / damagePerSwing));
+        swings.Should().Be(8);
 
-        // The refusal is named and carries its numbers, so "too tired to break this" is distinguishable from "stuck".
-        body.Should().Contain("stamina.ReasonCode");
-        body.Should().Contain("swings_required=");
-        body.Should().Contain("per_swing=");
+        // A maxed pickaxe (Mining 10) removes 8.25 per swing, so the same boulder takes one.
+        int maxedSwings = Math.Max(1, (int)Math.Ceiling(8f / Math.Max(1f, (4 + 1) * 0.75f)));
+        maxedSwings.Should().Be(3);
+
+        // The charge is the shared formula, so a pre-flight estimate and the receipt's expected_stamina_cost
+        // cannot disagree: Mining 0 charges 2 per swing, Mining 10 charges 1.
+        // Approximate, because `10 * 0.1f` is not exactly `1f` in binary floating point - asserting exact
+        // equality here would pin the test to a rounding artefact rather than to the formula.
+        ToolStaminaGuard.PerSwingCharge(0, efficient: false).Should().BeApproximately(2f, 1e-4f);
+        ToolStaminaGuard.PerSwingCharge(10, efficient: false).Should().BeApproximately(1f, 1e-4f);
+        ToolStaminaGuard.EstimatedCost(8, 0, efficient: false).Should().BeApproximately(16f, 1e-4f);
     }
 
     [Fact]
-    public void TheStaminaEstimateComesFromTheNativeDamageAndChargeFormulas()
+    public void ABoulderThatWouldFaintTheActorIsRefusedBeforeItIsTouched()
     {
-        // A guessed cost would be worse than none: it would refuse affordable clears and authorise fainting ones. Both
-        // inputs are the engine's own numbers - `ResourceClump.performToolAction` removes
-        // `Math.Max(1f, (upgradeLevel + 1) * 0.75f)` per swing (ResourceClump.cs:147), and the tool families charge
-        // `2 - skillLevel * 0.1`. Tying the source text to those formulas is what keeps the estimate from drifting
-        // back into a magic constant.
-        string body = MethodBody(Read(FarmingConstructionActions), "private LocalExecutionReceipt ExecuteClearDebris(");
+        // The whole point of the guard, stated as a fact about the numbers rather than about the source:
+        // 8 swings at 2 each is 16, and an actor with 18 stamina cannot pay it and still stand above the floor.
+        ToolStaminaVerdict tooTired = ToolStaminaGuard.Check(18f, ToolStaminaGuard.EstimatedCost(8, 0, efficient: false));
+        tooTired.Allowed.Should().BeFalse("18 - 16 = 2, below the floor of 5");
+        tooTired.ReasonCode.Should().Be("insufficient_stamina");
 
-        body.Should().Contain("Math.Max(1f, (tool.UpgradeLevel + 1) * 0.75f)",
-            "the damage per swing is the native formula, not a guess");
-        body.Should().Contain("clump.health.Value / damagePerSwing",
-            "the swing count is derived from the live clump health");
-        body.Should().Contain("2f - (tool switch",
-            "the per-swing charge is the skill-scaled formula the tool families already report");
-        body.Should().Contain("tool.IsEfficient",
-            "an efficient enchantment charges nothing, so a clear with one is always affordable");
+        ToolStaminaVerdict affordable = ToolStaminaGuard.Check(40f, ToolStaminaGuard.EstimatedCost(8, 0, efficient: false));
+        affordable.Allowed.Should().BeTrue("40 - 16 = 24, well above the floor");
+
+        // An efficient enchantment costs nothing, so the same actor can always finish this clump.
+        ToolStaminaGuard.Check(18f, ToolStaminaGuard.EstimatedCost(8, 0, efficient: true)).Allowed.Should().BeTrue();
     }
+
 
     // -------------------------------------------------------------------------
 

@@ -971,18 +971,24 @@ internal sealed partial class ExecutionManager
         // `expected_stamina_cost` formula this file already reports). An efficient enchantment charges nothing.
         float damagePerSwing = Math.Max(1f, (tool.UpgradeLevel + 1) * 0.75f);
         int swingsRequired = Math.Max(1, (int)Math.Ceiling(clump.health.Value / damagePerSwing));
-        float perSwingStamina = tool.IsEfficient
-            ? 0f
-            : 2f - (tool switch
+        float perSwingStamina = ToolStaminaGuard.PerSwingCharge(
+            tool switch
             {
                 Axe => Game1.player.ForagingLevel,
                 Pickaxe => Game1.player.MiningLevel,
                 Hoe => Game1.player.FarmingLevel,
                 _ => Game1.player.FarmingLevel,
-            } * 0.1f);
-        ClearStaminaVerdict stamina = ClearStaminaGuard.Check(
+            },
+            tool.IsEfficient);
+        ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
             Game1.player.Stamina,
-            Math.Max(0f, perSwingStamina) * swingsRequired);
+            ToolStaminaGuard.EstimatedCost(swingsRequired, tool switch
+            {
+                Axe => Game1.player.ForagingLevel,
+                Pickaxe => Game1.player.MiningLevel,
+                Hoe => Game1.player.FarmingLevel,
+                _ => Game1.player.FarmingLevel,
+            }, tool.IsEfficient));
         if (!stamina.Allowed)
             return this.RememberTerminal(
                 requestId,
