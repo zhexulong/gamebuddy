@@ -132,7 +132,7 @@ public sealed class DeclaredToolSelectionTests
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds("),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass("),
             ("break_rock_source", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource("),
-            ("water_crop", FarmingConstructionActions, "public LocalExecutionReceipt RequestLocalWaterCrop("),
+            ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop("),
         })
         {
             string body = MethodBody(Read(file), signature);
@@ -251,7 +251,7 @@ public sealed class DeclaredToolSelectionTests
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass(", "CutGrass"),
             ("break_rock_source", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
-            ("water_crop", FarmingConstructionActions, "public LocalExecutionReceipt RequestLocalWaterCrop(", "WaterCrop"),
+            ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop(", "WaterCrop"),
         })
         {
             string body = MethodBody(Read(file), signature);

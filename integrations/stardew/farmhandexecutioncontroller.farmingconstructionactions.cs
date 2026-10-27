@@ -103,8 +103,28 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then water, exactly like
+            // `harvest_crop` in this same file already does. Refusing here taught a live Agent
+            // nothing - its only evidence was `target=x,y` - so it retried the same request.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "water_crop",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteWaterCrop(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
 
+        return this.ExecuteWaterCrop(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -344,7 +364,28 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then plant, like `harvest_crop` and
+            // `water_crop` in this same file. Refusing here gave the Agent `target=x,y` as its only
+            // evidence, so it retried the same request.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "plant_seed",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlantSeed(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecutePlantSeed(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecutePlantSeed(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(seed.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
@@ -776,7 +817,27 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!IsCropTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then fertilize, like `harvest_crop`
+            // and `water_crop` in this same file.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "fertilize_tile",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFertilizeTile(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteFertilizeTile(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object fertilizer || fertilizer.Category != StardewValley.Object.fertilizerCategory)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(fertilizer.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
@@ -1091,7 +1152,27 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then swing, like `harvest_crop` and
+            // `water_crop` in this same file.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "scythe_crop",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteScytheCrop(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteScytheCrop(executionId, requestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
