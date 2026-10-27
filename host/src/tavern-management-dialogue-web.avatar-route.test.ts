@@ -233,6 +233,7 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {
@@ -245,6 +246,7 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
     }),

@@ -296,6 +296,7 @@ const voicePreferenceStore = Object.freeze({
       outputDevice: null,
       persona: null,
       paced: false,
+      gamePromptAddition: "",
     };
   },
   async update(expectedRevision: number, update: PlayerPreferenceUpdate) {
@@ -309,6 +310,7 @@ const voicePreferenceStore = Object.freeze({
       outputDevice: update.action === "setOutputDevice" ? update.outputDevice : null,
       persona: update.action === "setPersona" ? update.persona : null,
       paced: update.action === "setPaced" ? update.paced : false,
+      gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : "",
     };
   },
 });
@@ -1805,6 +1807,7 @@ test("management handler exposes the Host-owned language preference read and upd
     outputDevice: null,
     persona: null,
     paced: false,
+    gamePromptAddition: "",
   };
   // One Host-owned record carries both settings field groups (the companion
   // language and the Voice consent/output), so this language surface writes the
@@ -1957,6 +1960,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {
@@ -2029,6 +2033,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {
@@ -2041,6 +2046,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
     }),
@@ -2084,6 +2090,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
     ["PUT", "/api/tavern/v1/settings/voice-preference"],
     ["PUT", "/api/tavern/v1/settings/language"],
     ["PUT", "/api/tavern/v1/settings/delivery"],
+    ["PUT", "/api/tavern/v1/settings/game-prompt"],
     ["POST", "/api/tavern/v1/companions"],
     ["POST", "/api/tavern/v1/imports"],
     ["POST", `/api/tavern/v1/imports/${handle}/review`],

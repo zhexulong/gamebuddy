@@ -1269,7 +1269,9 @@ function managementBundle(): ManagementBundle {
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
-          persona: null, paced: false,
+          persona: null,
+          paced: false,
+          gamePromptAddition: "",
         }),
       update: async () => {
         throw new Error("unused_preference_update");

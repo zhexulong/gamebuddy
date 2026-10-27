@@ -214,6 +214,7 @@ async function withHandler(
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {
@@ -226,6 +227,7 @@ async function withHandler(
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
     }),
@@ -1415,6 +1417,7 @@ test("a profile that advertises connection routes without the Host service fails
               outputDevice: null,
               persona: null,
               paced: false,
+              gamePromptAddition: "",
             };
           },
         }),

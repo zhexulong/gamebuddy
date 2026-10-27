@@ -288,6 +288,7 @@ function managementOptions(input: {
           outputDevice: null,
           persona: null,
           paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {

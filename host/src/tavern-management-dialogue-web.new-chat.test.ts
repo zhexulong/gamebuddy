@@ -301,7 +301,9 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
           consent: "undecided" as const,
           decidedAtMs: null,
           outputDevice: null,
-          persona: null, paced: false,
+          persona: null,
+          paced: false,
+          gamePromptAddition: "",
         };
       },
       async update() {

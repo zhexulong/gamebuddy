@@ -153,6 +153,7 @@ const playerPreferenceStore = Object.freeze({
       outputDevice: null,
       persona: null,
       paced: false,
+      gamePromptAddition: "",
     };
   },
   async update(_expectedRevision: number, _update: PlayerPreferenceUpdate) {
@@ -165,6 +166,7 @@ const playerPreferenceStore = Object.freeze({
       outputDevice: null,
       persona: null,
       paced: false,
+      gamePromptAddition: "",
     };
   },
 });
