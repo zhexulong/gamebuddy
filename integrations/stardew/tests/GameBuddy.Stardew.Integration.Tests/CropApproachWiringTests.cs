@@ -18,6 +18,26 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class CropApproachWiringTests
 {
     private const string Relative = "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs";
+    private const string Machines = "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs";
+
+    [Theory]
+    [InlineData(Machines, "machine_inspect", "IsMachineTargetInRange", "InspectMachine")]
+    [InlineData(Machines, "feed_animal", "IsFeedTroughTargetInRange", "FeedAnimal")]
+    public void AnOutOfRangeMachineOrAnimalActionWalksInInsteadOfRefusing(string file, string actionId, string rangePredicate, string bodyName)
+    {
+        string request = MethodBody(System.IO.File.ReadAllText(RepositoryFile(file)), $"public LocalExecutionReceipt RequestLocal{bodyName}(");
+
+        int gate = request.IndexOf($"if (!{rangePredicate}(Game1.player, targetX, targetY))", System.StringComparison.Ordinal);
+        gate.Should().BeGreaterThan(0, $"{actionId} still gates on its native radius");
+
+        int gateEnd = request.IndexOf('}', gate);
+        string falseBranch = request.Substring(gate, gateEnd - gate);
+
+        falseBranch.Should().Contain("TryBeginToolApproach",
+            $"{actionId} must walk in when the native radius is not met");
+        falseBranch.Should().NotContain("target_out_of_range",
+            $"{actionId} must not refuse a target it can simply walk to");
+    }
 
     [Theory]
     [InlineData("water_crop", "IsCropTargetInRange")]
@@ -57,15 +77,15 @@ public sealed class CropApproachWiringTests
     private static string ActionMethodName(string actionId) =>
         string.Concat(actionId.Split('_').Select(part => char.ToUpperInvariant(part[0]) + part.Substring(1)));
 
-    private static string Source() => File.ReadAllText(RepositoryFile());
+    private static string Source() => System.IO.File.ReadAllText(RepositoryFile(Relative));
 
-    private static string RepositoryFile()
+    private static string RepositoryFile(string relative)
     {
         DirectoryInfo? directory = new(System.AppContext.BaseDirectory);
         while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "integrations")))
             directory = directory.Parent;
         directory.Should().NotBeNull("the test must run inside the repository");
-        return Path.Combine(directory!.FullName, Relative);
+        return Path.Combine(directory!.FullName, relative);
     }
 
     private static string MethodBody(string source, string signature)

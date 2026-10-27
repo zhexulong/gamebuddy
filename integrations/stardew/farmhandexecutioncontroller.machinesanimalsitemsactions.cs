@@ -244,7 +244,28 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
         if (!IsMachineTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then inspect, like `harvest_crop` in
+            // `farmhandexecutioncontroller.farmingconstructionactions.cs`. Refusing gave the Agent
+            // `target=x,y` as its only evidence.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "machine_inspect",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInspectMachine(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteInspectMachine(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecuteInspectMachine(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -350,7 +371,27 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
         if (!IsFeedTroughTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            // Out of the native interaction radius: walk in and then feed, like `harvest_crop` in
+            // `farmhandexecutioncontroller.farmingconstructionactions.cs`.
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "feed_animal",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteFeedAnimal(location, arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteFeedAnimal(location, executionId, requestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+    }
+
+    private LocalExecutionReceipt ExecuteFeedAnimal(AnimalHouse location, string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object hay
             || !string.Equals(hay.QualifiedItemId, "(O)178", StringComparison.Ordinal) || hay.Stack < 1)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hay_not_owned_in_slot", $"slot={slot}");
