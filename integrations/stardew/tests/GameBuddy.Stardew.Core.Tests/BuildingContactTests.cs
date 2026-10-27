@@ -25,28 +25,28 @@ public sealed class BuildingContactTests
     public void ABuildingWithADoorIsTouchedFromItsOwnOrAnAdjacentTile()
     {
         // A coop at (10,10), 4x3, with a human door at its origin + (1,3) = (11,13).
-        var contact = BuildingContact.WithHumanDoor(new Point(11, 13), new FootprintRect(10, 10, 4, 3));
+        var contact = BuildingContact.WithHumanDoor(new TilePoint(11, 13), new FootprintRect(10, 10, 4, 3));
 
         contact.Kind.Should().Be(BuildingContactKind.HumanDoor);
-        contact.HumanDoor.Should().Be(new Point(11, 13));
+        contact.HumanDoor.Should().Be(new TilePoint(11, 13));
 
-        contact.IsWithinContact(new Point(11, 13)).Should().BeTrue("standing on the door");
-        contact.IsWithinContact(new Point(11, 14)).Should().BeTrue("one tile below it");
-        contact.IsWithinContact(new Point(12, 12)).Should().BeTrue("diagonally adjacent");
-        contact.IsWithinContact(new Point(11, 15)).Should().BeFalse("two tiles away");
+        contact.IsWithinContact(new TilePoint(11, 13)).Should().BeTrue("standing on the door");
+        contact.IsWithinContact(new TilePoint(11, 14)).Should().BeTrue("one tile below it");
+        contact.IsWithinContact(new TilePoint(12, 12)).Should().BeTrue("diagonally adjacent");
+        contact.IsWithinContact(new TilePoint(11, 15)).Should().BeFalse("two tiles away");
     }
 
     [Fact]
     public void AHumanDoorContactOffersTheRingAroundTheDoorNotTheBuilding()
     {
-        var contact = BuildingContact.WithHumanDoor(new Point(11, 13), new FootprintRect(10, 10, 4, 3));
+        var contact = BuildingContact.WithHumanDoor(new TilePoint(11, 13), new FootprintRect(10, 10, 4, 3));
 
-        System.Collections.Generic.IReadOnlyList<Point> tiles = contact.InteractionTiles();
+        System.Collections.Generic.IReadOnlyList<TilePoint> tiles = contact.InteractionTiles();
 
         tiles.Should().HaveCount(8, "the eight neighbours of the door");
-        tiles.Should().Contain(new Point(11, 14));
+        tiles.Should().Contain(new TilePoint(11, 14));
         // Orthogonals come first so a caller that walks the list in order prefers a straight approach.
-        tiles[0].Should().Be(new Point(11, 12));
+        tiles[0].Should().Be(new TilePoint(11, 12));
     }
 
     [Fact]
@@ -60,13 +60,13 @@ public sealed class BuildingContactTests
         contact.HumanDoor.Should().BeNull("there is no door to name");
 
         // Every face is contact, which is the whole point: a companion at the south face is not "far away".
-        contact.IsWithinContact(new Point(20, 23)).Should().BeTrue("south face");
-        contact.IsWithinContact(new Point(23, 20)).Should().BeTrue("east face");
-        contact.IsWithinContact(new Point(23, 23)).Should().BeTrue("south-east corner of the ring");
+        contact.IsWithinContact(new TilePoint(20, 23)).Should().BeTrue("south face");
+        contact.IsWithinContact(new TilePoint(23, 20)).Should().BeTrue("east face");
+        contact.IsWithinContact(new TilePoint(23, 23)).Should().BeTrue("south-east corner of the ring");
         // A 3x3 footprint at (20,20) covers x 20..22 and y 20..22, so (22,22) is INSIDE it - not a standing tile.
-        contact.IsWithinContact(new Point(22, 22)).Should().BeFalse("inside the silo is not a standing tile");
-        contact.IsWithinContact(new Point(20, 21)).Should().BeFalse("inside the silo is not a standing tile");
-        contact.IsWithinContact(new Point(20, 24)).Should().BeFalse("one tile past the ring");
+        contact.IsWithinContact(new TilePoint(22, 22)).Should().BeFalse("inside the silo is not a standing tile");
+        contact.IsWithinContact(new TilePoint(20, 21)).Should().BeFalse("inside the silo is not a standing tile");
+        contact.IsWithinContact(new TilePoint(20, 24)).Should().BeFalse("one tile past the ring");
     }
 
     [Fact]
@@ -74,10 +74,10 @@ public sealed class BuildingContactTests
     {
         var footprint = new FootprintRect(20, 20, 3, 3);
 
-        footprint.IsWithinRing(new Point(20, 23)).Should().BeTrue();
-        footprint.IsWithinRing(new Point(19, 19)).Should().BeTrue("diagonal corner of the ring");
-        footprint.IsWithinRing(new Point(21, 21)).Should().BeFalse("inside the footprint");
-        footprint.IsWithinRing(new Point(20, 24)).Should().BeFalse("outside the ring");
+        footprint.IsWithinRing(new TilePoint(20, 23)).Should().BeTrue();
+        footprint.IsWithinRing(new TilePoint(19, 19)).Should().BeTrue("diagonal corner of the ring");
+        footprint.IsWithinRing(new TilePoint(21, 21)).Should().BeFalse("inside the footprint");
+        footprint.IsWithinRing(new TilePoint(20, 24)).Should().BeFalse("outside the ring");
     }
 
     [Fact]
@@ -85,8 +85,8 @@ public sealed class BuildingContactTests
     {
         var footprint = new FootprintRect(20, 20, 3, 3);
 
-        System.Collections.Generic.IReadOnlyList<Point> first = footprint.RingTiles();
-        System.Collections.Generic.IReadOnlyList<Point> second = footprint.RingTiles();
+        System.Collections.Generic.IReadOnlyList<TilePoint> first = footprint.RingTiles();
+        System.Collections.Generic.IReadOnlyList<TilePoint> second = footprint.RingTiles();
 
         first.Should().Equal(second, "an identical world must produce an identical candidate list");
 
@@ -94,8 +94,8 @@ public sealed class BuildingContactTests
         first.Should().HaveCount(16);
 
         // The first four are the four sides' leading tiles, in lowest-y then lowest-x order.
-        first[0].Should().Be(new Point(20, 19), "north face, lowest x");
-        first.Should().ContainInOrder(new Point(20, 19), new Point(21, 19), new Point(22, 19));
+        first[0].Should().Be(new TilePoint(20, 19), "north face, lowest x");
+        first.Should().ContainInOrder(new TilePoint(20, 19), new TilePoint(21, 19), new TilePoint(22, 19));
     }
 
     [Fact]
@@ -103,11 +103,11 @@ public sealed class BuildingContactTests
     {
         // The reviewer's finding: a 7x4 barn's approach used only the top-left corner, so standing at the
         // door reported out_of_range. With the door named, the door's ring is the approach set.
-        var contact = BuildingContact.WithHumanDoor(new Point(13, 10), new FootprintRect(10, 10, 7, 4));
+        var contact = BuildingContact.WithHumanDoor(new TilePoint(13, 10), new FootprintRect(10, 10, 7, 4));
 
-        contact.IsWithinContact(new Point(13, 10)).Should().BeTrue("standing in the doorway");
+        contact.IsWithinContact(new TilePoint(13, 10)).Should().BeTrue("standing in the doorway");
         // The top-left corner (10,10) is NOT what a companion at the door occupies.
-        contact.IsWithinContact(new Point(10, 13)).Should().BeFalse("the far south-west corner is not the door");
+        contact.IsWithinContact(new TilePoint(10, 13)).Should().BeFalse("the far south-west corner is not the door");
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public sealed class BuildingContactTests
 
         contact.Kind.Should().Be(BuildingContactKind.Unreachable);
         contact.InteractionTiles().Should().BeEmpty("a caller must refuse by name, not pick a tile");
-        contact.IsWithinContact(new Point(0, 0)).Should().BeFalse();
+        contact.IsWithinContact(new TilePoint(0, 0)).Should().BeFalse();
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class BuildingContactTests
         var empty = new FootprintRect(5, 5, 0, 0);
 
         empty.IsEmpty.Should().BeTrue();
-        empty.IsWithinRing(new Point(4, 4)).Should().BeFalse();
+        empty.IsWithinRing(new TilePoint(4, 4)).Should().BeFalse();
         empty.RingTiles().Should().BeEmpty();
     }
 }

@@ -34,7 +34,7 @@ namespace GameBuddy.Stardew.Core;
 /// </list>
 public readonly record struct BuildingContact
 {
-    private BuildingContact(BuildingContactKind kind, Point? door, FootprintRect footprint)
+    private BuildingContact(BuildingContactKind kind, TilePoint? door, FootprintRect footprint)
     {
         this.Kind = kind;
         this.HumanDoor = door;
@@ -44,7 +44,7 @@ public readonly record struct BuildingContact
     public BuildingContactKind Kind { get; }
 
     /// <summary>The declared human door tile, or null when there is none.</summary>
-    public Point? HumanDoor { get; }
+    public TilePoint? HumanDoor { get; }
 
     /// <summary>The building's occupied tiles. Always present so a caller can fall back to the ring.</summary>
     public FootprintRect Footprint { get; }
@@ -53,7 +53,7 @@ public readonly record struct BuildingContact
     /// A building that declared a human door. The tile is what `getPointForHumanDoor` returns and what the
     /// family's existing anchors use, so this preserves the one-anchor-per-building rule.
     /// </summary>
-    public static BuildingContact WithHumanDoor(Point door, FootprintRect footprint) =>
+    public static BuildingContact WithHumanDoor(TilePoint door, FootprintRect footprint) =>
         new(BuildingContactKind.HumanDoor, door, footprint);
 
     /// <summary>
@@ -75,7 +75,7 @@ public readonly record struct BuildingContact
     /// from the ring around its footprint - the same dilated-rectangle rule the obelisk action already used,
     /// promoted here so there is ONE spelling of it.
     /// </summary>
-    public bool IsWithinContact(Point tile) => this.Kind switch
+    public bool IsWithinContact(TilePoint tile) => this.Kind switch
     {
         BuildingContactKind.HumanDoor => Chebyshev(tile, this.HumanDoor!.Value) <= 1,
         BuildingContactKind.Ring => this.Footprint.IsWithinRing(tile),
@@ -87,7 +87,7 @@ public readonly record struct BuildingContact
     ///
     /// This is what an approach needs: the target of the walk, not just a yes/no reach answer.
     /// </summary>
-    public System.Collections.Generic.IReadOnlyList<Point> InteractionTiles()
+    public System.Collections.Generic.IReadOnlyList<TilePoint> InteractionTiles()
     {
         switch (this.Kind)
         {
@@ -96,7 +96,7 @@ public readonly record struct BuildingContact
             case BuildingContactKind.Ring:
                 return this.Footprint.RingTiles();
             default:
-                return Array.Empty<Point>();
+                return Array.Empty<TilePoint>();
         }
     }
 
@@ -104,19 +104,19 @@ public readonly record struct BuildingContact
     /// The eight neighbours of a door tile, in the deterministic order the approach selector already relies
     /// on: orthogonals first, then diagonals, each lowest-y then lowest-x.
     /// </summary>
-    private static System.Collections.Generic.IReadOnlyList<Point> Ring(Point door) => new[]
+    private static System.Collections.Generic.IReadOnlyList<TilePoint> Ring(TilePoint door) => new[]
     {
-        new Point(door.X, door.Y - 1),
-        new Point(door.X - 1, door.Y),
-        new Point(door.X + 1, door.Y),
-        new Point(door.X, door.Y + 1),
-        new Point(door.X - 1, door.Y - 1),
-        new Point(door.X + 1, door.Y - 1),
-        new Point(door.X - 1, door.Y + 1),
-        new Point(door.X + 1, door.Y + 1),
+        new TilePoint(door.X, door.Y - 1),
+        new TilePoint(door.X - 1, door.Y),
+        new TilePoint(door.X + 1, door.Y),
+        new TilePoint(door.X, door.Y + 1),
+        new TilePoint(door.X - 1, door.Y - 1),
+        new TilePoint(door.X + 1, door.Y - 1),
+        new TilePoint(door.X - 1, door.Y + 1),
+        new TilePoint(door.X + 1, door.Y + 1),
     };
 
-    private static int Chebyshev(Point a, Point b) =>
+    private static int Chebyshev(TilePoint a, TilePoint b) =>
         Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
 }
 
@@ -138,7 +138,7 @@ public readonly record struct FootprintRect(int X, int Y, int Width, int Height)
     public bool IsEmpty => this.Width <= 0 || this.Height <= 0;
 
     /// <summary>Whether the tile is inside the rectangle.</summary>
-    public bool Contains(Point tile) =>
+    public bool Contains(TilePoint tile) =>
         !this.IsEmpty && tile.X >= this.X && tile.X < this.X + this.Width
         && tile.Y >= this.Y && tile.Y < this.Y + this.Height;
 
@@ -147,7 +147,7 @@ public readonly record struct FootprintRect(int X, int Y, int Width, int Height)
     /// footprint. This is the rule the obelisk action already used; it lives here so every multi-tile
     /// building uses the same one.
     /// </summary>
-    public bool IsWithinRing(Point tile) =>
+    public bool IsWithinRing(TilePoint tile) =>
         !this.IsEmpty
         && tile.X >= this.X - 1 && tile.X <= this.X + this.Width
         && tile.Y >= this.Y - 1 && tile.Y <= this.Y + this.Height
@@ -157,31 +157,31 @@ public readonly record struct FootprintRect(int X, int Y, int Width, int Height)
     /// The ring tiles, orthogonals before diagonals and each group lowest-y then lowest-x, so a caller can
     /// walk the list in order and get a deterministic choice from an identical world.
     /// </summary>
-    public System.Collections.Generic.IReadOnlyList<Point> RingTiles()
+    public System.Collections.Generic.IReadOnlyList<TilePoint> RingTiles()
     {
-        if (this.IsEmpty) return Array.Empty<Point>();
-        var tiles = new System.Collections.Generic.List<Point>();
+        if (this.IsEmpty) return Array.Empty<TilePoint>();
+        var tiles = new System.Collections.Generic.List<TilePoint>();
         for (int y = this.Y - 1; y <= this.Y + this.Height; y += 1)
         for (int x = this.X - 1; x <= this.X + this.Width; x += 1)
         {
-            var tile = new Point(x, y);
+            var tile = new TilePoint(x, y);
             if (this.IsWithinRing(tile) && IsOrthogonalRingTile(tile)) tiles.Add(tile);
         }
 
         for (int y = this.Y - 1; y <= this.Y + this.Height; y += 1)
         for (int x = this.X - 1; x <= this.X + this.Width; x += 1)
         {
-            var tile = new Point(x, y);
+            var tile = new TilePoint(x, y);
             if (this.IsWithinRing(tile) && !IsOrthogonalRingTile(tile)) tiles.Add(tile);
         }
 
         return tiles;
     }
 
-    private bool IsOrthogonalRingTile(Point tile) =>
+    private bool IsOrthogonalRingTile(TilePoint tile) =>
         (tile.X >= this.X && tile.X < this.X + this.Width && (tile.Y == this.Y - 1 || tile.Y == this.Y + this.Height))
         || (tile.Y >= this.Y && tile.Y < this.Y + this.Height && (tile.X == this.X - 1 || tile.X == this.X + this.Width));
 }
 
 /// <summary>A tile. Engine-free twin of `Microsoft.Xna.Framework.Point`, for Core predicates.</summary>
-public readonly record struct Point(int X, int Y);
+public readonly record struct TilePoint(int X, int Y);
