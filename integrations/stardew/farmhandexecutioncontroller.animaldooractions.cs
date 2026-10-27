@@ -131,8 +131,8 @@ internal sealed partial class ExecutionManager
                 "animal_door_riding_horse",
                 $"target={expectedTargetId};tile={targetX},{targetY};building_type={resolution.Building!.buildingType.Value}");
 
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "toggle_animal_door", location, targetX, targetY, expectedTargetId,
+        if (!IsWithinBuildingContact(resolution.Building!, Game1.player))
+            return this.TryBeginBuildingApproach(requestId, executionId, "toggle_animal_door", location, resolution.Building!, expectedTargetId,
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteToggleAnimalDoor(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
         return this.ExecuteToggleAnimalDoor(executionId, requestId, targetX, targetY, expectedTargetId);
     }
@@ -155,13 +155,13 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "animal_door_riding_horse",
                 $"target={targetId};tile={x},{y};building_type={resolution.Building!.buildingType.Value}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, x, y, 1))
+        if (!IsWithinBuildingContact(resolution.Building!, Game1.player))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "animal_door_out_of_range",
-                $"target={targetId};tile={x},{y};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y}");
+                $"target={targetId};tile={x},{y};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(resolution.Building!)}");
 
         Building building = resolution.Building!;
         bool openBefore = resolution.IsOpen;

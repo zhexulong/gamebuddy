@@ -69,7 +69,7 @@ public sealed class WithdrawSiloHayActionTests
         // Design 5.2: a thin request path (admission, geometry, then either an
         // approach leg or the shared execution body) plus ONE execution body reached
         // by both paths, so a walk cannot run a second copy of the contract.
-        body.Should().Contain("TryBeginToolApproach(");
+        body.Should().Contain("TryBeginBuildingApproach(");
         body.Should().Contain("this.ExecuteWithdrawSiloHay(arrivalExecutionId, arrivalRequestId");
         body.Should().Contain("return this.ExecuteWithdrawSiloHay(executionId, requestId");
 
@@ -120,11 +120,13 @@ public sealed class WithdrawSiloHayActionTests
         body.Should().Contain("TryResolveSilo(");
         body.Should().Contain("Game1.player.currentLocation is not Farm farm");
 
-        // The tile handed to the native call is the resolved silo's own human door,
-        // not the caller's coordinate.
+        // The tile handed to the native call is the resolved silo's own contact shape, not the
+        // caller's coordinate. A silo declares no human door, so `getPointForHumanDoor()` answers
+        // its origin minus one on each axis - a tile outside the building. Reach is therefore asked
+        // of the BUILDING, not of that collapsed point.
         string executed = ExecuteBody("private LocalExecutionReceipt ExecuteWithdrawSiloHay(");
         executed.Should().Contain("TryResolveSilo(");
-        executed.Should().Contain("getPointForHumanDoor()");
+        executed.Should().Contain("IsWithinBuildingContact(silo!, Game1.player)");
         executed.Should().Contain("silo_target_out_of_range");
     }
 

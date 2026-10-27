@@ -81,14 +81,17 @@ public sealed class ToggleAnimalDoorActionTests
         // Design 5.2: a thin request path (admission, geometry, then either an approach leg or
         // the shared execution body) plus ONE execution body reached by both paths, so a walk
         // cannot run a second copy of the contract.
-        body.Should().Contain("TryBeginToolApproach(");
+        body.Should().Contain("TryBeginBuildingApproach(");
         body.Should().Contain("this.ExecuteToggleAnimalDoor(arrivalExecutionId, arrivalRequestId");
         body.Should().Contain("return this.ExecuteToggleAnimalDoor(executionId, requestId");
 
-        // Reach is Chebyshev-1 of the published building tile, the same rule the silo half of
-        // the facility family admits on — not the native click geometry, which this action
-        // does not reproduce.
-        body.Should().Contain("IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)");
+        // Reach is the shared building-contact rule, the same rule the silo and pond halves of
+        // the facility family admit on — not the native click geometry, which this action does
+        // not reproduce. A coop declares a real human door (1,2), so this resolves to the door's
+        // own or an adjacent tile; the predicate is used rather than the door arithmetic so a
+        // door-less building cannot be silently measured against a collapsed point.
+        body.Should().Contain("IsWithinBuildingContact(resolution.Building!, Game1.player)");
+        executed.Should().Contain("IsWithinBuildingContact(resolution.Building!, Game1.player)");
 
         // The seam takes no tool and no slot, so this action must not have grown either.
         code.Should().NotContain("int slot");

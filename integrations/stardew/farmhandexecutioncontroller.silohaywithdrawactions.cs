@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework;
 using StardewValley;
+using StardewValley.Buildings;
 
 namespace GameBuddy.Stardew;
 
@@ -45,21 +46,21 @@ internal sealed partial class ExecutionManager
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
-        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out _))
+        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out Building? silo))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "withdraw_silo_hay", farm, targetX, targetY, expectedTargetId,
+        if (!IsWithinBuildingContact(silo!, Game1.player))
+            return this.TryBeginBuildingApproach(requestId, executionId, "withdraw_silo_hay", farm, silo!, expectedTargetId,
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteWithdrawSiloHay(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
         return this.ExecuteWithdrawSiloHay(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
     private LocalExecutionReceipt ExecuteWithdrawSiloHay(string executionId, string requestId, int x, int y, string targetId)
     {
-        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, x, y, targetId, out StardewValley.Buildings.Building? silo))
+        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, x, y, targetId, out Building? silo))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_changed", $"target={x},{y}");
-        Vector2 door = silo!.getPointForHumanDoor().ToVector2();
-        if (!IsTileWithinChebyshevRadius(Game1.player, (int)door.X, (int)door.Y, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_out_of_range", $"target={targetId}");
+        if (!IsWithinBuildingContact(silo!, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_out_of_range",
+                $"target={targetId};tile={x},{y};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(silo!)}");
 
         // Admission in the native seam's own terms, before any mutation.
         // (1) Hay available: GetHayFromAnySilo needs piecesOfHay >= 1; an empty

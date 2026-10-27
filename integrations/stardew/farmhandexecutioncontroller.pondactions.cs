@@ -88,8 +88,8 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "clear_fish_pond", location, targetX, targetY, expectedTargetId,
+        if (!IsWithinBuildingContact(resolution.Building!, Game1.player))
+            return this.TryBeginBuildingApproach(requestId, executionId, "clear_fish_pond", location, resolution.Building!, expectedTargetId,
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearFishPond(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
         return this.ExecuteClearFishPond(executionId, requestId, targetX, targetY, expectedTargetId);
     }
@@ -108,6 +108,11 @@ internal sealed partial class ExecutionManager
 
         FishPond pond = resolution.Pond!;
         string identity = resolution.Identity;
+        // Re-checked here, not only on the request path: this body is also reached on arrival from
+        // the approach leg, and the walk can take several ticks.
+        if (!IsWithinBuildingContact(pond, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pond_out_of_range",
+                $"{identity};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(pond)}");
         int occupantsBefore = pond.currentOccupants.Value;
         string fishTypeBefore = pond.fishType.Value ?? "none";
         int populationGateBefore = pond.lastUnlockedPopulationGate.Value;
@@ -189,6 +194,9 @@ internal sealed partial class ExecutionManager
     {
         internal static FishPondTargetResolution Reject(string reasonCode, string evidence) =>
             new(false, reasonCode, evidence, string.Empty, null);
+
+        /// <summary>The resolved pond as a building, for the contact shape every facility action shares.</summary>
+        internal Building? Building => this.Pond;
     }
 
     /// <summary>

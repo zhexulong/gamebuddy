@@ -75,12 +75,15 @@ public sealed class ClearFishPondActionTests
 
         // Design 5.2: a thin request path (admission, target, geometry, then either an approach leg or
         // the shared body) and ONE execution body, so a walk cannot run a second copy of the contract.
-        request.Should().Contain("TryBeginToolApproach(");
+        request.Should().Contain("TryBeginBuildingApproach(");
         request.Should().Contain("this.ExecuteClearFishPond(arrivalExecutionId, arrivalRequestId");
         request.Should().Contain("return this.ExecuteClearFishPond(executionId, requestId");
 
-        // Reach is Chebyshev-1 of the published building tile, the facility family's own rule.
-        request.Should().Contain("IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)");
+        // Reach is the shared building-contact rule of the resolved pond, the same rule the silo
+        // half of the facility family admits on. The published tile is the human-door point, and a
+        // pond declares no human door (HumanDoor = (-1,-1) in Data/Buildings), so measuring reach
+        // against it would admit only an actor in the pond's north-west quadrant.
+        request.Should().Contain("IsWithinBuildingContact(resolution.Building!, Game1.player)");
 
         // The seam takes no tool, no slot and no held item, so this action must not have grown any.
         string code = StripLineComments(source);

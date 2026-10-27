@@ -1,9 +1,29 @@
 using Microsoft.Xna.Framework;
+using GameBuddy.Stardew.Core;
 using StardewValley;
+using StardewValley.Buildings;
 using StardewValley.Tools;
 using StardewValley.Objects;
 
 namespace GameBuddy.Stardew;
+
+// WHERE A BUILDING MAY BE TOUCHED FROM.
+//
+// The engine answers this in three shapes, and the facility family used to assume all three were the same
+// point (`getPointForHumanDoor()`). They are not:
+//
+//   * a human door is `tileX + humanDoor.X, tileY + humanDoor.Y`, and `humanDoor` is deserialised from the
+//     building's DATA (`Building.cs:502-503`);
+//   * a building whose data declares no human door keeps the default `NetPoint`. Measured against this
+//     installation's own `Data/Buildings`: the Silo, Fish Pond, Well, Mill, Stable, Shipping Bin, Pet Bowl,
+//     Junimo Hut and all four obelisks declare `HumanDoor = (-1,-1)`; coop/barn/shed/cabin declare a real
+//     offset (1,2 / 1,3 / 3,2 / 2,1) and the farmhouse (5,2).
+//
+// So `getPointForHumanDoor()` on a Silo is `(tileX - 1, tileY - 1)` - one tile DIAGONALLY outside the
+// building, not a door. A reach test against that point admits only an actor in the silo's north-west
+// quadrant and refuses a companion at its south face as "out of range", naming the distance instead of the
+// missing door. `BuildingContact` (Core) makes the three outcomes explicit; the projection below is the one
+// place that reads the engine to choose between them.
 
 internal sealed partial class ExecutionManager
 {
@@ -143,23 +163,23 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
         if (!TryGetHeldItem(slot, out Item? item) || item is not StardewValley.Object hay || hay.QualifiedItemId != "(O)178" || hay.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hay_not_held_in_requested_slot", $"slot={slot}");
-        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out _))
+        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, targetX, targetY, expectedTargetId, out Building? silo))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_changed", $"target={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
-            return this.TryBeginToolApproach(requestId, executionId, "deposit_silo_hay", farm, targetX, targetY, expectedTargetId,
+        if (!IsWithinBuildingContact(silo!, Game1.player))
+            return this.TryBeginBuildingApproach(requestId, executionId, "deposit_silo_hay", farm, silo!, expectedTargetId,
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteDepositSiloHay(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId), nowMs, requestedDeadlineMs);
         return this.ExecuteDepositSiloHay(executionId, requestId, slot, targetX, targetY, expectedTargetId);
     }
 
     private LocalExecutionReceipt ExecuteDepositSiloHay(string executionId, string requestId, int slot, int x, int y, string targetId)
     {
-        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, x, y, targetId, out StardewValley.Buildings.Building? silo))
+        if (Game1.player.currentLocation is not Farm farm || !TryResolveSilo(farm, x, y, targetId, out Building? silo))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_changed", $"target={x},{y}");
         if (!TryGetHeldItem(slot, out Item? item) || item is not StardewValley.Object hay || hay.QualifiedItemId != "(O)178" || hay.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hay_not_held_in_requested_slot", $"slot={slot}");
-        Vector2 door = silo!.getPointForHumanDoor().ToVector2();
-        if (!IsTileWithinChebyshevRadius(Game1.player, (int)door.X, (int)door.Y, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_out_of_range", $"target={targetId}");
+        if (!IsWithinBuildingContact(silo!, Game1.player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "silo_target_out_of_range",
+                $"target={targetId};tile={x},{y};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};contact={DescribeBuildingContact(silo!)}");
         int stackBefore = hay.Stack;
         int hayBefore = farm.piecesOfHay.Value;
         int remaining = farm.tryToAddHay(stackBefore);
@@ -218,12 +238,107 @@ internal sealed partial class ExecutionManager
             Game1.player.Items[slot] = null;
     }
 
-    private static bool TryResolveSilo(Farm farm, int x, int y, string expectedTargetId, out StardewValley.Buildings.Building? silo)
+    /// <summary>
+    /// Begins the walk to a building the actor is not yet in contact with, for any facility action that
+    /// interacts with the building itself rather than with a single named tile.
+    ///
+    /// The multi-tile approach form takes the contact tiles, so a door-less building is reached from ANY face
+    /// and the footprint tile that answered is the one the arrival is re-checked against. Handing it the
+    /// published <c>x,y</c> instead would walk the actor to the collapsed <c>(-1,-1)</c> door point - a tile
+    /// outside the building - and then measure arrival against the same wrong tile.
+    /// </summary>
+    private LocalExecutionReceipt TryBeginBuildingApproach(
+        string requestId,
+        string executionId,
+        string actionId,
+        GameLocation location,
+        Building building,
+        string expectedTargetId,
+        Func<string, string, LocalExecutionReceipt> onArrival,
+        long nowMs,
+        long requestedDeadlineMs)
+    {
+        (int X, int Y)[] contactTiles = BuildingApproachTargets(building);
+        if (contactTiles.Length == 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "building_unreachable",
+                $"building_type={building.buildingType.Value};tile={building.tileX.Value},{building.tileY.Value};footprint=empty");
+
+        return this.TryBeginToolApproach(
+            requestId,
+            executionId,
+            actionId,
+            location,
+            contactTiles[0],
+            contactTiles,
+            expectedTargetId,
+            onArrival,
+            nowMs,
+            requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// The building's contact shape as receipt evidence: which outcome was chosen and the tiles it covers, so
+    /// an "out of range" refusal names the relationship that was tested instead of only a distance.
+    /// </summary>
+    internal static string DescribeBuildingContact(Building building)
+    {
+        BuildingContact contact = BuildingContactOf(building);
+        return contact.Kind switch
+        {
+            BuildingContactKind.HumanDoor => $"human_door={contact.HumanDoor!.Value.X},{contact.HumanDoor.Value.Y}",
+            BuildingContactKind.Ring => $"ring={contact.Footprint.X},{contact.Footprint.Y},{contact.Footprint.Width},{contact.Footprint.Height}",
+            _ => "unreachable",
+        };
+    }
+
+    private static bool TryResolveSilo(Farm farm, int x, int y, string expectedTargetId, out Building? silo)
     {
         silo = farm.buildings.FirstOrDefault(candidate => candidate.buildingType.Value == "Silo"
             && candidate.getPointForHumanDoor() == new Point(x, y)
             && string.Equals(BuildSiloTargetId(farm, candidate), expectedTargetId, StringComparison.Ordinal));
         return silo is not null;
+    }
+
+    /// <summary>
+    /// Projects a live building into the engine-free <see cref="BuildingContact"/> the Core predicate takes,
+    /// so the Mod and Core cannot disagree about where a building may be touched from. See the file header
+    /// for the three engine shapes this collapses into three explicit outcomes.
+    /// </summary>
+    internal static BuildingContact BuildingContactOf(Building building)
+    {
+        var footprint = new FootprintRect(
+            building.tileX.Value,
+            building.tileY.Value,
+            building.tilesWide.Value,
+            building.tilesHigh.Value);
+        if (footprint.IsEmpty) return BuildingContact.Unreachable();
+
+        Point declared = building.GetData()?.HumanDoor ?? new Point(-1, -1);
+        return declared.X >= 0 && declared.Y >= 0
+            ? BuildingContact.WithHumanDoor(new TilePoint(building.tileX.Value + declared.X, building.tileY.Value + declared.Y), footprint)
+            : BuildingContact.WithoutHumanDoor(footprint);
+    }
+
+    /// <summary>
+    /// Whether an actor may interact with the building right now, using whichever relationship the building
+    /// actually has: a door is touched from its own or an adjacent tile, a door-less building from the ring
+    /// around its footprint. One rule for every door-less building, so a silo and a fish pond cannot drift
+    /// into two different answers.
+    /// </summary>
+    internal static bool IsWithinBuildingContact(Building building, Farmer actor) =>
+        BuildingContactOf(building).IsWithinContact(new TilePoint((int)actor.Tile.X, (int)actor.Tile.Y));
+
+    /// <summary>
+    /// The tiles a walk selector should treat as the target when the actor has to reach the building: the
+    /// door tile when there is one, the occupied footprint when there is not (the tiles worth standing beside
+    /// are that footprint's neighbours). Empty means refuse by name - there is nothing to stand beside.
+    /// </summary>
+    internal static (int X, int Y)[] BuildingApproachTargets(Building building)
+    {
+        System.Collections.Generic.IReadOnlyList<TilePoint> tiles = BuildingContactOf(building).ContactTiles();
+        (int X, int Y)[] result = new (int X, int Y)[tiles.Count];
+        for (int index = 0; index < tiles.Count; index += 1) result[index] = (tiles[index].X, tiles[index].Y);
+        return result;
     }
 
     private static bool IsEquippedLantern(int slot, out StardewValley.Tools.Lantern? lantern)

@@ -101,6 +101,19 @@ public readonly record struct BuildingContact
     }
 
     /// <summary>
+    /// The tiles an approach must be measured against: the door tile when there is one, the occupied
+    /// footprint when there is not. This is the dual of <see cref="IsWithinContact"/> - a walk selector
+    /// handed these tiles offers the neighbours this predicate accepts as arrival, and the tile it reports
+    /// back as reached is the one a re-check asks about.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<TilePoint> ContactTiles() => this.Kind switch
+    {
+        BuildingContactKind.HumanDoor => new[] { this.HumanDoor!.Value },
+        BuildingContactKind.Ring => this.Footprint.Tiles(),
+        _ => Array.Empty<TilePoint>(),
+    };
+
+    /// <summary>
     /// The eight neighbours of a door tile, in the deterministic order the approach selector already relies
     /// on: orthogonals first, then diagonals, each lowest-y then lowest-x.
     /// </summary>
@@ -152,6 +165,20 @@ public readonly record struct FootprintRect(int X, int Y, int Width, int Height)
         && tile.X >= this.X - 1 && tile.X <= this.X + this.Width
         && tile.Y >= this.Y - 1 && tile.Y <= this.Y + this.Height
         && !this.Contains(tile);
+
+    /// <summary>
+    /// Every tile the building occupies, lowest-y then lowest-x. This is the set an approach selector needs
+    /// for a building with no door: the tiles worth standing beside are the neighbours of these.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<TilePoint> Tiles()
+    {
+        if (this.IsEmpty) return Array.Empty<TilePoint>();
+        var tiles = new System.Collections.Generic.List<TilePoint>(this.Width * this.Height);
+        for (int y = this.Y; y < this.Y + this.Height; y += 1)
+        for (int x = this.X; x < this.X + this.Width; x += 1)
+            tiles.Add(new TilePoint(x, y));
+        return tiles;
+    }
 
     /// <summary>
     /// The ring tiles, orthogonals before diagonals and each group lowest-y then lowest-x, so a caller can
