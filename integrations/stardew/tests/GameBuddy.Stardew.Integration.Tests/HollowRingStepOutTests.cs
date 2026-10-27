@@ -45,6 +45,7 @@ public sealed class HollowRingStepOutTests
 {
     private const string MovementActions = "integrations/stardew/farmhandexecutioncontroller.movementactions.cs";
     private const string ResourceToolActions = "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs";
+    private const string BodyController = "integrations/stardew/StardewBodyController.cs";
 
     /// <summary>The one clause each in-range gate gains. Spelled once here, so the eight sites cannot drift.</summary>
     private const string HollowRingClause = "IsToolTargetUnderActor(Game1.player, targetX, targetY)";
@@ -238,17 +239,20 @@ public sealed class HollowRingStepOutTests
     public void WarpTilesStayCrossableEverywhereElse()
     {
         // The falsifier for an over-correction: making warp tiles unstandable outright would break
-        // `enter_exit` and every doorway. The exclusion belongs to the one predicate that chooses a tile to
-        // STOP on, and to nothing else - one definition, one call.
-        MethodBody(Read(MovementActions), "public LocalExecutionReceipt RequestLocalMove(")
+        // `enter_exit` and every doorway. The exclusion belongs to the predicates that choose a tile to
+        // STOP on, and to nothing else - one definition, and every caller is a stop.
+        MethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition(")
             .Should().NotContain("IsWarpBufferTile",
-                "move_to_tile keeps its own warp handling; a warp destination is still a legal walk target");
+                "enter_exit targets a warp tile by definition; filtering it here would seal the companion indoors");
+
+        MethodBody(Read(BodyController), "internal static bool IsWalkableTile(")
+            .Should().NotContain("Warp", "the traversal reading must stay clear of the warp table");
 
         int references = CountOccurrences(Read(MovementActions), "IsWarpBufferTile(")
             + CountOccurrences(Read(ResourceToolActions), "IsWarpBufferTile(");
-        references.Should().Be(2,
-            "one definition plus one call: the approach's standability. A further call would be a second "
-            + "opinion about which tiles the world may route through");
+        references.Should().Be(3,
+            "one definition plus the two STOP paths (the approach's stop candidate and the move substitution). "
+            + "A further call would be a second opinion about which tiles the world may route through");
     }
 
     // ---- nowhere to step out: a named refusal, never a forced move -------------------------

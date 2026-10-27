@@ -80,7 +80,12 @@ internal sealed partial class ExecutionManager
             Vector2? approach = SelectStandingApproachTile(
                 targetTile,
                 Game1.player.Tile,
-                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate),
+                // "Walkable" answers CROSSING and this substitute is where the walk ENDS, so the stop rule joins
+                // it here (design §3.1.1's three-way warp rule). Without it the substitution picked the exit
+                // blanket whenever that was the nearest walkable ring tile. The NAMED target stays unfiltered: a
+                // warp tile as the destination is a cross-map intent, handled by `nativeWarpTarget` above.
+                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate)
+                    && !IsWarpBufferTile(Game1.player.currentLocation, ((int)candidate.X, (int)candidate.Y)),
                 // The actor's OWN walkable component, not just "is this tile free".
                 StardewBodyController.BuildWalkableComponent(Game1.player.currentLocation, Game1.player)
                     ?? (_ => true));
