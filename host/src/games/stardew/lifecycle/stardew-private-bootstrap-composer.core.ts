@@ -5152,10 +5152,18 @@ function validateTestingDependencies(value: StardewPrivateBootstrapCoreDependenc
 function isPrivateModProfileStagingDependencies(value: unknown): value is PrivateModProfileStagingDependencies {
   return (
     isRecord(value) &&
-    exactKeys(value, ["readPackage", "createSecret", "nowMs"]) &&
+    // The reader is optional; the other three are the dependency's own body. A staging object that carries it is still a
+    // staging object - and one that does not is what a fixture and a root without a readable profile both look like.
+    exactKeys(
+      value,
+      value.readCompanionDisplayName === undefined
+        ? ["readPackage", "createSecret", "nowMs"]
+        : ["readPackage", "createSecret", "nowMs", "readCompanionDisplayName"],
+    ) &&
     typeof value.readPackage === "function" &&
     typeof value.createSecret === "function" &&
-    typeof value.nowMs === "function"
+    typeof value.nowMs === "function" &&
+    (value.readCompanionDisplayName === undefined || typeof value.readCompanionDisplayName === "function")
   );
 }
 
