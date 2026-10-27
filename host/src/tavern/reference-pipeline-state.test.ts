@@ -454,15 +454,28 @@ test(
   const swipeAuthority = createMountedTurnTransitionAuthority();
   await store.appendSwipeVariant(swipeAuthority.authority, fx.lease.chatThreadId, reply.messageId, "A second variant.");
   const withVariant = await fx.facade.read();
-  await internal.selectMountedSwipeVariant(fx.manifest, fx.lease, { messageId: reply.messageId, direction: "prev" });
+  // This suite's subject is the PROJECTION, and its fixture never drives Pi: the variant above names a text no
+  // session entry carries. The mounted ingress is therefore refused here rather than silently writing the store -
+  // which is the assertion below - and the projection half is driven through the store's own durable writer.
+  let ingressRefusal = "none";
+  try { await internal.selectMountedSwipeVariant(fx.manifest, fx.lease, { messageId: reply.messageId, direction: "prev" }); }
+  catch (error) { ingressRefusal = error instanceof Error ? error.message : String(error); }
+  const afterRefusal = await fx.facade.read();
+  await store.selectSwipe(swipeAuthority.authority, fx.lease.chatThreadId, reply.messageId, { direction: "prev" });
   const restored = await fx.facade.read();
   await fx.lease.close();
   await fx.authority.close();
-  process.stdout.write(JSON.stringify({ before, withVariant, restored }));
+  process.stdout.write(JSON.stringify({ before, withVariant, restored, ingressRefusal, afterRefusal }));
 `)) as Record<string, unknown>;
     const before = result.before as ReferencePipelineState;
     const withVariant = result.withVariant as ReferencePipelineState;
     const restored = result.restored as ReferencePipelineState;
+
+    // A store state no session entry can carry is a bounded refusal, not a silent no-op: the ingress says so by
+    // name and leaves the visible position exactly where the player had it. Without this the store would report
+    // one variant while the model kept reading another.
+    assert.equal(result.ingressRefusal, "state_reconciliation_required");
+    assert.deepEqual(result.afterRefusal, withVariant, "a refused ingress changes nothing the player can see");
 
     // The reply the drive committed is one position of a one-position set.
     const firstPosition = before.transcript.find((message) => message.text === "Synthetic companion reply.");

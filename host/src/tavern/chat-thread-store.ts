@@ -2282,14 +2282,9 @@ export function createChatThreadStore(
         const current = readStateFromDb(db, chatThreadId);
         const target = current.messages.find((message) => message.messageId === messageId);
         if (!target) throw new Error("message_not_found");
-        const swipes = target.swipes && target.swipes.length ? target.swipes : [target.text];
-        const currentIndex = target.activeSwipeIndex ?? 0;
         if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
-        let activeSwipeIndex = currentIndex;
-        if (selection.targetIndex !== undefined && selection.targetIndex >= 0 && selection.targetIndex < swipes.length)
-          activeSwipeIndex = selection.targetIndex;
-        else if (selection.direction === "next") activeSwipeIndex = Math.min(swipes.length - 1, currentIndex + 1);
-        else if (selection.direction === "prev") activeSwipeIndex = Math.max(0, currentIndex - 1);
+        const swipes = swipeTextsOf(target);
+        const activeSwipeIndex = nextSwipeIndex(swipes, target.activeSwipeIndex ?? 0, selection);
         db.prepare(
           "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
         ).run(swipes[activeSwipeIndex]!, activeSwipeIndex, chatThreadId, messageId);
@@ -4188,6 +4183,64 @@ function validateTurnVariantTarget(value: unknown): TurnVariantTarget {
   assertId("anchorMessageId", value.anchorMessageId);
   if (value.targetMessageId === value.anchorMessageId) throw new Error("invalid_chat_thread_turn_variant");
   return Object.freeze({ targetMessageId: value.targetMessageId, anchorMessageId: value.anchorMessageId });
+}
+
+/**
+ * The variants one reply row offers, oldest first. A row with no recorded set is a single position carrying
+ * its own text, which is the shape every reply written before variants existed has.
+ */
+function swipeTextsOf(message: ChatThreadMessage): readonly string[] {
+  return message.swipes !== undefined && message.swipes.length > 0 ? message.swipes : [message.text];
+}
+
+/**
+ * The index one swipe selection lands on: the named position when it is in range, otherwise one step in the
+ * requested direction, clamped to the set.
+ *
+ * ONE SPELLING, TWO LAYERS. The store writes this index into `active_swipe_index` and the mounted ingress
+ * resolves the session entry that carries the same variant, so a second copy of this arithmetic in the
+ * coordinator would let the two authorities disagree about which variant the player chose - which is exactly
+ * the defect this function was extracted to prevent.
+ */
+export function nextSwipeIndex(
+  swipes: readonly string[],
+  currentIndex: number,
+  selection: Readonly<{ targetIndex?: number; direction?: "prev" | "next" }>,
+): number {
+  if (
+    selection.targetIndex !== undefined &&
+    Number.isSafeInteger(selection.targetIndex) &&
+    selection.targetIndex >= 0 &&
+    selection.targetIndex < swipes.length
+  )
+    return selection.targetIndex;
+  if (selection.direction === "next") return Math.min(swipes.length - 1, currentIndex + 1);
+  if (selection.direction === "prev") return Math.max(0, currentIndex - 1);
+  return Math.min(Math.max(0, currentIndex), swipes.length - 1);
+}
+
+/**
+ * The position one reply row currently offers: its variant texts and the one it stands on.
+ *
+ * The two refusals are the store's own, because they are facts about the row rather than about the runtime: an
+ * id this Chat does not carry, and a row that is not her reply (the player's own line has no variants). Throwing
+ * those codes here is what keeps the mounted ingress's answer identical to `selectSwipe`'s.
+ *
+ * Exported because the mounted ingress has to resolve the SAME position the store is about to write, and a
+ * second derivation of "which texts is this row choosing between" is how the two layers would drift apart.
+ */
+export function readSwipePosition(
+  messages: readonly ChatThreadMessage[],
+  messageId: string,
+): Readonly<{ message: ChatThreadMessage; swipes: readonly string[]; currentIndex: number }> {
+  const message = messages.find((entry) => entry.messageId === messageId);
+  if (message === undefined) throw new Error("message_not_found");
+  if (message.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
+  return Object.freeze({
+    message,
+    swipes: swipeTextsOf(message),
+    currentIndex: message.activeSwipeIndex ?? 0,
+  });
 }
 
 /**

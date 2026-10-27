@@ -1,11 +1,11 @@
 /**
- * The Pi-side half of the three Chat operations that reshape a conversation for the model.
+ * The Pi-side half of the four Chat operations that reshape a conversation for the model.
  *
  * One is a same-position variant turn (`branchPiVariantAnchor`), one a rewind
  * (`rewindPiTranscriptTail`), one an in-place edit of a message the conversation already carries
- * (`editPiTranscriptEntry`). All three make the model's ACTIVE PATH equal the transcript the player
- * reads, all three refuse a session shape they cannot prove, and each hands its caller a `revert()`,
- * because the store and Pi cannot be atomic.
+ * (`editPiTranscriptEntry`), and one the player choosing among the variants such a turn produced
+ * (`resolvePiVariantEntry` + `selectPiVariantEntry`). All four make the model's ACTIVE PATH equal the
+ * transcript the player reads, and all four refuse a session shape they cannot prove.
  *
  * They differ in what the session file ends with, and that is what decides each one's mechanism. Pi
  * appends the prompt and the reply as children of the current leaf, and `SessionManager._buildIndex`
@@ -33,6 +33,11 @@
  * there. The projection the next request carries is then exactly one player
  * line and one reply, and the reply the player replaced is off the active
  * branch instead of duplicated in it.
+ *
+ * Of the four, only the swipe half and the variant half need no `revert()`: the variant half is
+ * followed by a prompt that makes its branch durable, and the swipe half is resolved completely
+ * before either layer is touched (see `resolvePiVariantEntry`). The rewind, edit and delete halves each
+ * hand back a `revert()` because the store and Pi cannot be atomic.
  *
  * TRANSITIONAL BINDING. The session-shape facts below stand in for a durable
  * Host-message-id to Pi-entry-id binding, which no authority records yet; the
@@ -87,6 +92,90 @@ export type PiVariantBranchResult =
       revert(): void;
     }>
   | Readonly<{ status: "refused"; reason: PiVariantBranchRefusal }>;
+
+/**
+ * The one entry a chosen swipe variant is carried by, resolved before either authority is touched.
+ *
+ * A reply position is one durable row with N variant texts, and the model's session carries one entry per
+ * variant a variant turn actually produced - the same 1:N the durable `tavern_message_entries` binding records
+ * (`chat-thread-store.ts`, `readTranscriptEntryBinding`). The chosen variant is therefore a TEXT, and the entry
+ * is the one bound to this row whose projected reply text is exactly that text. Zero or several candidates is
+ * not proof, so both refuse: guessing here would point the model at a variant the player did not choose, and a
+ * silent no-op would leave the store moved and the model behind, which is the defect this resolver prevents.
+ *
+ * The resolved answer carries the entry's own model content, which is the last fact the move needs. Handing it
+ * back here is what makes the move itself infallible: the caller can then write the store and move the leaf with
+ * no step between them that could refuse, so "both layers or neither" is structural rather than promised.
+ */
+export function resolvePiVariantEntry(
+  session: PiVariantBranchSession,
+  boundEntryIds: readonly string[],
+  variantText: string,
+): PiVariantEntryResolution {
+  const candidates = [...new Set(boundEntryIds)].flatMap((entryId) => {
+    if (piEntryReplyText(session, entryId) !== variantText) return [];
+    const content = editableContentOf(session.sessionManager.getEntry(entryId));
+    return content === null ? [] : [{ entryId, content }];
+  });
+  const only = candidates.length === 1 ? candidates[0]! : null;
+  if (only === null) return Object.freeze({ status: "refused", reason: "variant_entry_unavailable" });
+  return Object.freeze({ status: "resolved", entryId: only.entryId, content: only.content });
+}
+
+export type PiVariantEntryResolution =
+  | Readonly<{ status: "resolved"; entryId: string; content: ContextEditableContent }>
+  | Readonly<{ status: "refused"; reason: "variant_entry_unavailable" }>;
+
+/**
+ * Points the model's active path at the entry a chosen variant is carried by, durably.
+ *
+ * The mechanism is the rewind's, for the rewind's reason: Pi resets the leaf to the file's last entry on every
+ * re-open (`SessionManager._buildIndex`), so a bare leaf move would be undone by the next mount and the model
+ * would go back to reading the variant the player swiped away from. So the leaf is moved to the chosen entry
+ * and the vendor's own append-only edit of that entry's own content is appended as its child: the edit
+ * contributes nothing new, it is the file's last entry, and re-opening the session therefore lands on the
+ * chosen branch.
+ *
+ * The content arrives from `resolvePiVariantEntry` rather than being re-read, which is what makes this call
+ * unable to refuse. And it has no `revert()`: a true compensation is impossible for a leaf move, because
+ * branching back leaves the appended edit as the file's last entry, so the undo would not itself survive the
+ * next mount. The caller replaces the compensation with an ordering instead - every fact proved first, then the
+ * durable write, then this move - so the second layer cannot be left behind by a refusal.
+ */
+export function selectPiVariantEntry(
+  session: PiVariantBranchSession,
+  entryId: string,
+  content: ContextEditableContent,
+): void {
+  branchTo(session, entryId);
+  session.sessionManager.appendContextEdit(entryId, { content });
+  session.refreshContext();
+}
+
+/**
+ * The last companion line the model's active path carries, or `null` when the path ends on no reply.
+ *
+ * The leaf itself is not the answer: a durable cut is pinned by an append-only CONTEXT EDIT, so the leaf is
+ * usually the edit rather than the message it speaks for. What matters is what the next request carries, which
+ * is the projection's own tail - read through the same pairing every other operation uses, so an edit that
+ * replaced the text is read as the text it now contributes.
+ */
+export function piActivePathTailReplyText(session: PiVariantBranchSession): string | null {
+  const replies = modelCarriedRows(session).filter((row) => row.role === "companion");
+  return replies.length === 0 ? null : replies[replies.length - 1]!.text;
+}
+
+/**
+ * The reply text one session entry contributes, or `null` when it carries none.
+ *
+ * The same projection the transcript row was written from (`chatTranscriptAssistantText`), which is what makes
+ * "the entry that carries the variant the player chose" an exact question rather than a positional guess.
+ */
+export function piEntryReplyText(session: PiVariantBranchSession, entryId: string): string | null {
+  const entry = session.sessionManager.getEntry(entryId);
+  if (entry?.type !== "message") return null;
+  return chatTranscriptAssistantText(entry.message);
+}
 
 /** The branched half of a variant branch, which its caller keeps to revert it. */
 export type PiVariantBranch = Extract<PiVariantBranchResult, { status: "branched" }>;

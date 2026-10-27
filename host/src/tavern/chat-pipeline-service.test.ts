@@ -258,6 +258,12 @@ const mountPreamble = `
     );
   }
   async function driveVariantToCompleted(fx, position) {
+    const bindings = await import(bindingsUrl);
+    const durableBefore = await fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+    const anchorRow = [...durableBefore.messages]
+      .reverse()
+      .find((m) => m.kind === "player" && m.text === position.anchorText);
+    if (anchorRow === undefined) throw new Error("anchor_row_unavailable");
     return internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
       internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
         const sessionManager = scope.runtimeSession.sessionManager;
@@ -265,9 +271,19 @@ const mountPreamble = `
           sessionManager.appendMessage({ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() });
           sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: replyText }] });
         };
+        const bindTurn = async (before, replyText) => {
+          const proven = bindings.bindSettledPromptEntries(sessionManager, before, { playerText: position.anchorText, replyText });
+          const rows = proven.map((binding) => Object.freeze({
+            messageId: binding.role === "player" ? anchorRow.messageId : position.targetMessageId,
+            entryId: binding.entryId,
+          }));
+          await scope.recordTranscriptEntryBinding(rows);
+        };
         // The reply the player already had, as the session received it when that
         // line was sent.
+        const beforeCommitted = bindings.sessionEntryIds(sessionManager);
         appendTurn(position.anchorText, position.committedReplyText);
+        await bindTurn(beforeCommitted, position.committedReplyText);
         const times = [await nextTime(), await nextTime(), await nextTime(), await nextTime(), await nextTime()];
         await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
         await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
@@ -275,7 +291,9 @@ const mountPreamble = `
         // the player's line first, then append this turn's prompt and answer exactly
         // as Pi's prompt would.
         const activation = await scope.branchVariantAnchor(position.anchorText);
+        const beforeVariant = bindings.sessionEntryIds(sessionManager);
         appendTurn(position.anchorText, position.text);
+        await bindTurn(beforeVariant, position.text);
         const modelTexts = sessionManager
           .buildSessionProjection()
           .messages.map((message) =>
@@ -289,7 +307,14 @@ const mountPreamble = `
         });
         await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: times[3] });
         await scope.transitionPresentation({ operation: "complete", completedAtMs: times[4] });
-        return Object.freeze({ activation, modelTexts, committed });
+        return Object.freeze({
+          activation,
+          modelTexts,
+          committed,
+          // The mount's own session object, which the coordinator keeps: a read through it after a swipe is a
+          // read of the model's real active path, not a second derivation of it.
+          session: scope.runtimeSession.session,
+        });
       }),
     );
   }
@@ -992,6 +1017,119 @@ test(
     assert.equal(output.restoredIndex, 0);
     assert.deepEqual(output.restoredSwipes, [output.committedSample, output.regeneratedSample]);
     assert.equal(output.restoredMessages, 3);
+  },
+);
+
+test(
+  "a swipe selection moves the model's leaf to the variant the player chose, not just the store's row",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const bindings = await import(bindingsUrl);
+  const { SessionManager } = await import(piUrl);
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "qrstuvwxyzabcdefghijkl", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveToTerminal(fx, "completed");
+  const durable = await resume();
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const playerMessage = durable.messages.find((m) => m.kind === "player");
+  const tailMessage = durable.messages[durable.messages.length - 1];
+  const committedSample = tailMessage.text;
+  const regeneratedSample = "Regenerated companion reply, the position's second variant.";
+  // The variant turn itself: the service accepts it at this exact reply position, and the provider path below
+  // then does what the live runner does with that acceptance.
+  const accepted = await run(async () =>
+    service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(tailMessage.messageId) }, "rstuvwxyzabcdefghijklm"));
+  // The provider path a regenerate turn runs, with the durable binding the live runner records. That binding is
+  // what names the session entry carrying each variant, so it is the join the swipe selection resolves through.
+  const driven = await driveVariantToCompleted(fx, {
+    targetMessageId: tailMessage.messageId,
+    anchorText: playerMessage.text,
+    committedReplyText: committedSample,
+    text: regeneratedSample,
+  });
+  const session = driven.session;
+  const leafText = () => bindings.piActivePathTailReplyText(session);
+  const sessionManager = session.sessionManager;
+  const projected = () => sessionManager.buildSessionProjection().messages
+    .map((m) => m.content.filter((p) => p.type === "text").map((p) => p.text).join(""));
+  const before = { leaf: leafText(), projected: projected() };
+  const committedRow = (await resume()).messages.find((m) => m.messageId === tailMessage.messageId);
+  // Away: the player chooses the first variant.
+  const awayResult = await run(async () =>
+    service.selectSwipe({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(tailMessage.messageId), direction: "prev" }));
+  const awayRow = (await resume()).messages.find((m) => m.messageId === tailMessage.messageId);
+  const away = { leaf: leafText(), projected: projected() };
+  // And back: the player chooses the regenerated variant again.
+  const backResult = await run(async () =>
+    service.selectSwipe({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(tailMessage.messageId), direction: "next" }));
+  const backRow = (await resume()).messages.find((m) => m.messageId === tailMessage.messageId);
+  const back = { leaf: leafText(), projected: projected() };
+  // What the session file says after a re-open: the leaf pointer is not durable on its own, so this is the half
+  // that proves the move survived, rather than holding only until the next mount.
+  const reopened = SessionManager.continueRecent(sessionManager.getCwd(), sessionManager.getSessionDir());
+  const reopenLeaf = bindings.piActivePathTailReplyText({ sessionManager: reopened });
+  const reopenedProjected = reopened.buildSessionProjection().messages
+    .map((m) => m.content.filter((p) => p.type === "text").map((p) => p.text).join(""));
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    committedSample, regeneratedSample, startCalls, accepted: accepted.ok ? accepted.value.disposition : accepted,
+    committed: { text: committedRow.text, index: committedRow.activeSwipeIndex },
+    awayResult: awayResult.ok ? awayResult.value.message : awayResult,
+    away: { text: awayRow.text, index: awayRow.activeSwipeIndex, leaf: away.leaf, projected: away.projected },
+    backResult: backResult.ok ? backResult.value.message : backResult,
+    back: { text: backRow.text, index: backRow.activeSwipeIndex, leaf: back.leaf, projected: back.projected },
+    before,
+    reopenLeaf,
+    reopenedProjected,
+  }));
+`);
+    const committedSample = output.committedSample as string;
+    const regeneratedSample = output.regeneratedSample as string;
+    // The position really carried two variants, and the player was reading the second one: without that the rest
+    // of this test would be asserting agreement about a position that could not disagree.
+    assert.equal(output.accepted, "accepted");
+    assert.deepEqual(output.committed, { text: regeneratedSample, index: 1 });
+
+    const away = output.away as { text: string; index: number; leaf: string | null; projected: string[] };
+    const back = output.back as { text: string; index: number; leaf: string | null; projected: string[] };
+
+    // THE DUAL-LAYER ASSERTION. The store's own row and the model's own leaf name the same variant, in both
+    // directions. Before the fix the first pair held and the second did not: the row said `committedSample`
+    // while the leaf stayed on the regenerated entry, which is exactly the split this test exists to catch. It
+    // can fail because `leaf` is read from the live session the mount keeps (`piActivePathTailReplyText`), not from
+    // the store - so making `selectMountedSwipeVariant` a store-only write again turns `away.leaf` into the
+    // regenerated text and this assertion red.
+    assert.equal(away.text, committedSample, "the row shows the variant the player chose");
+    assert.equal(away.index, 0, "the store's active index moved with it");
+    assert.equal(away.leaf, away.text, "the model's leaf points at the same variant as the store's row");
+
+    assert.equal(back.text, regeneratedSample, "the row shows the other variant on the way back");
+    assert.equal(back.index, 1, "the store's active index moved back too");
+    assert.equal(back.leaf, back.text, "the model's leaf moved back with it");
+
+    // The projection is the third reading of the same fact, and it is the one the next request would carry: the
+    // model reads the chosen variant exactly once and the other one not at all.
+    assert.equal(away.projected.filter((text) => text === committedSample).length, 1);
+    assert.equal(away.projected.filter((text) => text === regeneratedSample).length, 0);
+    assert.equal(back.projected.filter((text) => text === regeneratedSample).length, 1);
+    assert.equal(back.projected.filter((text) => text === committedSample).length, 0);
+
+    // ...and the move is durable, which a leaf pointer alone is not: a re-open lands on the branch the last
+    // selection chose rather than on whatever the file happened to end with. Without the append-only edit pinned
+    // to the chosen entry, a re-open would land on the entry the variant turn appended last and the model would
+    // silently go back to reading a variant the store does not show.
+    assert.equal(output.reopenLeaf, back.text, "a re-opened session lands on the variant the player chose");
+    assert.notEqual(output.reopenLeaf, committedSample, "...and not on the variant they swiped away from");
+    const reopenedProjected = output.reopenedProjected as string[];
+    assert.equal(reopenedProjected.filter((text) => text === regeneratedSample).length, 1);
+    assert.equal(reopenedProjected.filter((text) => text === committedSample).length, 0);
   },
 );
 

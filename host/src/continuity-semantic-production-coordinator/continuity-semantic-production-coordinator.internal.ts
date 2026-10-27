@@ -54,7 +54,9 @@ import {
   branchPiVariantAnchor,
   deletePiTranscriptEntry,
   editPiTranscriptEntry,
+  resolvePiVariantEntry,
   rewindPiTranscriptTail,
+  selectPiVariantEntry,
   sessionHoldsTranscriptRow,
   type PiTranscriptMessage,
 } from "../pi-session-variant-branch.internal.js";
@@ -65,6 +67,8 @@ import {
   createChatThreadStore,
   ExactThreadNotFoundError,
   ExactThreadSurfaceMismatchError,
+  nextSwipeIndex,
+  readSwipePosition,
   transitionMountedProviderStart,
   transitionMountedPresentation,
 } from "../tavern/chat-thread-store.js";
@@ -1312,11 +1316,50 @@ export async function selectMountedSwipeVariant(
     input.messageId.length === 0
   )
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_swipe_selection_unavailable");
+  const runtimeSession = record.providerRuntimeSession;
+  if (runtimeSession === undefined)
+    throw refuseMountedMutation("swipe session-missing", "semantic_chat_runtime_swipe_selection_unavailable");
   const store = record.store();
-  return await store.selectSwipe!(record.transitionAuthority.authority, record.chatThreadId, input.messageId, {
-    ...(input.targetIndex === undefined ? {} : { targetIndex: input.targetIndex }),
-    ...(input.direction === undefined ? {} : { direction: input.direction }),
-  });
+  const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  // The store's own position facts, resolved by the store's own arithmetic (`nextSwipeIndex`), so this ingress
+  // cannot disagree with the row it is about to write. A row this Chat does not carry, and a row that is not
+  // her reply, throw the store's bounded codes exactly as `selectSwipe` always did.
+  const position = readSwipePosition(state.messages, input.messageId);
+  const activeSwipeIndex = nextSwipeIndex(position.swipes, position.currentIndex, input);
+  const variantText = position.swipes[activeSwipeIndex];
+  const bound =
+    typeof store.readTranscriptEntryBinding === "function"
+      ? await store.readTranscriptEntryBinding(record.chatThreadId, input.messageId)
+      : [];
+  const resolved =
+    variantText === undefined ? undefined : resolvePiVariantEntry(runtimeSession.session, bound, variantText);
+  // A store state no session entry can carry is refused HERE, before either authority moves. Writing the store
+  // first and moving the leaf afterwards is not an option this operation has: a leaf move cannot be compensated
+  // (branching back leaves the appended edit as the session file's last entry, so the undo would not survive the
+  // next mount). So every fact the move depends on is proved up front, and the move that follows a successful
+  // store write cannot refuse - which is both layers or neither, without a compensation that does not exist.
+  //
+  // The code is `state_reconciliation_required` rather than a new one: the fact is exactly that the transcript and
+  // the model disagree about which variant a position stands on (a variant written without the entry that carries
+  // it, which is what a turn that died at the provider leaves), and writing the store anyway would make the split
+  // permanent. It is not the ingress's runtime code - the runtime is fine - and it is not a delete code, which
+  // would tell the player the wrong thing about a swipe.
+  if (resolved === undefined || resolved.status !== "resolved") {
+    process.stderr.write("[swipe] no session entry carries the chosen variant\n");
+    throw new SemanticProductionCoordinatorError("state_reconciliation_required");
+  }
+  const selected = await store.selectSwipe!(
+    record.transitionAuthority.authority,
+    record.chatThreadId,
+    input.messageId,
+    {
+      // The absolute position this ingress resolved, never the direction: a concurrent append must not be able to
+      // choose a different variant from the one whose session entry was just proved.
+      targetIndex: activeSwipeIndex,
+    },
+  );
+  selectPiVariantEntry(runtimeSession.session, resolved.entryId, resolved.content);
+  return selected;
 }
 
 /**
