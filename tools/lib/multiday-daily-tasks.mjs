@@ -34,7 +34,7 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
     "machine_inspect",
     "collect_building_chest_output",
   ]),
-  town_errand: Object.freeze(["travel", "talk_to_npc", "ship_item"]),
+  town_errand: Object.freeze(["travel", "talk_to_npc"]),
 });
 
 /**

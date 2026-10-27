@@ -346,14 +346,14 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   water_and_harvest: "地里该浇的浇一遍，长好的收下来。",
   forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
   animals_and_machines: "棚里的牲口和那些机器都过一遍。",
-  town_errand: "跑一趟镇上，有点东西要送、有人要说话。",
+  town_errand: "去一趟镇上，找个人说说话。",
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
   water_and_harvest: "water what needs watering and bring in what is ripe. ",
   forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
   animals_and_machines: "go round the animals and the machines in the shed. ",
-  town_errand: "run into town - something to deliver and someone to talk to. ",
+  town_errand: "go into town and talk to somebody there. ",
 });
 
 const SCENARIO_PROMPTS = Object.freeze({
