@@ -323,7 +323,29 @@ export class CompanionEventPump {
         const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
         return Object.freeze({ ...factWithoutProjection, payload: projection });
       });
-      const events = [...normalizedInputs, ...deliveredFacts.map((fact) => normalizeFact(fact))].sort(compareEvents);
+      // `events` is the PRESENTATION projection, not a second copy of the facts.
+      //
+      // Its only production consumer is `canonicalPresentationSource`
+      // (`host/src/companion-loop.ts:537`), which reads exactly two things: `player_input` entries, and
+      // `world_fact` entries whose semantic kind is salient. Measured 2026-10-27: a 131KB batch carried 58KB
+      // of `worldFacts` and the SAME 58KB again under `events`, both 88 semantic events that consumer never
+      // looks at. `input` reached 466,568 tokens and the model answered `output: 1, stopReason: "length"`
+      // twelve times.
+      //
+      // What stays: the snapshot (it is the state the rest of the batch describes, and its bounded projection
+      // is already the model-facing form) and `world_fact`. What goes: `semantic_event` and
+      // `execution_receipt`, which the consumer never reads and which arrive in bulk.
+      //
+      // `worldFacts` is untouched and still carries every fact: that is the model-facing authoritative list.
+      // `triggerEventIds` is untouched: it is the Host's delivery correlation, and a fact still present in
+      // `worldFacts` must not lose its trigger identity.
+      const presentationKinds = new Set(["snapshot", "world_fact"]);
+      const events = [
+        ...normalizedInputs,
+        ...deliveredFacts
+          .filter((fact) => fact.kind !== undefined && presentationKinds.has(fact.kind))
+          .map((fact) => normalizeFact(fact)),
+      ].sort(compareEvents);
       const serialized = JSON.stringify({
         kind: "gamebuddy_fact_batch",
         batchId,
