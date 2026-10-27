@@ -3469,6 +3469,52 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         int weedCount = Math.Max(1, propBudget / 4);
         int stoneCount = Math.Max(1, propBudget / 2);
         int cropCount = Math.Max(1, propBudget / 4);
+
+        // TREES AND FORAGE, placed FIRST because a tree is a walkability blocker.
+        //
+        // The placement search protects only the door; earlier props are deliberately left unprotected because
+        // requiring every candidate to satisfy several reachability floods refused 7 of 8 stones (see the
+        // search's own comment). Trees placed LAST therefore walled off props already accepted: measured
+        // 2026-10-28, `dropped=5; kept=18`, which crosses the one-quarter bound and refused the world before a
+        // turn ran. First is the durable order: everything after is judged against a map that already has them.
+        //
+        // The tree recipe is the live-verified WIA fixture's (ModEntry.Fixtures.WiaToolApproach.cs:72-83).
+        int treesPlaced = 0;
+        for (int index = 0; index < PlaySessionTreeCount; index += 1)
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? treeSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            if (treeSpot is null)
+            {
+                this.Monitor.Log(
+                    $"GameBuddy play-session placed {treesPlaced} of {PlaySessionTreeCount} trees before the ground ran out",
+                    LogLevel.Warn);
+                break;
+            }
+            StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
+            tree.health.Value = 1f;
+            farm.terrainFeatures.Add(treeSpot.Value.TargetTile, tree);
+            provisioned.Add($"tree={(int)treeSpot.Value.TargetTile.X},{(int)treeSpot.Value.TargetTile.Y}");
+            provisionedTiles.Add(treeSpot.Value.TargetTile);
+            treesPlaced += 1;
+        }
+
+        int foragePlaced = 0;
+        for (int index = 0; index < PlaySessionForageCount; index += 1)
+        {
+            (Vector2 TargetTile, Vector2 StandingTile)? forageSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            if (forageSpot is null)
+            {
+                this.Monitor.Log(
+                    $"GameBuddy play-session placed {foragePlaced} of {PlaySessionForageCount} forage items before the ground ran out",
+                    LogLevel.Warn);
+                break;
+            }
+            farm.objects.Add(forageSpot.Value.TargetTile, new StardewValley.Object("18", 1));
+            provisioned.Add($"forage={(int)forageSpot.Value.TargetTile.X},{(int)forageSpot.Value.TargetTile.Y}");
+            provisionedTiles.Add(forageSpot.Value.TargetTile);
+            foragePlaced += 1;
+        }
+
         for (int index = 0; index < weedCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
@@ -3563,61 +3609,6 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         }
         if (plantedCrops != 4)
             throw new InvalidOperationException("fixture_native_local_play_session_crop_count_mismatch");
-
-        // TREES AND FORAGE, because two of the daily tasks named things this world did not contain.
-        //
-        // `forage_and_trees` asked for "pick up what is there, shake what can be shaken" and the fixture placed
-        // only stones, weeds, grass and crops - so the task measured the absence of a prop rather than the
-        // companion's ability to work one. Adding the props is the fix; changing the task to something the
-        // fixture already had would have measured a different capability and called it the same name.
-        //
-        // The tree recipe is the live-verified WIA fixture's (`ModEntry.Fixtures.WiaToolApproach.cs:72-83`):
-        // mature stage, health 1 so one axe swing finishes it, then validated after placement.
-        int treesPlaced = 0;
-        for (int index = 0; index < PlaySessionTreeCount; index += 1)
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
-            if (spot is null)
-            {
-                this.Monitor.Log(
-                    $"GameBuddy play-session placed {treesPlaced} of {PlaySessionTreeCount} trees before the ground ran out",
-                    LogLevel.Warn);
-                break;
-            }
-            StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
-            tree.health.Value = 1f;
-            farm.terrainFeatures.Add(spot.Value.TargetTile, tree);
-            if (!farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? placedTree)
-                || !ReferenceEquals(placedTree, tree)
-                || tree.stump.Value
-                || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage)
-                throw new InvalidOperationException("fixture_native_local_play_session_tree_placement_invalid");
-            provisioned.Add($"tree={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
-            provisionedTiles.Add(spot.Value.TargetTile);
-            standingTile ??= spot.Value.StandingTile;
-            treesPlaced += 1;
-        }
-
-        // Forage rides the same placement rule as every other prop, and the item id is a real forageable: a
-        // Daffodil (O)18 in spring. `pickup_forage` needs an object the ground can host, which is what the
-        // search already guarantees.
-        int foragePlaced = 0;
-        for (int index = 0; index < PlaySessionForageCount; index += 1)
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
-            if (spot is null)
-            {
-                this.Monitor.Log(
-                    $"GameBuddy play-session placed {foragePlaced} of {PlaySessionForageCount} forage items before the ground ran out",
-                    LogLevel.Warn);
-                break;
-            }
-            StardewValley.Object forage = new("18", 1);
-            farm.objects.Add(spot.Value.TargetTile, forage);
-            provisioned.Add($"forage={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
-            provisionedTiles.Add(spot.Value.TargetTile);
-            foragePlaced += 1;
-        }
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
