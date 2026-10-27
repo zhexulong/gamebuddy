@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 import {
   buildChatCompanionSystemPrompt,
@@ -200,6 +201,49 @@ test("the Game conduct paces a remark without a count of words or of actions", (
   assert.match(game, /A brief remark goes a long way/);
   assert.match(game, /never list your steps/);
   assert.match(game, /You may speak while you work/);
+});
+
+test("the Game conduct fits one spoken turn inside the bubble the player reads from", () => {
+  // The bubble is a physically small, transitory box: `companion-delivery-pacing.ts`
+  // delivers at most `lengthBudget.maxChars` characters per piece and splits at
+  // sentence ends, and `companion-interaction-gate.mjs` fails a turn past 120. The
+  // conduct said only "a brief remark goes a long way", so a live run answered in
+  // 157/178/144-character turns. The number here is derived from the delivery
+  // budget rather than restated, so changing the budget fails this line instead of
+  // leaving the prompt describing a box the surface no longer has.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  const budget = GAME_DELIVERY_PACING.lengthBudget;
+  assert.ok(budget !== null, "the Game surface must declare a bubble budget for this case to mean anything");
+  assert.ok(
+    game.includes(`One bubble holds about ${budget.maxChars} characters`),
+    `the conduct must state the ${budget.maxChars}-character bubble it is spoken into`,
+  );
+  assert.match(game, /say one thing per reply/);
+  // Structure is what makes a short line read as a document instead of as speech.
+  assert.match(game, /No markdown headings, lists, bold or block quotes/);
+  assert.match(game, /首先/);
+  assert.match(game, /总结/);
+  // A bracketed beat is never a body: the parenthesis becomes audio the voice
+  // performs, and an asterisk beat is dropped by the bubble entirely.
+  assert.match(game, /Write no bracketed stage direction at all/);
+  assert.match(game, /\*a sigh\*/);
+  assert.match(game, /dropped from the bubble entirely/);
+});
+
+test("the Game conduct turns an obstacle and a service register into a person", () => {
+  // Two registers the companion falls into when it has no line for them: the
+  // Mod's reason for a refusal (a live run read `gift_given` / `quest_25_completed`
+  // aloud) and the host answering a customer ("好的，我这就为您……"). Both are
+  // machine talk in the player's ear, so the conduct names them as such.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /the player hears a person's reaction to the obstacle, never the reason it happened/);
+  assert.match(game, /no reason code, no exhaustion threshold, no field name/);
+  assert.match(game, /assistant register/);
+  assert.match(game, /祝你玩得开心/);
+  // The two correctness lines this block already carried stay untouched: an
+  // unobserved NPC reaction and the emote channel are contract, not style.
+  assert.match(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
+  assert.match(game, /Body language goes through the native actions stardew_express_emote and stardew_face_direction/);
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {

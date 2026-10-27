@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { atomicWriteFile, type PathLockOptions, withPathLock } from "./path-lock.js";
 
 const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
@@ -408,6 +409,18 @@ function companionLanguageName(locale: string): string {
 }
 
 /**
+ * How many characters one Game bubble delivers, read from the pacing policy that
+ * actually splits the reply (`GAME_DELIVERY_PACING`). The conduct states this number,
+ * so it has to be the number the surface uses; `lengthBudget` is nullable only because
+ * Chat switches it off, so its absence on Game is a wiring fault, not a vague sentence.
+ */
+function gameBubbleMaxChars(): number {
+  const budget = GAME_DELIVERY_PACING.lengthBudget;
+  if (budget === null) throw new Error("game_bubble_length_budget_missing");
+  return budget.maxChars;
+}
+
+/**
  * Game-surface conduct shared by every Game companion runtime.
  *
  * The Game surface has native action channels (movement, stardew_express_emote,
@@ -436,16 +449,35 @@ function companionLanguageName(locale: string): string {
  * belongs, never how long it is. It also stops fighting the card, which asks for exactly
  * that line in the default profile's `expressionStyle` ("When working, says what it is
  * doing 为你").
+ *
+ * LENGTH, STRUCTURE AND REGISTER ARE THE SURFACE'S OWN FACTS HERE.
+ *
+ * The block used to bound length with one adjective ("a brief remark goes a long way") and
+ * named nothing else, and live runs answered in 157/178/144-character turns: paragraphs in a
+ * box the player cannot scroll, shaped like a status document, in the voice of a host. No
+ * imported card is obliged to say anything about that, so the floor says it instead. The
+ * character count is DERIVED from the delivery policy that splits the reply, never restated.
+ *
+ * Deliberately absent: anything shaping a turn beyond how much one utterance carries, a
+ * banned list of dialect particles (a card's voice may carry them), and any restatement of
+ * the persona. The observation-honesty and emote-channel rules are contract, not style.
+ *
+ * Rendered one rule per line (joined with "\n"): joined as one paragraph, ten rules hide
+ * their own structure from whoever reviews the next change here.
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself, like a friend playing together.",
   'You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure ("先拿锄头，再翻土，然后浇水"). A brief remark goes a long way, and the surface carries one per reply: say it as you begin a stretch of work, then work quietly until you are done.',
+  `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, so say one thing per reply and stop when it has been said.`,
+  "One utterance per reply. No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble is one spoken line, so structure in it reads as a document where a person was talking.",
   "Only state what you actually observed. You cannot see an NPC's feelings, expression or words unless the game reported them back to you, so never claim an NPC smiled, beamed, was delighted, or said something on your account. Tell the player what you did (\"the cauliflower is delivered\") and leave the NPC's reaction out; if you care, say you hope they liked it rather than asserting they did.",
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
-  "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. A full-width parenthesis in text is an audio tag the voice channel performs instead of speaking （轻声）, so a body action written there is never performed and reaches the player as prose.",
+  "When something blocks you or refuses what you asked for, the player hears a person's reaction to the obstacle, never the reason it happened: no reason code, no exhaustion threshold, no field name. Somebody who is tired, muddy or out of light says so; the machine's explanation is not yours to say.",
+  "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body the player can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches the player.",
   'Speak as the partner you are: decide and act, and let the player redirect you if they want. Offer a division of labour ("你收土豆，我去喂鸡"), say what you think of the situation ("今天下雨，正是下矿的好时候"), or name what you are about to do - never ask the player what you should do next.',
   'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to the player ("地浇好了，接下来你想去南瓜地还是去鸡舍？").',
-].join(" ");
+  "Talk to the player, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, and no summarising back what you just said you would do.",
+].join("\n");
 
 export function createIdentityProfileBinding(
   identityKey: string,
