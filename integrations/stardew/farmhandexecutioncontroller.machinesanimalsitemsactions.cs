@@ -704,9 +704,33 @@ internal sealed partial class ExecutionManager
                 && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
-        // Range against the villager's current tile -- what the inspection needs.
+        // Range against the villager's current tile -- what the inspection needs. Out of range means
+        // walk in, like `talk_to_npc`: the villager follows a daily schedule, so a refusal here would be
+        // a race the caller cannot win by retrying. The arrival path re-resolves the NPC and refuses by
+        // name if it moved out of reach in the meantime.
         if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
+            return this.TryBeginToolApproach(requestId, executionId, "inspect_npc_relationship", location, (int)npc.Tile.X, (int)npc.Tile.Y, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInspectNpcRelationship(arrivalExecutionId, arrivalRequestId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+        return this.ExecuteInspectNpcRelationship(executionId, requestId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// The one inspection body, reached both in range and on arrival. It re-resolves the villager by
+    /// name-binding rather than reusing the NPC object captured before the walk: a villager moves, and an
+    /// object captured two seconds ago can be in another room.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteInspectNpcRelationship(string executionId, string requestId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        StardewValley.NPC? npc = location.characters
+            .OfType<StardewValley.NPC>()
+            .FirstOrDefault(candidate => candidate.IsVillager
+                && !string.IsNullOrWhiteSpace(candidate.Name)
+                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        if (npc is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
+        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_out_of_reach_after_approach", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
         if (!Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? friendship))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "friendship_fact_unavailable", $"npc={npc.Name}");
 
@@ -793,9 +817,37 @@ internal sealed partial class ExecutionManager
                 && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
-        // Range against the villager's current tile -- what the interaction needs.
+        // Range against the villager's current tile -- what the interaction needs. Out of range means
+        // walk in, like `talk_to_npc`: a villager follows a daily schedule, so a refusal here is a race
+        // the caller cannot win by retrying. The arrival path re-resolves the NPC by name-binding and
+        // refuses by name if it moved away in the meantime.
         if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
+            return this.TryBeginToolApproach(requestId, executionId, "interact_npc_with_item", location, (int)npc.Tile.X, (int)npc.Tile.Y, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteInteractNpcWithItem(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+        return this.ExecuteInteractNpcWithItem(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// The one interaction body, reached both in range and on arrival. It re-resolves the villager by
+    /// name-binding rather than reusing the NPC captured before the walk, and re-checks the item the
+    /// request named, because both can change while the actor walks.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteInteractNpcWithItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object offered || offered.Stack < 1)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
+        if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
+        StardewValley.NPC? npc = location.characters
+            .OfType<StardewValley.NPC>()
+            .FirstOrDefault(candidate => candidate.IsVillager
+                && !string.IsNullOrWhiteSpace(candidate.Name)
+                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        if (npc is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
+        if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_out_of_reach_after_approach", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
 
         Farmer player = Game1.player;
         // Mirrors NPC.tryToReceiveActiveObject `if (!probe) { who.Halt();

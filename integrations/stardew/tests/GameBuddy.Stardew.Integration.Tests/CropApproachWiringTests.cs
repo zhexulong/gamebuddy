@@ -106,4 +106,48 @@ public sealed class CropApproachWiringTests
 
         throw new System.InvalidOperationException($"{signature} has unbalanced braces");
     }
+
+    [Theory]
+    [InlineData("inspect_npc_relationship", "InspectNpcRelationship")]
+    [InlineData("interact_npc_with_item", "InteractNpcWithItem")]
+    public void AnOutOfRangeNpcActionWalksInInsteadOfRefusing(string actionId, string bodyName)
+    {
+        // The villager actions gate on the NPC's LIVE tile rather than a request tile, so the predicate
+        // reads `(int)npc.Tile.X` and the generic case above cannot match it. The rule is the same: out of
+        // range means walk in. A refusal here is a race the caller cannot win by retrying, because the
+        // villager keeps walking.
+        string request = MethodBody(System.IO.File.ReadAllText(RepositoryFile(Machines)),
+            $"public LocalExecutionReceipt RequestLocal{bodyName}(");
+
+        int gate = request.IndexOf("if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))", System.StringComparison.Ordinal);
+        gate.Should().BeGreaterThan(0, $"{actionId} still gates on the villager's live tile");
+
+        int gateEnd = request.IndexOf('}', gate);
+        string falseBranch = request.Substring(gate, gateEnd - gate);
+
+        falseBranch.Should().Contain("TryBeginToolApproach",
+            $"{actionId} must walk in when the villager is out of reach");
+        falseBranch.Should().NotContain("target_out_of_range",
+            $"{actionId} must not refuse a villager it can simply walk to");
+    }
+
+    [Fact]
+    public void TheNpcArrivalPathReResolvesTheVillagerRatherThanReusingTheWalkStartObject()
+    {
+        // A villager moves while the actor walks. Reusing the NPC captured before the walk would aim the
+        // gift at where they WERE - the failure the moving-target rule exists for. Both execution bodies
+        // therefore re-resolve by name-binding, and refuse by name when the villager has left.
+        string source = System.IO.File.ReadAllText(RepositoryFile(Machines));
+        foreach ((string body, string refusal) in new[]
+        {
+            ("private LocalExecutionReceipt ExecuteInspectNpcRelationship(", "npc_relationship_out_of_reach_after_approach"),
+            ("private LocalExecutionReceipt ExecuteInteractNpcWithItem(", "npc_interaction_out_of_reach_after_approach"),
+        })
+        {
+            string executed = MethodBody(source, body);
+            executed.Should().Contain("BuildNpcRelationshipTargetId(location, candidate.Name)",
+                $"{body} must re-resolve the villager by name-binding, not by tile");
+            executed.Should().Contain(refusal, $"{body} must name the moved-out-of-reach refusal");
+        }
+    }
 }
