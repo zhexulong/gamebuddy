@@ -280,7 +280,6 @@ export const MessageBubble = memo(function MessageBubble({
   streaming = false,
   waitingNote = null,
   truncatedNote = null,
-  onContinue = undefined,
   as = "li",
   labels,
 }: {
@@ -374,14 +373,6 @@ export const MessageBubble = memo(function MessageBubble({
    */
   truncatedNote?: string | null;
   /**
-   * Asks her to keep writing from where the length ceiling stopped her.
-   *
-   * Present only when the note above is: the same fact decides both, so a row cannot offer a continuation of a reply that
-   * was not cut off, and cannot claim a cut-off reply without offering the way on. Unlike Regenerate - which replaces the
-   * generation the row shows - a continuation appends, so the player keeps the text they already read.
-   */
-  onContinue?: ((messageHandle: string) => void) | undefined;
-  /**
    * The element the row renders as. The transcript's rows are `<li>` of its own
    * `<ol>`; the optimistic row is the same presentation *outside* that list,
    * because it is not one of the transcript's rows (the send journey asserts the
@@ -413,9 +404,6 @@ export const MessageBubble = memo(function MessageBubble({
       editReplyName: string;
       editReplyField: string;
       deleteMessage: string;
-      /** The continuation of a reply the model's length ceiling stopped: its word and its accessible name. */
-      chatContinue: string;
-      chatContinueHint: string;
       deleteMessageName: string;
       deleteConfirmPrompt: string;
       deleteConfirmYes: string;
@@ -1044,22 +1032,9 @@ export const MessageBubble = memo(function MessageBubble({
             the bubble), and it carries no control of its own: the Regenerate it names is the
             button directly above it. */}
         {!isPlayer && truncatedNote !== null && (
-          <div className="message-truncated-row">
-            <p className="message-truncated" data-testid="message-truncated">
-              {truncatedNote}
-            </p>
-            {onContinue !== undefined && (
-              <button
-                type="button"
-                className="small-button message-continue"
-                data-testid="message-continue"
-                onClick={() => onContinue(message.handle)}
-                title={labels.chatContinueHint}
-              >
-                {labels.chatContinue}
-              </button>
-            )}
-          </div>
+          <p className="message-truncated" data-testid="message-truncated">
+            {truncatedNote}
+          </p>
         )}
       </div>
     </Row>
