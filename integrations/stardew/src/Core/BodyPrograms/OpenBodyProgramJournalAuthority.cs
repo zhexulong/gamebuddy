@@ -200,6 +200,19 @@ public sealed class OpenBodyProgramJournalAuthority
         // `quarantined` was permanent for the session and told the caller nothing it could act on - measured 2026-10-26,
         // 37 consecutive refusals that all read `authority_unavailable` while one expired node dispatch was the cause.
         if (!IsMutable) this.HealAgedRecovery();
+        // A program waiting for recovery stops THAT program, not the save.
+        //
+        // Measured 2026-10-26 on a real run: one `pickup_item` node settled uncertain, and every later submission -
+        // including the `advance_day` the companion needed to end its day - came back `quarantined`. The companion
+        // could not end its day OR do anything else, so the night never began and the run burned to its timeout.
+        //
+        // The unknown node stays unreachable and stays un-retried: its program keeps `RecoveryRequired`, keeps its
+        // binding, and `StartEligibleNodes` already skips it (`program.State != Active`). What a fresh submission gets
+        // is a new Active program that shares nothing with it except the journal file.
+        //
+        // The narrowness matters: `Corrupt` and the persistence failures are NOT in this set, because there is nowhere
+        // to write the new program and accepting it would promise a durability that does not exist.
+        if (IsRecoveryScoped) return SubmitWhileRecovering(candidate, restrictiveActionIds);
         if (!IsMutable) return new(BodyProgramSubmitCode.Quarantined, Rejected(RecoveryUnavailableCode(this.OpenStatus), null, "/"), null);
         BodyProgramVerificationReport verification = Verify(candidate, restrictiveActionIds);
         if (!verification.Accepted || verification.CanonicalProgram is null) return new(BodyProgramSubmitCode.Rejected, verification, null);
@@ -785,6 +798,45 @@ public sealed class OpenBodyProgramJournalAuthority
     /// RecoveryRequired and record a diagnostic that only describes its own consequence.
     /// </summary>
     internal bool IsMutable => this.IsLifecycleOpen && (this.OpenStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened);
+
+    /// <summary>
+    /// The authority is closed for exactly one reason: a program holds an unknown dispatch.
+    ///
+    /// That is a narrower failure than "this journal cannot be written", and the two have opposite correct
+    /// responses: an unwritable journal must refuse everything, while a program that cannot finish must only
+    /// refuse THAT program. `Corrupt` and the persistence failures are deliberately outside this set.
+    /// </summary>
+    private bool IsRecoveryScoped => this.IsLifecycleOpen
+        && this.OpenStatus is BodyProgramJournalOpenStatus.RecoveryRequired;
+
+    /// <summary>
+    /// A submission while a DIFFERENT program holds an unknown dispatch.
+    ///
+    /// Everything the ordinary path validates still applies - verification, policy identity, idempotency, conflict,
+    /// durable persistence - because those are facts about THIS candidate, not about the neighbour that failed. The
+    /// only thing that changes is that the journal may receive a new Active program while it still holds a
+    /// RecoveryRequired one.
+    /// </summary>
+    private BodyProgramSubmitResult SubmitWhileRecovering(ActionProgramCandidate candidate, IReadOnlySet<string>? restrictiveActionIds)
+    {
+        BodyProgramVerificationReport verification = Verify(candidate, restrictiveActionIds);
+        if (!verification.Accepted || verification.CanonicalProgram is null) return new(BodyProgramSubmitCode.Rejected, verification, null);
+        BodyProgramPolicyIdentity policy = ObservePolicy();
+        if (!policy.IsValid) return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_invalid", null, "/"), null);
+        if (this.state.Programs.Count > 0 && !PolicyMatches(policy, this.state.PolicyIdentity))
+            return new(BodyProgramSubmitCode.Rejected, Rejected("policy_identity_stale", null, "/"), null);
+        BodyProgramJournalProgram? existing = this.state.Programs.SingleOrDefault(program => program.Program.ProgramId == candidate.ProgramId);
+        if (existing is not null)
+            return new(BodyProgramCanonical.CandidateEquals(verification.CanonicalProgram, ToCandidate(existing.Program)) ? BodyProgramSubmitCode.Idempotent : BodyProgramSubmitCode.Conflict, verification, SnapshotFor(existing));
+        VerifiedBodyProgram verified = BodyProgramVerifier.Accept(verification.CanonicalProgram, this.catalog, this.scope);
+        var program = new BodyProgramJournalProgram(verified, BodyProgramState.Active, 0,
+            Array.AsReadOnly(verified.Nodes.Select(node => new BodyProgramJournalNode(node.NodeId, BodyProgramNodeState.Pending, 0, 0, null, null)).ToArray()), Array.Empty<RuntimeFact>());
+        BodyProgramJournalState next = AppendEvent(this.state with { PolicyIdentity = policy, Programs = Array.AsReadOnly(this.state.Programs.Append(program).ToArray()) }, program.Program.ProgramId, "accepted", null, null);
+        // The journal stays RecoveryRequired: the unknown program is still unknown, and saying otherwise would be the
+        // very claim this state exists to refuse. Only the new program is added.
+        if (!TryPersist(next)) return new(BodyProgramSubmitCode.PersistenceFailure, verification, null);
+        return new(BodyProgramSubmitCode.Accepted, verification, SnapshotFor(this.state.Programs.Single(p => p.Program.ProgramId == program.Program.ProgramId)));
+    }
     private void ThrowIfLifecycleUnavailable()
     {
         BodyProgramAuthorityLifecycleState lifecycle;

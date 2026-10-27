@@ -1248,8 +1248,16 @@ public sealed class BodyProgramAuthorityTests
         // Mid-session settlement, no reopen: this is the state the companion sat in.
         authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
         authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
-        authority.Submit(Program("while_fresh")).Code.Should().Be(BodyProgramSubmitCode.Quarantined,
-            "a dispatch that has not aged out may still be recoverable, so the refusal stands");
+        // CHANGED, deliberately. This assertion used to demand `Quarantined` - "a dispatch that has not aged out may
+        // still be recoverable, so the refusal stands". That is true of the unknown program and was applied to the
+        // whole journal, which is exactly the 10-minute freeze measured on 2026-10-26: the companion could not dispatch
+        // the `advance_day` it needed to end its day, so the night never began.
+        //
+        // The unknown is still unknown here - same program, same node, same binding - and nothing below relaxes that.
+        authority.Submit(Program("while_fresh")).Code.Should().Be(BodyProgramSubmitCode.Accepted,
+            "a neighbour is not the one in doubt");
+        authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired,
+            "admitting a neighbour must not settle the unknown");
 
         // Past the bound, still without reopening anything: the next submit must be the moment it heals.
         now = dispatchedDeadlineMs + OpenBodyProgramJournalAuthority.RecoveryAbandonAgeMs + 1;
@@ -1265,19 +1273,20 @@ public sealed class BodyProgramAuthorityTests
         // 37 consecutive refusals read `authority_unavailable` while one expired dispatch was the cause, and the model
         // responded by rewriting its script each time. A save-wide state and a malformed program are different facts
         // and the caller has to be able to tell them apart.
+        //
+        // The reason code survives the scope change below, and it is still worth pinning: this is the branch a caller
+        // reaches when the journal genuinely cannot take a program - a corrupt file, or a store whose write fails -
+        // and the code has to name which. A program that merely waits for recovery no longer reaches it, because that
+        // state no longer blocks a neighbour.
         var store = new MemoryStore();
-        long now = 10;
-        OpenBodyProgramJournalAuthority authority = Open(store, now: () => now);
-        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
-        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
-        HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
-        authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
-        authority.TryComplete(grant, TerminalOutcome(grant, BodyProgramNodeOutcome.Uncertain)).IsSuccess.Should().BeTrue();
+        store.Set("{ not a journal");
+        OpenBodyProgramJournalAuthority authority = Open(store, now: () => 10);
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Corrupt);
 
         BodyProgramSubmitResult refused = authority.Submit(Program("anything"));
 
         refused.Code.Should().Be(BodyProgramSubmitCode.Quarantined);
-        refused.Verification.Diagnostics.Should().ContainSingle().Which.Code.Should().Be("authority_recovery_pending",
+        refused.Verification.Diagnostics.Should().ContainSingle().Which.Code.Should().Be("authority_journal_corrupt",
             "the refusal must name the recovery state, not the caller's program");
     }
 
@@ -1294,12 +1303,25 @@ public sealed class BodyProgramAuthorityTests
         long dispatchedDeadlineMs = authority.Status("program").Snapshot!.Nodes.Single().DerivedDeadlineMs!.Value;
 
         // FALSIFIER: the dispatch has only just reached its own deadline, far inside the bound - the crash may still be
-        // recovering, so nothing may be abandoned and the scope stays visibly unavailable rather than silently healed.
+        // recovering, so nothing may be abandoned and the unknown must stay visibly unknown.
+        //
+        // NOTE ON THE SUBMISSION ASSERTION BELOW. It used to say `Quarantined`, on the reasoning that a dispatch which
+        // has not aged out may still be recoverable so the refusal stands. That reasoning is sound about the UNKNOWN
+        // and wrong about the SAVE: it froze every other program for the whole abandonment window, which is 600s past
+        // the deadline. Measured 2026-10-26, that window is what stopped the companion from dispatching the
+        // `advance_day` it needed. What must not happen is the unknown being forgotten; a neighbour being admitted is
+        // a different matter, and that is what this now asserts.
         now = dispatchedDeadlineMs;
         OpenBodyProgramJournalAuthority fresh = Open(store, now: () => now);
         fresh.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        fresh.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired,
+            "nothing may be abandoned inside the bound");
+        fresh.Events("program", 0, 32).Events.Should().NotContain(@event => @event.Kind == "abandoned");
+        fresh.Submit(Program("neighbour")).Code.Should().Be(BodyProgramSubmitCode.Accepted,
+            "the neighbour is admitted; the unknown program is what stays pending");
+        fresh.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired,
+            "admitting a neighbour must not launder the unknown");
         fresh.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired);
-        fresh.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
 
         // One millisecond inside the bound the answer is still the same: the bound is what decides, not the mere
         // passage of the deadline.
@@ -1307,7 +1329,7 @@ public sealed class BodyProgramAuthorityTests
         OpenBodyProgramJournalAuthority younger = Open(store, now: () => now);
         younger.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
         younger.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired);
-        younger.Submit(Program("blocked")).Code.Should().Be(BodyProgramSubmitCode.Quarantined);
+        younger.Events("program", 0, 32).Events.Should().NotContain(@event => @event.Kind == "abandoned");
     }
 
     [Fact]
