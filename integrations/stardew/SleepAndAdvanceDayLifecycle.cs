@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
@@ -85,6 +86,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private readonly int settleFrameBudget;
     private readonly int readyBarrierFrameBudget;
     private readonly Func<DateTimeOffset> clock;
+    private readonly Func<ShippingMenu, bool> commitShippingSummary;
     private readonly int timeoutSeconds;
     private DateTimeOffset deadline;
     private readonly List<string> trace = new();
@@ -128,6 +130,18 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private bool finished;
 
     /// <summary>
+    /// The settlement menu this lifecycle has already dispatched the engine commit for.
+    ///
+    /// `okClicked` is not idempotent in effect: it restarts the outro fade (ShippingMenu.cs:690-696), so dispatching
+    /// it again while that outro runs freezes it. The commit is therefore dispatched once per menu INSTANCE, however
+    /// many frames or terminals ask for it.
+    /// </summary>
+    private ShippingMenu? committedShippingSummary;
+
+    /// <summary>What this lifecycle's terminal left a standing settlement menu as.</summary>
+    private SettlementMenuOutcome settlementMenuOutcome;
+
+    /// <summary>
     /// Terminal outcome handed back to the owning execution. The lifecycle is the
     /// mechanism owner; the wire receipt is still minted by the one execution
     /// ledger, so both the evidence file and the bridge receipt describe the same
@@ -149,6 +163,27 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// </summary>
     internal bool IsAwaitingEligibility => this.phase == Phase.AwaitingEligibility;
 
+    /// <summary>
+    /// The terminal's disposition of a morning-after settlement menu, named so a receipt can state it.
+    /// </summary>
+    internal enum SettlementMenuOutcome
+    {
+        /// <summary>No settlement menu was standing when the lifecycle settled.</summary>
+        NotPresent,
+
+        /// <summary>One was standing and this lifecycle had already dispatched its commit, so the outro owns it.</summary>
+        AlreadyCommitted,
+
+        /// <summary>One was standing and the engine commit was dispatched now.</summary>
+        Committed,
+
+        /// <summary>One was standing and the engine commit seam could not be reached.</summary>
+        CommitUnavailable,
+
+        /// <summary>One was standing, the seam ran, and it threw. The menu is still standing and the receipt says so.</summary>
+        CommitFailed,
+    }
+
     private enum Phase
     {
         AwaitingEligibility,
@@ -164,9 +199,11 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private SleepAndAdvanceDayLifecycle(
         IMonitor monitor,
         SleepAndAdvanceDayLifecycleConfig config,
-        Func<DateTimeOffset> clock)
+        Func<DateTimeOffset> clock,
+        Func<ShippingMenu, bool>? commitShippingSummary)
     {
         this.monitor = monitor;
+        this.commitShippingSummary = commitShippingSummary ?? EngineShippingCommit;
         this.evidencePath = config.EvidencePath;
         this.settleFrameBudget = Math.Clamp(config.SettleFrameBudget, 1, 600);
         // The ready barrier is a different budget from the modal settle: other
@@ -183,14 +220,27 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>Fail-closed construction: an invalid config starts nothing.</summary>
+    /// <param name="monitor">The Mod log the lifecycle reports through.</param>
+    /// <param name="config">The opt-in configuration; an invalid one starts nothing.</param>
+    /// <param name="clock">The wall clock the deadline is measured against.</param>
+    /// <param name="commitShippingSummary">
+    /// The engine commit seam, or null for the installed engine's own. Injected rather than hidden so a headless test
+    /// can observe that a terminal really dispatches the commit, without a running game's audio track and player that
+    /// `okClicked` itself dereferences (ShippingMenu.cs:690-696 -> Game1.changeMusicTrack -> Game1.player).
+    /// </param>
     internal static SleepAndAdvanceDayLifecycle? TryStart(
         IMonitor monitor,
         SleepAndAdvanceDayLifecycleConfig? config,
-        Func<DateTimeOffset>? clock = null)
+        Func<DateTimeOffset>? clock = null,
+        Func<ShippingMenu, bool>? commitShippingSummary = null)
     {
         if (config is not { IsValid: true })
             return null;
-        var lifecycle = new SleepAndAdvanceDayLifecycle(monitor, config, clock ?? (() => DateTimeOffset.UtcNow));
+        var lifecycle = new SleepAndAdvanceDayLifecycle(
+            monitor,
+            config,
+            clock ?? (() => DateTimeOffset.UtcNow),
+            commitShippingSummary);
         monitor.Log(
             $"GameBuddy sleep lifecycle started; evidence='{config.EvidencePath}'; "
                 + $"settleBudget={lifecycle.settleFrameBudget}; readyBarrierBudget={lifecycle.readyBarrierFrameBudget}.",
@@ -364,7 +414,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 // taking it was measured to be the wrong division of labour.
                 if (Game1.activeClickableMenu is ShippingMenu uncommittedShipping)
                 {
-                    if (!this.CommitShippingSummary(uncommittedShipping))
+                    if (this.CommitShippingSummary(uncommittedShipping) == SettlementMenuOutcome.CommitUnavailable)
                         this.Finish("blocked", "shipping_summary_commit_unavailable", null);
                     return false;
                 }
@@ -666,15 +716,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>
-    /// Answer the game-owned Sleep question exactly the way the native
-    /// keyboard/mouse paths do, then wait for the outro to settle.
-    ///
-    /// The question itself exists in EVERY topology (GameLocation.cs:3763-3765).
-    /// In multiplayer the native answer path immediately replaces it with the
-    /// ReadyCheckDialog, so the ready barrier is observed next rather than here.
-    /// </summary>
-    /// <summary>
-    /// Close the morning-after shipping summary through the engine's own commit path.
+    /// Close the morning-after shipping summary through the engine's own commit path, once per menu instance.
     ///
     /// `ShippingMenu` overrides neither `exitThisMenu` nor `cleanupBeforeExit`, so a generic close is a pure cancel - and
     /// the save does not live on the close path. `okClicked` (ShippingMenu.cs:690-696) starts the outro, and the outro is
@@ -684,22 +726,128 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// thin call into the same private method rather than a second implementation, because a lifecycle that closes the
     /// summary differently from the published action would make one of them the wrong answer to "what does dismissing
     /// a shipping summary do".
+    ///
+    /// The two classes genuinely cannot share ONE body today: `RequestLocalDismissModal` is an admission-bound method
+    /// on `ExecutionManager` (it needs the request, the ledger and the bound actor, and it mints a receipt of its own),
+    /// while this runs from a lifecycle that has none of the three, and the only genuinely shared part is the reflection
+    /// reach into `okClicked`. Extracting that reach into a helper would require editing `dismiss_modal`'s file, which
+    /// this change deliberately does not touch.
     /// </summary>
-    private bool CommitShippingSummary(ShippingMenu menu)
+    private SettlementMenuOutcome CommitShippingSummary(ShippingMenu menu)
     {
-        System.Reflection.MethodInfo? commit = typeof(ShippingMenu).GetMethod(
-            "okClicked",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        if (commit is null)
+        bool alreadyCommitted = ReferenceEquals(this.committedShippingSummary, menu);
+        SettlementMenuOutcome decision = DecideSettlementMenuCommit(true, alreadyCommitted);
+        if (decision != SettlementMenuOutcome.Committed)
+            return decision;
+
+        // Recorded BEFORE the seam runs. A seam that throws half-way has still left the engine's outro flags where the
+        // dispatch put them, and `okClicked` restarts the fade (ShippingMenu.cs:690-696) - so the dispatch, not its
+        // success, is what may happen only once.
+        this.committedShippingSummary = menu;
+        try
         {
-            this.trace.Add("shipping_summary_commit_unavailable");
-            return false;
+            if (!this.commitShippingSummary(menu))
+            {
+                this.trace.Add("shipping_summary_commit_unavailable");
+                return SettlementMenuOutcome.CommitUnavailable;
+            }
         }
-        commit.Invoke(menu, null);
+        catch (Exception error)
+        {
+            // `Finish` now reaches engine code on EVERY terminal, so an exception from the seam may not escape into the
+            // game loop: the outro did not start, the menu is still standing, and the receipt has to say so.
+            this.trace.Add($"shipping_summary_commit_threw;exception={error.GetType().Name}");
+            return SettlementMenuOutcome.CommitFailed;
+        }
+
         this.trace.Add("shipping_summary_committed");
+        return SettlementMenuOutcome.Committed;
+    }
+
+    /// <summary>
+    /// The installed engine's own commit seam on `ShippingMenu`: `okClicked`, or false when this game build no longer
+    /// has it (so the caller refuses rather than falling back to a generic close, which would cancel the settlement).
+    ///
+    /// Read once per class, not per menu: it is a fact about the installed engine. Not a second closing implementation -
+    /// it is the same private method `dismiss_modal` reaches for, and the reason both reach for it instead of calling
+    /// `exitThisMenu` is the comment above.
+    /// </summary>
+    private static bool EngineShippingCommit(ShippingMenu menu)
+    {
+        if (ShippingCommitSeam is null)
+            return false;
+        ShippingCommitSeam.Invoke(menu, null);
         return true;
     }
 
+    private static readonly MethodInfo? ShippingCommitSeam = typeof(ShippingMenu).GetMethod(
+        "okClicked",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+
+    /// <summary>
+    /// Whether a standing menu is the morning-after settlement this lifecycle owns.
+    ///
+    /// Deliberately one type. `ShippingMenu` presents numbers and its own click action only starts the outro
+    /// (ShippingMenu.cs:690-696), so committing it takes no decision. `LevelUpMenu` grants a perk when it closes and a
+    /// `DialogueBox` carries a question, so neither is residue a terminal may settle.
+    /// </summary>
+    internal static bool IsRolloverSettlementMenu(IClickableMenu? activeMenu) => activeMenu is ShippingMenu;
+
+    /// <summary>
+    /// The commit decision, separated from the live game so the whole table can be pinned without a running instance.
+    ///
+    /// The ORDER is the invariant, not the branch shape: a menu this lifecycle already committed must report that
+    /// instead of committing again, because `okClicked` restarts the outro fade (ShippingMenu.cs:690-696) and a second
+    /// dispatch while the first outro runs freezes the settlement instead of finishing it. That is the same reason
+    /// `dismiss_modal` reports what it cleared rather than closing twice.
+    /// </summary>
+    internal static SettlementMenuOutcome DecideSettlementMenuCommit(bool settlementMenuStanding, bool alreadyCommitted)
+    {
+        if (!settlementMenuStanding)
+            return SettlementMenuOutcome.NotPresent;
+        return alreadyCommitted ? SettlementMenuOutcome.AlreadyCommitted : SettlementMenuOutcome.Committed;
+    }
+
+    /// <summary>The receipt vocabulary for <see cref="SettlementMenuOutcome"/>.</summary>
+    internal static string DescribeSettlementMenuOutcome(SettlementMenuOutcome outcome) => outcome switch
+    {
+        SettlementMenuOutcome.Committed => "committed",
+        SettlementMenuOutcome.AlreadyCommitted => "already_committed",
+        SettlementMenuOutcome.CommitUnavailable => "commit_unavailable",
+        SettlementMenuOutcome.CommitFailed => "commit_failed",
+        _ => "none",
+    };
+
+    /// <summary>
+    /// Discharge the one obligation that outlives the phase which raised it.
+    ///
+    /// The rollover pushes `ShippingMenu` onto `Game1.endOfNightMenus` (Game1.cs:9112-9160) and, until `okClicked`
+    /// starts its outro, that menu holds the actor for every later request as well as for `advance_day`'s own
+    /// eligibility gate (`menu_open`). `Phase.AwaitingModal` was the ONLY code that ever looked at it, so a night that
+    /// settled before reaching that phase - or through a day-start route that never went through the modal at all -
+    /// handed the actor back with the menu standing and nothing left to own it.
+    ///
+    /// That second route is the measured one (2026-10-26): `DayStarted` fires both when the active menu LEAVES a
+    /// ShippingMenu/SaveGameMenu (Game1.cs:1686-1703) AND on the day-transition game mode settling (Game1.cs:4393-4395),
+    /// so a night can confirm its new day while the settlement is still standing. Measured consequence: day 5 began at
+    /// 06:00, the companion could not act, could not move, and could not start another night, because a modal outlived
+    /// the process that owned it.
+    ///
+    /// Runs from the terminal BEFORE the receipt evidence is built, so the receipt states what happened instead of
+    /// leaving a reader to infer it, and before the owning execution drops the lifecycle handle - after that drop
+    /// nothing in the product looks at this menu again except the `dismiss_modal` action.
+    ///
+    /// Internal rather than private so the terminal's own obligation can be exercised headless against a seeded
+    /// `Game1.activeClickableMenu`; it is not part of the execution surface.
+    /// </summary>
+    internal SettlementMenuOutcome SettleStandingSettlementMenu()
+    {
+        IClickableMenu? standing = Game1.activeClickableMenu;
+        if (!IsRolloverSettlementMenu(standing))
+            return SettlementMenuOutcome.NotPresent;
+        // IsRolloverSettlementMenu admits exactly one type, so this cast cannot fail.
+        return this.CommitShippingSummary((ShippingMenu)standing!);
+    }
     private bool AnswerSleepPrompt()
     {
         if (Game1.activeClickableMenu is not DialogueBox dialogueBox)
@@ -976,6 +1124,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
             // A receipt that claims a day advanced without saying whether a save was ever observed lets a reader
             // assume one. Published unconditionally, because "false" here is the informative value.
             $"save_boundary_not_observed={this.saveBoundaryNotObserved.ToString().ToLowerInvariant()}",
+            // What the night's last owner did with a settlement menu the engine still held when the night ended.
+            // Published unconditionally: "none" is the ordinary case, and its absence would leave a reader unable to
+            // tell an owned settlement from a receipt written before the menu was ever looked at.
+            $"shipping_summary_settled={DescribeSettlementMenuOutcome(this.settlementMenuOutcome)}",
         };
         if (this.dayBaselineCaptured)
         {
@@ -1039,6 +1191,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
             chain.Add("saved");
         if (this.NightDayStartedObserved)
             chain.Add("day_started");
+        if (this.settlementMenuOutcome is SettlementMenuOutcome.Committed or SettlementMenuOutcome.AlreadyCommitted)
+            chain.Add("shipping_summary_committed");
         return chain.ToArray();
     }
 
@@ -1048,6 +1202,12 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return;
         this.finished = true;
 
+        // The night's last owner is handing the actor back on this tick, and the owning execution drops the handle as
+        // soon as this returns. Anything the rollover raised and this lifecycle still holds is settled HERE, before
+        // the terminal is projected, so that dropping the handle ends an ownership that is complete rather than
+        // abandoning a modal nothing else in the product will close.
+        this.settlementMenuOutcome = this.SettleStandingSettlementMenu();
+
         var evidence = new Dictionary<string, object?>
         {
             ["schema"] = Schema,
@@ -1056,6 +1216,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
             ["topology"] = this.Topology(),
             ["targetVersion"] = new Dictionary<string, object?> { ["game"] = Game1.version },
             ["settlement"] = settlement,
+            ["settlementMenu"] = DescribeSettlementMenuOutcome(this.settlementMenuOutcome),
             ["trace"] = this.trace.ToArray(),
             ["eventChain"] = this.BuildEventChain(),
         };
