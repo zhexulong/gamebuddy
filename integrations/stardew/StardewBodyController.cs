@@ -820,17 +820,32 @@ internal sealed class StardewBodyController
             if (clearable.Count == 0)
                 return string.Empty;
 
+            HashSet<(int X, int Y)> walkableTiles = walkable.Select(tile => (tile.X, tile.Y)).ToHashSet();
             ClearingPlan plan = ClearingPlanner.Plan(
                 (actor.X, actor.Y),
                 (target.X, target.Y),
-                walkable.Select(tile => (tile.X, tile.Y)).ToHashSet(),
+                walkableTiles,
                 clearable.ToDictionary(entry => (entry.Key.X, entry.Key.Y), entry => entry.Value));
-            return ClearingEvidence.Describe(
-                    plan,
-                    tile => kinds.TryGetValue(new Point(tile.X, tile.Y), out string? kind) ? kind : null)
-                is { } described
-                ? $";{described}"
-                : string.Empty;
+            string? Kind((int X, int Y) tile) =>
+                kinds.TryGetValue(new Point(tile.X, tile.Y), out string? kind) ? kind : null;
+
+            // The plan's price, and the STEP it implies. The tile list alone left a live Agent re-aiming at
+            // neighbours: a rock is removed from an adjacent tile, and that tile is often not where the actor is.
+            var described = new List<string>(2);
+            if (ClearingEvidence.Describe(plan, Kind) is { } price) described.Add(price);
+            FirstClearStep step = ClearStepPlanner.Resolve((actor.X, actor.Y), plan, walkableTiles);
+            if (ClearingEvidence.DescribeFirstStep(step, Kind) is { } firstStep)
+            {
+                described.Add(firstStep);
+            }
+            else if (plan.Reachable)
+            {
+                // The plan opens the way yet no reachable tile brings the blocker within reach. Naming the
+                // reason is the difference between "keep trying" and "this cannot be done in one step".
+                described.Add($"clear_step_unavailable={step.ReasonCode}");
+            }
+
+            return described.Count == 0 ? string.Empty : ";" + string.Join(";", described);
         }
         catch
         {
