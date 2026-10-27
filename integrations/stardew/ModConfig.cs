@@ -242,6 +242,7 @@ public sealed record NativeLocalPlayerFixtureConfig
 
     };
 
+
     internal bool IsValid => Enable
         && LogicalSaveName.Length is >= 1 and <= 96
         && LogicalSaveName.StartsWith("GameBuddyFixture", StringComparison.Ordinal)
@@ -346,15 +347,33 @@ public sealed class HostFarmhandProvisioningConfig
     public string SessionToken { get; init; } = string.Empty;
     public string IntegrationVersion { get; init; } = "0.1.0";
     public string FarmhandName { get; init; } = "GameBuddy";
+    /// <summary>
+    /// What she says when a Stardrop asks what she likes best.
+    ///
+    /// A card format has no such field, and guessing it from prose would be a fiction of its own, so it is a setting with a
+    /// default rather than something derived. The Host projects the player's own name into it, which is the one answer the game
+    /// already knows about them.
+    /// </summary>
+    public string FavoriteThing { get; init; } = "GameBuddy";
     public int ManifestLifetimeSeconds { get; init; } = 120;
     public List<string> AuthorizedCompanionIds { get; init; } = new();
+
+    /// <summary>
+    /// Whether a name can be written onto a Farmer.
+    ///
+    /// Letters, digits, spaces, and the punctuation real names carry - apostrophe, hyphen, period, underscore. Deliberately not a
+    /// path character and not a control character: this string reaches a save file and a UI, and a name is not the place to be
+    /// permissive.
+    /// </summary>
+    internal static bool IsUsableFarmhandName(string name) =>
+        name.Length is >= 1 and <= 64
+        && name.All(c => char.IsLetterOrDigit(c) || c is ' ' or '-' or '_' or '\'' or '.');
 
     internal bool IsValid => Enable
         && Path.IsPathFullyQualified(SessionDirectory)
         && FarmhandProvisioningProtocol.IsValidToken(SessionToken)
         && IntegrationVersion.Length is >= 1 and <= 32
-        && FarmhandName.Length is >= 1 and <= 64
-        && FarmhandName.All(char.IsLetterOrDigit)
+        && IsUsableFarmhandName(FarmhandName)
         && ManifestLifetimeSeconds is >= 30 and <= 600
         && AuthorizedCompanionIds.Count > 0
         && AuthorizedCompanionIds.All(FarmhandProvisioningProtocol.IsValidOpaque);

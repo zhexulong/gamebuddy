@@ -736,7 +736,7 @@ internal sealed class HostFarmhandProvisioner
         string filteredName = Utility.FilterDirtyWords(this.config.FarmhandName);
         farmhand.Name = filteredName;
         farmhand.displayName = filteredName;
-        farmhand.favoriteThing.Value = Utility.FilterDirtyWords("GameBuddy");
+        farmhand.favoriteThing.Value = Utility.FilterDirtyWords(this.config.FavoriteThing);
         farmhand.isCustomized.Value = true;
         farmhand.ConvertClothingOverrideToClothesItems();
         farmhand.gameVersion = Game1.version;
