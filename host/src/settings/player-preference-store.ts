@@ -121,8 +121,16 @@ export type PlayerPreference = Readonly<{
   persona: VoicePersona;
   /** True when the player chose short paced Chat replies; never chosen is false. */
   paced: PacedDelivery;
-  /** The player's own addition to the Game companion's instructions; empty means none. */
-  gamePromptAddition: GamePromptAddition;
+  /**
+   * The player's own addition to the Game companion's instructions; empty means none.
+   *
+   * OPTIONAL on the TYPE, always filled by `project()`. Required on the type meant every fixture that builds a
+   * `PlayerPreference` had to learn a field it does not care about - measured 2026-10-27, forty-eight errors across
+   * eleven management-route suites under `tsconfig.test.json` (and zero under `tsconfig.json`, because that project
+   * does not include those test files; the build uses the TEST project, so the tree looked clean while it was not).
+   * A reader of a real value never sees `undefined`: `project()` always sets it.
+   */
+  gamePromptAddition?: GamePromptAddition;
 }>;
 
 /**
@@ -249,7 +257,8 @@ export async function resolvePacedDelivery(runtimeRoot: string): Promise<PacedDe
  * setting it said it had saved.
  */
 export async function resolveGamePromptAddition(runtimeRoot: string): Promise<GamePromptAddition> {
-  return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).gamePromptAddition;
+  // `?? ""`: an older record predates the field, and "the player has added nothing" is the right answer for it.
+  return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).gamePromptAddition ?? "";
 }
 
 const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({

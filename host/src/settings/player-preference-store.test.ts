@@ -507,7 +507,7 @@ test("the Game prompt addition is bounded by the contract's ceiling and refuses 
   await withStore(async (_path, store) => {
     const atBound = "x".repeat(MAX_GAME_PROMPT_ADDITION_CHARS);
     const saved = await store.update(0, { action: "setGamePromptAddition", addition: atBound });
-    assert.equal(saved.gamePromptAddition.length, MAX_GAME_PROMPT_ADDITION_CHARS);
+    assert.equal(saved.gamePromptAddition?.length, MAX_GAME_PROMPT_ADDITION_CHARS);
 
     // One past the bound is refused, not truncated: a store that silently shortened the
     // player's text would save a document the author never wrote and the field can never
@@ -519,7 +519,7 @@ test("the Game prompt addition is bounded by the contract's ceiling and refuses 
       }),
       /invalid_player_preference_update/u,
     );
-    assert.equal((await store.read()).gamePromptAddition.length, MAX_GAME_PROMPT_ADDITION_CHARS);
+    assert.equal((await store.read()).gamePromptAddition?.length, MAX_GAME_PROMPT_ADDITION_CHARS);
 
     // An over-bound record on disk is a protocol fault, not a value to keep serving.
     await writeFile(

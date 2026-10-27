@@ -62,6 +62,8 @@ import {
   type TavernConnectionRevisionCommandV1,
   type TavernDeliveryPreferenceCommandV1,
   type TavernDeliveryPreferenceV1,
+  type TavernGamePromptAdditionCommandV1,
+  type TavernGamePromptAdditionV1,
   type TavernLanguagePreferenceCommandV1,
   type TavernLanguagePreferenceV1,
   type TavernModelProfilesV1,
@@ -147,6 +149,16 @@ const MANAGEMENT_LANGUAGE_ROUTES = ["settings.language.read", "settings.language
  * without the one Host-owned preference record fails closed at composition.
  */
 const MANAGEMENT_DELIVERY_ROUTES = ["settings.delivery.read", "settings.delivery.update"] as const;
+/**
+ * Optional Game-prompt-addition extension: only a profile that declares these routes mounts
+ * the read/write of the player's own addition to the Game companion's instructions. It is its
+ * own group directly after the delivery group, so a profile that advertises it without the one
+ * Host-owned preference record fails closed at composition.
+ *
+ * Unlike every other group here it is a GAME-side setting: the addition has meaning only
+ * against the Game surface's floor, and it reaches a game at its next start.
+ */
+const MANAGEMENT_GAME_PROMPT_ROUTES = ["settings.game-prompt.read", "settings.game-prompt.update"] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -331,6 +343,9 @@ const languagePreferenceUpdateValidator = Compile(
 );
 const deliveryPreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernDeliveryPreferenceCommandV1Schema,
+);
+const gamePromptAdditionUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernGamePromptAdditionCommandV1Schema,
 );
 const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
 const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
@@ -1093,6 +1108,49 @@ export function createTavernManagementDialogueWebRequestHandler(
           return sendProblem(response, 404, "profile_operation_unavailable");
         const preference: TavernDeliveryPreferenceV1 = deliveryPreference(await playerPreferenceStore.read());
         if (!TavernBrowserValidatorsV1.TavernDeliveryPreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      // The player's own addition to the Game companion's instructions. Same record, same
+      // revision, same CAS as language and delivery; what differs is WHEN it lands, and that
+      // difference lives in the runtime (it reads once at Game-session start), not here - this
+      // route only stores what the player wrote.
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/game-prompt") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.game-prompt.read") ||
+          !profile.operationIds.includes("settings.game-prompt.read") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernGamePromptAdditionV1 = gamePromptAddition(await playerPreferenceStore.read());
+        if (!TavernBrowserValidatorsV1.TavernGamePromptAdditionV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/game-prompt") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.game-prompt.update") ||
+          !profile.operationIds.includes("settings.game-prompt.update") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!gamePromptAdditionUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernGamePromptAdditionCommandV1;
+        const preference = gamePromptAddition(
+          await playerPreferenceStore.update(command.expectedRevision, {
+            action: "setGamePromptAddition",
+            addition: command.addition,
+          }),
+        );
+        if (!TavernBrowserValidatorsV1.TavernGamePromptAdditionV1Schema.Check(preference))
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
@@ -2417,7 +2475,8 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // The core surface and the extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
-  // connections, model profiles, companions/personas/retention, card import,
+  // delivery, Game prompt addition, connections, model profiles,
+  // companions/personas/retention, card import,
   //  new-chat opening, new chat, chat selection, World Info authoring, companion
   //  profile, card export, companion avatar, lorebook import, chat export. A partially applied
   //  group, an undeclared
@@ -2436,6 +2495,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_VOICE_DEVICES,
     MANAGEMENT_LANGUAGE_ROUTES,
     MANAGEMENT_DELIVERY_ROUTES,
+    MANAGEMENT_GAME_PROMPT_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2457,6 +2517,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_VOICE_DEVICES,
     MANAGEMENT_LANGUAGE_ROUTES,
     MANAGEMENT_DELIVERY_ROUTES,
+    MANAGEMENT_GAME_PROMPT_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2664,6 +2725,13 @@ function languagePreference(preference: PlayerPreference): TavernLanguagePrefere
 /** The delivery field group of the one player preference record. */
 function deliveryPreference(preference: PlayerPreference): TavernDeliveryPreferenceV1 {
   return { revision: preference.revision, paced: preference.paced };
+}
+
+/** The Game-prompt-addition field group of the one player preference record. */
+function gamePromptAddition(preference: PlayerPreference): TavernGamePromptAdditionV1 {
+  // `?? ""` here rather than a required field on `PlayerPreference`: the store always sets it, and a fixture that
+  // does not care about this setting must not have to learn it (eleven did, when the field was required).
+  return { revision: preference.revision, addition: preference.gamePromptAddition ?? "" };
 }
 
 /**

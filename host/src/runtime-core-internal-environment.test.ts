@@ -10,6 +10,7 @@ import {
   formatGameEnvironmentFacts,
   formatGameStamina,
   formatGameWeather,
+  type GameEnvironmentFactsSource,
   MAX_GAME_ENVIRONMENT_FACTS_BYTES,
   reloadMagicContextInRuntimeRoot,
 } from "./runtime-core.internal.js";
@@ -266,9 +267,9 @@ test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, a
 
   for (const currentTool of [undefined, null, ""] as const) {
     // `exactOptionalPropertyTypes` forbids writing `undefined` into an optional field, so the absent case is
-    // expressed by omitting the key instead of restating it as undefined.
-    const { currentTool: _omitted, ...withoutTool } = base;
-    const source = currentTool === undefined ? withoutTool : { ...base, currentTool };
+    // expressed by omitting the key instead of restating it as undefined. `null` and `""` are different values
+    // than `undefined` and can be written as-is.
+    const source: GameEnvironmentFactsSource = currentTool === undefined ? base : { ...base, currentTool };
     const empty = formatGameEnvironmentFacts(source, false);
     assert.ok(!empty.includes("holding:"), `an absent held tool drops the whole fact: ${empty}`);
   }
