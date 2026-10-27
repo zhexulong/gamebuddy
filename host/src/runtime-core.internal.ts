@@ -275,18 +275,131 @@ export function formatGameStamina(stamina: number | undefined, exhausted: boolea
 }
 
 /**
- * The macro world context the companion sees each turn, as the one fact line
- * Magic Context injects: the native clock, date, weather and location plus the
- * actor's own stamina. Same rule as every sibling fact - a plain native read,
- * no interpretation - and every fact whose source is absent is dropped rather
- * than defaulted. `stamina` is required on today's wire, so the optional type
- * only documents the omit path a frame without a finite reading takes.
+ * The world context the companion sees each turn, as the one fact line Magic
+ * Context injects: the native clock, date, weather and location, where she
+ * stands and what she is holding, the villagers around her, the unwatered crops
+ * in reach, and her own stamina. Same rule as every sibling fact - a plain
+ * native read, no interpretation - and every fact whose source is absent is
+ * dropped rather than defaulted.
+ *
+ * Two bounds keep this a line and not a second snapshot, because it is rendered
+ * on every turn: the nearby names are capped and their remainder is a count, and
+ * the joined line is capped in bytes. `stamina` and `tile` are required on
+ * today's wire, so their optional spelling only documents the omit path a frame
+ * without a readable reading takes.
  */
 export type GameEnvironmentFactsSource = Pick<
   Snapshot,
-  "timeOfDay" | "dayOfMonth" | "seasonIndex" | "year" | "weather" | "location"
+  | "timeOfDay"
+  | "dayOfMonth"
+  | "seasonIndex"
+  | "year"
+  | "weather"
+  | "location"
+  | "tile"
+  | "currentTool"
+  | "currentToolSlot"
+  | "toolSlots"
+  | "villagerWhereabouts"
+  | "cropTargets"
 > &
   Readonly<{ stamina?: number; exhausted?: boolean }>;
+
+/**
+ * The most this line may cost a turn. Four player names arrive bounded at 128
+ * characters each on the wire, which three of them would spend on nothing else.
+ */
+export const MAX_GAME_ENVIRONMENT_FACTS_BYTES = 512;
+/** A town square reaches further than three, and the rest is a count anyway. */
+const MAX_NEARBY_VILLAGER_NAMES = 3;
+/**
+ * "Nearby" is the Mod's own discovery envelope (6 tiles, Chebyshev). A villager
+ * across the farm is not next to her, however few others are in the map.
+ */
+const MAX_NEARBY_VILLAGER_TILES = 6;
+/** One published name's share of the line; the wire allows 128 characters. */
+const MAX_ENVIRONMENT_NAME_CHARS = 16;
+
+function boundedName(value: string): string {
+  const characters = Array.from(value);
+  return characters.length <= MAX_ENVIRONMENT_NAME_CHARS
+    ? value
+    : `${characters.slice(0, MAX_ENVIRONMENT_NAME_CHARS - 1).join("")}…`;
+}
+
+/** The tile under her feet, in the map's own coordinates. */
+function formatGameTile(tile: { readonly x: number; readonly y: number }, zh: boolean): string {
+  if (!Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return "";
+  return `${zh ? "脚下" : "tile"}: (${tile.x}, ${tile.y})`;
+}
+
+/**
+ * The tool in her hand. The upgrade level is only on the wire beside the slot
+ * that holds the tool, so it is read from there and only when the two agree - an
+ * unmatched slot costs the level and never the name. A basic tool renders no
+ * marker: the handlers require the basic one, so a marker is what an upgrade is.
+ */
+function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const tool = source.currentTool;
+  if (typeof tool !== "string" || tool.length === 0) return "";
+  const slot = source.currentToolSlot;
+  const occupant =
+    typeof slot === "number" && Number.isSafeInteger(slot)
+      ? (source.toolSlots ?? []).find((candidate) => candidate.slot === slot)
+      : undefined;
+  const upgradeLevel = occupant?.label === tool ? occupant.upgradeLevel : undefined;
+  const upgrade = Number.isSafeInteger(upgradeLevel) ? (upgradeLevel as number) : 0;
+  const level = upgrade > 0 ? (zh ? `（+${upgrade}）` : ` (+${upgrade})`) : "";
+  return `${zh ? "手持" : "holding"}: ${tool}${level}`;
+}
+
+/**
+ * The villagers standing with her. `villagerWhereabouts` describes every loaded
+ * location, so this reads only the map she is on, orders by tile distance, names
+ * the ones inside the discovery envelope up to the cap, and counts the rest of
+ * the map - "is anyone here" must stay answerable in both directions.
+ */
+function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const tile = source.tile;
+  if (!Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return "";
+  const here = (source.villagerWhereabouts ?? []).filter((villager) => villager.inCurrentLocation === true);
+  if (here.length === 0) return "";
+  const distance = (villager: { readonly x: number; readonly y: number }): number =>
+    Math.max(Math.abs(villager.x - tile.x), Math.abs(villager.y - tile.y));
+  const named = here
+    .filter((villager) => distance(villager) <= MAX_NEARBY_VILLAGER_TILES)
+    .sort((left, right) => distance(left) - distance(right))
+    .slice(0, MAX_NEARBY_VILLAGER_NAMES);
+  const names = named.map((villager) => boundedName(zh ? villager.displayName : villager.npcName));
+  const others = here.length - named.length;
+  const rest = others <= 0 ? "" : zh ? `本图另有 ${others} 人` : `${others} more in this location`;
+  const listed = names.length === 0 ? "" : zh ? names.join("、") : names.join(", ");
+  const body = listed !== "" && rest !== "" ? `${listed}${zh ? "；" : "; "}${rest}` : listed !== "" ? listed : rest;
+  return `${zh ? "附近" : "nearby"}: ${body}`;
+}
+
+/**
+ * The unwatered crops in reach: `cropTargets` is already the Mod's own bounded
+ * list of them, so the count is a plain read. An ABSENT list means the family
+ * was not measured and is silent, while a measured zero answers "is anything
+ * here thirsty".
+ */
+function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const crops = source.cropTargets;
+  if (crops === undefined) return "";
+  return zh ? `待浇水作物: ${crops.length}` : `unwatered crops: ${crops.length}`;
+}
+
+/**
+ * Drops whole facts from the END while the line is over its byte cap, so a bound
+ * can never eat the clock it opens with. Every fact is dropped rather than
+ * truncated: half a name reads as a shorter name.
+ */
+function joinBoundedFacts(facts: readonly string[]): string {
+  const kept = [...facts];
+  while (kept.length > 1 && Buffer.byteLength(kept.join("；"), "utf8") > MAX_GAME_ENVIRONMENT_FACTS_BYTES) kept.pop();
+  return kept.join("；");
+}
 
 export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
   const facts = [
@@ -294,10 +407,14 @@ export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, z
     formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
     formatGameWeather(source.weather, zh),
     `${zh ? "位置" : "location"}: ${source.location}`,
-  ];
-  const stamina = formatGameStamina(source.stamina, source.exhausted, zh);
-  if (stamina !== "") facts.push(stamina);
-  return facts.join("；");
+    formatGameTile(source.tile, zh),
+    formatHeldTool(source, zh),
+    formatNearbyVillagers(source, zh),
+    formatUnwateredCrops(source, zh),
+    formatGameStamina(source.stamina, source.exhausted, zh),
+  ].filter((fact) => fact !== "");
+  if (facts.length === 0) return "";
+  return joinBoundedFacts(facts);
 }
 /**
  * Magic Context's native trigger may now run the embedded-SDK, no-tool

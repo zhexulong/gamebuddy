@@ -10,6 +10,7 @@ import {
   formatGameEnvironmentFacts,
   formatGameStamina,
   formatGameWeather,
+  MAX_GAME_ENVIRONMENT_FACTS_BYTES,
   reloadMagicContextInRuntimeRoot,
 } from "./runtime-core.internal.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
@@ -122,7 +123,15 @@ test("the localized clock fact can actually fire the evening world-book entry, a
   assert.ok(entry !== undefined, "the owner's evening book entry must exist");
   const keys = entry.keys ?? [];
   assert.deepEqual(keys, ["晚霞", "傍晚", "收工", "深夜", "睡觉"]);
-  const evening = { timeOfDay: 1800, dayOfMonth: 19, seasonIndex: 2, year: 1, weather: "sunny", location: "Farm" };
+  const evening = {
+    timeOfDay: 1800,
+    dayOfMonth: 19,
+    seasonIndex: 2,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+  };
   const zhFacts = formatGameEnvironmentFacts(evening, true);
   assert.ok(zhFacts.includes("18:00（傍晚）"), `the Chinese clock line carries the band: ${zhFacts}`);
   assert.ok(
@@ -187,12 +196,232 @@ test("formatGameEnvironmentFacts carries the actor's current stamina, verbatim",
       year: 1,
       weather: "sunny",
       location: "Farm",
+      tile: { x: 64, y: 15 },
       stamina: 270,
       exhausted: false,
     },
     false,
   );
-  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm；stamina: 270");
+  assert.equal(
+    facts,
+    "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm；tile: (64, 15)；stamina: 270",
+  );
+});
+
+/**
+ * A turn with no tool call is the ordinary case, and on it the companion could
+ * describe the hour, the weather and her stamina but not the tile she stands on
+ * nor the tool in her hand - so "what are you holding" had to be guessed. Both
+ * are plain native reads already on the wire (`Snapshot.tile`, `currentTool`,
+ * and `toolSlots[].upgradeLevel` for the upgrade the handlers actually check).
+ */
+test("formatGameEnvironmentFacts carries the actor's own tile and the tool she is holding", () => {
+  const source = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+    stamina: 270,
+    exhausted: false,
+    currentTool: "(T)Hoe",
+    currentToolSlot: 2,
+    toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2 }],
+  };
+
+  const en = formatGameEnvironmentFacts(source, false);
+  assert.ok(en.includes("tile: (64, 15)"), `the English line must name her tile: ${en}`);
+  assert.ok(en.includes("holding: (T)Hoe (+2)"), `the English line must name the held tool and its upgrade: ${en}`);
+
+  const zh = formatGameEnvironmentFacts(source, true);
+  assert.ok(zh.includes("脚下: (64, 15)"), `the Chinese line must name her tile: ${zh}`);
+  assert.ok(zh.includes("手持: (T)Hoe（+2）"), `the Chinese line must name the held tool and its upgrade: ${zh}`);
+});
+
+/**
+ * The upgrade level is the fact the tool handlers check (an upgraded axe is not
+ * the basic one), but it is only on the wire beside the slot that holds it. A
+ * slot list that does not match the held tool must cost the upgrade, never the
+ * name, and a snapshot with no held tool must cost the whole fact.
+ */
+test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, and omits it when nothing is held", () => {
+  const base = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+  };
+
+  const unmatched = formatGameEnvironmentFacts(
+    { ...base, currentTool: "(T)Axe", currentToolSlot: 0, toolSlots: [{ slot: 2, label: "(T)Hoe" }] },
+    false,
+  );
+  assert.ok(unmatched.includes("holding: (T)Axe"), `the tool name survives an unknown slot: ${unmatched}`);
+  assert.ok(!unmatched.includes("holding: (T)Axe ("), `no invented upgrade level: ${unmatched}`);
+
+  for (const currentTool of [undefined, null, ""] as const) {
+    const empty = formatGameEnvironmentFacts({ ...base, currentTool }, false);
+    assert.ok(!empty.includes("holding:"), `an absent held tool drops the whole fact: ${empty}`);
+  }
+});
+
+/**
+ * Nearby villagers: the nearest few by name, the remainder as a count, and a
+ * radius so "nearby" never means "somewhere on this map". Eight villagers here
+ * is the shape a town square reaches, and it must still cost one bounded fact.
+ */
+test("formatGameEnvironmentFacts names at most three villagers near her and counts the rest of the map", () => {
+  const villager = (npcName: string, displayName: string, x: number, y: number) => ({
+    npcName,
+    displayName,
+    location: "Farm",
+    x,
+    y,
+    inCurrentLocation: true,
+  });
+  const villagers = [
+    villager("Abigail", "阿比盖尔", 51, 50),
+    villager("Sam", "山姆", 52, 50),
+    villager("Penny", "潘妮", 53, 50),
+    villager("Sebastian", "塞巴斯蒂安", 54, 50),
+    villager("Marlon", "马龙", 55, 50),
+    villager("Jas", "贾斯", 56, 50),
+    // In this location, but not near her: they must be counted, not named.
+    villager("Haley", "海莉", 90, 50),
+    villager("Elliott", "艾利欧特", 50, 90),
+  ];
+  const source = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 50, y: 50 },
+    villagerWhereabouts: villagers,
+  };
+
+  const en = formatGameEnvironmentFacts(source, false);
+  for (const named of ["Abigail", "Sam", "Penny"]) assert.ok(en.includes(named), `names the nearest: ${en}`);
+  assert.ok(!en.includes("Sebastian"), `the fourth nearest is a count, not a name: ${en}`);
+  assert.ok(!en.includes("Haley"), `a villager on another part of the map is a count, not a name: ${en}`);
+  assert.ok(en.includes("5 more in this location"), `the rest of the map is counted: ${en}`);
+
+  const zh = formatGameEnvironmentFacts(source, true);
+  assert.ok(zh.includes("附近: "), `the Chinese line names the neighbours: ${zh}`);
+  assert.ok(zh.includes("阿比盖尔"), zh);
+  assert.ok(!zh.includes("塞巴斯蒂安"), zh);
+  assert.ok(zh.includes("本图另有 5 人"), `the Chinese line counts the rest of the map: ${zh}`);
+});
+
+/**
+ * The radius is the point of "nearby": with nobody inside the discovery
+ * envelope, only the count may appear - a name would say someone is with her when
+ * nobody is.
+ */
+test("formatGameEnvironmentFacts counts a villager across the map without claiming she is nearby", () => {
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 900,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      tile: { x: 10, y: 10 },
+      villagerWhereabouts: [
+        { npcName: "Haley", displayName: "海莉", location: "Farm", x: 60, y: 40, inCurrentLocation: true },
+        { npcName: "Marlon", displayName: "马龙", location: "AdventureGuild", x: 11, y: 11, inCurrentLocation: false },
+      ],
+    },
+    false,
+  );
+  assert.equal(facts.endsWith("nearby: 1 more in this location"), true, `only the count, and only this map: ${facts}`);
+  assert.ok(!facts.includes("Haley"), facts);
+  assert.ok(!facts.includes("Marlon"), `another location is not nearby whatever its tile: ${facts}`);
+});
+
+/**
+ * The line is rendered on every turn, so it must stay a line. Villager display
+ * names arrive bounded at 128 characters each, which three of them would make
+ * larger than every other fact combined.
+ */
+test("formatGameEnvironmentFacts stays a bounded line even with pathological names", () => {
+  const long = "阿".repeat(128);
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 900,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      tile: { x: 50, y: 50 },
+      stamina: 270,
+      exhausted: false,
+      currentTool: "(T)Hoe",
+      villagerWhereabouts: [
+        { npcName: "A", displayName: long, location: "Farm", x: 51, y: 50, inCurrentLocation: true },
+        { npcName: "B", displayName: long, location: "Farm", x: 52, y: 50, inCurrentLocation: true },
+        { npcName: "C", displayName: long, location: "Farm", x: 53, y: 50, inCurrentLocation: true },
+      ],
+    },
+    true,
+  );
+  assert.ok(
+    Buffer.byteLength(facts, "utf8") <= MAX_GAME_ENVIRONMENT_FACTS_BYTES,
+    `the line is bounded (${Buffer.byteLength(facts, "utf8")} bytes): ${facts.length} chars`,
+  );
+  // The bound must not eat the facts it opens with: a truncation that removed the
+  // clock would trade one blindness for another.
+  assert.ok(facts.startsWith("09:00"), facts);
+  assert.ok(facts.includes("天气：晴天"), facts);
+  // Nor the neighbours: the per-name cap is what keeps an 128-character display
+  // name from crowding the rest of the line out of the byte bound.
+  assert.ok(facts.includes("附近: "), `the neighbour fact survives the bound: ${facts}`);
+  assert.ok(facts.includes("手持: (T)Hoe"), `the held-tool fact survives the bound: ${facts}`);
+});
+
+/**
+ * Unwatered crops: `cropTargets` is already the Mod's bounded Chebyshev-6 list
+ * of them, so the count is a plain read. ABSENT is "not measured" (the family is
+ * only published when `water_crop` is advertised) and must stay silent, while a
+ * measured zero is the answer to "is anything in front of her thirsty".
+ */
+test("formatGameEnvironmentFacts counts unwatered crops nearby, and tells an unmeasured list from an empty one", () => {
+  const base = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 50, y: 50 },
+  };
+  const crop = (targetId: string, x: number, y: number) => ({
+    targetId,
+    x,
+    y,
+    cropId: "24",
+    displayName: "花椰菜",
+  });
+
+  const thirsty = formatGameEnvironmentFacts(
+    { ...base, cropTargets: [crop("crop_a", 51, 50), crop("crop_b", 52, 50), crop("crop_c", 53, 50)] },
+    true,
+  );
+  assert.ok(thirsty.includes("待浇水作物: 3"), `the count reaches the line: ${thirsty}`);
+
+  const measuredNone = formatGameEnvironmentFacts({ ...base, cropTargets: [] }, false);
+  assert.ok(measuredNone.includes("unwatered crops: 0"), `a measured zero is an answer: ${measuredNone}`);
+
+  const unmeasured = formatGameEnvironmentFacts(base, false);
+  assert.ok(!unmeasured.includes("unwatered crops"), `an absent list says nothing: ${unmeasured}`);
 });
 
 test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue", () => {
@@ -204,20 +433,29 @@ test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue"
       year: 1,
       weather: "rain",
       location: "Farm",
+      tile: { x: 64, y: 15 },
       stamina: 12,
       exhausted: true,
     },
     true,
   );
-  assert.equal(facts, "06:00（清晨）；1年第1天 春季；天气：雨天；位置: Farm；体力: 12（已疲惫）");
+  assert.equal(facts, "06:00（清晨）；1年第1天 春季；天气：雨天；位置: Farm；脚下: (64, 15)；体力: 12（已疲惫）");
 });
 
 test("formatGameEnvironmentFacts omits stamina when the snapshot does not carry it", () => {
   const facts = formatGameEnvironmentFacts(
-    { timeOfDay: 1700, dayOfMonth: 19, seasonIndex: 0, year: 1, weather: "sunny", location: "Farm" },
+    {
+      timeOfDay: 1700,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      tile: { x: 5, y: 10 },
+    },
     false,
   );
-  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm");
+  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm；tile: (5, 10)");
   assert.ok(!facts.includes("stamina"));
 });
 
@@ -230,12 +468,13 @@ test("formatGameEnvironmentFacts omits stamina rather than defaulting a non-fini
       year: 1,
       weather: "sunny",
       location: "Farm",
+      tile: { x: 5, y: 10 },
       stamina: Number.NaN,
       exhausted: false,
     },
     false,
   );
-  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm");
+  assert.equal(facts, "5:00 PM；Year 1, Day 19 of Spring；weather: sunny；location: Farm；tile: (5, 10)");
   assert.ok(!facts.includes("stamina"));
 });
 
