@@ -198,8 +198,11 @@ public static class FarmhandActionCatalog
             "BusStop.checkAction+answerDialogue"), FarmhandActionLifecycle.LiveVerified),
         E("select_mine_elevator_floor", "world_navigation", FarmhandActionHandlerGroup.Movement, ElevatorFloor(), FarmhandActionLifecycle.LiveVerified),
         E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.LiveVerified),
-        E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")) with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }, FarmhandActionLifecycle.LiveVerified),
-        E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")) with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }, FarmhandActionLifecycle.LiveVerified),
+        // approachRequirement is NOT declared: both handlers walk the actor in themselves
+        // (`TryBeginToolApproach`), so "you must already stand beside this" would be a false
+        // sentence published through `plan_shape`.
+        E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
+        E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         // `enter_exit` resolves a warp from (x,y) and refuses when the actor is more than one tile from it
 // (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
