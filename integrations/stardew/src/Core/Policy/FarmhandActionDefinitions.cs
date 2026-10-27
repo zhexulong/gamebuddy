@@ -199,8 +199,16 @@ public static class FarmhandActionCatalog
         E("select_mine_elevator_floor", "world_navigation", FarmhandActionHandlerGroup.Movement, ElevatorFloor(), FarmhandActionLifecycle.LiveVerified),
         E("use_raft", "water_travel", FarmhandActionHandlerGroup.Movement, A(null, null, "raft_launched", ("slot", "integer"), ("x", "integer"), ("y", "integer")), FarmhandActionLifecycle.LiveVerified),
         // approachRequirement is NOT declared: both handlers walk the actor in themselves
-        // (`TryBeginToolApproach`), so "you must already stand beside this" would be a false
-        // sentence published through `plan_shape`.
+        // (`TryBeginToolApproach`), so "you must already stand beside this" would be false.
+        //
+        // Stated precisely, because a later reader will otherwise repeat my mistake: the declaration
+        // currently stops at `FarmhandActionCatalog` / `FarmhandActionSurfacePublication` /
+        // `action-surface.v1.json` and does NOT reach the game. `FarmhandActionDescriptorWire` has no
+        // `Approach` member and the Host's `KNOWN_ACTION_DESCRIPTOR_KEYS` has no `approach`, so every
+        // action publishes `approach_requirement_undeclared` through `plan_shape` regardless of what is
+        // written here. The declaration is still worth keeping honest - it is the artifact the wire
+        // SHOULD carry once that gap is closed - but nobody should read this file and conclude that a
+        // false declaration would have been visible to the companion today. It would not.
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         // `enter_exit` resolves a warp from (x,y) and refuses when the actor is more than one tile from it
