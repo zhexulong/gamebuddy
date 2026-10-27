@@ -3466,9 +3466,22 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         if (propBudget <= 0)
             throw new InvalidOperationException(
                 $"fixture_native_local_play_session_world_too_small:{startTile.X},{startTile.Y}");
-        int weedCount = Math.Max(1, propBudget / 4);
-        int stoneCount = Math.Max(1, propBudget / 2);
-        int cropCount = Math.Max(1, propBudget / 4);
+        // THE TREES AND FORAGE COME OUT OF THE BUDGET, not on top of it.
+        //
+        // `PropCapacity.For` answers how many props this ground can host, and the three ordinary families divide
+        // that number. Adding six more props afterwards overshot it by exactly six, and the post-placement sweep
+        // then had to drop five of the twenty-three - crossing the one-quarter bound and refusing the world before a
+        // turn ran (`dropped=5; kept=18`, measured twice on 2026-10-28).
+        //
+        // The budget is about ground, not about which family consumes it, so the two new families simply take their
+        // share first and the other three divide what is left. If the ground is too small for a full share, the
+        // later loops degrade the way they already do (`placed N of M ... before the ground ran out`).
+        int treesCount = Math.Min(PlaySessionTreeCount, Math.Max(0, propBudget / 8));
+        int forageCount = Math.Min(PlaySessionForageCount, Math.Max(0, propBudget / 8));
+        int remainingBudget = Math.Max(1, propBudget - treesCount - forageCount);
+        int weedCount = Math.Max(1, remainingBudget / 4);
+        int stoneCount = Math.Max(1, remainingBudget / 2);
+        int cropCount = Math.Max(1, remainingBudget / 4);
 
         // TREES AND FORAGE, placed FIRST because a tree is a walkability blocker.
         //
@@ -3480,7 +3493,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         //
         // The tree recipe is the live-verified WIA fixture's (ModEntry.Fixtures.WiaToolApproach.cs:72-83).
         int treesPlaced = 0;
-        for (int index = 0; index < PlaySessionTreeCount; index += 1)
+        for (int index = 0; index < treesCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? treeSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (treeSpot is null)
@@ -3499,7 +3512,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         }
 
         int foragePlaced = 0;
-        for (int index = 0; index < PlaySessionForageCount; index += 1)
+        for (int index = 0; index < forageCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? forageSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
             if (forageSpot is null)
