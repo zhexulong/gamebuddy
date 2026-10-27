@@ -7,6 +7,7 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
+  CONSERVATIVE_CONTEXT_WINDOW,
   declaredContextWindow,
   environmentProviderEntry,
   mergeModelProviderEntry,
@@ -52,8 +53,8 @@ const ZERO_CONFIG_DEEPSEEK = `{
           "input": [
             "text"
           ],
-          "contextWindow": 1000000,
-          "maxTokens": 384000,
+          "contextWindow": 131072,
+          "maxTokens": 50331,
           "cost": {
             "input": 0.14,
             "output": 0.28,
@@ -376,21 +377,27 @@ test("an unreadable connection document yields no player endpoint", async () => 
   }
 });
 
-test("the declared window is the product value unless a fixture asks for a smaller one", () => {
+test("the declared window is the model's own, a conservative floor for an unknown one, and the fixture when it asks", () => {
   // Pressure is a fraction of this window, so shrinking it is what makes a context-pressure measurement
   // possible in a session-sized conversation - and reusable, rather than a product-scale run.
   const key = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
   const previous = process.env[key];
   try {
     delete process.env[key];
-    assert.equal(declaredContextWindow(), 1_000_000);
+    // A model the catalog knows states its own window: no path invents one on top of it.
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 131_072);
+    // A model it does not know gets the conservative floor, not a million: Pi refuses nothing at this size, and folding is
+    // measured against something the endpoint will actually accept.
+    assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
+    assert.ok(CONSERVATIVE_CONTEXT_WINDOW < 131_072, "the floor is below the smallest catalogued window");
+    // The fixture still wins over both, because a measurement must be able to shrink it.
     process.env[key] = "80000";
-    assert.equal(declaredContextWindow(), 80_000);
-    // An unusable value is reported and ignored, never guessed at.
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 80_000);
+    // An unusable value is reported and ignored, never guessed at - and then the catalog's own number applies again.
     process.env[key] = "12";
-    assert.equal(declaredContextWindow(), 1_000_000);
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 131_072);
     process.env[key] = "not-a-number";
-    assert.equal(declaredContextWindow(), 1_000_000);
+    assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
   } finally {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;

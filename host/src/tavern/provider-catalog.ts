@@ -87,6 +87,15 @@ export type TavernCatalogModel = Readonly<{
   defaultThinkingLevel: CompanionThinkingLevel;
   /** The reasoning dialect this exact model speaks (see above). */
   reasoningDialect: TavernModelReasoningDialect;
+  /**
+   * The context window this model actually has, when the catalog knows it.
+   *
+   * The product has to declare *some* window to Pi and to the fold policy, and both ways of getting it wrong are real: the
+   * endpoint's `/models` reply carries no window on OpenAI or DeepSeek (only OpenRouter does), and Pi refuses every request
+   * when the declared window is zero. A per-model number is the honest middle - a known model states its own, and a model the
+   * catalog does not know falls back to a conservative constant rather than to a million.
+   */
+  contextWindow?: number;
 }>;
 
 export type TavernCatalogProvider = Readonly<{
@@ -136,6 +145,7 @@ const defineModel = (
   allowedThinkingLevels: readonly CompanionThinkingLevel[],
   defaultThinkingLevel: CompanionThinkingLevel,
   reasoningDialect: TavernModelReasoningDialect,
+  contextWindow: number,
 ): TavernCatalogModel =>
   Object.freeze({
     modelId,
@@ -143,6 +153,7 @@ const defineModel = (
     allowedThinkingLevels: Object.freeze([...allowedThinkingLevels]),
     defaultThinkingLevel,
     reasoningDialect,
+    contextWindow,
   });
 
 const defineProvider = (provider: TavernCatalogProvider): TavernCatalogProvider =>
@@ -166,7 +177,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: TAVERN_ENVIRONMENT_VARIABLE,
     setupFields: [],
     allowedPlayerModels: [
-      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek"),
+      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 131_072),
     ],
     escapeHatch: false,
     probeBearerAuth: true,
@@ -180,8 +191,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: null,
     setupFields: ["apiKey", "modelId"],
     allowedPlayerModels: [
-      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek"),
-      defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek"),
+      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 131_072),
+      defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek", 131_072),
     ],
     escapeHatch: false,
     // `openai-completions` authenticates a request with a bearer token; without this the probe
@@ -197,8 +208,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: null,
     setupFields: ["apiKey", "modelId"],
     allowedPlayerModels: [
-      defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high", "native"),
-      defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native"),
+      defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high", "native", 400_000),
+      defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native", 400_000),
     ],
     escapeHatch: false,
     // `openai-responses` authenticates a request with a bearer token; without this the probe sends

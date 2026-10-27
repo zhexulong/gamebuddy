@@ -58,18 +58,43 @@ export type PiProviderEntry = Readonly<Record<string, unknown>>;
  */
 const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
 
-export function declaredContextWindow(): number {
+/**
+ * The window this product assumes when neither the catalog nor the fixture channel states one.
+ *
+ * A model served through this product is usually a current chat model, and the honest assumption for an unknown one is the
+ * smallest common ceiling rather than the largest: understating a window costs an earlier fold, overstating it costs the
+ * endpoint refusing the request outright. 32k is chosen because it is the floor the escape hatch's own `modelId` can
+ * realistically name (a locally served model), and because the fold policy then measures something the endpoint will
+ * actually accept.
+ */
+export const CONSERVATIVE_CONTEXT_WINDOW = 32_768;
+
+/**
+ * The window to declare for a model.
+ *
+ * Three sources, in order: the fixture channel (so a pressure measurement is reusable rather than a product-scale run), the
+ * catalog's own number for a model it knows, and the conservative constant. The point of the ordering is that no path can
+ * claim a window larger than the model's own.
+ */
+export function declaredContextWindow(modelId?: string): number {
   const raw = process.env[FIXTURE_MODEL_WINDOW_ENV];
-  if (raw === undefined || raw.trim() === "") return 1_000_000;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isSafeInteger(value) || value < 4_000) {
-    process.stderr.write(
-      `[provider] ignoring ${FIXTURE_MODEL_WINDOW_ENV}=${JSON.stringify(raw)}: not an integer of at least 4000\n`,
-    );
-    return 1_000_000;
+  if (raw !== undefined && raw.trim() !== "") {
+    const value = Number.parseInt(raw, 10);
+    if (!Number.isSafeInteger(value) || value < 4_000) {
+      process.stderr.write(
+        `[provider] ignoring ${FIXTURE_MODEL_WINDOW_ENV}=${JSON.stringify(raw)}: not an integer of at least 4000\n`,
+      );
+    } else {
+      process.stderr.write(`[provider] fixture model window: ${value} tokens\n`);
+      return value;
+    }
   }
-  process.stderr.write(`[provider] fixture model window: ${value} tokens\n`);
-  return value;
+  if (modelId !== undefined) {
+    const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
+    const catalogWindow = provider === null ? undefined : catalogModel(provider, modelId)?.contextWindow;
+    if (catalogWindow !== undefined) return catalogWindow;
+  }
+  return CONSERVATIVE_CONTEXT_WINDOW;
 }
 
 function environmentReasoningDialect(modelId: string): TavernModelReasoningDialect {
@@ -119,10 +144,10 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
                 max: "max",
               },
         input: ["text"],
-        contextWindow: declaredContextWindow(),
+        contextWindow: declaredContextWindow(modelId),
         // The output cap has to travel with the window, or a shrunk window asks the provider for more output than
         // it has room for. 0.384 keeps the production window's own ratio, so the default is unchanged.
-        maxTokens: Math.min(384_000, Math.floor(declaredContextWindow() * 0.384)),
+        maxTokens: Math.min(384_000, Math.floor(declaredContextWindow(modelId) * 0.384)),
         cost: {
           input: 0.14,
           output: 0.28,
