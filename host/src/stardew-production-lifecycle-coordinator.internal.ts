@@ -2785,9 +2785,15 @@ function createCoordinator(
         denied: denied.has(familyId),
       })),
       advanceDayMinimumOnlineFarmers: settings.advanceDayMinimumOnlineFarmers,
+      ...(settings.windowMode === undefined
+        ? {}
+        : { windowMode: settings.windowMode as "visible" | "minimized" | "hidden" | "background" }),
+      ...(settings.deniedActions === undefined ? {} : { deniedActions: [...settings.deniedActions] }),
       appliesToRunningGame: {
         actionPolicy: "within_seconds",
         advanceDayMinimumOnlineFarmers: "next_world_load",
+        windowMode: "within_seconds",
+        deniedActions: "within_seconds",
       },
     };
   };

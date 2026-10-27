@@ -3441,7 +3441,12 @@ function settingsProjection(
   revision: number;
   families: { familyId: string; denied: boolean }[];
   advanceDayMinimumOnlineFarmers: number;
-  appliesToRunningGame: { actionPolicy: "within_seconds"; advanceDayMinimumOnlineFarmers: "next_world_load" };
+  appliesToRunningGame: {
+    actionPolicy: "within_seconds";
+    advanceDayMinimumOnlineFarmers: "next_world_load";
+    windowMode: "within_seconds";
+    deniedActions: "within_seconds";
+  };
 }> {
   return {
     apiVersion: 1,
@@ -3454,6 +3459,8 @@ function settingsProjection(
     appliesToRunningGame: {
       actionPolicy: "within_seconds",
       advanceDayMinimumOnlineFarmers: "next_world_load",
+      windowMode: "within_seconds",
+      deniedActions: "within_seconds",
     },
   };
 }
@@ -3548,6 +3555,8 @@ test("the settings route reads and writes only the player-owned fields, and refu
     assert.deepEqual(saved.appliesToRunningGame, {
       actionPolicy: "within_seconds",
       advanceDayMinimumOnlineFarmers: "next_world_load",
+      windowMode: "within_seconds",
+      deniedActions: "within_seconds",
     });
     assert.deepEqual(updates, [
       {

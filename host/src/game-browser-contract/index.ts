@@ -575,6 +575,14 @@ const StardewActionFamilyV1Schema = strictObject({
  *    (`ConfigureLifecycleMinimumFarmers`), so a change takes effect the next time the
  *    world loads and its own sentence says so.
  */
+/** The four behaviours `WindowModeManagement` implements; anything else is not a mode this product can ask for. */
+export const StardewWindowModeV1Schema = Type.Union([
+  Type.Literal("visible"),
+  Type.Literal("minimized"),
+  Type.Literal("hidden"),
+  Type.Literal("background"),
+]);
+
 export const StardewPlayerSettingsV1Schema = strictObject({
   apiVersion: ApiVersion,
   revision: NonNegativeGeneration,
@@ -585,9 +593,20 @@ export const StardewPlayerSettingsV1Schema = strictObject({
    * fact, never a hedge: the Mod reads that field once, and a control that said
    * "saved" without saying that would be promising a live change it cannot make.
    */
+  /**
+   * How the game window behaves while the companion plays. Absent when the player never chose: the Mod's own `visible` then
+   * applies, exactly as an absent language leaves the live-game locale in charge.
+   */
+  windowMode: Type.Optional(StardewWindowModeV1Schema),
+  /** Individual action ids withheld on top of the families. Absent means none. */
+  deniedActions: Type.Optional(Type.Array(SAFE_ID, { maxItems: 512 })),
   appliesToRunningGame: strictObject({
     actionPolicy: Type.Literal("within_seconds"),
     advanceDayMinimumOnlineFarmers: Type.Literal("next_world_load"),
+    /** The window mode is read by the Mod on each tick, so this one really is immediate. */
+    windowMode: Type.Literal("within_seconds"),
+    /** Per-action denials ride the same policy document the families do. */
+    deniedActions: Type.Literal("within_seconds"),
   }),
 });
 
@@ -601,6 +620,12 @@ export const StardewPlayerSettingsCommandV1Schema = strictObject({
   expectedRevision: NonNegativeGeneration,
   deniedActionFamilies: Type.Array(SAFE_ID, { maxItems: 64 }),
   advanceDayMinimumOnlineFarmers: Type.Integer({ minimum: 1, maximum: 4 }),
+  /**
+   * Absent leaves whatever the record holds - a client that does not know the field cannot clear it - and naming it sets it.
+   * There is no "clear" verb here on purpose: `visible` is the Mod's own default and the honest way to say "no preference".
+   */
+  windowMode: Type.Optional(StardewWindowModeV1Schema),
+  deniedActions: Type.Optional(Type.Array(SAFE_ID, { maxItems: 512 })),
 });
 
 export const StardewPlayerSettingsReadCommandV1Schema = strictObject({
