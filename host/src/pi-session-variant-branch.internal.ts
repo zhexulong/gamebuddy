@@ -190,6 +190,55 @@ export function rewindPiTranscriptTail(
 /** One Chat transcript message a rewind drops, as the transcript itself holds it. */
 export type PiTranscriptMessage = Readonly<{ role: "player" | "companion"; text: string }>;
 
+/**
+ * The one mount-time alignment: after the Pi session is reopened, take back whatever it still carries past the transcript's
+ * own last row.
+ *
+ * The store and the session are two authorities over one conversation. A delete or a rewind performed while nothing was
+ * mounted changes only the store - there is no live session to reshape - and re-opening the session file lands the leaf where
+ * the file last ended, which resurrects exactly the rows the player removed. This is that disagreement, settled the same way a
+ * mounted rewind settles it: the kept prefix is proved text by text against what the session still carries, and the tail past
+ * it is cut with the same append-only edit, so the cut survives the next re-open too.
+ *
+ * Refusals are reported rather than thrown. A mount whose session shape this function cannot prove is still a mount - the
+ * player's conversation must open - and a silent cut would damage a conversation on a guess.
+ */
+export function alignSessionToTranscriptRows(
+  session: PiVariantBranchSession,
+  rows: readonly Readonly<{ role: string; text: string }>[],
+): Readonly<{ status: "aligned"; dropped: number }> | Readonly<{ status: "refused"; reason: string }> {
+  const messages = branchMessageEntries(session);
+  // What each side thinks the conversation is, in the same shape: a player line or a companion line, with its text.
+  const sessionRows = messages.map((entry, index) =>
+    Object.freeze({
+      role: entry.player !== null ? ("player" as const) : ("companion" as const),
+      text: (entry.player ?? entry.reply ?? "").trim(),
+      index,
+    }),
+  );
+  const expected = rows.map((row) =>
+    Object.freeze({
+      role: row.role === "player" ? ("player" as const) : ("companion" as const),
+      text: row.text.trim(),
+    }),
+  );
+  if (sessionRows.length <= expected.length) return Object.freeze({ status: "aligned", dropped: 0 });
+  // The prefix has to be the same conversation before anything is cut: this is a re-alignment, not a repair.
+  for (const [offset, row] of expected.entries()) {
+    const actual = sessionRows[offset];
+    if (actual === undefined || actual.role !== row.role || actual.text !== row.text)
+      return Object.freeze({ status: "refused", reason: "transcript_prefix_mismatch" });
+  }
+  const trailing = sessionRows.slice(expected.length);
+  const dropped = trailing.map((row): PiTranscriptMessage => Object.freeze({ role: row.role, text: row.text }));
+  // An empty companion reply cannot be proved byte for byte, so it is left alone rather than cut on a guess.
+  if (dropped.some((row) => row.text.length === 0))
+    return Object.freeze({ status: "refused", reason: "trailing_row_unprovable" });
+  const rewound = rewindPiTranscriptTail(session, dropped);
+  if (rewound.status !== "rewound") return Object.freeze({ status: "refused", reason: rewound.reason });
+  return Object.freeze({ status: "aligned", dropped: dropped.length });
+}
+
 /** Why a refused rewind left the model's context exactly as it was. */
 type PiTranscriptRewindRefusal = "rewind_tail_unavailable" | "rewind_tail_text_mismatch" | "rewind_keep_unavailable";
 

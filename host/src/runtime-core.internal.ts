@@ -58,6 +58,7 @@ import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/co
 import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
 import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
+import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
@@ -683,6 +684,17 @@ export async function createChatRuntimeConstructionInternal(
         );
       }
     }
+    // The store is the authority for which rows exist; the session is the authority for what the model carries. A mount is
+    // the one moment both are known and neither is in flight, so the disagreement is settled here: whatever the session
+    // still carries past the store's last row was removed while nothing was mounted - an offline delete or rewind - and
+    // the same append-only cut a mounted rewind uses pins it durably.
+    const alignment = alignSessionToTranscriptRows(runtime.session, construction.transcriptRows);
+    if (alignment.status === "refused")
+      process.stderr.write(
+        `[mount] the session carries rows the transcript no longer has, and the cut was refused: ${alignment.reason}\n`,
+      );
+    else if (alignment.dropped > 0)
+      process.stderr.write(`[mount] aligned the session to the transcript: dropped ${alignment.dropped} row(s)\n`);
     return Object.freeze({
       runtime,
       appliedModelConfig: () => appliedModelConfig,

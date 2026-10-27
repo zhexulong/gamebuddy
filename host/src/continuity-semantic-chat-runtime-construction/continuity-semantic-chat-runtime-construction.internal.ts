@@ -52,6 +52,15 @@ export type ExactChatRuntimeConstruction = Readonly<{
    */
   openingGreeting: string | null;
   /**
+   * The rows this construction read, in order.
+   *
+   * The store and the Pi session are two authorities over one conversation and they can disagree: a delete or rewind
+   * performed while nothing was mounted changes only the store, while re-opening the session file lands the leaf where the
+   * file last ended. The mount compares these rows with the session it just reopened, so the conversation the player sees
+   * is the one the model reads.
+   */
+  transcriptRows: readonly Readonly<{ role: string; text: string }>[];
+  /**
    * Releases the construction's own store. The construction keeps one store for
    * its whole lifetime, so the consumer that owns the mounted runtime owns this
    * release; the materializer's reverse-disposal calls it.
@@ -260,6 +269,14 @@ async function buildExactChatRuntimeConstruction(
     materializeStableContextForPiSession,
     materializeDesiredStableContextForPiSession,
     openingGreeting: openingGreetingOf(state),
+    /**
+     * The rows this mount read, in order. `runtime-core` compares them with the Pi session it reopens, because the two can
+     * disagree: an offline delete or rewind changes only the store, and re-opening the session file lands the leaf where the
+     * file last ended - which resurrects the rows that were removed while nothing was mounted.
+     */
+    transcriptRows: Object.freeze(
+      state.messages.map((message) => Object.freeze({ role: message.role, text: message.text })),
+    ),
     closeChatThreadStore: () => threads.close?.(),
     ...(options.tavernNarrativeGateNonceSha256 === undefined
       ? {}
