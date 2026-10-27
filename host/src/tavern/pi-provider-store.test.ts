@@ -14,8 +14,15 @@ import {
   modelProviderEntry,
 } from "./pi-provider-store.js";
 import { connectionDocumentPath, TavernConnectionStore } from "./connection-store.js";
-import { TAVERN_ESCAPE_HATCH_PROVIDER_ID } from "./provider-catalog.js";
-
+import {
+  catalogModel,
+  catalogModelById,
+  catalogProvider,
+  TAVERN_ENVIRONMENT_PROVIDER_ID,
+  TAVERN_ESCAPE_HATCH_PROVIDER_ID,
+  TAVERN_PROVIDER_CATALOG,
+  type TavernCatalogProvider,
+} from "./provider-catalog.js";
 /**
  * The zero-configuration equivalence boundary.
  *
@@ -398,6 +405,75 @@ test("the declared window is the model's own, a conservative floor for an unknow
     assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 131_072);
     process.env[key] = "not-a-number";
     assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+});
+
+/**
+ * A model the catalog declares is described by the entry that declares it - not only by the operator's
+ * own gateway.
+ *
+ * The measured defect: `declaredContextWindow` looked the model up through
+ * `catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID)` and nowhere else, so every id that any other entry
+ * carried answered `undefined` and fell to `CONSERVATIVE_CONTEXT_WINDOW` - 32,768, which magic-context
+ * folds at 65% of, about 21k tokens, while the model really had 128k and up.
+ *
+ * The population is a stated catalog rather than the shipped one, because that is the crossing case. A
+ * BYOK model id is normally not declared at all - `820fe985` emptied `allowedPlayerModels` for `deepseek`
+ * and `openai` on purpose, since those ids were this project's gateway ids and not the endpoints' - so the
+ * shipped catalog has exactly one declaring entry, and a lookup that only ever asks that entry could still
+ * pass by accident. The catalog parameter makes the entry under test a non-environment one, which is the
+ * shape a player's own model takes once any provider does describe its models.
+ */
+test("a model another entry declares keeps its own window and its own dialects", () => {
+  const key = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+  const previous = process.env[key];
+  delete process.env[key];
+  try {
+    const playerEntry = Object.freeze({
+      ...catalogProvider("deepseek")!,
+      allowedPlayerModels: Object.freeze([
+        Object.freeze({
+          modelId: "byok-deepseek-chat",
+          modelLabel: "BYOK DeepSeek Chat",
+          allowedThinkingLevels: Object.freeze(["low", "high"] as const),
+          defaultThinkingLevel: "high" as const,
+          reasoningDialect: "deepseek" as const,
+          contextWindow: 163_840,
+        }),
+      ]),
+    }) satisfies TavernCatalogProvider;
+    const catalog: readonly TavernCatalogProvider[] = [...TAVERN_PROVIDER_CATALOG, playerEntry];
+
+    // The crossing assertion: a model no environment entry declares still states its own window.
+    assert.equal(catalogModel(catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID)!, "byok-deepseek-chat"), null);
+    assert.equal(catalogModelById("byok-deepseek-chat", catalog)?.contextWindow, 163_840);
+    assert.equal(declaredContextWindow("byok-deepseek-chat", catalog), 163_840);
+    assert.notEqual(declaredContextWindow("byok-deepseek-chat", catalog), CONSERVATIVE_CONTEXT_WINDOW);
+
+    // The dialect is the same fact asked a second way, and it travels with the window: a `deepseek` model
+    // gets the collapsed effort vocabulary wherever its entry lives, not only under the environment one.
+    const asCatalogued = environmentProviderEntry("byok-deepseek-chat", catalog);
+    const model = (asCatalogued["models"] as readonly Readonly<Record<string, unknown>>[])[0]!;
+    assert.equal(model["contextWindow"], 163_840);
+    assert.deepEqual(model["compat"], {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      maxTokensField: "max_tokens",
+      supportsStrictMode: true,
+      thinkingFormat: "deepseek",
+      requiresReasoningContentOnAssistantMessages: true,
+    });
+
+    // An id no entry in that same catalog declares is still the conservative floor, and still the neutral
+    // dialect - widening the lookup must not turn an unknown model into a described one.
+    assert.equal(declaredContextWindow("still-unlisted-model", catalog), CONSERVATIVE_CONTEXT_WINDOW);
+    const unknown = environmentProviderEntry("still-unlisted-model", catalog);
+    const unknownModel = (unknown["models"] as readonly Readonly<Record<string, unknown>>[])[0]!;
+    assert.equal(unknownModel["contextWindow"], CONSERVATIVE_CONTEXT_WINDOW);
+    assert.equal((unknownModel["compat"] as Readonly<Record<string, unknown>>)["thinkingFormat"], undefined);
   } finally {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;

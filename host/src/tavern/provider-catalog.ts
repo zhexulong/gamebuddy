@@ -268,6 +268,33 @@ export function catalogModel(provider: TavernCatalogProvider, modelId: string): 
 }
 
 /**
+ * The catalog entry that declares one model id, wherever in the catalog it lives.
+ *
+ * A model id is not scoped to the provider that offers it: the operator's gateway declares the ids its
+ * own endpoint serves, and a player's BYOK id belongs to the endpoint they configured. Every reader
+ * that asks what a MODEL is - its context window, the effort vocabulary it speaks - asks this, so a
+ * declared fact is found wherever it is written down instead of only under the one entry that happens
+ * to be the environment.
+ *
+ * `null` when no entry declares it, which is the ordinary answer for a player-typed id (design/28 §1:
+ * the model id is the player's on every entry, and the endpoint's own `/models` reply is the list).
+ * The caller then states that consequence rather than inventing a description.
+ *
+ * `catalog` is a parameter so a test can state a population the real catalog does not hold yet - the
+ * same lever `playerOfferedProviders` takes for its environment.
+ */
+export function catalogModelById(
+  modelId: string,
+  catalog: readonly TavernCatalogProvider[] = TAVERN_PROVIDER_CATALOG,
+): TavernCatalogModel | null {
+  for (const provider of catalog) {
+    const model = catalogModel(provider, modelId);
+    if (model !== null) return model;
+  }
+  return null;
+}
+
+/**
  * True when this provider accepts a bounded player-supplied model id. Every provider the player
  * configures does: the Host's curated ids are a starting point, not the set of ids an endpoint may
  * serve, so a player who wants a model we did not list types its id and the probe decides whether

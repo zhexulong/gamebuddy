@@ -3,9 +3,10 @@ import { atomicWriteFile } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime-identity.js";
 import { connectionDocumentPath } from "./connection-store.js";
 import {
-  catalogModel,
+  catalogModelById,
   catalogProvider,
   isTavernPiApi,
+  type TavernCatalogProvider,
   type TavernModelReasoningDialect,
   type TavernPiApi,
   TAVERN_ENVIRONMENT_PROVIDER_ID,
@@ -41,13 +42,6 @@ import {
 export type PiProviderEntry = Readonly<Record<string, unknown>>;
 
 /**
- * The reasoning dialect the environment model is declared with. It is read from
- * the model's catalog entry, never from its name: a player-typed model id the
- * catalog does not describe keeps the neutral dialect, so a non-catalog model
- * still gets a reasoning mapping instead of silently losing one (design/28
- * §2.3.1).
- */
-/**
  * The context window this runtime declares for its provider entry.
  *
  * A fixture-only channel, under the same rules as the runtime's other test levers: opt-in by environment, one
@@ -75,8 +69,16 @@ export const CONSERVATIVE_CONTEXT_WINDOW = 32_768;
  * Three sources, in order: the fixture channel (so a pressure measurement is reusable rather than a product-scale run), the
  * catalog's own number for a model it knows, and the conservative constant. The point of the ordering is that no path can
  * claim a window larger than the model's own.
+ *
+ * The catalog is searched as a whole, not through the environment entry alone. The window is a property of the MODEL, and
+ * the entry that declares it is whichever endpoint the catalog happens to describe it under: only the operator's gateway
+ * carries the ids this product's own gateway serves today, so an environment-only lookup answers `undefined` for every id
+ * a player brought with them, and their model falls through to the conservative floor while it really has far more room.
+ *
+ * `catalog` is the same population lever `playerOfferedProviders` takes: a test states the catalog it means, so the
+ * crossing rule stays assertable when the real catalog happens to declare a model under only one entry.
  */
-export function declaredContextWindow(modelId?: string): number {
+export function declaredContextWindow(modelId?: string, catalog?: readonly TavernCatalogProvider[]): number {
   const raw = process.env[FIXTURE_MODEL_WINDOW_ENV];
   if (raw !== undefined && raw.trim() !== "") {
     const value = Number.parseInt(raw, 10);
@@ -89,22 +91,25 @@ export function declaredContextWindow(modelId?: string): number {
       return value;
     }
   }
-  if (modelId !== undefined) {
-    const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
-    const catalogWindow = provider === null ? undefined : catalogModel(provider, modelId)?.contextWindow;
-    if (catalogWindow !== undefined) return catalogWindow;
-  }
-  return CONSERVATIVE_CONTEXT_WINDOW;
+  const catalogWindow = typeof modelId === "string" ? catalogModelById(modelId, catalog)?.contextWindow : undefined;
+  return catalogWindow ?? CONSERVATIVE_CONTEXT_WINDOW;
 }
 
-function environmentReasoningDialect(modelId: string): TavernModelReasoningDialect {
-  const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
-  return provider === null ? "native" : (catalogModel(provider, modelId)?.reasoningDialect ?? "native");
+/**
+ * The reasoning dialect one model speaks, read the same way its window is: from the catalog entry that declares the model.
+ *
+ * The dialect is a property of the model, so the entry that serves a given id speaks what that id speaks. Keeping this
+ * environment-only while the window had been widened would describe a model's window while declining to describe the same
+ * model's effort vocabulary - the same defect in the same file, one fact over.
+ */
+function reasoningDialectOf(modelId: string, catalog?: readonly TavernCatalogProvider[]): TavernModelReasoningDialect {
+  return catalogModelById(modelId, catalog)?.reasoningDialect ?? "native";
 }
-
 /** The frozen operator-managed Agent provider entry (zero-configuration default). */
-export function environmentProviderEntry(modelId: string): PiProviderEntry {
-  const reasoningDialect = environmentReasoningDialect(modelId);
+export function environmentProviderEntry(modelId: string, catalog?: readonly TavernCatalogProvider[]): PiProviderEntry {
+  const reasoningDialect = reasoningDialectOf(modelId, catalog);
+  // Read once: the window and the output cap have to describe the same model, and two reads could straddle a change.
+  const contextWindow = declaredContextWindow(modelId, catalog);
   return {
     name: "CPA OpenAI-compatible Agent",
     baseUrl: "http://127.0.0.1:8317/v1",
@@ -144,10 +149,10 @@ export function environmentProviderEntry(modelId: string): PiProviderEntry {
                 max: "max",
               },
         input: ["text"],
-        contextWindow: declaredContextWindow(modelId),
+        contextWindow,
         // The output cap has to travel with the window, or a shrunk window asks the provider for more output than
         // it has room for. 0.384 keeps the production window's own ratio, so the default is unchanged.
-        maxTokens: Math.min(384_000, Math.floor(declaredContextWindow(modelId) * 0.384)),
+        maxTokens: Math.min(384_000, Math.floor(contextWindow * 0.384)),
         cost: {
           input: 0.14,
           output: 0.28,
