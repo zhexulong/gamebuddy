@@ -1,3 +1,4 @@
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using StardewModdingAPI;
 using StardewValley;
@@ -71,13 +72,9 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_target_changed", $"target={targetX},{targetY};expected={expectedTargetId}");
-        // W-rule: the actor must stand next to the bin's actual footprint; the
-        // client-supplied tile is only a stale-planning hint and never the
-        // authority for the native call. Farm's building and IslandWest's island
-        // bin both resolve to an origin-plus-extent footprint, so one rule is
-        // enough for either location.
-        if (ShippingBinChebyshevDistance(Game1.player, bin) > 1)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"bin={bin.TileX},{bin.TileY};player={FormatTile(Game1.player.Tile)}");
+        // Everything that does not depend on where the actor stands is decided BEFORE
+        // the geometry, so a walk is only committed for a bin and a stack that could
+        // actually ship on arrival.
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Item slotItem || slotItem.Stack <= 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(slotItem.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
@@ -87,6 +84,60 @@ internal sealed partial class ExecutionManager
         // new day; a Tool would settle for 0g and be cleared with the bin.
         if (slotItem is not StardewValley.Object shippable || !shippable.canBeShipped())
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId};slot={slot}");
+        // W-rule: the actor must stand next to the bin's actual footprint; the
+        // client-supplied tile is only a stale-planning hint and never the
+        // authority for the native call. Farm's building and IslandWest's island
+        // bin both resolve to an origin-plus-extent footprint, so one rule is
+        // enough for either location. Out of it, the actor walks in rather than
+        // being refused: the native bin is an ordinary building on the map the
+        // actor already stands on.
+        if (ShippingBinChebyshevDistance(Game1.player, bin) > 1)
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "ship_item",
+                Game1.player.currentLocation,
+                // The walk's target is the bin's occupied tiles, never its anchor: a
+                // shipping bin is 2x2 (and larger), so a tile beside the anchor can be
+                // INSIDE the bin - standing in the bin is not approaching it - and the
+                // south face is two rows below the anchor, outside its own ring.
+                (bin.TileX, bin.TileY),
+                ShippingBinFootprintTiles(bin),
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteShipItem(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteShipItem(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes ship_item against the current world, re-reading the bin, the footprint distance and the stack
+    /// because an approach leg may have taken several ticks. Shared by the in-range path and the
+    /// post-approach path, so neither is a copy of the other.
+    ///
+    /// The two arrival failures keep different names: a bin that is no longer the requested one is
+    /// <c>shipping_bin_target_changed</c>, and a footprint the actor still cannot reach after walking is
+    /// <c>target_out_of_range</c>.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteShipItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
+        if (Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+        if (ResolveShippingBin(Game1.player) is not ResolvedShippingBin bin)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
+        if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_target_changed", $"target={targetX},{targetY};expected={expectedTargetId};actual={bin.TargetId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object shippable || shippable.Stack <= 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
+        if (!string.Equals(shippable.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+        if (!shippable.canBeShipped())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId};slot={slot}");
+        if (ShippingBinChebyshevDistance(Game1.player, bin) > 1)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"bin={bin.TileX},{bin.TileY};footprint_tiles={ShippingBinFootprintTiles(bin).Length};player={FormatTile(Game1.player.Tile)};approach=arrived");
 
         StardewValley.Inventories.IInventory binInventory = Game1.getFarm().getShippingBin(Game1.player);
         int stackShipped = shippable.Stack;
@@ -189,14 +240,27 @@ internal sealed partial class ExecutionManager
         return $"shipping_bin_island_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
+    /// <summary>
+    /// The bin's occupied tiles, which is the walk target and the distance measurement alike.
+    ///
+    /// A shipping bin is multi-tile: 2x1 on the Farm and 2x2 on Ginger Island, taken from the
+    /// building's own live extent so a resized bin is measured as it actually is. Both rules read
+    /// this ONE enumeration of the extent, so the tiles the distance check measures and the tiles the approach
+    /// hands to the walk selector cannot drift apart. The extent always grows +x/+y from the footprint origin.
+    /// </summary>
+    private static (int X, int Y)[] ShippingBinFootprintTiles(ResolvedShippingBin bin)
+    {
+        return new FootprintRect(bin.TileX, bin.TileY, bin.TilesWide, bin.TilesHigh)
+            .Tiles()
+            .Select(tile => (tile.X, tile.Y))
+            .ToArray();
+    }
+
     private static int ShippingBinChebyshevDistance(Farmer player, ResolvedShippingBin bin)
     {
         int best = int.MaxValue;
-        for (int offsetX = 0; offsetX < bin.TilesWide; offsetX++)
-        {
-            for (int offsetY = 0; offsetY < bin.TilesHigh; offsetY++)
-                best = Math.Min(best, ChebyshevDistance(player, bin.TileX + offsetX, bin.TileY + offsetY));
-        }
+        foreach ((int X, int Y) tile in ShippingBinFootprintTiles(bin))
+            best = Math.Min(best, ChebyshevDistance(player, tile.X, tile.Y));
         return best;
     }
 
