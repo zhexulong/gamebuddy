@@ -4,7 +4,20 @@ import { canonicalTestRoot } from "./test-support/canonical-test-root.test-suppo
 import { join } from "node:path";
 import test from "node:test";
 
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import { createCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime.js";
+
+// The runtime writes an identity profile under a path lock, and releasing a lock on Windows goes through the build-time
+// reclaimer - the same binding every other path-lock consumer's suite makes. Without it the release fails and the failure
+// surfaces as an unrelated-looking error several frames deep.
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 
 const identity = { playerId: "player_01", saveId: "save_01", worldId: "world_01", companionId: "companion_01" };
 
@@ -31,7 +44,9 @@ test("Companion Agent registry is identity-scoped and uses DeepSeek V4.1 Flash t
     assert.match(models, /"apiKey": "\$CPA_OAI_API_KEY"/);
     assert.match(models, /"thinkingFormat": "deepseek"/);
     assert.match(models, /"requiresReasoningContentOnAssistantMessages": true/);
-    assert.match(models, /"contextWindow": 1000000/);
+    // The DeepSeek V4 line declares 131,072; the assertion says the document carries that model's own window rather than a
+    // product-wide default, which is what it used to carry.
+    assert.match(models, /"contextWindow": 131072/);
     assert.doesNotMatch(models, /sk-|Bearer\s+[A-Za-z0-9]/i);
     assert.match(models, /127\.0\.0\.1:8317\/v1/);
     assert.doesNotMatch(models, /xiaomimimo|MIMO_API_KEY|mimo-v2\.5|XAI_API_KEY/i);

@@ -74,6 +74,14 @@ export type PrivateModProfileStagingDependencies = Readonly<{
   readPackage(): Promise<Readonly<{ root: string; entries: readonly string[] }>>;
   createSecret(): string;
   nowMs(): number;
+  /**
+   * The companion's display name, from the identity profile the runtime provisioned at mount.
+   *
+   * It is the single authority every surface reads her name from, and the farmhand standing in the player's world is the same
+   * character - an NPC calling her "GameBuddy" while the Chat surface calls her by her own name is two identities for one
+   * companion. Absent means the profile has not been read yet, and the Mod's own default applies.
+   */
+  readCompanionDisplayName?(): Promise<string | undefined>;
 }>;
 import type {
   StardewAiClientLaunch,
@@ -88,6 +96,20 @@ import type {
   StardewOwnedPlayerHostBootstrapOwnerRecord,
   StardewPrivateBootstrapOwnerRecord,
 } from "./stardew-private-bootstrap-owner-records.private.js";
+
+/**
+ * Whether the Mod will accept this as a farmhand's name.
+ *
+ * The same rule as `HostFarmhandProvisioningConfig.IsUsableFarmhandName` on the C# side: letters, digits, spaces, and the
+ * punctuation real names carry. Kept here as well because this side decides what to write, and a name the game refuses would
+ * otherwise fail the whole staging instead of falling back.
+ */
+function isUsableFarmhandName(name: string | undefined): name is string {
+  if (typeof name !== "string") return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 1 || trimmed.length > 64) return false;
+  return /^[\p{L}\p{N} ._'-]+$/u.test(trimmed);
+}
 
 const OWNER_SCHEMA = "gamebuddy-stardew-private-bootstrap-owner/v4";
 const MAX_OWNER_RECORD_BYTES = 64 * 1024;
@@ -1764,7 +1786,8 @@ async function stageOwnedPlayerHostProfileWithValidatedDependencies(
     const packageSource = await dependencies.readPackage();
     validatePackageSource(packageSource);
     if (facts.expiresAtMs <= dependencies.nowMs()) throw new Error("stardew_private_mod_profile_staging_expired");
-    const privateMaterial = await stagePlayerHostModProfile(owner, packageSource, dependencies);
+    const companionDisplayName = await dependencies.readCompanionDisplayName?.();
+    const privateMaterial = await stagePlayerHostModProfile(owner, packageSource, dependencies, companionDisplayName);
     facts.privateMaterial.value = privateMaterial;
   } catch (error) {
     try {
@@ -2866,6 +2889,7 @@ async function stagePlayerHostModProfile(
   owner: StardewOwnedPlayerHostBootstrap,
   packageSource: Readonly<{ root: string; entries: readonly string[] }>,
   dependencies: PrivateModProfileStagingDependencies,
+  companionDisplayName: string | undefined,
 ): Promise<StardewPrivateBootstrapMaterial> {
   const facts = requireOwnedPlayerHostBootstrapFacts(owner);
   const transactionDirectory = resolve(facts.durableOwner.transactionDirectory);
@@ -2915,6 +2939,10 @@ async function stagePlayerHostModProfile(
             IntegrationVersion: INTEGRATION_VERSION,
             ManifestLifetimeSeconds: MANIFEST_LIFETIME_SECONDS,
             AuthorizedCompanionIds: [facts.durableOwner.record.companionId],
+            // Her name in the world is her name. The Mod rejects anything that is not a usable Farmer name, so a card whose
+            // name the game cannot carry falls back rather than failing the whole staging - the character still arrives, under
+            // the name the Mod defaults to, and the surface says the name is fixed at creation.
+            ...(isUsableFarmhandName(companionDisplayName) ? { FarmhandName: companionDisplayName } : {}),
           },
           // Creation is requested, never named: the Mod creates one world from
           // this form and publishes the physical slot basename it observed, which

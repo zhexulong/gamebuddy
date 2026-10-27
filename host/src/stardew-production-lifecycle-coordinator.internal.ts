@@ -32,6 +32,8 @@ import {
   type StardewInstallationDiscoveryProvider,
   type StardewInstallationDiscoveryProviderResult,
 } from "./windows-stardew-installation-discovery/index.js";
+import { readIdentityProfile } from "./identity-profile.js";
+import { resolveRuntimePaths } from "./runtime-identity.js";
 import { createStardewPrivateBootstrapComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.js";
 import type { StardewPrivateBootstrapInternalComposition } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
@@ -3283,7 +3285,21 @@ export function createStardewProductionLifecycleCoordinator(
 ): StardewProductionLifecycleCoordinator {
   const hostArtifactRoot = resolve(dirname(fileURLToPath(import.meta.url)));
   const materializer = createStardewOwnedFarmhandGameSessionMaterializer(manifest, game);
-  const internal = createStardewPrivateBootstrapComposition();
+  // Her name in the world is her name on every other surface: the identity profile this root provisioned is that single
+  // authority, and this is the first place that can locate it. The reader is built here and passed down, so the staging layer
+  // stays free of path knowledge and a fixture that has no profile simply omits it.
+  const identityProfilePath = resolveRuntimePaths(manifest.principal, manifest.runtimeRoot).identityProfilePath;
+  const internal = createStardewPrivateBootstrapComposition({
+    readCompanionDisplayName: async () => {
+      try {
+        return (await readIdentityProfile(identityProfilePath)).identity.name;
+      } catch {
+        // No profile yet, or one this build cannot parse: the Mod's own default name applies rather than failing a launch. The
+        // surface says the name is fixed at first entry, so a fallback here is visible rather than silent.
+        return undefined;
+      }
+    },
+  });
   // Production has no raw-spawn fallback and no second launch authority:
   // without the runtime collaborator both role launches fail closed, and the
   // direct-spawn Stage C/D consumers exist only in the test-support reference.

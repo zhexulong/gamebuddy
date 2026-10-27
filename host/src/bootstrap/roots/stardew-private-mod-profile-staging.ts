@@ -11,6 +11,8 @@ export type PrivateModProfileStagingDependencies = Readonly<{
   readPackage(): Promise<Readonly<{ root: string; entries: readonly string[] }>>;
   createSecret(): string;
   nowMs(): number;
+  /** The companion's display name, when the caller can read it; absent leaves the Mod's own default. */
+  readCompanionDisplayName?(): Promise<string | undefined>;
 }>;
 
 export function createProductionStagingDependencies(): PrivateModProfileStagingDependencies {

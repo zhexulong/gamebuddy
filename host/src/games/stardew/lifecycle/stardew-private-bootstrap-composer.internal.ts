@@ -1,6 +1,4 @@
-import type {
-  StardewOwnedPlayerHostBootstrap,
-} from "./stardew-private-bootstrap-composer.js";
+import type { StardewOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.js";
 import {
   productionPlayerHostProbe,
   productionPlayerHostSpawn,
@@ -29,20 +27,39 @@ export type StardewBootstrapGuardianOwnerFactory = Readonly<{
   settle(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
 }>;
 
-export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition & Readonly<{
-  settleOwnedPlayerHostContainedRuntimeAttempt(
-    owner: StardewOwnedPlayerHostBootstrap,
-    launchedRoles: readonly ("playerHost" | "aiClient")[],
-  ): Promise<void>;
+export type StardewPrivateBootstrapTrustedComposition = StardewPrivateBootstrapInternalComposition &
+  Readonly<{
+    settleOwnedPlayerHostContainedRuntimeAttempt(
+      owner: StardewOwnedPlayerHostBootstrap,
+      launchedRoles: readonly ("playerHost" | "aiClient")[],
+    ): Promise<void>;
+  }>;
+
+export type StardewPrivateBootstrapCompositionOptions = Readonly<{
+  /**
+   * How to read the companion's display name, for the name the character carries in the world.
+   *
+   * Supplied by the caller that knows the runtime root and the principal, because only it can locate the identity profile - and
+   * that profile is the single authority for her name. Absent means the Mod's own default name applies, which is what a test
+   * fixture and a root with no readable profile both want.
+   */
+  readCompanionDisplayName?: () => Promise<string | undefined>;
 }>;
 
-export function createStardewPrivateBootstrapComposition(): StardewPrivateBootstrapTrustedComposition {
+export function createStardewPrivateBootstrapComposition(
+  options: StardewPrivateBootstrapCompositionOptions = {},
+): StardewPrivateBootstrapTrustedComposition {
   const core = createStardewPrivateBootstrapProductionCore({
     rawSpawn: productionSpawn,
     rawProbe: productionProbe,
     rawPlayerHostSpawn: productionPlayerHostSpawn,
     rawPlayerHostProbe: productionPlayerHostProbe,
-    staging: createProductionStagingDependencies(),
+    staging: Object.freeze({
+      ...createProductionStagingDependencies(),
+      ...(options.readCompanionDisplayName === undefined
+        ? {}
+        : { readCompanionDisplayName: options.readCompanionDisplayName }),
+    }),
   });
   return Object.freeze({
     ...core,
@@ -60,9 +77,7 @@ export function consumeOwnedPlayerHostBootstrap<T>(
 }
 
 /** Permanently terminalizes an owner after post-staging admission failure. */
-export function terminalizeOwnedPlayerHostBootstrap(
-  owner: StardewOwnedPlayerHostBootstrap,
-): void {
+export function terminalizeOwnedPlayerHostBootstrap(owner: StardewOwnedPlayerHostBootstrap): void {
   terminalizeOwnedPlayerHostBootstrapCore(owner);
 }
 
@@ -75,8 +90,6 @@ export async function settleOwnedPlayerHostRegistrationAttempt(
 }
 
 /** Runs the closed production Player Host profile staging profile staging operation. */
-export async function stageOwnedPlayerHostProfile(
-  owner: StardewOwnedPlayerHostBootstrap,
-): Promise<void> {
+export async function stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void> {
   await stageOwnedPlayerHostProfileCore(owner);
 }
