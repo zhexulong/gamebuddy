@@ -46,6 +46,7 @@ import {
   type ChatTitleV1,
   createManagementPipelineApi,
   type ManagementPipelineApi,
+  MAX_GAME_PROMPT_ADDITION_CHARS,
   type MemoryReadV1,
   TavernProblemError,
   TavernProtocolError,
@@ -53,6 +54,7 @@ import {
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
   type TavernConnectionProviderV1,
+  type TavernGamePromptAdditionV1,
   type TavernModelProfilesV1,
   type TavernVoiceDevicesV1,
   type WorldInfoStateV1,
@@ -1205,6 +1207,91 @@ export type WorldInfoSurfaceSource = Readonly<{
 }>;
 
 /**
+ * The player's own addition to the Game companion's instructions.
+ *
+ * `record` is what the Host has stored (and its revision is the CAS every write carries);
+ * `draft` is what the field currently shows. A save adopts the Host's read-back into both, so
+ * the field never keeps text the store refused; a lost race re-reads the authority instead of
+ * overwriting it with the stale form.
+ */
+type GamePromptAdditionView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "ready"; record: TavernGamePromptAdditionV1; draft: string; pending: boolean }>;
+
+/**
+ * The player's own addition to the Game companion's instructions: one field, one bound, and
+ * the sentence saying when it lands.
+ *
+ * That last sentence is not decoration. The runtime composes a game's instructions when the
+ * game starts, so a saved addition reaches the NEXT game - unlike the action policy beside the
+ * Game surface, which the Mod re-reads on its own tick. A control that saved silently would
+ * leave a player watching a running game for a change it cannot make.
+ *
+ * The counter and the `maxLength` both read `MAX_GAME_PROMPT_ADDITION_CHARS`, and `onChange`
+ * clamps to it as well: a paste or a programmatic fill is not stopped by `maxLength` (the
+ * browser enforces that attribute on typing only), so the ceiling is applied to the value
+ * itself rather than to one way of entering it.
+ */
+function GamePromptAdditionPanel({
+  view,
+  labels,
+  onChange,
+  onSave,
+}: Readonly<{
+  view: GamePromptAdditionView;
+  labels: Messages;
+  onChange: (next: string) => void;
+  onSave: () => void;
+}>): ReactElement {
+  return (
+    <section
+      className="management-settings-section"
+      aria-label={labels.gamePromptAdditionTitle}
+      data-game-prompt-addition
+    >
+      <h2>{labels.gamePromptAdditionTitle}</h2>
+      <p>{labels.gamePromptAdditionHint}</p>
+      {view.kind === "loading" && <p>{labels.loading}</p>}
+      {view.kind === "unavailable" && <p>{labels.gamePromptAdditionUnavailable}</p>}
+      {view.kind === "error" && <p>{labels.failure}</p>}
+      {view.kind === "ready" && (
+        <>
+          <label className="management-settings-label" htmlFor="game-prompt-addition">
+            {labels.gamePromptAdditionField}
+          </label>
+          <textarea
+            id="game-prompt-addition"
+            className="form-textarea"
+            rows={6}
+            maxLength={MAX_GAME_PROMPT_ADDITION_CHARS}
+            disabled={view.pending}
+            value={view.draft}
+            onChange={(event) => onChange(event.target.value.slice(0, MAX_GAME_PROMPT_ADDITION_CHARS))}
+          />
+          <p className="management-settings-hint" data-game-prompt-addition-count>
+            {labels.gamePromptAdditionCount
+              .replace("{{count}}", String(view.draft.length))
+              .replace("{{max}}", String(MAX_GAME_PROMPT_ADDITION_CHARS))}
+          </p>
+          {/* WHEN it takes effect, always rendered beside the field: this is the one fact a
+              save here cannot demonstrate for itself. */}
+          <p className="management-settings-hint" data-game-prompt-addition-effective>
+            {labels.gamePromptAdditionEffective}
+          </p>
+          <div className="composer-actions">
+            <button type="button" className="small-button" disabled={view.pending} onClick={onSave}>
+              {labels.gamePromptAdditionSave}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
  * The Settings panel: the connection records, the companion language, the voice
  * consent/devices and the two model profiles - the four field groups the
  * management surface shows, over the same routes.
@@ -1260,6 +1347,7 @@ export function SettingsSurfacePanel({
    */
   const [modelRoute, setModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const [modelProfilesView, setModelProfilesView] = useState<ModelProfilesView>({ kind: "loading" });
+  const [promptAdditionView, setPromptAdditionView] = useState<GamePromptAdditionView>({ kind: "loading" });
   // The one Host-owned preference record's revision, shared by both settings
   // field groups (see the header).
   const settingsRevisionRef = useRef(0);
@@ -1371,6 +1459,14 @@ export function SettingsSurfacePanel({
         },
       });
       if (active) setModelRoute(route);
+      // The player's prompt addition, read once. A route this build's Host does not serve leaves
+      // the group saying so rather than showing a field whose save would always fail.
+      try {
+        const record = await api.readGamePromptAddition();
+        if (active) setPromptAdditionView({ kind: "ready", record, draft: record.addition, pending: false });
+      } catch {
+        if (active) setPromptAdditionView({ kind: "unavailable" });
+      }
     })();
     return () => {
       active = false;
@@ -1462,6 +1558,38 @@ export function SettingsSurfacePanel({
           setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
         } catch {
           setVoiceView({ kind: "error" });
+        }
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
+      }
+    })();
+  };
+
+  /**
+   * Writes the player's prompt addition.
+   *
+   * The validated read-back is the only value the panel then shows, so a rejected write never
+   * leaves the player looking at text the store does not hold. A lost race is the one refusal
+   * worth re-reading for: another tab's save is the authority, and the field adopts it rather
+   * than overwriting it with this one's draft.
+   */
+  const savePromptAddition = (): void => {
+    if (promptAdditionView.kind !== "ready" || promptAdditionView.pending) return;
+    const view = promptAdditionView;
+    setPromptAdditionView({ ...view, pending: true });
+    void (async () => {
+      try {
+        const written = await api.updateGamePromptAddition(
+          { expectedRevision: view.record.revision, addition: view.draft },
+          csrfToken,
+        );
+        setPromptAdditionView({ kind: "ready", record: written, draft: written.addition, pending: false });
+        report({ kind: "success", text: labels.success });
+      } catch (error) {
+        try {
+          const restated = await api.readGamePromptAddition();
+          setPromptAdditionView({ kind: "ready", record: restated, draft: restated.addition, pending: false });
+        } catch {
+          setPromptAdditionView({ kind: "error" });
         }
         report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
@@ -1640,6 +1768,19 @@ export function SettingsSurfacePanel({
           onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
         />
       )}
+      {
+        // Rendered from the first frame, like every other settings group: the read is what
+        // decides whether there is a field to show, and a group that appeared only after its
+        // read landed would pop into a list the player was already reading.
+        <GamePromptAdditionPanel
+          view={promptAdditionView}
+          labels={labels}
+          onChange={(next) =>
+            setPromptAdditionView((previous) => (previous.kind === "ready" ? { ...previous, draft: next } : previous))
+          }
+          onSave={savePromptAddition}
+        />
+      }
       <VoiceSettingsPanel
         voiceView={voiceView}
         labels={labels}
