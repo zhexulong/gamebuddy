@@ -1491,7 +1491,12 @@ public sealed class BodyProgramAuthorityTests
         program.Nodes.Single(node => node.NodeId == "first").State.Should().Be(BodyProgramNodeState.Rejected);
         program.Nodes.Single(node => node.NodeId == "first").RejectionCode.Should().Be("scope_mismatch");
         program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.SkippedDependency);
-        reopened.TryCreateAdmissionChallenge("program").Code.Should().Be(BodyProgramControllerResultCode.NotFound);
+        // CHANGED DELIBERATELY. This used to expect `NotFound`, which was a consequence of `TryProgram` folding
+        // every non-Active state into `false`. The program is right there in the snapshot, `Failed`, with a
+        // Rejected node and a SkippedDependency - so `NotFound` was never true, it was just what the fold produced.
+        // `ProgramNotActive` is the code that exists for this answer, and a caller can act on it: the program is
+        // finished, do not re-submit, do not wait for a node.
+        reopened.TryCreateAdmissionChallenge("program").Code.Should().Be(BodyProgramControllerResultCode.ProgramNotActive);
     }
 
     [Fact]

@@ -269,8 +269,34 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryCreateAdmissionChallenge(string programId)
     {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.RecoveryRequired);
-        if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NotFound);
+        // A program waiting for recovery must not hold back a DIFFERENT program's nodes.
+        //
+        // `IsMutable` is about the JOURNAL; this is about one PROGRAM. Measured 2026-10-27: a submitted plan
+        // came back `Accepted` (`SubmitWhileRecovering` admits it) and then every one of its five nodes stayed
+        // `Pending` because this line answered RecoveryRequired - the companion stood in the farmhouse with an
+        // active program it could not start, while the model re-observed and waited. The submit fix alone was
+        // half a fix.
+        //
+        // The narrowness still holds: only the RECOVERY status is waived, and only for a program that is not
+        // itself in recovery. A corrupt or unwritable journal still refuses here.
+        if (!IsMutable && !IsRecoveryScoped) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.RecoveryRequired);
+        // Three answers, and they must not be collapsed:
+        //   - no such program                     -> NotFound
+        //   - this program is ITSELF in recovery  -> RecoveryRequired (its unknown node must not run)
+        //   - this program is Active              -> proceed, whatever a NEIGHBOUR is doing
+        //
+        // `TryProgram` folds the last two into one `false`, which read as NotFound for a program the caller
+        // can plainly see. A recovery program is not missing; it is waiting.
+        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
+        if (program is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NotFound);
+        // A failed, cancelled or succeeded program is not MISSING and not RECOVERING - it is finished. It gets
+        // `ProgramNotActive`, which is the code that exists for exactly this answer; folding it into NotFound made a
+        // caller re-submit a program that had already run, and folding it into RecoveryRequired made a caller
+        // believe an unknown dispatch was outstanding when none was.
+        if (program.State != BodyProgramState.Active)
+            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(program.State == BodyProgramState.RecoveryRequired
+                ? BodyProgramControllerResultCode.RecoveryRequired
+                : BodyProgramControllerResultCode.ProgramNotActive);
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!PolicyMatches(policy, this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PolicyIdentityStale);
         BodyProgramJournalNode? node = program!.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && DependenciesSatisfied(program, item.NodeId));

@@ -47,6 +47,36 @@ public sealed class RecoveryScopeTests
     }
 
     [Fact]
+    public void ARecoveringNeighbourDoesNotStopTheFreshProgramsNodesFromBeingAdmitted()
+    {
+        // The submit half of this was fixed and shipped, and it was HALF a fix. Measured 2026-10-27: a plan was
+        // admitted (`Accepted`) and then all five of its nodes stayed `Pending` because `TryCreateAdmissionChallenge`
+        // began with `if (!IsMutable) return RecoveryRequired` - a JOURNAL-wide answer to a PROGRAM-wide question.
+        // The companion stood in the farmhouse holding an active program it could not start, while the model
+        // re-observed and waited with `waitMs: 20000`.
+        //
+        // Admission is per program. A neighbour's unknown dispatch has nothing to say about these nodes.
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, () => now);
+        SubmitAndBindFirstNode(authority, "first");
+        SettleUncertain(authority);
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+
+        authority.Submit(Program("second")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        BodyProgramControllerResult<NodeAdmissionChallenge> challenge = authority.TryCreateAdmissionChallenge("second");
+
+        challenge.Code.Should().Be(BodyProgramControllerResultCode.Succeeded,
+            "the fresh program has nothing to do with the neighbour's unknown dispatch");
+        challenge.Value.Should().NotBeNull();
+
+        // And the program that IS in recovery still gets nothing: its unknown node is the thing that must not run.
+        authority.TryCreateAdmissionChallenge("first").Code.Should().Be(BodyProgramControllerResultCode.RecoveryRequired);
+        // The journal still says it is holding an unknown dispatch. Admitting a neighbour does not launder it.
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+    }
+
+    [Fact]
     public void TheProgramInRecoveryStaysInRecoveryAndIsNotSettled()
     {
         var store = new MemoryStore();
