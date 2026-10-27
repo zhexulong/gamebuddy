@@ -211,6 +211,17 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
     L.push(`  launch state: ${JSON.stringify(launch ?? null)} — the run did not reach a mounted entry`);
     if (launch !== null && launch.kind === "launch_failed") L.push(`  detail: ${launch.detail}`);
   }
+  // A run root carries no model until something puts a connection in it, and three drivers need a real
+  // turn. The launch phase seeds one through the product's own writer; either it says what this run
+  // sends through, or it says why it could not - and then the skips below are the reason, not a defect.
+  const connection = launch?.connection ?? null;
+  if (connection !== null) {
+    L.push(
+      connection.kind === "seeded"
+        ? `  connection             ${connection.providerId} · ${connection.modelId} @ ${connection.thinkingLevel} (seeded into the run root by the launch phase)`
+        : `  connection             NOT seeded (${connection.reason}) — turn-dependent drivers take their named skip`,
+    );
+  }
   L.push("");
 
   section(L, "ISOLATION — WHAT measureRunRoots() SAID");

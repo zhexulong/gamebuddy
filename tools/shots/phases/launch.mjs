@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runPaths, loadRunConfig } from "../lib/config.mjs";
 import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
+import { seedRunConnection } from "../lib/seed-connection.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
 if (run === null) throw new Error(`run_config_unreadable:${process.argv[2]}`);
@@ -241,23 +242,47 @@ async function main() {
     await mkdir(join(paths.runRoot, "GameBuddy", name), { recursive: true });
   const declaredDataRoot = desktopCompositionMutableRootPaths(paths.runRoot).data;
   await mkdir(declaredDataRoot, { recursive: true });
+  const principal = {
+    playerId: `${run.tag}_player`,
+    companionId: `${run.tag}_companion`,
+    continuityId: `${run.tag}_continuity`,
+  };
   await writeFile(
     paths.deploymentManifest,
     JSON.stringify({
       schemaVersion: 2,
       topology: "independent_chat_and_game_surfaces",
       runtimeRoot: declaredDataRoot,
-      principal: {
-        playerId: `${run.tag}_player`,
-        companionId: `${run.tag}_companion`,
-        continuityId: `${run.tag}_continuity`,
-      },
+      principal,
       bootstrapOperationId: `${run.tag}_bootstrap_${Date.now()}`,
       authorityGeneration: 1,
     }),
     "utf8",
   );
   say("manifest runtimeRoot (the launcher's own declared data root):", declaredDataRoot);
+
+  // The root the child is about to mount has no model of its own: this product ships no endpoint, so a
+  // fresh root projects `no_model`, the composer refuses the send, and the three drivers that need a real
+  // turn take their named skip. The harness owns both the root and the endpoint's credential, so it puts
+  // the connection there through the product's own writer BEFORE the Host reads it - the same create, probe
+  // and activate a player performs in Settings. Reported either way: a seeded run says what it sends
+  // through, and a run with no credential (or an endpoint that did not answer) says so and behaves as before.
+  let connection;
+  try {
+    connection = await seedRunConnection({
+      artifactRoot: paths.artifact,
+      runtimeRoot: declaredDataRoot,
+      principal,
+      credential: process.env.CPA_OAI_API_KEY,
+    });
+  } catch (error) {
+    connection = { kind: "skipped", reason: `seed_failed:${String(error).slice(0, 200)}` };
+  }
+  say(
+    connection.kind === "seeded"
+      ? `connection seeded: ${connection.providerId} · ${connection.modelId} @ ${connection.thinkingLevel}`
+      : `connection NOT seeded (${connection.reason}) — turn-dependent drivers will take their named skip`,
+  );
 
   const measureNow = async () =>
     launcher.measureDesktopCompositionRunRoots({
@@ -479,6 +504,7 @@ async function main() {
         worktree: paths.worktree,
         stderrBytes: Buffer.byteLength(stderr, "utf8"),
         mounted: Boolean(mounted),
+        connection,
         title,
         launchUrlRedacted: launchUrl.replace(/boot=[^&]*/u, "boot=<redacted>"),
         measureRunRootsAfterLaunch: measurement,
