@@ -50,6 +50,8 @@ export type StardewModActionPolicyProjection = Readonly<{
   DeniedActions: readonly string[];
   DeniedActionFamilies: readonly string[];
   AdvanceDayMinimumOnlineFarmers: number;
+  /** Absent leaves the Mod's own `visible` default in charge. */
+  WindowMode?: string;
   /** Absent leaves the Mod's own live-game-locale fallback in charge. */
   PresentationLocale?: string;
 }>;
@@ -59,6 +61,7 @@ const OWNED_CONFIG_KEYS = Object.freeze([
   "DeniedActions",
   "DeniedActionFamilies",
   "AdvanceDayMinimumOnlineFarmers",
+  "WindowMode",
 ] as const);
 
 /**
@@ -81,13 +84,21 @@ export async function readStardewModPresentationLocale(runtimeRoot: string): Pro
 }
 
 export function projectStardewModActionPolicy(
-  settings: Pick<StardewPlayerSettings, "deniedActionFamilies" | "advanceDayMinimumOnlineFarmers">,
+  settings: Pick<
+    StardewPlayerSettings,
+    "deniedActionFamilies" | "advanceDayMinimumOnlineFarmers" | "deniedActions" | "windowMode"
+  >,
   presentationLocale?: string,
 ): StardewModActionPolicyProjection {
   return Object.freeze({
-    DeniedActions: Object.freeze([]) as unknown as readonly string[],
+    // The per-action list the Mod's own filter already honours. It used to be published as an always-empty array because
+    // nothing could write it; the record carries it now, so the projection says what the player chose.
+    DeniedActions: Object.freeze([...(settings.deniedActions ?? [])]),
     DeniedActionFamilies: Object.freeze([...settings.deniedActionFamilies]),
     AdvanceDayMinimumOnlineFarmers: settings.advanceDayMinimumOnlineFarmers,
+    // The window behaviour the Mod implements natively. Absent leaves the Mod's own default ("visible") in charge, exactly as
+    // an absent PresentationLocale leaves the live-game locale in charge.
+    ...(settings.windowMode === undefined ? {} : { WindowMode: settings.windowMode }),
     ...(presentationLocale === undefined ? {} : { PresentationLocale: presentationLocale }),
   });
 }
@@ -107,7 +118,15 @@ export function mergeStardewModActionPolicy(
   policy: StardewModActionPolicyProjection,
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...existing };
-  for (const key of OWNED_CONFIG_KEYS) merged[key] = policy[key];
+  for (const key of OWNED_CONFIG_KEYS) {
+    const value = policy[key];
+    if (value === undefined) {
+      // The caller said nothing about this key, so the document keeps whatever it had - including the absence.
+      if (!Object.hasOwn(existing, key)) continue;
+      continue;
+    }
+    merged[key] = value;
+  }
   if (policy.PresentationLocale !== undefined) merged.PresentationLocale = policy.PresentationLocale;
   return merged;
 }

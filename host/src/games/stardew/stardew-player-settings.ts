@@ -51,6 +51,10 @@ export type StardewPlayerSettings = Readonly<{
   deniedActionFamilies: readonly string[];
   /** Farmers that must be online before a night may start. 1 is the honest single-player minimum. */
   advanceDayMinimumOnlineFarmers: number;
+  /** How the game window behaves while the companion plays. Absent means the Mod's own `visible`. */
+  windowMode?: string;
+  /** Individual action ids withheld on top of the families. Absent means none. */
+  deniedActions?: readonly string[];
 }>;
 
 type StoredStardewPlayerSettings = Readonly<{
@@ -58,6 +62,8 @@ type StoredStardewPlayerSettings = Readonly<{
   revision: number;
   deniedActionFamilies: readonly string[];
   advanceDayMinimumOnlineFarmers: number;
+  windowMode?: string;
+  deniedActions?: readonly string[];
 }>;
 
 /**
@@ -68,6 +74,9 @@ type StoredStardewPlayerSettings = Readonly<{
 export type StardewPlayerSettingsUpdate = Readonly<{
   deniedActionFamilies: readonly string[];
   advanceDayMinimumOnlineFarmers: number;
+  /** Absent keeps whatever the record holds, so a client that does not know the field cannot clear it. */
+  windowMode?: string;
+  deniedActions?: readonly string[];
 }>;
 
 export class StardewPlayerSettingsRevisionConflict extends Error {
@@ -127,6 +136,18 @@ export class StardewPlayerSettingsStore {
         revision: current.revision + 1,
         deniedActionFamilies: Object.freeze([...update.deniedActionFamilies].sort()),
         advanceDayMinimumOnlineFarmers: update.advanceDayMinimumOnlineFarmers,
+        ...(update.windowMode === undefined && current.windowMode === undefined
+          ? {}
+          : {
+              windowMode: (update.windowMode ?? current.windowMode) as string,
+            }),
+        ...(update.deniedActions === undefined && current.deniedActions === undefined
+          ? {}
+          : {
+              deniedActions: Object.freeze(
+                [...(update.deniedActions ?? current.deniedActions ?? [])].sort(),
+              ) as readonly string[],
+            }),
       });
       await this.writeMergingForeignKeys(next);
       const readBack = await this.load();
@@ -194,6 +215,8 @@ function project(value: StoredStardewPlayerSettings): StardewPlayerSettings {
     revision: value.revision,
     deniedActionFamilies: value.deniedActionFamilies,
     advanceDayMinimumOnlineFarmers: value.advanceDayMinimumOnlineFarmers,
+    ...(value.windowMode === undefined ? {} : { windowMode: value.windowMode }),
+    ...(value.deniedActions === undefined ? {} : { deniedActions: value.deniedActions }),
   });
 }
 
@@ -203,7 +226,9 @@ function validateStored(value: unknown): StoredStardewPlayerSettings {
     value.schemaVersion !== STARDEW_PLAYER_SETTINGS_SCHEMA_VERSION ||
     !isRevision(value.revision) ||
     !isDeniedFamilies(value.deniedActionFamilies) ||
-    !isMinimumOnlineFarmers(value.advanceDayMinimumOnlineFarmers)
+    !isMinimumOnlineFarmers(value.advanceDayMinimumOnlineFarmers) ||
+    (value.windowMode !== undefined && !isWindowMode(value.windowMode)) ||
+    (value.deniedActions !== undefined && !isDeniedActions(value.deniedActions))
   )
     throw new Error("invalid_stardew_player_settings_store");
   return Object.freeze({
@@ -211,18 +236,47 @@ function validateStored(value: unknown): StoredStardewPlayerSettings {
     revision: value.revision,
     deniedActionFamilies: Object.freeze([...(value.deniedActionFamilies as readonly string[])]),
     advanceDayMinimumOnlineFarmers: value.advanceDayMinimumOnlineFarmers as number,
+    ...(value.windowMode === undefined ? {} : { windowMode: value.windowMode as string }),
+    ...(value.deniedActions === undefined
+      ? {}
+      : { deniedActions: Object.freeze([...(value.deniedActions as readonly string[])]) }),
   });
 }
 
 function isUpdate(value: unknown): value is StardewPlayerSettingsUpdate {
-  return (
-    isRecord(value) &&
-    Object.keys(value).length === 2 &&
-    Object.hasOwn(value, "deniedActionFamilies") &&
-    Object.hasOwn(value, "advanceDayMinimumOnlineFarmers") &&
-    isDeniedFamilies(value.deniedActionFamilies) &&
-    isMinimumOnlineFarmers(value.advanceDayMinimumOnlineFarmers)
-  );
+  if (
+    !isRecord(value) ||
+    !Object.hasOwn(value, "deniedActionFamilies") ||
+    !Object.hasOwn(value, "advanceDayMinimumOnlineFarmers") ||
+    !isDeniedFamilies(value.deniedActionFamilies) ||
+    !isMinimumOnlineFarmers(value.advanceDayMinimumOnlineFarmers)
+  )
+    return false;
+  // The optional pair may be named by an update, but nothing else may: an unknown member here would be stored and then read
+  // back as a fact this product never agreed to.
+  const known = ["deniedActionFamilies", "advanceDayMinimumOnlineFarmers", "windowMode", "deniedActions"];
+  if (!Object.keys(value).every((key) => known.includes(key))) return false;
+  if (value.windowMode !== undefined && !isWindowMode(value.windowMode)) return false;
+  if (value.deniedActions !== undefined && !isDeniedActions(value.deniedActions)) return false;
+  return true;
+}
+
+/** The four behaviours the Mod implements natively; anything else is not a mode this product can ask for. */
+const WINDOW_MODES = Object.freeze(["visible", "minimized", "hidden", "background"]);
+function isWindowMode(value: unknown): value is string {
+  return typeof value === "string" && WINDOW_MODES.includes(value);
+}
+
+/**
+ * A per-action denial list is a set of action ids, bounded and duplicate-free for the same reason the family list is: a stored
+ * value must not mean two things depending on which reader looked at it.
+ */
+const STARDEW_DENIED_ACTION_LIMIT = 512;
+const STARDEW_ACTION_ID_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+function isDeniedActions(value: unknown): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > STARDEW_DENIED_ACTION_LIMIT) return false;
+  if (!value.every((entry) => typeof entry === "string" && STARDEW_ACTION_ID_PATTERN.test(entry))) return false;
+  return new Set(value).size === value.length;
 }
 
 /**
