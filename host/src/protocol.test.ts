@@ -376,6 +376,66 @@ test("current Mod hello acknowledgement wire projection is admitted", () => {
   );
 });
 
+test("an approach declaration admits exactly a relation and an optional distance", () => {
+  // The declaration the Mod now publishes on hello_ack. Its two shapes are pinned here because the Host's
+  // validator is what decides whether `plan_shape` ever sees the fact: a key it does not accept turns the whole
+  // `hello_ack` into `invalid_hello_ack`, which is how the declaration went missing for every action.
+  const declaring = (approach: unknown) =>
+    newEnvelope(
+      "hello_ack",
+      scope,
+      {
+        sessionId: "session_01",
+        capabilities: ["pickup_forage"],
+        catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+        enabledActionIds: ["pickup_forage"],
+        runtimeRole: "farmhand_client",
+        launchGeneration: "generation_01",
+        presentationLocale: "en-US",
+        registrations: [
+          {
+            actionId: "pickup_forage",
+            familyId: "resource_gathering",
+            identityVersion: 1,
+            lifecycle: "published",
+            kind: "execution",
+            descriptor: {
+              arguments: [
+                { name: "x", type: "integer" },
+                { name: "y", type: "integer" },
+              ],
+              outputFacts: {},
+              resourceTemplate: { claims: [] },
+              effect: "write",
+              postcondition: { name: "native_action_postcondition" },
+              ...(approach === undefined ? {} : { approach }),
+            },
+          },
+        ],
+      },
+      "hello_approach_01",
+      now,
+    );
+
+  // Both legal shapes: the distance the Mod states, and the distance it does not (its serializer omits a null).
+  assert.equal(validateBridgeMessage(declaring({ relation: "adjacent", withinTiles: 1 }), scope, now), null);
+  assert.equal(validateBridgeMessage(declaring({ relation: "adjacent" }), scope, now), null);
+  assert.equal(validateBridgeMessage(declaring(undefined), scope, now), null, "declaring nothing stays legal");
+
+  for (const [reason, approach] of [
+    ["an empty relation names nothing", { relation: "", withinTiles: 1 }],
+    ["a non-string relation is not a word", { relation: 1 }],
+    ["a third field would be a precondition nobody enforces", { relation: "adjacent", withinTiles: 1, note: "" }],
+    ["a fractional distance is not a tile count", { relation: "adjacent", withinTiles: 1.5 }],
+    ["a negative distance is not a tile count", { relation: "adjacent", withinTiles: -1 }],
+    ["a string distance is not a tile count", { relation: "adjacent", withinTiles: "1" }],
+    ["an explicit null is not the same as no distance stated", { relation: "adjacent", withinTiles: null }],
+    ["the member must be an object", "adjacent"],
+  ] as const)
+    assert.equal(validateBridgeMessage(declaring(approach), scope, now), "invalid_hello_ack", reason);
+});
+
 test("catalog updates are exact and bounded", () => {
   const valid = newEnvelope(
     "catalog_update",

@@ -303,6 +303,7 @@ function declaredApproachRequirementOf(registration: ActionRegistration): Publis
   return Object.freeze({
     declared: true as const,
     relation: approach.relation,
+    // The Mod omits a null distance from the wire, so absent and null both mean "the relation states no distance".
     withinTiles: typeof approach.withinTiles === "number" ? approach.withinTiles : null,
   });
 }

@@ -1412,8 +1412,11 @@ export type ActionRegistrationDescriptor = Readonly<{
    * Where the body must already stand, in the Mod's own words, or absent when this action declares no such
    * precondition. Published because one the Mod enforces and never declares can only be learned by being
    * refused: measured 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
+   *
+   * `withinTiles` is ABSENT when the Mod's relation states no distance (its serializer omits nulls), which is never
+   * the same statement as zero tiles.
    */
-  approach?: Readonly<{ relation: string; withinTiles: number | null }>;
+  approach?: Readonly<{ relation: string; withinTiles?: number }>;
   postcondition?: string | Readonly<{ name: string }>;
 }>;
 
@@ -4331,6 +4334,7 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "nativeBinding",
   "canonicalCodec",
   "watchdogMs",
+  "approach",
   "postcondition",
 ] as const;
 
@@ -4455,6 +4459,25 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     // A positive, JavaScript-safe integer: the value becomes a deadline, so a negative or fractional one would be a
     // request that can never be waited on.
     if (!Number.isSafeInteger(value.watchdogMs) || (value.watchdogMs as number) <= 0) return false;
+  }
+
+  if ("approach" in value && value.approach !== undefined) {
+    // A relation word plus an optional distance. `withinTiles` is absent when the Mod states no distance (its
+    // serializer omits nulls), so a reader must never read absent as "zero tiles"; a third field beside them would be
+    // a precondition nobody enforces.
+    if (
+      !isRecord(value.approach) ||
+      !hasExactKeysOrOptional(value.approach, ["relation"], ["withinTiles"]) ||
+      typeof value.approach.relation !== "string" ||
+      value.approach.relation.length === 0 ||
+      value.approach.relation.length > 64
+    )
+      return false;
+    if (
+      "withinTiles" in value.approach &&
+      !(Number.isSafeInteger(value.approach.withinTiles) && (value.approach.withinTiles as number) > 0)
+    )
+      return false;
   }
 
   return true;

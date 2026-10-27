@@ -59,6 +59,13 @@ public sealed class BridgeSessionPublicationTests
              new FarmhandActionObservationBindingDescriptorWire("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
          pickupForage.Descriptor.Effect.Should().Be("write");
          pickupForage.Descriptor.Postcondition.Name.Should().Be("native_action_postcondition");
+         // The spatial precondition this action ENFORCES (`observation_binding_target_out_of_range` from beyond
+         // Chebyshev 1) travels on the wire, so `plan_shape` can say it instead of the companion learning it from a
+         // refusal. Before this member existed the declaration stopped at the surface artifact and every action
+         // answered `approach_requirement_undeclared`.
+         pickupForage.Descriptor.Approach.Should().Be(new FarmhandActionApproachRequirementWire("adjacent", 1));
+         payload.Registrations.Single(registration => registration.ActionId == "move_to_tile")
+             .Descriptor!.Approach.Should().BeNull("an action that declares no precondition publishes none");
          payload.RuntimeRole.Should().Be("unattested");
         payload.LaunchGeneration.Should().BeNull();
 
@@ -99,7 +106,38 @@ public sealed class BridgeSessionPublicationTests
         // is unchanged.
         serializedPayload.GetProperty("launchGeneration").ValueKind.Should().Be(JsonValueKind.Null);
 
+        // The two shapes the Host has to tell apart on ONE pipeline: a declaring descriptor carries `approach`,
+        // and one that declares nothing OMITS the member (BridgeProtocol serializes nulls out). The omission is the
+        // contract, not an accident: `{relation:...}` absent means "this surface does not say", which the Host must
+        // answer with `approach_requirement_undeclared` rather than a fabricated "stand anywhere".
+        JsonElement serializedPickupForage = serializedPayload.GetProperty("registrations")
+            .EnumerateArray()
+            .Single(registration => registration.GetProperty("actionId").GetString() == "pickup_forage");
+        serializedPickupForage.GetProperty("descriptor").GetProperty("approach")
+            .EnumerateObject().Select(property => property.Name).Should().Equal("relation", "withinTiles");
+        serializedPickupForage.GetProperty("descriptor").GetProperty("approach").GetProperty("relation")
+            .GetString().Should().Be("adjacent");
+        serializedPickupForage.GetProperty("descriptor").GetProperty("approach").GetProperty("withinTiles")
+            .GetInt32().Should().Be(1);
+        JsonElement serializedMoveToTile = serializedPayload.GetProperty("registrations")
+            .EnumerateArray()
+            .Single(registration => registration.GetProperty("actionId").GetString() == "move_to_tile");
+        serializedMoveToTile.GetProperty("descriptor").TryGetProperty("approach", out _).Should().BeFalse(
+            "an action declaring no precondition must not arrive looking like one that declared 'anywhere'");
+
         string? snapshotOutputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_SNAPSHOT_WIRE_OUTPUT");
+        string? helloOutputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_HELLO_WIRE_OUTPUT");
+        if (helloOutputPath is not null)
+        {
+            // The real `hello_ack` this session builds, written for the Host-side pipeline test: the registration
+            // projection is the half of the approach declaration no Host fixture can honestly invent.
+            Path.IsPathFullyQualified(helloOutputPath).Should().BeTrue(
+                "the Host pipeline test must own an absolute private output path");
+            using var helloStream = new FileStream(helloOutputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            using var helloWriter = new StreamWriter(helloStream, new System.Text.UTF8Encoding(false));
+            helloWriter.Write(json);
+        }
+
         if (snapshotOutputPath is null)
             return;
 

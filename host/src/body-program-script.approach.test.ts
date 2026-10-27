@@ -13,9 +13,19 @@ import { planActionsFromRegistrations, planShape } from "./body-program-script.j
  * `approachRequirement` is where that knowledge lives. These cases pin it: it is the Mod's declaration, its
  * absence is an explicit answer rather than an omission, and `plan_shape` surfaces it without the Host
  * inventing anything.
+ *
+ * The registration here is hand-built, which on its own proves only that this function reads the field. The half
+ * that used to be missing - whether the Mod's declaration actually CLEARS the wire - is pinned end to end in
+ * `approach-requirement-pipeline.test.ts`, which runs the Mod's own `hello_ack` serializer and feeds the result to
+ * this same code.
  */
 
-type ApproachDeclaration = Readonly<{ relation: string; withinTiles: number | null }>;
+/**
+ * The wire shape, exactly: `withinTiles` is present only when the Mod's relation states a distance, because the
+ * Mod's serializer omits nulls. There is no `null` here to test - an earlier version of this file declared one,
+ * which meant it pinned a registration the Mod cannot send.
+ */
+type ApproachDeclaration = Readonly<{ relation: string; withinTiles?: number }>;
 
 const registrationWithApproach = (actionId: string, approach: ApproachDeclaration | undefined) => ({
   actionId,
@@ -64,10 +74,12 @@ test("plan_shape surfaces the precondition, so the companion learns it before be
   assert.deepEqual(shape.actions[0]?.approachRequirement, { declared: true, relation: "adjacent", withinTiles: 1 });
 });
 
-test("a null distance stays null rather than becoming a guess", () => {
-  const actions = planActionsFromRegistrations([
-    registrationWithApproach("enter_exit", { relation: "adjacent", withinTiles: null }),
-  ]);
+test("a relation that states no distance stays null rather than becoming a guess", () => {
+  // The Mod's serializer omits a null `withinTiles`, so ABSENT is what "no distance stated" looks like on the wire.
+  // The published answer still names the field as null, because the companion may not have to distinguish "the
+  // surface said nothing about distance" from "the surface did not declare an approach at all" - and it can: the
+  // `declared` flag above already carries that distinction.
+  const actions = planActionsFromRegistrations([registrationWithApproach("enter_exit", { relation: "adjacent" })]);
   const action = actions.find((candidate) => candidate.actionId === "enter_exit");
   assert.ok(action);
   assert.deepEqual(action.approachRequirement, { declared: true, relation: "adjacent", withinTiles: null });

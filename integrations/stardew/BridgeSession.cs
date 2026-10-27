@@ -278,7 +278,11 @@ string? bodyProgramUnavailableReason = null,
                              : null,
                          // The Mod's own watchdog for this action, so the Host can wait as long as the action
                          // was designed to be waited on (see the wire record).
-                         descriptor.WatchdogMs)
+                         descriptor.WatchdogMs,
+                         // The declared spatial precondition, or null when this action declares none.
+                         descriptor.Approach is { } approach
+                             ? new FarmhandActionApproachRequirementWire(approach.Relation, approach.WithinTiles)
+                             : null)
                      : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
             this.runtimeAttestation.LaunchGeneration,

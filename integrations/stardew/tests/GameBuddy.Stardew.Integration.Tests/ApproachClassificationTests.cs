@@ -36,10 +36,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// <para>
 /// SCOPE, stated because it is easy to over-read. The two publication pins read the Mod catalog and its surface
-/// projection - the artifact layer. That is NOT the <c>hello_ack</c> wire: <c>FarmhandActionDescriptorWire</c>
-/// carries no <c>Approach</c> member and the Host's <c>KNOWN_ACTION_DESCRIPTOR_KEYS</c> accepts none, so no
-/// declaration currently reaches the companion through <c>plan_shape</c> for any action. See
-/// <c>design/research/approach-requirement-never-reaches-the-wire.md</c>.
+/// projection - the artifact layer. The same declaration also travels on the <c>hello_ack</c> wire
+/// (<c>FarmhandActionDescriptorWire.Approach</c>) and reaches <c>plan_shape</c>; <c>BridgeSessionPublicationTests</c>
+/// pins that half.
 /// </para>
 ///
 /// <para>

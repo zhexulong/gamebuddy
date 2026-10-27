@@ -147,6 +147,9 @@ public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string 
 public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
 public sealed record FarmhandActionPostconditionWire(string Name);
 public sealed record FarmhandActionObservationBindingDescriptorWire(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
+/// <summary>Where the body must already stand, in the Mod's own words (<c>Relation</c>, e.g. `adjacent`), or null
+/// when that relationship states no distance.</summary>
+public sealed record FarmhandActionApproachRequirementWire(string Relation, int? WithinTiles);
 public sealed record FarmhandActionDescriptorWire(
     IReadOnlyList<FarmhandActionArgumentWire> Arguments,
     IReadOnlyDictionary<string, string> OutputFacts,
@@ -161,7 +164,10 @@ public sealed record FarmhandActionDescriptorWire(
     // the action was designed to be waited on, instead of one hard-coded number for every action - measured
     // 2026-10-17: `advance_day` was dispatched with a 30s deadline against a 600s watchdog, so it timed out by
     // construction and the failure read as the companion being unable to sleep.
-    long? WatchdogMs = null
+    long? WatchdogMs = null,
+    // The spatial precondition the Mod enforces, so the companion can stand in the right place instead of learning it
+    // by being refused. Absent when the action declares none (WhenWritingNull), which is NOT "stand anywhere".
+    FarmhandActionApproachRequirementWire? Approach = null
 );
 
 public sealed record FarmhandActionRegistrationWire(
