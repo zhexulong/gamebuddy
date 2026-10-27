@@ -928,20 +928,34 @@ internal sealed partial class ExecutionManager
                 ((int)clump.Tile.X, (int)clump.Tile.Y),
                 DebrisFootprint(clump),
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearDebris(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteClearDebris(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs),
                 nowMs,
                 requestedDeadlineMs);
         }
 
-        return this.ExecuteClearDebris(executionId, requestId, slot, targetX, targetY, expectedTargetId);
+        return this.ExecuteClearDebris(executionId, requestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs);
     }
 
     /// <summary>
     /// Executes clear_debris against the current world, re-validating the tool and the clump because an approach leg may
     /// have taken several ticks - the clump can be felled, damaged or replaced while the actor walks. One native hit per
     /// request; the postcondition is read from the live clump, not assumed.
+    ///
+    /// <para>
+    /// The stamina gate is now a per-INTENT clearance lease (<see cref="ClearanceLease"/>) driving
+    /// <see cref="SingleClearExecutor"/>: the same <see cref="ToolStaminaGuard"/> floor and the same
+    /// `insufficient_stamina` refusal, plus a bounded, deadline-carrying budget that reports what the fresh world
+    /// says afterwards. The lease authorises exactly this one clump and is fixed at issue, so nothing here can widen
+    /// it mid-walk.
+    /// </para>
+    ///
+    /// <para>
+    /// MOD-INTERNAL. The lease is decided and spent inside this Mod process; it is not a bridge/Host contract and no
+    /// lease field appears on the wire or in a snapshot. The `debris_cleared` success evidence keeps its exact key set
+    /// because the Host pins it, so the lease's own facts go to the trace line and to the non-success evidence.
+    /// </para>
     /// </summary>
-    private LocalExecutionReceipt ExecuteClearDebris(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteClearDebris(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool tool)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
@@ -957,13 +971,13 @@ internal sealed partial class ExecutionManager
         int parentSheetIndex = clump.parentSheetIndex.Value;
         float healthBefore = clump.health.Value;
 
-        // The stamina red line, checked BEFORE the first swing.
+        // The stamina red line, checked BEFORE the first swing - now through the per-intent clearance lease.
         //
-        // Nothing gated on stamina before this: the engine does not refuse a swing for lack of it, it lets stamina run
-        // negative and then faints the actor (`Game1.cs:6452`, `stamina <= -15f`), and a faint halves next day's
-        // stamina. For a companion running a multi-day routine that is not a local defeat, it is the end of the
-        // routine. So estimate what THIS clump will actually cost and refuse if the actor cannot pay it and still
-        // stand.
+        // Nothing gated on stamina before this work: the engine does not refuse a swing for lack of it, it lets
+        // stamina run negative and then faints the actor (`Game1.cs:6452`, `stamina <= -15f`), and a faint halves
+        // next day's stamina. For a companion running a multi-day routine that is not a local defeat, it is the end
+        // of the routine. So estimate what THIS clump will actually cost and refuse if the actor cannot pay it and
+        // still stand.
         //
         // The estimate is derived, not guessed: `ResourceClump.performToolAction` removes
         // `Math.Max(1f, (upgradeLevel + 1) * 0.75f)` per swing (`ResourceClump.cs:147`), and the tool families charge
@@ -971,31 +985,48 @@ internal sealed partial class ExecutionManager
         // `expected_stamina_cost` formula this file already reports). An efficient enchantment charges nothing.
         float damagePerSwing = Math.Max(1f, (tool.UpgradeLevel + 1) * 0.75f);
         int swingsRequired = Math.Max(1, (int)Math.Ceiling(clump.health.Value / damagePerSwing));
-        float perSwingStamina = ToolStaminaGuard.PerSwingCharge(
-            tool switch
-            {
-                Axe => Game1.player.ForagingLevel,
-                Pickaxe => Game1.player.MiningLevel,
-                Hoe => Game1.player.FarmingLevel,
-                _ => Game1.player.FarmingLevel,
-            },
-            tool.IsEfficient);
-        ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
-            Game1.player.Stamina,
-            ToolStaminaGuard.EstimatedCost(swingsRequired, tool switch
-            {
-                Axe => Game1.player.ForagingLevel,
-                Pickaxe => Game1.player.MiningLevel,
-                Hoe => Game1.player.FarmingLevel,
-                _ => Game1.player.FarmingLevel,
-            }, tool.IsEfficient));
-        if (!stamina.Allowed)
+        int toolSkillLevel = tool switch
+        {
+            Axe => Game1.player.ForagingLevel,
+            Pickaxe => Game1.player.MiningLevel,
+            Hoe => Game1.player.FarmingLevel,
+            _ => Game1.player.FarmingLevel,
+        };
+        float perSwingStamina = ToolStaminaGuard.PerSwingCharge(toolSkillLevel, tool.IsEfficient);
+        float expectedClearCost = ToolStaminaGuard.EstimatedCost(swingsRequired, toolSkillLevel, tool.IsEfficient);
+
+        // ONE intent, ONE clear, ONE lease. The intent is this request; its blockers are exactly the clump in hand,
+        // and its deadline is the request's own - a lease cannot outlive the request that opened it.
+        //
+        // Only this clump is declared. A second blocker the world reveals after the swing is NOT added here: the
+        // executor reports the fresh state and the caller decides whether another intent is worth opening. That is
+        // the difference between a companion that clears one rock and one that spends the player's day doing it.
+        ClearBlockerTile blocker = new(
+            (int)clump.Tile.X,
+            (int)clump.Tile.Y,
+            ClearableKind.Map("resourceClump", toolKind) ?? "debris",
+            expectedTargetId);
+        ClearanceLease lease = ClearanceLease.Issue($"clear_debris:{requestId}", Game1.player.Stamina, requestedDeadlineMs, new[] { blocker });
+        SingleClearExecutor executor = SingleClearExecutor.Create(blocker, ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y), lease);
+        SingleClearAuthorization authorization = executor.AuthorizeSwing(
+            new ClearSwingObservation(
+                (int)Game1.player.Tile.X,
+                (int)Game1.player.Tile.Y,
+                BlockerPresent: true,
+                BlockerTargetId: expectedTargetId,
+                ExpectedCost: expectedClearCost,
+                // The family's own reach, not a distance from the anchor: a 2x2 clump is hit from any tile beside its
+                // footprint, and the anchor reading refuses a walk that landed exactly where it was sent.
+                InToolReach: IsDebrisFootprintWithinChebyshev(Game1.player, clump, 1),
+                Stopped: false),
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        if (!authorization.Allowed)
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
-                stamina.ReasonCode,
-                $"target={targetX},{targetY};parent={parentSheetIndex};{stamina.Evidence};swings_required={swingsRequired};per_swing={perSwingStamina.ToString("0.####", CultureInfo.InvariantCulture)}");
+                authorization.ReasonCode,
+                $"target={targetX},{targetY};parent={parentSheetIndex};swings_required={swingsRequired};per_swing={perSwingStamina.ToString("0.####", CultureInfo.InvariantCulture)};{authorization.Evidence}");
 
         int previousSlot = Game1.player.CurrentToolIndex;
         Game1.player.CurrentToolIndex = slot;
@@ -1059,6 +1090,29 @@ internal sealed partial class ExecutionManager
         StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         float healthAfter = remaining?.health.Value ?? 0f;
         bool cleared = remaining is null;
+
+        // The ONE clear is recorded with what the engine ACTUALLY took, not with the estimate that authorised it.
+        // A lease that charged the estimate would spend the player's day on a number nobody measured.
+        //
+        // After this call the executor cannot start another swing from this intent - it refuses by name - so the
+        // shape below is the only one this action can produce: one clump cleared, then a fresh reading of the world.
+        executor.RecordClear(staminaDelta);
+
+        // RE-OBSERVE from the world the clear just changed, and report it rather than act on it. The tile this
+        // request was about is reachable when the clump is gone, the tile is walkable again, and the actor's own
+        // walkable component contains it - three facts, each of which the native predicates answer.
+        bool targetReachable = cleared
+            && StardewBodyController.IsWalkableTile(location, Game1.player, new Vector2(targetX, targetY))
+            && (StardewBodyController.BuildWalkableComponent(location, Game1.player) is not { } component
+                || component(new Vector2(targetX, targetY)));
+        ClearBlockerTile[] stillInTheWay = remaining is null
+            ? System.Array.Empty<ClearBlockerTile>()
+            : new[] { blocker };
+        SingleClearFollowUp followUp = executor.Reobserve(ClearReobservation.FromReachability(targetReachable, stillInTheWay));
+        // The lease's facts are written HERE rather than into the success detail: the Host pins that detail's exact
+        // key set, and a lease is not a wire fact. Nothing about this line is a contract.
+        this.monitor.Log($"[clear-lease] request={requestId};{followUp.Evidence}", LogLevel.Trace);
+
         // A clump that survives the bounded swing cap ends `Uncertain`, the same shape `cut_weeds` and
         // `chop_tree_source` use when their postcondition cannot be reached. It must NOT end `PartiallySucceeded`:
         // that state is non-terminal to the Body Program router, which keeps the node bound-Running and replays the
@@ -1070,7 +1124,11 @@ internal sealed partial class ExecutionManager
             cleared ? ExecutionState.Succeeded : ExecutionState.Uncertain,
             cleared ? "debris_cleared" : "debris_not_cleared",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed={cleared.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+            cleared
+                ? $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=true;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}"
+                // The failure path is not Host-pinned, so it carries the lease's own report: what was still in the
+                // way and that the next step is the caller's decision, not another swing from this intent.
+                : $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=false;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};{followUp.Evidence}");
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
