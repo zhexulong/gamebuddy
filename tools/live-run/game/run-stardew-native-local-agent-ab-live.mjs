@@ -343,16 +343,16 @@ const COMPANION_VOICE_RULE_EN =
  */
 const DAILY_TASK_PROMPT_ZH = Object.freeze({
   clear_east_patch: "东头那片地该收拾了，杂草和石头都清一清。",
-  water_and_harvest: "地里该浇的浇一遍，长好的收下来。",
+  water_and_harvest: "地里长好的都收下来，收完再把空地种上。",
   forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
-  animals_and_machines: "棚里的牲口和那些机器都过一遍。",
+  craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   town_errand: "去一趟镇上，找个人说说话。",
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
-  water_and_harvest: "water what needs watering and bring in what is ripe. ",
+  water_and_harvest: "bring in what is ripe, then plant the empty ground. ",
   forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
-  animals_and_machines: "go round the animals and the machines in the shed. ",
+  craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
   town_errand: "go into town and talk to somebody there. ",
 });
 

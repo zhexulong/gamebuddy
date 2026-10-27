@@ -26,14 +26,9 @@ import { readdirSync } from "node:fs";
 /** The published action ids each task expects the companion to reach for. Used by the run's own audit. */
 export const DAILY_TASK_ACTION_HINTS = Object.freeze({
   clear_east_patch: Object.freeze(["cut_weeds", "cut_grass", "break_rock_source", "chop_stump"]),
-  water_and_harvest: Object.freeze(["water_crop", "harvest_crop", "scythe_crop", "harvest_bush"]),
+  water_and_harvest: Object.freeze(["harvest_crop", "scythe_crop", "plant_seed", "water_crop"]),
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree_source"]),
-  animals_and_machines: Object.freeze([
-    "collect_animal_product",
-    "pet_animal",
-    "machine_inspect",
-    "collect_building_chest_output",
-  ]),
+  craft_and_place_machine: Object.freeze(["craft_item", "place_owned_object", "machine_inspect"]),
   town_errand: Object.freeze(["travel", "talk_to_npc"]),
 });
 
@@ -45,7 +40,7 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "clear_east_patch",
   "water_and_harvest",
   "forage_and_trees",
-  "animals_and_machines",
+  "craft_and_place_machine",
   "town_errand",
 ]);
 
