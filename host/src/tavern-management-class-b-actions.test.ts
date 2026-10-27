@@ -362,6 +362,7 @@ function appliedPreference(
   if (update.action === "revoke") return { ...next, consent: "revoked" };
   if (update.action === "setOutputDevice") return { ...next, outputDevice: update.outputDevice };
   if (update.action === "setPaced") return { ...next, paced: update.paced };
+  if (update.action === "setGamePromptAddition") return { ...next, gamePromptAddition: update.addition };
   return { ...next, persona: update.persona };
 }
 
@@ -431,6 +432,7 @@ test(
       outputDevice: null,
       persona: null,
       paced: false,
+      gamePromptAddition: "",
     };
     const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
       chat: { surface: "chat", revision: 0, thinkingLevel: "low" },

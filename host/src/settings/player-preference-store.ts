@@ -1,14 +1,17 @@
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
 import { readStrictJsonFile } from "../strict-json-reader.js";
+import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index.js";
 import { join } from "node:path";
 
 /**
- * Host-owned player preference record. One path, one revision, three field
+ * Host-owned player preference record. One path, one revision, four field
  * groups: the companion language the runtimes read at mount, the cloud TTS
- * consent/output the Voice surface reads, and whether Chat replies arrive as
- * short paced pieces. Every player-visible settings write goes through this one
- * record's compare-and-swap, so a write from any settings surface advances the
- * same revision and a stale expectedRevision is rejected for all of them.
+ * consent/output the Voice surface reads, whether Chat replies arrive as short
+ * paced pieces, and the player's own addition to the Game companion's
+ * instructions (read once, at Game-session start). Every player-visible settings
+ * write goes through this one record's compare-and-swap, so a write from any
+ * settings surface advances the same revision and a stale expectedRevision is
+ * rejected for all of them.
  */
 export const PLAYER_PREFERENCE_SCHEMA_VERSION = 1 as const;
 
@@ -80,6 +83,22 @@ export type VoiceCloudTtsConsent = "undecided" | "accepted" | "revoked";
 export type PacedDelivery = boolean;
 
 /**
+ * The player's own addition to the Game companion's starting instructions, or
+ * the empty string when they have added nothing.
+ *
+ * It is an ADDITION and only that: the prompt renders it after the Host floor
+ * (observation honesty, the emote channel, the player's language), so no value
+ * of this field can remove or weaken a Host rule. What the player may say is
+ * their own; what the product requires of her is not theirs to edit.
+ *
+ * The bound is the browser contract's `MAX_GAME_PROMPT_ADDITION_CHARS`, imported
+ * rather than restated: the textarea, the counter the player reads, the wire and
+ * this record must refuse the same string at the same length, and two spellings
+ * of one ceiling drift.
+ */
+export type GamePromptAddition = string;
+
+/**
  * The single root-level path of the record. One path, one authority: the
  * management surface writes it and every runtime reads it, so neither side
  * carries a preference of its own.
@@ -102,6 +121,8 @@ export type PlayerPreference = Readonly<{
   persona: VoicePersona;
   /** True when the player chose short paced Chat replies; never chosen is false. */
   paced: PacedDelivery;
+  /** The player's own addition to the Game companion's instructions; empty means none. */
+  gamePromptAddition: GamePromptAddition;
 }>;
 
 /**
@@ -115,7 +136,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "revoke" }>
   | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>
   | Readonly<{ action: "setPersona"; persona: VoicePersona }>
-  | Readonly<{ action: "setPaced"; paced: PacedDelivery }>;
+  | Readonly<{ action: "setPaced"; paced: PacedDelivery }>
+  | Readonly<{ action: "setGamePromptAddition"; addition: GamePromptAddition }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -127,6 +149,7 @@ type StoredPlayerPreference = Readonly<{
   outputDevice: VoiceOutputDevice;
   persona: VoicePersona;
   paced: PacedDelivery;
+  gamePromptAddition: GamePromptAddition;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -159,6 +182,7 @@ export class PlayerPreferenceStore {
         outputDevice: update.action === "setOutputDevice" ? update.outputDevice : current.outputDevice,
         persona: update.action === "setPersona" ? update.persona : current.persona,
         paced: update.action === "setPaced" ? update.paced : current.paced,
+        gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : current.gamePromptAddition,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -209,6 +233,25 @@ export async function resolvePacedDelivery(runtimeRoot: string): Promise<PacedDe
   return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).paced;
 }
 
+/**
+ * The player's own addition to the Game companion's instructions, read ONCE at the
+ * moment a Game session is constructed.
+ *
+ * Read-once is the product statement, not an optimisation: a Game session
+ * composes its instructions when it starts, and a player who edits this while a
+ * game runs must keep playing the game that started - the settings panel says so
+ * beside the field. The returned string is therefore what one session carries for
+ * its whole life, never re-read per turn.
+ *
+ * An unreadable record throws rather than silently running with no addition, for
+ * the same reason the readers above do: the player wrote text that the product
+ * promised to use, and quietly dropping it would be the product forgetting a
+ * setting it said it had saved.
+ */
+export async function resolveGamePromptAddition(runtimeRoot: string): Promise<GamePromptAddition> {
+  return (await new PlayerPreferenceStore(playerPreferencePath(runtimeRoot)).read()).gamePromptAddition;
+}
+
 const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   schemaVersion: PLAYER_PREFERENCE_SCHEMA_VERSION,
   revision: 0,
@@ -219,6 +262,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   outputDevice: null,
   persona: null,
   paced: false,
+  gamePromptAddition: "",
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -231,6 +275,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     outputDevice: value.outputDevice,
     persona: value.persona,
     paced: value.paced,
+    gamePromptAddition: value.gamePromptAddition,
   });
 }
 
@@ -246,6 +291,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isOutputDevice(value.outputDevice) ||
     !isVoicePersona(value.persona) ||
     !isPaced(value.paced) ||
+    !isGamePromptAddition(value.gamePromptAddition) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -256,6 +302,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "outputDevice",
       "persona",
       "paced",
+      "gamePromptAddition",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -281,6 +328,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     outputDevice: value.outputDevice as VoiceOutputDevice,
     persona: value.persona as VoicePersona,
     paced: value.paced as PacedDelivery,
+    gamePromptAddition: value.gamePromptAddition as GamePromptAddition,
   });
 }
 
@@ -303,6 +351,9 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   }
   if (value.action === "setPaced") {
     return hasExactKeys(value, ["action", "paced"]) && isPaced(value.paced);
+  }
+  if (value.action === "setGamePromptAddition") {
+    return hasExactKeys(value, ["action", "addition"]) && isGamePromptAddition(value.addition);
   }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
@@ -340,6 +391,17 @@ function isVoicePersona(value: unknown): value is VoicePersona {
 /** The player's own yes/no: a real boolean, never a truthy string or number. */
 function isPaced(value: unknown): value is PacedDelivery {
   return typeof value === "boolean";
+}
+
+/**
+ * The player's own text, bounded by the one ceiling the browser field enforces.
+ *
+ * Measured in UTF-16 code units because that is what the textarea and the counter
+ * the player reads measure, and a store that counted differently from its own
+ * field would save a document the field can never show back to its author.
+ */
+function isGamePromptAddition(value: unknown): value is GamePromptAddition {
+  return typeof value === "string" && value.length <= MAX_GAME_PROMPT_ADDITION_CHARS;
 }
 
 function isConsent(value: unknown): value is VoiceCloudTtsConsent {

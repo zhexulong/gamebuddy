@@ -14,6 +14,28 @@ export const TAVERN_BROWSER_API_VERSION = 1 as const;
  * (JSON escapes one character as `\uXXXX`).
  */
 export const MAX_TEXT_UTF8_BYTES = 16_384;
+/**
+ * The most characters the player's own Game prompt addition may hold.
+ *
+ * ONE bound, and this is its authority. A free-text field the player types into needs a ceiling
+ * for two concrete reasons, neither of them theoretical:
+ *
+ *  - it is written into the system prompt of every Game session that follows, so an unbounded
+ *    field would let a settings control displace the Host floor by sheer length - the floor is
+ *    an addition's surroundings, not a competing one, and the prompt has a real token bill;
+ *  - it is stored in a JSON record read at every Game session start, so the ceiling is also the
+ *    size of that read.
+ *
+ * 2000 characters is roughly the length of the floor and the interaction conduct together, so a
+ * player can say what they want at least as fully as the Host says what it requires, and no
+ * further. It is counted in UTF-16 code units, which is what the browser's own `maxLength` and
+ * `String.length` count, so the textarea, the counter the player reads and this wire all refuse
+ * the same input at the same point.
+ *
+ * `dialogue-web/src/management-pipeline-api.ts` mirrors the number as
+ * `MAX_GAME_PROMPT_ADDITION_CHARS`; a test there pins the two to one value.
+ */
+export const MAX_GAME_PROMPT_ADDITION_CHARS = 2000;
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const OPAQUE_HANDLE_PATTERN = "^[A-Za-z0-9_-]{22,128}$";
 // A model id and a thinking level are the player's own input (design/28 §2.3.1):
@@ -53,6 +75,20 @@ const isMemoryText = (value: string): boolean =>
   !hasUnpairedUtf16Surrogate(value) &&
   value === value.normalize("NFC") &&
   new TextEncoder().encode(value).byteLength <= 4096;
+/**
+ * The player's Game prompt addition, bounded in the SAME unit the browser counts.
+ *
+ * `Type.String({ maxLength })` counts Unicode code points, while the textarea's `maxLength` and
+ * the player-facing counter count UTF-16 code units. A field holding 2000 astral characters is
+ * 2000 code points and 4000 code units, so a `maxLength` schema would accept text the browser's
+ * own control refuses to produce, and the two halves of one bound would disagree about the same
+ * string. This format is the bound spelled once, in the unit the player types in.
+ *
+ * A lone surrogate is refused here rather than downstream: the value is written into a prompt and
+ * into a JSON record, and half a code point is not text either one can carry.
+ */
+const isGamePromptAdditionText = (value: string): boolean =>
+  !hasUnpairedUtf16Surrogate(value) && value.length <= MAX_GAME_PROMPT_ADDITION_CHARS;
 const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
   if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
   const finalValue = BASE64URL_ALPHABET.indexOf(value.at(-1)!);
@@ -60,6 +96,7 @@ const isCanonicalUnpaddedBase64Url = (value: string): boolean => {
 };
 Format.Set("tavern-browser-nfc-utf8-text-v1", isNfcUtf8Text);
 Format.Set("tavern-browser-memory-text-v1", isMemoryText);
+Format.Set("tavern-browser-game-prompt-addition-v1", isGamePromptAdditionText);
 Format.Set("tavern-browser-canonical-base64url-v1", isCanonicalUnpaddedBase64Url);
 
 const strictObject = <T extends Record<string, TSchema>>(properties: T) =>
@@ -851,6 +888,12 @@ const OperationId = Type.Union([
   Type.Literal("settings.language.update"),
   Type.Literal("settings.delivery.read"),
   Type.Literal("settings.delivery.update"),
+  // The player's own addition to the Game companion's starting instructions. It is a
+  // settings write like language and delivery, but it lands in a RUNNING SESSION's
+  // prompt only at the next start: the addition is read once when a Game session is
+  // constructed, so a running game keeps the text it started with.
+  Type.Literal("settings.game-prompt.read"),
+  Type.Literal("settings.game-prompt.update"),
   Type.Literal("settings.connection.read"),
   Type.Literal("settings.connection.create"),
   Type.Literal("settings.connection.test"),
@@ -909,6 +952,8 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.language.update"),
   Type.Literal("tavern.operation.settings.delivery.read"),
   Type.Literal("tavern.operation.settings.delivery.update"),
+  Type.Literal("tavern.operation.settings.game-prompt.read"),
+  Type.Literal("tavern.operation.settings.game-prompt.update"),
   Type.Literal("tavern.operation.settings.connection.read"),
   Type.Literal("tavern.operation.settings.connection.create"),
   Type.Literal("tavern.operation.settings.connection.test"),
@@ -1712,6 +1757,33 @@ export const TavernDeliveryPreferenceV1Schema = strictObject({
 export const TavernDeliveryPreferenceCommandV1Schema = strictObject({
   expectedRevision: Revision,
   paced: Type.Boolean(),
+});
+
+/**
+ * The player's own addition to the Game companion's starting instructions.
+ *
+ * The addition is an ADDITION, and the wire says so by carrying only the addition: it is
+ * rendered AFTER the Host floor (observation honesty, the emote channel, the player's
+ * language), which is what makes those rules un-editable from a settings field. `revision`
+ * is the shared record's, so a write here cannot silently discard a concurrent language or
+ * voice write.
+ *
+ * An empty `addition` is the player having added nothing, which is a different fact from a
+ * never-written record at `revision: 0`.
+ */
+export const TavernGamePromptAdditionV1Schema = strictObject({
+  revision: Revision,
+  addition: Type.String({
+    maxLength: MAX_GAME_PROMPT_ADDITION_CHARS,
+    format: "tavern-browser-game-prompt-addition-v1",
+  }),
+});
+export const TavernGamePromptAdditionCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  addition: Type.String({
+    maxLength: MAX_GAME_PROMPT_ADDITION_CHARS,
+    format: "tavern-browser-game-prompt-addition-v1",
+  }),
 });
 
 const MemoryStateSnapshotV1Schema = Type.Union([
@@ -2693,6 +2765,35 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: TavernDeliveryPreferenceV1Schema },
   }),
   route({
+    routeId: "settings.game-prompt.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/game-prompt",
+    operationId: "settings.game-prompt.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernGamePromptAdditionV1Schema },
+  }),
+  route({
+    routeId: "settings.game-prompt.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/game-prompt",
+    operationId: "settings.game-prompt.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernGamePromptAdditionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernGamePromptAdditionV1Schema },
+  }),
+  route({
     routeId: "settings.connection.read",
     method: "GET",
     path: "/api/tavern/v1/settings/connection",
@@ -3217,6 +3318,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernLanguagePreferenceCommandV1Schema,
     TavernDeliveryPreferenceV1Schema,
     TavernDeliveryPreferenceCommandV1Schema,
+    TavernGamePromptAdditionV1Schema,
+    TavernGamePromptAdditionCommandV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -3335,6 +3438,8 @@ export type TavernLanguagePreferenceV1 = Static<typeof TavernLanguagePreferenceV
 export type TavernLanguagePreferenceCommandV1 = Static<typeof TavernLanguagePreferenceCommandV1Schema>;
 export type TavernDeliveryPreferenceV1 = Static<typeof TavernDeliveryPreferenceV1Schema>;
 export type TavernDeliveryPreferenceCommandV1 = Static<typeof TavernDeliveryPreferenceCommandV1Schema>;
+export type TavernGamePromptAdditionV1 = Static<typeof TavernGamePromptAdditionV1Schema>;
+export type TavernGamePromptAdditionCommandV1 = Static<typeof TavernGamePromptAdditionCommandV1Schema>;
 export type StCardImportFieldSummaryV1 = Static<typeof StCardImportFieldSummaryV1Schema>;
 export type StCardImportDispositionV1 = Static<typeof StCardImportDispositionV1Schema>;
 export type StCardImportLossV1 = Static<typeof StCardImportLossV1Schema>;

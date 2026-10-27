@@ -265,7 +265,11 @@ test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, a
   assert.ok(!unmatched.includes("holding: (T)Axe ("), `no invented upgrade level: ${unmatched}`);
 
   for (const currentTool of [undefined, null, ""] as const) {
-    const empty = formatGameEnvironmentFacts({ ...base, currentTool }, false);
+    // `exactOptionalPropertyTypes` forbids writing `undefined` into an optional field, so the absent case is
+    // expressed by omitting the key instead of restating it as undefined.
+    const { currentTool: _omitted, ...withoutTool } = base;
+    const source = currentTool === undefined ? withoutTool : { ...base, currentTool };
+    const empty = formatGameEnvironmentFacts(source, false);
     assert.ok(!empty.includes("holding:"), `an absent held tool drops the whole fact: ${empty}`);
   }
 });

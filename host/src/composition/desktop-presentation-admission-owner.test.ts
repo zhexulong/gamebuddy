@@ -448,3 +448,47 @@ test("the production management profile declaration fits the dispatcher's canoni
     "the production management profile must declare exactly the canonical groups the dispatcher serves: a route outside every group throws at provisioning",
   );
 });
+
+/**
+ * Every settings group the player can reach is ACTUALLY DECLARED by the production profile.
+ *
+ * The fit test above is not enough on its own, and the reason is a real green-through-the-defect
+ * shape: `managementProfileFitsCanonicalGroups` asks whether the profile is a legal selection of
+ * the dispatcher's groups, which is equally true when BOTH sides simply omit a group. A new
+ * settings route could therefore be added to the contract, served by the dispatcher, and then
+ * dropped from the profile - and the surface would answer `profile_operation_unavailable` to a
+ * player while every test stayed green.
+ *
+ * So the population is derived from the settings route pairs the CONTRACT declares (any
+ * `*.read`/`*.update` pair under `settings.`), and each one must appear in the production
+ * profile's routes and operations. A contract that grows a settings pair fails here until the
+ * profile declares it, which is the direction that costs a launch rather than a feature.
+ */
+test("the production management profile declares every settings pair the contract publishes", async () => {
+  const { composeTavernManagementProfile } = await import("./desktop-presentation-admission-owner.js");
+  const { TavernBrowserContractV1 } = await import("../tavern/browser-contract/index.js");
+  const profile = composeTavernManagementProfile();
+
+  const settingsRouteIds = TavernBrowserContractV1.routes
+    .map((route) => route.routeId)
+    .filter((routeId) => routeId.startsWith("settings."));
+  assert.ok(settingsRouteIds.length > 0, "the contract publishes no settings routes at all");
+
+  const missing = settingsRouteIds.filter((routeId) => !profile.routeIds.includes(routeId as never));
+  assert.deepEqual(
+    missing,
+    [],
+    `the production profile omits settings route(s) the contract publishes: ${missing.join(", ")} - the surface would answer profile_operation_unavailable`,
+  );
+
+  // Every one of those routes is also an OPERATION the browser can address, because these are
+  // the settings groups the panel calls by operation id; a route with no operation is a route
+  // the dispatcher serves and no projection lists.
+  const profileOperations = new Set<string>(profile.operationIds);
+  const missingOperations = settingsRouteIds.filter((routeId) => !profileOperations.has(routeId));
+  assert.deepEqual(
+    missingOperations,
+    [],
+    `the production profile omits settings operation(s) the contract publishes: ${missingOperations.join(", ")}`,
+  );
+});

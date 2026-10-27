@@ -13,9 +13,11 @@ import {
   playerPreferencePath,
   readStoredCompanionLocale,
   resolveCompanionLocale,
+  resolveGamePromptAddition,
   resolvePacedDelivery,
   VOICE_CLOUD_TTS_DISCLOSURE_VERSION,
 } from "./player-preference-store.js";
+import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index.js";
 
 // The record's durable path lock releases through the Windows stale-lock
 // reclaimer; bind the same capability the production runtime binds.
@@ -48,6 +50,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       outputDevice: null,
       persona: null,
       paced: false,
+      gamePromptAddition: "",
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
@@ -57,6 +60,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       "consent",
       "decidedAtMs",
       "disclosureVersion",
+      "gamePromptAddition",
       "locale",
       "outputDevice",
       "paced",
@@ -452,4 +456,115 @@ test("the delivery path reads the player's paced choice from the one root path",
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/**
+ * The Game prompt addition is player-authored free text that the system prompt carries on
+ * every turn of every session that follows, so it is the one field in this record whose abuse
+ * is measured in tokens rather than in UI: an unbounded string in the Host floor's own context
+ * is a settings control with more room than the floor itself.
+ *
+ * The bound is asserted against the imported authority rather than a literal here, because the
+ * field, the wire and this record must refuse the same string at the same length - and 2000 is
+ * the contract's number, not this test's.
+ */
+test("the Game prompt addition round-trips as the player's own text under the shared revision", async () => {
+  await withStore(async (path, store) => {
+    // Never written is the empty addition, which is a different fact from "no record":
+    // the field shows what they wrote, and they have written nothing.
+    assert.equal((await store.read()).gamePromptAddition, "");
+
+    const written = await store.update(0, {
+      action: "setGamePromptAddition",
+      addition: "收完土豆再去矿洞。下雨天不用浇水。",
+    });
+    assert.equal(written.gamePromptAddition, "收完土豆再去矿洞。下雨天不用浇水。");
+    assert.equal(written.revision, 1);
+    // Writing the addition touches no other field group.
+    assert.equal(written.locale, null);
+    assert.equal(written.consent, "undecided");
+    assert.equal(written.paced, false);
+
+    // Durable: a fresh store over the same path answers the same text.
+    assert.equal(
+      (await new PlayerPreferenceStore(path).read()).gamePromptAddition,
+      "收完土豆再去矿洞。下雨天不用浇水。",
+    );
+    // And it is the one root-path reader the runtime calls.
+    const root = join(path, "..", "..");
+    assert.equal(await resolveGamePromptAddition(root), "收完土豆再去矿洞。下雨天不用浇水。");
+
+    // Clearing is the same revision-checked write, not a delete of the record:
+    // an empty addition from a player who cleared the field is a value they chose.
+    const cleared = await store.update(written.revision, { action: "setGamePromptAddition", addition: "" });
+    assert.equal(cleared.gamePromptAddition, "");
+    assert.equal(cleared.revision, 2);
+    assert.equal(await resolveGamePromptAddition(root), "");
+  });
+});
+
+test("the Game prompt addition is bounded by the contract's ceiling and refuses one character more", async () => {
+  await withStore(async (_path, store) => {
+    const atBound = "x".repeat(MAX_GAME_PROMPT_ADDITION_CHARS);
+    const saved = await store.update(0, { action: "setGamePromptAddition", addition: atBound });
+    assert.equal(saved.gamePromptAddition.length, MAX_GAME_PROMPT_ADDITION_CHARS);
+
+    // One past the bound is refused, not truncated: a store that silently shortened the
+    // player's text would save a document the author never wrote and the field can never
+    // show them, and they would have no way to know which part was dropped.
+    await assert.rejects(
+      store.update(saved.revision, {
+        action: "setGamePromptAddition",
+        addition: "x".repeat(MAX_GAME_PROMPT_ADDITION_CHARS + 1),
+      }),
+      /invalid_player_preference_update/u,
+    );
+    assert.equal((await store.read()).gamePromptAddition.length, MAX_GAME_PROMPT_ADDITION_CHARS);
+
+    // An over-bound record on disk is a protocol fault, not a value to keep serving.
+    await writeFile(
+      playerPreferencePath(join(_path, "..", "..")),
+      JSON.stringify({
+        schemaVersion: 1,
+        revision: 3,
+        locale: null,
+        disclosureVersion: null,
+        consent: "undecided",
+        decidedAtMs: null,
+        outputDevice: null,
+        persona: null,
+        paced: false,
+        gamePromptAddition: "x".repeat(MAX_GAME_PROMPT_ADDITION_CHARS + 1),
+      }),
+    );
+    await assert.rejects(resolveGamePromptAddition(join(_path, "..", "..")), /invalid_player_preference_store/u);
+
+    // The bound is the CONTRACT's, so one constant change moves the store with it: the
+    // field, the counter, the wire and this record cannot disagree about the same string.
+    for (const update of [
+      { action: "setGamePromptAddition" },
+      { action: "setGamePromptAddition", addition: null },
+      { action: "setGamePromptAddition", addition: 12 },
+      { action: "setGamePromptAddition", addition: "ok", extra: true },
+    ]) {
+      await assert.rejects(
+        store.update(saved.revision, update as never),
+        /invalid_player_preference_update/u,
+        `expected ${JSON.stringify(update)} to be refused`,
+      );
+    }
+  });
+});
+
+test("an addition write cannot clobber the other groups and a stale revision is refused", async () => {
+  await withStore(async (_path, store) => {
+    const language = await store.update(0, { action: "setLocale", locale: "en-US" });
+    await assert.rejects(
+      store.update(0, { action: "setGamePromptAddition", addition: "hello" }),
+      PlayerPreferenceRevisionConflict,
+    );
+    const addition = await store.update(language.revision, { action: "setGamePromptAddition", addition: "hello" });
+    assert.equal(addition.locale, "en-US");
+    assert.equal(addition.gamePromptAddition, "hello");
+  });
 });

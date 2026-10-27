@@ -47,6 +47,7 @@ import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt, Snapshot } from "./protocol.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
 import { type RunTrace } from "./run-trace.js";
+import { resolveGamePromptAddition } from "./settings/player-preference-store.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -1276,6 +1277,17 @@ export async function createRuntimeWithFixedToolsCore(
   // The resolver is anchored at `host/` (not the emitted generation) so it
   // cannot accidentally acquire an extension from a user Pi installation.
   const magicContextEntry = resolveMagicContextExtensionEntry();
+  // The player's own addition to the Game companion's instructions, resolved ONCE here and
+  // carried by this session for its whole life. Read at construction rather than inside the
+  // prompt builder for a product reason, not a performance one: a Game session composes its
+  // instructions when it starts, so a player who edits the addition mid-game keeps playing the
+  // game that started - which is exactly what the settings panel promises beside the field. A
+  // per-turn read here would make that sentence false, and the session would change character
+  // under the player's hands.
+  //
+  // Chat never reads it: the addition is the Game surface's own, and a Chat mount that consulted
+  // it would be reaching for a setting its own settings group does not show.
+  const gamePromptAddition = runtimeSurface === "game" ? await resolveGamePromptAddition(paths.root) : undefined;
   const loader = new DefaultResourceLoader({
     cwd: paths.runtimeCwd,
     agentDir: paths.agentDir,
@@ -1289,7 +1301,7 @@ export async function createRuntimeWithFixedToolsCore(
     systemPrompt:
       runtimeSurface === "chat"
         ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
-        : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale),
+        : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
     appendSystemPrompt: [],
   });
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.
