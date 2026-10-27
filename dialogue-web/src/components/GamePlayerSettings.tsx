@@ -4,6 +4,7 @@ import {
   ComposedReferenceGameProblemError,
   type ComposedReferenceGameBrowserApi,
   type StardewPlayerSettingsV1,
+  type StardewWindowModeV1,
 } from "../composed-reference-game-browser-api";
 
 /**
@@ -77,6 +78,9 @@ const FAMILY_LABELS: Readonly<Record<string, (labels: Messages) => string>> = Ob
   expression: (labels) => labels.gameFamilyExpression,
 });
 
+/** The four behaviours `WindowModeManagement` implements. One spelling: the contract's union names the same four. */
+const WINDOW_MODE_KEYS = ["visible", "minimized", "hidden", "background"] as const;
+
 export function GamePlayerSettings({
   api,
   labels,
@@ -85,6 +89,15 @@ export function GamePlayerSettings({
   const [unavailable, setUnavailable] = useState(false);
   const [denied, setDenied] = useState<ReadonlySet<string>>(() => new Set());
   const [minimum, setMinimum] = useState(1);
+  /**
+   * The window behaviour, or null when the player has never chosen one.
+   *
+   * Null is a real answer here - the Mod runs visibly by default - so the surface must be able to say "no preference" rather
+   * than pick a value on the player's behalf. The same holds for the denial list below.
+   */
+  const [windowMode, setWindowMode] = useState<StardewWindowModeV1 | null>(null);
+  /** Actions withheld individually, on top of the families. Sorted, deduplicated, and empty when the player chose none. */
+  const [deniedActions, setDeniedActions] = useState<readonly string[]>([]);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<"saved" | "conflict" | "error" | null>(null);
 
@@ -92,6 +105,8 @@ export function GamePlayerSettings({
     setSettings(next);
     setDenied(new Set(next.families.filter((family) => family.denied).map((family) => family.familyId)));
     setMinimum(next.advanceDayMinimumOnlineFarmers);
+    setWindowMode(next.windowMode ?? null);
+    setDeniedActions(next.deniedActions ?? []);
   };
 
   useEffect(() => {
@@ -112,6 +127,18 @@ export function GamePlayerSettings({
   }, [api]);
 
   const familyLabel = (familyId: string): string => FAMILY_LABELS[familyId]?.(labels) ?? familyId;
+  /**
+   * One label per mode, read by name.
+   *
+   * The catalogue gate can only follow a named read, and a `labels[someMap[mode]]` lookup is invisible to it - the four
+   * sentences would look unread. Naming them keeps the check honest and the intent obvious.
+   */
+  const windowModeLabels = Object.freeze({
+    visible: labels.gameSettingsWindowModeVisible,
+    minimized: labels.gameSettingsWindowModeMinimized,
+    hidden: labels.gameSettingsWindowModeHidden,
+    background: labels.gameSettingsWindowModeBackground,
+  });
 
   const toggle = (familyId: string, withheld: boolean): void => {
     setDenied((previous) => {
@@ -133,6 +160,8 @@ export function GamePlayerSettings({
         expectedRevision: settings.revision,
         deniedActionFamilies: [...denied],
         advanceDayMinimumOnlineFarmers: minimum,
+        ...(windowMode === null ? {} : { windowMode }),
+        deniedActions: [...deniedActions],
       });
       apply(saved);
       setNotice("saved");
@@ -213,6 +242,31 @@ export function GamePlayerSettings({
             </select>
           </label>
           <p className="surface-model-settings-hint">{labels.gameSettingsCoopHint}</p>
+
+          <label className="surface-model-field">
+            <span>{labels.gameSettingsWindowModeTitle}</span>
+            <select
+              className="form-select"
+              value={windowMode ?? ""}
+              disabled={saving}
+              aria-label={labels.gameSettingsWindowModeTitle}
+              onChange={(event) => {
+                // The select's options ARE the union, so the cast states what the markup already guarantees rather than
+                // widening the state to arbitrary text.
+                setWindowMode(event.target.value === "" ? null : (event.target.value as StardewWindowModeV1));
+                setNotice(null);
+              }}
+            >
+              {/* The empty option is the Mod's own default, named as what it is rather than hidden. */}
+              <option value="">{labels.gameSettingsWindowModeDefault}</option>
+              {WINDOW_MODE_KEYS.map((mode) => (
+                <option key={mode} value={mode}>
+                  {windowModeLabels[mode]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="surface-model-settings-hint">{labels.gameSettingsWindowModeHint}</p>
 
           <div className="surface-model-actions">
             <button type="button" className="small-button" disabled={saving} onClick={() => void save()}>

@@ -236,17 +236,31 @@ export type StardewPlayerSettingsV1 = Readonly<{
    * behaviour: the action policy is re-read on a 120-tick throttle, the night floor
    * only when a world loads.
    */
+  /** The window behaviour the player chose, or absent when they never did: the Mod then runs visibly. */
+  windowMode?: StardewWindowModeV1;
+  /** Actions withheld individually, on top of the families. Absent means none. */
+  deniedActions?: readonly string[];
   appliesToRunningGame: Readonly<{
     actionPolicy: "within_seconds";
     advanceDayMinimumOnlineFarmers: "next_world_load";
+    /** The Mod re-reads this on its own tick, so the sentence can promise a live change. */
+    windowMode: "within_seconds";
+    /** Per-action denials ride the same policy document the families do. */
+    deniedActions: "within_seconds";
   }>;
 }>;
+
+/** The four behaviours the Mod implements. One spelling with the Host contract's union. */
+export type StardewWindowModeV1 = "visible" | "minimized" | "hidden" | "background";
 
 export type StardewPlayerSettingsRequestV1 = Readonly<{
   apiVersion: 1;
   expectedRevision: number;
   deniedActionFamilies: readonly string[];
   advanceDayMinimumOnlineFarmers: number;
+  /** Absent keeps whatever the record holds, so a client that does not know the field cannot clear it. */
+  windowMode?: StardewWindowModeV1;
+  deniedActions?: readonly string[];
 }>;
 
 export type StardewInstallationCandidateV1 = Readonly<{
@@ -493,16 +507,59 @@ const SETTINGS_KEYS = [
   "revision",
   "families",
   "advanceDayMinimumOnlineFarmers",
+  // Optional on the wire, and named here because a validator that accepts this shape must know every key the contract
+  // declares for it - otherwise a response carrying one is refused and the surface goes down with it.
+  "windowMode",
+  "deniedActions",
   "appliesToRunningGame",
 ] as const;
 const SETTINGS_FAMILY_KEYS = ["familyId", "denied"] as const;
-const SETTINGS_APPLIES_KEYS = ["actionPolicy", "advanceDayMinimumOnlineFarmers"] as const;
+const SETTINGS_APPLIES_KEYS = [
+  "actionPolicy",
+  "advanceDayMinimumOnlineFarmers",
+  "windowMode",
+  "deniedActions",
+] as const;
+const STARDEW_WINDOW_MODES = ["visible", "minimized", "hidden", "background"] as const;
+const DENIED_ACTION_LIMIT = 512;
+const DENIED_ACTION_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+
+/** The four behaviours the Mod implements; anything else is not a mode this client will carry. */
+function isStardewWindowMode(value: unknown): value is StardewWindowModeV1 {
+  return typeof value === "string" && (STARDEW_WINDOW_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * A per-action denial list is a set of action ids: bounded, duplicate-free, and shaped like an id.
+ *
+ * Validated here rather than trusted, for the same reason the family list beside it is - a value that reaches the surface must
+ * not mean two things depending on which reader looked at it.
+ */
+function isDeniedActionIds(value: unknown): value is readonly string[] {
+  if (!Array.isArray(value) || value.length > DENIED_ACTION_LIMIT) return false;
+  if (!value.every((entry) => typeof entry === "string" && DENIED_ACTION_PATTERN.test(entry))) return false;
+  return new Set(value).size === value.length;
+}
 const SETTINGS_MAX_FAMILIES = 64;
+const SETTINGS_SAVE_REQUIRED_KEYS = [
+  "apiVersion",
+  "expectedRevision",
+  "deniedActionFamilies",
+  "advanceDayMinimumOnlineFarmers",
+] as const;
+/**
+ * Every key a save may carry, required and optional.
+ *
+ * The request check is "exactly these keys and no others", so an optional member that is not named here would be refused on the
+ * way out - the mirror would be stricter than the contract it mirrors, and a player who picked a window mode could not save.
+ */
 const SETTINGS_SAVE_KEYS = [
   "apiVersion",
   "expectedRevision",
   "deniedActionFamilies",
   "advanceDayMinimumOnlineFarmers",
+  "windowMode",
+  "deniedActions",
 ] as const;
 
 function validateStardewPlayerSettings(value: unknown): StardewPlayerSettingsV1 {
@@ -515,10 +572,14 @@ function validateStardewPlayerSettings(value: unknown): StardewPlayerSettingsV1 
     value.families.length > SETTINGS_MAX_FAMILIES ||
     !isSafeInteger(value.advanceDayMinimumOnlineFarmers, 1) ||
     value.advanceDayMinimumOnlineFarmers > 4 ||
+    (value.windowMode !== undefined && !isStardewWindowMode(value.windowMode)) ||
+    (value.deniedActions !== undefined && !isDeniedActionIds(value.deniedActions)) ||
     !isRecord(value.appliesToRunningGame) ||
     !hasExactKeys(value.appliesToRunningGame, SETTINGS_APPLIES_KEYS) ||
     value.appliesToRunningGame.actionPolicy !== "within_seconds" ||
-    value.appliesToRunningGame.advanceDayMinimumOnlineFarmers !== "next_world_load"
+    value.appliesToRunningGame.advanceDayMinimumOnlineFarmers !== "next_world_load" ||
+    value.appliesToRunningGame.windowMode !== "within_seconds" ||
+    value.appliesToRunningGame.deniedActions !== "within_seconds"
   )
     throw new ComposedReferenceGameProtocolError("invalid_stardew_player_settings");
   const families: StardewActionFamilyV1[] = [];
@@ -539,10 +600,16 @@ function validateStardewPlayerSettings(value: unknown): StardewPlayerSettingsV1 
     apiVersion: 1,
     revision: value.revision,
     families: Object.freeze(families),
+    ...(value.windowMode === undefined ? {} : { windowMode: value.windowMode }),
+    ...(value.deniedActions === undefined
+      ? {}
+      : { deniedActions: Object.freeze([...(value.deniedActions as readonly string[])]) }),
     advanceDayMinimumOnlineFarmers: value.advanceDayMinimumOnlineFarmers,
     appliesToRunningGame: Object.freeze({
       actionPolicy: "within_seconds" as const,
       advanceDayMinimumOnlineFarmers: "next_world_load" as const,
+      windowMode: "within_seconds" as const,
+      deniedActions: "within_seconds" as const,
     }),
   });
 }
@@ -1131,7 +1198,12 @@ export function createComposedReferenceGameBrowserApi(
         !request.deniedActionFamilies.every((familyId) => isSafeId(familyId)) ||
         !isSafeInteger(request.advanceDayMinimumOnlineFarmers, 1) ||
         request.advanceDayMinimumOnlineFarmers > 4 ||
-        !hasExactKeys(request as Record<string, unknown>, SETTINGS_SAVE_KEYS)
+        // Required keys present, and nothing outside the declared set: an optional member is admitted but never required, which
+        // a length comparison cannot say.
+        !SETTINGS_SAVE_REQUIRED_KEYS.every((key) => Object.hasOwn(request, key)) ||
+        !Object.keys(request).every((key) => (SETTINGS_SAVE_KEYS as readonly string[]).includes(key)) ||
+        (request.windowMode !== undefined && !isStardewWindowMode(request.windowMode)) ||
+        (request.deniedActions !== undefined && !isDeniedActionIds(request.deniedActions))
       )
         throw new ComposedReferenceGameProtocolError("invalid_stardew_player_settings_request");
       if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");

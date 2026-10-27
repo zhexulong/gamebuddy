@@ -936,6 +936,14 @@ const en = {
   gameSettingsCoopTitle: "Farmers needed before night falls",
   gameSettingsCoopHint:
     "How many players must be online before the companion may end the day. A change takes effect the next time the world loads.",
+  gameSettingsWindowModeTitle: "While she plays",
+  gameSettingsWindowModeHint:
+    "How the game window behaves while she is in the world. The Mod reads this on its own tick, so a change lands within seconds.",
+  gameSettingsWindowModeDefault: "Visible (default)",
+  gameSettingsWindowModeVisible: "Visible",
+  gameSettingsWindowModeMinimized: "Minimised",
+  gameSettingsWindowModeHidden: "Hidden",
+  gameSettingsWindowModeBackground: "Background (muted)",
   // The one sentence about the world's own name. It is here instead of a field
   // because the game writes the farm name once, at creation: the Wizard's shrine
   // lets a player change their own name and favourite thing on an existing save,
@@ -1703,6 +1711,13 @@ const zh: Messages = {
   gameSettingsActionPolicyHint: "关掉你不希望它碰的任何事项。游戏运行中保存后几秒内生效。",
   gameSettingsCoopTitle: "入夜前需要到场的玩家人数",
   gameSettingsCoopHint: "伙伴结束一天之前，需要有几位玩家在线。更改在下次载入世界时生效。",
+  gameSettingsWindowModeTitle: "她玩的时候",
+  gameSettingsWindowModeHint: "她在世界里时游戏窗口的表现。模组每次自己读取，所以改动几秒内生效。",
+  gameSettingsWindowModeDefault: "可见（默认）",
+  gameSettingsWindowModeVisible: "可见",
+  gameSettingsWindowModeMinimized: "最小化",
+  gameSettingsWindowModeHidden: "隐藏",
+  gameSettingsWindowModeBackground: "后台（静音）",
   gameSettingsWorldNameNote: "农场的名字在创建世界时确定，之后无法更改。",
   gameSettingsSave: "保存设置",
   gameSettingsSaved: "已保存。",
