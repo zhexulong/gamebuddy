@@ -153,6 +153,26 @@ const editorFacts = () => {
   };
 };
 
+/**
+ * Whether this mount can start a turn at all.
+ *
+ * The credential flag says a provider key exists in the environment; it does not say this run's root has a connection. BYOK ships
+ * nothing and preselects nothing, so a fresh root is openable and readable with a send button that is disabled and a sentence
+ * saying why. A driver that waits for that button waits forever - 58 retries, then a timeout - so the button itself is asked.
+ */
+async function canStartTurn(page) {
+  const disabled = await page
+    .locator(".composer-button.send-button")
+    .isDisabled()
+    .catch(() => false);
+  if (!disabled) return { ok: true };
+  const sentence = await page.evaluate(() => {
+    const notice = document.querySelector(".reference-turn-notice, .chat-model-banner, [data-chat-model-banner]");
+    return notice === null ? null : (notice.textContent ?? "").trim();
+  });
+  return { ok: false, sentence };
+}
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("n-message-edit.txt");
@@ -189,8 +209,9 @@ const editorFacts = () => {
   say(`durable transcript before: ${JSON.stringify((await readDurableTranscript(page)).transcript?.map((message) => ({ order: message.order, role: message.role, text: message.text?.slice(0, 12) })))}`);
 
   if (rows.filter((row) => row.role === "player").length === 0) {
-    if (!CREDENTIAL_PRESENT) {
-      say('=== ITEM: editing a message -> SKIPPED:no_player_message_mounted_and_no_provider_credential');
+    const turnGate = await canStartTurn(page);
+      if (!CREDENTIAL_PRESENT || !turnGate.ok) {
+      say('=== ITEM: editing a message -> SKIPPED:no_turn_possible');
       flush();
       await browser.close().catch(() => undefined);
       say("DONE-N");

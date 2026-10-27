@@ -107,6 +107,26 @@ const durableRows = async (page) => {
   };
 };
 
+/**
+ * Whether this mount can start a turn at all.
+ *
+ * The credential flag says a provider key exists in the environment; it does not say this run's root has a connection. BYOK ships
+ * nothing and preselects nothing, so a fresh root is openable and readable with a send button that is disabled and a sentence
+ * saying why. A driver that waits for that button waits forever - 58 retries, then a timeout - so the button itself is asked.
+ */
+async function canStartTurn(page) {
+  const disabled = await page
+    .locator(".composer-button.send-button")
+    .isDisabled()
+    .catch(() => false);
+  if (!disabled) return { ok: true };
+  const sentence = await page.evaluate(() => {
+    const notice = document.querySelector(".reference-turn-notice, .chat-model-banner, [data-chat-model-banner]");
+    return notice === null ? null : (notice.textContent ?? "").trim();
+  });
+  return { ok: false, sentence };
+}
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("p-rewind-delete.txt");
@@ -139,9 +159,10 @@ const durableRows = async (page) => {
 
   let rows = await page.evaluate(rowFacts);
   if (rows.filter((row) => row.role === "player").length < 2) {
-    if (!CREDENTIAL_PRESENT) {
-      say("SKIPPED:needs_two_exchanges_and_no_provider_credential_is_present");
-      flush();
+    const turnGate = await canStartTurn(page);
+      if (!CREDENTIAL_PRESENT || !turnGate.ok) {
+      say("SKIPPED:no_turn_possible - two exchanges are needed and this mount cannot start one");
+      say(`the surface's own sentence: ${turnGate.sentence ?? "(none)"}`);
       await browser.close().catch(() => undefined);
       say("DONE-O");
       process.exit(0);

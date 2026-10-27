@@ -184,6 +184,26 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   return null;
 }
 
+/**
+ * Whether this mount can start a turn at all.
+ *
+ * The credential flag says a provider key exists in the environment; it does not say this run's root has a connection. BYOK ships
+ * nothing and preselects nothing, so a fresh root is openable and readable with a send button that is disabled and a sentence
+ * saying why. A driver that waits for that button waits forever - 58 retries, then a timeout - so the button itself is asked.
+ */
+async function canStartTurn(page) {
+  const disabled = await page
+    .locator(".composer-button.send-button")
+    .isDisabled()
+    .catch(() => false);
+  if (!disabled) return { ok: true };
+  const sentence = await page.evaluate(() => {
+    const notice = document.querySelector(".reference-turn-notice, .chat-model-banner, [data-chat-model-banner]");
+    return notice === null ? null : (notice.textContent ?? "").trim();
+  });
+  return { ok: false, sentence };
+}
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("f-turn-variant.txt");
@@ -199,8 +219,9 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   say(JSON.stringify(beforeRows, null, 1));
   await shot(page, "70-before-turn.png");
 
-  if (!CREDENTIAL_PRESENT) {
-    say(`=== ITEM: real conversation -> ${SKIP("no provider credential (CPA_OAI_API_KEY absent); a turn would fail before the reply exists")}`);
+  const turnGate = await canStartTurn(page);
+  if (!CREDENTIAL_PRESENT || !turnGate.ok) {
+    say(`=== ITEM: real conversation -> ${SKIP(turnGate.ok ? "no provider credential (CPA_OAI_API_KEY absent); a turn would fail before the provider answers" : `no connection on this mount; the surface says: ${turnGate.sentence ?? "(no sentence)"}`)}`);
     say(`=== ITEM: variant flow -> ${SKIP("needs a settled reply to regenerate")}`);
     say("=== ITEM: beat letter-spacing (measured on whatever settled companion bubble exists) ===");
     say(JSON.stringify(await page.evaluate(beatFacts), null, 1));
