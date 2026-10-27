@@ -3499,7 +3499,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             if (treeSpot is null)
             {
                 this.Monitor.Log(
-                    $"GameBuddy play-session placed {treesPlaced} of {PlaySessionTreeCount} trees before the ground ran out",
+                    $"GameBuddy play-session placed {treesPlaced} of {treesCount} trees before the ground ran out",
                     LogLevel.Warn);
                 break;
             }
@@ -3518,7 +3518,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             if (forageSpot is null)
             {
                 this.Monitor.Log(
-                    $"GameBuddy play-session placed {foragePlaced} of {PlaySessionForageCount} forage items before the ground ran out",
+                    $"GameBuddy play-session placed {foragePlaced} of {forageCount} forage items before the ground ran out",
                     LogLevel.Warn);
                 break;
             }
@@ -3620,8 +3620,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             standingTile ??= spot.Value.StandingTile;
             plantedCrops += 1;
         }
-        if (plantedCrops != 4)
-            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_mismatch");
+        // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the\n        // world is then missing the family the crops task needs. It used to demand exactly four, which was true\n        // only while the budget happened to divide to four - measured 2026-10-28, after trees and forage began\n        // taking their share, the division produced three and this refused a world that had every prop it needed.\n        if (plantedCrops <= 0)\n            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
