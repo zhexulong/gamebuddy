@@ -151,7 +151,11 @@ public sealed class StardewBodyControllerPathGoalTests
         // No tile satisfying the predicate means a genuinely unreachable target; the
         // rejection must keep naming both ends so the next attempt can differ.
         body.Should().Contain("plannedPath.pathToEndPoint is null");
-        body.Should().Contain("\"no_native_path\"");
+        // The code is named through ONE definition, so the refusal and the move action's decision to offer the
+        // route's first clear step cannot disagree about which verdict earns a step. Asserting the constant's
+        // VALUE keeps this pin on the wire word rather than on a spelling.
+        body.Should().Contain("NoNativePathReasonCode");
+        StardewBodyController.NoNativePathReasonCode.Should().Be("no_native_path");
         body.Should().Contain("from={");
         body.Should().Contain("to={");
     }

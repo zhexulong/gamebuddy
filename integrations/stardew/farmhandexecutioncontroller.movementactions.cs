@@ -133,6 +133,29 @@ internal sealed partial class ExecutionManager
         this.active = specification;
         if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence))
         {
+            // 3. The native finder has no route, but the Mod's own clearing search can name the FIRST step that
+            //    would open one - a rock, an approach tile and a price. Walking to that approach tile is a MOVE, so
+            //    it belongs here, at the level of the other approach legs, and not inside the reachability probe or
+            //    the evidence formatter: those are predicates, and starting a walk from a predicate puts a mutation
+            //    in a query.
+            //
+            //    What this does NOT do is clear anything. Arrival there re-plans (`clear_step_blocked` if the
+            //    blocker is still standing), because swinging is destructive - it costs a tool and stamina, and
+            //    which rock to remove is a policy question the caller owns.
+            if (reasonCode == StardewBodyController.NoNativePathReasonCode
+                && this.controller.TryStartClearApproach(specification, Game1.player, this.tick, out string? clearEvidence)
+                && clearEvidence is not null)
+            {
+                // `this.active` stays the spec the caller asked for, because it is what the walk comes back to: the
+                // arrival re-plans and either continues to THAT tile or refuses. The controller owns the tile it is
+                // actually walking to for this leg, and the evidence names it.
+                string clearAcceptedEvidence = $"route_revision={specification.RouteRevision};requested={FormatTile(targetTile)};clear_step_approach=true;{clearEvidence}";
+                LocalExecutionReceipt clearAccepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, clearAcceptedEvidence);
+                this.Remember(clearAccepted);
+                this.AddTrace(clearAccepted);
+                return clearAccepted;
+            }
+
             this.active = null;
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence);
         }

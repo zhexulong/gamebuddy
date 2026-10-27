@@ -78,7 +78,274 @@ internal sealed class StardewBodyController
 
     public bool HasActiveExecution => this.active is not null;
 
+    /// <summary>
+    /// The one reason a route the engine cannot walk is refused with: no native path exists.
+    ///
+    /// Named once because two callers read it - the refusal itself, and the move action's decision to offer the
+    /// route's first clear step instead of refusing - and a second spelling would let them disagree about when a
+    /// step applies.
+    /// </summary>
+    internal const string NoNativePathReasonCode = "no_native_path";
+
     public string? ActiveExecutionId => this.active?.ExecutionId;
+
+    /// <summary>
+    /// What opening a route to one tile costs, and the FIRST step it implies, over the live world.
+    ///
+    /// One resolution for two callers: the refusal that DESCRIBES the step, and the move action that WALKS it.
+    /// Keeping one resolution means the step an Agent is told about and the step the Mod walks cannot drift -
+    /// which they would if the evidence and the walk each built their own plan.
+    /// </summary>
+    private sealed record ClearingToReach(
+        ClearingPlan Plan,
+        FirstClearStep Step,
+        IReadOnlyDictionary<Point, string> Kinds)
+    {
+        public string? KindAt((int X, int Y) tile) =>
+            this.Kinds.TryGetValue(new Point(tile.X, tile.Y), out string? kind) ? kind : null;
+    }
+
+    /// <summary>
+    /// The clearing plan and its first step for <paramref name="target"/>, or null when nothing can be said
+    /// (no location, or no tile the cost table prices - a wall is not a bill).
+    /// </summary>
+    private static ClearingToReach? ResolveClearingToReach(Farmer localPlayer, Vector2 target)
+    {
+        StardewValley.GameLocation? location = localPlayer.currentLocation;
+        if (location is null)
+            return null;
+        var layer = location.map.Layers[0];
+        Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+        Point targetTile = new((int)target.X, (int)target.Y);
+
+        // The walkable set is the planner's own predicate, so the search agrees with the engine about what a
+        // step is. It is bounded by the same budget the reachability probe uses.
+        var walkable = new HashSet<Point>();
+        for (int x = 0; x < layer.LayerWidth; x += 1)
+            for (int y = 0; y < layer.LayerHeight; y += 1)
+            {
+                if (IsWalkableTile(location, localPlayer, new Vector2(x, y)))
+                    walkable.Add(new Point(x, y));
+            }
+
+        var clearable = new Dictionary<Point, int>();
+        var kinds = new Dictionary<Point, string>();
+        CollectClearableTiles(location, localPlayer, clearable, kinds);
+        if (clearable.Count == 0)
+            return null;
+
+        HashSet<(int X, int Y)> walkableTiles = walkable.Select(tile => (tile.X, tile.Y)).ToHashSet();
+        ClearingPlan plan = ClearingPlanner.Plan(
+            (actor.X, actor.Y),
+            (targetTile.X, targetTile.Y),
+            walkableTiles,
+            clearable.ToDictionary(entry => (entry.Key.X, entry.Key.Y), entry => entry.Value));
+        FirstClearStep step = ClearStepPlanner.Resolve((actor.X, actor.Y), plan, walkableTiles);
+        return new ClearingToReach(plan, step, kinds);
+    }
+
+    /// <summary>
+    /// The first clear that opens a route to <paramref name="targetTile"/>, as the step AND the receipt wording
+    /// that names it - or null when no single step resolves.
+    ///
+    /// It answers for the `already_in_reach` case too, because the caller that ACTS on it must be able to tell
+    /// "the blocker is still there" from "it is gone"; refusing to answer would read as the latter.
+    /// </summary>
+    internal ClearStepOffer? ResolveClearStep(Farmer localPlayer, Vector2 targetTile)
+    {
+        try
+        {
+            if (ResolveClearingToReach(localPlayer, targetTile) is not { } resolution)
+                return null;
+            FirstClearStep step = resolution.Step;
+            if (!step.Reachable || step.BlockerTile is null || step.ApproachTile is null)
+                return null;
+            if (ClearingEvidence.DescribeFirstStep(step, resolution.KindAt) is not { } evidence)
+                return null;
+            return new ClearStepOffer(step, evidence);
+        }
+        catch
+        {
+            // A derived plan must never break the refusal it decorates, and it must never start a walk on a
+            // half-read world: the native verdict stays authoritative.
+            return null;
+        }
+    }
+
+    /// <summary>What opens a route the engine cannot walk: the first clear, as the receipt names it.</summary>
+    internal sealed record ClearStepOffer(FirstClearStep Step, string Evidence);
+
+    /// <summary>
+    /// The named refusal for "walked to the blocker and it is still there".
+    ///
+    /// Distinct from <see cref="NoNativePathReasonCode"/> on purpose: the route existed and was walked, and what
+    /// stands in the way is one specific tile the caller can clear if it decides to. Collapsing the two would tell
+    /// the caller nothing happened.
+    /// </summary>
+    internal const string ClearStepBlockedReasonCode = "clear_step_blocked";
+
+    /// <summary>Whether the blocker a clear-approach walk was started for is still in the way.</summary>
+    internal enum ClearApproachArrival
+    {
+        BlockerGone,
+        BlockerStillPresent,
+    }
+
+    /// <summary>
+    /// A walk to a blocker's <c>stand_at</c> tile, and the request it was started for.
+    ///
+    /// Controller state rather than a `LocalMoveSpec` field on purpose: which move is a clear approach is not a
+    /// property of the request the caller made, and the request must not have to carry the Mod's clearing
+    /// vocabulary to be served.
+    /// </summary>
+    private sealed record ClearApproach(LocalMoveSpec Requested, (int X, int Y) BlockerTile);
+
+    private ClearApproach? clearApproach;
+
+    /// <summary>
+    /// The walk a blocked route earns, decided without touching the native finder: the spec to walk, the blocker
+    /// it is for, and the evidence that names the step - or null with <paramref name="refusal"/> saying why there
+    /// is no walk.
+    ///
+    /// Separate from arming it (<see cref="TryStartClearApproach"/>) so the decision is testable against a real
+    /// world without a native path controller, and so no test has to stand in for the engine.
+    /// </summary>
+    internal ClearApproachWalk? PlanClearApproachWalk(LocalMoveSpec requested, Farmer localPlayer, out string? refusal)
+    {
+        refusal = null;
+        if (this.ResolveClearStep(localPlayer, requested.TargetTile) is not { } offer)
+        {
+            refusal = "clear_step_walk=no_step";
+            return null;
+        }
+        if (offer.Step.ApproachTile is not { } approach || offer.Step.BlockerTile is not { } blocker)
+        {
+            refusal = $"{offer.Evidence};clear_step_walk=no_step";
+            return null;
+        }
+
+        (int X, int Y) actor = ((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
+        if (approach == actor)
+        {
+            // Zero-length walk: the actor is already beside the blocker, so the remaining act is a SWING - which is
+            // the caller's decision, not this walk's. Issuing a move to the tile they are standing on is not one.
+            refusal = $"{offer.Evidence};clear_step_walk=none;already_in_reach=true";
+            return null;
+        }
+
+        LocalMoveSpec candidate = requested with
+        {
+            TargetTile = new Vector2(approach.X, approach.Y),
+            // Exact arrival: the approach tile is where a swing reaches from, so stopping one tile short would
+            // arrive out of reach of the very blocker this walk exists for.
+            AllowAdjacentArrival = false,
+            RequestedTile = null,
+            StagedApproach = false,
+            StagedSteps = 0,
+        };
+        return new ClearApproachWalk(
+            candidate,
+            blocker,
+            $"{offer.Evidence};clear_step_walk={approach.X},{approach.Y};requested={FormatTile(requested.TargetTile)}");
+    }
+
+    /// <summary>The walk a blocked route earns: the spec, the blocker it is for, and the evidence naming the step.</summary>
+    internal sealed record ClearApproachWalk(LocalMoveSpec Walk, (int X, int Y) BlockerTile, string Evidence);
+
+    /// <summary>
+    /// Arms the walk <see cref="PlanClearApproachWalk"/> decided on. False means no walk was armed, with
+    /// <paramref name="evidence"/> saying why (no step, or the native finder has no path to the approach tile).
+    /// </summary>
+    internal bool TryStartClearApproach(LocalMoveSpec requested, Farmer localPlayer, int tick, out string? evidence)
+    {
+        evidence = null;
+        if (this.active is not null)
+            return false;
+        if (this.PlanClearApproachWalk(requested, localPlayer, out evidence) is not { } planned)
+            return false;
+
+        PathFindController path = this.BuildNativePath(planned.Walk, localPlayer);
+        if (path.pathToEndPoint is not { Count: > 0 })
+        {
+            evidence = $"{planned.Evidence};clear_step_walk=unroutable;stand_at={planned.Walk.TargetTile.X},{planned.Walk.TargetTile.Y}";
+            return false;
+        }
+
+        this.InstallStagedStep(planned.Walk, path, localPlayer, tick);
+        this.clearApproach = new ClearApproach(requested, planned.BlockerTile);
+        evidence = planned.Evidence;
+        return true;
+    }
+
+    /// <summary>
+    /// The arrival ruling for a clear-approach walk: is the blocker this walk was started for still in the way?
+    ///
+    /// This is the whole of the arrival decision, as arithmetic, and it is deliberately the only thing an arrival
+    /// decides. `BlockerStillPresent` refuses by name; anything else continues to the target. Neither swings:
+    /// clearing is the caller's action, with its own tool, stamina cost and policy question.
+    /// </summary>
+    internal static ClearApproachArrival AssessClearApproachArrival((int X, int Y) blockerWalkedTo, FirstClearStep? freshStep)
+    {
+        // A fresh plan that no longer asks for THAT tile is the blocker being gone. A plan that asks for a
+        // DIFFERENT tile is also "gone" for this walk: one clear per request, and the next step belongs to a fresh
+        // decision rather than to a chain this walk was never authorised to promise.
+        return freshStep is { Reachable: true, BlockerTile: var blocker } && blocker == blockerWalkedTo
+            ? ClearApproachArrival.BlockerStillPresent
+            : ClearApproachArrival.BlockerGone;
+    }
+
+    /// <summary>
+    /// Handles the tick a clear-approach walk reaches <c>stand_at</c>, or says false when this tick is not one.
+    /// </summary>
+    private bool TryCompleteClearApproach(LocalMoveSpec walk, Vector2 currentTile, Farmer localPlayer, int tick)
+    {
+        if (this.clearApproach is not { } arrived || arrived.Requested.ExecutionId != walk.ExecutionId)
+            return false;
+
+        localPlayer.Halt();
+        localPlayer.controller = null;
+        this.pathController = null;
+        this.CompleteClearApproachArrival(arrived, currentTile, localPlayer, tick);
+        return true;
+    }
+
+    /// <summary>
+    /// The arrival re-plan: blocker still there means refuse by name with the step attached again; blocker gone
+    /// means continue to the tile the caller actually asked for.
+    /// </summary>
+    private void CompleteClearApproachArrival(ClearApproach arrived, Vector2 currentTile, Farmer localPlayer, int tick)
+    {
+        this.clearApproach = null;
+        ClearStepOffer? fresh = this.ResolveClearStep(localPlayer, arrived.Requested.TargetTile);
+        if (AssessClearApproachArrival(arrived.BlockerTile, fresh?.Step) == ClearApproachArrival.BlockerStillPresent)
+        {
+            // The blocker is still there, so this walk achieved nothing but a better position. Naming the step
+            // again - with the whole idea's size - is what lets the caller decide whether to clear it. Clearing
+            // from here would be the walk making a destructive decision it was never given.
+            this.Fail(
+                ClearStepBlockedReasonCode,
+                $"tile={FormatTile(currentTile)};requested={FormatTile(arrived.Requested.TargetTile)};clear_step_walk=arrived;blocker={arrived.BlockerTile.X},{arrived.BlockerTile.Y};{fresh!.Evidence}");
+            return;
+        }
+
+        PathFindController resumed = this.BuildNativePath(arrived.Requested, localPlayer);
+        if (resumed.pathToEndPoint is not { Count: > 0 })
+        {
+            // The blocker this walk was started for is gone, yet the engine still has no route. That is a fact
+            // about the world; the fresh plan is offered when one resolves, and no second clear is implied.
+            string next = fresh is null ? string.Empty : $";{fresh.Evidence}";
+            this.Fail(
+                NoNativePathReasonCode,
+                $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true{next}");
+            return;
+        }
+
+        this.InstallStagedStep(arrived.Requested, resumed, localPlayer, tick);
+        this.transition(
+            ExecutionState.Running,
+            "clear_step_cleared",
+            $"tile={FormatTile(currentTile)};target={FormatTile(arrived.Requested.TargetTile)};clear_step_cleared=true");
+    }
 
     public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence)
     {
@@ -137,7 +404,7 @@ internal sealed class StardewBodyController
         // actually succeed.
         if (AssessNativeReachability(localPlayer, specification) is { ComponentContainsTarget: false } unreachable)
         {
-            reasonCode = "no_native_path";
+            reasonCode = NoNativePathReasonCode;
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
@@ -152,7 +419,7 @@ internal sealed class StardewBodyController
         PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
-            reasonCode = "no_native_path";
+            reasonCode = NoNativePathReasonCode;
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
             // A refusal is only actionable if it names WHY. The bare verdict plus a probe field
             // that can contradict it sent a live agent into ten blind re-aims at neighbouring
@@ -286,6 +553,7 @@ internal sealed class StardewBodyController
         Game1.player?.Halt();
         this.active = null;
         this.pathController = null;
+        this.clearApproach = null;
         this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
@@ -394,6 +662,13 @@ internal sealed class StardewBodyController
         bool exactArrival = Vector2.DistanceSquared(currentTile, specification.TargetTile) <= 0.04f;
         bool adjacentArrival = specification.AllowAdjacentArrival
             && IsChebyshevAdjacent(Math.Abs((int)currentTile.X - (int)specification.TargetTile.X), Math.Abs((int)currentTile.Y - (int)specification.TargetTile.Y));
+
+        // A clear-approach walk ends where a swing would reach from, and what happens there is a RE-PLAN rather than
+        // a swing: the blocker may have been removed by someone else (or never been the only obstacle), and clearing
+        // is the caller's action with its own tool, stamina cost and policy question. This is checked before the
+        // ordinary arrival branches because its arrival is not success for the caller's request.
+        if (exactArrival && this.TryCompleteClearApproach(specification, currentTile, localPlayer, tick))
+            return;
         if (this.isStallWaiting)
         {
             if (!HasStallWaitElapsed(tick, this.stallWaitStartedTick, StallWaitTicks))
@@ -791,50 +1066,27 @@ internal sealed class StardewBodyController
     /// Empty has two meanings, both honest: the target is already reachable (no clears needed), or no
     /// number of clears opens the way (a wall is not a bill). An agent reading the refusal does not need
     /// the difference spelled out - the absence of a promise is the answer in both cases.
+    ///
+    /// It resolves the plan through the SAME <see cref="ResolveClearingToReach"/> the walk uses, so the step an
+    /// Agent is told about and the step the Mod walks cannot describe different worlds. It describes and nothing
+    /// more: starting a walk from here would put a mutation in a query.
     /// </summary>
     private static string DescribeClearToReach(Farmer localPlayer, LocalMoveSpec specification)
     {
         try
         {
-            StardewValley.GameLocation? location = localPlayer.currentLocation;
-            if (location is null)
-                return string.Empty;
-            var layer = location.map.Layers[0];
-            Point actor = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
-            Point target = new((int)specification.TargetTile.X, (int)specification.TargetTile.Y);
-
-            // The walkable set is the planner's own predicate, so the search agrees with the engine about
-            // what a step is. It is bounded by the same budget the reachability probe uses.
-            var walkable = new HashSet<Point>();
-            for (int x = 0; x < layer.LayerWidth; x += 1)
-                for (int y = 0; y < layer.LayerHeight; y += 1)
-                {
-                    var tile = new Point(x, y);
-                    if (IsWalkableTile(location, localPlayer, new Vector2(x, y)))
-                        walkable.Add(tile);
-                }
-
-            var clearable = new Dictionary<Point, int>();
-            var kinds = new Dictionary<Point, string>();
-            CollectClearableTiles(location, localPlayer, clearable, kinds);
-            if (clearable.Count == 0)
+            Vector2 target = specification.TargetTile;
+            if (ResolveClearingToReach(localPlayer, target) is not { } resolution)
                 return string.Empty;
 
-            HashSet<(int X, int Y)> walkableTiles = walkable.Select(tile => (tile.X, tile.Y)).ToHashSet();
-            ClearingPlan plan = ClearingPlanner.Plan(
-                (actor.X, actor.Y),
-                (target.X, target.Y),
-                walkableTiles,
-                clearable.ToDictionary(entry => (entry.Key.X, entry.Key.Y), entry => entry.Value));
-            string? Kind((int X, int Y) tile) =>
-                kinds.TryGetValue(new Point(tile.X, tile.Y), out string? kind) ? kind : null;
+            ClearingPlan plan = resolution.Plan;
+            FirstClearStep step = resolution.Step;
 
             // The plan's price, and the STEP it implies. The tile list alone left a live Agent re-aiming at
             // neighbours: a rock is removed from an adjacent tile, and that tile is often not where the actor is.
             var described = new List<string>(2);
-            if (ClearingEvidence.Describe(plan, Kind) is { } price) described.Add(price);
-            FirstClearStep step = ClearStepPlanner.Resolve((actor.X, actor.Y), plan, walkableTiles);
-            if (ClearingEvidence.DescribeFirstStep(step, Kind) is { } firstStep)
+            if (ClearingEvidence.Describe(plan, tile => resolution.KindAt(tile)) is { } price) described.Add(price);
+            if (ClearingEvidence.DescribeFirstStep(step, tile => resolution.KindAt(tile)) is { } firstStep)
             {
                 described.Add(firstStep);
             }
@@ -1398,6 +1650,7 @@ internal sealed class StardewBodyController
         // directive may only start after this old route is truly inert.
         this.active = null;
         this.pathController = null;
+        this.clearApproach = null;
         this.hasEmittedRunning = false;
         this.hasEmittedStalledWaiting = false;
         this.isStallWaiting = false;
