@@ -643,6 +643,9 @@ export async function createChatRuntimeConstructionInternal(
     if (modelConfig === null || sameModelConfig(appliedModelConfig, modelConfig)) return modelConfig;
     await applyCompanionModelSelection(runtime.session, construction, modelConfig);
     appliedModelConfig = modelConfig;
+    // The historian's model lives in Magic Context's config files, not in the session, so pointing the session at the new
+    // model is only half the fact: without this the historian folds on the model the player just left.
+    await projectHistorianModelForConstruction(construction, modelConfig);
     return modelConfig;
   };
   try {
@@ -1704,6 +1707,40 @@ function sameModelConfig(left: CompanionModelConfig | null, right: CompanionMode
  * new model, and the greeting anchor and every settled exchange keep pointing at
  * the model that produced them.
  */
+/**
+ * Writes the historian's model and thinking level into the two Magic Context config files a mount owns.
+ *
+ * Extracted from the mount's inline writers so the live model reload can reach exactly the same fact. The files are what the
+ * embedded historian reads - it never looks at the Pi session's model - so a reload that repoints only the session leaves the
+ * historian folding on the model the player just left.
+ *
+ * Failure is not fatal: the conversation the player is looking at must keep working, and a historian on a stale model is the
+ * status quo this fixes rather than a new breakage. It is reported so the gap stays visible.
+ */
+async function projectHistorianModelForConstruction(
+  construction: Readonly<{ identity: CompanionIdentity; runtimeRoot: string; surfaceSessionId: string }>,
+  config: CompanionModelConfig,
+): Promise<void> {
+  const { runtimeCwd } = resolveRuntimePaths(
+    construction.identity,
+    construction.runtimeRoot,
+    construction.surfaceSessionId,
+  );
+  const model = `${config.provider}/${config.modelId}`;
+  try {
+    const projection = await import("./magic-context-historian-projection.internal.js");
+    await projection.projectHistorianModel({
+      runtimeCwd,
+      model,
+      thinkingLevel: config.thinkingLevel,
+    });
+  } catch (error) {
+    process.stderr.write(
+      `[historian] the model projection was not updated: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
 async function applyCompanionModelSelection(
   session: RuntimeSessionResource,
   construction: Readonly<{ identity: CompanionIdentity; runtimeRoot: string; surfaceSessionId: string }>,
