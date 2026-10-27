@@ -453,8 +453,36 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        // Out of the native interaction radius: walk in and then plant, like `plant_seed`, `water_crop`,
+        // `fertilize_tile` and `scythe_crop` in this same file. Refusing here told the Agent the tile was
+        // unavailable with `target=x,y` as its only evidence, and a sapling tile does not move away, so the
+        // refusal was a dead end rather than a race it could win by re-observing.
         if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"target={targetX},{targetY}");
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "plant_sapling",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePlantSapling(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecutePlantSapling(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// The plant_sapling terminal step: re-reads the slot, the item, the tile and the target identity, then
+    /// runs the native wild-tree-seed placement. Called directly when the actor is already in range and from
+    /// the approach continuation after a walk, so both routes run the same checks and produce the same
+    /// evidence - a walk takes ticks, and the slot can empty or the tile can be taken in the meantime.
+    /// </summary>
+    private LocalExecutionReceipt ExecutePlantSapling(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object sapling
             || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_not_owned_in_slot", $"slot={slot}");
@@ -465,6 +493,12 @@ internal sealed partial class ExecutionManager
         if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
             || !string.Equals(BuildTreeSaplingTargetId(location, slot, targetX, targetY, sapling.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY}");
+        // Reach is re-checked here as well as at the request path, because this body is reached by BOTH routes and
+        // a walk takes ticks. A sapling tile is static, so the only arrival failure it has is a walk that stopped
+        // short: `approach=did_not_arrive`, with no `moved while you walked` case to name. `clear_debris` states its
+        // own static-target reach in the same words rather than leaning on the leg.
+        if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach", $"target={targetX},{targetY};reach=1;approach=did_not_arrive");
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         int previousSlot = Game1.player.CurrentToolIndex;
