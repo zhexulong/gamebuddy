@@ -864,7 +864,7 @@ public sealed class OpenBodyProgramJournalAuthority
     /// program in RecoveryRequired is refused by `TryProgram`'s own state check. What it stops doing is letting
     /// ONE program's unknown dispatch silence a DIFFERENT program's execution chain.
     /// </summary>
-    private bool MayOperateOnPrograms => this.IsMutable || this.IsRecoveryScoped;
+    internal bool MayOperateOnPrograms => this.IsMutable || this.IsRecoveryScoped;
     /// <summary>
     /// A submission while a DIFFERENT program holds an unknown dispatch.
     ///

@@ -357,7 +357,11 @@ public sealed class FarmhandBodyProgramController
             //
             // The honest action when the authority is closed is to do nothing: the node is still bound, its executor is
             // still whoever owns it, and nothing here knows that it failed. Stopping is reversible; settling is not.
-            if (!this.authority.IsMutable) return;
+            // The same distinction the authority names: "the journal cannot be written" is not "this program is
+            // waiting for recovery". Using the narrower question here stopped every RUNNING node in every program
+            // whenever one neighbour became unknown - measured 2026-10-27, `plan_254` n01 Running while n02..n07
+            // answered `NodeNotEligible` forever, because their dependency never settled.
+            if (!this.authority.MayOperateOnPrograms) return;
             if (this.authority.RevalidateRunningDispatch(boundGrant, execution) != BodyProgramControllerResultCode.Succeeded)
             {
                 if (!this.authority.IsLifecycleOpen) return;

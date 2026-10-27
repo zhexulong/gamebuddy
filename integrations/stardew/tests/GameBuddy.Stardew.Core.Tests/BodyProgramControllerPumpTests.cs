@@ -1089,4 +1089,61 @@ public sealed class BodyProgramControllerPumpTests
         // A program that is not poisoned may not be abandoned: an Active one has its own stop machinery.
         authority.TryAbandonProgram("missing", "gone").Code.Should().Be(BodyProgramControllerResultCode.NotFound);
     }
+
+    [Fact]
+    public void ARecoveringNeighbourDoesNotStopRunningNodesOfAnotherProgramFromAdvancing()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+
+        int secondCalls = 0;
+        var executor = new DelegatingExecutor((grant, execution) =>
+        {
+            if (grant.ProgramId == "first")
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null);
+
+            secondCalls++;
+            if (secondCalls == 1)
+                return null; // Continuation: first dispatch leaves node Running in boundRunning
+
+            RuntimeFact fact = new(grant.ProgramId, grant.NodeId, grant.NodeAttempt, "machine_target_id",
+                new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal) { ["machine_target_id"] = new(BodyProgramArgumentKind.String, "validated-target") });
+            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt-inspect", "evidence-inspect", "postcondition-inspect");
+        });
+
+        var controller = new FarmhandBodyProgramController(authority, admission, executor);
+
+        // 1. Run "first" to Uncertain, which sets authority.OpenStatus = RecoveryRequired
+        authority.Submit(SingleNodeProgram("first")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        controller.Update();
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+        authority.Status("first").Snapshot!.State.Should().Be(BodyProgramState.RecoveryRequired);
+
+        // 2. Submit "second", which is accepted despite the neighbour in recovery
+        authority.Submit(SingleNodeProgram("second")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        // 3. Tick 1 of "second": challenged, admitted, dispatched. Executor returns null -> node stays Running in boundRunning.
+        controller.Update();
+        secondCalls.Should().Be(1);
+        authority.Status("second").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+
+        // 4. Tick 2 of "second": AdvanceRunningNodes runs.
+        // If AdvanceRunningNodes incorrectly checks !this.authority.IsMutable, it aborts because the journal is RecoveryRequired.
+        // If it correctly checks !this.authority.MayOperateOnPrograms, it advances the running node to Succeeded.
+        controller.Update();
+        secondCalls.Should().Be(2, "AdvanceRunningNodes must advance the running node of an active program even when another program is in recovery");
+        authority.Status("second").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Succeeded);
+    }
+
+    private static ActionProgramCandidate SingleNodeProgram(string programId) => new(programId, new[]
+    {
+        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings()),
+    });
+
+    private sealed class DelegatingExecutor : IBodyProgramNodeExecutor
+    {
+        private readonly Func<HostAdmissionGrant, NodeExecutionBinding, BodyProgramTerminalResult?> execute;
+        public DelegatingExecutor(Func<HostAdmissionGrant, NodeExecutionBinding, BodyProgramTerminalResult?> execute) => this.execute = execute;
+        public BodyProgramTerminalResult? Execute(HostAdmissionGrant grant, NodeExecutionBinding execution) => this.execute(grant, execution);
+    }
 }
