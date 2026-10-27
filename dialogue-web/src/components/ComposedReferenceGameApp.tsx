@@ -1061,6 +1061,17 @@ export function ComposedReferenceGameApp() {
   const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
   /**
+   * The mounted turn as the shell has committed it: which turn, and where it is.
+   *
+   * A surface whose rows the Host writes as a turn completes needs to know when that
+   * happened, and the shell is the one place that knows - the same committed projection the
+   * conversation reads. It carries no rows and no turn body; the panel reads only the pair
+   * whose change is the event (see `MemorySurfacePanel`). It is the snapshot's own frozen
+   * turn, so its identity moves exactly when the committed turn does.
+   */
+  const mountedTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
+
+  /**
    * The route a message the player sends from here would actually reach a model through.
    *
    * It is derived, never guessed: `readChatModelRoute` is the one function that reads the two
@@ -1315,6 +1326,7 @@ export function ComposedReferenceGameApp() {
                 csrfToken={view.session.snapshot.csrfToken}
                 labels={labels()}
                 locale={view.locale}
+                conversationTurn={mountedTurn}
                 restoreFocusTo={memoryEntryRef}
               />
             )}

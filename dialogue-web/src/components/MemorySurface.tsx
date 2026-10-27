@@ -19,12 +19,15 @@ export function MemorySurface({
   csrfToken,
   labels,
   locale,
+  conversationTurn,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
   labels: Messages;
   locale: Locale;
+  /** The mounted conversation's turn as the shell committed it; see `MemorySurfacePanel`. */
+  conversationTurn: Readonly<{ handle: string; state: string }> | null;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -35,7 +38,13 @@ export function MemorySurface({
       className="surface-panel"
       restoreFocusTo={restoreFocusTo}
     >
-      <MemorySurfacePanel api={api} csrfToken={csrfToken} labels={labels} locale={locale} />
+      <MemorySurfacePanel
+        api={api}
+        csrfToken={csrfToken}
+        labels={labels}
+        locale={locale}
+        conversationTurn={conversationTurn}
+      />
     </SurfaceView>
   );
 }

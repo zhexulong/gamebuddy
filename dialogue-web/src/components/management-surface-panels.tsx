@@ -1090,6 +1090,7 @@ export function MemorySurfacePanel({
   csrfToken,
   labels,
   locale,
+  conversationTurn,
   mutationAvailable,
   onNotice,
 }: Readonly<{
@@ -1098,11 +1099,27 @@ export function MemorySurfacePanel({
   labels: Messages;
   /** The player's UI language, which is the language the Memory rows are labelled in. */
   locale: Locale;
+  /**
+   * The mounted conversation's turn, as this shell has committed it. The notebook's rows are
+   * not on the composed root - they come from this panel's own `memory.read` route - so the
+   * shell cannot hand the panel the rows themselves. What it can say is when the ground under
+   * them moved: a turn settling is the moment the companion writes, and a panel that read only
+   * on mount kept showing the pre-turn notebook until the player pressed Refresh.
+   *
+   * It is the whole of what the panel is told: which turn, and where it is. Any change to that
+   * pair is a read, so a settlement (same turn, new state) and a fresh turn both count, and
+   * nothing but a read of the route ever produces a row.
+   */
+  conversationTurn: Readonly<{ handle: string; state: string }> | null;
   mutationAvailable?: boolean;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [view, setView] = useState<MemoryView>({ kind: "loading" });
   const { inline, report } = useSurfaceNotice(onNotice);
+  // The identity of the turn the rows below were read beside. It is a value, not an effect
+  // dependency list of its own, so the one effect below stays the single read path: mounting
+  // reads, and so does every settlement the shell commits afterwards.
+  const turnIdentity = conversationTurn === null ? "" : `${conversationTurn.handle}@${conversationTurn.state}`;
 
   useEffect(() => {
     let active = true;
@@ -1117,7 +1134,7 @@ export function MemorySurfacePanel({
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, turnIdentity]);
 
   const refresh = (): void => {
     setView({ kind: "loading" });
