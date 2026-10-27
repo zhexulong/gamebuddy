@@ -93,8 +93,19 @@ test("every scenario has a prompt in both locales, and none of them is empty", (
     const at = prompts.indexOf(`${scenario}: Object.freeze({`);
     assert.ok(at >= 0, `${scenario} must own a prompt block`);
     const block = prompts.slice(at, prompts.indexOf("}),", at));
-    assert.match(block, /zh: `[^`]{80,}|zh: \([a-zA-Z]+\) =>/u, `${scenario} needs a real Chinese prompt`);
-    assert.match(block, /en: `[^`]{80,}|en: \([a-zA-Z]+\) =>/u, `${scenario} needs a real English prompt`);
+    // The multi-day prompt takes (day, task), so the two-argument arity is part of the shape a scenario may
+    // use. Accepting it here rather than special-casing `multiday_routine` keeps this check about "there is a
+    // real prompt" for every scenario at once.
+    assert.match(
+      block,
+      /zh: `[^`]{80,}|zh: \([a-zA-Z]+(?:, [a-zA-Z]+)?\) =>/u,
+      `${scenario} needs a real Chinese prompt`,
+    );
+    assert.match(
+      block,
+      /en: `[^`]{80,}|en: \([a-zA-Z]+(?:, [a-zA-Z]+)?\) =>/u,
+      `${scenario} needs a real English prompt`,
+    );
   }
   // The companion-voice rule and the presence paragraph are shared constants: a prompt that stops asking for
   // them would let the interaction gate fail for a scenario that was never told how to speak.
@@ -241,9 +252,12 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   assert.ok(templateLines.length >= 2, "both locales must be present as template lines");
   const promptText = templateLines.join("\n");
   assert.match(promptText, /(你看着办|由你决定)/u, "the Chinese prompt must hand the day over with its task");
+  // The English wording changed when the task became per-day: the day is still handed over, but the
+  // sentence now names what is theirs to handle rather than "the how". Both spellings mean the same thing and
+  // the assertion is about the handing-over, not the phrasing.
   assert.match(
     promptText,
-    /(left the how to you|up to you)/u,
+    /(left the how to you|up to you|yours to handle|yours to keep)/u,
     "the English prompt must hand the day over with its task",
   );
   // The hour is theirs; the tool and the steps are not the prompt's business. Naming them is the coaching this

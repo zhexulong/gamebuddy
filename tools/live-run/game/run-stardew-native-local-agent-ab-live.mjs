@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
 import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
+import { countPriorMultidayRuns, dailyTaskFor, runOffsetFor } from "../../lib/multiday-daily-tasks.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
@@ -105,6 +106,9 @@ import {
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+// The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
+// mid-run, which is exactly when a program's evidence matters most.
+import { createBodyProgramJournalFallback, stardewDataPath } from "../../lib/stardew-body-program-journal.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
@@ -330,6 +334,28 @@ const COMPANION_VOICE_RULE_ZH =
   "**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**";
 const COMPANION_VOICE_RULE_EN =
   "**How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**";
+/**
+ * What the player asks for on a given day, one entry per rotation id.
+ *
+ * The task is a SENTENCE, not an action list: which actions serve it is the companion's decision, and naming
+ * them here would turn the run into a script. `DAILY_TASK_ACTION_HINTS` exists for the audit, not for the
+ * prompt.
+ */
+const DAILY_TASK_PROMPT_ZH = Object.freeze({
+  clear_east_patch: "东头那片地该收拾了，杂草和石头都清一清。",
+  water_and_harvest: "地里该浇的浇一遍，长好的收下来。",
+  forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
+  animals_and_machines: "棚里的牲口和那些机器都过一遍。",
+  town_errand: "跑一趟镇上，有点东西要送、有人要说话。",
+});
+const DAILY_TASK_PROMPT_EN = Object.freeze({
+  clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
+  water_and_harvest: "water what needs watering and bring in what is ripe. ",
+  forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
+  animals_and_machines: "go round the animals and the machines in the shed. ",
+  town_errand: "run into town - something to deliver and someone to talk to. ",
+});
+
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
     zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟玩家说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
@@ -356,14 +382,17 @@ const SCENARIO_PROMPTS = Object.freeze({
     // day is a big action... it may be the player's prerogative... I'll ask nothing, just state" - it announced
     // going to bed and dispatched nothing, then passed out at 02:00. The reluctance was not a bug in the model:
     // ending a shared world's day IS normally the player's call, and nothing here had said it was not.
-    zh: (day) =>
+    // The TASK changes per day, so one run covers several capabilities and the night crossing doubles as a
+    // task switch. The invariant clauses - the player is away, ending the day is yours - are the same every
+    // day, because they are what this scenario exists to observe and a task change must not rewrite them.
+    zh: (day, task) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代：东头那片地该收拾了，杂草和石头都清一清，你看着办。把这片收拾完，天黑就回屋睡觉，明天接着来。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）` +
+      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）` +
       `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。` +
       `${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
-    en: (day) =>
+    en: (day, task) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `The player has gone into town, and on the way out they said the east patch needs clearing - weeds and rocks - and left the how to you. Once that is done, go inside and sleep when it gets dark, and we pick it up tomorrow. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ` +
+      `The player has gone into town, and on the way out left you today's one thing: ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; go inside and sleep when it gets dark, and tomorrow there will be something else. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ` +
       `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. ` +
       `${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
   }),
@@ -2566,8 +2595,17 @@ const PROGRAM_EVENTS_PAGE_SIZE = 32;
  * NEVER `dispatched: 0`: an unobserved program and a program that dispatched nothing are different facts and collapsing
  * them would turn a read failure into a measured zero. A `programId` the Mod never minted (a rejected submit) reads
  * `not_found` and is likewise `observed: false`, with `accepted: false` saying why.
+ *
+ * The bridge is the PRIMARY source and stays so: it is the Mod's answer for the run that is happening, and a bridge that
+ * answers - even `not_found` - is never second-guessed by a file. But the bridge is also the evidence that disappears
+ * first: measured 2026-10-27, the game exited during a `pickup_item` dispatch, every status query threw
+ * `bridge_not_authenticated`, and six accepted programs whose work was already durable were published as
+ * `observed: 0 of 6` - a run that did real work scored as a run that did nothing. So a bridge read that THROWS falls
+ * back to the Mod's own durable journal (`stardew-body-program-journal.mjs`), and every record says which source
+ * answered: `source: "bridge"` or `source: "journal"`. The two are not the same strength of evidence and a reader must
+ * be able to tell them apart. A journal that proves nothing about the program leaves the record exactly as it was.
  */
-async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
+async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, journal = null }) {
   const records = [];
   for (const submission of submissions) {
     const programId = typeof submission?.programId === "string" ? submission.programId : null;
@@ -2623,6 +2661,7 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
           programId,
           accepted,
           observed: true,
+          source: "bridge",
           dispatched: executions.length,
           executions: Object.freeze(executions),
           nodeOutcomes: Object.freeze(
@@ -2633,18 +2672,48 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery }) {
         }),
       );
     } catch (error) {
-      records.push(unobserved(`read_failed:${(error instanceof Error ? error.message : String(error)).slice(0, 80)}`));
+      const reason = `read_failed:${(error instanceof Error ? error.message : String(error)).slice(0, 80)}`;
+      // The bridge is gone; the Mod's own durable journal may still prove what this program did. Only a program the
+      // journal actually holds is answered from it - absence is not a zero, and `dispatched: null` stays null.
+      const fromJournal = journal === null ? null : journal.outcomeFor(programId);
+      if (fromJournal === null) {
+        records.push(unobserved(reason));
+        continue;
+      }
+      records.push(
+        Object.freeze({
+          programId,
+          accepted,
+          observed: true,
+          source: "journal",
+          // The bridge failure that forced this read travels with the record, so a reader knows why the weaker
+          // source answered instead of having to search the Mod log for it.
+          observation: reason,
+          dispatched: fromJournal.dispatched,
+          executions: fromJournal.executions,
+          nodeOutcomes: fromJournal.nodeOutcomes,
+        }),
+      );
     }
   }
   return Object.freeze(records);
 }
 
-/** Reads the journal for every submission over the live bridge. Called once, at assembly time. */
+/**
+ * The Mod's durable Body Program journal for THIS run's scope, read only if the bridge stops answering.
+ *
+ * Derived from the same ids the Mod config declares and the documented Stardew data root - the folder that contains
+ * `Saves` - because that is the exact path `WindowsBodyProgramJournalStore` writes.
+ */
+const bodyProgramJournal = createBodyProgramJournalFallback({ dataPath: stardewDataPath(), scope });
+
+/** Reads the journal for every submission over the live bridge, falling back to the durable journal. Once per run. */
 async function sampleProgramOutcomes() {
   return readProgramOutcomes({
     submissions: programSubmissions,
     statusQuery: (programId) => client.programStatus({ programId }),
     eventsQuery: (programId, cursor) => client.programEvents({ programId, cursor, pageSize: PROGRAM_EVENTS_PAGE_SIZE }),
+    journal: bodyProgramJournal,
   });
 }
 const originalProgramSubmit = client.programSubmit.bind(client);
@@ -2978,9 +3047,20 @@ try {
       dayOfMonth: client.state?.snapshot?.dayOfMonth ?? null,
     });
   };
+  // Which task this run's days rotate through. Derived from the runs already on disk rather than stored, so
+  // the rotation cannot drift from the artifacts that record what actually happened.
+  const dailyRunOffset =
+    SCENARIO === "multiday_routine"
+      ? runOffsetFor(
+          countPriorMultidayRuns(
+            join(fileURLToPath(new URL("../../..", import.meta.url)), ".live-runs", "game-ladder"),
+          ),
+        )
+      : 0;
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
-    return typeof entry === "function" ? entry(day) : entry;
+    if (typeof entry !== "function") return entry;
+    return SCENARIO === "multiday_routine" ? entry(day, dailyTaskFor(dailyRunOffset, day)) : entry(day);
   };
 
   // What the harness says when it offers the same day again. Deliberately carries no instruction: anything
