@@ -28,9 +28,9 @@
  *   node tools/check-game-context-pressure.mjs --run-dir DIR
  *   node tools/check-game-context-pressure.mjs --run-dir DIR --all
  */
-import { DatabaseSync } from "node:sqlite";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 /**
  * The model windows this product declares, as `provider/model-id` fragments.
@@ -202,10 +202,10 @@ function main() {
   const all = args.includes("--all");
   const offline = fixtureChecks();
 
-  let judged = [];
+  const judged = [];
   if (runDirIndex >= 0) {
     const target = args[runDirIndex + 1];
-    if (!target || !existsSync(target)) {
+    if (!(target && existsSync(target))) {
       console.error(`context_pressure_run_dir_missing:${String(target)}`);
       process.exit(1);
     }
@@ -225,7 +225,7 @@ function main() {
   }
 
   const failures = [...offline.filter((entry) => entry.status === "failed")];
-  for (const { row, verdict } of judged) {
+  for (const { verdict } of judged) {
     for (const violation of verdict.violations)
       failures.push({ id: violation.code, status: "failed", detail: violation.detail });
   }
