@@ -856,6 +856,136 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
 });
 
 /**
+ * The Memory panel's search: one list already in hand, narrowed by a word.
+ *
+ * The defect this catches is the field that looks like search and is not: a
+ * query that reaches the Host (a second read would show up as another GET on
+ * the route, which this journey counts), a match that only works on one field
+ * (`title` OR `content`, not just the body), a case-sensitive comparison, a
+ * search that silently replaces the origin chip instead of composing with it,
+ * and - the honest-words case - an empty result reported with the notebook's
+ * "nothing recorded yet" line, which is false the moment the notebook has rows
+ * and none of them matched.
+ */
+test("the Memory panel's search narrows the mounted rows without asking the Host", async ({ page }) => {
+  const projectionRevision = `${"F".repeat(42)}A`;
+  const memories = [
+    {
+      handle: `${"G".repeat(42)}A`,
+      title: "The parsnips",
+      content: "You told her the parsnips took.",
+      category: "semantic",
+      status: "active",
+      origin: "player",
+      pinned: false,
+    },
+    {
+      handle: `${"H".repeat(42)}A`,
+      title: "The rainy afternoon",
+      content: "She remembers the PARSNIP harvest in the rain.",
+      category: "interaction",
+      status: "active",
+      origin: "companion",
+      pinned: false,
+    },
+    {
+      handle: `${"I".repeat(42)}A`,
+      title: "The cabin",
+      content: "She moved her things into the cabin.",
+      category: "interaction",
+      status: "active",
+      origin: "companion",
+      pinned: false,
+    },
+  ];
+  let memoryReads = 0;
+
+  const rootWithMemory = {
+    ...composedRoot,
+    chat: {
+      ...composedChat,
+      memory: { readAvailable: true, mutationAvailable: false, projectionRevision },
+    },
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(rootWithMemory)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(rootWithMemory)));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: null,
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "The parsnips took. All of them, by the look of it.",
+          },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/memory", (route) => {
+    memoryReads += 1;
+    return route.fulfill(json200({ apiVersion: 1, projectionRevision, memories, chapters: [] }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Memory", exact: true }).click();
+
+  const surface = page.getByTestId("memory-surface");
+  const rows = surface.locator("[data-memory-state=ready] [role=listitem]");
+  const search = surface.locator("[data-memory-search]");
+  await expect(rows).toHaveCount(3);
+  await expect(search).toBeVisible();
+  // The field is named, so a screen reader player can find it at all.
+  await expect(search).toHaveAccessibleName("Find a memory");
+  const readsAfterMount = memoryReads;
+
+  // A lowercase query matches a title and a body, and it matches the body of the
+  // companion's row through its UPPERCASE word: the comparison is case-insensitive.
+  await search.fill("parsnip");
+  await expect(rows).toHaveCount(2);
+  await expect(surface).not.toContainText("She moved her things into the cabin.");
+
+  // It reaches the row's title too, not only its body. The title is not painted as
+  // a visible line of the card (the body is), so the row is identified by the handle
+  // it carries rather than by text that only the edit field would show.
+  await search.fill("rainy");
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toHaveAttribute("data-memory-handle", `${"H".repeat(42)}A`);
+
+  // The chips and the field compose: the same word inside one origin's slice.
+  await search.fill("parsnip");
+  await expect(rows).toHaveCount(2);
+  await surface.locator("[data-memory-filter=companion]").click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator("[data-memory-origin]")).toHaveAttribute("data-memory-origin", "companion");
+
+  // Nothing matches: the panel says that, and not the notebook's "nothing
+  // recorded yet" line, which would be a false claim about a notebook holding three.
+  await search.fill("prehistoric");
+  await expect(rows).toHaveCount(0);
+  const empty = surface.locator('[data-memory-state="search-empty"]');
+  await expect(empty).toBeVisible();
+  await expect(empty).toHaveText("Nothing here matches that.");
+  await expect(surface).not.toContainText("No recorded memories yet.");
+
+  // Clearing the field brings back every row of the slice the chip still names (both
+  // companion rows), and releasing the chip brings the third.
+  await search.fill("");
+  await expect(rows).toHaveCount(2);
+  await surface.locator("[data-memory-filter=all]").click();
+  await expect(rows).toHaveCount(3);
+
+  // The whole journey asked the Host for nothing after the mount's own read.
+  expect(memoryReads, "typing in the field issues no read").toBe(readsAfterMount);
+});
+
+/**
  * The armed row's confirmation is its own row of the card, and the row's
  * destructive controls step aside while it is armed.
  *

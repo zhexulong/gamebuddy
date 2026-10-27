@@ -1202,6 +1202,10 @@ export function MemoryPanel({
   // The filter is presentation state, not a projection: switching it re-reads
   // nothing, and the mounted rows are what it narrows.
   const [originFilter, setOriginFilter] = useState<MemoryOriginFilter>("all");
+  // The search is the same kind of state: the rows are read once, and typing asks
+  // the Host for nothing. It composes with the origin chips - both narrow the one
+  // list in hand - so a player can look for a word inside one slice.
+  const [search, setSearch] = useState("");
   // Manual authoring is real (`memory.mutate`) but secondary: it is the one
   // control a player has to open, so the surface reads as the companion's own
   // notebook rather than as a form the player fills.
@@ -1212,7 +1216,12 @@ export function MemoryPanel({
   const [chapterDraft, setChapterDraft] = useState("");
   const rows = memoryView.kind === "ready" ? memoryView.rows : [];
   const chapters = memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.chapters : [];
-  const visibleRows = originFilter === "all" ? rows : rows.filter((item) => item.origin === originFilter);
+  const needle = search.trim().toLowerCase();
+  const visibleRows = rows.filter(
+    (item) =>
+      (originFilter === "all" || item.origin === originFilter) &&
+      (needle.length === 0 || item.title.toLowerCase().includes(needle) || item.content.toLowerCase().includes(needle)),
+  );
   // The notebook's own words, selected by this mount's locale.
   const notebook = memoryNotebookLabels(locale);
 
@@ -1353,6 +1362,20 @@ export function MemoryPanel({
         </section>
       )}
       {memoryView.kind === "ready" && (
+        // The search sits above the chips because it is the wider question: the
+        // chips pick whose memory to read, the field finds one entry among what
+        // that slice holds. It narrows the rows already on screen.
+        <input
+          type="text"
+          className="form-input"
+          aria-label={labels.memorySearch}
+          placeholder={labels.memorySearch}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          data-memory-search
+        />
+      )}
+      {memoryView.kind === "ready" && (
         // The group is named by the panel's own heading, so no string exists only
         // for the filter and the two origin chips keep the labels the rows
         // themselves already use.
@@ -1380,10 +1403,12 @@ export function MemoryPanel({
         </div>
       )}
       {memoryView.kind === "ready" && visibleRows.length === 0 && (
-        // Still the one "nothing recorded" line: under an active filter it reads
-        // as "none of these", and the pressed chip says which slice is shown.
-        <div className="state-placeholder" data-memory-state="filtered-empty">
-          <p className="loading-text">{labels.noMemories}</p>
+        // Two different empty answers, because they mean different things: an
+        // active search says nothing matched IT, and the "nothing recorded yet"
+        // line would be a lie about a notebook that has rows. Under an origin
+        // chip alone the old line stays, and the pressed chip names the slice.
+        <div className="state-placeholder" data-memory-state={needle.length === 0 ? "filtered-empty" : "search-empty"}>
+          <p className="loading-text">{needle.length === 0 ? labels.noMemories : labels.memorySearchEmpty}</p>
         </div>
       )}
       {memoryView.kind === "ready" && visibleRows.length > 0 && (

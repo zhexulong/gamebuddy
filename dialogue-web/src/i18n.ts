@@ -177,6 +177,11 @@ const en = {
   // origin chips reuse the row labels above: the filter never needs its own
   // vocabulary for the same split.
   memoryFilterAll: "All",
+  // The search beside that filter, and its own empty answer. It is not the
+  // notebook's "nothing recorded yet" line: under an active search the rows exist
+  // and none of them matched, which is a different fact about a different list.
+  memorySearch: "Find a memory",
+  memorySearchEmpty: "Nothing here matches that.",
 
   // Composer
   typeMessagePlaceholder: "Type a message to your companion… (Enter to send, Shift+Enter for newline)",
@@ -1138,6 +1143,8 @@ const zh: Messages = {
   memoryChapterSave: "保存",
   memoryChapterCancel: "取消",
   memoryFilterAll: "全部",
+  memorySearch: "查找一条记忆",
+  memorySearchEmpty: "这里没有符合的内容。",
 
   // Composer
   typeMessagePlaceholder: "给伴侣发送消息… (Enter 发送, Shift+Enter 换行)",
