@@ -290,12 +290,7 @@ export const DECLARED = Object.freeze([
         path: "tools/stardew-action-gate-descriptors.test.mjs",
         reason: "a test asserting which gate descriptors expect no fixture scenario has to name the ids it derives",
       },
-      {
-        path: "host/src/body-program-synthesizer.test.ts",
-        reason:
-          "a test asserting which actions the program catalog keeps publishable, and which live_verified ones it " +
-          "must refuse, has to name both sets: the list is the subject of the assertion, not a copy of the surface",
-      },
+
       SELF_EXEMPTION,
       SELF_TESTS_EXEMPTION,
     ]),
