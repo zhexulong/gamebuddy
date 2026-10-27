@@ -452,6 +452,15 @@ export function ComposedReferenceGameApp() {
    * the one read Stop performs, and when the stream is down (or silent) it is the
    * only thing that can hand the composer back - so the rule belongs here, where
    * every reread caller gets it, not in each handler.
+   *
+   * The streaming preview is spent only when the read no longer describes the turn
+   * it belongs to. That is the state a reread always means - the authoritative
+   * transcript now carries the reply - but it is not what a read taken *while* a
+   * turn streams means: choosing another surface mid-reply rereads this shell too,
+   * and dropping the preview there would erase the text the player was watching
+   * until the stream's next delta rebuilt it from nothing. The comparison runs
+   * through the updater so it reads the preview that is actually committed, never
+   * the one this render closed over.
    */
   const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
@@ -465,7 +474,11 @@ export function ComposedReferenceGameApp() {
     ) {
       throw new ReferencePipelineSessionError("state_reconciliation_required");
     }
-    setPreview(null);
+    const runningTurn =
+      root.chat.chat.turn === null || terminalTurn(root.chat.chat.turn) ? null : root.chat.chat.turn.handle;
+    setPreview((existing) =>
+      existing !== null && runningTurn !== null && existing.turnHandle === runningTurn ? existing : null,
+    );
     const session = current.session.applySnapshot(root.chat);
     commit({
       ...current,
@@ -1070,6 +1083,31 @@ export function ComposedReferenceGameApp() {
       active = false;
     };
   }, [conversationShown, shownSurface]);
+
+  /**
+   * The conversation the shell has committed has to be re-read when the player comes back to it.
+   *
+   * Every fact the conversation renders - the transcript, the mic control, the voice state the
+   * Host projects - is the composed root's Chat half, and the Host can move it while another
+   * surface is open. Granting the cloud-TTS consent in Settings is the case that reported it:
+   * coming back kept the pre-consent `unavailable` mic, because nothing re-read the root and
+   * the stale projection stood until a reload.
+   *
+   * The read is `rereadChat`, the mount's own authoritative path (the composed root plus the
+   * draft that must still reconcile with it), taken once per arrival. The ref is what keeps
+   * the first paint from paying for a second read: mount already read, so only a *change* of
+   * surface is an arrival. The other surfaces read their own projections when they mount, so
+   * this one belongs to the surface that renders the shell's committed projection; it is a
+   * read on an event, never a timer. A read that fails commits the shell's problem view, so a
+   * conversation that cannot be re-read says so instead of keeping the projection it had.
+   */
+  const lastArrivedSurfaceRef = useRef<string>(shownSurface);
+  useEffect(() => {
+    if (lastArrivedSurfaceRef.current === shownSurface) return;
+    lastArrivedSurfaceRef.current = shownSurface;
+    if (shownSurface !== CHAT_PANEL) return;
+    void rereadChat().catch((error: unknown) => commit(problemView(error, messages(localeRef.current))));
+  }, [shownSurface, commit]);
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
