@@ -500,21 +500,8 @@ test("game.prerequisites.read is a simple apiVersion-only command", () => {
   assert.equal(validator.Check({}), false);
 });
 
-test("game.instances.read is a simple apiVersion-only command", () => {
-  const validator = GameBrowserValidatorsV1.GameInstancesReadCommandV1Schema;
-  assert.equal(validator.Check({ apiVersion: 1 }), true);
-  assert.equal(validator.Check({ apiVersion: 1, idempotencyKey }), false);
-  assert.equal(validator.Check({ apiVersion: 1, extra: true }), false);
-});
-
 test("game.state.read is a simple apiVersion-only command", () => {
   const validator = GameBrowserValidatorsV1.GameStateReadCommandV1Schema;
-  assert.equal(validator.Check({ apiVersion: 1 }), true);
-  assert.equal(validator.Check({ apiVersion: 1, extra: true }), false);
-});
-
-test("game.diagnostics.read is a simple apiVersion-only command", () => {
-  const validator = GameBrowserValidatorsV1.GameDiagnosticsReadCommandV1Schema;
   assert.equal(validator.Check({ apiVersion: 1 }), true);
   assert.equal(validator.Check({ apiVersion: 1, extra: true }), false);
 });
@@ -1091,9 +1078,7 @@ test("Game controls are absent from an empty profile that has no Game operations
   assert.equal(profile.operationIds.includes("game.stop" as never), false);
   assert.equal(profile.operationIds.includes("game.resume" as never), false);
   assert.equal(profile.operationIds.includes("game.disconnect" as never), false);
-  assert.equal(profile.operationIds.includes("game.diagnostics.read" as never), false);
   assert.equal(profile.operationIds.includes("game.prerequisites.setup" as never), false);
-  assert.equal(profile.operationIds.includes("game.instances.read" as never), false);
 });
 
 test("Game controls are present exactly when the Game profile mounts matching operations", () => {
@@ -1153,7 +1138,6 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GameCompatibilityV1Schema",
     "GameCreateCommandV1Schema",
     "GameCreateResultV1Schema",
-    "GameDiagnosticsReadCommandV1Schema",
     "GameDisconnectCommandV1Schema",
     "GameDiscoveryActionCommandV1Schema",
     "GameDiscoveryConfirmCommandV1Schema",
@@ -1162,7 +1146,6 @@ test("GameBrowserContractV1 preserves the exact versioned aggregate schema bound
     "GameEndgameCommandV1Schema",
     "GameEndgameResultV1Schema",
     "GameInstanceV1Schema",
-    "GameInstancesReadCommandV1Schema",
     "GameLaunchCommandV1Schema",
     "GamePrerequisiteStateV1Schema",
     "GamePrerequisitesReadCommandV1Schema",

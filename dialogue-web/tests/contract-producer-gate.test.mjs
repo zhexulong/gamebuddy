@@ -10,8 +10,8 @@
  *     speaking`), where the frontend carries a label for `unavailable` and the one
  *     production reader emits only `ready`/`speaking`;
  *   - `game_browser_api/v1`'s declared operations, which is where a member can be
- *     published with nothing behind it: `game.diagnostics.read`, `game.instances.read`,
- *     `game.attach` and `game.prerequisites.read` have no route in this tree.
+ *     published with nothing behind it: `game.attach` and `game.prerequisites.read`
+ *     have no route in this tree.
  *
  * The members are *enumerated from the contracts*, not listed here: every id in
  * `GAME_BROWSER_OPERATION_IDS_V1`, every id in the tavern contract's `OperationId`

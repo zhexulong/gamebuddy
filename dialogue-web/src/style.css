@@ -2588,10 +2588,6 @@
     overflow-wrap: anywhere;
   }
 
-  .game-diagnostics-note[data-tone="warning"] {
-    color: var(--text-disabled);
-  }
-
   .game-diagnostics-json {
     margin: 0;
     max-height: 320px;

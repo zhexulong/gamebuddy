@@ -7,20 +7,11 @@ import type { Messages } from "../i18n";
  * Host actually publishes about the game instance.
  *
  * Reachability is the first question here, and the answer decides what this
- * panel may show:
- *
- *   - The composed shell serves exactly one game read,
- *     `GET /api/composed-reference-game/v1/game` (and the same projection inside
- *     `…/state`), backed by `game.state.read`. That projection is the Host's
- *     instance and session truth, and it is what this dump renders.
- *   - `game.instances.read` and `game.diagnostics.read` are declared by
- *     `host/src/game-browser-contract/index.ts` (the operation ids, and the
- *     `GameInstancesReadCommandV1Schema` / `GameDiagnosticsReadCommandV1Schema`
- *     command bodies) but have no route on the composed shell, no producer and
- *     no result schema at all - `host/src/composed-reference-game-browser.ts`
- *     mounts none of them and the Stardew profile does not list them in its
- *     `operationIds`. A dedicated diagnostics body therefore cannot be fetched
- *     from the browser, and this panel says so instead of inventing one.
+ * panel may show: the composed shell serves exactly one game read,
+ * `GET /api/composed-reference-game/v1/game` (and the same projection inside
+ * `…/state`), backed by `game.state.read`. That projection is the Host's
+ * instance and session truth, it is the whole of what a browser can obtain, and
+ * it is what this dump renders.
  *
  * So: real Host data, rendered read-only; no chart library, no new dependency;
  * the frozen Game-surface anchors are untouched (this sits beside the
@@ -44,9 +35,6 @@ export function GameDiagnosticsDisclosure({
       ) : (
         <>
           <p className="game-diagnostics-note">{labels.gameDiagnosticsPublished}</p>
-          <p className="game-diagnostics-note" data-tone="warning">
-            {labels.gameDiagnosticsNoChannel}
-          </p>
           {/* The session's CSRF token and expiry are deliberately not part of the
               dump: only the nested game projection crosses, so no credential or
               session secret is renderable here. `tabIndex` because a scrollable

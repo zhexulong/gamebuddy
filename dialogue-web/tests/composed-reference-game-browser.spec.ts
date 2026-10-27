@@ -210,12 +210,10 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
 /**
  * The Game surface's read-only data disclosure.
  *
- * Reachability first: `game.instances.read` and `game.diagnostics.read` are
- * declared by `host/src/game-browser-contract/index.ts` (operation ids plus the
- * two command bodies) but have no route on the composed shell, no producer and
- * no result schema, so the only Host game data a browser can actually obtain is
- * the projection `game.state.read` serves. The disclosure renders exactly that,
- * collapsed, and says plainly that no diagnostics are published.
+ * Reachability first: the composed shell mounts exactly one game read
+ * (`game.state.read`, declared by `host/src/game-browser-contract/index.ts`), so
+ * the only Host game data a browser can actually obtain is that projection. The
+ * disclosure renders exactly that, collapsed, and nothing else.
  *
  * The failures this catches: a disclosure that starts open (a debug box pushing
  * the panel's own facts down the surface), a body that is placeholder text
