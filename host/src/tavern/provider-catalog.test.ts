@@ -7,8 +7,12 @@ import test from "node:test";
 
 import {
   TAVERN_ENVIRONMENT_PROVIDER_ID,
+  TAVERN_ESCAPE_HATCH_PROVIDER_ID,
   TAVERN_OPERATOR_GATEWAY_ENV,
   TAVERN_PI_API_SHAPES,
+  TAVERN_PROVIDER_CATALOG,
+  catalogModel,
+  catalogProvider,
   isTavernPiApi,
   playerOfferedProviders,
 } from "./provider-catalog.js";
@@ -150,4 +154,63 @@ test("the operator's gateway is reachable only through an explicit, labelled dev
       `${JSON.stringify(value)} must not count as the opt-in`,
     );
   }
+});
+
+/**
+ * No public provider publishes a model id (design/28 §1).
+ *
+ * The measured defect: the `deepseek` entry pinned `https://api.deepseek.com` and "recommended"
+ * `deepseek-v4.1-flash` and `deepseek-v4-pro` - ids this project's own CPA gateway serves, which
+ * `api.deepseek.com` does not. The probe answers `not_found` for the model the panel had just
+ * suggested, and a player who bought a perfectly good key reads that as a broken product. The same
+ * shape was in the `openai` entry with `gpt-5.6-luna`.
+ *
+ * The rule this pins is the fix, stated so it outlives today's ids: a model id may be stated for a
+ * provider ONLY where this product runs the endpoint (the operator's own gateway). Everywhere else
+ * the endpoint's own `/models` reply - which the probe already reads - is the list, and the player
+ * types an id.
+ *
+ * The population is the catalogue itself, and the permitted one is named by its constant, so an
+ * entry added tomorrow is covered today and a new exception has to be written down deliberately.
+ */
+test("a model id is stated only for the endpoint this product runs, never for someone else's", () => {
+  const stated = TAVERN_PROVIDER_CATALOG.filter((entry) => entry.allowedPlayerModels.length > 0);
+  assert.deepEqual(
+    stated.map((entry) => entry.providerId),
+    [TAVERN_ENVIRONMENT_PROVIDER_ID],
+    "only the operator's own gateway knows which model ids its endpoint serves",
+  );
+
+  // The public providers, by name, with the ids that used to be fabricated here: the catalog must
+  // not claim any of them, and `catalogModel` is how every reader asks (store default level, the
+  // provider entry, the connection projection), so its answer is the whole claim.
+  for (const [providerId, fabricated] of [
+    ["deepseek", ["deepseek-v4.1-flash", "deepseek-v4-pro"]],
+    ["openai", ["gpt-5.6-luna", "gpt-5.5"]],
+  ] as const) {
+    const provider = catalogProvider(providerId);
+    assert.ok(provider, `${providerId} is still a catalog entry a player can configure`);
+    assert.deepEqual(provider.allowedPlayerModels, [], `${providerId} may publish no model id of its own`);
+    // ...and it stays configurable by the player, which is what makes an empty list honest rather
+    // than a dead end: the model id field is the player's on every entry that declares it.
+    assert.equal(provider.setupFields.includes("modelId"), true, `${providerId} must let the player name a model`);
+    for (const modelId of fabricated)
+      assert.equal(catalogModel(provider, modelId), null, `${providerId} must not describe ${modelId}`);
+  }
+
+  // The operator's gateway is untouched: it is our own endpoint, so its id and its window are facts
+  // rather than guesses, and `declaredContextWindow` still reads the number from here.
+  const operator = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
+  assert.ok(operator);
+  assert.deepEqual(
+    operator.allowedPlayerModels.map((model) => model.modelId),
+    ["deepseek-v4.1-flash"],
+    "the developer-only gateway keeps the model its own endpoint serves",
+  );
+  assert.equal(catalogModel(operator, "deepseek-v4.1-flash")?.contextWindow, 131_072);
+
+  // The escape hatch is the third state: no model list, and the player supplies the id.
+  const hatch = catalogProvider(TAVERN_ESCAPE_HATCH_PROVIDER_ID);
+  assert.ok(hatch);
+  assert.deepEqual(hatch.allowedPlayerModels, []);
 });

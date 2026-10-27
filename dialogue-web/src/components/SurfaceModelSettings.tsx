@@ -6,6 +6,7 @@ import type {
   TavernModelProfilesV1,
 } from "../management-pipeline-api";
 import type { Messages } from "../i18n";
+import { MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS } from "./management-panels";
 
 /**
  * One surface's model settings (design/104 §3; the owner's ruling that the model a
@@ -124,18 +125,26 @@ export function SurfaceModelSettings({
        * provider's own label and nothing here is clickable, which is the difference between "here is what
        * is available" and "pick one for this surface".
        */}
-      <div className="surface-model-recommended" data-surface-model-recommended>
-        <p className="surface-model-recommended-label">{labels.modelProfilesRecommended}</p>
-        {recommendedFor(profiles, surface).map((entry) => (
-          <span
-            key={`${entry.providerId}/${entry.modelId}`}
-            className="surface-model-chip"
-            title={`${entry.providerLabel} (${entry.providerId})`}
-          >
-            {`${entry.modelId} · ${entry.providerLabel}`}
-          </span>
-        ))}
-      </div>
+      {/*
+       * What this endpoint offers, read back. It is empty until an endpoint has answered
+       * `/models`, and then it says only that: GameBuddy ships no model endpoint, so it never
+       * publishes a model id for one it does not run. A caption over an empty list would be the
+       * same guess as the ids that used to sit under it.
+       */}
+      {recommendedFor(profiles, surface).length > 0 && (
+        <div className="surface-model-recommended" data-surface-model-recommended>
+          <p className="surface-model-recommended-label">{labels.modelProfilesRecommended}</p>
+          {recommendedFor(profiles, surface).map((entry) => (
+            <span
+              key={`${entry.providerId}/${entry.modelId}`}
+              className="surface-model-chip"
+              title={`${entry.providerLabel} (${entry.providerId})`}
+            >
+              {`${entry.modelId} · ${entry.providerLabel}`}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div className="surface-model-actions">
         <button type="button" className="small-button" disabled={saving} onClick={() => void apply()}>
@@ -254,13 +263,20 @@ function recommendedFor(profiles: TavernModelProfilesV1, surface: "chat" | "game
   return profiles.recommendedModels;
 }
 
-/** The contract's levels for this surface, plus whatever the profile already holds. */
+/**
+ * The contract's levels for this surface, plus whatever the profile already holds.
+ *
+ * The levels a connection publishes depend on which model it names, and a player-typed model has no
+ * published levels at all, so the fallback is the runtime's whole vocabulary rather than a subset:
+ * offering five of seven would hide the ones a model that does support them can be given. The list
+ * is the one this panel already declares, not a second copy.
+ */
 function levelsFor(profiles: TavernModelProfilesV1, surface: "chat" | "game", current: string): readonly string[] {
   const recommended = recommendedFor(profiles, surface);
   const allowed = recommended.flatMap((entry) => entry.allowedThinkingLevels);
   const levels = new Set<string>(allowed);
   levels.add(current);
-  for (const fallback of ["off", "minimal", "low", "medium", "high"]) levels.add(fallback);
+  for (const fallback of MODEL_PROFILE_THINKING_LEVEL_SUGGESTIONS) levels.add(fallback);
   return [...levels];
 }
 

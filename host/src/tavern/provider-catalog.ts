@@ -12,10 +12,13 @@ import type { CompanionThinkingLevel } from "../runtime-identity.js";
  * endpoint for them.
  *
  * The model id is the player's in every entry the player configures, including
- * the pinned ones: `allowedPlayerModels` is curated guidance (the models this
- * Host recommends and knows how to describe), never the set of ids an endpoint
- * may serve. A player types any id, and the Host-owned probe - not this list -
- * decides whether the endpoint offers it.
+ * the pinned ones. `allowedPlayerModels` is not a gate, and for an endpoint this
+ * product does not run it is empty: an id could only be published there by
+ * guessing at what someone else's service serves, and a guess that misses is
+ * read by the player as "my key is invalid". A player types any id, and the
+ * Host-owned probe against the endpoint's own `/models` - not this list - decides
+ * whether it is offered. Only the operator's own gateway, whose ids are ours,
+ * states a model.
  */
 
 /**
@@ -111,10 +114,10 @@ export type TavernCatalogProvider = Readonly<{
   environmentVariable: string | null;
   setupFields: readonly TavernProviderSetupFieldId[];
   /**
-   * Curated guidance, not a gate: the models this Host recommends for this entry and knows how to
-   * describe (labels, thinking levels, reasoning dialect). A player may name any bounded model id
-   * for any provider they configure; what decides whether it works is the probe against the
-   * endpoint's own listing.
+   * The models this Host may state for this entry, and nothing else. It is empty for every endpoint
+   * this product does not run: those ids are not ours to know, and publishing a guess makes the
+   * endpoint's honest `not_found` read as a broken key. There, the endpoint's own `/models` reply -
+   * which the probe already reads - is the list, beside whatever the player types.
    */
   allowedPlayerModels: readonly TavernCatalogModel[];
   /** True only for the single OpenAI-compatible escape hatch entry. */
@@ -190,10 +193,10 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     baseUrl: "https://api.deepseek.com",
     environmentVariable: null,
     setupFields: ["apiKey", "modelId"],
-    allowedPlayerModels: [
-      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 131_072),
-      defineModel("deepseek-v4-pro", "DeepSeek V4 Pro", ["high", "max"], "high", "deepseek", 131_072),
-    ],
+    // Empty on purpose: `deepseek-v4.1-flash` is this project's own gateway id, not one
+    // `api.deepseek.com` serves, so listing it made the first probe answer `not_found` for a player
+    // with a perfectly good key. The endpoint's `/models` reply is the list.
+    allowedPlayerModels: [],
     escapeHatch: false,
     // `openai-completions` authenticates a request with a bearer token; without this the probe
     // sends no credential at all and a real endpoint answers 401.
@@ -207,10 +210,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     baseUrl: "https://api.openai.com/v1",
     environmentVariable: null,
     setupFields: ["apiKey", "modelId"],
-    allowedPlayerModels: [
-      defineModel("gpt-5.6-luna", "GPT-5.6 Luna", ["low", "medium", "high", "xhigh", "max"], "high", "native", 400_000),
-      defineModel("gpt-5.5", "GPT-5.5", ["low", "medium", "high", "xhigh"], "high", "native", 400_000),
-    ],
+    // Same rule, same failure: these ids were the CPA gateway's, not OpenAI's.
+    allowedPlayerModels: [],
     escapeHatch: false,
     // `openai-responses` authenticates a request with a bearer token; without this the probe sends
     // no credential at all and a real endpoint answers 401.

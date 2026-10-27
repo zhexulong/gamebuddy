@@ -425,7 +425,7 @@ export function ConnectionSettingsPanel({
   // does not.
   const selected = providers.find((entry) => entry.providerId === providerId);
   // What one provider's endpoints told us they serve, at their last probe: the only authority on
-  // which models exist there, and the reason a player is not limited to our own catalogue.
+  // which models exist there.
   const servedModelsFor = (providerId: string | undefined): readonly string[] => [
     ...new Set(
       connectionView.state.connections
@@ -434,9 +434,6 @@ export function ConnectionSettingsPanel({
     ),
   ];
   const servedModels = servedModelsFor(selected?.providerId);
-  // Our own curated ids. Suggestions, never gatekeeping: the field is a text field, and the probe
-  // is what decides whether what the player named is really served.
-  const suggestedModels = selected?.allowedPlayerModels ?? [];
   /**
    * Who supplies the selected entry's credential, as two facts that must never be
    * merged into one sentence.
@@ -679,14 +676,14 @@ export function ConnectionSettingsPanel({
                 id="connection-model-id"
                 className="form-input"
                 type="text"
-                // Everything this provider's endpoints have told us they serve, then our own
-                // curated ids. A picker and a text field at once: choose one, or type any id the
-                // endpoint serves that neither list knows about.
+                // Everything this provider's endpoints have told us they serve. A picker and a text
+                // field at once: choose one, or type any id the endpoint serves that no earlier probe
+                // happened to list.
                 list="connection-model-options"
                 autoComplete="off"
                 spellCheck={false}
-                // The player names the model. It is never defaulted to a curated id, because the
-                // endpoint - not our catalogue - decides which ids exist.
+                // The player names the model. It is never defaulted: the endpoint - not this panel -
+                // decides which ids exist.
                 required
                 disabled={connectionView.pending}
                 placeholder={labels.connectionModelIdHint}
@@ -694,15 +691,14 @@ export function ConnectionSettingsPanel({
                 onChange={(event) => setModelId(event.target.value)}
               />
               <datalist id="connection-model-options">
+                {/*
+                 * What one provider's endpoints told us they serve, at their last probe, and nothing
+                 * else. GameBuddy ships no model endpoint, so it publishes no model id for one it does
+                 * not run: an id guessed for `api.deepseek.com` only made the endpoint's honest
+                 * `not_found` look like a broken key. A player types any id the endpoint serves.
+                 */}
                 {servedModels.map((id) => (
                   <option key={`served-${id}`} value={id} label={labels.connectionModelServed} />
-                ))}
-                {suggestedModels.map((model) => (
-                  <option
-                    key={`suggested-${model.modelId}`}
-                    value={model.modelId}
-                    label={`${model.modelLabel} \u00b7 ${labels.connectionModelSuggested}`}
-                  />
                 ))}
               </datalist>
               {servedModels.length > 0 && (

@@ -313,9 +313,10 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
     // player's active connection's, and no default model is shipped.
     assert.deepEqual(profiles.chat, { revision: 0, thinkingLevel: "high" });
     assert.deepEqual(profiles.game, { revision: 0, thinkingLevel: "high" });
-    // The guidance list is derived from the one provider catalog the browser may choose from, so
-    // it names the models of every entry a player can actually configure - and the operator's own
-    // gateway is not one of them (BYOK: this product ships no endpoint).
+    // The guidance list is derived from the one provider catalog the browser may choose from. Every
+    // entry a player can configure publishes no model id (a public endpoint's ids are not ours to
+    // know; the probe reads them from the endpoint itself), so the shipped list is the escape
+    // hatch's empty one - and the operator's own gateway is never offered as guidance either.
     const shipped = playerOfferedProviders().flatMap((provider) =>
       provider.allowedPlayerModels.map((model) => model.modelId),
     );
@@ -323,7 +324,15 @@ test("the profiles read is a browser-session read of both surfaces plus the ship
       profiles.recommendedModels.map((model) => model.modelId),
       shipped,
     );
-    assert.ok(shipped.includes("gpt-5.6-luna"));
+    // The ids this entry used to "recommend" are this project's own gateway's, which
+    // `api.deepseek.com` does not serve: suggesting one made the first honest `not_found` read as a
+    // broken key. Nothing here may name them.
+    for (const fabricated of ["deepseek-v4.1-flash", "deepseek-v4-pro", "gpt-5.6-luna", "gpt-5.5"])
+      assert.equal(
+        profiles.recommendedModels.some((model) => model.modelId === fabricated),
+        false,
+        `a public endpoint's guidance must not claim ${fabricated}`,
+      );
     assert.equal(
       profiles.recommendedModels.every((model) => model.providerId !== "cpa-oai"),
       true,

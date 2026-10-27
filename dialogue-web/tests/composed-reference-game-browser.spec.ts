@@ -2048,6 +2048,11 @@ test("the AppBar Game entry selects the Game surface, the URL names it, and Back
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
+  // Returning to the conversation re-reads the composed root, which is this fixture's own
+  // projection: the shell reads on arrival rather than trusting what it happened to hold.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
@@ -2453,13 +2458,10 @@ test("the product Settings surface creates, tests and activates a connection who
   const catalogProvider = {
     providerId: "openai",
     label: "OpenAI",
-    // A pinned entry declares `modelId` too: the curated ids are suggestions it offers beside the
-    // endpoint's own listing, and the player may type any id this endpoint serves.
+    // A pinned entry declares `modelId` too, and publishes no model list: `api.openai.com` serves ids
+    // this Host does not know, so the endpoint's own listing is the list.
     setupFields: ["apiKey", "modelId"],
-    allowedPlayerModels: [
-      { modelId: "gpt-4o", modelLabel: "GPT-4o", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
-      { modelId: "gpt-4o-mini", modelLabel: "GPT-4o mini", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "low" },
-    ],
+    allowedPlayerModels: [],
     escapeHatch: false,
     environmentManaged: false,
   };
@@ -2583,9 +2585,8 @@ test("the product Settings surface creates, tests and activates a connection who
   const panel = surface.locator("[data-connection-settings]");
   await expect(panel).toBeVisible();
 
-  // Both entries reach the same model control: the catalog entry offers its own
-  // curated ids as suggestions, and the player can type any id either entry's
-  // endpoint serves. The escape hatch additionally offers the API key and base URL.
+  // Both entries reach the same model control, and neither offers an id it cannot know: the
+  // player types the one their endpoint serves, and a probe's listing is offered beside it.
   await panel.locator("#connection-provider").selectOption("openai");
   await expect(panel.locator("#connection-model-id")).toBeVisible();
   await expect(panel.locator("#connection-model-id")).toHaveAttribute("list", "connection-model-options");
@@ -2644,7 +2645,7 @@ test("the product Settings surface creates, tests and activates a connection who
   const rowModel = panel.locator(`#connection-model-${connectionId}`);
   await expect(rowModel).toBeVisible();
   await expect(rowModel.locator("option")).toHaveCount(3);
-  // ...and the draft form offers them too, beside the entries marked as suggestions.
+  // ...and the draft form offers them too.
   await expect(panel.locator("#connection-model-options option")).toHaveCount(3);
   await expect.poll(documentCarriesKey).toBe(false);
 
@@ -2796,9 +2797,11 @@ test("a local endpoint that needs no credential saves keyless and probes ready",
  *
  * The owner's comparison with SillyTavern and Liyuan came down to one thing: they
  * render the model list their endpoint serves and this product read it and threw it
- * away. Here the endpoint serves three models, the form offers them beside the two
- * curated ids it marks as suggestions, a typed id that is not among them never
- * becomes ready, and picking one that is turns the same record ready.
+ * away. The provider here publishes NO model id of its own, because `api.openai.com`
+ * does not serve the ids this project's gateway does: before any probe the form offers
+ * nothing but the field itself, then the endpoint's three models appear, a typed id that
+ * is not among them never becomes ready, and picking one that is turns the same record
+ * ready. That is the whole fix - a guess could only ever disagree with `/models`.
  *
  * Measured at both widths: the endpoint-listing select's box and the test-result note's
  * box, and that neither the surface nor the document overflows.
@@ -2807,20 +2810,16 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   const connectionId = "L".repeat(42) + "A";
   const apiKey = "sk-typed-model-secret-0001";
   const invented = "gpt-9-invented";
-  const suggestions = [
-    { modelId: "gpt-5.6-luna", modelLabel: "GPT-5.6 Luna", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
-    { modelId: "gpt-5.5", modelLabel: "GPT-5.5", allowedThinkingLevels: ["low", "high"], defaultThinkingLevel: "high" },
-  ];
   const catalogProvider = {
     providerId: "openai",
     label: "OpenAI",
     setupFields: ["apiKey", "modelId"],
-    allowedPlayerModels: suggestions,
+    // Empty: the ids this entry used to suggest were this project's gateway's, not OpenAI's.
+    allowedPlayerModels: [],
     escapeHatch: false,
     environmentManaged: false,
   };
-  // What the endpoint says it serves. `gpt-4o-mini` is served and NOT curated, which
-  // is exactly the case the curated list used to make unreachable.
+  // What the endpoint says it serves.
   const listed = ["gpt-4o-mini", "gpt-5.6-luna", "gpt-5.5"];
 
   const writes: Array<{ path: string; body: unknown }> = [];
@@ -2880,7 +2879,7 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   await page.route(/\/api\/tavern\/v1\/settings\/connections$/, async (route) => {
     const body = route.request().postDataJSON() as { modelId?: string };
     writes.push({ path: new URL(route.request().url()).pathname, body });
-    recordModelId = body.modelId ?? suggestions[0]!.modelId;
+    recordModelId = body.modelId ?? listed[0]!;
     created = true;
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(connectionState()) });
   });
@@ -2926,12 +2925,10 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   await panel.locator("#connection-provider").selectOption("openai");
   await expect(panel.locator("#connection-base-url")).toHaveCount(0);
   await expect(panel.locator("#connection-model-id")).toBeVisible();
-  // Both curated ids are offered, and both say they are suggestions rather than rules.
-  await expect(panel.locator("#connection-model-options option")).toHaveCount(2);
-  await expect(panel.locator("#connection-model-options option").first()).toHaveAttribute(
-    "label",
-    `${suggestions[0]!.modelLabel} \u00b7 suggestion`,
-  );
+  // Nothing is offered before an endpoint has answered: the two ids this entry used to suggest were
+  // the project's own gateway's, and `api.openai.com` never served them. The field then carries the
+  // endpoint's own listing - and only that.
+  await expect(panel.locator("#connection-model-options option")).toHaveCount(0);
 
   // A typed id the endpoint does not serve is accepted as a draft and never becomes ready.
   await panel.locator("#connection-api-key").fill(apiKey);
@@ -2959,7 +2956,11 @@ test("the endpoint's own listing is what the form offers, and a typed id it does
   await expect(panel.getByRole("button", { name: "Save and activate" })).toBeDisabled();
 
   // The endpoint's own listing is now what the form offers, and the record offers it too.
-  await expect(panel.locator("#connection-model-options option")).toHaveCount(listed.length + suggestions.length);
+  await expect(panel.locator("#connection-model-options option")).toHaveCount(listed.length);
+  await expect(panel.locator("#connection-model-options option").first()).toHaveAttribute(
+    "label",
+    "served by this endpoint",
+  );
   const listingSelect = panel.locator(`#connection-model-${connectionId}`);
   await expect(listingSelect).toBeVisible();
   await expect(listingSelect.locator("option")).toHaveCount(listed.length + 1);

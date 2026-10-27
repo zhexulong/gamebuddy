@@ -372,8 +372,12 @@ test("the connection read projects the catalog, and selectable models are the ca
     );
     assert.deepEqual(
       byId.get("deepseek")!.allowedPlayerModels.map((model) => model.modelId),
-      ["deepseek-v4.1-flash", "deepseek-v4-pro"],
+      [],
+      "a public endpoint serves models this Host does not know: it publishes none of its own",
     );
+    // ...and the player still names one, which is what makes the empty list a starting point rather
+    // than a dead end. The endpoint's own `/models` reply is the list.
+    assert.ok(byId.get("deepseek")!.setupFields.includes("modelId"));
     const escapeHatches = body.providers.filter((provider) => provider.escapeHatch);
     assert.equal(escapeHatches.length, 1);
     assert.equal(escapeHatches[0]!.providerId, TAVERN_ESCAPE_HATCH_PROVIDER_ID);
@@ -1040,12 +1044,13 @@ test("a typed model id is a legal draft on every entry the player configures, an
       };
 
       // A level that exact catalog model does not offer, and an id the model id ceiling refuses.
-      assert.equal((await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "medium" })).status, 400);
+      // The catalog model is the operator entry's; a player entry describes no model, so every
+      // level the runtime accepts is legal there.
       assert.equal((await selectModel({ modelId: "with space", thinkingLevel: "high" })).status, 400);
-      const allowed = await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "max" });
+      const allowed = await selectModel({ modelId: "deepseek-v4-pro", thinkingLevel: "high" });
       assert.equal(allowed.status, 200);
       assert.equal(row(allowed.body).modelId, "deepseek-v4-pro");
-      assert.equal(row(allowed.body).thinkingLevel, "max");
+      assert.equal(row(allowed.body).thinkingLevel, "high");
 
       // The endpoint serves the model, so the probe makes the record ready.
       assert.equal((await test()).outcome, "ready");
@@ -1098,6 +1103,21 @@ test("a typed model id is a legal draft on every entry the player configures, an
       );
       assert.equal(environmentModel.status, 400);
       assert.equal((environmentModel.body as { code: string }).code, "invalid_request");
+      // ...and the level the entry's own model declares is the authority for it: `medium` is not one
+      // `deepseek-v4.1-flash` advertises, so it is refused even for the id that entry does serve.
+      const environmentLevel = await request(
+        "POST",
+        `/api/tavern/v1/settings/connections/${environmentBody.connections[1]!.connectionId}/model`,
+        {},
+        {
+          apiVersion: 1,
+          expectedRevision: environmentBody.revision,
+          modelId: "deepseek-v4.1-flash",
+          thinkingLevel: "medium",
+        },
+      );
+      assert.equal(environmentLevel.status, 400);
+      assert.equal((environmentLevel.body as { code: string }).code, "invalid_request");
 
       // The escape hatch accepts the model id its endpoint serves, bounded.
       const hatch = await request(

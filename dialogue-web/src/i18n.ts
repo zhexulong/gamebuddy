@@ -331,9 +331,10 @@ const en = {
   connectionModelId: "Model ID",
   connectionModelIdHint: "The model name the endpoint serves, for example qwen2.5-coder:7b",
   connectionModelServed: "served by this endpoint",
-  connectionModelSuggested: "suggestion",
+  // One sentence, true in both states: an entry whose endpoint this product does not run publishes no
+  // model ids at all, so what is shown here can never be more than what the endpoint itself answered.
   connectionModelSuggestionsHint:
-    "Entries marked as suggestions come from GameBuddy's own catalogue. Your endpoint may serve others: type any model id it serves, and testing the connection is what proves it does.",
+    "Type the model id your endpoint serves. Testing the connection is what proves it does.",
   connectionModelsServed: "models served by this endpoint",
   connectionModelOffered: "Models offered",
   connectionModelsOfferedAmong: "models offered; the one you picked is among them.",
@@ -977,6 +978,21 @@ const en = {
   gameFamilyFacilityStorageLighting: "Chests, storage and lights",
   gameFamilyModalHandling: "Answering in-game questions and menus",
   gameFamilyExpression: "Emotes and expressions",
+
+  // --- the player's own addition to the Game companion's instructions ----------
+  // The one settings group whose change does NOT reach a running game: the game runtime
+  // composes its instructions when it starts, so the sentence says "next start" instead of
+  // borrowing the action policy's "within seconds". A save that quietly did nothing visible
+  // until the next launch, with no sentence saying so, would read as a broken control.
+  gamePromptAdditionTitle: "Extra instructions for your companion",
+  gamePromptAdditionHint:
+    "Written into the instructions she plays with. Say what you want her to do, or to leave alone.",
+  gamePromptAdditionField: "Your extra instructions",
+  gamePromptAdditionEffective:
+    "Saved instructions take effect the next time you start the game. A game already running keeps the ones it started with.",
+  gamePromptAdditionCount: "{{count}} / {{max}} characters",
+  gamePromptAdditionSave: "Save instructions",
+  gamePromptAdditionUnavailable: "These instructions could not be read right now.",
 } as const;
 
 type MessageKey = keyof typeof en;
@@ -1228,9 +1244,7 @@ const zh: Messages = {
   connectionModelId: "模型 ID",
   connectionModelIdHint: "该端点提供的模型名，例如 qwen2.5-coder:7b",
   connectionModelServed: "该端点提供",
-  connectionModelSuggested: "建议",
-  connectionModelSuggestionsHint:
-    "标记为建议的条目来自 GameBuddy 自带的推荐。你的端点可能还提供其他模型：直接输入它提供的任意模型 ID，测试连接即可确认。",
+  connectionModelSuggestionsHint: "请输入该端点提供的模型 ID。测试连接即可确认它确实提供。",
   connectionModelsServed: "个模型由该端点提供",
   connectionModelOffered: "可用模型",
   connectionModelsOfferedAmong: "个模型可选，你选的模型在其中。",
@@ -1745,6 +1759,17 @@ const zh: Messages = {
   gameFamilyFacilityStorageLighting: "箱子、储物与照明",
   gameFamilyModalHandling: "回应游戏内提问与菜单",
   gameFamilyExpression: "表情与动作",
+
+  // Player-editable Game prompt addition. The when-sentence is the requirement behind the
+  // whole group: the addition is composed into a game's instructions when that game starts,
+  // so it says "next start" rather than claiming a running game changed.
+  gamePromptAdditionTitle: "给你的伙伴的额外指令",
+  gamePromptAdditionHint: "这些内容会写进她进行游戏时收到的指令里。写你希望她做、或不要去碰的事。",
+  gamePromptAdditionField: "你的额外指令",
+  gamePromptAdditionEffective: "保存的指令会在下次启动游戏时生效；正在运行的游戏仍使用启动时的那一份。",
+  gamePromptAdditionCount: "{{count}} / {{max}} 字符",
+  gamePromptAdditionSave: "保存指令",
+  gamePromptAdditionUnavailable: "暂时无法读取这些指令。",
 } satisfies Record<MessageKey, string>;
 
 export function messages(locale: Locale): Messages {
