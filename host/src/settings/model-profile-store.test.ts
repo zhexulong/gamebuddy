@@ -205,6 +205,40 @@ test("invalid profile updates and persisted profiles are rejected", async () => 
   });
 });
 
+test("a profile written before the surface owned a model still loads, and drops the stale id", async () => {
+  // The comment above `validStoredProfile` promises exactly this: 'A profile written before this store
+  // stopped owning a model id still carries one, and a root that upgraded must not fail to load'.
+  //
+  // It did fail. A document with `modelId` and no `providerId` - which is what every root upgraded from
+  // the previous format has on disk - hit the final rule (`modelId === undefined) === (providerId ===
+  // undefined`), was declared invalid, and `load` rethrew it as `invalid_model_profile_store`. Measured
+  // 2026-10-27: a real root at `%LOCALAPPDATA%/GameBuddy/settings/model-profiles.json` (written
+  // 2026-10-24, `{"revision":0,"modelId":"deepseek-v4.1-flash","thinkingLevel":"high"}`) made every
+  // live run crash at step 0 with `invalid_model_profile_store`, before a single game action.
+  //
+  // So the promise was documentation, not behaviour. This pins the behaviour.
+  await withStore(async (path, store) => {
+    await mkdir(join(path, ".."), { recursive: true });
+    await writeFile(
+      path,
+      JSON.stringify({
+        schemaVersion: 1,
+        chat: { revision: 3, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+        game: { revision: 5, modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
+      }),
+    );
+
+    const chat = await store.read("chat");
+
+    assert.equal(chat.revision, 3);
+    assert.equal(chat.thinkingLevel, "high");
+    // Dropped, not preserved: the model is the active connection's, and a stale id can only disagree
+    // with it. `freezeProfile` keeps the pair together, so dropping the id drops nothing else.
+    assert.equal("modelId" in chat, false, "the stale model id is dropped, not kept");
+    assert.equal("providerId" in chat, false);
+  });
+});
+
 test("profile projection exposes no credential, provider, endpoint or model value", async () => {
   await withStore(async (_path, store) => {
     const profile = (await store.read("chat")) as Record<string, unknown>;

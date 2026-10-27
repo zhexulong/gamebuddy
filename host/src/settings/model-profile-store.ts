@@ -180,16 +180,25 @@ function validStoredProfile(value: unknown): value is Record<string, unknown> {
   if (!isRevision(value.revision) || !isThinkingLevel(value.thinkingLevel)) return false;
   if (value.modelId !== undefined && !isModelId(value.modelId)) return false;
   if (value.providerId !== undefined && !isProviderId(value.providerId)) return false;
-  // A model without its provider is not a selection this product can resolve, and a provider without a model names
-  // nothing to run.
-  return (value.modelId === undefined) === (value.providerId === undefined);
+  // A provider without a model names nothing to run, so that half is still refused.
+  //
+  // The other half is NOT refused any more: a model without its provider is exactly what every root
+  // upgraded from the previous format has on disk, and the comment above promises those load. It used to
+  // be refused here, which turned that promise into documentation - measured 2026-10-27, a real root
+  // written on 2026-10-24 failed every live run at step 0 with `invalid_model_profile_store` before a
+  // single game action. `freezeProfile` drops the orphaned id, so the pair rule is preserved where it
+  // matters (nothing resolves a model without a provider) without bricking the read.
+  return value.providerId === undefined || value.modelId !== undefined;
 }
 function freezeProfile(value: Record<string, unknown>): StoredProfile {
+  // An orphaned `modelId` - a model with no provider - is dropped here rather than refused above. The
+  // product cannot resolve it, so keeping it would only let a stale id disagree with the player's active
+  // connection; dropping it is what the tolerance in `validStoredProfile` is FOR.
+  const paired = value.modelId !== undefined && value.providerId !== undefined;
   return Object.freeze({
     revision: value.revision as number,
     thinkingLevel: value.thinkingLevel as string,
-    ...(value.modelId === undefined ? {} : { modelId: value.modelId as string }),
-    ...(value.providerId === undefined ? {} : { providerId: value.providerId as string }),
+    ...(paired ? { modelId: value.modelId as string, providerId: value.providerId as string } : {}),
   });
 }
 function isUpdate(value: unknown): value is ModelProfileUpdate {
