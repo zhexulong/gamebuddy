@@ -250,7 +250,7 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
     {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
         if (!PolicyMatches(ObservePolicy(), this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PolicyIdentityStale);
         if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
@@ -428,7 +428,12 @@ public sealed class OpenBodyProgramJournalAuthority
 
      public BodyProgramControllerResult<HostAdmissionGrant> TryConsumeHostGrant(HostAdmissionGrant grant)
      {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.RecoveryRequired);
+        // A grant names the program it was minted for, so the program OWN state is checked before the grant own
+        // shape: after a restart fence the program is RecoveryRequired, and answering ExecutionBindingMismatch there
+        // would blame the grant for a state the journal imposed on the program.
+        if (grant is not null && this.state.Programs.SingleOrDefault(p => p.Program.ProgramId == grant.ProgramId) is { State: not BodyProgramState.Active })
+            return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.RecoveryRequired);
         if (grant?.ExecutionBinding is not null) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
         if (!TryGrant(grant, BodyProgramNodeState.AwaitingHostAdmission, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)) return BodyProgramControllerResult.Failure<HostAdmissionGrant>(failure);
         NodeExecutionBinding execution = new(program!.Program.ProgramId, node!.NodeId, node.NodeAttempt, Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"));
@@ -446,7 +451,12 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<NodeExecutionBinding> TryBeginNativeDispatch(HostAdmissionGrant grant, NodeExecutionBinding execution)
     {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<NodeExecutionBinding>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<NodeExecutionBinding>(BodyProgramControllerResultCode.RecoveryRequired);
+        // Same reason as TryConsumeHostGrant: the program own state is the first fact, so a restart-fenced
+        // program is reported as RecoveryRequired rather than having its grant blamed.
+        if (grant is not null && this.state.Programs.SingleOrDefault(p => p.Program.ProgramId == grant.ProgramId) is { State: not BodyProgramState.Active })
+            return BodyProgramControllerResult.Failure<NodeExecutionBinding>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (grant is null) return BodyProgramControllerResult.Failure<NodeExecutionBinding>(BodyProgramControllerResultCode.GrantMismatch);
         if (!TryGrant(grant, BodyProgramNodeState.HostAdmitted, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out _, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return BodyProgramControllerResult.Failure<NodeExecutionBinding>(failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure);
         if (!MatchesNode(execution, program!, node!) || grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)) return BodyProgramControllerResult.Failure<NodeExecutionBinding>(BodyProgramControllerResultCode.ExecutionBindingMismatch);
@@ -457,7 +467,7 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<BodyProgramTerminalResult> TryComplete(HostAdmissionGrant grant, BodyProgramTerminalResult result)
     {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.RecoveryRequired);
         if (result is null || !Enum.IsDefined(typeof(BodyProgramNodeOutcome), result.Outcome)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out VerifiedBodyProgramNode? descriptor, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure);
@@ -550,7 +560,7 @@ public sealed class OpenBodyProgramJournalAuthority
     /// </summary>
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TrySettleRecoveryRequired(HostAdmissionGrant grant, NodeExecutionBinding execution, string? reasonCode = null)
     {
-        if (!IsMutable) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
+        if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
         if (grant is null || !BodyProgramValidation.IsIdentifier(grant.GrantId)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.GrantMismatch);
         if (!TryProgram(grant.ProgramId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         BodyProgramJournalNode? node = program!.Nodes.SingleOrDefault(item => item.NodeId == grant.NodeId);
@@ -718,7 +728,7 @@ public sealed class OpenBodyProgramJournalAuthority
     /// </summary>
     internal BodyProgramControllerResultCode RevalidateRunningDispatch(HostAdmissionGrant grant, NodeExecutionBinding execution)
     {
-        if (!IsMutable) return BodyProgramControllerResultCode.RecoveryRequired;
+        if (!MayOperateOnPrograms) return BodyProgramControllerResultCode.RecoveryRequired;
         if (!TryGrant(grant, BodyProgramNodeState.Running, out BodyProgramJournalProgram? program, out BodyProgramJournalNode? node, out _, out BodyProgramControllerResultCode failure)
             || node!.GrantId != grant.GrantId) return failure == BodyProgramControllerResultCode.Succeeded ? BodyProgramControllerResultCode.GrantMismatch : failure;
         if (grant.ExecutionBinding is null || !Equals(node.ExecutionBinding, grant.ExecutionBinding) || !Equals(execution, grant.ExecutionBinding)
@@ -835,6 +845,26 @@ public sealed class OpenBodyProgramJournalAuthority
     private bool IsRecoveryScoped => this.IsLifecycleOpen
         && this.OpenStatus is BodyProgramJournalOpenStatus.RecoveryRequired;
 
+    /// <summary>
+    /// May a program be STATUS-READ, ADMITTED, DISPATCHED, SETTLED or REVALIDATED right now?
+    ///
+    /// `IsMutable` answers a narrower question - may this journal accept a NEW program - and it is the right
+    /// guard for `Submit` alone. Using it on the execution chain conflates two facts:
+    ///
+    ///     the journal cannot be written   -> nothing may run anywhere   (Corrupt, Persistence*)
+    ///     one program is unknown          -> THAT program may not run   (RecoveryRequired)
+    ///
+    /// Measured 2026-10-27, twice in one session. First `Submit` refused every plan while a neighbour was
+    /// unknown (fixed in 3aa7bd9f). Then a plan was admitted and its nodes still would not start, because
+    /// admission is a THREE-STEP chain - challenge, consume grant, begin dispatch - and only the first step
+    /// had been taught the difference (fixed in 0b8d6565). This predicate is that difference, applied once to
+    /// every step instead of being rediscovered one method at a time.
+    ///
+    /// It does NOT relax the per-program rule: each method still validates the program it was handed, and a
+    /// program in RecoveryRequired is refused by `TryProgram`'s own state check. What it stops doing is letting
+    /// ONE program's unknown dispatch silence a DIFFERENT program's execution chain.
+    /// </summary>
+    private bool MayOperateOnPrograms => this.IsMutable || this.IsRecoveryScoped;
     /// <summary>
     /// A submission while a DIFFERENT program holds an unknown dispatch.
     ///

@@ -77,6 +77,42 @@ public sealed class RecoveryScopeTests
     }
 
     [Fact]
+    public void ARecoveringNeighbourDoesNotStopTheFreshProgramsExecutionChain()
+    {
+        // Admission is a THREE-step chain, and fixing only its first step looked like a fix for one live run.
+        //
+        // Measured 2026-10-27, run 4: `plan_458_eb81b84a7a2d634a` was Active with n01 Succeeded and n02..n06 all
+        // `attempt=0` Pending - never tried. A neighbour, `plan_452`, sat in RecoveryRequired. `TryCreateAdmissionChallenge`
+        // had been taught the difference (0b8d6565), so n01 ran; `TryConsumeHostGrant` and `TryBeginNativeDispatch` had
+        // not, so the chain stopped one step later and the companion stood at Farm 51,10 with `can_move=True;
+        // navigate=idle; last=program_status` until the run was killed.
+        //
+        // Each step now asks `MayOperateOnPrograms` - may this journal be USED - and leaves the per-program question to
+        // that program's own state.
+        var store = new MemoryStore();
+        long now = 10;
+        OpenBodyProgramJournalAuthority authority = Open(store, () => now);
+        SubmitAndBindFirstNode(authority, "first");
+        SettleUncertain(authority);
+        authority.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.RecoveryRequired);
+
+        authority.Submit(Program("second")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("second").Value!;
+        challenge.Should().NotBeNull();
+        HostAdmissionGrant consumed = authority.TryConsumeHostGrant(GrantFor(challenge)).Value!;
+        consumed.Should().NotBeNull();
+        NodeExecutionBinding execution = ExecutionFor(consumed);
+        authority.TryBeginNativeDispatch(consumed, execution).IsSuccess.Should().BeTrue(
+            "the fresh program's node must reach the game, whatever a neighbour is waiting for");
+
+        // And the recovering program is still exactly as unknown as it was: no node of IT was dispatched.
+        BodyProgramJournalProgram recovering = authority.Snapshot.Programs.Single(p => p.Program.ProgramId == "first");
+        recovering.State.Should().Be(BodyProgramState.RecoveryRequired);
+        recovering.Nodes.Single().State.Should().Be(BodyProgramNodeState.RecoveryRequired);
+    }
+
+    [Fact]
     public void TheProgramInRecoveryStaysInRecoveryAndIsNotSettled()
     {
         var store = new MemoryStore();
