@@ -346,8 +346,26 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     // never cancels, replays, retries, or closes the native mutation/pipe; only the launcher-owned record stops
     // being usable for NEW port acquisition.
     const isLauncherClosed = (): boolean => closed || invalidated || !bridge.state.connected;
-    const assertLauncherPortsLive = (): void => {
-      if (isLauncherClosed()) throw new Error("stardew_launcher_ports_not_live");
+    /**
+     * Liveness for the ports an ORDINARY turn needs: submit, status, events.
+     *
+     * `invalidated` is deliberately NOT in here, and that is the same argument as `isPresentationClosed` below -
+     * which was learned the same way. One execution being invalidated says nothing about whether a NEW program may
+     * be submitted; it says this one was interrupted. Measured 2026-10-28 (`round2b`, spring day 5):
+     *
+     *     a native event (Clint's furnace blueprint) interrupted an `enter_exit`
+     *     Mod answered correctly:  actionId=enter_exit, state=invalidated, reasonCode=event_started
+     *     Host set invalidated = true and never cleared it
+     *     every later program_submit and program_status threw stardew_launcher_ports_not_live
+     *
+     * The companion stood at the farmhouse door saying "我这边有点卡住了，脚迈不出去" - it could not plan anything for
+     * the rest of the run, because a cutscene had interrupted one walk.
+     *
+     * A genuine disconnect still closes these ports: `disconnect()` clears `closed`, which this reads.
+     */
+    const areProgramPortsLive = (): boolean => closed || !bridge.state.connected;
+    const assertProgramPortsLive = (): void => {
+      if (areProgramPortsLive()) throw new Error("stardew_launcher_ports_not_live");
     };
     // The PRESENTATION projection is different, and deliberately so: the live session speaks through this same
     // object (`host-service.presentNativeAssistantContent` -> `farmhand-companion-presentation.present` ->
@@ -378,15 +396,15 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
     const bodyProgram = bridge.state.authenticated
       ? Object.freeze({
           submit: (request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult> => {
-            assertLauncherPortsLive();
+            assertProgramPortsLive();
             return bridge.programSubmit(request);
           },
           status: (request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> => {
-            assertLauncherPortsLive();
+            assertProgramPortsLive();
             return bridge.programStatus(request);
           },
           events: (request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> => {
-            assertLauncherPortsLive();
+            assertProgramPortsLive();
             return bridge.programEvents(request);
           },
         })
