@@ -249,6 +249,42 @@ public sealed class NpcDialoguePagerTests
         session.CanPublishWorldFact.Should().BeFalse();
     }
 
+    [Fact]
+    public void Observe_WithNoMenuAndNoTrackedBox_IsSilent()
+    {
+        // The state the game is in on almost every tick: no modal up at all. It used to reach `trackedBox!`
+        // (`ReferenceEquals(null, null)` skipped the branch that returns for a null box) and report a
+        // NullReferenceException as a warning on the first tick of every session.
+        using var game = new GameStateScope();
+        game.SetActiveMenu(null);
+        var monitor = new RecordingMonitor();
+        var pager = new NpcDialoguePager(monitor);
+
+        for (int tick = 0; tick < 3; tick++)
+            pager.Observe(null);
+
+        monitor.Logs.Should().BeEmpty("no menu is not a fault: there is nothing to page and nothing to report");
+    }
+
+    [Fact]
+    public void Observe_AfterADialogueEndsIntoNoMenu_StaysSilent()
+    {
+        // The tracked-box half of the same guard: once the box is gone the pager settles back into the ordinary
+        // no-menu state instead of throwing on every later tick.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("One.");
+        game.SetActiveMenu(box);
+        var monitor = new RecordingMonitor();
+        var pager = new NpcDialoguePager(monitor);
+
+        pager.Observe(null);
+        game.SetActiveMenu(null);
+        pager.Observe(null);
+        pager.Observe(null);
+
+        monitor.Logs.Should().BeEmpty();
+    }
+
     // ---- drift anchors ---------------------------------------------------------
 
     [Fact]
@@ -413,6 +449,26 @@ public sealed class NpcDialoguePagerTests
         }
 
         return null;
+    }
+
+    private sealed class RecordingMonitor : StardewModdingAPI.IMonitor
+    {
+        public List<string> Logs { get; } = new();
+
+        public bool IsVerbose => false;
+
+        public void Log(string message, StardewModdingAPI.LogLevel level = StardewModdingAPI.LogLevel.Trace)
+        {
+            if (level >= StardewModdingAPI.LogLevel.Warn)
+                this.Logs.Add(message);
+        }
+
+        public void LogOnce(string message, StardewModdingAPI.LogLevel level = StardewModdingAPI.LogLevel.Trace) =>
+            this.Log(message, level);
+
+        public void VerboseLog(string message) { }
+
+        public void VerboseLog(ref StardewModdingAPI.Framework.Logging.VerboseLogStringHandler message) { }
     }
 
     private sealed class OutboundSink

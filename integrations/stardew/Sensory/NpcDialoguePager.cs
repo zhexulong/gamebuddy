@@ -74,9 +74,20 @@ internal sealed class NpcDialoguePager
     /// </summary>
     internal void Observe(BridgeSession? session)
     {
+        DialogueBox? box = Game1.activeClickableMenu as DialogueBox;
+        // NO MENU AND NO DIALOGUE IN FLIGHT IS THE ORDINARY STATE. `activeClickableMenu` is null on every tick
+        // that no modal is up - startup and world load, walking around, and any non-dialogue menu as well - so
+        // there is nothing to page and nothing to report. It returns BEFORE the try below because that try is
+        // for a BROKEN box, not for the absence of one: this state used to fall through to `trackedBox!`
+        // (`ReferenceEquals(null, null)` skipped the branch that returns for a null box), so every session opened
+        // with a NullReferenceException swallowed into a "skipped a box" warning for a state the game is in most
+        // of the time. The read cannot throw: `Game1.activeClickableMenu` is a plain static field accessor.
+        if (box is null && this.trackedBox is null)
+            return;
+
         try
         {
-            this.ObserveCore(session);
+            this.ObserveCore(session, box);
         }
         catch (Exception error)
         {
@@ -97,10 +108,8 @@ internal sealed class NpcDialoguePager
         }
     }
 
-    private void ObserveCore(BridgeSession? session)
+    private void ObserveCore(BridgeSession? session, DialogueBox? box)
     {
-        DialogueBox? box = Game1.activeClickableMenu as DialogueBox;
-
         if (!ReferenceEquals(box, this.trackedBox))
         {
             // Whatever we were paging is over: exhausted, answered, replaced by
