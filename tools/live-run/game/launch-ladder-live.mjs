@@ -259,18 +259,23 @@ const prepareAttempt = (attempt) => {
     // killed run while this very launcher's runs were refused - and the flag was simply never passed.
     "--stardew-save-root",
     path.join(process.env.APPDATA ?? "", "StardewValley", "Saves"),
-    // NOTE: the cross-day lifecycle is deliberately NOT armed here.
+    // NOTE: the config-load lifecycle flag (`--sleep-lifecycle-evidence`, i.e. `SleepLifecycle.Enable`) is
+    // deliberately NOT passed here - and that costs the run nothing, because it is not what lets a night be
+    // advanced.
     //
-    // Arming it (`--sleep-lifecycle-evidence`, i.e. `SleepLifecycle.Enable`) at config load starts it BEFORE the
-    // bridge exists, and it then sits in `AwaitingEligibility`, reporting `time_paused` and
-    // `bridge session unavailable`, while the Mod never opens the pipe: the launcher dies at
-    // `stardew_pipe_not_listening:gamebuddy-stardew` and the companion never gets to act. Measured 2026-10-17 on
-    // run g8, in the SMAPI log: `sleep lifecycle started` at load time, the multi-day and play-session givens armed,
-    // then `not_home` / `time_paused` forever and no bridge attach.
+    // Passing it would arm `ModEntry.TryArmSleepLifecycle` at config load, BEFORE the bridge exists: the lifecycle
+    // then sits in `AwaitingEligibility`, reporting `time_paused` and `bridge session unavailable`, while the Mod
+    // never opens the pipe. The launcher dies at `stardew_pipe_not_listening:gamebuddy-stardew` and the companion
+    // never gets to act. Measured 2026-10-17 on run g8, in the SMAPI log: `sleep lifecycle started` at load time,
+    // the multi-day and play-session givens armed, then `not_home` / `time_paused` forever and no bridge attach.
     //
-    // So a night still cannot be advanced by this launcher, and that is the NEXT change: the lifecycle has to be
-    // armed after the bridge (or created on demand when `advance_day` arrives) rather than at config load. Leaving
-    // it off keeps runs attachable and playable in the meantime, which is what the other findings need.
+    // A night IS advanceable anyway, because `advance_day` owns its own lifecycle on demand rather than borrowing
+    // an armed one: `RequestLocalAdvanceDay` starts it itself
+    // (farmhandexecutioncontroller.lifecycleactions.cs:103-107, `SleepAndAdvanceDayLifecycle.TryStart` +
+    // `new ActiveDayAdvance(...)`) and `UpdateActiveDayAdvance()` drives it to its receipt from the ordinary
+    // game-thread update. Arming the flag as well would be actively wrong: the file lane and the wire action would
+    // then compete for the same actor, and the dispatched night would bounce off `body_owned`
+    // (`ModConfig.cs:66-68`). So leaving it off is what keeps runs attachable AND nights reachable.
   ]);
   console.log(`fixture prepared (action=${action}, attempt ${attempt})`);
 };
