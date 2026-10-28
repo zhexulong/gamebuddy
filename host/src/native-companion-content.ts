@@ -51,6 +51,16 @@ export type NativeCompanionContentEvent =
  * model's exact text to the sinks; the Chat transcript renderer draws the
  * asterisk beat (`.message-action`) and its durable row must hold what the model
  * wrote.
+ *
+ * Stage direction is `*...*`, never a bracket. An inline bracket group such as
+ * `（轻声）` is a prosody direction the voice channel performs instead of
+ * speaking, and `dehydrateCompanionSpeech` deliberately preserves it for that
+ * lane - so `"strip"` passes it through to the bubble as well. That is the
+ * accepted cost, not an oversight: the same text feeds `onPreviewDelta` into
+ * `voiceSink.append`, and a projection here that removed the tag to tidy the
+ * bubble would delete the emotion channel that consumer reads. Both surfaces
+ * therefore keep it, and the Chat renderer is the one that dresses it (a leading
+ * run as a badge, `MOOD_TAG_CLASS`); the bubble prints it as her words.
  */
 export type StageDirectionPresentation = "strip" | "keep";
 

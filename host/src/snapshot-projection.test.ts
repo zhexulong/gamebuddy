@@ -40,9 +40,9 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         revision: fc.integer({ min: 0, max: 100000 }),
         location: fc.string({ minLength: 1, maxLength: 20 }),
         tile: fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }),
-    stamina: fc.integer({ min: 0, max: 500 }),
-    exhausted: fc.boolean(),
-    health: fc.integer({ min: 0, max: 100 }),
+        stamina: fc.integer({ min: 0, max: 500 }),
+        exhausted: fc.boolean(),
+        health: fc.integer({ min: 0, max: 100 }),
         actionable: fc.boolean(),
         capabilities: fc.array(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 0, maxLength: 5 }),
         catalogRevision: fc.constant(1),
@@ -54,10 +54,46 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         seasonIndex: fc.constant(0),
         year: fc.constant(1),
         inventorySlots: fc.option(fc.integer({ min: 12, max: 36 }), { nil: undefined }),
-        soilTiles: fc.option(fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
-        toolSlots: fc.option(fc.array(fc.record({ slot: fc.integer({ min: 0, max: 36 }), label: fc.string({ minLength: 1, maxLength: 20 }) }), { minLength: 0, maxLength: 5 }), { nil: undefined }),
-        warps: fc.option(fc.array(fc.record({ sourceX: fc.integer({ min: 0, max: 200 }), sourceY: fc.integer({ min: 0, max: 200 }), targetLocation: fc.string({ minLength: 1, maxLength: 20 }), targetX: fc.integer({ min: 0, max: 200 }), targetY: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 3 }), { nil: undefined }),
-        doorTargets: fc.option(fc.array(fc.record({ sourceX: fc.integer({ min: 0, max: 200 }), sourceY: fc.integer({ min: 0, max: 200 }), targetLocation: fc.string({ minLength: 1, maxLength: 20 }), targetX: fc.integer({ min: 0, max: 200 }), targetY: fc.integer({ min: 0, max: 200 }) }), { minLength: 0, maxLength: 3 }), { nil: undefined }),
+        soilTiles: fc.option(
+          fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), {
+            minLength: 0,
+            maxLength: 5,
+          }),
+          { nil: undefined },
+        ),
+        toolSlots: fc.option(
+          fc.array(
+            fc.record({ slot: fc.integer({ min: 0, max: 36 }), label: fc.string({ minLength: 1, maxLength: 20 }) }),
+            { minLength: 0, maxLength: 5 },
+          ),
+          { nil: undefined },
+        ),
+        warps: fc.option(
+          fc.array(
+            fc.record({
+              sourceX: fc.integer({ min: 0, max: 200 }),
+              sourceY: fc.integer({ min: 0, max: 200 }),
+              targetLocation: fc.string({ minLength: 1, maxLength: 20 }),
+              targetX: fc.integer({ min: 0, max: 200 }),
+              targetY: fc.integer({ min: 0, max: 200 }),
+            }),
+            { minLength: 0, maxLength: 3 },
+          ),
+          { nil: undefined },
+        ),
+        doorTargets: fc.option(
+          fc.array(
+            fc.record({
+              sourceX: fc.integer({ min: 0, max: 200 }),
+              sourceY: fc.integer({ min: 0, max: 200 }),
+              targetLocation: fc.string({ minLength: 1, maxLength: 20 }),
+              targetX: fc.integer({ min: 0, max: 200 }),
+              targetY: fc.integer({ min: 0, max: 200 }),
+            }),
+            { minLength: 0, maxLength: 3 },
+          ),
+          { nil: undefined },
+        ),
       }),
       (generated) => {
         const snapshot = generated as unknown as Snapshot;
@@ -80,9 +116,9 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         const farmProj1 = projectFarmingContext(frozen);
         const farmProj2 = projectFarmingContext(frozen);
         assert.deepEqual(farmProj1, farmProj2);
-    assert.equal(farmProj1.soilTilesCount, snapshot.soilTiles?.length ?? 0);
-    assert.equal(farmProj1.stamina, snapshot.stamina);
-    assert.equal(farmProj1.exhausted, snapshot.exhausted === true);
+        assert.equal(farmProj1.soilTilesCount, snapshot.soilTiles?.length ?? 0);
+        assert.equal(farmProj1.stamina, snapshot.stamina);
+        assert.equal(farmProj1.exhausted, snapshot.exhausted === true);
         assert.deepEqual(frozen, baselineClone);
       },
     ),
@@ -108,8 +144,14 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     dayOfMonth: 1,
     seasonIndex: 0,
     year: 1,
-    soilTiles: [{ x: 5, y: 10 }, { x: 5, y: 11 }],
-    toolSlots: [{ slot: 0, label: "Axe" }, { slot: 1, label: "Hoe" }],
+    soilTiles: [
+      { x: 5, y: 10 },
+      { x: 5, y: 11 },
+    ],
+    toolSlots: [
+      { slot: 0, label: "Axe" },
+      { slot: 1, label: "Hoe" },
+    ],
     inventorySlots: 24,
   };
 
@@ -127,8 +169,8 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
   assert.equal(farming.revision, 10);
   assert.equal(farming.location, "Farm");
   assert.equal(farming.soilTilesCount, 2);
-    assert.equal(farming.stamina, 270);
-    assert.equal(farming.exhausted, true);
+  assert.equal(farming.stamina, 270);
+  assert.equal(farming.exhausted, true);
   assert.equal(farming.canTill, true);
   assert.equal(farming.canWater, true);
   assert.ok(Object.isFrozen(farming));
@@ -170,7 +212,13 @@ test("Game snapshot projection is bounded, deterministic, frozen, and excludes a
       evidence: { bearer: "secret" },
     },
     toolSlots: Array.from({ length: 200 }, (_, slot) => ({ slot, label: `Tool ${slot}` })),
-    warps: Array.from({ length: 200 }, () => ({ sourceX: 1, sourceY: 1, targetLocation: "Town", targetX: 2, targetY: 2 })),
+    warps: Array.from({ length: 200 }, () => ({
+      sourceX: 1,
+      sourceY: 1,
+      targetLocation: "Town",
+      targetX: 2,
+      targetY: 2,
+    })),
   } as unknown as Snapshot;
   const first = projectGameSnapshotContext(snapshot, 10_000, 10_120);
   const second = projectGameSnapshotContext(snapshot, 10_000, 10_120);
@@ -267,4 +315,56 @@ test("Projections handle completely empty or missing optional fields cleanly", (
   assert.equal(inventory.inventorySlots, 12);
   assert.equal(inventory.toolSlotsCount, 0);
   assert.deepEqual(inventory.toolLabels, []);
+});
+
+/**
+ * Weather is deliberately NOT projected here, and this test is what keeps it that way.
+ *
+ * The fact is already delivered every turn by the environment-facts line
+ * (`formatGameEnvironmentFacts`, `runtime-core.internal.ts`), which Magic Context injects as
+ * `<runtime-environment>` into that same turn's user message. The projection's own `text` and its
+ * structured fields ride the SAME message (`event-pump.ts` `takeBatch` -> `payload`), so projecting
+ * weather too would put one fact into the model's context twice - the duplication this repo keeps
+ * paying for. The turn-facts line is the owner: it is the layer that renders the world once per
+ * turn, and it is what the Game surface's world-book selection is keyed on
+ * (`gameTurnWorldStateText`). A solicited `stardew_observe` still returns `weather` verbatim.
+ *
+ * The Mod publishes neither a festival day nor a music track on `Snapshot` (`SNAPSHOT_KEYS`,
+ * `protocol.ts`), so those two are not withheld here - they do not exist on the wire to project.
+ */
+test("the projection leaves weather to the turn-level environment line rather than rendering it twice", () => {
+  const source: Snapshot = {
+    revision: 31,
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+    stamina: 210,
+    exhausted: false,
+    health: 100,
+    actionable: true,
+    capabilities: ["water_crop"],
+    catalogRevision: 4,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 900,
+    dayOfMonth: 13,
+    seasonIndex: 0,
+    year: 2,
+    weather: "rain",
+  };
+
+  const rain = projectGameSnapshotContext(source, 1_000, 1_250);
+  const sunny = projectGameSnapshotContext({ ...source, weather: "sunny" }, 1_000, 1_250);
+  if (!rain.available || !sunny.available) throw new Error("projection_unavailable");
+
+  // Weather does not reach either half of this layer: not a structured field, not the text.
+  assert.equal(Object.hasOwn(rain, "weather"), false);
+  assert.deepEqual(rain, sunny);
+  assert.doesNotMatch(rain.text, /rain|weather/i);
+
+  // Positive control: the two projections above are equal because weather is absent, not because
+  // this layer is inert. A fact it does own must still move it.
+  const spent = projectGameSnapshotContext({ ...source, stamina: 12 }, 1_000, 1_250);
+  if (!spent.available) throw new Error("projection_unavailable");
+  assert.notDeepEqual(spent, rain);
+  assert.match(spent.text, /Stamina=12/);
 });

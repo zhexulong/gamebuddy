@@ -224,6 +224,30 @@ test("strips roleplay stage direction when the surface cannot draw it (Game bubb
   assert.deepEqual(finals, ["早安!今天天气真好。"]);
 });
 
+test("passes an inline prosody tag through to the Game bubble, because the voice lane reads the same text", async () => {
+  // A `（轻声）` is a direction the voice channel performs instead of speaking, so the
+  // dehydrator preserves it (`companion-speech-dehydration.ts`) and the Game preview
+  // lane feeds the raw delta into `voiceSink.append`. `"strip"` therefore removes
+  // stage-direction BEATS and never a bracket group: a projection here that tidied the
+  // bubble by removing the tag would delete the emotion channel of the very consumer
+  // this text also serves. The bubble printing the tag is the accepted cost.
+  const fx = fakeSession();
+  const finals: string[] = [];
+  const observer = attach(fx, {
+    onPreviewDelta: async () => undefined,
+    onFinalText: async (value) => {
+      finals.push(value);
+    },
+    onRejected: async (reason) => assert.fail(`unexpected rejection: ${reason}`),
+  });
+  observer.open();
+  fx.emit({ type: "message_start", message: assistant([text("")]) });
+  fx.emit({ type: "message_end", message: assistant([text("*转过身*（轻声）种子我已经帮你种好啦。")]) });
+  await observer.close();
+
+  assert.deepEqual(finals, ["（轻声）种子我已经帮你种好啦。"]);
+});
+
 test("keeps the model's exact text, including its asterisk action beat, for the Chat transcript", async () => {
   // The Chat durable row is the model's own output, not a display projection:
   // the renderer draws the single-asterisk beat as `.message-action`. A `strip`

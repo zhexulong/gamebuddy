@@ -1,4 +1,5 @@
 import type { GameCompanionRuntimeAttachment, GameHostBindingFactory } from "../runtime-core.internal.js";
+import type { CompanionModelConfig } from "../runtime-identity.js";
 import { requireSelectedModelConfig, resolveSurfaceModelSelection } from "../settings/model-selection.js";
 
 /** The durable recovery fields this construction zone already owns. */
@@ -18,6 +19,26 @@ export type GameRuntimeRecoveryAttachment = Pick<
  * where the connection they own lives.
  */
 const GAME_MODEL_CONFIGURATION_UNAVAILABLE = "game_runtime_model_configuration_unavailable";
+
+/**
+ * Reads the Game surface's model selection, mapped onto this surface's own answer.
+ *
+ * This is the one read, and it happens twice in a Game session's life: while the attachment is built
+ * (where `undefined` means `no_model`, the fresh-install state this surface opens in and only refuses
+ * at a provider turn) and again before every companion turn (where the same absence refuses, because
+ * a turn that ran without a model would be answered on the endpoint the player just left).
+ */
+async function readGameModelConfig(
+  input: Readonly<{ runtimeRoot: string; agentDir: string }>,
+): Promise<CompanionModelConfig | undefined> {
+  const selection = await resolveSurfaceModelSelection({
+    runtimeRoot: input.runtimeRoot,
+    agentDir: input.agentDir,
+    surface: "game",
+  });
+  if (selection.status === "no_model") return undefined;
+  return requireSelectedModelConfig(selection, GAME_MODEL_CONFIGURATION_UNAVAILABLE);
+}
 
 /**
  * Builds the one attachment every Game runtime is constructed with.
@@ -52,13 +73,6 @@ export async function createGameRuntimeAttachment(
     recoveryAttachment?: GameRuntimeRecoveryAttachment;
   }>,
 ): Promise<GameCompanionRuntimeAttachment> {
-  // The refusal below names no directory, so a missing connection, an invalid document and a lookup in the
-  // wrong place all read alike. Print the directory and the outcome, once, when the surface is about to refuse.
-  const gameSelection = await resolveSurfaceModelSelection({
-    runtimeRoot: input.runtimeRoot,
-    agentDir: input.agentDir,
-    surface: "game",
-  });
   // A root with no model still constructs: the Chat surface already works that way (a fresh install opens, reads and
   // holds a draft, and only a send refuses), and a Game surface that cannot even be built for the same reason made the
   // two surfaces disagree about what "no model" means. Only that state is omitted here.
@@ -66,12 +80,7 @@ export async function createGameRuntimeAttachment(
   // `unreadable` is not the same fact and keeps refusing: a connection document this process cannot parse is a broken
   // configuration, not an absent one, and telling a player to bring a connection they already brought is the wrong
   // instruction. The one owner of the rule distinguishes the two, so this surface does too.
-  const modelConfig =
-    gameSelection.status === "selected"
-      ? requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE)
-      : gameSelection.status === "no_model"
-        ? undefined
-        : requireSelectedModelConfig(gameSelection, GAME_MODEL_CONFIGURATION_UNAVAILABLE);
+  const modelConfig = await readGameModelConfig(input);
   const recoveryAttachment = input.recoveryAttachment;
   const recoveryFields =
     recoveryAttachment === undefined

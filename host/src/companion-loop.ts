@@ -53,6 +53,18 @@ export type CompanionTurnVolatileContext = Readonly<{
 }>;
 
 /**
+ * The Game surface's per-turn model reload.
+ *
+ * A player can change provider, model or thinking level while the game is running, and the Chat
+ * surface answers that by re-reading the selection before every prompt. The Game has no prompt
+ * loop of its own - its turns are delivered by this loop - so this is where the same read happens:
+ * immediately before a batch is handed to Pi, and nowhere else. A session whose selection is
+ * unchanged is left untouched, so an idle game reads two small files per turn instead of rewriting
+ * Pi's provider entry.
+ */
+export type CompanionTurnModelReload = () => Promise<void>;
+
+/**
  * Thin Host orchestration: a labelled batch becomes one explicitly classified Pi turn.
  * It intentionally has no goals, planner state, or game-success inference.
  */
@@ -68,6 +80,7 @@ export class CompanionLoop {
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
     private readonly voiceSink?: import("./voice.js").ChatVoiceSpeechPublisher,
     private readonly volatileContext?: CompanionTurnVolatileContext,
+    private readonly reloadModelSelection?: CompanionTurnModelReload,
   ) {
     this.#turnObserver = turnObserver;
   }
@@ -198,6 +211,12 @@ export class CompanionLoop {
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
+      // The player's Settings may have moved since the previous turn: the model a companion turn runs
+      // with is the selection the player holds NOW, exactly as a Chat turn re-reads it before its own
+      // prompt. A reload that fails is not swallowed into the turn - an unusable selection must reach
+      // the player as a failed turn, never as one answered on the model they just left - and the pump
+      // restores this exact batch for the retry, so nothing is lost.
+      if (this.reloadModelSelection !== undefined) await this.reloadModelSelection();
       // Bind this turn's keyword-gated world-book entries to the exact batch Pi is about
       // to consume, the way the Chat surface binds its own volatile sources immediately
       // before `session.prompt`. The batch id is this turn's own identity, so two turns
