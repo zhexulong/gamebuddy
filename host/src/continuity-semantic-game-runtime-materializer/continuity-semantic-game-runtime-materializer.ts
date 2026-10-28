@@ -214,6 +214,10 @@ function createBodyProgramTools(
                     requiredArguments: compiled.requirement.requiredArguments,
                     resourceClaims: compiled.requirement.resourceClaims,
                   }),
+              // A script that threw is the one refusal no builder call explains, so the engine's own words and the
+              // line they name travel with the refusal: `plan_script_threw:SyntaxError` alone leaves the companion
+              // holding eight kilobytes of its own text with nowhere to look.
+              ...(compiled.threw === undefined ? {} : { threw: compiled.threw }),
               ...(compiled.reasonCode.startsWith("plan_script_unknown_action:")
                 ? { legalActionIds: legalPlanActionIds(actions) }
                 : {}),
@@ -268,7 +272,7 @@ function createBodyProgramTools(
         // The siblings described themselves with their own names, which is zero information (measured: an agent
         // reading this list could not tell what any of the three was for).
         description:
-          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened.",
+          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened. An expired wait also says whether the plan changed while it waited: `waited.snapshotChanged: false` means the plan stood still for the whole wait, so asking again the same way will report the same thing - do something else instead (check the game, change the approach) rather than waiting again.",
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -284,7 +288,7 @@ function createBodyProgramTools(
           // Omitted or zero keeps the old behaviour exactly: one read, return. Only a caller that asked to wait
           // pays for the loop, so no existing path gets slower or starts blocking.
           if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(first)) return toolResult(first, null);
-          const waited = await waitForTerminalProgramStatus(read, waitMs);
+          const waited = await waitForTerminalProgramStatus(read, first, waitMs);
           return toolResult(waited.result, waited.waited);
         },
       }),
@@ -466,7 +470,7 @@ function bodyProgramToolParameters(name: string) {
             minimum: 0,
             maximum: 30_000,
             description:
-              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running.",
+              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running, and waited.snapshotChanged says whether the plan's own state or nodes moved at all during the wait.",
           }),
         ),
       },
@@ -662,7 +666,10 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
  * `waited` is `null` for a plain read, so a caller can tell "I did not wait" from "I waited and it was still
  * running" - the distinction the poll loop existed to express and a fixed `running` reply hides.
  */
-function toolResult<TDetails>(details: TDetails, waited: Readonly<{ reachedTerminal: boolean }> | null) {
+function toolResult<TDetails>(
+  details: TDetails,
+  waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }> | null,
+) {
   const published = (waited === null ? details : { ...(details as Record<string, unknown>), waited }) as TDetails;
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(published) }],

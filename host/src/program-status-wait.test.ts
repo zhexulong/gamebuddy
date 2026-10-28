@@ -44,22 +44,34 @@ function fakeTime() {
   };
 }
 
+/** One `program_status` payload with the fields the wait compares. */
+function active(nodeStates: readonly string[], eventHighWater = 0) {
+  return {
+    code: "found",
+    snapshot: {
+      programId: "p1",
+      state: "active",
+      eventHighWater,
+      nodes: nodeStates.map((state, index) => ({ nodeId: `n${index + 1}`, state })),
+    },
+  };
+}
+
 test("a plan that settles while waiting returns the settled read and says it waited", async () => {
   const clock = fakeTime();
-  const reads = [
-    { code: "found", snapshot: { state: "active" } },
-    { code: "found", snapshot: { state: "active" } },
-    { code: "found", snapshot: { state: "succeeded" } },
-  ];
+  const reads = [active(["running"]), active(["running"]), { code: "found", snapshot: { state: "succeeded" } }];
   let index = 0;
   const outcome = await waitForTerminalProgramStatus(
     async () => reads[Math.min(index++, reads.length - 1)]!,
+    reads[0]!,
     5_000,
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
   assert.deepEqual(outcome.result, { code: "found", snapshot: { state: "succeeded" } });
   assert.equal(outcome.waited.reachedTerminal, true);
+  // The second read had moved a node, so the plan changed even before it settled.
+  assert.equal(outcome.waited.snapshotChanged, true);
   assert.equal(index, 3);
 });
 
@@ -69,16 +81,72 @@ test("expiry returns the honest still-running read, never a finished one", async
   const outcome = await waitForTerminalProgramStatus(
     async () => {
       reads += 1;
-      return { code: "found", snapshot: { state: "active" } };
+      return active(["running"]);
     },
+    active(["running"]),
     1_000,
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.deepEqual(outcome.result, { code: "found", snapshot: { state: "active" } });
+  assert.deepEqual(outcome.result, active(["running"]));
   assert.equal(outcome.waited.reachedTerminal, false);
   // It polled more than once but did not spin: ~4 intervals inside a 1s budget.
   assert.ok(reads >= 2 && reads <= 6, `unexpected read count ${String(reads)}`);
+});
+
+/**
+ * The measurement this field exists for (`round4`): four consecutive 30 s waits on one plan, every one of them
+ * returning the same `running` node. A caller told only "still running" waited again and paid the bound again.
+ */
+test("an expired wait whose plan never moved says so, instead of the bare still-running it used to say", async () => {
+  const clock = fakeTime();
+  const outcome = await waitForTerminalProgramStatus(
+    async () => active(["succeeded", "running"]),
+    active(["succeeded", "running"]),
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, false);
+});
+
+test("a plan that advanced a node during an expired wait is reported as having advanced", async () => {
+  const clock = fakeTime();
+  const reads = [active(["running", "pending"]), active(["succeeded", "pending"]), active(["succeeded", "running"])];
+  let index = 0;
+  const outcome = await waitForTerminalProgramStatus(
+    async () => reads[Math.min(index++, reads.length - 1)]!,
+    reads[0]!,
+    5_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, true);
+});
+
+/**
+ * `eventHighWater` is the journal-wide cursor, so another plan's progress moves it while this one stands still.
+ * Measured 2026-10-28: two programs ran in alternation, which is what made a single controller-wide slot useless for
+ * the same de-duplication on the Mod side (`6e69b478`). Reporting this plan as "changed" because a DIFFERENT plan
+ * moved would be the same mistake in the other direction.
+ */
+test("another program's journal entry does not count as this plan changing", async () => {
+  const clock = fakeTime();
+  let reads = 0;
+  const outcome = await waitForTerminalProgramStatus(
+    async () => {
+      reads += 1;
+      return active(["running"], 288 + reads);
+    },
+    active(["running"], 288),
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, false);
 });
 
 test("the wait is capped, so a caller cannot hold a turn open indefinitely", async () => {
@@ -87,8 +155,9 @@ test("the wait is capped, so a caller cannot hold a turn open indefinitely", asy
   await waitForTerminalProgramStatus(
     async () => {
       reads += 1;
-      return { code: "found", snapshot: { state: "active" } };
+      return active(["running"]);
     },
+    active(["running"]),
     MAX_PROGRAM_STATUS_WAIT_MS * 10,
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
@@ -105,6 +174,7 @@ test("an already-finished plan costs exactly one read", async () => {
       reads += 1;
       return { code: "found", snapshot: { state: "succeeded" } };
     },
+    { code: "found", snapshot: { state: "succeeded" } },
     5_000,
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
