@@ -97,7 +97,17 @@ export type CabinViewState =
   | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
   | Readonly<{ kind: "admitted" }>
   | Readonly<{ kind: "uncertain" }>
-  | Readonly<{ kind: "unavailable" }>;
+  | Readonly<{ kind: "unavailable" }>
+  /**
+   * No cabin this companion may use in the current host world.
+   *
+   * Distinct from `unavailable`, and the distinction is the whole point: this state has a CURE the player can act
+   * on - have Robin build one - while `unavailable` is "the read could not be made". The Host has always known the
+   * difference (`stardew_player_host_cabin_unavailable`); it was flattened to `state_unavailable` on the read route
+   * until 2026-10-28, so the panel had one word for two situations and a player reading the wrong one retried
+   * forever.
+   */
+  | Readonly<{ kind: "missing" }>;
 
 type StatusDotTone = "progress" | "warning" | "danger" | "neutral";
 
@@ -768,6 +778,11 @@ function CabinHandoff({
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
       <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
       {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
+      {state.kind === "missing" && (
+        <p className="game-status" data-tone="action" role="status">
+          {labels.stardewCabinsMissing}
+        </p>
+      )}
       {state.kind === "unavailable" &&
         (awaitsSession ? (
           <p className="game-status" data-tone="info" role="status">
@@ -783,7 +798,7 @@ function CabinHandoff({
         The failing state and the not-yet state look identical to a player and have the same cure, so one
         control covers both rather than making the player work out which silence they are reading.
       */}
-      {state.kind === "unavailable" && onRefresh !== undefined && (
+      {(state.kind === "unavailable" || state.kind === "missing") && onRefresh !== undefined && (
         <button type="button" className="game-secondary-action" onClick={onRefresh}>
           {labels.stardewCabinsRefresh}
         </button>

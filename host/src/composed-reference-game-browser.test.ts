@@ -1942,6 +1942,54 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
   }
 });
 
+test("the cabin READ keeps the missing-cabin cause, which the confirm route already did", async () => {
+  // `stardew_player_host_cabin_unavailable` is not a fault: it is the fact that this host world has no cabin the
+  // companion may use, and its cure is the guidance the product already gives - have Robin build one. The read
+  // branch flattened it to `state_unavailable` until 2026-10-28, so the panel could say only "unavailable" and a
+  // player in that state retried a read that would never change on its own.
+  //
+  // The assertion is the DISTINCTION, not the sentence: this cause must survive, and a genuine read failure must
+  // still land on `state_unavailable`.
+  const cases = [
+    ["stardew_player_host_cabin_unavailable", "stardew_player_host_cabin_missing"],
+    ["stardew_cabin_handoff_unavailable", "state_unavailable"],
+    ["stardew_cabin_handoff_revision_changed", "state_unavailable"],
+    ["private-sensitive-detail", "state_unavailable"],
+  ] as const;
+  for (const [internalMessage, expectedCode] of cases) {
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+      bootstrapToken,
+      async readChat(context) {
+        return stateForChat(context);
+      },
+      async readGame(context) {
+        return stateForGame(context);
+      },
+      stardewCabins: {
+        async read() {
+          throw new Error(internalMessage);
+        },
+        async confirm() {
+          throw new Error("unused");
+        },
+      },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins`, {
+        headers: { origin: server.origin, cookie, "x-csrf-token": root.chat.csrfToken },
+      });
+      assert.equal(response.status, 409, internalMessage);
+      assert.deepEqual(await response.json(), lifecycleProblemBody(internalMessage, expectedCode), internalMessage);
+    } finally {
+      await server.close();
+    }
+  }
+});
 test("construction rejects fake or mismounted capabilities", () => {
   assert.throws(
     () =>

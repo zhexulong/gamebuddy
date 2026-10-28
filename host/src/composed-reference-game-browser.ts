@@ -596,6 +596,25 @@ function stardewSettingsProblemCode(error: unknown): string {
   return "state_unavailable";
 }
 
+/**
+ * The cabin READ's own causes.
+ *
+ * `stardew_player_host_cabin_unavailable` is not a fault: it is the fact that this host world has no cabin the
+ * companion may use, and its cure is the guidance the product already gives - have Robin build one. Flattening it
+ * to `state_unavailable` (which is what this branch did) leaves the panel able to say only "unavailable", so a
+ * player reading it retries forever against a state that will never change on its own.
+ *
+ * Both `stardew_cabin_handoff_unavailable` and `stardew_cabin_handoff_revision_changed` keep `state_unavailable`:
+ * the first means no Player Host instance is awaiting attestation (the panel has a separate sentence for that via
+ * `awaitsSession`), and the second is a genuine retry - the world moved while the read was in flight.
+ */
+function stardewCabinReadProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  return error.message === "stardew_player_host_cabin_unavailable"
+    ? "stardew_player_host_cabin_missing"
+    : "state_unavailable";
+}
+
 function stardewCabinProblemCode(error: unknown): string {
   if (!(error instanceof Error)) return "state_unavailable";
   switch (error.message) {
@@ -1986,7 +2005,13 @@ export function createComposedReferenceGameBrowserRequestHandler(
         if (!GameBrowserValidatorsV1.StardewCabinChoicesV1Schema.Check(result)) throw new ControlledStateError();
         sendJson(response, 200, result);
       } catch (error) {
-        sendLifecycleProblem(response, 409, error, "state_unavailable");
+        // The read has its OWN causes, and one of them is actionable in a way `state_unavailable` is not.
+        //
+        // Measured 2026-10-28: a world with no cabin for the companion throws
+        // `stardew_player_host_cabin_unavailable`, whose cure is "have Robin build one" - the guidance the product
+        // already gives. Flattened to `state_unavailable`, the panel can only say "unavailable" and the player
+        // retries forever. The confirm branch beside this one has always mapped by name; the read branch did not.
+        sendLifecycleProblem(response, 409, error, stardewCabinReadProblemCode(error));
       }
       return;
     }

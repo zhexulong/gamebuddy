@@ -81,6 +81,8 @@ const en = {
   // player nothing about what happened or why a reload is the way forward.
   stardewCabinsUnavailable:
     "Cabins are read while the game you launched is starting up. Load your farm, then read them again.",
+  stardewCabinsMissing:
+    "This world has no cabin she can live in yet. Have Robin build one on your farm, then read the cabins again.",
   stardewCabinsRefresh: "Read cabins again",
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
@@ -1062,6 +1064,7 @@ const zh: Messages = {
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
+  stardewCabinsMissing: "这个世界还没有她能住的小屋。先请罗宾在农场盖一间，然后再读一次小屋。",
   stardewCabinsRefresh: "再读一次小屋",
   stardewCabinsAwaitingSession:
     "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",

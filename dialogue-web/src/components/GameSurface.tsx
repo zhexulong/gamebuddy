@@ -130,6 +130,18 @@ export function GameSurface({
   const [endgameConfirmArmed, setEndgameConfirmArmed] = useState(false);
   const cabinIdempotencyKeysRef = useRef(new Map<string, string>());
 
+  /**
+   * Which cabin state an error stands for.
+   *
+   * Only one message is distinguishable to the player, and it is the one with a cure: the Host answers
+   * `stardew_player_host_cabin_missing` when this world cannot host the companion YET, and the product's own
+   * guidance is to have Robin build a cabin. Every other failure is a read that could not be made.
+   */
+  const cabinViewKindFor = (error: unknown): "missing" | "unavailable" => {
+    const code = (error as { code?: unknown } | null)?.code;
+    return code === "stardew_player_host_cabin_missing" ? "missing" : "unavailable";
+  };
+
   const readCabins = useCallback(async (): Promise<void> => {
     setCabinView({ kind: "loading" });
     try {
@@ -138,8 +150,11 @@ export function GameSurface({
         result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
       );
       setCabinView({ kind: "choices", choices: result.choices });
-    } catch {
-      setCabinView({ kind: "unavailable" });
+    } catch (error) {
+      // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
+      // cabin for her YET and Robin can build one; everything else is a read that could not be made. Flattening them
+      // was why a player with no cabin retried the same read instead of building one.
+      setCabinView({ kind: cabinViewKindFor(error) });
     }
   }, [composedApi]);
 
