@@ -278,6 +278,89 @@ test("bounds: the wire's cap and the writer's cap must agree in both directions"
   }
 });
 
+test("bounds: one property capped two ways is the drift the element type cannot name", (t) => {
+  const root = fixture();
+  const file = "host/src/tavern/browser-contract/index.ts";
+  try {
+    // `NoteListV1Schema.notes` is capped at 10. A second schema declaring the SAME property over the
+    // SAME rows at another cap is what this rule exists for: one collection, two published ceilings, so
+    // a projection legal under one schema is truncated or refused under the other. The injection is a
+    // real second schema, not a mocked predicate.
+    const original = read(root, file);
+    write(
+      root,
+      file,
+      original.replace(
+        "const NoteListV1Schema = strictObject({",
+        [
+          "const NotePageV1Schema = strictObject({",
+          "  notes: Type.Array(NoteV1Schema, { maxItems: 40 }),",
+          "});",
+          "const NoteListV1Schema = strictObject({",
+        ].join("\n"),
+      ),
+    );
+    try {
+      const broken = violationsOf(root, "bounds");
+      const drift = broken.violations.find((violation) => /capped 2 different ways/u.test(violation.message));
+      assert.notEqual(drift, undefined, `one property capped twice is a finding:\n${broken.notes.join("\n")}`);
+      assert.match(drift.message, /NoteListV1Schema=10/u, "the message must name every schema and its cap");
+      assert.match(drift.message, /NotePageV1Schema=40/u);
+      t.diagnostic(drift.message);
+    } finally {
+      write(root, file, original);
+    }
+    assert.deepEqual(violationsOf(root, "bounds").violations, [], "green again once the second schema is gone");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds: two properties over one element type are two collections, not one cap", (t) => {
+  const root = fixture();
+  const contract = "host/src/tavern/browser-contract/index.ts";
+  const store = "host/src/note-store.ts";
+  try {
+    // The shape `deniedActions` (512) and `deniedActionFamilies` (64) have: one row type, two
+    // properties, two caps the writer states on purpose - one constant per collection. An audit that
+    // groups by the row type calls this drift and can never be green on correct code, so it must not.
+    const originalContract = read(root, contract);
+    const originalStore = read(root, store);
+    write(
+      root,
+      contract,
+      originalContract.replace(
+        "const NoteListV1Schema = strictObject({",
+        [
+          "const NoteArchiveV1Schema = strictObject({",
+          "  notes: Type.Array(NoteV1Schema, { maxItems: 10 }),",
+          "  archivedNotes: Type.Array(NoteV1Schema, { maxItems: 40 }),",
+          "});",
+          "const NoteListV1Schema = strictObject({",
+        ].join("\n"),
+      ),
+    );
+    write(
+      root,
+      store,
+      originalStore.replace("const MAX_NOTES = 10;", "const MAX_NOTES = 10;\nconst MAX_ARCHIVED_NOTES = 40;"),
+    );
+    try {
+      const result = violationsOf(root, "bounds");
+      assert.deepEqual(
+        result.violations,
+        [],
+        `two collections over one row type are not one cap:\n${result.notes.join("\n")}`,
+      );
+    } finally {
+      write(root, contract, originalContract);
+      write(root, store, originalStore);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("refusal: a capacity enforced without a named code is a generic failure", (t) => {
   const root = fixture();
   try {

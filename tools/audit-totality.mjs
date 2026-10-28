@@ -475,20 +475,27 @@ function runBounds(sources) {
     }
   }
 
-  // The same collection carried by two schemas with two different caps is the
-  // drift no single-schema check can see.
-  const byElement = new Map();
+  // One collection, declared twice with two different caps, is the drift no single-schema check can see:
+  // the read schema can project a record its own command schema refuses, or keep one the other cannot fill.
+  //
+  // The collection is named by its property AND by what it holds. Grouping by the element type alone
+  // compares two different collections that happen to share a row shape: `deniedActionFamilies` (64) and
+  // `deniedActions` (512) both carry `SAFE_ID`, and the writer states both caps on purpose
+  // (`STARDEW_DENIED_FAMILY_LIMIT`, `STARDEW_DENIED_ACTION_LIMIT`, one per collection). Two arrays of one
+  // element type are not one collection, so they are not one cap.
+  const byCollection = new Map();
   for (const entry of caps) {
     if (entry.elementSchema === null) continue;
-    byElement.set(entry.elementSchema, [...(byElement.get(entry.elementSchema) ?? []), entry]);
+    const key = `${entry.property}\u0000${entry.elementSchema}`;
+    byCollection.set(key, [...(byCollection.get(key) ?? []), entry]);
   }
-  for (const [element, entries] of byElement) {
+  for (const entries of byCollection.values()) {
     const limits = new Set(entries.map((entry) => entry.limit));
     if (limits.size <= 1) continue;
     violations.push({
       rank: 2,
       where: entries.map((entry) => entry.where).join(" "),
-      message: `${element} is carried by ${entries.length} array cap(s) with ${limits.size} different limits (${entries.map((entry) => `${entry.property}=${entry.limit ?? entry.expression}`).join(", ")}); one of them truncates`,
+      message: `${entries[0].property} (${entries[0].elementSchema} rows) is capped ${limits.size} different ways in ${entries.length} schema(s) (${entries.map((entry) => `${entry.schema}=${entry.limit ?? entry.expression}`).join(", ")}); one of them truncates`,
     });
   }
 
