@@ -598,13 +598,24 @@ function enclosingFunction(node) {
 }
 
 /**
- * The nearest enclosing function the module *declared* by name. An arrow is a callback passed to something else
- * (`value.every((item) => …)`), so the question it answers is the named function's, not its own.
+ * The nearest enclosing function the module *declared* by name, with its name and the return type it
+ * declares.
+ *
+ * A `const`-bound arrow is one of those: `const isX = (value: string): boolean => …` is a predicate this
+ * tree writes, and reading it is the difference between "the caller names this refusal" and "the player
+ * meets a generic failure". An anonymous callback (`value.every((item) => …)`) is not - the question it
+ * answers is the named function's, not its own - so it is scanned past, not returned.
  */
 function declaredFunction(node) {
   for (let current = node.parent; current !== undefined; current = current.parent) {
     if (ts.isFunctionDeclaration(current) || ts.isMethodDeclaration(current)) return current;
     if (ts.isFunctionExpression(current) && current.name !== undefined) return current;
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
+      const binding = current.parent;
+      if (ts.isVariableDeclaration(binding) && ts.isIdentifier(binding.name))
+        return { name: binding.name, type: current.type };
+      continue;
+    }
     if (ts.isSourceFile(current)) return null;
   }
   return null;
@@ -618,10 +629,7 @@ function declaredFunction(node) {
  */
 function answersQuestion(fn) {
   if (fn === null) return false;
-  const name =
-    ts.isFunctionDeclaration(fn) || ts.isMethodDeclaration(fn) || ts.isFunctionExpression(fn)
-      ? fn.name?.text
-      : undefined;
+  const name = fn.name !== undefined && ts.isIdentifier(fn.name) ? fn.name.text : undefined;
   if (name !== undefined && /^(?:is|has|can|validate|assert|allows)/u.test(name)) return true;
   const type = fn.type;
   if (type === undefined) return false;

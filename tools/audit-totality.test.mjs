@@ -361,6 +361,54 @@ test("bounds: two properties over one element type are two collections, not one 
   }
 });
 
+test("refusal: a const-bound predicate answers the question its caller names, and one that does not is a finding", (t) => {
+  const root = fixture();
+  const file = "host/src/note-store.ts";
+  try {
+    // The shape `MAX_GAME_PROMPT_ADDITION_CHARS` has: `const isX = (value: string): boolean => … length <= MAX`.
+    // It is a predicate - `answersQuestion` counts it as named by its caller - and the reader has to see a
+    // `const`-bound arrow at all for that branch to exist. Before it did, this comparison was reported as a
+    // capacity enforced "with no bounded code", which pointed at the wrong layer: the code lives at the caller.
+    const original = read(root, file);
+    write(
+      root,
+      file,
+      `${original}\nexport const isNotesBounded = (value: readonly string[]): boolean =>\n  value.length <= MAX_NOTES;\n`,
+    );
+    try {
+      assert.deepEqual(
+        violationsOf(root, "refusal").violations,
+        [],
+        "a boolean-returning const arrow is a predicate, so its caller names the refusal",
+      );
+    } finally {
+      write(root, file, original);
+    }
+    // And the other direction: the same const arrow answering a non-boolean (a value it narrows) is not a
+    // predicate, so its capacity comparison is a refusal the player meets unnamed - which must go red.
+    write(
+      root,
+      file,
+      `${original}\nexport const boundedNotes = (value: readonly string[]): readonly string[] =>\n  value.length <= MAX_NOTES ? value : [];\n`,
+    );
+    try {
+      const broken = violationsOf(root, "refusal");
+      assert.equal(
+        broken.violations.length,
+        1,
+        `an unnamed capacity refusal is a finding:\n${broken.notes.join("\n")}`,
+      );
+      assert.match(broken.violations[0].message, /MAX_NOTES/u);
+      t.diagnostic(broken.violations[0].message);
+    } finally {
+      write(root, file, original);
+    }
+    assert.deepEqual(violationsOf(root, "refusal").violations, [], "green again once the injection is removed");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("refusal: a capacity enforced without a named code is a generic failure", (t) => {
   const root = fixture();
   try {
