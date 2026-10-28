@@ -474,20 +474,32 @@ export async function admitDesktopCompositionGeneration({ outputRoot, pointer })
  * the entry directory where the bootstrap wire resolves it.
  */
 export async function installDesktopCompositionGeneration({ artifactRoot, rootLayout }) {
-  try {
+  // The reason travels with the failure. A bare catch here reported every cause as "install failed", and that name cost a
+  // debugging session: the real error was `ENOSPC` - the disk was full, the artifact had built fine - while the message
+  // read like the install logic was broken. Each step names itself, and the errno is carried through, so the next reader
+  // does not have to reproduce the copy by hand to find out what happened.
+  const step = async (name, run) => {
+    try {
+      await run();
+    } catch (error) {
+      const code = error?.code ?? error?.errno ?? (error instanceof Error ? error.message : String(error));
+      throw new Error(`desktop_compose_generation_install_failed:${name}:${String(code).slice(0, 120)}`);
+    }
+  };
+  await step("roots", async () => {
     await mkdir(rootLayout.dataRoot, { recursive: true });
     await mkdir(rootLayout.operationalRoot, { recursive: true });
     await mkdir(rootLayout.presentationRoot, { recursive: true });
     await mkdir(dirname(rootLayout.generationRoot), { recursive: true });
-    await cp(artifactRoot, rootLayout.generationRoot, { recursive: true, force: true });
-    await cp(
+  });
+  await step("generation_copy", () => cp(artifactRoot, rootLayout.generationRoot, { recursive: true, force: true }));
+  await step("reparse_pair_copy", () =>
+    cp(
       join(artifactRoot, "native", "windows-reparse-inspector", "win-x64"),
       join(rootLayout.moduleDirectory, "native", "windows-reparse-inspector", "win-x64"),
       { recursive: true, force: true },
-    );
-  } catch {
-    throw new Error("desktop_compose_generation_install_failed");
-  }
+    ),
+  );
   await regularDirectory(rootLayout.generationRoot, "installed_generation");
   return rootLayout;
 }
