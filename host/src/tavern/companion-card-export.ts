@@ -65,6 +65,14 @@ type TavernCardBookEntry = Readonly<{
   content: string;
   /** The card's own trigger words; absent when the entry carries none. */
   keys?: readonly string[];
+  /**
+   * The card's own secondary trigger words; absent when the entry carries none. The
+   * per-turn selector applies them through `selectiveLogic` once `keys` matched, so an
+   * entry that loses them selects where its author excluded it.
+   */
+  secondary_keys?: readonly string[];
+  /** SillyTavern's mode for the secondary words: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. */
+  selectiveLogic?: 0 | 1 | 2 | 3;
   /** Always-on membership; absent when the entry is keyword-gated. */
   constant?: boolean;
 }>;
@@ -270,7 +278,8 @@ function examplesToMesExample(examples: readonly Readonly<{ user: string; compan
  * The card's `character_book`, or absent when the companion has no book (or an
  * empty one). A book's `alwaysOnPremise` has no V2/V3 field and is not invented;
  * the entries and the declared scan depth are the facts the format carries, and
- * both the durable entry's trigger words and its always-on flag round-trip.
+ * the durable entry's trigger words, its secondary gate (the words and the mode
+ * that combines them) and its always-on flag all round-trip.
  */
 function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined {
   if (book === null || book === undefined || book.entries.length === 0) return undefined;
@@ -282,6 +291,10 @@ function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined 
           comment: entry.title,
           content: entry.content,
           ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: Object.freeze([...entry.keys]) }),
+          ...(entry.secondaryKeys === undefined || entry.secondaryKeys.length === 0
+            ? {}
+            : { secondary_keys: Object.freeze([...entry.secondaryKeys]) }),
+          ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
           ...(entry.constant === true ? { constant: true } : {}),
         }),
       ),

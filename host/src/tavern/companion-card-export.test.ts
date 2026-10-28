@@ -44,11 +44,11 @@ async function cleanupTestRoot(root: string): Promise<void> {
 }
 
 /**
- * The card a companion is first built from: her own world book (keyed entries and
- * one always-on entry, with a declared scan depth), a scenario, two openings
- * beside the default and a performance directive. This is the shape that makes a
- * round trip meaningful - every field the export writes came from a card first,
- * so the second import has something to get wrong.
+ * The card a companion is first built from: her own world book (keyed entries, one
+ * gated entry with the card's secondary words and mode, and one always-on entry, with
+ * a declared scan depth), a scenario, two openings beside the default and a performance
+ * directive. This is the shape that makes a round trip meaningful - every field the
+ * export writes came from a card first, so the second import has something to get wrong.
  */
 const SEED_CARD = JSON.stringify({
   spec: "chara_card_v3",
@@ -66,7 +66,16 @@ const SEED_CARD = JSON.stringify({
     character_book: {
       scan_depth: 5,
       entries: [
-        { comment: "温室", content: "温室是她去年冬天修好的。", keys: ["温室", "玻璃房"] },
+        {
+          comment: "温室",
+          content: "温室是她去年冬天修好的。",
+          keys: ["温室", "玻璃房"],
+          // The card's own secondary gate, in SillyTavern's NOT ALL mode: the entry is
+          // about the greenhouse only when the player is NOT also in that mood. Live
+          // data for the per-turn selector, and the loss the export used to make silent.
+          secondary_keys: ["mood:quiet"],
+          selectiveLogic: 1,
+        },
         { comment: "洒水器", content: "洒水器接在井边。", constant: true },
       ],
     },
@@ -214,6 +223,8 @@ test("a companion's card round-trips through the real import path to the same ef
         title: entry.title,
         content: entry.content,
         keys: entry.keys ?? [],
+        secondaryKeys: entry.secondaryKeys ?? [],
+        selectiveLogic: entry.selectiveLogic,
         constant: entry.constant === true,
       }));
     assert.deepEqual(entries(secondRecords.worldBook), entries(firstRecords.worldBook));
@@ -232,6 +243,23 @@ test("a companion's card round-trips through the real import path to the same ef
       [["温室", "玻璃房"], []],
     );
     assert.equal(entries(firstRecords.worldBook)[1]?.constant, true);
+    // The card's secondary gate is live data - the per-turn selector applies it - so
+    // it is asserted by name on both sides of the round trip.
+    assert.deepEqual(entries(firstRecords.worldBook)[0]?.secondaryKeys, ["mood:quiet"]);
+    assert.equal(entries(firstRecords.worldBook)[0]?.selectiveLogic, 1);
+    assert.equal(entries(secondRecords.worldBook)[0]?.selectiveLogic, 1);
+
+    // The exported card itself carries both, in the spec's own spellings, and the
+    // entry that never wrote a gate writes no gate field at all.
+    const exportedEntries = (
+      JSON.parse(exported.card) as {
+        data: { character_book: { entries: readonly Record<string, unknown>[] } };
+      }
+    ).data.character_book.entries;
+    assert.deepEqual(exportedEntries[0]?.secondary_keys, ["mood:quiet"]);
+    assert.equal(exportedEntries[0]?.selectiveLogic, 1);
+    assert.equal(Object.hasOwn(exportedEntries[1]!, "secondary_keys"), false);
+    assert.equal(Object.hasOwn(exportedEntries[1]!, "selectiveLogic"), false);
   } finally {
     threads?.close?.();
     await cleanupTestRoot(root);
@@ -792,6 +820,8 @@ test("her picture round-trips: the PNG card carries her own image and the re-imp
         title: entry.title,
         content: entry.content,
         keys: entry.keys ?? [],
+        secondaryKeys: entry.secondaryKeys ?? [],
+        selectiveLogic: entry.selectiveLogic,
         constant: entry.constant === true,
       }));
     assert.deepEqual(entries(secondRecords.worldBook), entries(firstRecords.worldBook));
