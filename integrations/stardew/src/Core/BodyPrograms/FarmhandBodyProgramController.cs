@@ -85,14 +85,24 @@ public sealed class FarmhandBodyProgramController
     private void DiagnoseWaiting(string programId, BodyProgramControllerResultCode code)
     {
         if (this.Diagnostics is null) return;
-        string detail = $"challenge_not_created;program={programId};code={code}";
-        if (this.diagnosticsLastWaiting == detail) return;
-        this.diagnosticsLastWaiting = detail;
-        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+        // PER PROGRAM, keyed by program alone: a program that is still waiting for the same reason says the same
+        // thing, no matter how many other programs are doing the same beside it.
+        //
+        // Measured 2026-10-28 (`round4`): 314 `challenge_not_created` lines, of which `plan_273` accounted for 122
+        // and `plan_344` for 121. Two programs waiting in alternation made every frame look like a change to a
+        // single "last reason" field - so the de-duplication did nothing for exactly the case that matters, several
+        // programs alive at once, which is the normal state of a multi-program run.
+        //
+        // Whether the reason is unchanged is a per-program fact. The frame is not involved: a program can wait for
+        // `NodeNotEligible` for a whole day, and that is one line, not 60 per second.
+        if (this.diagnosticsLastWaiting.TryGetValue(programId, out BodyProgramControllerResultCode last) && last == code)
+            return;
+        this.diagnosticsLastWaiting[programId] = code;
+        this.Diagnostics($"[GameBuddy-body-program] challenge_not_created;program={programId};code={code}");
     }
 
-    /// <summary>The last waiting reason printed, so an unchanged one is not repeated.</summary>
-    private string? diagnosticsLastWaiting;
+    /** The last waiting code printed for each program, so a repeat says nothing. */
+    private readonly Dictionary<string, BodyProgramControllerResultCode> diagnosticsLastWaiting = new(StringComparer.Ordinal);
     private readonly IBodyProgramNodeExecutor? executor;
     // Dispatch tuple every subset pass (admission, policy, deadline, exact
     // binding) has acknowledged. A node whose last Execute returned the null
