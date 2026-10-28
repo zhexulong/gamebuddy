@@ -5294,25 +5294,53 @@
 
   /* The character domain's own cards use the region they are given. Six stacked
    cards are three screens of one column once the region is wider than a
-   transcript, and the grid is the surface's own: it packs the cards the surface
-   already had and falls back to one column the moment the room is gone.
+   transcript, so they are packed into columns that fall back to one the moment
+   the room is gone.
 
-   Every card is as tall as its own content (`align-items: start`), not as tall
-   as the row. A grid's default is `stretch`, which puts the row's tallest card on
-   every card in it: measured at 1440x900, the second row's track was 739 px, and
-   the persona and scenario cards in it ended their content at y=773 and y=716
-   against a card bottom of 1139 - 353 px and 410 px of empty *card* below the
-   last control, inside a border that then reads as content the card does not
-   have (the design review's shots read 306 px and 364 px on a 730 px card: the
-   same defect, a slightly shorter row). Stretching does not remove that space,
-   it only moves it inside the border and manufactures a card around it; the
-   leftover belongs to the row, as canvas between this row and the next. The top
-   line is unaffected - the cards still all start on their row's top edge - and
-   the single-column narrow layout is unchanged because one card is one row. */
+   Columns, not a grid of rows. A grid sizes every track to its tallest card, and
+   this surface's opening card is more than twice any other: measured at 1440x900,
+   it is 757 px against 398 px for 用户设定 and 341 px for 场景, so the second
+   row's track was 757 px and those two cards ended their content 359 px and
+   416 px above its bottom - dead canvas between them and the export card the
+   row pushed below the 900 px fold. `align-items: start` (the previous rule)
+   had moved that emptiness out of the cards' own borders and into the row, which
+   is why every card reported 0 px of slack inside itself, but it cannot remove
+   it: the track is still there and still as tall as its tallest card.
+
+   In columns there is no row track. Each card takes its own height and the next
+   card in that column follows it directly: measured at 1440x900, three columns
+   of 931, 751 and 757 px with the 12 px between cards and no hole punched
+   between any two of them, the panel 951 px instead of 1127. At 400x800 it is
+   one column and the same 12 px the grid gave, because one column is one card
+   per row.
+
+   A column break never splits a card (`break-inside: avoid`). The shared
+   `.management-settings-section` gap is a flex gap, which a block container does
+   not have, so the space between cards is carried by the cards' own margin.
+
+   The cost, measured rather than assumed: columns balance by content, so a
+   change large enough to cross a boundary re-flows cards between columns. The
+   one control on this surface that can do it is adding opening variants -
+   adding a fourth moved 用户设定 from the second column to the first. Typing
+   does not re-flow anything (the authoring fields are fixed-row textareas), nor
+   does the companion's own world-book disclosure, which is a card outside this
+   panel. The card being edited - 开场白, the last one - never moves: the cards
+   before it are what re-pack. */
   [data-characters-panel] {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
-    align-items: start;
+    display: block;
+    columns: 420px;
+    column-gap: 12px;
+  }
+
+  [data-characters-panel] > section {
+    break-inside: avoid;
+    margin: 0 0 12px;
+  }
+
+  /* The last card's margin would be canvas below it rather than between it and
+     the next card, and a panel already ends with its own padding. */
+  [data-characters-panel] > section:last-child {
+    margin-bottom: 0;
   }
 
   .card-import-report {

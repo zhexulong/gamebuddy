@@ -183,11 +183,16 @@ async function stubShell(
 }
 
 /**
- * The Characters grid's own geometry: every card's box, plus how much of that box
- * is empty card - the distance from the card's own last child (and that child's
- * margin) down to its inner bottom edge. A card whose content is its own height
- * reports `slack` 0; a card stretched to its row's tallest neighbour reports
- * exactly the height it does not fill.
+ * The Characters panel's own geometry: every card's box, how much of that box is
+ * empty card, and the columns the cards were packed into.
+ *
+ * `slack` is the distance from the card's own last child (and that child's
+ * margin) down to its inner bottom edge: a card that is its own content reports
+ * 0. `tailBelowColumn` is the canvas between a column's last card and the
+ * panel's own inner bottom, and it is what a row track used to manufacture below
+ * a short card. `columns` are read off the cards' left edges - the container's
+ * own `column-count` is `auto` under a width, so the count is what was laid out,
+ * not what was declared.
  */
 async function measureCharactersGrid(page: Page) {
   return await page.evaluate(() => {
@@ -196,7 +201,8 @@ async function measureCharactersGrid(page: Page) {
     const style = getComputedStyle(panel);
     const round = (value: number) => Math.round(value);
     const px = (value: string) => Number.parseFloat(value) || 0;
-    const columns = style.gridTemplateColumns.split(/\s+/u).filter((value) => value.length > 0);
+    const panelBox = panel.getBoundingClientRect();
+    const innerBottom = panelBox.bottom - px(style.paddingBottom) - px(style.borderBottomWidth);
     const cards = [...panel.children].map((child) => {
       const card = child as HTMLElement;
       const box = card.getBoundingClientRect();
@@ -205,7 +211,7 @@ async function measureCharactersGrid(page: Page) {
       const lastBox = last === null ? null : last.getBoundingClientRect();
       const contentBottom =
         lastBox === null ? box.bottom : lastBox.bottom + px(getComputedStyle(last!).marginBottom);
-      const innerBottom = box.bottom - px(own.paddingBottom) - px(own.borderBottomWidth);
+      const cardInnerBottom = box.bottom - px(own.paddingBottom) - px(own.borderBottomWidth);
       return {
         label: card.getAttribute("aria-label") ?? card.tagName.toLowerCase(),
         left: round(box.left),
@@ -214,28 +220,35 @@ async function measureCharactersGrid(page: Page) {
         height: round(box.height),
         bottom: round(box.bottom),
         contentBottom: round(contentBottom),
-        slack: round(innerBottom - contentBottom),
+        slack: round(cardInnerBottom - contentBottom),
       };
     });
-    const rowTops = [...new Set(cards.map((card) => card.top))].sort((left, right) => left - right);
-    const rows = rowTops.map((top) => {
-      const inRow = cards.filter((card) => card.top === top);
+    const columnLefts = [...new Set(cards.map((card) => card.left))].sort((left, right) => left - right);
+    const columns = columnLefts.map((left) => {
+      const inColumn = cards.filter((card) => card.left === left).sort((first, second) => first.top - second.top);
+      const between: number[] = [];
+      for (let index = 1; index < inColumn.length; index += 1) {
+        between.push(inColumn[index]!.top - inColumn[index - 1]!.bottom);
+      }
+      const lastBottom = inColumn.length === 0 ? round(innerBottom) : inColumn[inColumn.length - 1]!.bottom;
       return {
-        top,
-        cardCount: inRow.length,
-        bottoms: inRow.map((card) => card.bottom),
-        cards: inRow.map((card) => `${card.label}: ${card.contentBottom}->${card.bottom} (${card.slack} px)`),
+        left,
+        cards: inColumn.map((card) => card.label),
+        gapsBetween: between,
+        // Canvas between this column's last card and the panel's own bottom edge.
+        // A balanced column ends where its content ends; this is the page's foot,
+        // not a hole punched between two cards.
+        tailBelowColumn: round(innerBottom - lastBottom),
       };
     });
     return {
       display: style.display,
-      alignItems: style.alignItems,
-      columnCount: columns.length,
+      columnCount: columnLefts.length,
       columnGap: round(px(style.columnGap)),
-      rowGap: round(px(style.rowGap)),
       panelScrollHeight: panel.scrollHeight,
+      panelHeight: round(panelBox.height),
       cardCount: cards.length,
-      rows,
+      columns,
       cards,
       largestSlack: Math.max(0, ...cards.map((card) => card.slack)),
     };
@@ -279,7 +292,14 @@ test("item 1: a card is as tall as its own content, and the trigger list is fold
 
   const grid = await measureCharactersGrid(page);
   console.log(`[item-1 characters @1440] ${JSON.stringify(grid)}`);
-  expect(grid, "the Characters surface lays its cards out as a grid").not.toBeNull();
+  const exportTopOf = () =>
+    page.evaluate(() => {
+      const node = document.querySelector<HTMLElement>("[data-companion-card-export-section]");
+      return node === null ? null : Math.round(node.getBoundingClientRect().top + window.scrollY);
+    });
+  const exportTop = await exportTopOf();
+  console.log(`[item-1 export card top @1440] ${exportTop}`);
+  expect(grid, "the Characters surface lays its cards out in columns").not.toBeNull();
 
   expect(disclosureState.open, "the trigger list is folded by default, so its card is one summary tall").toBe(false);
   expect(disclosureState.rowsPaintedInside, "a folded disclosure paints none of its rows").toBe(0);
@@ -287,34 +307,57 @@ test("item 1: a card is as tall as its own content, and the trigger list is fold
   expect(await disclosure.locator("[data-companion-world-book-entry]").first().isVisible(), "a folded row is hidden")
     .toBe(false);
 
-  // The target: a card's box is its own content, not its row's tallest neighbour.
-  // Before the change the grid's default `stretch` made every card in the second
-  // row 730 px tall, while the persona and scenario cards' content ended at
-  // y=824 and y=766 against a card bottom of 1130 - 306 px and 364 px of empty
-  // card below their last control. The allowance is 1 px: the box is the content
+  // Three columns at 1440, and every card its own content: the box is the content
   // plus the card's own 12 px padding and 1 px border, and nothing else.
   expect(grid!.columnCount, "1440 leaves room for three columns").toBe(3);
   expect(
     grid!.largestSlack,
-    `every card ends within 1 px of its own content: ${JSON.stringify(grid!.rows)}`,
+    `every card ends within 1 px of its own content: ${JSON.stringify(grid!.cards)}`,
   ).toBeLessThanOrEqual(1);
 
-  // Sensitivity proof, measured through the same probe: the pre-fix `stretch` is
-  // what padded a short card to its row's tallest neighbour. The injected rule is
-  // unlayered, so it wins over the layered stylesheet.
-  const stretch = await page.addStyleTag({
-    content: "[data-characters-panel] { align-items: stretch; }\n",
-  });
-  const stretched = await measureCharactersGrid(page);
-  console.log(`[item-1 characters @1440, stretch injected] ${JSON.stringify(stretched)}`);
-  await stretch.evaluate((node) => node.remove());
-  expect(stretched, "the Characters surface renders with `stretch` injected").not.toBeNull();
-  expect(
-    stretched!.largestSlack,
-    `stretch pads the short cards to the row's tallest again (${JSON.stringify(stretched!.rows)}); the assertion above is what sees it`,
-  ).toBeGreaterThan(100);
+  // …and no card has canvas beneath it before the next one: in a column the cards
+  // are stacked by their own heights, so every gap inside a column is exactly the
+  // column gap. This is the reading a row track cannot give - the row's tallest
+  // card sets where the NEXT row starts, whatever the shorter cards need.
+  for (const column of grid!.columns) {
+    expect(
+      column.gapsBetween,
+      `column at x=${column.left} stacks ${JSON.stringify(column.cards)} with only the column gap between them`,
+    ).toEqual(column.gapsBetween.map(() => grid!.columnGap));
+  }
 
-  // …and the same holds in the one-column layout, where every card is its own row.
+  // Sensitivity proof, measured through the same probe: the pre-fix grid. A grid
+  // sizes each row's track to its tallest card, so the short cards in that row end
+  // above the track's bottom and everything after the row starts at the tallest
+  // card's foot instead. The injected rule is unlayered, so it wins over the
+  // layered stylesheet.
+  const gridBefore = await page.addStyleTag({
+    content:
+      "[data-characters-panel] { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); align-items: start; }\n" +
+      "[data-characters-panel] > section { break-inside: auto; margin: 0; }\n" +
+      "[data-characters-panel] > section:last-child { margin-bottom: 0; }\n",
+  });
+  const reread = await measureCharactersGrid(page);
+  const exportTopBefore = await exportTopOf();
+  console.log(`[item-1 characters @1440, pre-fix grid injected] ${JSON.stringify(reread)}`);
+  console.log(`[item-1 export card top @1440, pre-fix grid injected] ${exportTopBefore}`);
+  await gridBefore.evaluate((node) => node.remove());
+  expect(reread, "the Characters surface renders with the pre-fix grid injected").not.toBeNull();
+  // The row track is what costs the height: 用户设定 and 场景 end 359 px and 416 px
+  // above 开场白's foot, and the row cannot start its next card before it.
+  expect(
+    reread!.panelHeight!,
+    `the grid is taller by its row track, not by its content (${reread!.panelHeight} px against ${grid!.panelHeight} px in columns)`,
+  ).toBeGreaterThan(grid!.panelHeight! + 100);
+  // …which is exactly the complaint: the export card below the panel moves down by
+  // the same amount, further out of the first viewport.
+  expect(
+    exportTopBefore!,
+    `the export card below the panel moves down with the row track (${exportTopBefore} px against ${exportTop} px)`,
+  ).toBeGreaterThan(exportTop! + 100);
+
+  // …and the same holds in the one-column layout, where one card is one row and
+  // columns and grid are the same thing.
   await page.setViewportSize({ width: 400, height: 800 });
   const narrow = await measureCharactersGrid(page);
   console.log(`[item-1 characters @400] ${JSON.stringify(narrow)}`);
@@ -323,8 +366,12 @@ test("item 1: a card is as tall as its own content, and the trigger list is fold
   expect(narrow!.cardCount, "every card is still mounted").toBe(grid!.cardCount);
   expect(
     narrow!.largestSlack,
-    `at 400 every card is its own content too: ${JSON.stringify(narrow!.rows)}`,
+    `at 400 every card is its own content too: ${JSON.stringify(narrow!.cards)}`,
   ).toBeLessThanOrEqual(1);
+  expect(
+    narrow!.columns[0]!.gapsBetween,
+    `the narrow column keeps the 12 px between cards: ${JSON.stringify(narrow!.columns)}`,
+  ).toEqual(narrow!.columns[0]!.gapsBetween.map(() => narrow!.columnGap));
 });
 
 /**
