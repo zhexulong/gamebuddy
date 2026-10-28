@@ -105,6 +105,17 @@ type PlanArgumentRequirement = Readonly<{
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
 }>;
 
+/**
+ * The engine's own account of a script that threw: what it said, and the script line it named.
+ *
+ * `plan_script_threw:SyntaxError` is the one refusal no builder call can explain - the action vocabulary, the
+ * argument names and the target families are all correct and the script still does not compile - so the reason code
+ * alone leaves a caller with eight kilobytes of its own text and no place to look. `line` is the script's own
+ * numbering (the wrapper the script is run inside does not count), and it is `null` when the engine blamed a line
+ * that is not in the script at all: an unclosed group is reported where the wrapper's closing brace sits.
+ */
+export type PlanScriptThrow = Readonly<{ message: string; line: number | null }>;
+
 export type CompiledPlan =
   | Readonly<{
       ok: true;
@@ -119,6 +130,8 @@ export type CompiledPlan =
       reasonCode: string;
       /** Present when the refusal was a builder call, so the answer names what that action demands. */
       requirement?: PlanArgumentRequirement;
+      /** Present when the script threw, so the answer says what the engine said and where. */
+      threw?: PlanScriptThrow;
     }>;
 
 /** Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`. */
@@ -128,6 +141,8 @@ export const MAX_PLAN_NODES = 16;
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
+/** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
+const MAX_THROWN_MESSAGE_CHARS = 300;
 /** Wall-clock budget for one compile. A plan is a loop over a snapshot, not a computation. */
 const PLAN_SCRIPT_BUDGET_MS = 50;
 /** The script may call the builder more often than it adds nodes (a full plan still checks `isFull`). */
@@ -427,12 +442,18 @@ export function compilePlanScript(
       timeout: PLAN_SCRIPT_BUDGET_MS,
       displayErrors: false,
       filename: "plan-script.js",
+      // The wrapper's opening line is dropped from every reported line number, so a SyntaxError names a line the
+      // caller wrote rather than one the wrapper added above it.
+      lineOffset: -1,
     });
   } catch (error) {
     if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
     if (isTimeout(error))
       return refused(`plan_script_timeout:${PLAN_SCRIPT_BUDGET_MS}`, scriptSource, snapshotRevision);
-    return refused(`plan_script_threw:${thrownName(error)}`, scriptSource, snapshotRevision);
+    return refused(`plan_script_threw:${thrownName(error)}`, scriptSource, snapshotRevision, undefined, {
+      message: thrownMessage(error),
+      line: thrownLine(error, scriptSource),
+    });
   }
   // A script may swallow a builder refusal with its own try/catch; the plan is still refused, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote.
@@ -467,6 +488,7 @@ function refused(
   scriptSource: string,
   snapshotRevision: number | null,
   requirement?: PlanArgumentRequirement,
+  threw?: PlanScriptThrow,
 ): CompiledPlan {
   return Object.freeze({
     ok: false as const,
@@ -474,6 +496,7 @@ function refused(
     snapshotRevision,
     reasonCode,
     ...(requirement === undefined ? {} : { requirement }),
+    ...(threw === undefined ? {} : { threw }),
   });
 }
 
@@ -746,6 +769,32 @@ function thrownName(error: unknown): string {
     if (typeof name === "string" && /^[A-Za-z]{1,32}$/u.test(name)) return name;
   }
   return "Error";
+}
+
+/**
+ * What the engine said, in its own words. Its name is not an account of it: `SyntaxError` says a script does not
+ * parse and nothing about where, which is the state a caller cannot leave in one turn.
+ */
+function thrownMessage(error: unknown): string {
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  if (typeof message !== "string" || message.length === 0) return thrownName(error);
+  return message.slice(0, MAX_THROWN_MESSAGE_CHARS);
+}
+
+/**
+ * The line the engine's stack names first, in the script's own numbering, or `null`.
+ *
+ * `lineOffset: -1` already dropped the wrapper's opening line, so a number past the script's own length is the
+ * wrapper's closing line - an unclosed group is reported there - and naming it would send the caller to a line that
+ * does not exist in its script.
+ */
+function thrownLine(error: unknown, scriptSource: string): number | null {
+  const stack = (error as { stack?: unknown } | null | undefined)?.stack;
+  if (typeof stack !== "string") return null;
+  const named = /plan-script\.js:(\d+)/u.exec(stack);
+  if (named === null) return null;
+  const line = Number(named[1]);
+  return Number.isSafeInteger(line) && line >= 1 && line <= scriptSource.split("\n").length ? line : null;
 }
 
 function isUsableSnapshot(snapshot: Snapshot): boolean {

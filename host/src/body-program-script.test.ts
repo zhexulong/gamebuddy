@@ -340,6 +340,34 @@ builder.move_to_tile({ x: 11, y: 10 });
   assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty");
 });
 
+/**
+ * A script that does not compile is the one refusal no builder call can explain: `plan_script_threw:SyntaxError`
+ * alone says something is wrong somewhere in eight kilobytes of script, which is the state a weak model cannot leave
+ * in one turn. So the answer carries the engine's own words and the line they point at, in the script's own numbering.
+ */
+test("a script that throws answers with the engine's own message and the line it named", () => {
+  const threwOf = (result: CompiledPlan) => {
+    if (result.ok) assert.fail("expected a refusal");
+    return result.threw;
+  };
+  const unparsed = compile("const steps = 2;\nbuilder.move_to_tile({ x: 10, y: 10 );");
+  assert.equal(refusalOf(unparsed), "plan_script_threw:SyntaxError");
+  assert.equal(threwOf(unparsed)?.line, 2, "the line is the script's own, not the wrapper's");
+  assert.ok((threwOf(unparsed)?.message.length ?? 0) > 0, "the parser's own message reaches the caller");
+  assert.notEqual(threwOf(unparsed)?.message, "SyntaxError", "the error's name is not an account of it");
+
+  // A runtime throw is the same seam, and its message is the script's own text.
+  const raised = compile("const steps = 2;\nthrow new TypeError('bad loop');");
+  assert.equal(refusalOf(raised), "plan_script_threw:TypeError");
+  assert.deepEqual(threwOf(raised), { message: "bad loop", line: 2 });
+
+  // An unclosed group is reported at the wrapper's closing line, which is not a line of the script: the answer
+  // says it has no line instead of naming one the companion would search for and not find.
+  assert.equal(threwOf(compile("const steps = 2;\n}"))?.line, null);
+  // A script that never ran has no account to give.
+  assert.equal(threwOf(compile("   ")), undefined);
+});
+
 test("a plan with no snapshot refuses rather than compiling from nothing", () => {
   const result = compilePlanScript(
     { script: "builder.move_to_tile({ x: 1, y: 1 });" },
