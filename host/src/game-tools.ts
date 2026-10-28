@@ -125,6 +125,9 @@ export function createStardewObservationTools(
   integration: StardewBridgeConnection & Partial<NavigationReadIntegration>,
   policy?: ActionPolicy,
 ) {
+  // Which catalog revision this model has already been shown. Held in the closure because the connection
+  // state belongs to the bridge, and "what this model has been told" is a property of the model's view.
+  let surfaceRevisionShown: number | undefined;
   const observe = defineTool({
     name: "stardew_observe",
     label: "Observe Stardew",
@@ -154,7 +157,11 @@ export function createStardewObservationTools(
       // The admitted snapshot is the whole published world. What the model is HANDED is bounded to
       // the facts an action is dispatched with (see `boundObservedSnapshot`); the bridge, the
       // connection state and the plan tool all keep reading the untouched snapshot.
-      const bounded = available ? boundObservedSnapshot(observed) : null;
+      const bounded = available ? boundObservedSnapshot(observed, surfaceRevisionShown) : null;
+      // The action surface is described ONCE per catalog revision; every later observation says only that it has
+      // not changed. Recorded only when the observation succeeded, so a failed refresh cannot consume the one
+      // description the model was owed.
+      if (bounded !== null && observed !== null) surfaceRevisionShown = observed.catalogRevision;
       const snapshot = bounded === null ? null : bounded.snapshot;
       // The model-facing text carries the actionable cause, not one opaque
       // sentence. A trace shows the Agent polling this tool 32 times with the

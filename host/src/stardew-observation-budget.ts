@@ -41,13 +41,31 @@ export interface ObservationBudget {
  * is also kept as an empty array: plan scripts loop `for (const row of snapshot.<family>)`, and a
  * dropped key throws in the compiler instead of iterating zero times.
  */
-export function boundObservedSnapshot(snapshot: Snapshot): Readonly<{
+export function boundObservedSnapshot(
+  snapshot: Snapshot,
+  /**
+   * The catalog revision the model was last shown the action surface for, or `undefined` for "never".
+   *
+   * `capabilities` (97 strings) and `enabledActionIds` (92) only change when the Mod republishes its surface -
+   * `catalogRevision` is that fact. Measured 2026-10-27: those two fields are 2634 of 2781 bytes on a minimal
+   * snapshot, so re-sending them on every observation spends the largest single block saying the same thing.
+   */
+  surfaceRevisionShownToModel?: number,
+): Readonly<{
   snapshot: Readonly<Record<string, unknown>>;
   budget: ObservationBudget;
 }> {
   let elidedVillagerCoordinates = 0;
   let withheldUnavailableRecipes = 0;
   const bounded: Record<string, unknown> = { ...snapshot };
+
+  // A surface the model has already been shown is not re-described. The revision travels WITH the omission so a
+  // reader can still tell which surface the current step belongs to.
+  if (surfaceRevisionShownToModel !== undefined && surfaceRevisionShownToModel === snapshot.catalogRevision) {
+    delete bounded.capabilities;
+    delete bounded.enabledActionIds;
+    bounded.actionSurfaceUnchangedSinceRevision = snapshot.catalogRevision;
+  }
 
   for (const field of ["craftingRecipeTargets", "cookingRecipeTargets"] as const) {
     const rows = snapshot[field];

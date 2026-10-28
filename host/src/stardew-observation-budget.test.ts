@@ -4,6 +4,7 @@ import test from "node:test";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import type { Snapshot } from "./protocol.js";
+import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 
 /**
  * W5: the observation payload is the largest per-turn cost the Host hands the model. Measured on the
@@ -225,4 +226,42 @@ test("an observation with nothing to bound is published unchanged and disclosed 
   assert.equal(budget.bytesRemoved, 0);
   assert.equal(budget.elidedVillagerCoordinates, 0);
   assert.equal(budget.withheldUnavailableRecipes, 0);
+});
+
+test("the action surface is described once per catalog revision, not on every observation", () => {
+  // Measured 2026-10-27: `capabilities` (97 strings) and `enabledActionIds` (92) are 2634 of 2781 bytes on a
+  // minimal snapshot - the largest single block in the payload, and it changes only when the Mod republishes.
+  const surface = {
+    capabilities: Array.from({ length: 97 }, (_, index) => `capability_${String(index)}`),
+    enabledActionIds: Array.from({ length: 92 }, (_, index) => `action_${String(index)}`),
+    catalogRevision: 7,
+  };
+  const base = {
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+    stamina: 270,
+    health: 100,
+    actionable: true,
+  };
+  const snapshot = { ...base, ...surface } as unknown as Snapshot;
+
+  const first = boundObservedSnapshot(snapshot);
+  assert.deepEqual(first.snapshot.capabilities, surface.capabilities, "the first observation describes the surface");
+  assert.deepEqual(first.snapshot.enabledActionIds, surface.enabledActionIds);
+
+  const again = boundObservedSnapshot(snapshot, 7);
+  assert.equal("capabilities" in again.snapshot, false, "an unchanged surface is not re-described");
+  assert.equal("enabledActionIds" in again.snapshot, false);
+  assert.equal(again.snapshot.actionSurfaceUnchangedSinceRevision, 7, "the revision still travels with the omission");
+
+  const republished = boundObservedSnapshot({ ...base, ...surface, catalogRevision: 8 } as unknown as Snapshot, 7);
+  assert.deepEqual(
+    republished.snapshot.capabilities,
+    surface.capabilities,
+    "a NEW revision must re-send the surface, or the model cannot act on it",
+  );
+
+  const saving =
+    Buffer.byteLength(JSON.stringify(snapshot), "utf8") - Buffer.byteLength(JSON.stringify(again.snapshot), "utf8");
+  assert.ok(saving > 1500, `the omission must be worth real bytes, saved ${String(saving)}`);
 });
