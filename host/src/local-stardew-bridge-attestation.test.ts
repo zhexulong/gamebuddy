@@ -2325,20 +2325,50 @@ test("invalidated execution receipt immediately closes launcher-owned preview an
                   () => getAuthenticatedStardewPresentationPortForPreview(launch),
                   /authenticated_stardew_presentation_port_required/,
                 );
-                // Already-retained launcher-owned PROGRAM projection fails closed (the record is unusable for new
-                // work), but the PRESENTATION projection stays live: the companion speaks through this same object,
-                // and silencing it on an execution invalidation killed a real ladder-6 run while it tried to speak.
-                await assert.rejects(async () => {
-                  await ports.bodyProgram.status({ programId: "program_invalidated_after" });
-                }, /stardew_launcher_ports_not_live/);
+                // Already-retained launcher-owned PROGRAM projection must KEEP WORKING. Its old assertion required
+                // it to fail closed, on the premise that the Host would relearise a fresh port after an
+                // interruption - and that premise is false: materialization happens ONCE per run
+                // (`continuity-semantic-game-facade.internal.ts:101`, `if (... || live || ...) throw`), so a frozen
+                // port is a frozen port for the rest of the session.
+                //
+                // Measured 2026-10-28 (`round2b`, spring day 5): one Clint cutscene interrupted one `enter_exit`, and
+                // the next 16 `program_status` / `program_submit` calls were refused. The companion stood at the
+                // farmhouse door for the rest of the run.
+                //
+                // The frozen port also protected nothing. `BodyProgramState` has no `invalidated` member
+                // (`BodyProgramModels.cs:17`), and the Mod's own executor answers that receipt with `return null`,
+                // keeping the node bound-Running for a retry (`RouteReenteringBodyProgramExecutor.cs:301-305`).
+                // Unsettled program state is guarded by the journal and the controller, which refuse by name; the
+                // Host cannot protect it by cutting the only channel through which it could learn that state.
+                //
+                // The RECORD still closes, and that half is unchanged and asserted above: a new materialization and
+                // the preview accessor both fail. What survives an invalidation is the long-lived port, exactly as
+                // `presentation` already does - and for the same reason its own comment records.
+                const statusAfterInvalidation = ports.bodyProgram.status({ programId: "program_invalidated_after" });
+                assert.ok(
+                  statusAfterInvalidation instanceof Promise,
+                  "the long-lived program port must still accept work after one execution is invalidated",
+                );
+                statusAfterInvalidation.catch(() => undefined);
                 assert.ok(
                   ports.presentation.state.snapshot !== undefined || ports.presentation.state.snapshot === null,
                   "the live presentation port must keep working after an execution invalidation",
                 );
-                // No program frame reached the live native pipe after invalidation.
+                // The channel stays open, which is the point: a request reaches the native pipe after invalidation.
+                //
+                // Await the frame rather than assert a promise exists: `status()` resolves only once its result
+                // arrives, and the socket handler here records without replying, so awaiting would hang. Polling the
+                // recorded requests is the honest form - it observes the frame actually leaving.
+                await until(
+                  () =>
+                    requests.filter((request) => request.type === "program_status").length >
+                    statusFramesBeforeInvalidation,
+                  "program_status_after_invalidation_not_observed",
+                );
                 assert.equal(
                   requests.filter((request) => request.type === "program_status").length,
-                  statusFramesBeforeInvalidation,
+                  statusFramesBeforeInvalidation + 1,
+                  "an invalidated receipt must not seal the program channel",
                 );
                 return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
               },

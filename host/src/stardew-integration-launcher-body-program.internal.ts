@@ -211,14 +211,20 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       if (receipt.state === "invalidated") {
         // This deliberately does NOT close `executionGate`.
         //
-        // The invalidated wake freezes the launcher-owned records (presentation and body program) through
-        // `isLauncherClosed`, which is what stops an interrupted BODY PROGRAM. Also closing `executionGate`
-        // forbade ORDINARY action dispatch, and the receipt that invalidates an execution is exactly what a
-        // native modal interruption produces - so the one tool that could clear the modal (`dismiss_modal`) was
-        // refused by the gate the modal had just closed. Observed live on ladder 6: the Agent called
-        // `dismiss_modal` FIVE times and every call returned `integration_not_ready`, so it could not recover by
-        // construction, no matter what it decided. `disconnect()` still closes the gate: a genuine
-        // disconnection must stop everything.
+        // The invalidated wake freezes the launcher-owned MATERIALIZATION projection through `isLauncherClosed`
+        // (the preview accessor and `materializeAuthenticatedStardewLaunchPorts`), while the long-lived program
+        // ports keep working through `areProgramPortsLive`, which reads only `closed` and the connection. Both
+        // halves of that split were learned from a live failure:
+        //
+        //  - Closing `executionGate` forbade ORDINARY action dispatch, and the receipt that invalidates an
+        //    execution is exactly what a native modal interruption produces - so the one tool that could clear
+        //    the modal (`dismiss_modal`) was refused by the gate the modal had just closed. Observed on ladder 6:
+        //    five `dismiss_modal` calls, every one `integration_not_ready`.
+        //  - Closing the PROGRAM ports cut the only channel through which the Host could learn an interrupted
+        //    program's state. Observed 2026-10-28 (`round2b`): one Clint cutscene interrupted one `enter_exit`, and
+        //    16 `program_status` calls were refused for the rest of the run while the companion stood at the door.
+        //
+        // `disconnect()` still closes everything: a genuine disconnection must stop all of it.
         invalidated = true;
         publishWake(Object.freeze({ kind: "invalidated", reasonCode: receipt.reasonCode }));
       } else if (isTerminalExecutionState(receipt.state))
@@ -341,27 +347,38 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
         removeDiagnostic();
       },
     });
-    // Launcher-owned liveness for the retained body-program projection AND the accessors that hand ports out of
-    // this record: an invalidated receipt, explicit close, or bridge disconnect freezes acquisition. Invalidation
+    // Launcher-owned liveness for the MATERIALIZATION projection and the accessors that hand a whole port set out
+    // of this record: an invalidated receipt, explicit close, or bridge disconnect freezes acquisition. Invalidation
     // never cancels, replays, retries, or closes the native mutation/pipe; only the launcher-owned record stops
     // being usable for NEW port acquisition.
+    //
+    // `assertLauncherPortsLive` is gone with the last caller that used the wider question: the long-lived program
+    // ports moved to `areProgramPortsLive` below. `isLauncherClosed` remains because the record's own `isClosed()`
+    // (line ~430) and `materializeAuthenticatedStardewLaunchPorts` still answer it.
     const isLauncherClosed = (): boolean => closed || invalidated || !bridge.state.connected;
     /**
-     * Liveness for the ports an ORDINARY turn needs: submit, status, events.
+     * Liveness for the ports that carry the WHOLE RUN's program work: submit, status, events.
      *
-     * `invalidated` is deliberately NOT in here, and that is the same argument as `isPresentationClosed` below -
-     * which was learned the same way. One execution being invalidated says nothing about whether a NEW program may
-     * be submitted; it says this one was interrupted. Measured 2026-10-28 (`round2b`, spring day 5):
+     * `invalidated` is deliberately NOT part of it. It marks ONE step's receipt - the Mod's own executor treats
+     * that state as "this attempt did not finish, stay bound-Running and retry"
+     * (`RouteReenteringBodyProgramExecutor.cs:301-305`), and `BodyProgramState` has no invalidated member at all
+     * (`BodyProgramModels.cs:17`). Unsettled program state is protected entirely on the Mod side, by the journal
+     * and the controller, which refuse by name. Nothing the Host can do to its own port protects any of it.
      *
-     *     a native event (Clint's furnace blueprint) interrupted an `enter_exit`
-     *     Mod answered correctly:  actionId=enter_exit, state=invalidated, reasonCode=event_started
-     *     Host set invalidated = true and never cleared it
-     *     every later program_submit and program_status threw stardew_launcher_ports_not_live
+     * Measured 2026-10-28 (`round2b`, spring day 5): Clint's furnace cutscene interrupted one `enter_exit`, the Mod
+     * answered `state=invalidated; reasonCode=event_started` - correct - and the Host set `invalidated = true` and
+     * never cleared it. Every later `program_status` and `program_submit` threw `stardew_launcher_ports_not_live`,
+     * 16 times, and the companion stood at the farmhouse door saying "我这边有点卡住了，脚迈不出去" for the rest of the
+     * run.
      *
-     * The companion stood at the farmhouse door saying "我这边有点卡住了，脚迈不出去" - it could not plan anything for
-     * the rest of the run, because a cutscene had interrupted one walk.
+     * The lock did not protect the unsettled program; it cut the only channel through which the Host could LEARN
+     * the program's state. That is the opposite of protection.
      *
-     * A genuine disconnect still closes these ports: `disconnect()` clears `closed`, which this reads.
+     * This is the third time this file has had to make the same distinction, and the comment on
+     * `isPresentationClosed` below already states it: an execution being invalidated says nothing about whether
+     * the companion may talk. `executionGate` went first (`52866c06`), presentation second, these ports now.
+     *
+     * A genuine disconnect still closes them: `disconnect()` clears `closed`, which this reads.
      */
     const areProgramPortsLive = (): boolean => closed || !bridge.state.connected;
     const assertProgramPortsLive = (): void => {
