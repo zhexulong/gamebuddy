@@ -5,6 +5,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
+
+// The three authored-record routes write through the durable artifact store, and releasing a path lock on Windows goes through the
+// build-time reclaimer. Without this binding the write itself succeeds and the release fails, which the route maps to a 503 - so
+// every save looked like a service failure while the real cause was an unbound reclaimer.
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
 import {
   PlayerPreferenceRevisionConflict,
   type PlayerPreference,
@@ -3095,6 +3108,9 @@ test("a stale persona, scenario or greeting save names the record that moved, no
         macroTable({ char: "琥珀", user: "阿岚" }),
       ),
       greetingService: createGreetingManagementService(artifactStore, root),
+      // The profile declares companion.worldbook.read/update, and composition fails closed when a declared route has no service
+      // behind it - so this test needs the same book the Characters surface uses, even though it never opens it.
+      companionWorldBookService: realCompanionWorldBookService(root, { refreshes: 0, announced: null }),
       profile: charactersProfile,
       bootstrapToken: token,
     });
