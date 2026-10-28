@@ -13,7 +13,10 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { admitStardewInstallation, type AdmittedStardewInstallation } from "./stardew-installation-admission.js";
-import { readStardewInstallationRegistration } from "./stardew-installation-registration.internal.js";
+import {
+  publishStardewReadyInstallationRegistration,
+  readStardewInstallationRegistration,
+} from "./stardew-installation-registration.internal.js";
 import {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
@@ -1579,6 +1582,27 @@ function createCoordinator(
     throw new Error(STARDEW_GAME_CREATE_WORLD_HELD_BY_PLAYER_RESUME_REQUIRED);
   };
 
+  /**
+   * Registers the player's chosen folder as the bound Stardew installation.
+   *
+   * There are four cases, and only ONE of them is keyed by the owner:
+   *
+   * 1. No record at all (a fresh Host, and the first-run player this exists for) and
+   * 2. a record no attempt occupies - both publish the locator at the next revision.
+   *    Their authority is the admission that already ran above them in this same
+   *    callback: the authenticated browser request, `requireStardewGameInstalled`,
+   *    `requireStardewModLoaderInstalled` and `admitStardewInstallation` on exactly this
+   *    locator. No staged attempt is claimed or needed, because a player who has never
+   *    run the lifecycle has none to key a write by - requiring one is what refused
+   *    every first-time player.
+   * 3. A record whose live attempt pointer is set: only that attempt's owner may move
+   *    the locator under it, which is why this is the case that still demands one.
+   * 4. A record that is not ready: refused by name rather than overwritten.
+   *
+   * The answer is read back from storage, never taken from the write: `registered`
+   * means the durable record says ready, carries this exact locator, and sits at the
+   * revision this call produced.
+   */
   const registerInstallationLocator = async (locator: string): Promise<StardewInstallationSelectionResult> => {
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     // The two refusals a player can act on come first, and in this order: a folder with
@@ -1591,9 +1615,29 @@ function createCoordinator(
     if (isClosing()) throw new Error("stardew_lifecycle_closing");
     const current = await readStardewInstallationRegistration(runtimeRoot);
     const owner = exactOwner;
-    if (current === null || current.state !== "ready" || owner === undefined)
-      throw new Error("stardew_installation_registration_unavailable");
-    await internal.replaceStagedInstallationLocator(owner, current.revision, locator);
+    if (current !== null && current.state !== "ready") throw new Error("stardew_installation_registration_not_ready");
+    // A live attempt owns the pointer, so a caller that is not its owner may not move
+    // the locator out from under it. This is a different fact from "no record yet",
+    // and the player's next step differs, so it keeps its own name.
+    if (current !== null && current.activeAttempt !== null) {
+      if (owner === undefined) throw new Error("stardew_installation_registration_owner_missing");
+      await internal.replaceStagedInstallationLocator(owner, current.revision, locator);
+    } else {
+      await publishStardewReadyInstallationRegistration(
+        runtimeRoot,
+        current === null ? null : current.revision,
+        locator,
+      );
+    }
+    const expectedRevision = (current === null ? 0 : current.revision) + 1;
+    const registered = await readStardewInstallationRegistration(runtimeRoot);
+    if (
+      registered === null ||
+      registered.state !== "ready" ||
+      registered.locator !== locator ||
+      registered.revision !== expectedRevision
+    )
+      throw new Error("stardew_installation_registration_unconfirmed");
     return Object.freeze({ status: "registered" });
   };
   /**

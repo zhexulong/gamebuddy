@@ -274,6 +274,17 @@ function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   };
 }
 
+/**
+ * The identity chain admission expects for one Windows folder: a drive root, one directory
+ * per path component, then the executable leaf. `admitStardewInstallation` requires exactly
+ * that length and that shape, so a fixture that picks a real temporary folder has to size its
+ * chain to the folder it picked.
+ */
+function identityChainFor(folder: string): readonly WindowsPathObjectIdentity[] {
+  const componentCount = folder.slice(3).split("\\").length;
+  return [...Array.from({ length: componentCount + 1 }, () => installationChain[0]!), installationChain.at(-1)!];
+}
+
 function installationInspector(
   chains: readonly (readonly WindowsPathObjectIdentity[])[],
   beforeResponse?: (readIndex: number) => Promise<void>,
@@ -578,19 +589,27 @@ async function createFixture(
     nowMs?: () => number;
     afterPlayerSpawn?(): void;
     discoveryBrowserHandlers?: DiscoveryBrowserHandler;
+    /**
+     * Leaves the Host with no installation registration record at all - the fresh-root
+     * shape a first-run player has. The default seeds a ready revision-1 record, which is
+     * what every later test's activation depends on.
+     */
+    withoutSeededRegistration?: boolean;
   }> = {},
 ) {
   const runtimeRoot = await canonicalTemporaryRoot("gamebuddy-lifecycle-coordinator-");
   const packageRoot = join(runtimeRoot, "package");
   temporaryRoots.push(runtimeRoot);
-  await publishStardewInstallationRegistration(runtimeRoot, null, {
-    schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1 },
-    revision: 1,
-    state: "ready",
-    locator: gameDirectoryCandidate,
-    activeAttempt: null,
-  });
+  if (input.withoutSeededRegistration !== true) {
+    await publishStardewInstallationRegistration(runtimeRoot, null, {
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: 1,
+      state: "ready",
+      locator: gameDirectoryCandidate,
+      activeAttempt: null,
+    });
+  }
   await mkdir(packageRoot);
   for (const entry of packageEntries) await writeFile(join(packageRoot, entry), `fixed-${entry}`, "utf8");
   const spawnCalls: Array<
@@ -2731,6 +2750,113 @@ test("an unreadable or closing installation selection keeps the unnamed unavaila
       );
     } finally {
       await closingFixture.broker.close();
+    }
+  });
+});
+
+test("a fresh Host registers the folder the player picked as revision one, and a second pick replaces it", async () => {
+  await withWindowsPlatform(async () => {
+    // The player the defect was reported by: a Host whose runtime root holds no registration
+    // record at all, picking a folder before any lifecycle activation. No staged attempt exists
+    // here and none can - an attempt is only reserved against an existing ready record - so the
+    // write is authorized by the admission above it: the authenticated picker callback plus the
+    // folder checks on exactly this locator.
+    const installParent = await canonicalTemporaryRoot("gamebuddy-fresh-registration-");
+    temporaryRoots.push(installParent);
+    const picks = [join(installParent, "Stardew Valley"), join(installParent, "Stardew Valley Copy")];
+    for (const root of picks) {
+      await mkdir(root, { recursive: true });
+      // Both executables, so neither refusal names a missing game or a missing mod loader.
+      await writeFile(join(root, "Stardew Valley.exe"), "", "utf8");
+      await writeFile(join(root, "StardewModdingAPI.exe"), "", "utf8");
+    }
+    let pickCount = 0;
+    const fixture = await createFixture({
+      withoutSeededRegistration: true,
+      overrides: {
+        selectStardewFolder: async () => ({ status: "selected" as const, path: picks[pickCount++]! }),
+        // One inspector per registration, sized to the chain the pick being admitted walks.
+        createInstallationInspector: async () => {
+          const chain = identityChainFor(picks[pickCount - 1]!);
+          return installationInspector([chain, chain]);
+        },
+      },
+    });
+    try {
+      assert.equal(await readStardewInstallationRegistration(fixture.runtimeRoot), null);
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "registered" },
+      );
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 1,
+        state: "ready",
+        locator: picks[0],
+        activeAttempt: null,
+      });
+      // The product-visible half: the Host now reports an installation, which is the fact the
+      // Game surface reads instead of asking the player to choose a folder again.
+      assert.equal(await fixture.coordinator.installationReader.readInstallationView(), "registered");
+
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "registered" },
+      );
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
+        schema: "gamebuddy-stardew-installation-registration/v1",
+        binding: { rootLayoutVersion: 1 },
+        revision: 2,
+        state: "ready",
+        locator: picks[1],
+        activeAttempt: null,
+      });
+      assert.equal(pickCount, 2);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  });
+});
+
+/**
+ * The boundary of the fresh-root publish: a record that a live attempt already occupies is
+ * NOT a record any caller may overwrite. Without the owner the locator under that pointer is
+ * refused, and the record is left exactly as it was - the publish CAS must never be reached.
+ */
+test("a registration with a live attempt pointer and no owner is refused instead of replacing the record", async () => {
+  await withWindowsPlatform(async () => {
+    const fixture = await createFixture({
+      overrides: { selectStardewFolder: async () => ({ status: "selected" as const, path: gameDirectoryCandidate }) },
+    });
+    try {
+      // The shape only a live attempt can produce: a ready record whose pointer is bound. It is
+      // written as the exact bytes the owner transaction publishes, because only that transaction
+      // may bind a pointer and it always advances an existing ready record by one revision.
+      const occupied = {
+        schema: "gamebuddy-stardew-installation-registration/v1" as const,
+        binding: { rootLayoutVersion: 1 } as const,
+        revision: 2,
+        state: "ready" as const,
+        locator: gameDirectoryCandidate,
+        activeAttempt: { bootstrapCorrelation: "bootstrap-other-attempt" },
+      };
+      await writeFile(
+        join(fixture.runtimeRoot, "stardew-installation-registration", "registration.json"),
+        JSON.stringify(occupied),
+        "utf8",
+      );
+      // No activation ran in this fixture, so there is no exact owner to key the replace by.
+      assert.deepEqual(
+        await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
+        { status: "unavailable" },
+      );
+      assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), occupied);
+      assert.equal(fixture.freshRegistrationAdmissionCount(), 1);
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
     }
   });
 });

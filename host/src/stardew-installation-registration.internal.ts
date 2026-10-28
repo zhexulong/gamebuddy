@@ -79,116 +79,157 @@ export async function withStardewLifecycleInstallationRegistrationOwner<T>(
     if (typeof callback !== "function") throw unavailable();
     const path = registrationPath(runtimeRoot);
     const root = resolve(runtimeRoot);
-    return await withPathLock(path, async () => {
-      await verifySafePathBoundary(path, root);
-      let active = true;
-      const requireActive = (): void => {
-        if (!active) throw unavailable();
-      };
-      const storage: StardewInstallationRegistrationOwnerLockedStorage = Object.freeze({
-        readRegistration: async () => {
-          requireActive();
-          return await readCurrentRecord(path, root);
-        },
-        bindPreparedPointer: async (expectedRegistrationRevision, marker) => {
-          requireActive();
-          const checked = validateOwnerTransactionMarker(marker);
-          if (checked.operation !== "prepare_bind" || checked.registrationRevision !== expectedRegistrationRevision + 1) {
-            throw unavailable();
-          }
-          const persistedMarker = await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
-          if (persistedMarker === null || serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)) {
-            throw unavailable();
-          }
-          const current = await readCurrentRecord(path, root);
-          if (current === null || current.revision !== expectedRegistrationRevision || current.state !== "ready" || current.activeAttempt !== null) {
-            throw unavailable();
-          }
-          return await writeOwnerTransactionRecord(path, root, {
-            ...current,
-            revision: current.revision + 1,
-            activeAttempt: { bootstrapCorrelation: checked.bootstrapCorrelation },
-          });
-        },
-        releaseSettledPointer: async (expectedRegistrationRevision, marker) => {
-          requireActive();
-          const checked = validateOwnerTransactionMarker(marker);
-          if (checked.operation !== "settlement_release" || checked.registrationRevision !== expectedRegistrationRevision + 1) {
-            throw unavailable();
-          }
-          const persistedMarker = await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
-          if (persistedMarker === null ||
-              serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)) {
-            throw unavailable();
-          }
-          const current = await readCurrentRecord(path, root);
-          if (current === null || current.revision !== expectedRegistrationRevision || current.state !== "ready" ||
-              current.activeAttempt?.bootstrapCorrelation !== checked.bootstrapCorrelation) {
-            throw unavailable();
-          }
-          return await writeOwnerTransactionRecord(path, root, {
-            ...current,
-            revision: current.revision + 1,
-            activeAttempt: null,
-          });
-        },
-        replaceActiveAttemptLocator: async (expectedRegistrationRevision, bootstrapCorrelation, locator) => {
-          requireActive();
-          if (!isPositiveSafeInteger(expectedRegistrationRevision) || !isOpaqueId(bootstrapCorrelation) ||
-              !isCanonicalWindowsDirectory(locator)) throw unavailable();
-          if (await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root) !== null) throw unavailable();
-          const current = await readCurrentRecord(path, root);
-          if (current === null || current.revision !== expectedRegistrationRevision || current.state !== "ready" ||
-              current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation) throw conflict();
-          return await writeOwnerTransactionRecord(path, root, {
-            ...current,
-            revision: current.revision + 1,
-            locator,
-          });
-        },
-        readMarker: async () => {
-          requireActive();
-          return await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
-        },
-        writeMarker: async (marker) => {
-          requireActive();
-          const checked = validateOwnerTransactionMarker(marker);
-          const markerPath = ownerTransactionMarkerPath(root);
-          if (await readOwnerTransactionMarker(markerPath, root) !== null) throw unavailable();
-          const current = await readCurrentRecord(path, root);
-          if (current === null || current.state !== "ready" || checked.registrationRevision !== current.revision + 1) {
-            throw unavailable();
-          }
-          if (checked.operation === "prepare_bind") {
-            if (current.activeAttempt !== null || checked.ownerRecordRevision !== 1) throw unavailable();
-          } else if (current.activeAttempt?.bootstrapCorrelation !== checked.bootstrapCorrelation) {
-            throw unavailable();
-          }
-          const encoded = serializeOwnerTransactionMarker(checked);
-          await atomicWriteFile(markerPath, encoded, root);
-          const reread = await readOwnerTransactionMarker(markerPath, root);
-          if (reread === null || serializeOwnerTransactionMarker(reread) !== encoded) throw unavailable();
-        },
-        clearMarker: async (marker) => {
-          requireActive();
-          const checked = validateOwnerTransactionMarker(marker);
-          const markerPath = ownerTransactionMarkerPath(root);
-          const current = await readOwnerTransactionMarker(markerPath, root);
-          if (current === null || serializeOwnerTransactionMarker(current) !== serializeOwnerTransactionMarker(checked)) {
-            throw unavailable();
-          }
-          const identity = await captureSafeFileIdentity(markerPath, root);
-          if (identity === undefined) throw unavailable();
-          await removeOwnedSafeFile(markerPath, identity, root);
-          if (await readOwnerTransactionMarker(markerPath, root) !== null) throw unavailable();
-        },
-      });
-      try {
-        return await callback(storage);
-      } finally {
-        active = false;
-      }
-    }, { containmentRoot: root });
+    return await withPathLock(
+      path,
+      async () => {
+        await verifySafePathBoundary(path, root);
+        let active = true;
+        const requireActive = (): void => {
+          if (!active) throw unavailable();
+        };
+        const storage: StardewInstallationRegistrationOwnerLockedStorage = Object.freeze({
+          readRegistration: async () => {
+            requireActive();
+            return await readCurrentRecord(path, root);
+          },
+          bindPreparedPointer: async (expectedRegistrationRevision, marker) => {
+            requireActive();
+            const checked = validateOwnerTransactionMarker(marker);
+            if (
+              checked.operation !== "prepare_bind" ||
+              checked.registrationRevision !== expectedRegistrationRevision + 1
+            ) {
+              throw unavailable();
+            }
+            const persistedMarker = await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
+            if (
+              persistedMarker === null ||
+              serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)
+            ) {
+              throw unavailable();
+            }
+            const current = await readCurrentRecord(path, root);
+            if (
+              current === null ||
+              current.revision !== expectedRegistrationRevision ||
+              current.state !== "ready" ||
+              current.activeAttempt !== null
+            ) {
+              throw unavailable();
+            }
+            return await writeOwnerTransactionRecord(path, root, {
+              ...current,
+              revision: current.revision + 1,
+              activeAttempt: { bootstrapCorrelation: checked.bootstrapCorrelation },
+            });
+          },
+          releaseSettledPointer: async (expectedRegistrationRevision, marker) => {
+            requireActive();
+            const checked = validateOwnerTransactionMarker(marker);
+            if (
+              checked.operation !== "settlement_release" ||
+              checked.registrationRevision !== expectedRegistrationRevision + 1
+            ) {
+              throw unavailable();
+            }
+            const persistedMarker = await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
+            if (
+              persistedMarker === null ||
+              serializeOwnerTransactionMarker(persistedMarker) !== serializeOwnerTransactionMarker(checked)
+            ) {
+              throw unavailable();
+            }
+            const current = await readCurrentRecord(path, root);
+            if (
+              current === null ||
+              current.revision !== expectedRegistrationRevision ||
+              current.state !== "ready" ||
+              current.activeAttempt?.bootstrapCorrelation !== checked.bootstrapCorrelation
+            ) {
+              throw unavailable();
+            }
+            return await writeOwnerTransactionRecord(path, root, {
+              ...current,
+              revision: current.revision + 1,
+              activeAttempt: null,
+            });
+          },
+          replaceActiveAttemptLocator: async (expectedRegistrationRevision, bootstrapCorrelation, locator) => {
+            requireActive();
+            if (
+              !isPositiveSafeInteger(expectedRegistrationRevision) ||
+              !isOpaqueId(bootstrapCorrelation) ||
+              !isCanonicalWindowsDirectory(locator)
+            )
+              throw unavailable();
+            if ((await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root)) !== null)
+              throw unavailable();
+            const current = await readCurrentRecord(path, root);
+            if (
+              current === null ||
+              current.revision !== expectedRegistrationRevision ||
+              current.state !== "ready" ||
+              current.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation
+            )
+              throw conflict();
+            return await writeOwnerTransactionRecord(path, root, {
+              ...current,
+              revision: current.revision + 1,
+              locator,
+            });
+          },
+          readMarker: async () => {
+            requireActive();
+            return await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root);
+          },
+          writeMarker: async (marker) => {
+            requireActive();
+            const checked = validateOwnerTransactionMarker(marker);
+            const markerPath = ownerTransactionMarkerPath(root);
+            if ((await readOwnerTransactionMarker(markerPath, root)) !== null) throw unavailable();
+            const current = await readCurrentRecord(path, root);
+            if (
+              current === null ||
+              current.state !== "ready" ||
+              checked.registrationRevision !== current.revision + 1
+            ) {
+              throw unavailable();
+            }
+            if (checked.operation === "prepare_bind") {
+              if (current.activeAttempt !== null || checked.ownerRecordRevision !== 1) throw unavailable();
+            } else if (current.activeAttempt?.bootstrapCorrelation !== checked.bootstrapCorrelation) {
+              throw unavailable();
+            }
+            const encoded = serializeOwnerTransactionMarker(checked);
+            await atomicWriteFile(markerPath, encoded, root);
+            const reread = await readOwnerTransactionMarker(markerPath, root);
+            if (reread === null || serializeOwnerTransactionMarker(reread) !== encoded) throw unavailable();
+          },
+          clearMarker: async (marker) => {
+            requireActive();
+            const checked = validateOwnerTransactionMarker(marker);
+            const markerPath = ownerTransactionMarkerPath(root);
+            const current = await readOwnerTransactionMarker(markerPath, root);
+            if (
+              current === null ||
+              serializeOwnerTransactionMarker(current) !== serializeOwnerTransactionMarker(checked)
+            ) {
+              throw unavailable();
+            }
+            const identity = await captureSafeFileIdentity(markerPath, root);
+            if (identity === undefined) throw unavailable();
+            await removeOwnedSafeFile(markerPath, identity, root);
+            if ((await readOwnerTransactionMarker(markerPath, root)) !== null) throw unavailable();
+          },
+        });
+        try {
+          return await callback(storage);
+        } finally {
+          active = false;
+        }
+      },
+      { containmentRoot: root },
+    );
   } catch (error) {
     if (error instanceof Error && isKnownError(error.message)) throw error;
     throw unavailable();
@@ -205,11 +246,15 @@ export async function readStardewInstallationRegistration(
 ): Promise<StardewInstallationRegistrationRecordV1 | null> {
   try {
     const path = registrationPath(runtimeRoot);
-    return await withPathLock(path, async () => {
-      const root = resolve(runtimeRoot);
-      if (await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root) !== null) throw unavailable();
-      return await readCurrentRecord(path, runtimeRoot);
-    }, { containmentRoot: runtimeRoot });
+    return await withPathLock(
+      path,
+      async () => {
+        const root = resolve(runtimeRoot);
+        if ((await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root)) !== null) throw unavailable();
+        return await readCurrentRecord(path, runtimeRoot);
+      },
+      { containmentRoot: runtimeRoot },
+    );
   } catch {
     throw unavailable();
   }
@@ -221,6 +266,29 @@ export async function readStardewInstallationRegistration(
  * active attempt pointer: both the current and replacement records must have
  * no active attempt.
  */
+/**
+ * Publishes one `ready` record carrying the player's selected locator, at the next revision after `expectedRevision`
+ * (`null` for the first record on a fresh Host).
+ *
+ * The initial producer is the coordinator's authenticated picker callback: it admits the locator first and only then publishes, so a
+ * folder that is not an installation never reaches durable state. The revision arithmetic and the record's canonical shape stay here
+ * rather than at that call site, so a ready record has exactly one spelling.
+ */
+export async function publishStardewReadyInstallationRegistration(
+  runtimeRoot: string,
+  expectedRevision: number | null,
+  locator: string,
+): Promise<StardewInstallationRegistrationRecordV1> {
+  return await publishStardewInstallationRegistration(runtimeRoot, expectedRevision, {
+    schema: REGISTRATION_SCHEMA,
+    binding: { rootLayoutVersion: 1 },
+    revision: nextRevision(expectedRevision),
+    state: "ready",
+    locator,
+    activeAttempt: null,
+  });
+}
+
 export async function publishStardewInstallationRegistration(
   runtimeRoot: string,
   expectedRevision: number | null,
@@ -234,18 +302,26 @@ export async function publishStardewInstallationRegistration(
     if (candidate.revision !== nextRevision(expectedRevision)) throw invalidPublish();
     const encoded = serializeRecord(candidate);
 
-    return await withPathLock(path, async () => {
-      await verifySafePathBoundary(path, runtimeRoot);
-      if (await readOwnerTransactionMarker(ownerTransactionMarkerPath(resolve(runtimeRoot)), resolve(runtimeRoot)) !== null) throw unavailable();
-      const current = await readCurrentRecord(path, runtimeRoot);
-      if (current !== null && current.activeAttempt !== null) throw busy();
-      if (current === null ? expectedRevision !== null : current.revision !== expectedRevision) throw conflict();
+    return await withPathLock(
+      path,
+      async () => {
+        await verifySafePathBoundary(path, runtimeRoot);
+        if (
+          (await readOwnerTransactionMarker(ownerTransactionMarkerPath(resolve(runtimeRoot)), resolve(runtimeRoot))) !==
+          null
+        )
+          throw unavailable();
+        const current = await readCurrentRecord(path, runtimeRoot);
+        if (current !== null && current.activeAttempt !== null) throw busy();
+        if (current === null ? expectedRevision !== null : current.revision !== expectedRevision) throw conflict();
 
-      await atomicWriteFile(path, encoded, runtimeRoot);
-      const reread = await readCurrentRecord(path, runtimeRoot);
-      if (reread === null || serializeRecord(reread) !== encoded) throw unavailable();
-      return reread;
-    }, { containmentRoot: runtimeRoot });
+        await atomicWriteFile(path, encoded, runtimeRoot);
+        const reread = await readCurrentRecord(path, runtimeRoot);
+        if (reread === null || serializeRecord(reread) !== encoded) throw unavailable();
+        return reread;
+      },
+      { containmentRoot: runtimeRoot },
+    );
   } catch (error) {
     if (error instanceof Error && isKnownError(error.message)) throw error;
     throw unavailable();
@@ -253,7 +329,12 @@ export async function publishStardewInstallationRegistration(
 }
 
 function registrationPath(runtimeRoot: string): string {
-  if (typeof runtimeRoot !== "string" || runtimeRoot.length === 0 || runtimeRoot.includes("\u0000") || !isAbsolute(runtimeRoot)) {
+  if (
+    typeof runtimeRoot !== "string" ||
+    runtimeRoot.length === 0 ||
+    runtimeRoot.includes("\u0000") ||
+    !isAbsolute(runtimeRoot)
+  ) {
     throw unavailable();
   }
   const root = resolve(runtimeRoot);
@@ -295,19 +376,30 @@ async function readOwnerTransactionMarker(
   const marker = validateOwnerTransactionMarker(parsed);
   const bytes = await readFile(path);
   await verifySafePathBoundary(path, runtimeRoot);
-  if (bytes.length > MAX_OWNER_TRANSACTION_MARKER_BYTES || !bytes.equals(Buffer.from(serializeOwnerTransactionMarker(marker), "utf8"))) {
+  if (
+    bytes.length > MAX_OWNER_TRANSACTION_MARKER_BYTES ||
+    !bytes.equals(Buffer.from(serializeOwnerTransactionMarker(marker), "utf8"))
+  ) {
     throw unavailable();
   }
   return marker;
 }
 
 function validateOwnerTransactionMarker(value: unknown): StardewInstallationRegistrationOwnerTransactionMarker {
-  const marker = requireExactObject(value, ["schema", "operation", "bootstrapCorrelation", "registrationRevision", "ownerRecordRevision"]);
-  if (marker.schema !== OWNER_TRANSACTION_MARKER_SCHEMA ||
-      (marker.operation !== "prepare_bind" && marker.operation !== "settlement_release") ||
-      !isOpaqueId(marker.bootstrapCorrelation) ||
-      !isPositiveSafeInteger(marker.registrationRevision) ||
-      !isPositiveSafeInteger(marker.ownerRecordRevision)) {
+  const marker = requireExactObject(value, [
+    "schema",
+    "operation",
+    "bootstrapCorrelation",
+    "registrationRevision",
+    "ownerRecordRevision",
+  ]);
+  if (
+    marker.schema !== OWNER_TRANSACTION_MARKER_SCHEMA ||
+    (marker.operation !== "prepare_bind" && marker.operation !== "settlement_release") ||
+    !isOpaqueId(marker.bootstrapCorrelation) ||
+    !isPositiveSafeInteger(marker.registrationRevision) ||
+    !isPositiveSafeInteger(marker.ownerRecordRevision)
+  ) {
     throw unavailable();
   }
   return Object.freeze({
@@ -358,7 +450,10 @@ function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1
   if (binding.rootLayoutVersion !== 1) throw unavailable();
 
   if (record.state !== "ready" && record.state !== "invalid") throw unavailable();
-  if ((record.state === "ready" && !isCanonicalWindowsDirectory(record.locator)) || (record.state === "invalid" && record.locator !== null)) {
+  if (
+    (record.state === "ready" && !isCanonicalWindowsDirectory(record.locator)) ||
+    (record.state === "invalid" && record.locator !== null)
+  ) {
     throw unavailable();
   }
 
@@ -370,7 +465,7 @@ function validateRecord(value: unknown): StardewInstallationRegistrationRecordV1
     activeAttempt = Object.freeze({ bootstrapCorrelation: pointer.bootstrapCorrelation });
   }
 
-  const locator = record.locator === null ? null : record.locator as string;
+  const locator = record.locator === null ? null : (record.locator as string);
   return Object.freeze({
     schema: REGISTRATION_SCHEMA,
     binding: Object.freeze({ rootLayoutVersion: 1 }),
@@ -391,18 +486,27 @@ function serializeRecord(record: StardewInstallationRegistrationRecordV1): strin
     revision: normalized.revision,
     state: normalized.state,
     locator: normalized.locator,
-    activeAttempt: normalized.activeAttempt === null ? null : {
-      bootstrapCorrelation: normalized.activeAttempt.bootstrapCorrelation,
-    },
+    activeAttempt:
+      normalized.activeAttempt === null
+        ? null
+        : {
+            bootstrapCorrelation: normalized.activeAttempt.bootstrapCorrelation,
+          },
   });
 }
 
 function requireExactObject(value: unknown, keys: readonly string[]): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
     throw unavailable();
   }
   const actualKeys = Reflect.ownKeys(value);
-  if (actualKeys.length !== keys.length || actualKeys.some((key) => typeof key !== "string" || !keys.includes(key))) throw unavailable();
+  if (actualKeys.length !== keys.length || actualKeys.some((key) => typeof key !== "string" || !keys.includes(key)))
+    throw unavailable();
   for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !Object.hasOwn(descriptor, "value")) throw unavailable();
@@ -428,15 +532,16 @@ function isCanonicalWindowsDirectory(value: unknown): value is string {
 
   const components = value.slice(3).split("\\");
   if (components.length === 0 || components.length > 511) return false;
-  return components.every((component) => (
-    component.length > 0 &&
-    component !== "." &&
-    component !== ".." &&
-    !/[\\/:*?<>"|\u0000-\u001f]/.test(component) &&
-    !component.endsWith(".") &&
-    !component.endsWith(" ") &&
-    !isReservedWindowsName(component)
-  ));
+  return components.every(
+    (component) =>
+      component.length > 0 &&
+      component !== "." &&
+      component !== ".." &&
+      !/[\\/:*?<>"|\u0000-\u001f]/.test(component) &&
+      !component.endsWith(".") &&
+      !component.endsWith(" ") &&
+      !isReservedWindowsName(component),
+  );
 }
 
 function isReservedWindowsName(component: string): boolean {
@@ -463,10 +568,12 @@ function isMissing(error: unknown): error is NodeJS.ErrnoException {
 }
 
 function isKnownError(message: string): boolean {
-  return message === "stardew_installation_registration_busy" ||
+  return (
+    message === "stardew_installation_registration_busy" ||
     message === "stardew_installation_registration_conflict" ||
     message === "invalid_stardew_installation_registration_publish" ||
-    message === "stardew_installation_registration_unavailable";
+    message === "stardew_installation_registration_unavailable"
+  );
 }
 
 function unavailable(): Error {
