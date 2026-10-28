@@ -199,6 +199,81 @@ test("a union answer is as many outcomes as it has members", (t) => {
   }
 });
 
+test("an optional answer is one answer, and a real second answer still fails", (t) => {
+  const root = fixture();
+  try {
+    // The shape `resolveWindowsPowerShell` has: one answer, and `undefined` for "this environment names
+    // none". All call sites apply the same fallback, so there is no rule two of them could state
+    // differently. A crowded decider of that shape must stay green.
+    write(
+      root,
+      "host/src/settings/executable.ts",
+      [
+        'import { join } from "node:path";',
+        "export function resolveToolExecutable(environment: NodeJS.ProcessEnv): string | undefined {",
+        "  const root = environment.SystemRoot ?? environment.SYSTEMROOT ?? environment.windir;",
+        '  if (typeof root !== "string" || root.length === 0) return undefined;',
+        '  return join(root, "Tool", "tool.exe");',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    write(
+      root,
+      "host/src/tavern/executable-one.ts",
+      [
+        'import { resolveToolExecutable } from "../settings/executable.js";',
+        'export const tool = resolveToolExecutable({}) ?? "tool.exe";',
+        "",
+      ].join("\n"),
+    );
+    write(
+      root,
+      "host/src/tavern/executable-two.ts",
+      [
+        'import { resolveToolExecutable } from "../settings/executable.js";',
+        'export const otherTool = resolveToolExecutable({}) ?? "tool.exe";',
+        "",
+      ].join("\n"),
+    );
+    const optional = duplication(root);
+    assert.deepEqual(optional.violations, [], `an optional answer carries no choice:\n${optional.notes.join("\n")}`);
+    const construction = optional.notes.find((note) => note.includes("crowded by construction"));
+    assert.match(construction, /resolveToolExecutable/u, "the reading still counts it, and says why it cannot diverge");
+    t.diagnostic(construction);
+
+    // The other direction, so the rule cannot pass by calling everything one answer: a union of two real
+    // answers is a decision, and a second crowded caller of it is still a finding.
+    write(
+      root,
+      "host/src/settings/answer-pair.ts",
+      [
+        'export type AnswerPair = Readonly<{ kind: "first" }> | Readonly<{ kind: "second" }>;',
+        "export function decideAnswerPair(flag: boolean): AnswerPair {",
+        '  return flag ? Object.freeze({ kind: "first" }) : Object.freeze({ kind: "second" });',
+        "}",
+        "",
+      ].join("\n"),
+    );
+    write(
+      root,
+      "host/src/tavern/pair-one.ts",
+      'import { decideAnswerPair } from "../settings/answer-pair.js";\nexport const pairOne = decideAnswerPair(true);\n',
+    );
+    write(
+      root,
+      "host/src/tavern/pair-two.ts",
+      'import { decideAnswerPair } from "../settings/answer-pair.js";\nexport const pairTwo = decideAnswerPair(false);\n',
+    );
+    const pairs = duplication(root);
+    const finding = pairs.violations.find((violation) => violation.message.includes("decideAnswerPair"));
+    assert.notEqual(finding, undefined, `a two-answer union is still a finding:\n${pairs.notes.join("\n")}`);
+    assert.match(finding.message, /2 outcomes/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the class is advisory, and the set says so", () => {
   assert.equal(ADVISORY.has("duplication"), true, "the class reports without deciding the run");
 });

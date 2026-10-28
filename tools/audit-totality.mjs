@@ -1971,8 +1971,21 @@ function workspaceSourceRoots(sources) {
 }
 
 /**
- * How many distinct outcomes a declared answer admits, read from the declaration rather than from the
- * function's body: `boolean` is two, a union of N members is N, and a single structural answer (a paths
+ * Whether a type member names the absence of an answer rather than an answer.
+ *
+ * `undefined` and `null` in a return type mean "there was nothing to return", which is not a state a
+ * caller chooses between: every call site handles it the same way, with one `?? fallback` or one
+ * early return. `selected | no_model | unreadable` names three states of the world, and a caller has
+ * to tell them apart - that is what this class counts.
+ */
+function namesAbsence(typeNode) {
+  if (typeNode.kind === ts.SyntaxKind.UndefinedKeyword || typeNode.kind === ts.SyntaxKind.NullKeyword) return true;
+  return ts.isLiteralTypeNode(typeNode) && typeNode.literal.kind === ts.SyntaxKind.NullKeyword;
+}
+
+/**
+ * How many distinct answers a declared answer admits, read from the declaration rather than from the
+ * function's body: `boolean` is two, a union of N answers is N, and a single structural answer (a paths
  * object, one record) is one.
  *
  * This is what separates a *constructor* from a *decision*. `resolveRuntimePaths` answers exactly one
@@ -1980,15 +1993,23 @@ function workspaceSourceRoots(sources) {
  * object, not a rule two places could state differently. `resolveSurfaceModelSelection` answers
  * `selected | no_model | unreadable`, which is three outcomes a caller has to act on, and that is the
  * kind of function a second call site can disagree about.
+ *
+ * An optional answer is one answer, not two. `resolveWindowsPowerShell` returns `string | undefined`,
+ * and `undefined` there is "this environment names no SystemRoot" - every one of its call sites then
+ * applies the same `?? "powershell.exe"`. A caller has nothing to choose, so there is no rule that two
+ * of them could state differently.
  */
 function answerOutcomes(typeNode, sourceFile, seen = new Set()) {
   if (typeNode === undefined || typeNode === null) return null;
   if (typeNode.kind === ts.SyntaxKind.BooleanKeyword) return 2;
   if (ts.isParenthesizedTypeNode(typeNode)) return answerOutcomes(typeNode.type, sourceFile, seen);
-  // Every member of a union is an outcome the caller has to tell apart, whatever shape it carries: a
-  // union of three discriminated object literals is three, not one. A union of one member that is not
-  // written as a union is a single answer, which is why the floor is 2 here and 1 below.
-  if (ts.isUnionTypeNode(typeNode)) return Math.max(2, typeNode.types.length);
+  // Every answer of a union is one the caller has to tell apart, whatever shape it carries: a union of
+  // three discriminated object literals is three, not one. A union of one answer is a single answer,
+  // which is why the floor is 2 for a boolean and 1 for one member below.
+  if (ts.isUnionTypeNode(typeNode)) {
+    const answers = typeNode.types.filter((member) => !namesAbsence(member));
+    return Math.max(1, answers.length);
+  }
   if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
     const name = typeNode.typeName.text;
     if (
@@ -2212,7 +2233,7 @@ function runDuplication(sources) {
       `duplication: crowded by construction, cannot diverge - each answers exactly one outcome, so no two call sites can receive answers that disagree: ${constructors.join("; ")}`,
     );
   notes.push(
-    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more outcomes (a boolean, or a union of two or more members). It reports ${diverging} such decider(s) today, which is why it is advisory: promoting it now would veto a plurality this tree already holds, and resolving that plurality is a product edit`,
+    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more answers a caller has to tell apart (a boolean, or a union of two or more members that are not the absence of an answer). It reports ${diverging} such decider(s) today${diverging === 0 ? ", so nothing here blocks; the class stays advisory only because no such decider exists yet" : ", which is why it is advisory: promoting it now would veto a plurality this tree already holds, and resolving that plurality is a product edit"}`,
   );
   notes.push(
     "duplication: what it cannot see - two implementations with different names (nothing here reads intent), a decision inlined into a caller with no decider function at all, and a decider whose second consumer reaches it through an `export *` barrel with no `index.ts`, which the specifier resolver does not follow",
@@ -2361,14 +2382,13 @@ function runDelegated(sources, gate) {
  * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
  * class found nothing it can prove, not that it stopped looking.
  *
- * `duplication` joined for a reason that is not a defect: the deciders it reports as crowded are path and
- * executable constructors (`resolveRuntimePaths`, `resolveTavernPaths`, `resolveWindowsPowerShell`), each of
- * which answers one shape, so no two call sites can receive answers that disagree. The class prints why in its
- * own note rather than in a comment here, because that note is what stops the next reader re-litigating them,
- * and it names the promotion condition it is waiting on: a crowded decider whose declared answer admits two or
- * more outcomes (a boolean, or a union of two or more members). It reports one such decider today
- * (`resolveWindowsPowerShell`, `string | undefined`); flipping it to blocking is a product edit, not a reading
- * this audit may take on its own.
+ * `duplication` is still here, but no longer because of a defect it reports: since the class learned that an
+ * optional answer is one answer, `resolveWindowsPowerShell` (`string | undefined`) is a constructor like the
+ * other two - its `undefined` is "this environment names no SystemRoot", and every call site applies the same
+ * `?? "powershell.exe"`, so no two of them can disagree. The class reports zero diverging deciders today, and
+ * the note says so. It stays advisory for the reason every class here does: a red from it would veto a ruling
+ * the owner has not taken rather than report a defect this repository holds wrong. The promotion condition is
+ * unchanged and still testable - a crowded decider whose answer is a boolean or a union of two real answers.
  */
 export const ADVISORY = Object.freeze(new Set(["hygiene", "duplication"]));
 
