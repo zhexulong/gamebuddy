@@ -133,6 +133,22 @@ test("the Game conduct asks for the opening line instead of licensing silence th
   assert.match(game, /not an inventory of your own procedure/);
 });
 
+test("the step-list ban names the one thing it does not forbid, so a plan is not mistaken for a list", () => {
+  // Measured 2026-10-28 (live run game-1793179432152): 63 assistant messages before the first text, 73 tool
+  // calls, ZERO text blocks. Nine of those thinking blocks carried say/speak/talk intent and at least three
+  // drafted a publishable line; the longest (#18, 146.3 s) drafted one, judged it "a step list", and called a
+  // tool instead. The permission above grants only what she has already noticed, felt or been told, while the
+  // ban's own example describes the only forward-looking thing she has before she starts: the plan. The
+  // boundary now sits inside that rule - one intent is company, the sequence is the inventory - and the ban
+  // itself is untouched. The tail still licenses quiet between remarks, so this is not a per-turn obligation.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /One thing you are about to do is not a list/);
+  assert.match(game, /is the inventory this forbids/);
+  assert.match(game, /never list your steps/);
+  assert.match(game, /not an inventory of your own procedure/);
+  assert.match(game, /work quietly until you are done/);
+});
+
 test("the system prompt states the action syntax and no longer prescribes the turn's form", () => {
   // Owner ruling: "the prompt governs the floor, the card governs the form; anything
   // that governs form gets deleted." Two shared constraints prescribed the SHAPE of a
