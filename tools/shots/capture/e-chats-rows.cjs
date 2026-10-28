@@ -3,7 +3,7 @@
 // shows a raw `*` or `{{`. The row meta line is clamped to two lines (height, line clamp, chars
 // inside the box, plus a forced 160-char preview probe — the wire's own maximum), and the meta
 // colour's contrast against its card is measured at both widths.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, createChat } = require("./common.cjs");
 
 const RENAME = "重命名契约行";
 /** The three controls every active row carries, by the accessible name the surface gives them. */
@@ -170,19 +170,6 @@ const commitRetention = () => {
   return "confirmed";
 };
 
-/** The product's own New Chat control, on the Chats list - the same one the second-row loop above uses. */
-const startNewChat = () => {
-  const surface = document.querySelector('[data-testid="chats-surface"]');
-  if (surface === null) return "no_chats_surface";
-  const button = [...surface.querySelectorAll("button")].find((candidate) =>
-    (candidate.textContent ?? "").includes("新建会话"),
-  );
-  if (button === undefined) return "no_create_button";
-  if (button.disabled) return "create_disabled";
-  button.click();
-  return "clicked";
-};
-
 /** One row's own select control. K drives this same gesture; the archive half uses it to go back. */
 const clickChatSelect = ({ index }) => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -195,31 +182,6 @@ const clickChatSelect = ({ index }) => {
   button.click();
   return "clicked";
 };
-
-/**
- * Create one Chat through the product's own New Chat control and wait for the shell to land in it.
- *
- * The control has two jobs: with openings to choose from it opens the picker and the Chat exists only
- * once an opening is picked, and with none it creates the Chat outright. This driver means "another
- * conversation", which is the default opening. Creating lands IN the created Chat - the shell selects
- * it and moves the region to the chat surface - and that landing is the fact that says the created
- * Chat is the mount, so it is what this returns.
- */
-async function createChatAndLand(page, say) {
-  const started = await page.evaluate(startNewChat);
-  say("the product's own New Chat control:", started);
-  if (started !== "clicked") return false;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await page.waitForTimeout(1500);
-    if ((await page.locator('[data-testid="opening-option"]').count()) > 0) {
-      await page.locator('[data-testid="opening-option"]').first().click();
-      say("the create control opened the opening picker; the default opening was chosen");
-      continue;
-    }
-    if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null)) return true;
-  }
-  return false;
-}
 
 /** The select requests the wire carries - the one thing a non-mounted mutation must not produce. */
 const selectRequests = (wire) => wire.filter((entry) => entry.route.includes("/chat/select"));
@@ -319,7 +281,12 @@ function snapshotDifference(before, after) {
   /** A claim about the product fails the driver when it is false: a false print would read as a pass. */
   const assertClaim = (label, ok, detail) => {
     say(`${label}: ${ok}${detail === undefined ? "" : ` (${detail})`}`);
-    if (!ok) throw new Error(`driver_e: ${label}`);
+    if (!ok) {
+      // The facts file is this driver's only report: write the lines it did measure before failing, so a
+      // red run says which item it reached instead of leaving the report to guess.
+      flush();
+      throw new Error(`driver_e: ${label}`);
+    }
   };
   // Every request this page makes, so "a non-mounted mutation produces no selection" can be a fact about the
   // wire rather than an inference from the DOM (`selectRequests` above filters this list).
@@ -340,11 +307,12 @@ function snapshotDifference(before, after) {
   say("=== ITEM: 会话 rows as the surface opens ===");
   say(JSON.stringify(facts, null, 1));
 
-  let landedInChat = null;
   // One control, two jobs: with openings to choose from the create control opens the picker, and the
-  // Chat exists only once an opening is picked. This driver means "another conversation", which is
-  // the default opening - the same thing a companion with no choice gets - so the picker is answered
-  // here instead of being read as a create that did nothing (which left this loop unbounded).
+  // Chat exists only once an opening is COMMITTED. This driver means "another conversation", which is
+  // the default opening - the same thing a companion with no choice gets. The commit is the picker's
+  // own `opening-option-commit`, not the card's prose: `c55ea777` made the prose inert text a reader
+  // can select and copy, and clicking it now creates nothing (which is how this loop came to press it
+  // five times, get five `clicked` answers, and still measure a one-row list).
   let createAttempts = 0;
   while (facts.rowCount < 2) {
     createAttempts += 1;
@@ -352,38 +320,30 @@ function snapshotDifference(before, after) {
       say(`gave up after ${createAttempts - 1} create attempts without a second row on the list`);
       break;
     }
-    const created = await page.evaluate(startNewChat);
-    say("create another conversation:", created);
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await page.waitForTimeout(1500);
-      if ((await page.locator('[data-testid="opening-option"]').count()) > 0) {
-        await page.locator('[data-testid="opening-option"]').first().click();
-        say("the create control opened the opening picker; the default opening was chosen");
-        continue;
-      }
-      // Creating a Chat now lands IN it: the shell selects the new conversation and moves
-      // the region to the chat surface, so the list is not on screen any more. Recorded
-      // here as the fact it is (this driver used to read the list straight after the
-      // click, which is what made it throw on a null `chats-surface`), and the list is
-      // asked for again below before the rows are read.
-      landedInChat = await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null);
-      if (landedInChat) break;
-      facts = await page.evaluate(readRows);
-      if (facts.rowCount >= 2) break;
-    }
-    if (created !== "clicked") break;
-    if (landedInChat === true) {
-      say("create landed in the new Chat (the shell selected it), so the list is re-opened:", landedInChat);
-      const reopened = await activateSurface(page, "会话");
-      say("re-opened the Chats surface:", reopened);
-      await page.waitForTimeout(1200);
-      facts = await page.evaluate(readRows);
-    }
+    const created = await createChat(page);
+    say(`create another conversation: control=${created.started} committed_opening=${JSON.stringify(created.committed)} landed_in_the_new_chat=${created.landed}`);
+    if (!created.landed) break;
+    // Creating a Chat lands IN it: the shell selects the new conversation and moves the region to the
+    // chat surface, so the list is not on screen any more. It is asked for again before the rows are read.
+    say("create landed in the new Chat (the shell selected it), so the list is re-opened:", created.landed);
+    const reopened = await activateSurface(page, "会话");
+    say("re-opened the Chats surface:", reopened);
+    await page.waitForTimeout(1200);
+    facts = await page.evaluate(readRows);
   }
 
   say("=== ITEM: rows with two conversations (both must be UNNAMED here) ===");
   say(JSON.stringify(facts, null, 1));
   say(`rowCount=${facts.rowCount}`);
+  // The whole family below (identity, numbering, rename, and the 41b/41c half that manages a row the
+  // mount is not on) is about TWO rows, and a fresh root starts with one. "I could not make a second"
+  // printed as a false and skipped past is what let `shots-final55` report a green run with 41b and
+  // 41c missing. So a list this driver could not grow is a named failure.
+  assertClaim(
+    "the list carries the two conversations this family measures",
+    facts.rowCount >= 2,
+    `${facts.rowCount} row(s) after ${createAttempts} create attempt(s): ${JSON.stringify(facts.rows.map((row) => row.titleText))}`,
+  );
   for (const [index, row] of facts.rows.entries()) {
     say(`ROW ${index + 1} titleText: ${JSON.stringify(row.titleText)}`);
     say(`ROW ${index + 1} visible text: ${JSON.stringify(row.rowText)}`);
@@ -456,9 +416,14 @@ function snapshotDifference(before, after) {
     `(the Chats list is the surface on screen, so ${snapshotBefore.dom.length} transcript rows are rendered here - the durable half is what carries the comparison)`,
   );
 
-  if (selectedIndex < 0 || otherIndex < 0) {
-    say("named skip: this list has no second, unselected row, so the non-mounted half cannot be driven");
-  } else {
+  assertClaim(
+    "the list has a selected row and a row that is not it (the two the management half needs)",
+    selectedIndex >= 0 && otherIndex >= 0,
+    `selected=${selectedIndex} notSelected=${otherIndex} of ${listBefore.rows.length}`,
+  );
+  // The half below is scoped: its two unique titles and the spare Chat it creates belong to the rows this
+  // assertion just required, and nothing after this block needs them.
+  {
     // Two unique titles carry the identity of the rows this half acts on. An auto-title cannot: the list
     // renumbers 新对话 1 / 新对话 2 as rows come and go, so the same row reads differently later.
     const OTHER_TITLE = "不是我在的那一行";
@@ -499,8 +464,9 @@ function snapshotDifference(before, after) {
     // need (K chooses a NON-selected row). So the row archived below is one this driver creates, and it is given a
     // unique title immediately - which is what lets the archive half name it after two other rows have moved.
     say("=== ITEM: the spare Chat this driver creates for the archive half ===");
-    const landedInSpare = await createChatAndLand(page, say);
-    assertClaim("the created Chat became the mount (the shell lands in what it creates)", landedInSpare);
+    const spare = await createChat(page);
+    say(`the product's own New Chat control: control=${spare.started} committed_opening=${JSON.stringify(spare.committed)} landed=${spare.landed}`);
+    assertClaim("the created Chat became the mount (the shell lands in what it creates)", spare.landed);
     say("re-opened the Chats surface:", await activateSurface(page, "会话"));
     await page.waitForTimeout(1200);
     let spareRows = await page.evaluate(rowControls);

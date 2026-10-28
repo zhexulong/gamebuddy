@@ -119,8 +119,12 @@ const clickButtonNamed = ({ selector, text }) => {
   return "clicked";
 };
 
+// The commit is the picker's own `opening-option-commit` (`用这个开场`), not the card's prose: since
+// `c55ea777` the card is a container a player reads, selects and copies, and the prose creates
+// nothing. Clicking it answered "clicked" while nothing was committed, which is why every run from
+// shots-final51 on read `the opening the player chose is the one the Chat opened on: false`.
 const clickOption = (index) => {
-  const options = [...document.querySelectorAll('[data-testid="opening-option"]')];
+  const options = [...document.querySelectorAll('[data-testid="opening-option-commit"]')];
   const option = options[index];
   if (option === undefined) return "no_such_option";
   option.click();

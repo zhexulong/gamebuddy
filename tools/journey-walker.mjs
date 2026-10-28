@@ -724,8 +724,9 @@ class Walker {
     const chats = SURFACES.find((surface) => surface.key === "chats");
     const characters = SURFACES.find((surface) => surface.key === "characters");
 
-    // 1. Spam `new chat` a dozen times. The picker's first option, when a picker opens, is the
-    //    product's own commit control; a picker that never opens is the plain New Chat path.
+    // 1. Spam `new chat` a dozen times. The picker's commit button, when a picker opens, is the
+    //    product's own commit control; a picker that never opens is the plain New Chat path. The
+    //    card's prose is inert text since `c55ea777`, so clicking it creates nothing.
     this.setSurface(chats);
     this.setControl("new-chat x12");
     await this.presentSurface(chats);
@@ -741,7 +742,7 @@ class Walker {
       }
       await trigger.click({ timeout: CLICK_TIMEOUT_MS }).catch(() => undefined);
       await this.page.waitForTimeout(400);
-      const option = this.page.locator('[data-testid="opening-option"]').first();
+      const option = this.page.locator('[data-testid="opening-option-commit"]').first();
       if ((await option.count()) > 0 && (await option.isVisible().catch(() => false))) {
         await option.click({ timeout: CLICK_TIMEOUT_MS }).catch(() => undefined);
         created += 1;

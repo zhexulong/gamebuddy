@@ -250,6 +250,48 @@ async function activateSurface(page, label) {
   await page.waitForTimeout(600);
   return "app-bar";
 }
+
+/**
+ * Create one Chat through the product's own New Chat control, and answer how it really went.
+ *
+ * One control, two jobs, decided by the catalogue: a companion with openings to choose from opens
+ * the picker and the Chat exists only once an opening is committed; one without creates the Chat
+ * outright. The picker's commit is `[data-testid="opening-option-commit"]` (`用这个开场`): on
+ * 2026-10-27 `c55ea777` made the card's prose inert text a player can read, select and copy, and
+ * moved the commit onto that button - the same control `new-chat-opening-picker.spec.ts` drives.
+ * Clicking the prose commits nothing, which is what this kit was still doing: `shots-final55`'s
+ * driver E pressed it five times, got five `clicked` answers, made no Chat, and the run measured a
+ * one-row list - so E's second-row claims, its 41b/41c screenshots and driver K's switch were all
+ * gone while the run still reported a green `DONE-CAPTURE`. A gesture that answers "clicked" and
+ * creates nothing is why this answers `landed` from the surface instead of from the click.
+ *
+ * Creating lands IN the created Chat: the shell selects it and moves the region to the chat
+ * surface. `landed` is that surface, read after the picker has been answered; `committed` is the
+ * opening index this driver pressed, so a refusal (`landed: false`) names what was tried.
+ */
+async function createChat(page, { openingIndex = 0, settleMs = 1500, rounds = 20 } = {}) {
+  const started = await page.evaluate(() => {
+    const button = document.querySelector('[data-testid="new-chat"]');
+    if (button === null) return "no_create_control";
+    if (button.disabled) return "create_disabled";
+    button.click();
+    return "clicked";
+  });
+  if (started !== "clicked") return { started, committed: null, landed: false };
+  let committed = null;
+  for (let round = 0; round < rounds; round += 1) {
+    await page.waitForTimeout(settleMs);
+    if (await page.evaluate(() => document.querySelector('[data-testid="chat-surface"]') !== null))
+      return { started, committed, landed: true };
+    const commit = page.locator('[data-testid="opening-option-commit"]').nth(openingIndex);
+    if ((await commit.count()) > 0 && (await commit.isVisible().catch(() => false))) {
+      await commit.click({ timeout: 10000 }).catch(() => undefined);
+      committed = openingIndex;
+    }
+  }
+  return { started, committed, landed: false };
+}
+
 module.exports = {
   connect,
   reporter,
@@ -260,4 +302,5 @@ module.exports = {
   readDurableTranscript,
   canStartTurn,
   classifyComposer,
+  createChat,
 };
