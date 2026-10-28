@@ -374,3 +374,22 @@ test("a summary that was held and never cleared is still a violation", () => {
     `an uncleared summary must be refused; got ${JSON.stringify(codes(result))}`,
   );
 });
+test("a night with no receipt still crosses when the calendar moved, and says which witness answered", () => {
+  // `actionTrace` records only FLAT dispatches. Measured 2026-10-28 (`round5`): `dismiss_modal` succeeded at
+  // 00:27:59, SMAPI logged "after save, starting spring 6 Y1" at 00:28:04, and the run was reported as
+  // `night_never_started:actor_held_by_cutscene` because all 42 dispatches went through a Body Program and the
+  // trace held no `advance_day`.
+  //
+  // The calendar is the witness a dispatch path cannot hide. Both directions are asserted, because a classifier
+  // that answers `advanced: true` whenever the receipt is absent would pass the first half alone.
+  const byCalendar = classifyNight({ terminal: null, after: { dayBefore: 5, dayOfMonth: 6 } });
+  assert.equal(byCalendar.advanced, true, "a moved calendar is a crossed night");
+  assert.equal(byCalendar.witness, "calendar");
+
+  const unchanged = classifyNight({ terminal: null, after: { dayBefore: 5, dayOfMonth: 5 } });
+  assert.equal(unchanged.advanced, false, "an unmoved calendar is not a crossing");
+  assert.equal(unchanged.reasonCode, "night_terminal_missing");
+
+  const unknown = classifyNight({ terminal: null, after: { dayOfMonth: 6 } });
+  assert.equal(unknown.advanced, false, "a calendar with no before-value proves nothing");
+});

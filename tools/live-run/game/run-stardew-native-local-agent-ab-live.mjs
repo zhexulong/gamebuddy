@@ -2317,13 +2317,39 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // HOW the night ended: the engine's 2:00 AM pass-out, or the companion's own sleep. It is a CAUSE on the day's
   // record and never a verdict - the night was watched on to the day the engine opened.
   const cause = outcome.passOutObserved === true ? "pass_out" : "sleep";
+  // Did the night actually pass? TWO answers, and the calendar is the one that cannot be faked by a dispatch path.
+  //
+  // `actionTrace` records only FLAT dispatches. Measured 2026-10-28 (`round5`): all 42 of that run's dispatches went
+  // through Body Program, so `advance_day` - which the Mod DID execute, `dismiss_modal` succeeding at 00:27:59 and
+  // SMAPI logging "after save, starting spring 6 Y1" at 00:28:04 - was invisible here. The run was reported as
+  // `night_never_started:actor_held_by_cutscene` while the world had in fact rolled over.
+  //
+  // The calendar is the fact the watcher was always trying to observe: `dayBefore` is the day this watch began on,
+  // and a different `dayOfMonth` afterwards means the engine opened a new day whatever dispatched it.
+  const afterNight = await observeQuietly();
+  const dayAdvanced = (() => {
+    const now = afterNight?.dayOfMonth;
+    return Number.isInteger(dayBefore) && Number.isInteger(now) && now !== dayBefore;
+  })();
+  if (dayAdvanced) {
+    // No flat `advance_day` receipt exists to read, and inventing one would be a receipt for something the trace
+    // never saw. `release` says what actually closed the night.
+    return Object.freeze({
+      terminal: null,
+      after: Object.freeze({ ...afterNight, dayBefore }),
+      menus: outcome.menus,
+      cause: outcome.passOutObserved === true ? "pass_out" : "sleep",
+      release: "calendar_advanced",
+      reasonCode: null,
+    });
+  }
   // The night's own terminal: the receipt of the `advance_day` the COMPANION dispatched during this window.
   const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
   const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
   if (dispatched === undefined) {
     return Object.freeze({
       terminal: null,
-      after: await observeQuietly(),
+      after: afterNight,
       menus: outcome.menus,
       cause: null,
       reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,

@@ -107,9 +107,31 @@ export function dayOfMonthForTotalDays(totalDays) {
   return (Math.trunc(totalDays) % DAYS_PER_SEASON) + 1;
 }
 
-/** Does the calendar advanced by this night follow from the totals the same receipt reported? */
+/**
+ * Did this night cross, and what says so?
+ *
+ * TWO witnesses, and the receipt is not always available. `actionTrace` records only FLAT dispatches, so a night
+ * the companion crossed through Body Program produces no `terminal` here at all - measured 2026-10-28 (`round5`):
+ * `dismiss_modal` succeeded at 00:27:59 and SMAPI logged "after save, starting spring 6 Y1" at 00:28:04, while every
+ * one of that run's 42 dispatches went through a program and the trace was empty.
+ *
+ * The world's own calendar is the witness that cannot be hidden by a dispatch path: the runner records the day the
+ * watch began on and the day observed afterwards, and a different `dayOfMonth` IS the crossing. The receipt, when it
+ * exists, is the STRONGER witness - it carries the engine's own totals - so it is still preferred and still
+ * cross-checked. Absent a receipt, the calendar alone is enough, and `witness` says which one answered.
+ */
 export function classifyNight({ terminal, after }) {
   if (!isPlainObject(terminal)) {
+    const observed = after?.dayOfMonth;
+    const before = after?.dayBefore;
+    if (isFiniteNumber(observed) && isFiniteNumber(before) && observed !== before) {
+      return Object.freeze({
+        advanced: true,
+        witness: "calendar",
+        reasonCode: null,
+        facts: Object.freeze({ day_before: String(before), day_of_month: String(observed) }),
+      });
+    }
     return Object.freeze({ advanced: false, reasonCode: "night_terminal_missing", facts: Object.freeze({}) });
   }
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "day_advanced") {
