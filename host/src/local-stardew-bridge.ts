@@ -400,30 +400,44 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   /** Read the Mod-advertised scene projection; this route cannot dispatch or create a receipt. */
   public async observeScene(request: ObserveSceneRequest = {}): Promise<ObserveSceneResult> {
     this.requireAuthenticated();
-    if (!this.hasPublishedReadOnlyCapability("observe_scene")) throw new Error("bridge_capability_not_ready");
+    const refusal = this.readOnlyGateFailure("observe_scene", "world_perception");
+    if (refusal !== null) throw new Error(`bridge_capability_not_ready:${refusal}`);
     const response = await this.request("observe_scene_request", request as Record<string, unknown>);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "observe_scene_result") throw new Error("unexpected_observe_scene_response");
     return response.payload;
   }
 
-  private hasPublishedReadOnlyCapability(actionId: string): boolean {
+  /**
+   * Which term of the read-only gate fails, or null when all of them hold.
+   *
+   * The gate used to answer a bare `false`, and a bare false is why this was undiagnosed for a long time:
+   * measured 2026-10-28, across 60 sessions, `stardew_read_scene` was called 72 times, `stardew_find_destination`
+   * 25 and `stardew_inspect_world_map` 9 - and every single one failed with `bridge_capability_not_ready` in
+   * under a millisecond. Six terms, one boolean, and no way to tell which one.
+   */
+  private readOnlyGateFailure(actionId: string, familyId: string): string | null {
     const state = this.state;
-    return (
-      state.connected &&
-      state.snapshot !== null &&
-      state.catalogRevision === state.snapshot.catalogRevision &&
-      state.capabilities.includes(actionId) &&
-      state.snapshot.capabilities.includes(actionId) &&
-      (state.catalogRegistrations ?? []).some(
-        (registration) =>
-          registration.actionId === actionId &&
-          registration.familyId === "world_perception" &&
-          registration.identityVersion === 1 &&
-          registration.lifecycle === "published" &&
-          registration.kind === "read_only",
-      )
-    );
+    if (!state.connected) return "disconnected";
+    if (state.snapshot === null) return "no_snapshot";
+    if (state.catalogRevision !== state.snapshot.catalogRevision)
+      return `catalog_revision_mismatch:hello_ack=${String(state.catalogRevision)};snapshot=${String(state.snapshot.catalogRevision)}`;
+    if (!state.capabilities.includes(actionId)) return "not_in_advertised_capabilities";
+    if (!state.snapshot.capabilities.includes(actionId)) return "not_in_snapshot_capabilities";
+    const registration = (state.catalogRegistrations ?? []).find((entry) => entry.actionId === actionId);
+    if (registration === undefined) return "not_registered";
+    if (registration.familyId !== familyId)
+      return `family_mismatch:registered=${registration.familyId};expected=${familyId}`;
+    if (registration.identityVersion !== 1) return `identity_version:value=${String(registration.identityVersion)}`;
+    if (registration.lifecycle !== "published") return `lifecycle:value=${String(registration.lifecycle)}`;
+    if (registration.kind !== "read_only") return `kind:value=${String(registration.kind)}`;
+    return null;
+  }
+
+  /** The same six terms, exposed so the tool layer can NAME the one that failed instead of answering a bare false. */
+  public readOnlyCapabilityRefusal(actionId: string): string | null {
+    const family = actionId === "observe_scene" ? "world_perception" : "world_navigation";
+    return this.readOnlyGateFailure(actionId, family);
   }
 
   /**

@@ -322,6 +322,23 @@ export function createStardewObservationTools(
     content: [{ type: "text" as const, text: JSON.stringify(result) }],
     details: { result },
   });
+  /**
+   * The read-only gate's answer, with the failing term named.
+   *
+   * Three tools share one refusal string and one boolean, so a failure could not be diagnosed from a run: measured
+   * 2026-10-28, `stardew_read_scene` failed 72 of 72 calls, `stardew_find_destination` 25 of 25 and
+   * `stardew_inspect_world_map` 9 of 9, every one of them `bridge_capability_not_ready` in under a millisecond.
+   * The bridge owns the six terms; this asks it which one is false.
+   */
+  const readOnlyRefusal = (actionId: string): string => {
+    const refusal = (
+      integration as { readOnlyCapabilityRefusal?: (id: string) => string | null }
+    ).readOnlyCapabilityRefusal?.(actionId);
+    return refusal === undefined || refusal === null
+      ? "bridge_capability_not_ready"
+      : `bridge_capability_not_ready:${refusal}`;
+  };
+
   const sceneCapabilityReady = (): boolean => {
     const state = integration.state;
     const snapshot = state.snapshot;
@@ -365,7 +382,7 @@ export function createStardewObservationTools(
         execute: async (_toolCallId, params) => {
           if (!requireStrictObject(params) || Object.keys(params).length !== 0)
             throw new Error("invalid_tool_parameters");
-          if (!sceneCapabilityReady()) throw new Error("bridge_capability_not_ready");
+          if (!sceneCapabilityReady()) throw new Error(readOnlyRefusal("observe_scene"));
           const result = await (
             integration as StardewBridgeConnection & { observeScene: (request: {}) => Promise<unknown> }
           ).observeScene({});
@@ -401,7 +418,7 @@ export function createStardewObservationTools(
                 (args[keys[0]!] as string).length > 128))
           )
             throw new Error("invalid_tool_parameters");
-          if (!navigationCapabilityReady("inspect_world_map")) throw new Error("bridge_capability_not_ready");
+          if (!navigationCapabilityReady("inspect_world_map")) throw new Error(readOnlyRefusal("inspect_world_map"));
           return navigationResult(
             await (integration as NavigationReadIntegration).navigationRead({
               operation: "inspect_world_map",
@@ -435,7 +452,7 @@ export function createStardewObservationTools(
             args.query.length > 128
           )
             throw new Error("invalid_tool_parameters");
-          if (!navigationCapabilityReady("find_destination")) throw new Error("bridge_capability_not_ready");
+          if (!navigationCapabilityReady("find_destination")) throw new Error(readOnlyRefusal("find_destination"));
           return navigationResult(
             await (integration as NavigationReadIntegration).navigationRead({
               operation: "find_destination",
