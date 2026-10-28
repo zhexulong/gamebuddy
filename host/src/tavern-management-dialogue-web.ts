@@ -2818,6 +2818,14 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "companion_delete_in_play") return { status: 409, code: "companion_delete_in_play" };
   if (message === "companion_conflict") return { status: 409, code: "companion_conflict" };
   if (message === "companion_world_book_binding_unavailable") return { status: 503, code: "storage_unavailable" };
+  // The player's persona, scenario and opening are each one revisioned artifact edited through a
+  // compare-and-set, so a save that lost the race is the same bounded fact as every other stale
+  // write - and each record names itself. Falling through to the catch-all told the player the CHAT
+  // state could not be reconciled, which is a false statement about which record moved; these three
+  // codes are already declared, mirrored and worded, and nothing produced them until now.
+  if (message === "persona_revision_conflict") return { status: 409, code: "persona_conflict" };
+  if (message === "scenario_revision_conflict") return { status: 409, code: "scenario_conflict" };
+  if (message === "greeting_revision_conflict") return { status: 409, code: "greeting_conflict" };
   // The new-chat opening choice: a sealed opening, a Chat whose opening is not a greeting, and a
   // variant that no longer resolves are each a distinct, bounded, player-actionable refusal.
   if (message === "chat_opening_locked" || message === "chat_thread_opening_locked")

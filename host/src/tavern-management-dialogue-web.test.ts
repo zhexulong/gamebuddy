@@ -19,6 +19,13 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "./tavern/companion-world-book-service.js";
+import { createGreetingManagementService } from "./tavern/greeting-management/greeting-management.js";
+import { createPersonaManagementService } from "./tavern/persona-management/persona-management.js";
+import {
+  createScenarioManagementService,
+  withScenarioSurfaceMacros,
+} from "./tavern/scenario-management/scenario-management.js";
+import { TavernArtifactStore } from "./tavern/artifact-store.js";
 import { exportCompanionCard, type CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
 import { writeCompanionCardPng } from "./tavern/png-card-writer.js";
@@ -3022,4 +3029,132 @@ test("the card export route is absent when the profile does not declare it, and 
       }),
     /tavern_management_composition_unavailable/,
   );
+});
+
+/**
+ * The three authored records say WHICH record moved.
+ *
+ * `persona_conflict`, `scenario_conflict` and `greeting_conflict` were declared by the
+ * contract's `ProblemCode` union, published in `TAVERN_BROWSER_PROBLEM_CODES_V1`, mirrored
+ * by both browser clients and worded in the catalogue ("This changed while you were
+ * working") - and no producer could emit any of them. The three management services do
+ * throw `persona_revision_conflict` / `scenario_revision_conflict` /
+ * `greeting_revision_conflict` (`persona-management.ts:54`, `scenario-management.ts:61`,
+ * `greeting-management.ts:55`), but `problemFor` had no branch for those messages, so a
+ * stale save fell through to the catch-all and answered `state_reconciliation_required`:
+ * the player was told the CHAT state could not be reconciled, which is a false statement
+ * about which record moved, and a client that keyed its re-read on the conflict could
+ * never have seen one.
+ *
+ * This drives the real dispatcher over a real loopback server with the real management
+ * services over a real artifact store: a save at a stale revision is a 409 that names the
+ * record, and the record is unchanged afterwards. The three cases are enumerated from one
+ * table so a fourth authored record cannot be added without landing here.
+ */
+const authoredRecords = [
+  {
+    name: "persona",
+    path: "/api/tavern/v1/persona",
+    conflict: "persona_conflict",
+    create: { name: "Alex", description: "A calm farmer" },
+    stale: { name: "Alex, rewritten", description: "This must not land." },
+  },
+  {
+    name: "scenario",
+    path: "/api/tavern/v1/scenario",
+    conflict: "scenario_conflict",
+    create: { name: "Saloon evening", description: "A quiet evening at the Stardrop Saloon." },
+    stale: { name: "Rainy evening", description: "This must not land." },
+  },
+  {
+    name: "greeting",
+    path: "/api/tavern/v1/greeting",
+    conflict: "greeting_conflict",
+    create: { label: "Default", variants: [{ label: "Default", text: "The valley is quiet." }] },
+    stale: { label: "Rainy", variants: [{ label: "Rainy", text: "This must not land." }] },
+  },
+] as const;
+
+test("a stale persona, scenario or greeting save names the record that moved, not the chat", async () => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-authored-conflict-"));
+  try {
+    const artifactStore = new TavernArtifactStore(root);
+    const server = await startTavernManagementDialogueWebServer({
+      managementStateFacade: facade,
+      managementService: service({ lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 }),
+      worldInfoService: worldInfoService(),
+      playerPreferenceStore: voicePreferenceStore,
+      libraryService: Object.freeze({
+        async listCompanions() {
+          return [{ handle, name: "琥珀", isCurrent: true }];
+        },
+      }),
+      // The REAL services, so the refusal is the one the durable artifact store raises.
+      personaService: createPersonaManagementService(artifactStore, root),
+      scenarioService: withScenarioSurfaceMacros(createScenarioManagementService(artifactStore, root), async () =>
+        macroTable({ char: "琥珀", user: "阿岚" }),
+      ),
+      greetingService: createGreetingManagementService(artifactStore, root),
+      profile: charactersProfile,
+      bootstrapToken: token,
+    });
+    try {
+      const origin = server.origin;
+      const bootstrap = await fetch(`${origin}/api/tavern/v1/bootstrap`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+      });
+      assert.equal(bootstrap.status, 200);
+      const snapshot = (await bootstrap.json()) as { csrfToken: string };
+      const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const writes = {
+        Origin: origin,
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-origin",
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+      };
+
+      for (const record of authoredRecords) {
+        // The first save mints revision 1 through the same control (`expectedRevision: 0`).
+        const created = await fetch(`${origin}${record.path}`, {
+          method: "PUT",
+          headers: writes,
+          body: JSON.stringify({ apiVersion: 1, expectedRevision: 0, ...record.create }),
+        });
+        assert.equal(created.status, 200, `${record.name}: the first save must land`);
+        assert.equal(((await created.json()) as { revision: number }).revision, 1);
+
+        // A second save at the SAME revision is stale by one: another tab (or an earlier
+        // save) moved the record, and the refusal must name the record it was about.
+        const stale = await fetch(`${origin}${record.path}`, {
+          method: "PUT",
+          headers: writes,
+          body: JSON.stringify({ apiVersion: 1, expectedRevision: 0, ...record.stale }),
+        });
+        assert.equal(stale.status, 409, `${record.name}: a stale save is a conflict`);
+        assert.equal(
+          ((await stale.json()) as { code: string }).code,
+          record.conflict,
+          `${record.name}: the refusal must name the record that moved, not the chat`,
+        );
+
+        // …and it changed nothing: the next save at the revision the read carries succeeds.
+        const read = await fetch(`${origin}${record.path}`, {
+          headers: { Origin: origin, Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+        });
+        assert.equal(read.status, 200);
+        assert.equal(
+          ((await read.json()) as { revision: number }).revision,
+          1,
+          `${record.name}: a refused save never advanced the record`,
+        );
+      }
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
