@@ -25,7 +25,7 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -67,7 +67,7 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -637,6 +637,41 @@ internal sealed partial class ExecutionManager
     internal static string DescribeToolCategory(Tool? tool) => ToolCategory(tool) ?? "none";
 
     /// <summary>
+    /// The evidence one refused `slot`-named tool request carries: the slot the caller named, what that slot ACTUALLY
+    /// holds, what the actor is holding, and the slot the action's own claim selects (with that claim's refusal when
+    /// nothing satisfies it). The refusal condition below collapses six different realities - no such index, an empty
+    /// slot, a non-axe, an axe the actor is not holding, an upgraded axe, a held axe at another index - and the whole
+    /// detail used to be `slot=N`, so the refused caller could not tell which of them to repair and had only another
+    /// guess. Naming the four facts is the receipt's whole job here: the action still does not equip anything.
+    /// </summary>
+    private static string DescribeRequestedSlot(IList<Item?> items, int requestedSlot, int heldSlot, string actionId)
+    {
+        DeclaredToolResolution resolution = ResolveDeclaredTool(items, actionId);
+        return $"slot={requestedSlot.ToString(CultureInfo.InvariantCulture)}"
+            + $";holds={DescribeSlotOccupant(items, requestedSlot)}"
+            + $";held={DescribeSlotOccupant(items, heldSlot)}"
+            + $";tool_slot={(resolution.Slot >= 0 ? resolution.Slot.ToString(CultureInfo.InvariantCulture) : "none")}"
+            + $";tool_refusal={resolution.RefusalCode ?? "none"}";
+    }
+
+    /// <summary>
+    /// What one pack slot holds, in the vocabulary the published tool slots speak: a tool's claim category, a
+    /// non-tool item's identity, `none` for an empty slot, and `out_of_range` for an index the pack does not have -
+    /// "there is no slot 12" is a different repair from "slot 12 is empty".
+    /// </summary>
+    private static string DescribeSlotOccupant(IList<Item?> items, int slot)
+    {
+        if (slot < 0 || slot >= items.Count)
+            return "out_of_range";
+        return items[slot] switch
+        {
+            null => "none",
+            Tool tool => ToolCategory(tool) ?? DescribeTool(tool) ?? "tool",
+            Item item => item.QualifiedItemId,
+        };
+    }
+
+    /// <summary>
     /// Chop exactly one TerrainFeature Tree stump (stump.Value == true) with an
     /// equipped Axe of any upgrade level. ResourceClump stumps (600/602) are
     /// NOT this action's targets: they belong exclusively to clear_debris, per
@@ -657,7 +692,7 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_stump"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -692,7 +727,7 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteChopStump(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", $"slot={slot}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_stump"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
