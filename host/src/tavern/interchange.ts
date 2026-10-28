@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { WorldBook } from "../worldbook.js";
+import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBook } from "../worldbook.js";
 import type { ChatThreadMessage } from "./chat-thread-store.js";
 
 export const TAVERN_INTERCHANGE_VERSION = "tavern-interchange/v1" as const;
@@ -9,6 +9,35 @@ const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
   worldBookEntries: 128,
   textBytes: 4_000,
 });
+/**
+ * A worldbook key word's own bound, the one `WorldBookEntry` states for `keys`/`secondaryKeys`: the
+ * interchange must accept exactly what the book itself accepts, or a file it just wrote would fail
+ * to read back.
+ */
+const KEY_WORD_MAX_CHARS = 64;
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
+/** The members a worldbook interchange entry may carry; the gate members are optional because `WorldBookEntry` makes them so. */
+const SAFE_WORLDBOOK_ENTRY_KEYS = Object.freeze([
+  "entryId",
+  "title",
+  "content",
+  "scope",
+  "tokenBudget",
+  "constant",
+  "keys",
+  "secondaryKeys",
+  "selectiveLogic",
+]);
+const SAFE_WORLDBOOK_KEYS = Object.freeze([
+  "format",
+  "kind",
+  "worldBookId",
+  "revision",
+  "scanDepth",
+  "entries",
+  "dispositions",
+  "canonicalHash",
+]);
 type InterchangeDisposition = Readonly<{
   field: string;
   classification: "accepted_typed" | "dropped_unsupported" | "rejected_invalid";
@@ -37,12 +66,23 @@ export type SafeWorldBook = Readonly<{
   kind: "worldbook";
   worldBookId: string;
   revision: number;
+  /** The book's own declared scan depth, when it declared one: how many recent messages the
+   *  per-turn selection scans for this book's trigger keys. */
+  scanDepth?: number;
   entries: readonly Readonly<{
     entryId: string;
     title: string;
     content: string;
     scope: "companion" | "setting";
     tokenBudget: "small" | "medium";
+    /** Reviewed always-on membership; absent means false, exactly as `WorldBookEntry` means it. */
+    constant?: boolean;
+    /** The entry's own trigger words: without them a keyword-gated entry has no gate left. */
+    keys?: readonly string[];
+    /** The entry's secondary trigger words, applied through `selectiveLogic` once `keys` matched. */
+    secondaryKeys?: readonly string[];
+    /** SillyTavern's four secondary-key modes: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. */
+    selectiveLogic?: 0 | 1 | 2 | 3;
   }>[];
   dispositions: readonly InterchangeDisposition[];
   canonicalHash: string;
@@ -110,32 +150,49 @@ export function exportSafeChat(
   });
 }
 
-/** Exports only public background entries. Runtime/world-scoped facts and always-on prompt text are never browser-exported. */
+/**
+ * Exports only public background entries. Runtime/world-scoped facts, the scoping identifiers of
+ * those entries and the always-on prompt premise are never browser-exported.
+ *
+ * What an entry is *selected* by travels with it: its trigger words, its secondary gate (the words
+ * and the mode that combines them), its always-on flag, and the book's declared scan depth. An
+ * export that kept the body but lost the gate would hand the player a book that says something
+ * different from the one she wrote.
+ */
 export function exportSafeWorldBook(book: WorldBook): SafeWorldBook {
-  const entries = book.entries
-    .filter(
-      (entry): entry is typeof entry & Readonly<{ scope: "companion" | "setting" }> =>
-        entry.scope === "companion" || entry.scope === "setting",
-    )
-    .slice(0, TAVERN_INTERCHANGE_LIMITS_V1.worldBookEntries)
-    .map((entry) =>
-      Object.freeze({
-        entryId: entry.entryId,
-        title: entry.title,
-        content: entry.content,
-        scope: entry.scope,
-        tokenBudget: entry.tokenBudget,
-      }),
-    );
-  const dispositions: InterchangeDisposition[] =
-    book.entries.length === entries.length
-      ? []
-      : [disposition("entries", "dropped_unsupported", "runtime_or_world_scoped_entries_excluded")];
+  const publicEntries = book.entries.filter(
+    (entry): entry is typeof entry & Readonly<{ scope: "companion" | "setting" }> =>
+      entry.scope === "companion" || entry.scope === "setting",
+  );
+  const entries = publicEntries.slice(0, TAVERN_INTERCHANGE_LIMITS_V1.worldBookEntries).map((entry) =>
+    Object.freeze({
+      entryId: entry.entryId,
+      title: entry.title,
+      content: entry.content,
+      scope: entry.scope,
+      tokenBudget: entry.tokenBudget,
+      ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+      ...(entry.keys === undefined ? {} : { keys: Object.freeze([...entry.keys]) }),
+      ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: Object.freeze([...entry.secondaryKeys]) }),
+      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
+    }),
+  );
+  // Two distinct losses are possible and each is named. Truncation cannot arise from a stored book
+  // (`validateWorldBook` caps one at this same limit) but the slice still reports it rather than
+  // silently shortening a book a caller built. The scope loss carries the dropped entries'
+  // `integrationId`/`saveId`/`worldId` with it: a kept `companion`/`setting` entry is forbidden
+  // those members, so they have no separate loss of their own to report.
+  const dispositions: InterchangeDisposition[] = [];
+  if (publicEntries.length > entries.length)
+    dispositions.push(disposition("entries", "dropped_unsupported", "entries_over_the_interchange_limit_excluded"));
+  if (publicEntries.length !== book.entries.length)
+    dispositions.push(disposition("scope", "dropped_unsupported", "world_and_integration_scoped_entries_excluded"));
   return signed({
     format: TAVERN_INTERCHANGE_VERSION,
     kind: "worldbook",
     worldBookId: book.worldBookId,
     revision: book.revision,
+    ...(book.scanDepth === undefined ? {} : { scanDepth: book.scanDepth }),
     entries: Object.freeze(entries),
     dispositions: Object.freeze(dispositions),
   });
@@ -178,26 +235,17 @@ export function decodeSafeInterchange(input: string): SafeChatJsonl | SafeWorldB
     if (value.jsonl !== jsonl(value.header, value.messages)) throw new Error("interchange_jsonl_mismatch");
     return value as SafeChatJsonl;
   }
-  if (!exactKeys(value, ["format", "kind", "worldBookId", "revision", "entries", "dispositions", "canonicalHash"]))
-    throw new Error("interchange_private_or_unknown_field");
+  if (!onlyKeys(value, SAFE_WORLDBOOK_KEYS)) throw new Error("interchange_private_or_unknown_field");
   const unsigned = { ...value };
   delete unsigned.canonicalHash;
   if (hash(JSON.stringify(unsigned)) !== value.canonicalHash) throw new Error("interchange_hash_mismatch");
   if (
     !id(value.worldBookId) ||
     !positive(value.revision) ||
+    (value.scanDepth !== undefined && !scanDepth(value.scanDepth)) ||
     !Array.isArray(value.entries) ||
     value.entries.length > TAVERN_INTERCHANGE_LIMITS_V1.worldBookEntries ||
-    !value.entries.every(
-      (entry) =>
-        record(entry) &&
-        exactKeys(entry, ["entryId", "title", "content", "scope", "tokenBudget"]) &&
-        id(entry.entryId) &&
-        text(entry.title) &&
-        text(entry.content) &&
-        (entry.scope === "companion" || entry.scope === "setting") &&
-        (entry.tokenBudget === "small" || entry.tokenBudget === "medium"),
-    )
+    !value.entries.every(validWorldBookEntry)
   )
     throw new Error("invalid_interchange_worldbook");
   return value as SafeWorldBook;
@@ -271,6 +319,31 @@ function validBubble(value: unknown): value is SafeChatBubble {
 function emptyMetadata(value: unknown): value is Readonly<Record<string, never>> {
   return record(value) && Object.keys(value).length === 0;
 }
+function validWorldBookEntry(entry: unknown): boolean {
+  return (
+    record(entry) &&
+    onlyKeys(entry, SAFE_WORLDBOOK_ENTRY_KEYS) &&
+    id(entry.entryId) &&
+    text(entry.title) &&
+    text(entry.content) &&
+    (entry.scope === "companion" || entry.scope === "setting") &&
+    (entry.tokenBudget === "small" || entry.tokenBudget === "medium") &&
+    (entry.constant === undefined || typeof entry.constant === "boolean") &&
+    (entry.keys === undefined || keyWords(entry.keys)) &&
+    (entry.secondaryKeys === undefined || keyWords(entry.secondaryKeys)) &&
+    (entry.selectiveLogic === undefined ||
+      (Number.isSafeInteger(entry.selectiveLogic) && entry.selectiveLogic >= 0 && entry.selectiveLogic <= 3))
+  );
+}
+function keyWords(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length > 0 && value.every(keyWord);
+}
+function keyWord(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= KEY_WORD_MAX_CHARS;
+}
+function scanDepth(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= MAX_WORLDBOOK_SCAN_DEPTH;
+}
 function signed<T extends object>(value: T): T & Readonly<{ canonicalHash: string }> {
   return Object.freeze({ ...value, canonicalHash: hash(JSON.stringify(value)) });
 }
@@ -298,7 +371,7 @@ function name(value: unknown): value is string {
     typeof value === "string" &&
     Buffer.byteLength(value, "utf8") > 0 &&
     Buffer.byteLength(value, "utf8") <= 128 &&
-    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+    !CONTROL_CHARACTERS.test(value)
   );
 }
 function text(value: unknown): value is string {
@@ -306,14 +379,17 @@ function text(value: unknown): value is string {
     typeof value === "string" &&
     Buffer.byteLength(value, "utf8") > 0 &&
     Buffer.byteLength(value, "utf8") <= TAVERN_INTERCHANGE_LIMITS_V1.textBytes &&
-    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+    !CONTROL_CHARACTERS.test(value)
   );
 }
 function positive(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 function exactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key)) && allowed.every((key) => key in value);
+  return onlyKeys(value, allowed) && allowed.every((key) => key in value);
+}
+function onlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
 }
 function validDisposition(value: unknown): value is InterchangeDisposition {
   return (
