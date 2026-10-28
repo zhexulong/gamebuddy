@@ -651,6 +651,39 @@ export type TavernDeliveryPreferenceCommandV1 = Readonly<{
   paced: boolean;
 }>;
 
+/**
+ * The largest prompt addition the Game companion accepts, in characters.
+ *
+ * One number, three readers: the textarea's own `maxLength`, the command validator that
+ * refuses a longer body before it leaves the browser, and the counter the player reads. A
+ * field bounded by a different number than the wire would either send a body the Host
+ * refuses or silently swallow text the player wrote.
+ *
+ * The Host owns this bound: `GAME_PROMPT_ADDITION_CHARS` in
+ * `host/src/tavern/browser-contract/index.ts` declares the same 2000, and a test on that side
+ * pins the two to one value. Change it there first.
+ */
+export const MAX_GAME_PROMPT_ADDITION_CHARS = 2000;
+
+/**
+ * Mirrors the Host's game-prompt record: the player's own addition to the instructions
+ * the Game companion starts with.
+ *
+ * `addition` is the player's text verbatim - empty means "the player has added nothing",
+ * which is a different fact from the field being absent because no player ever opened
+ * this control, and that one is `revision: 0`.
+ */
+export type TavernGamePromptAdditionV1 = Readonly<{
+  revision: number;
+  addition: string;
+}>;
+
+/** Mirrors the Host's game-prompt write: the whole addition, CASed on the revision read. */
+export type TavernGamePromptAdditionCommandV1 = Readonly<{
+  expectedRevision: number;
+  addition: string;
+}>;
+
 export type TavernStateSnapshotV1 = Readonly<{
   apiVersion: 1;
   build: Readonly<{
@@ -1367,6 +1400,8 @@ const LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
 const LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
 const DELIVERY_PREFERENCE_KEYS = ["revision", "paced"] as const;
 const DELIVERY_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "paced"] as const;
+const GAME_PROMPT_ADDITION_KEYS = ["revision", "addition"] as const;
+const GAME_PROMPT_ADDITION_COMMAND_KEYS = ["expectedRevision", "addition"] as const;
 const VOICE_PREFERENCE_KEYS = [
   "revision",
   "disclosureVersion",
@@ -2662,6 +2697,29 @@ function isDeliveryPreferenceCommand(value: unknown): value is TavernDeliveryPre
   );
 }
 
+/**
+ * The addition is read back as stored, bounded by the same ceiling the field enforces: a
+ * record longer than the field would be text no control could ever shorten to its own limit
+ * without the player deleting what they wrote, so it is a protocol fault rather than a value.
+ */
+function isGamePromptAddition(value: unknown): value is TavernGamePromptAdditionV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, GAME_PROMPT_ADDITION_KEYS) &&
+    isNonNegativeSafeInteger(value.revision) &&
+    isLengthBoundedString(value.addition, 0, MAX_GAME_PROMPT_ADDITION_CHARS)
+  );
+}
+
+function isGamePromptAdditionCommand(value: unknown): value is TavernGamePromptAdditionCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, GAME_PROMPT_ADDITION_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isLengthBoundedString(value.addition, 0, MAX_GAME_PROMPT_ADDITION_CHARS)
+  );
+}
+
 // The companion language is the player's own BCP-47 tag: the shape is bounded and the
 // set is open. Mirrors the Host's COMPANION_LOCALE_PATTERN (settings/player-preference-store.ts),
 // spelled as a literal because this module is deliberately dependency-free; a test in
@@ -2684,6 +2742,16 @@ export function validateVoicePreferenceConsentCommand(value: unknown): TavernVoi
 
 export function validateDeliveryPreferenceCommand(value: unknown): TavernDeliveryPreferenceCommandV1 {
   if (!isDeliveryPreferenceCommand(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateGamePromptAddition(value: unknown): TavernGamePromptAdditionV1 {
+  if (!isGamePromptAddition(value)) throw new TavernProtocolError();
+  return value;
+}
+
+export function validateGamePromptAdditionCommand(value: unknown): TavernGamePromptAdditionCommandV1 {
+  if (!isGamePromptAdditionCommand(value)) throw new TavernProtocolError();
   return value;
 }
 
@@ -3245,6 +3313,21 @@ export type ManagementPipelineApi = Readonly<{
     command: TavernDeliveryPreferenceCommandV1,
     csrfToken: string,
   ): Promise<TavernDeliveryPreferenceV1>;
+  /**
+   * GET /api/tavern/v1/settings/game-prompt (browser session; no CSRF header): the
+   * player's own addition to the Game companion's starting instructions.
+   */
+  readGamePromptAddition(): Promise<TavernGamePromptAdditionV1>;
+  /**
+   * PUT /api/tavern/v1/settings/game-prompt with browser-session CSRF protection. The
+   * reply is the Host's validated read-back, which is the only value the surface then
+   * shows. The addition reaches a game on its NEXT start: a running game keeps the
+   * instructions it was started with, and the panel says so.
+   */
+  updateGamePromptAddition(
+    command: TavernGamePromptAdditionCommandV1,
+    csrfToken: string,
+  ): Promise<TavernGamePromptAdditionV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
@@ -3674,6 +3757,25 @@ export function createManagementPipelineApi(
         command,
       );
       observe("settings.delivery.update", "passed", String(result.revision));
+      return result;
+    },
+    async readGamePromptAddition(): Promise<TavernGamePromptAdditionV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/game-prompt", 200, validateGamePromptAddition);
+    },
+    async updateGamePromptAddition(
+      command: TavernGamePromptAdditionCommandV1,
+      csrfToken: string,
+    ): Promise<TavernGamePromptAdditionV1> {
+      if (!isGamePromptAdditionCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/game-prompt",
+        200,
+        validateGamePromptAddition,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
       return result;
     },
     async updateVoicePreference(
