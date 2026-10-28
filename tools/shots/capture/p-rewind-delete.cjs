@@ -10,7 +10,7 @@
 // leaving the rest of the conversation in place. So the driver first makes sure the open conversation
 // is long enough to carry both (two exchanges), gated on the provider credential exactly as driver F
 // gates its own turn (`GB_SHOTS_CREDENTIAL_PRESENT`).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -107,26 +107,6 @@ const durableRows = async (page) => {
   };
 };
 
-/**
- * Whether this mount can start a turn at all.
- *
- * The credential flag says a provider key exists in the environment; it does not say this run's root has a connection. BYOK ships
- * nothing and preselects nothing, so a fresh root is openable and readable with a send button that is disabled and a sentence
- * saying why. A driver that waits for that button waits forever - 58 retries, then a timeout - so the button itself is asked.
- */
-async function canStartTurn(page) {
-  const disabled = await page
-    .locator(".composer-button.send-button")
-    .isDisabled()
-    .catch(() => false);
-  if (!disabled) return { ok: true };
-  const sentence = await page.evaluate(() => {
-    const notice = document.querySelector(".reference-turn-notice, .chat-model-banner, [data-chat-model-banner]");
-    return notice === null ? null : (notice.textContent ?? "").trim();
-  });
-  return { ok: false, sentence };
-}
-
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("p-rewind-delete.txt");
@@ -161,7 +141,7 @@ async function canStartTurn(page) {
   if (rows.filter((row) => row.role === "player").length < 2) {
     const turnGate = await canStartTurn(page);
       if (!CREDENTIAL_PRESENT || !turnGate.ok) {
-      say("SKIPPED:no_turn_possible - two exchanges are needed and this mount cannot start one");
+      say(`SKIPPED:no_turn_possible (${turnGate.ok ? "no provider credential" : turnGate.reason}) - two exchanges are needed and this mount cannot start one`);
       say(`the surface's own sentence: ${turnGate.sentence ?? "(none)"}`);
       await browser.close().catch(() => undefined);
       say("DONE-O");

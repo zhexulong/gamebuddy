@@ -240,6 +240,7 @@
     "test:stardew:core": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests",
     "test:stardew:all": "node tools/test-stardew-all.mjs",
     "test:stardew:integration": "dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests",
+    "test:shots-turn-gate": "node --test tools/shots/capture/can-start-turn.test.mjs",
     "test:tavern-presets": "node tools/validate-tavern-card.mjs",
     "test:tavern-references": "node --test tools/verify-tavern-semantic-references.test.mjs",
     "test:tavern-release-prerequisites": "node --test tools/check-tavern-release-prerequisites.test.mjs",

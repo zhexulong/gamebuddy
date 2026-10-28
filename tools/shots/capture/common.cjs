@@ -110,7 +110,44 @@ window.__shots = {
 };
 `;
 
-module.exports = { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, readDurableTranscript };
+/**
+ * Whether this mount can start a turn at all - the one rule every turn-dependent driver asks.
+ *
+ * The question is the composer's own two refusals, and NOT the send button's `disabled` attribute.
+ * `Composer.tsx` disables that button on `disabled || sendUnavailable || !value.trim()`: the third
+ * term is the field being empty, which is the state every driver is in when it asks, because it has
+ * not typed yet. Reading the button therefore answered "this mount cannot send" on every mount,
+ * including one with a seeded, active connection - three drivers took a named skip, and the run
+ * reported a green `DONE-CAPTURE` with a whole family of screenshots missing.
+ *
+ * The two terms that are the product's own answer are read where the product states them:
+ * `disabled` (`= !submitAvailable`: the Host would not accept a submission now) is the field's own
+ * lock, and `sendUnavailable` (the surface's `ChatModelRoute = none`) is the standing banner that
+ * route renders. The credential flag is a third, separate fact the drivers already check.
+ */
+async function canStartTurn(page) {
+  return classifyComposer(
+    await page.evaluate(() => {
+      const field = document.querySelector("textarea.composer-textarea");
+      const banner = document.querySelector("[data-chat-no-model]");
+      const notice = document.querySelector(".reference-turn-notice");
+      return {
+        fieldPresent: field !== null,
+        submitRefused: field !== null && field.disabled,
+        noModel: banner !== null,
+        sentence: (banner?.textContent ?? notice?.textContent ?? "").trim() || null,
+      };
+    }),
+  );
+}
+
+/** The three readings above, as the rule itself, so a test can hold every member without a browser. */
+function classifyComposer(facts) {
+  if (!facts.fieldPresent) return { ok: false, reason: "no_composer_on_this_mount", sentence: facts.sentence };
+  if (facts.noModel) return { ok: false, reason: "no_model_route", sentence: facts.sentence };
+  if (facts.submitRefused) return { ok: false, reason: "submit_refused", sentence: facts.sentence };
+  return { ok: true, reason: null, sentence: facts.sentence };
+}
 
 /**
  * The Host's own projection of the mounted conversation, read through the product's own state route
@@ -213,3 +250,14 @@ async function activateSurface(page, label) {
   await page.waitForTimeout(600);
   return "app-bar";
 }
+module.exports = {
+  connect,
+  reporter,
+  SHOTS,
+  PAGE_HELPERS,
+  activateSurface,
+  shot,
+  readDurableTranscript,
+  canStartTurn,
+  classifyComposer,
+};
