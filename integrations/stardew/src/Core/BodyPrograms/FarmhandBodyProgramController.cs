@@ -69,6 +69,30 @@ public sealed class FarmhandBodyProgramController
         this.diagnosticsLastReportedMs[detail] = now;
         this.Diagnostics($"[GameBuddy-body-program] {detail}");
     }
+
+    /// <summary>
+    /// A poll that came back with nothing to do is the controller WORKING, not a problem.
+    ///
+    /// `StartEligibleNodes` runs every Update pass. While a node is mid-action its dependency is unsatisfied, so
+    /// `TryCreateAdmissionChallenge` answers `NodeNotEligible` and the loop exits - correctly, and then the next frame
+    /// asks again. A two-second throttle on the message did not help, because a chop or a walk takes longer than two
+    /// seconds: measured 2026-10-27, 400+ identical `challenge_not_created;code=NodeNotEligible` lines in one run,
+    /// which reads as a fault in every log review and buries the one line that would matter.
+    ///
+    /// The state is what a reader needs to see CHANGE. Repeating an unchanged answer is the same defect as
+    /// re-delivering an unchanged fact to the model, and it gets the same fix: say it once, until it is different.
+    /// </summary>
+    private void DiagnoseWaiting(string programId, BodyProgramControllerResultCode code)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"challenge_not_created;program={programId};code={code}";
+        if (this.diagnosticsLastWaiting == detail) return;
+        this.diagnosticsLastWaiting = detail;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
+
+    /// <summary>The last waiting reason printed, so an unchanged one is not repeated.</summary>
+    private string? diagnosticsLastWaiting;
     private readonly IBodyProgramNodeExecutor? executor;
     // Dispatch tuple every subset pass (admission, policy, deadline, exact
     // binding) has acknowledged. A node whose last Execute returned the null
@@ -191,7 +215,8 @@ public sealed class FarmhandBodyProgramController
             BodyProgramControllerResult<NodeAdmissionChallenge> started = this.authority.TryCreateAdmissionChallenge(programId);
             if (!started.IsSuccess)
             {
-                this.Diagnose($"challenge_not_created;program={programId};code={started.Code}");
+                // A not-yet-eligible node is the ordinary state of a program whose current action is running.
+                this.DiagnoseWaiting(programId, started.Code);
                 return;
             }
             if (!this.authority.IsLifecycleOpen)
