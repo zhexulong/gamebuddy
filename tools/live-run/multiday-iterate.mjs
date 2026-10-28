@@ -120,9 +120,14 @@ if (!dryRun && RUNTIME_ROOT !== null) {
   const fixtures = path.join(RUNTIME_ROOT, "stardew-fixtures");
   if (fs.existsSync(fixtures)) {
     for (const name of fs.readdirSync(fixtures)) {
-      // Two things this loop removes: a lock a killed run left behind, and an orphaned fixture directory. Keeping one of
-      // them and removing everything else is the point, so the condition is "neither" rather than two negations.
-      if (!(name.includes(".lock") || name.includes("orphaned"))) continue;
+      // Remove the lock, any orphaned directory, AND the plain backup directory a run leaves behind.
+      //
+      // The backup is written by the fixture transaction and carries no "lock" or "orphaned" in its name, so the
+      // previous condition kept it while deleting everything else. The next launch then found a backup with no lock,
+      // refused to restore it (`native_local_fixture_restore_failed`), renamed it `orphaned-...` and slept 30
+      // seconds before retrying - measured on every run of 2026-10-28. Cleaning the thing that causes the wait is
+      // cheaper than waiting for it.
+      if (!(name.includes(".lock") || name.includes("orphaned") || name.includes("fixture-backup"))) continue;
       fs.rmSync(path.join(fixtures, name), { recursive: true, force: true });
       removed.push(`fixture ${name}`);
     }
