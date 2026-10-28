@@ -2083,6 +2083,26 @@ const readWorldClock = () => {
 
 async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = {}) {
   const traceStart = actionTrace.length;
+  // The calendar this watch began on. A crossing is `dayOfMonth` becoming a DIFFERENT value, which is true
+  // whatever path dispatched the night and whatever the clock reads afterwards.
+  //
+  // This is the same second clause `nightCrossedInScope` has (`tools/lib/multiday-day-scope.mjs:70`), and it is
+  // here because this watcher did not have it. Measured 2026-10-28 (`round4`): the world crossed TWO nights -
+  // `day_advanced` succeeded at 17:36:07 and 17:46:21, SMAPI logged "starting spring 6 Y1" - and this function
+  // reported `companion_did_not_sleep:day_turn_still_running` after a 31-minute timeout, because
+  //
+  //   - it looked for `advance_day` in `actionTrace`, which records only FLAT dispatches, and all 276 of that
+  //     run's dispatches went through Body Program;
+  //   - and even had it found one, `readWorldClock().spent` is false the moment a new morning starts (a fresh
+  //     day is `timeOfDay: 600`), so it would have waited for a night that had already ended.
+  //
+  // Judging by the calendar makes the watcher independent of WHICH path dispatched the night - flat, program, or
+  // a native event - which is the fact it was always trying to observe.
+  const startDay = client.state?.snapshot?.dayOfMonth ?? null;
+  const calendarMovedPastStartDay = () => {
+    const now = client.state?.snapshot?.dayOfMonth;
+    return Number.isInteger(startDay) && Number.isInteger(now) && now !== startDay;
+  };
   const observeQuietly = async () => {
     try {
       return await client.observe();
@@ -2102,6 +2122,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       if (bridgeDisconnections.length > 0) {
         return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
       }
+      if (calendarMovedPastStartDay()) return null;
       const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
       if (dispatched !== undefined) return null;
       // A settled day turn is NOT a companion who refused to sleep, and calling it that was the oldest mistake in this
