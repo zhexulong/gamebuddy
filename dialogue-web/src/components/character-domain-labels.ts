@@ -191,6 +191,17 @@ export type CharacterLabels = Readonly<{
   worldBookEntrySummary: string;
   worldBookEntryKeys: string;
   worldBookEntryKeysHint: string;
+  /** The entry's second trigger list, and the rule that applies it once a trigger word matched. */
+  worldBookEntrySecondaryKeys: string;
+  worldBookEntrySecondaryKeysHint: string;
+  worldBookEntrySelectiveLogic: string;
+  /** The one choice that states no gate at all, so an entry without one gains no mode. */
+  worldBookEntrySelectiveLogicNone: string;
+  worldBookEntrySelectiveLogicAndAny: string;
+  worldBookEntrySelectiveLogicNotAll: string;
+  worldBookEntrySelectiveLogicNotAny: string;
+  worldBookEntrySelectiveLogicAndAll: string;
+  worldBookEntrySelectiveLogicHint: string;
   worldBookEntryAdd: string;
   worldBookEntryRemove: string;
   worldBookDeleted: string;
@@ -480,6 +491,17 @@ const en: CharacterLabels = Object.freeze({
   worldBookEntrySummary: "What it says",
   worldBookEntryKeys: "Trigger words",
   worldBookEntryKeysHint: "Separated by commas. Leave empty for an entry that is always on.",
+  worldBookEntrySecondaryKeys: "Second condition words",
+  worldBookEntrySecondaryKeysHint:
+    "Separated by commas. These words never bring the entry in on their own: once a trigger word has matched, they decide whether it is used.",
+  worldBookEntrySelectiveLogic: "The second condition needs",
+  worldBookEntrySelectiveLogicNone: "Not set",
+  worldBookEntrySelectiveLogicAndAny: "Any one of these words",
+  worldBookEntrySelectiveLogicNotAll: "Not all of these words",
+  worldBookEntrySelectiveLogicNotAny: "None of these words",
+  worldBookEntrySelectiveLogicAndAll: "All of these words",
+  worldBookEntrySelectiveLogicHint:
+    "With no second condition words this does nothing. If you add them and leave this not set, any one of them is enough.",
   worldBookEntryAdd: "Add entry",
   worldBookEntryRemove: "Remove entry",
   worldBookDeleted: "Removed from the library.",
@@ -729,6 +751,16 @@ const zh: CharacterLabels = Object.freeze({
   worldBookEntrySummary: "词条内容",
   worldBookEntryKeys: "触发词",
   worldBookEntryKeysHint: "用逗号分隔。留空表示这条词条始终生效。",
+  worldBookEntrySecondaryKeys: "附加条件词",
+  worldBookEntrySecondaryKeysHint:
+    "用逗号分隔。这些词不会单独带出词条：等某个触发词命中之后，由它们决定这条词条是否被用到。",
+  worldBookEntrySelectiveLogic: "附加条件需要",
+  worldBookEntrySelectiveLogicNone: "未设置",
+  worldBookEntrySelectiveLogicAndAny: "其中任意一个词出现",
+  worldBookEntrySelectiveLogicNotAll: "并非每个词都出现",
+  worldBookEntrySelectiveLogicNotAny: "这些词一个都没出现",
+  worldBookEntrySelectiveLogicAndAll: "每个词都出现",
+  worldBookEntrySelectiveLogicHint: "没有填附加条件词时，这一项不起作用；填了词却没有选择时，其中任意一个出现就够。",
   worldBookEntryAdd: "添加词条",
   worldBookEntryRemove: "移除词条",
   worldBookDeleted: "已从书库中删除。",

@@ -816,6 +816,21 @@ type WorldBookEntryDraft = Readonly<{
   publicTitle: string;
   summary: string;
   keys: string;
+  /**
+   * The entry's second trigger words, typed the same way as `keys`.
+   *
+   * They never bring the entry in on their own: the per-turn selection applies them
+   * only after a trigger word matched, through `selectiveLogic`.
+   */
+  secondaryKeys: string;
+  /**
+   * SillyTavern's mode for the second words (0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND
+   * ALL), or null when the entry states none.
+   *
+   * Null is a value of its own, not 0: the Host distinguishes an entry with no mode
+   * from one that names AND ANY, so the form's "no choice" has to send neither.
+   */
+  selectiveLogic: 0 | 1 | 2 | 3 | null;
 }>;
 
 /**
@@ -832,6 +847,8 @@ function newWorldBookEntryDraft(): WorldBookEntryDraft {
     publicTitle: "",
     summary: "",
     keys: "",
+    secondaryKeys: "",
+    selectiveLogic: null,
   };
 }
 
@@ -857,6 +874,17 @@ function parseTriggerWords(value: string): string[] {
     .split(/[,，、]/u)
     .map((key) => key.trim())
     .filter((key) => key.length > 0);
+}
+
+/**
+ * The entry's second-condition mode, from the selector's own value.
+ *
+ * The empty value is the "no choice" option and yields null, which the save sends as
+ * nothing at all: the library tells an entry that states no mode from one that names
+ * AND ANY, so the form can never turn "not stated" into `0`.
+ */
+function selectiveLogicOf(value: string): 0 | 1 | 2 | 3 | null {
+  return value === "0" || value === "1" || value === "2" || value === "3" ? (Number(value) as 0 | 1 | 2 | 3) : null;
 }
 
 /**
@@ -1029,6 +1057,8 @@ function CharacterWorldBookPanel({
           publicTitle: entry.publicTitle,
           summary: entry.summary,
           keys: (entry.keys ?? []).join(labels.companionWorldBookKeySeparator),
+          secondaryKeys: (entry.secondaryKeys ?? []).join(labels.companionWorldBookKeySeparator),
+          selectiveLogic: entry.selectiveLogic ?? null,
         })),
       });
       setArmed(null);
@@ -1051,11 +1081,17 @@ function CharacterWorldBookPanel({
       summary: draft.summary.trim(),
       entries: draft.entries.map((entry) => {
         const keys = parseTriggerWords(entry.keys);
+        const secondaryKeys = parseTriggerWords(entry.secondaryKeys);
         return {
           scope: entry.scope,
           publicTitle: entry.publicTitle.trim(),
           summary: entry.summary.trim(),
           ...(keys.length === 0 ? {} : { keys }),
+          // Absent stays absent: an entry with no second words gains no empty list,
+          // and an entry with no chosen mode gains no mode at all - the library
+          // tells "no gate" from "AND ANY", which are 0 and nothing.
+          ...(secondaryKeys.length === 0 ? {} : { secondaryKeys }),
+          ...(entry.selectiveLogic === null ? {} : { selectiveLogic: entry.selectiveLogic }),
         };
       }),
     };
@@ -1466,9 +1502,9 @@ function WorldBookItemRow({
  * content, the same fields and the same validation, so the two cannot drift.
  *
  * Every field is the Host's own shape - a title and a summary on the item, and a
- * scope, a title, a summary and optional trigger words on each entry - because
- * what the wire validates is what the player is offered; a control for a fact
- * the item does not carry (a secondary key list, a selective logic) is not here.
+ * scope, a title, a summary, optional trigger words, optional second-condition words
+ * and the mode that applies them on each entry - because what the wire validates is
+ * what the player is offered.
  */
 function WorldBookDraftEditor({
   labels,
@@ -1566,6 +1602,35 @@ function WorldBookDraftEditor({
             onChange={(event) => updateEntry(index, { ...entry, keys: event.target.value })}
           />
           <p className="management-settings-hint">{labels.worldBookEntryKeysHint}</p>
+          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-secondary-keys`}>
+            {labels.worldBookEntrySecondaryKeys}
+          </label>
+          <input
+            id={`world-book-entry-${index}-secondary-keys`}
+            className="form-input"
+            type="text"
+            data-world-book-entry-secondary-keys
+            value={entry.secondaryKeys}
+            onChange={(event) => updateEntry(index, { ...entry, secondaryKeys: event.target.value })}
+          />
+          <p className="management-settings-hint">{labels.worldBookEntrySecondaryKeysHint}</p>
+          <label className="management-settings-label" htmlFor={`world-book-entry-${index}-selective-logic`}>
+            {labels.worldBookEntrySelectiveLogic}
+          </label>
+          <select
+            id={`world-book-entry-${index}-selective-logic`}
+            className="form-select"
+            data-world-book-entry-selective-logic
+            value={entry.selectiveLogic === null ? "" : String(entry.selectiveLogic)}
+            onChange={(event) => updateEntry(index, { ...entry, selectiveLogic: selectiveLogicOf(event.target.value) })}
+          >
+            <option value="">{labels.worldBookEntrySelectiveLogicNone}</option>
+            <option value="0">{labels.worldBookEntrySelectiveLogicAndAny}</option>
+            <option value="1">{labels.worldBookEntrySelectiveLogicNotAll}</option>
+            <option value="2">{labels.worldBookEntrySelectiveLogicNotAny}</option>
+            <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
+          </select>
+          <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
           <div className="composer-actions">
             <button
               type="button"

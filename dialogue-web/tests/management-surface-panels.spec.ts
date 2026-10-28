@@ -2153,6 +2153,8 @@ type FakeWorldBookEntry = Readonly<{
   publicTitle: string;
   summary: string;
   keys?: readonly string[];
+  secondaryKeys?: readonly string[];
+  selectiveLogic?: 0 | 1 | 2 | 3;
 }>;
 
 type FakeWorldBookItem = Readonly<{
@@ -2509,6 +2511,92 @@ test("editing a World Info item saves through the item's own revision and re-ren
   await expect(draft).toHaveCount(0);
   await expect(panel.getByText("Pelican Town, revisited", { exact: true })).toBeVisible();
   await expect(panel.getByText("Cindersap Forest", { exact: true })).toBeVisible();
+});
+
+test("the entry editor shows and saves the second condition words and their mode, and sends neither when unset", async ({
+  page,
+}) => {
+  const revisionSeed = opaqueFrom("W");
+  const handle = opaqueFrom("V");
+  // An entry as the card import leaves it: gated on a second word in NOT ALL mode.
+  const library = fakeWorldBook(
+    [
+      {
+        handle,
+        publicTitle: "Mira's notebook",
+        summary: "Things she wrote down.",
+        revision: 2,
+        entries: [
+          {
+            scope: "companion",
+            publicTitle: "Moody afternoon",
+            summary: "She keeps the curtains shut.",
+            keys: ["afternoon"],
+            secondaryKeys: ["mood:quiet"],
+            selectiveLogic: 1,
+          },
+        ],
+      },
+    ],
+    revisionSeed,
+  );
+  const panel = await mountCharactersWithLibrary(page, library);
+
+  await panel.getByRole("button", { name: "Edit: Mira's notebook" }).click();
+  const draft = panel.locator("[data-world-book-draft]");
+  const secondary = draft.locator("[data-world-book-entry-secondary-keys]");
+  const mode = draft.locator("[data-world-book-entry-selective-logic]");
+  // The imported entry opens on the facts it really carries, not on an empty gate.
+  await expect(secondary).toHaveValue("mood:quiet");
+  await expect(mode).toHaveValue("1");
+  await expect(mode.locator("option:checked")).toHaveText("Not all of these words");
+  // Every mode is named for what it does, so a player never picks a SillyTavern number.
+  await expect(mode.locator("option")).toHaveText([
+    "Not set",
+    "Any one of these words",
+    "Not all of these words",
+    "None of these words",
+    "All of these words",
+  ]);
+
+  await mode.selectOption("3");
+  await draft.locator("[data-world-book-submit]").click();
+
+  // The saved entry moves the mode and keeps the words it never lost.
+  await expect.poll(() => library.requests.updates.length).toBe(1);
+  const saved = library.requests.updates[0] as {
+    item: { entries: readonly Record<string, unknown>[] };
+  };
+  expect(saved.item.entries[0]).toEqual({
+    scope: "companion",
+    publicTitle: "Moody afternoon",
+    summary: "She keeps the curtains shut.",
+    keys: ["afternoon"],
+    secondaryKeys: ["mood:quiet"],
+    selectiveLogic: 3,
+  });
+
+  // Reopening reads the saved revision back, so the store - not the form - is the authority.
+  await panel.getByRole("button", { name: "Edit: Mira's notebook" }).click();
+  await expect(draft.locator("[data-world-book-entry-secondary-keys]")).toHaveValue("mood:quiet");
+  await expect(draft.locator("[data-world-book-entry-selective-logic]")).toHaveValue("3");
+  await draft.locator("[data-world-book-cancel]").click();
+
+  // The negative: an entry written from scratch with no gate gains neither field.
+  await panel.locator("[data-world-book-create]").click();
+  await draft.locator("#world-book-item-title").fill("Cindersap");
+  await draft.locator("#world-book-item-summary").fill("The woods south of the farm.");
+  await draft.locator("#world-book-entry-0-title").fill("The clearing");
+  await draft.locator("#world-book-entry-0-summary").fill("Where the spring onions grow.");
+  await expect(draft.locator("[data-world-book-entry-secondary-keys]")).toHaveValue("");
+  await expect(draft.locator("[data-world-book-entry-selective-logic]")).toHaveValue("");
+  await draft.locator("[data-world-book-submit]").click();
+
+  await expect.poll(() => library.requests.creates.length).toBe(1);
+  const created = library.requests.creates[0] as {
+    item: { entries: readonly Record<string, unknown>[] };
+  };
+  expect(Object.keys(created.item.entries[0]!).sort()).toEqual(["publicTitle", "scope", "summary"]);
 });
 
 test("deleting a World Info item arms first, sends nothing, and names the item it removes", async ({ page }) => {
