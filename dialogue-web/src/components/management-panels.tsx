@@ -791,20 +791,15 @@ export function ConnectionRow({
   const levels: readonly TavernConnectionThinkingLevelV1[] =
     connection.allowedThinkingLevels.length > 0 ? connection.allowedThinkingLevels : ["high"];
   /**
-   * The one control this row is asking the player to press, read from the readiness the Host
-   * reported. A record is created `configured` and only a probe makes it `ready`, so an
-   * untested endpoint can only be tested; a tested one can be activated; an active one asks
-   * for nothing. Painting exactly one of the three as primary is what makes that step visible
-   * - three equally-weighted `.small-button`s beside a greyed-out fourth read as three
-   * choices rather than as one action and its prerequisites.
-   *
-   * It is derived, never stored: the same `readiness` gates the activate control below, so the
-   * highlight cannot disagree with what is actually pressable.
+   * The control this row asks the player to press, from the readiness the Host reported: an
+   * untested record can only be tested, a tested one activated, an active one asks for nothing.
+   * Derived from the same `readiness` that gates the activate control below, so the highlight
+   * cannot disagree with what is pressable.
    */
   const nextAction: "test" | "activate" | null =
     connection.readiness !== "ready" ? "test" : connection.active ? null : "activate";
-  void nextAction;
-  const nextActionClass = (_action: "test" | "activate"): string => "small-button";
+  const nextActionClass = (action: "test" | "activate"): string =>
+    nextAction === action ? "small-button primary" : "small-button";
   return (
     <li className="connection-row" data-connection-row data-readiness={connection.readiness}>
       <dl className="management-settings-details">
@@ -856,21 +851,11 @@ export function ConnectionRow({
           </div>
         )}
       </dl>
-      {/*
-       * Why the activate control below is shut, in the row itself and in the catalogue's own
-       * words. Before this the only answer was the activate button's `title`, which is a
-       * tooltip: a touch player never sees it and a keyboard player never reaches it, so the
-       * row read as "activation is unavailable right now" instead of "one step is missing".
-       *
-       * The sentence is `connectionActivateRequiresReady` - the same fact the Host's
-       * `connection_not_ready` refusal words, and the same sentence the tip carried. One fact,
-       * one spelling: the tip is gone rather than kept beside it, because a tooltip repeating
-       * the visible line is noise, not a second channel.
-       *
-       * It stands on the failed state too: a probe that did not answer is exactly when the
-       * player needs to test again.
-       */}
-      {connection.readiness !== "ready" && false && (
+      {/* Why the activate control below is shut. It is the same fact the Host's
+          `connection_not_ready` refusal words, and the same sentence the control's removed `title`
+          carried - rendered as text, because a tooltip is invisible to a touch player and
+          unreachable for a keyboard player. */}
+      {connection.readiness !== "ready" && (
         <p className="field-hint" data-connection-untested>
           {labels.connectionActivateRequiresReady}
         </p>
@@ -948,7 +933,6 @@ export function ConnectionRow({
           type="button"
           className={nextActionClass("activate")}
           disabled={pending || connection.readiness !== "ready" || connection.active}
-          title={connection.readiness === "ready" ? undefined : labels.connectionActivateRequiresReady}
           onClick={() => onActivate(connection.connectionId)}
         >
           {labels.connectionActivate}
