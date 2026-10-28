@@ -9,6 +9,7 @@ import type {
   ScenarioV1,
 } from "../management-pipeline-api";
 import { problemTextWithCode } from "../composed-problem-view";
+import { TavernProblemError } from "../management-pipeline-api";
 import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
@@ -310,7 +311,22 @@ export function CharactersPanel({
         setPersonaNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setPersonaNotice(saveFailure(error, labels.saveFailed, problemLabels));
+      const notice = saveFailure(error, labels.saveFailed, problemLabels);
+      // `persona_conflict` is the Host stating that her persona moved under this save. The
+      // refusal alone leaves the field CASed on the revision that already lost, so every
+      // retry resends it and is refused identically until the panel remounts; the read-back
+      // is the revision to save against. Her typed words are NOT taken from it - the read is
+      // only the record's identity, and replacing the text would silently discard what she
+      // is in the middle of writing.
+      if (error instanceof TavernProblemError && error.code === "persona_conflict") {
+        try {
+          const fresh = await api.readPersona();
+          if (activeRef.current) setPersona(fresh);
+        } catch {
+          // The refusal stands on its own; the next save is CASed on the revision shown.
+        }
+      }
+      if (activeRef.current) setPersonaNotice(notice);
     } finally {
       if (activeRef.current) setPersonaSaving(false);
     }
@@ -335,7 +351,18 @@ export function CharactersPanel({
         setScenarioNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setScenarioNotice(saveFailure(error, labels.saveFailed, problemLabels));
+      const notice = saveFailure(error, labels.saveFailed, problemLabels);
+      // A stale scenario needs the same treatment as a stale persona: adopt the revision the
+      // Host holds and keep the player's text, so the next save is a fresh compare-and-set.
+      if (error instanceof TavernProblemError && error.code === "scenario_conflict") {
+        try {
+          const fresh = await api.readScenario();
+          if (activeRef.current) setScenario(fresh);
+        } catch {
+          // The refusal stands on its own; the next save is CASed on the revision shown.
+        }
+      }
+      if (activeRef.current) setScenarioNotice(notice);
     } finally {
       if (activeRef.current) setScenarioSaving(false);
     }
@@ -366,7 +393,19 @@ export function CharactersPanel({
         setOpeningNotice("saved");
       }
     } catch (error) {
-      if (activeRef.current) setOpeningNotice(saveFailure(error, labels.saveFailed, problemLabels));
+      const notice = saveFailure(error, labels.saveFailed, problemLabels);
+      // The opening's own version of the same fix: the read-back becomes the record this form
+      // CASes on, while `openingLabel` and `openingVariants` - the two states the player actually
+      // types into - are left untouched, so her words are what the next save carries.
+      if (error instanceof TavernProblemError && error.code === "greeting_conflict") {
+        try {
+          const fresh = await api.readGreeting();
+          if (activeRef.current) setOpening(fresh);
+        } catch {
+          // The refusal stands on its own; the next save is CASed on the revision shown.
+        }
+      }
+      if (activeRef.current) setOpeningNotice(notice);
     } finally {
       if (activeRef.current) setOpeningSaving(false);
     }
