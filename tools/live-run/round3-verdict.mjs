@@ -52,6 +52,45 @@ const distinctWaitingPrograms = new Set(
 // 3. Is the repeated line bounded by programs or by frames? That is the whole question 6e69b478 answers.
 const waitingLinesPerProgram = distinctWaitingPrograms === 0 ? null : nodeNotEligible / distinctWaitingPrograms;
 
+// 3b. The read-only tools, from the session. These three were refused 100% of the time until the launch facade began
+// forwarding their routes (30395fb9); a run where any of them fails again is the first thing to look at.
+const readOnlyToolOutcomes = (() => {
+  try {
+    const sessionRoot =
+      "C:/Users/long/AppData/Local/GameBuddy/contexts/28b640f414390b353dc283a041897d95d405cfd106804b756969e312e00a23b9/surface-sessions";
+    const session = readdirSync(sessionRoot)
+      .filter((name) => name.startsWith("game-"))
+      .sort()
+      .at(-1);
+    const sessions = join(sessionRoot, session, "sessions");
+    const file = readdirSync(sessions)
+      .filter((name) => name.endsWith(".jsonl"))
+      .sort()
+      .at(-1);
+    const counts = {};
+    for (const line of readFileSync(join(sessions, file), "utf8").split("\n")) {
+      let record;
+      try {
+        record = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const name = record?.message?.toolName;
+      if (typeof name !== "string" || !name.startsWith("stardew_")) continue;
+      const slot = (counts[name] ??= { ok: 0, error: 0 });
+      if (record.message.isError === true) slot.error += 1;
+      else slot.ok += 1;
+    }
+    return counts;
+  } catch {
+    return null;
+  }
+})();
+const toolRow = (name) => {
+  const slot = readOnlyToolOutcomes?.[name];
+  return slot === undefined ? "not called" : `ok=${String(slot.ok)} error=${String(slot.error)}`;
+};
+
 // 4. Context pressure, from the session rather than the mod log - it is the only place input tokens are recorded.
 let inputMax = null;
 let lengthStops = 0;
@@ -69,8 +108,18 @@ try {
     .at(-1);
   const raw = readFileSync(join(sessions, file), "utf8");
   lengthStops = count(raw, /"stopReason":"length"/g);
+  // CONTEXT SIZE IS `input + cacheRead`, not `input`. `input` alone is only the part that missed the prompt cache,
+  // so it swings between a few hundred and the full prompt as the cache is evicted - measured 2026-10-28 (`round6`):
+  // 61759, 221, 604, 8546, 313, 409, 180, 71933. Reporting the largest of those as "context" said the session was
+  // 62k when it was 80k, and would have said 200 on a run that stayed cached. The sum is the request the provider
+  // actually received.
   inputMax = 0;
-  for (const match of raw.matchAll(/"input":(\d+)/g)) inputMax = Math.max(inputMax, Number(match[1]));
+  for (const match of raw.matchAll(/\{"input":(\d+),"output":\d+[^}]*?"cacheRead":(\d+)/g)) {
+    inputMax = Math.max(inputMax, Number(match[1]) + Number(match[2]));
+  }
+  if (inputMax === 0) {
+    for (const match of raw.matchAll(/"input":(\d+)/g)) inputMax = Math.max(inputMax, Number(match[1]));
+  }
 } catch (error) {
   console.log(`session unreadable: ${String(error instanceof Error ? error.message : error)}`);
 }
@@ -90,6 +139,9 @@ const rows = [
   ["invalidated receipts", invalidatedFacts, ">0 means a cutscene DID interrupt something - else NOT EXERCISED"],
   ["ports_not_live", portsNotLive, "0 while invalidated > 0 is what f84b0d8b claims"],
   ["NodeNotEligible lines", nodeNotEligible, "bounded by programs, not frames (6e69b478)"],
+  ["stardew_read_scene", toolRow("stardew_read_scene"), "error=0 after 30395fb9"],
+  ["stardew_find_destination", toolRow("stardew_find_destination"), "error=0 after 30395fb9"],
+  ["stardew_inspect_world_map", toolRow("stardew_inspect_world_map"), "error=0 after 30395fb9"],
   ["distinct waiting progs", distinctWaitingPrograms, ""],
   ["waiting lines/program", waitingLinesPerProgram ?? "n/a", "1 means one line per program; 120 means per frame"],
   ["inputMax tokens", inputMax ?? "unreadable", "<40000 for the batch work to be doing its job"],
