@@ -33,6 +33,8 @@ import type {
   BodyProgramSubmitResult,
   BodyNodeAdmissionChallenge,
   BodyNodeAdmissionResult,
+  NavigationReadRequest,
+  ObserveSceneRequest,
 } from "./protocol.js";
 
 /** Liveness check carried by one exact authenticated connection association. */
@@ -304,6 +306,11 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
           ? bridge.cancel(requestId, executionId, reasonCode)
           : Promise.reject(new Error("integration_not_ready")),
       observe: () => bridge.observe(),
+      // Both read-only routes must be forwarded, and their absence is invisible: `StardewBridgeConnection` declares
+      // them optional (`game-connection.ts:90-92`), so a facade that omits them still type-checks while the readiness
+      // gate's route-presence clause (`game-tools.ts:300`, `:342`) refuses every call synchronously.
+      navigationRead: (request: NavigationReadRequest) => bridge.navigationRead(request),
+      observeScene: (request: ObserveSceneRequest) => bridge.observeScene(request),
     });
     // Mint exactly one authenticated association for the exact frozen wrapper
     // returned by this launch handle. The adapter refuses any structural copy,

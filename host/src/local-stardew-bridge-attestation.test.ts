@@ -1492,6 +1492,132 @@ test("attested submit timeout emits exactly one program frame and is not retried
   );
 });
 
+/**
+ * The wait's own news, proven through the real tool, socket and Mod-shape response rather than the unit seam.
+ *
+ * Measured 2026-10-28 (`round4`): four consecutive 30 s waits on `plan_273` each returned `eventHighWater: 288` with
+ * `n03` running, and the caller waited again. The tool has to say that the plan did not move, so the difference
+ * between patience and blindness reaches the model that decides whether to wait once more.
+ */
+test("an expired wait reports whether the plan moved, through the real status tool", { timeout: 15_000 }, async () => {
+  const requests: BridgeMessage[] = [];
+  // The Mod's answer moves once, on the SECOND status read: a plan that advanced a node during the wait.
+  let statusReads = 0;
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 10_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = () => observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools;
+        const execute = async (name: string, params: Record<string, unknown>) =>
+          (
+            await tools()
+              .find((tool) => tool.name === name)!
+              .execute("wait_outcome", params, new AbortController().signal, () => undefined)
+          ).details as { code?: string; waited?: { reachedTerminal: boolean; snapshotChanged: boolean } };
+        // The readers mount on a recorded submission, so one accepted program comes first.
+        await execute("stardew_submit_action_program", {
+          programId: "program_06",
+          nodes: [{ nodeId: "node_06", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+        });
+        // A short wait, not 30 s: the fact under test is WHICH answer comes back, and the deadline is the unit test's.
+        const advanced = await execute("stardew_action_program_status", { programId: "program_06", waitMs: 400 });
+        assert.equal(advanced.code, "found");
+        assert.equal(advanced.waited?.reachedTerminal, false, "the fixture never settles, so the wait expired");
+        assert.equal(advanced.waited?.snapshotChanged, true, "a node moved while the call waited");
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type !== "program_submit" && request.type !== "program_status") return;
+      const programId = (request.payload as { programId: string }).programId;
+      if (request.type === "program_submit")
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_program_submit_wait_outcome",
+            type: "program_submit_result",
+            payload: {
+              code: "accepted",
+              verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+              snapshot: {
+                programId,
+                state: "active",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 0,
+                nodes: [{ nodeId: "node_06", state: "running", nodeAttempt: 1, admissionAttempt: 1 }],
+              },
+            },
+          }),
+        );
+      else {
+        statusReads += 1;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_program_status_wait_outcome",
+            type: "program_status_result",
+            payload: {
+              code: "found",
+              snapshot: {
+                programId,
+                state: "active",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 0,
+                nodes: [
+                  {
+                    nodeId: "node_06",
+                    state: statusReads === 1 ? "running" : "succeeded",
+                    nodeAttempt: 1,
+                    admissionAttempt: 1,
+                  },
+                ],
+              },
+            },
+          }),
+        );
+      }
+      return true;
+    },
+  );
+});
+
 test("attested fixed closure drains the held request before revocation", async () => {
   const requests: BridgeMessage[] = [];
   let heldStatus: BridgeMessage | undefined;
@@ -2251,6 +2377,124 @@ test("exact authenticated launch handle drives status and toolset materializatio
     }
   });
 });
+/**
+ * The three read-only tools are the companion's only way to SEE a scene and the map. They are gated on six terms
+ * (`game-tools.ts` navigationCapabilityReady/sceneCapabilityReady), and the Mod publishes every one of them: the
+ * `R(...)` registrations carry `familyId`, `kind="read_only"`, `lifecycle="published"`, `identityVersion=1`, and
+ * land in `AdvertisedCapabilityIds` (`farmhandcapabilityset.cs:56`), which is what hello_ack's `capabilities` and the
+ * snapshot's `capabilities` both carry.
+ *
+ * The term that was FALSE was the route itself: the authenticated connection facade built by the launcher forwarded
+ * `observe`/`execute`/`cancel` and omitted `observeScene`/`navigationRead`, so the gate's route-presence clause could
+ * never hold and every call was refused synchronously (`durationMs: 1`, and no `world_navigation` frame ever reached
+ * the Mod). This test pins the whole product path - adapter -> tool set -> tool -> authenticated pipe - rather than
+ * the facade's key list, so it stays meaningful if the facade is ever rebuilt.
+ */
+test("authenticated launch handle forwards the Mod-published read-only routes so scene and map tools reach the Mod", async () => {
+  const readRequests: string[] = [];
+  const readOnlyRegistrations = Object.freeze([
+    {
+      actionId: "observe_scene",
+      familyId: "world_perception",
+      identityVersion: 1,
+      lifecycle: "published",
+      kind: "read_only",
+    },
+    {
+      actionId: "inspect_world_map",
+      familyId: "world_navigation",
+      identityVersion: 1,
+      lifecycle: "published",
+      kind: "read_only",
+    },
+    {
+      actionId: "find_destination",
+      familyId: "world_navigation",
+      identityVersion: 1,
+      lifecycle: "published",
+      kind: "read_only",
+    },
+  ]);
+  const readCapabilities = ["observe_scene", "inspect_world_map", "find_destination"];
+  const navigationResult = {
+    status: "succeeded",
+    reason: "world_map_observed",
+    entries: [],
+    nextCursor: null,
+    candidates: null,
+    destination: null,
+    unlockState: null,
+  };
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await attestedLaunch(client);
+      try {
+        const tools = STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: launch.connection });
+        const read = tools.observation.find((tool) => tool.name === "stardew_read_scene");
+        const map = tools.observation.find((tool) => tool.name === "stardew_inspect_world_map");
+        const find = tools.observation.find((tool) => tool.name === "stardew_find_destination");
+        assert.ok(read, "stardew_read_scene is a constant mount");
+        assert.ok(map, "stardew_inspect_world_map is a constant mount");
+        assert.ok(find, "stardew_find_destination is a constant mount");
+        const signal = new AbortController().signal;
+        await read.execute("read_scene_01", {}, signal, () => {}, {} as never);
+        await map.execute("inspect_map_01", {}, signal, () => {}, {} as never);
+        await find.execute("find_destination_01", { query: "mine" }, signal, () => {}, {} as never);
+        assert.deepEqual(readRequests, ["observe_scene_request", "navigation_read_request", "navigation_read_request"]);
+      } finally {
+        launch.close();
+      }
+    },
+    (request, socket) => {
+      if (request.type === "observe_scene_request") {
+        readRequests.push(request.type);
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_observe_scene_attestation",
+            type: "observe_scene_result",
+            payload: {
+              observationId: "observation_attestation",
+              currentLocation: "Farm",
+              currentRegion: "outdoor",
+              affordances: [],
+              summary: "Nothing within reach.",
+              partial: false,
+              truncatedReason: null,
+              ground: null,
+            },
+          }),
+        );
+        return true;
+      }
+      if (request.type === "navigation_read_request") {
+        readRequests.push(request.type);
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_navigation_read_attestation",
+            type: "navigation_read_result",
+            payload: navigationResult,
+          }),
+        );
+        return true;
+      }
+      return false;
+    },
+    { registrations: readOnlyRegistrations, capabilities: readCapabilities },
+  );
+});
+
 test("invalidated execution receipt immediately closes launcher-owned preview and materializer projections", async () => {
   let socket!: Socket;
   const requests: BridgeMessage[] = [];
