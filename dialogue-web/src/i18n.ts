@@ -500,6 +500,11 @@ const en = {
   problemChatMessageRevisionConflictTitle: "The conversation moved",
   problemChatMessageRevisionConflictDetail:
     "This message is no longer where the page read it. Reload the page and try again.",
+  // The variant removal's own refusal: the position has one attempt left, and a reply with no words is
+  // not a state this conversation has.
+  problemChatSwipeLastVariantTitle: "That is her only reply",
+  problemChatSwipeLastVariantDetail:
+    "This message has no other version to fall back on. To remove the reply itself, delete the message.",
   problemChatRewindOpeningRetainedTitle: "That is the opening",
   problemChatRewindOpeningRetainedDetail: "The greeting this conversation started on cannot be removed.",
   problemChatRewindTurnActiveTitle: "A reply is still being written",
@@ -1384,6 +1389,8 @@ const zh: Messages = {
   problemChatMessageNotFoundDetail: "这个对话里已经没有这条消息了。请重新读取，另选一个回退位置。",
   problemChatMessageRevisionConflictTitle: "对话已经变化",
   problemChatMessageRevisionConflictDetail: "这条消息已经不在页面上显示的位置了。请重新加载页面后重试。",
+  problemChatSwipeLastVariantTitle: "只剩这一个版本了",
+  problemChatSwipeLastVariantDetail: "这条消息没有其他版本可以切换。要删掉这条回复本身，请删除这条消息。",
   problemChatRewindOpeningRetainedTitle: "这是开场问候",
   problemChatRewindOpeningRetainedDetail: "对话开始时的那句问候不能删除。",
   problemChatRewindTurnActiveTitle: "还有一条回复正在生成",

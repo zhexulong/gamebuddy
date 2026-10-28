@@ -1246,6 +1246,7 @@ const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  "chat_swipe_last_variant",
   "chat_message_not_found",
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",

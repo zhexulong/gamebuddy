@@ -4,6 +4,7 @@ import {
   deleteMountedChatMessage,
   editMountedChatMessage,
   isCurrentMountedChatRuntimeLease,
+  removeMountedSwipeVariant,
   rewindMountedChatTranscript,
   selectMountedSwipeVariant,
   stopMountedChatPresentationEpoch,
@@ -27,6 +28,7 @@ import {
   type RewindChatResultV1,
   type SubmitMessageCommandV1,
   type SubmitResultV1Schema,
+  type SwipeRemoveCommandV1,
   type SwipeSelectCommandV1,
   type SwipeSelectResultV1,
   TAVERN_BROWSER_API_VERSION,
@@ -150,6 +152,14 @@ export type ChatPipelineService = Readonly<{
   /** Stops the exact active turn and returns its fresh browser-safe projection. */
   cancel(turnHandle: string, command: CancelTurnCommandV1): Promise<BrowserTurnV1>;
   selectSwipe?(command: SwipeSelectCommandV1): Promise<SwipeSelectResultV1>;
+  /**
+   * Discards ONE variant of a reply position that offers several, leaving the reply and every other
+   * attempt in place. The removed variant leaves the transcript the player reads and the model's own
+   * session at the same time; the row's remaining position and the leaf are moved together when the
+   * discarded variant is the one the row was showing, and neither moves otherwise. A reply that would be
+   * left with no words is refused by name (`chat_swipe_last_variant`).
+   */
+  removeSwipeVariant?(command: SwipeRemoveCommandV1): Promise<SwipeSelectResultV1>;
   regenerate?(command: RegenerateMessageCommandV1, idempotencyKey: string): Promise<SubmitResultV1>;
   /**
    * Drops the named message and every message after it from the mounted conversation - the
@@ -537,36 +547,31 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
         ...(command.direction === undefined ? {} : { direction: command.direction }),
         ...(command.targetIndex === undefined ? {} : { targetIndex: command.targetIndex }),
       });
-      const updatedMessage = state.messages.find(
-        (m: ChatThreadState["messages"][number]) => m.messageId === targetMessage.messageId,
+      return projectSwipePosition(lease, state, targetMessage.messageId);
+    },
+
+    async removeSwipeVariant(command: SwipeRemoveCommandV1): Promise<SwipeSelectResultV1> {
+      assertOpen();
+      if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+      if (!TavernBrowserValidatorsV1.SwipeRemoveCommandV1Schema.Check(command)) throw unavailable();
+      // The swipe family's own CAS, unchanged: the session generation plus the reply's opaque handle,
+      // and no idempotency key - a removal names a position the caller just read.
+      if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
+      const stateBefore = await resumeState();
+      const targetMessage = stateBefore.messages.find(
+        (m: ChatThreadState["messages"][number]) =>
+          lease.browserProjection.projectMessageHandle(m.messageId) === command.messageHandle,
       );
-      if (!updatedMessage) throw unavailable();
-      const messageIndex = state.messages.indexOf(updatedMessage);
-      const totalSwipes = updatedMessage.swipes && updatedMessage.swipes.length > 0 ? updatedMessage.swipes.length : 1;
-      const currentIndex = updatedMessage.activeSwipeIndex ?? 0;
-      const swipeInfo =
-        updatedMessage.role === "companion" && totalSwipes > 1
-          ? Object.freeze({
-              currentIndex,
-              totalSwipes,
-              label: formatSwipeLabel(currentIndex, totalSwipes),
-              hasPrevious: currentIndex > 0,
-              hasNext: currentIndex < totalSwipes - 1,
-            })
-          : undefined;
-      const projected: BrowserMessageV1 = Object.freeze({
-        handle: lease.browserProjection.projectMessageHandle(updatedMessage.messageId),
-        role: updatedMessage.role,
-        text: updatedMessage.text,
-        locale: "und",
-        order: messageIndex,
-        revision: 1,
-        ...(swipeInfo !== undefined ? { swipeInfo } : {}),
-      });
-      return Object.freeze({
-        apiVersion: TAVERN_BROWSER_API_VERSION,
-        message: projected,
-      });
+      if (targetMessage === undefined) throw mutationRefusal("chat_message_not_found");
+      try {
+        const state = await removeMountedSwipeVariant(manifest, lease, {
+          messageId: targetMessage.messageId,
+          targetIndex: command.targetIndex,
+        });
+        return projectSwipePosition(lease, state, targetMessage.messageId);
+      } catch (error) {
+        throw rethrowMutationRefusal(error);
+      }
     },
 
     async regenerate(command: RegenerateMessageCommandV1, idempotencyKey: string): Promise<SubmitResultV1> {
@@ -897,6 +902,50 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
   }
 }
 
+/**
+ * One reply position as the browser reads it after a swipe, shared by the select and the remove
+ * answers so the two cannot describe the same row differently.
+ *
+ * The projection reads the durable read-back, never the command's echo: a row that is not the one the
+ * caller named is a disagreement the surface must not see. `swipeInfo` is present only while the row
+ * offers more than one variant - a position that has been narrowed to one attempt is a reply again, not
+ * a pager with a single page.
+ */
+function projectSwipePosition(
+  lease: MountedChatRuntimeLease,
+  state: ChatThreadState,
+  messageId: string,
+): SwipeSelectResultV1 {
+  const updatedMessage = state.messages.find((message) => message.messageId === messageId);
+  if (!updatedMessage) throw unavailable();
+  const messageIndex = state.messages.indexOf(updatedMessage);
+  const totalSwipes = updatedMessage.swipes && updatedMessage.swipes.length > 0 ? updatedMessage.swipes.length : 1;
+  const currentIndex = updatedMessage.activeSwipeIndex ?? 0;
+  const swipeInfo =
+    updatedMessage.role === "companion" && totalSwipes > 1
+      ? Object.freeze({
+          currentIndex,
+          totalSwipes,
+          label: formatSwipeLabel(currentIndex, totalSwipes),
+          hasPrevious: currentIndex > 0,
+          hasNext: currentIndex < totalSwipes - 1,
+        })
+      : undefined;
+  const projected: BrowserMessageV1 = Object.freeze({
+    handle: lease.browserProjection.projectMessageHandle(updatedMessage.messageId),
+    role: updatedMessage.role,
+    text: updatedMessage.text,
+    locale: "und",
+    order: messageIndex,
+    revision: 1,
+    ...(swipeInfo !== undefined ? { swipeInfo } : {}),
+  });
+  const result = Object.freeze({ apiVersion: TAVERN_BROWSER_API_VERSION, message: projected });
+  // Fail closed unless the committed representation satisfies its frozen contract schema.
+  if (!TavernBrowserValidatorsV1.SwipeSelectResultV1Schema.Check(result)) throw unavailable();
+  return result;
+}
+
 function projectMessage(
   lease: MountedChatRuntimeLease,
   message: ChatThreadState["messages"][number],
@@ -967,16 +1016,17 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
 }
 
 /**
- * The message-mutation refusals that name the point the player chose: the rewind's four, the edit's two
- * and the delete's three. They keep their own code all the way to the surface; every other failure
- * (store shape, session path, read-back, admission, unknown) collapses to the service's fail-closed code
- * so no raw path, identifier or content can escape. One list for all three operations, because each
- * forwards the durable store's own refusals unchanged - and only codes a store or ingress can really
- * produce belong on it.
+ * The message-mutation refusals that name the point the player chose: the variant removal's last-variant
+ * refusal, the rewind's four, the edit's two and the delete's three. They keep their own code all the way to
+ * the surface; every other failure (store shape, session path, read-back, admission, unknown) collapses to the
+ * service's fail-closed code so no raw path, identifier or content can escape. One list for all four
+ * operations, because each forwards the durable store's own refusals unchanged - and only codes a store or
+ * ingress can really produce belong on it.
  */
 const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
   "chat_message_not_found",
   "chat_message_revision_conflict",
+  "chat_swipe_last_variant",
   "chat_rewind_opening_retained",
   "chat_rewind_turn_active",
   "chat_edit_turn_active",

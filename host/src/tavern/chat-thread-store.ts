@@ -702,6 +702,31 @@ export type ChatThreadStore = Readonly<{
     newText: string,
   ): Promise<ChatThreadState>;
   /**
+   * The durable half of discarding ONE variant of a reply position that offers several.
+   *
+   * A reply position is one row with N variant texts, so the player can throw one attempt away without
+   * throwing the reply away - which is the thing neither a rewind nor a delete could do. Exactly that
+   * variant leaves the position: every other variant stays, in order, and every other row of the
+   * transcript is untouched. Refused by name: the LAST variant (`chat_swipe_last_variant`), because a
+   * reply with no words is not a state this transcript has - removing the reply itself is the delete;
+   * and an index the position no longer carries (`chat_message_revision_conflict`), because the set the
+   * browser read has moved, and removing whatever now sits at that number would discard a variant the
+   * player never pointed at.
+   *
+   * Which position the row then STANDS on is the one arithmetic both this store and the mounted ingress
+   * read (`swipePositionAfterRemoval`): removing a variant the row was not showing leaves the shown
+   * variant (and its text) exactly as it was, while removing the shown one moves the row to the
+   * neighbour that took its place. Which Pi session entry carries any of them is NOT this seam's
+   * business - that binding is the model's own (`tavern_message_entries`), and the caller moves the leaf
+   * when the variant that leaves is the one the row was showing.
+   */
+  removeSwipeVariant?(
+    authority: MountedTurnTransitionAuthority,
+    chatThreadId: string,
+    messageId: string,
+    targetIndex: number,
+  ): Promise<ChatThreadState>;
+  /**
    * The durable half of a conversation rewind: KEEPS the named message and drops every message after it.
    *
    * This is the shape both references have - SillyTavern truncates the conversation after the point, and
@@ -2317,6 +2342,53 @@ export function createChatThreadStore(
         ).run(newText, nextIndex, chatThreadId, messageId);
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
         return readStateFromDb(db, chatThreadId);
+      });
+    },
+
+    async removeSwipeVariant(authority, chatThreadId, messageId, targetIndex): Promise<ChatThreadState> {
+      assertMountedTurnTransitionAuthority(authority);
+      assertId("chatThreadId", chatThreadId);
+      assertId("messageId", messageId);
+      if (!Number.isSafeInteger(targetIndex) || targetIndex < 0) throw new Error("chat_message_revision_conflict");
+      return withDb((db) => {
+        const current = readStateFromDb(db, chatThreadId);
+        const target = current.messages.find((message) => message.messageId === messageId);
+        if (!target) throw new Error("message_not_found");
+        if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
+        // A row written before variants existed carries its one text and no variant set; either way a
+        // position of one has nothing to remove, and saying so is what keeps a reply from ending empty.
+        const swipes = swipeTextsOf(target);
+        if (swipes.length <= 1) throw new Error("chat_swipe_last_variant");
+        if (targetIndex >= swipes.length) throw new Error("chat_message_revision_conflict");
+        const next = swipePositionAfterRemoval(swipes, target.activeSwipeIndex ?? 0, targetIndex);
+        // The set is rewritten whole rather than shifted in place: `swipe_index` is the position's own
+        // order and a transient gap or duplicate would be a shape `readMessages` refuses.
+        db.prepare("DELETE FROM tavern_message_swipes WHERE thread_id = ? AND message_id = ?").run(
+          chatThreadId,
+          messageId,
+        );
+        const insert = db.prepare(
+          "INSERT INTO tavern_message_swipes (thread_id, message_id, swipe_index, text) VALUES (?, ?, ?, ?)",
+        );
+        for (const [index, text] of next.swipes.entries()) insert.run(chatThreadId, messageId, index, text);
+        db.prepare(
+          "UPDATE tavern_messages SET text = ?, active_swipe_index = ? WHERE thread_id = ? AND message_id = ?",
+        ).run(next.swipes[next.activeIndex]!, next.activeIndex, chatThreadId, messageId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(now(), chatThreadId);
+        // The read-back is the assertion: it re-runs the same opening, message and ledger integrity
+        // checks every other read runs, and it proves the position landed with one fewer variant and
+        // that the row still shows the variant the arithmetic named.
+        const readBack = readStateFromDb(db, chatThreadId);
+        const readBackTarget = readBack.messages.find((message) => message.messageId === messageId);
+        if (
+          readBackTarget === undefined ||
+          readBackTarget.swipes === undefined ||
+          readBackTarget.swipes.length !== next.swipes.length ||
+          readBackTarget.activeSwipeIndex !== next.activeIndex ||
+          readBackTarget.text !== next.swipes[next.activeIndex]
+        )
+          throw new Error("chat_swipe_remove_readback_mismatch");
+        return readBack;
       });
     },
 
@@ -4217,6 +4289,36 @@ export function nextSwipeIndex(
   if (selection.direction === "next") return Math.min(swipes.length - 1, currentIndex + 1);
   if (selection.direction === "prev") return Math.max(0, currentIndex - 1);
   return Math.min(Math.max(0, currentIndex), swipes.length - 1);
+}
+
+/**
+ * The position one reply row offers once ONE of its variants is discarded: the surviving texts, in order,
+ * and the one the row stands on.
+ *
+ * ONE SPELLING, TWO LAYERS, exactly as `nextSwipeIndex` is. The store writes this position into
+ * `tavern_message_swipes`/`active_swipe_index`, and the mounted ingress resolves the session entry that
+ * carries the same variant, so a second copy of this arithmetic in the coordinator would let the two
+ * authorities disagree about which variant the player is looking at - the defect `nextSwipeIndex` was
+ * extracted to prevent, in the one operation where the removal itself can move the row.
+ *
+ * Removing a variant the row was NOT showing leaves the row on the same words: the survivor keeps its
+ * text and only its position number changes. Removing the shown one moves the row to the neighbour that
+ * slid into its place - the next variant, or the new last when the removed one was last - so the reply
+ * always still reads as one of its own attempts and never as an empty position.
+ */
+export function swipePositionAfterRemoval(
+  swipes: readonly string[],
+  activeIndex: number,
+  removedIndex: number,
+): Readonly<{ swipes: readonly string[]; activeIndex: number }> {
+  const surviving = Object.freeze(swipes.filter((_, index) => index !== removedIndex));
+  const active =
+    removedIndex === activeIndex
+      ? Math.min(removedIndex, surviving.length - 1)
+      : activeIndex > removedIndex
+        ? activeIndex - 1
+        : activeIndex;
+  return Object.freeze({ swipes: surviving, activeIndex: active });
 }
 
 /**

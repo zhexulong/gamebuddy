@@ -121,6 +121,7 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   // session entry to omit.
   if (message === "chat_message_not_found") return { status: 409, code: "chat_message_not_found" };
   if (message === "chat_message_revision_conflict") return { status: 409, code: "chat_message_revision_conflict" };
+  if (message === "chat_swipe_last_variant") return { status: 409, code: "chat_swipe_last_variant" };
   if (message === "chat_rewind_opening_retained") return { status: 409, code: "chat_rewind_opening_retained" };
   if (message === "chat_rewind_turn_active") return { status: 409, code: "chat_rewind_turn_active" };
   if (message === "chat_edit_turn_active") return { status: 409, code: "chat_edit_turn_active" };

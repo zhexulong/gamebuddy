@@ -379,6 +379,10 @@ export const PROBLEM_CODES = [
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  // Discarding one variant of a reply (`chat.swipe.remove`) refuses by name the one position that would
+  // be left with no words: a reply with nothing to read is not a state the transcript has, and removing the
+  // reply itself is the delete.
+  "chat_swipe_last_variant",
   // The rewind refusals: each names one point the player asked for. See `TAVERN_BROWSER_PROBLEM_CODES_V1`'s
   // sibling in the Host contract.
   "chat_message_not_found",

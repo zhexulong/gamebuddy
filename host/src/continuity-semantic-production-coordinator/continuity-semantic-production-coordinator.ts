@@ -21,6 +21,7 @@ export {
   editMountedChatMessage,
   isCurrentMountedChatRuntimeLease,
   rewindMountedChatTranscript,
+  removeMountedSwipeVariant,
   selectMountedSwipeVariant,
   settleMountedAuthoredContext,
   stopMountedChatPresentationEpoch,

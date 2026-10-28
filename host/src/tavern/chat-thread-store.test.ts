@@ -1404,6 +1404,99 @@ test("an edit of her reply rewrites the variant it stands on, leaves her other a
 });
 
 /**
+ * The durable half of discarding ONE variant. A reply position is one row with N variant texts, so an
+ * attempt can be thrown away without throwing the reply away - and the position it then stands on is the
+ * whole invariant: removing an attempt the player was NOT reading leaves the visible words exactly as they
+ * were, while removing the one they WERE reading moves the row to the survivor that took its place. The
+ * LAST variant is refused by name, because a reply with no words is not a state this transcript has.
+ *
+ * Every assertion is a read-back, and the visible-tail assertion reads the same bounded tail the per-turn
+ * World Info selection scans, so "the row still shows one of its own attempts" is proven against the Host's
+ * own context assembly rather than against this store's return value.
+ */
+test("removing one variant keeps the shown attempt when it is not the one removed, moves to a neighbour when it is, and refuses the last", async () => {
+  const { root, store: s, creation, key } = await store();
+  const reopened = createChatThreadStore(root, key);
+  try {
+    await creation.createExplicit(request());
+    await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
+    await s.commitResponse("thread_01", { messageId: "response_01", text: "Hello back", occurredAtMs: 102 });
+    await s.appendSwipeVariant!(testTransitionAuthority.authority, "thread_01", "response_01", "Hello again");
+    const three = await s.appendSwipeVariant!(
+      testTransitionAuthority.authority,
+      "thread_01",
+      "response_01",
+      "Hello a third time",
+    );
+    assert.deepEqual(three.messages[2]!.swipes, ["Hello back", "Hello again", "Hello a third time"]);
+    assert.equal(three.messages[2]!.activeSwipeIndex, 2);
+
+    // The player is reading the third attempt; the first is the one they discard.
+    const nonActive = await s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "response_01", 0);
+    assert.deepEqual(
+      nonActive.messages.map((message) => message.messageId),
+      ["opening_01", "player_01", "response_01"],
+    );
+    assert.deepEqual(nonActive.messages[2]!.swipes, ["Hello again", "Hello a third time"]);
+    assert.equal(nonActive.messages[2]!.text, "Hello a third time", "the shown attempt did not move");
+    assert.equal(nonActive.messages[2]!.activeSwipeIndex, 1, "its position number followed the set it sits in");
+    assert.equal(boundedVisibleTail(nonActive.messages, 2), "Hello\nHello a third time");
+
+    // A position the set no longer carries is a stale view, not an invitation to discard a different
+    // attempt: the caller read a set longer than the one the row now offers.
+    await assert.rejects(
+      () => s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "response_01", 3),
+      /chat_message_revision_conflict/,
+    );
+
+    // Now the player is reading the SURVIVING first attempt and discards exactly that one: the row has to
+    // land on the neighbour that took its place, never on an empty position.
+    const active = await s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "response_01", 0);
+    assert.deepEqual(active.messages[2]!.swipes, ["Hello a third time"]);
+    assert.equal(active.messages[2]!.activeSwipeIndex, 0);
+    assert.equal(active.messages[2]!.text, "Hello a third time", "the neighbour the row slid onto");
+    assert.equal(boundedVisibleTail(active.messages, 2), "Hello\nHello a third time");
+
+    // Both halves are durable, not this store's own memory.
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(durable.messages[2]!.swipes, ["Hello a third time"]);
+    assert.equal(durable.messages[2]!.text, "Hello a third time");
+
+    // The last variant is refused BY NAME, and nothing moved: a reply with no words at all is the delete's
+    // job, not this operation's.
+    await assert.rejects(
+      () => s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "response_01", 0),
+      /chat_swipe_last_variant/,
+    );
+    const unchanged = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(unchanged.messages[2]!.swipes, ["Hello a third time"]);
+    assert.equal(unchanged.messages[2]!.text, "Hello a third time");
+
+    // A player line is never a variant position, and an unknown row names nothing to remove.
+    await assert.rejects(
+      () => s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "player_01", 0),
+      /chat_thread_swipe_not_allowed/,
+    );
+    await assert.rejects(
+      () => s.removeSwipeVariant!(testTransitionAuthority.authority, "thread_01", "missing_01", 0),
+      /message_not_found/,
+    );
+    // The writer is behind the same mounted transition authority as every other swipe write: a revoked
+    // authority mutates nothing.
+    const revoked = createMountedTurnTransitionAuthority();
+    revoked.revoke();
+    await assert.rejects(
+      () => s.removeSwipeVariant!(revoked.authority, "thread_01", "response_01", 0),
+      /p4_p5_transition_authority_unavailable/,
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
  * The list projection reads one row per thread, so the last message must arrive
  * from ONE batched statement rather than one transcript open per thread: this
  * pins the shape the projection depends on (`tavern_messages.text` is the active

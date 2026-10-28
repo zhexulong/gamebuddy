@@ -69,6 +69,7 @@ import {
   ExactThreadSurfaceMismatchError,
   nextSwipeIndex,
   readSwipePosition,
+  swipePositionAfterRemoval,
   transitionMountedProviderStart,
   transitionMountedPresentation,
 } from "../tavern/chat-thread-store.js";
@@ -1383,6 +1384,85 @@ export async function selectMountedSwipeVariant(
 function refuseMountedMutation(branch: string, code: string): never {
   process.stderr.write(`[mounted-mutation] ${branch} -> ${code}\n`);
   throw new SemanticProductionCoordinatorError(code);
+}
+
+/**
+ * The one authorized swipe-variant REMOVAL ingress: the player discards one of several attempts at a
+ * reply position without discarding the reply.
+ *
+ * The two authorities move together exactly as they do for a swipe, and by the same mechanism rather than a
+ * second one. `selectPiVariantEntry` is `d852293a`'s path: resolve the session entry that carries the
+ * variant BEFORE either layer is written (a pure read, so every refusal leaves both untouched), write the
+ * store, then move the leaf with no step between the two that can refuse.
+ *
+ * WHICH layer moves is the difference, and it is the whole invariant:
+ *   - removing a variant the row is NOT showing leaves the store's active index on the same words and the
+ *     leaf where it is - nothing the player is reading changes, so nothing about the model's context may
+ *     change either;
+ *   - removing the SHOWN one moves the row to the surviving neighbour that took its place
+ *     (`swipePositionAfterRemoval`, the store's own arithmetic) and the leaf follows that neighbour, so the
+ *     transcript the player reads and the path the model reads still name one variant.
+ *
+ * The removal itself leaves the model's session alone: a variant is only reachable while its own entry is ON
+ * the active path, so the variants that are not the row's current one are already off it, and the one that is
+ * being removed is precisely a path the later branch or swipe replaces. Writing nothing is therefore the whole
+ * Pi half of a non-active removal, and the caller must not invent an omission that would cut an entry a
+ * sibling variant still needs.
+ */
+export async function removeMountedSwipeVariant(
+  manifest: HostDeploymentManifest,
+  lease: MountedChatRuntimeLease,
+  input: Readonly<{ messageId: string; targetIndex: number }>,
+): Promise<import("../tavern/chat-thread-store.js").ChatThreadState> {
+  const record = mountedChatRuntimeLeases.get(lease);
+  if (
+    record === undefined ||
+    !record.active ||
+    manifest.runtimeRoot !== record.runtimeRoot ||
+    manifest.principal.playerId !== record.principal.playerId ||
+    manifest.principal.companionId !== record.principal.companionId ||
+    manifest.principal.continuityId !== record.principal.continuityId ||
+    typeof input.messageId !== "string" ||
+    input.messageId.length === 0 ||
+    !Number.isSafeInteger(input.targetIndex) ||
+    input.targetIndex < 0
+  )
+    throw refuseMountedMutation("swipe-remove record-or-input", "semantic_chat_runtime_swipe_selection_unavailable");
+  const runtimeSession = record.providerRuntimeSession;
+  if (runtimeSession === undefined)
+    throw refuseMountedMutation("swipe-remove session-missing", "semantic_chat_runtime_swipe_selection_unavailable");
+  const store = record.store();
+  const state = await store.resumeThread(record.chatThreadId, record.chatSurfaceSessionId);
+  // The store's own position facts. A row this Chat does not carry, a row that is not her reply, and a
+  // position with nothing left to remove throw the store's own bounded codes, exactly as `selectSwipe` does.
+  const position = readSwipePosition(state.messages, input.messageId);
+  if (position.swipes.length <= 1) throw refuseMountedMutation("swipe-remove last-variant", "chat_swipe_last_variant");
+  if (input.targetIndex >= position.swipes.length)
+    throw refuseMountedMutation("swipe-remove index-out-of-range", "chat_message_revision_conflict");
+  const next = swipePositionAfterRemoval(position.swipes, position.currentIndex, input.targetIndex);
+  const remainingText = next.swipes[next.activeIndex];
+  const shownVariantRemoved = input.targetIndex === position.currentIndex;
+  const resolved = shownVariantRemoved
+    ? resolvePiVariantEntry(
+        runtimeSession.session,
+        typeof store.readTranscriptEntryBinding === "function"
+          ? await store.readTranscriptEntryBinding(record.chatThreadId, input.messageId)
+          : [],
+        remainingText ?? "",
+      )
+    : undefined;
+  if (resolved !== undefined && resolved.status !== "resolved") {
+    process.stderr.write("[swipe-remove] no session entry carries the surviving variant\n");
+    throw new SemanticProductionCoordinatorError("state_reconciliation_required");
+  }
+  const removed = await store.removeSwipeVariant!(
+    record.transitionAuthority.authority,
+    record.chatThreadId,
+    input.messageId,
+    input.targetIndex,
+  );
+  if (resolved !== undefined) selectPiVariantEntry(runtimeSession.session, resolved.entryId, resolved.content);
+  return removed;
 }
 
 /**

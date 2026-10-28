@@ -164,6 +164,10 @@ const ProblemCode = Type.Union([
   Type.Literal("chat_opening_locked"),
   Type.Literal("chat_opening_not_greeting"),
   Type.Literal("chat_opening_variant_not_found"),
+  // Discarding one variant of a reply (`chat.swipe.remove`). The one refusal that is not borrowed from
+  // the swipe family's own row checks is the position that would be left with no words at all: a reply
+  // with nothing to read is not a state the transcript has, and removing the reply itself is the delete.
+  Type.Literal("chat_swipe_last_variant"),
   // Rewinding the conversation to an earlier message (`chat.rewind`) is one mutation over two
   // authorities - the visible transcript and the model's own session - so every way it can be
   // refused is its own bounded fact about the point the player named: a handle this Chat does not
@@ -1952,6 +1956,27 @@ export const SwipeSelectResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   message: BrowserMessageV1Schema,
 });
+/**
+ * Discarding ONE variant of a reply position (`chat.swipe.remove`): the position the player is looking
+ * at offers several attempts, and they throw one of them away without throwing the reply away. That is
+ * the thing neither `chat.rewind` (which drops everything after a point) nor `chat.delete` (which drops
+ * the whole reply, every variant with it) can do, and it is what a SillyTavern user does by deleting a
+ * single swipe.
+ *
+ * `targetIndex` is the variant position the browser rendered, 0-based, exactly as `chat.swipe` names
+ * one. The position is CASed by the same two facts that command uses - the session's own
+ * `selectionGeneration` and the reply's opaque `messageHandle` - so this is the swipe family's shape, not
+ * a second mutation vocabulary: it carries no idempotency key (neither does the swipe), because a
+ * removal names a state the caller just read and is not a retryable request to a provider. A reply that
+ * would be left with no words is refused by name (`chat_swipe_last_variant`): the reply itself is the
+ * delete's job.
+ */
+export const SwipeRemoveCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  selectionGeneration: PositiveGeneration,
+  messageHandle: OpaqueHandle,
+  targetIndex: Revision,
+});
 export const RegenerateMessageCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   selectionGeneration: PositiveGeneration,
@@ -2195,6 +2220,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "chat_opening_locked",
   "chat_opening_not_greeting",
   "chat_opening_variant_not_found",
+  "chat_swipe_last_variant",
   "chat_message_not_found",
   "chat_message_revision_conflict",
   "chat_rewind_opening_retained",
@@ -2470,6 +2496,20 @@ const RouteDescriptors = Object.freeze([
     pathParams: noPath,
     query: noQuery,
     request: SwipeSelectCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: SwipeSelectResultV1Schema },
+  }),
+  route({
+    routeId: "chat.swipe.remove",
+    method: "POST",
+    path: "/api/tavern/v1/messages/swipe/remove",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: SwipeRemoveCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: SwipeSelectResultV1Schema },
   }),
   route({
@@ -3404,6 +3444,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     CancelTurnResultV1Schema,
     SwipeSelectCommandV1Schema,
     SwipeSelectResultV1Schema,
+    SwipeRemoveCommandV1Schema,
     RegenerateMessageCommandV1Schema,
     RewindChatCommandV1Schema,
     RewindChatResultV1Schema,
@@ -3459,6 +3500,7 @@ export type TavernBrowserNavigationItemIdV1 = Static<typeof NavigationItemId>;
 export type SubmitMessageCommandV1 = Static<typeof SubmitMessageCommandV1Schema>;
 export type SwipeSelectCommandV1 = Static<typeof SwipeSelectCommandV1Schema>;
 export type SwipeSelectResultV1 = Static<typeof SwipeSelectResultV1Schema>;
+export type SwipeRemoveCommandV1 = Static<typeof SwipeRemoveCommandV1Schema>;
 export type RegenerateMessageCommandV1 = Static<typeof RegenerateMessageCommandV1Schema>;
 export type RewindChatCommandV1 = Static<typeof RewindChatCommandV1Schema>;
 export type RewindChatResultV1 = Static<typeof RewindChatResultV1Schema>;
@@ -3743,8 +3785,8 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
   "events",
 ] as const;
 /**
- * The optional message-mutation extension of the reference Chat profile: Swipe, Regenerate, Rewind,
- * Edit and Delete.
+ * The optional message-mutation extension of the reference Chat profile: Swipe, Swipe variant
+ * removal, Regenerate, Rewind, Edit and Delete.
  *
  * The browser client posts all five from its own message controls, so the dispatcher mounted on the
  * composed Chat surface must reach them or the player's controls answer 404. They are routes, not
@@ -3759,6 +3801,7 @@ const REFERENCE_TAVERN_ROUTE_IDS = [
  */
 const REFERENCE_TAVERN_MESSAGE_MUTATION_ROUTE_IDS = [
   "chat.swipe",
+  "chat.swipe.remove",
   "chat.regenerate",
   "chat.rewind",
   "chat.edit",

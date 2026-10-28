@@ -19,6 +19,7 @@ import {
   type RegenerateMessageCommandV1,
   type RewindChatCommandV1,
   type RewindChatResultV1,
+  type SwipeRemoveCommandV1,
   type SwipeSelectCommandV1,
   type SwipeSelectResultV1,
   composeReferenceTavernProfile,
@@ -554,6 +555,8 @@ function mutationService(
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
     deletes: DeleteMessageCommandV1[];
+    removals?: SwipeRemoveCommandV1[];
+    removalRefusal?: string;
     closes: number;
   },
   swipeResult: SwipeSelectResultV1,
@@ -573,6 +576,11 @@ function mutationService(
     },
     async selectSwipe(command): Promise<SwipeSelectResultV1> {
       recorder.swipes.push(command);
+      return swipeResult;
+    },
+    async removeSwipeVariant(command): Promise<SwipeSelectResultV1> {
+      recorder.removals?.push(command);
+      if (recorder.removalRefusal !== undefined) throw new Error(recorder.removalRefusal);
       return swipeResult;
     },
     async regenerate(command, idempotencyKey): Promise<SubmitResultV1> {
@@ -634,6 +642,7 @@ test("the production reference profile declares the message-mutation group and f
   assert.deepEqual(production.routeIds, [
     ...tavernProfile.routeIds,
     "chat.swipe",
+    "chat.swipe.remove",
     "chat.regenerate",
     "chat.rewind",
     "chat.edit",
@@ -693,6 +702,8 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
     rewinds: RewindChatCommandV1[];
     edits: EditMessageCommandV1[];
     deletes: DeleteMessageCommandV1[];
+    removals?: SwipeRemoveCommandV1[];
+    removalRefusal?: string;
     closes: number;
   } = { swipes: [], regenerations: [], rewinds: [], edits: [], deletes: [], closes: 0 };
   const broker = createComposedReferenceGameBrowserRequestHandler({
@@ -749,6 +760,44 @@ test("delegated handler answers the reference profile's Swipe and Regenerate rou
         idempotencyKey: "A".repeat(22),
       },
     ]);
+
+    // Discarding one variant posts the same two CAS facts the swipe does - the session generation and the
+    // reply's opaque handle - plus the position it names, and it carries no idempotency header at all.
+    const removals: SwipeRemoveCommandV1[] = [];
+    recorder.removals = removals;
+    const removeVariant = (token: string, body: unknown) =>
+      fetch(`${server.origin}/api/tavern/v1/messages/swipe/remove`, {
+        method: "POST",
+        headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json", "X-CSRF-Token": token },
+        body: JSON.stringify(body),
+      });
+    const removeCommand = { apiVersion: 1, selectionGeneration: 1, messageHandle: handle, targetIndex: 0 };
+    const removed = await removeVariant(csrf, removeCommand);
+    const removedBody = await removed.text();
+    assert.equal(removed.status, 200, `swipe variant removal must be served, got ${removed.status} ${removedBody}`);
+    assert.deepEqual(JSON.parse(removedBody), swipeResult);
+    assert.deepEqual(removals, [removeCommand]);
+
+    // A body the contract does not admit is refused before the service: a removal without the position the
+    // page rendered names no attempt to discard.
+    const malformed = await removeVariant(csrf, { apiVersion: 1, selectionGeneration: 1, messageHandle: handle });
+    assert.equal(malformed.status, 400);
+    assert.equal(((await malformed.json()) as { code: string }).code, "invalid_request");
+    assert.equal(removals.length, 1);
+
+    // The wrong CSRF fails before the service too, as every mutation on this surface does.
+    const wrongCsrfRemove = await removeVariant("B".repeat(43), removeCommand);
+    assert.equal(wrongCsrfRemove.status, 403);
+    assert.equal(((await wrongCsrfRemove.json()) as { code: string }).code, "csrf_failed");
+    assert.equal(removals.length, 1);
+
+    // The last-variant refusal keeps its own name all the way to the surface: the position has one attempt
+    // left, and removing the reply itself is the delete's job.
+    recorder.removalRefusal = "chat_swipe_last_variant";
+    const refused = await removeVariant(csrf, removeCommand);
+    assert.equal(refused.status, 409);
+    assert.equal(((await refused.json()) as { code: string }).code, "chat_swipe_last_variant");
+    assert.equal(removals.length, 2);
   } finally {
     await server.close();
     assert.equal(recorder.closes, 1);

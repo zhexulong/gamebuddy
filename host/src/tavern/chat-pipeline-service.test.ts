@@ -1134,6 +1134,144 @@ test(
 );
 
 test(
+  "removing a variant moves the store's position and the model's leaf together only when it is the one shown",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const bindings = await import(bindingsUrl);
+  const { SessionManager } = await import(piUrl);
+  /**
+   * One reply position carrying two variants, with the regenerate turn's own durable entry binding:
+   * the committed reply, then the regenerated one the row is showing.
+   */
+  async function twoVariantPosition() {
+    const fx = await fixture();
+    let startCalls = 0;
+    const service = serviceFor(fx, async () => { startCalls += 1; });
+    const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+    await service.submitAfterResponseCommit(commandFor(fx, {}), "qrstuvwxyzabcdefghijkl", async () => undefined);
+    await waitFor(() => startCalls === 1);
+    await driveToTerminal(fx, "completed");
+    const durable = await resume();
+    const playerMessage = durable.messages.find((m) => m.kind === "player");
+    const tailMessage = durable.messages[durable.messages.length - 1];
+    const committedSample = tailMessage.text;
+    const regeneratedSample = "Regenerated companion reply, the position's second variant.";
+    await run(async () =>
+      service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: fx.lease.browserProjection.projectMessageHandle(tailMessage.messageId) }, "rstuvwxyzabcdefghijklm"));
+    const driven = await driveVariantToCompleted(fx, {
+      targetMessageId: tailMessage.messageId,
+      anchorText: playerMessage.text,
+      committedReplyText: committedSample,
+      text: regeneratedSample,
+    });
+    const session = driven.session;
+    const sessionManager = session.sessionManager;
+    return {
+      fx, service, committedSample, regeneratedSample, tailMessageId: tailMessage.messageId,
+      handle: fx.lease.browserProjection.projectMessageHandle(tailMessage.messageId),
+      resume,
+      leafText: () => bindings.piActivePathTailReplyText(session),
+      projected: () => sessionManager.buildSessionProjection().messages
+        .map((m) => m.content.filter((p) => p.type === "text").map((p) => p.text).join("")),
+      reopen: () => bindings.piActivePathTailReplyText({ sessionManager: SessionManager.continueRecent(sessionManager.getCwd(), sessionManager.getSessionDir()) }),
+    };
+  }
+  const readRow = async (position) => {
+    const state = await position.resume();
+    const row = state.messages.find((m) => m.messageId === position.tailMessageId);
+    return { text: row.text, index: row.activeSwipeIndex, swipes: row.swipes };
+  };
+  const closeAll = async (position) => {
+    await position.service.close();
+    await position.fx.lease.close();
+    await position.fx.authority.close();
+  };
+
+  // A: the position shows the SECOND variant and the player discards the FIRST. Nothing they are reading
+  // changes, so nothing about the model's context may change either - not the text, not the leaf.
+  const nonActive = await twoVariantPosition();
+  const beforeNonActive = { row: await readRow(nonActive), leaf: nonActive.leafText(), projected: nonActive.projected() };
+  const removedNonActive = await run(async () => nonActive.service.removeSwipeVariant(
+    { apiVersion: 1, selectionGeneration: nonActive.fx.generation, messageHandle: nonActive.handle, targetIndex: 0 }));
+  const afterNonActive = { row: await readRow(nonActive), leaf: nonActive.leafText(), projected: nonActive.projected(), reopen: nonActive.reopen() };
+  // The reply now offers one attempt: removing it would leave nothing to read, and that is refused by name.
+  const lastVariant = await run(async () => nonActive.service.removeSwipeVariant(
+    { apiVersion: 1, selectionGeneration: nonActive.fx.generation, messageHandle: nonActive.handle, targetIndex: 0 }));
+  await closeAll(nonActive);
+
+  // B: the position shows the SECOND variant and the player discards exactly that one. The row has to land
+  // on the survivor AND the leaf has to follow it, or the player reads one variant while the model reads none.
+  const active = await twoVariantPosition();
+  const beforeActive = { row: await readRow(active), leaf: active.leafText() };
+  const removedActive = await run(async () => active.service.removeSwipeVariant(
+    { apiVersion: 1, selectionGeneration: active.fx.generation, messageHandle: active.handle, targetIndex: 1 }));
+  const afterActive = { row: await readRow(active), leaf: active.leafText(), projected: active.projected(), reopen: active.reopen() };
+  await closeAll(active);
+
+  process.stdout.write(JSON.stringify({
+    committedSample: nonActive.committedSample,
+    regeneratedSample: nonActive.regeneratedSample,
+    removedNonActive: removedNonActive.ok ? removedNonActive.value.message : removedNonActive,
+    removedActive: removedActive.ok ? removedActive.value.message : removedActive,
+    lastVariant: lastVariant.ok ? lastVariant.value : lastVariant,
+    beforeNonActive, afterNonActive, beforeActive, afterActive,
+  }));
+`);
+    const committedSample = output.committedSample as string;
+    const regeneratedSample = output.regeneratedSample as string;
+    type Reading = {
+      row: { text: string; index: number; swipes: string[] };
+      leaf: string | null;
+      projected?: string[];
+      reopen?: string | null;
+    };
+    const beforeNonActive = output.beforeNonActive as Reading;
+    const afterNonActive = output.afterNonActive as Reading;
+    const beforeActive = output.beforeActive as Reading;
+    const afterActive = output.afterActive as Reading;
+
+    // The premise: both positions really carried two variants and the row was showing the regenerated one.
+    // Without that the rest of this test would be asserting agreement about a position that could not disagree.
+    assert.deepEqual(beforeNonActive.row, {
+      text: regeneratedSample,
+      index: 1,
+      swipes: [committedSample, regeneratedSample],
+    });
+    assert.deepEqual(beforeActive.row, beforeNonActive.row);
+    assert.equal(beforeNonActive.leaf, regeneratedSample);
+
+    // A. THE NON-ACTIVE HALF. The discarded variant leaves the set and the row keeps reading exactly the
+    // words it read before, which is what makes the leaf's staying put correct rather than an omission.
+    assert.deepEqual(afterNonActive.row.swipes, [regeneratedSample]);
+    assert.equal(afterNonActive.row.text, regeneratedSample, "the shown attempt is untouched");
+    assert.equal(afterNonActive.row.index, 0, "its position number followed the set it sits in");
+    assert.equal(afterNonActive.leaf, regeneratedSample, "the model still reads the variant the player reads");
+    assert.equal(afterNonActive.reopen, regeneratedSample, "and a re-open lands there too");
+    assert.equal(afterNonActive.projected!.filter((text) => text === regeneratedSample).length, 1);
+    assert.equal(afterNonActive.projected!.filter((text) => text === committedSample).length, 0);
+
+    // The last variant is refused by name, and the refusal left both authorities where they were: a reply
+    // with no words is not a state the transcript has, and removing the reply itself is the delete.
+    const lastVariant = output.lastVariant as { ok: boolean; error?: string };
+    assert.equal(lastVariant.ok, false);
+    assert.match(String(lastVariant.error), /chat_swipe_last_variant/);
+
+    // B. THE ACTIVE HALF. The store's position and the model's leaf both move to the survivor - the pair
+    // that a store-only or leaf-only write cannot produce.
+    assert.equal(beforeActive.row.text, regeneratedSample);
+    assert.deepEqual(afterActive.row.swipes, [committedSample]);
+    assert.equal(afterActive.row.text, committedSample, "the row landed on the neighbour that took its place");
+    assert.equal(afterActive.row.index, 0);
+    assert.equal(afterActive.leaf, committedSample, "the model's leaf followed the row, not the variant just removed");
+    assert.notEqual(afterActive.leaf, regeneratedSample);
+    assert.equal(afterActive.reopen, committedSample, "and a re-open lands on the surviving variant");
+    assert.equal(afterActive.projected!.filter((text) => text === committedSample).length, 1);
+    assert.equal(afterActive.projected!.filter((text) => text === regeneratedSample).length, 0);
+  },
+);
+
+test(
   "the bounded visible tail reaches a keyword while the bound book's declared depth includes it, and stops one turn past it",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {

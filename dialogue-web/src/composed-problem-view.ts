@@ -110,6 +110,14 @@ const chatDeleteTurnActive: ProblemSentence = (labels) =>
 const chatDeleteBindingUnavailable: ProblemSentence = (labels) =>
   sentence(labels.problemChatDeleteBindingUnavailableTitle, labels.problemChatDeleteBindingUnavailableDetail);
 
+/**
+ * Discarding one variant, when it is the last one: the reply would be left with nothing to read, and
+ * removing the reply itself is the delete - so the sentence names that other control rather than
+ * "could not change the conversation".
+ */
+const chatSwipeLastVariant: ProblemSentence = (labels) =>
+  sentence(labels.problemChatSwipeLastVariantTitle, labels.problemChatSwipeLastVariantDetail);
+
 // --- Ten refusals that say the same thing: what you edited moved first --------------------------
 //
 // Every one of them is a compare-and-set against something the browser read - the mounted selection,
@@ -313,6 +321,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
 
   chat_message_not_found: chatMessageNotFound,
   chat_message_revision_conflict: chatMessageRevisionConflict,
+  chat_swipe_last_variant: chatSwipeLastVariant,
   chat_rewind_opening_retained: chatRewindOpeningRetained,
   chat_rewind_turn_active: chatRewindTurnActive,
   chat_edit_turn_active: chatEditTurnActive,

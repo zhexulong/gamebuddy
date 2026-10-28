@@ -277,6 +277,7 @@ test("production coordinator exports only the known Game constructor and its saf
     // belong to the same family as the swipe and the authored-context settle - they reshape the mounted
     // Chat under the lease - which is why they are on the surface rather than internal to the pipeline
     // service.
+    "removeMountedSwipeVariant",
     "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
@@ -302,6 +303,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "editMountedChatMessage",
     "isCurrentMountedChatRuntimeLease",
     "orchestrateExplicitGameRecovery",
+    "removeMountedSwipeVariant",
     "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
     "settleMountedAuthoredContext",
