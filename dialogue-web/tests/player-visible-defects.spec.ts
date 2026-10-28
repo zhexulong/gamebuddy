@@ -212,9 +212,22 @@ async function sampleContrast(page: Page, selectors: readonly string[]) {
   return page.evaluate((wanted: readonly string[]) => {
     const parse = (value: string): [number, number, number, number] => {
       const match = value.match(/rgba?\(([^)]+)\)/);
-      if (match === null) return [0, 0, 0, 0];
-      const parts = match[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
-      return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+      if (match !== null) {
+        const parts = match[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+      }
+      // A `color-mix()` computes to `color(srgb r g b / a)` with components in 0..1, not
+      // to an `rgb()` string. This reader used to answer [0,0,0,0] for that form - which
+      // is transparent black, not the colour - so every mixed value was measured against
+      // the wrong ink and a 6.5:1 chip was reported as 1.32:1. A colour function this
+      // reader does not know must fail loudly rather than silently become black.
+      const mixed = value.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u);
+      if (mixed !== null) {
+        const channel = (part: string): number => Math.round(Number.parseFloat(part) * 255);
+        return [channel(mixed[1]!), channel(mixed[2]!), channel(mixed[3]!), mixed[4] === undefined ? 1 : Number.parseFloat(mixed[4])];
+      }
+      if (value === "transparent" || value === "rgba(0, 0, 0, 0)") return [0, 0, 0, 0];
+      throw new Error(`contrast probe cannot read the computed colour ${JSON.stringify(value)}`);
     };
     const effective = (element: Element): [number, number, number] | null => {
       const stack: [number, number, number, number][] = [];
@@ -301,16 +314,31 @@ test("defect 1: a filled accent control and the current badge clear WCAG AA", as
   }
 
   // Sensitivity proof, measured through the same engine rather than quoted from a
-  // report: the tokens as they were before the fix put both elements back under
-  // the floor, so the assertion above is what catches the defect and not a
-  // coincidence of today's values.
-  await page.addStyleTag({ content: ":root{--accent-solid:#c8787d;--palette-burgundy-dark:#3a2226}" });
+  // report: the badge as it was before the fix - the accent rose on the shallower
+  // plate - reads back under the floor, so the assertion above is what catches the
+  // defect and not a coincidence of today's values.
+  //
+  // The fixture's PREMISE changed, not its force. It used to inject only the pre-fix
+  // tokens and let the badge read those; the badge's ink is now derived with
+  // `color-mix()`, so re-injecting the plate alone would measure a mixed ink the fix
+  // never shipped. Injecting the pre-fix ink alone is not enough either, and that is
+  // arithmetic rather than preference: `#c8787d` on today's `#2f1d22` plate is
+  // 4.88:1, which clears the floor, so it is not a failing case. The pair is what
+  // failed - 4.48:1 - and the pair is what this fixture paints. What the assertion
+  // must keep is its direction: a badge below 4.5:1 is reported below 4.5:1.
+  await page.addStyleTag({
+    content:
+      ":root{--accent-solid:#c8787d}em.companion-current-badge{color:#c8787d;background-color:#3a2226}",
+  });
   const beforeBadge = await sampleContrast(page, ["em.companion-current-badge"]);
   await openSurface(page, "游戏", "game-surface");
   const beforePrimary = await sampleContrast(page, ["button.game-action.primary"]);
   console.log(`[defect-1] with the pre-fix tokens: ${JSON.stringify([...beforePrimary, ...beforeBadge])}`);
   expect(beforePrimary[0]!.ratio, "the sampled primary action really was 2.88:1 before the fix").toBeLessThan(4.5);
-  expect(beforeBadge[0]!.ratio, "the sampled badge really was 4.48:1 before the fix").toBeLessThan(4.5);
+  expect(
+    beforeBadge[0]!.ratio,
+    `the sampled badge really was 4.48:1 before the fix (measured ${beforeBadge[0]!.ratio.toFixed(2)}:1)`,
+  ).toBeLessThan(4.5);
 });
 
 // --- defect 2 -----------------------------------------------------------------

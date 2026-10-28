@@ -348,7 +348,6 @@ const en = {
   connectionModelsOfferedAmong: "models offered; the one you picked is among them.",
   connectionModelsOfferedNotAmong: "models offered, but not the one you picked.",
   connectionTestResult: "Test result",
-  connectionThinkingLevel: "Thinking level",
   connectionReadiness: "Readiness",
   connectionReadinessUnconfigured: "Not configured",
   connectionReadinessConfigured: "Configured, not tested",
@@ -388,6 +387,12 @@ const en = {
   modelProfilesChat: "Chat",
   modelProfilesGame: "Game companion",
   modelProfilesThinkingLevel: "Thinking level",
+  // One phrasing for the thinking-level field of every record that has one, so the three
+  // controls on Settings cannot read as three indistinguishable fields: the record's own name
+  // goes into the sentence. A surface editor passes its heading (`modelProfilesChat` /
+  // `modelProfilesGame`); a saved connection passes its own `label`, so a second connection row
+  // does not reintroduce the collision the first one had.
+  thinkingLevelOf: "{{record}} thinking level",
   modelProfilesRecommended: "Suggested models",
   modelProfilesApply: "Save",
   modelProfilesApplied: "Saved. It applies the next time that surface's runtime starts.",
@@ -822,6 +827,10 @@ const en = {
   gameInstallationSourceSteamRegistry: "Found via Steam",
   gameInstallationSourceSteamVdf: "Found in a Steam library folder",
   gameInstallationSourceKnownLocation: "Found in a common install folder",
+  // The GOG proposal source's own channel (`stardew-game-install/gog-source.ts`). It says GOG
+  // rather than "another store" because that is the store the player bought the game in, and
+  // it is the fact that tells two rows apart when the same folder is also a Steam library.
+  gameInstallationSourceGog: "Found via GOG Galaxy",
   gameInstallationSourceOther: "Found on this computer",
   // The row's own name for the game. The Host's `label` is content but it is one
   // fixed English string for every installation (`StardewDiscoverySession.issue`), so
@@ -1259,7 +1268,6 @@ const zh: Messages = {
   connectionModelsOfferedAmong: "个模型可选，你选的模型在其中。",
   connectionModelsOfferedNotAmong: "个模型可选，但没有你选的那个。",
   connectionTestResult: "测试结果",
-  connectionThinkingLevel: "思考强度",
   connectionReadiness: "状态",
   connectionReadinessUnconfigured: "未配置",
   connectionReadinessConfigured: "已配置，未测试",
@@ -1295,6 +1303,7 @@ const zh: Messages = {
   modelProfilesChat: "聊天",
   modelProfilesGame: "游戏陪玩",
   modelProfilesThinkingLevel: "思考强度",
+  thinkingLevelOf: "{{record}}思考强度",
   modelProfilesRecommended: "建议模型",
   modelProfilesApply: "保存",
   modelProfilesApplied: "已保存。将在该界面下次启动运行时生效。",
@@ -1647,6 +1656,7 @@ const zh: Messages = {
   gameInstallationSourceSteamRegistry: "通过 Steam 找到",
   gameInstallationSourceSteamVdf: "在 Steam 库文件夹中找到",
   gameInstallationSourceKnownLocation: "在常见的安装位置找到",
+  gameInstallationSourceGog: "通过 GOG Galaxy 找到",
   gameInstallationSourceOther: "已在这台电脑上找到",
   gameInstallationCandidateName: "《星露谷物语》",
   gameInstallationCandidateLocation: "{{name}}（{{location}}）",

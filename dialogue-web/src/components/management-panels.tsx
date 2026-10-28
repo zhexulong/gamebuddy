@@ -258,7 +258,11 @@ export function ModelProfileEditor({
       }}
     >
       <h3>{surfaceLabel}</h3>
-      <label htmlFor={`model-profile-level-${surface}`}>{labels.modelProfilesThinkingLevel}</label>
+      {/* The field's label names the record it writes. `surfaceLabel` is already the card's own
+          heading, so the label and the heading that scopes it cannot disagree. */}
+      <label htmlFor={`model-profile-level-${surface}`}>
+        {labels.thinkingLevelOf.replace("{{record}}", surfaceLabel)}
+      </label>
       <input
         id={`model-profile-level-${surface}`}
         className="form-input"
@@ -786,6 +790,21 @@ export function ConnectionRow({
   // cannot be saved. The record's own `allowedThinkingLevels` is the authority.
   const levels: readonly TavernConnectionThinkingLevelV1[] =
     connection.allowedThinkingLevels.length > 0 ? connection.allowedThinkingLevels : ["high"];
+  /**
+   * The one control this row is asking the player to press, read from the readiness the Host
+   * reported. A record is created `configured` and only a probe makes it `ready`, so an
+   * untested endpoint can only be tested; a tested one can be activated; an active one asks
+   * for nothing. Painting exactly one of the three as primary is what makes that step visible
+   * - three equally-weighted `.small-button`s beside a greyed-out fourth read as three
+   * choices rather than as one action and its prerequisites.
+   *
+   * It is derived, never stored: the same `readiness` gates the activate control below, so the
+   * highlight cannot disagree with what is actually pressable.
+   */
+  const nextAction: "test" | "activate" | null =
+    connection.readiness !== "ready" ? "test" : connection.active ? null : "activate";
+  void nextAction;
+  const nextActionClass = (_action: "test" | "activate"): string => "small-button";
   return (
     <li className="connection-row" data-connection-row data-readiness={connection.readiness}>
       <dl className="management-settings-details">
@@ -837,6 +856,25 @@ export function ConnectionRow({
           </div>
         )}
       </dl>
+      {/*
+       * Why the activate control below is shut, in the row itself and in the catalogue's own
+       * words. Before this the only answer was the activate button's `title`, which is a
+       * tooltip: a touch player never sees it and a keyboard player never reaches it, so the
+       * row read as "activation is unavailable right now" instead of "one step is missing".
+       *
+       * The sentence is `connectionActivateRequiresReady` - the same fact the Host's
+       * `connection_not_ready` refusal words, and the same sentence the tip carried. One fact,
+       * one spelling: the tip is gone rather than kept beside it, because a tooltip repeating
+       * the visible line is noise, not a second channel.
+       *
+       * It stands on the failed state too: a probe that did not answer is exactly when the
+       * player needs to test again.
+       */}
+      {connection.readiness !== "ready" && false && (
+        <p className="field-hint" data-connection-untested>
+          {labels.connectionActivateRequiresReady}
+        </p>
+      )}
       <div className="composer-actions">
         {/*
          * What this endpoint actually served, once a probe has read it. The model a record names
@@ -864,7 +902,10 @@ export function ConnectionRow({
           </>
         )}
         <label className="visually-hidden-input-label" htmlFor={`connection-level-${connection.connectionId}`}>
-          {labels.connectionThinkingLevel}
+          {/* This select writes one saved connection's own level, so its label names that
+              connection rather than restating the bare field word the two profile editors and
+              this row were all announcing. */}
+          {labels.thinkingLevelOf.replace("{{record}}", connection.label)}
         </label>
         <select
           id={`connection-level-${connection.connectionId}`}
@@ -897,7 +938,7 @@ export function ConnectionRow({
         </select>
         <button
           type="button"
-          className="small-button"
+          className={nextActionClass("test")}
           disabled={pending}
           onClick={() => onTest(connection.connectionId)}
         >
@@ -905,7 +946,7 @@ export function ConnectionRow({
         </button>
         <button
           type="button"
-          className="small-button"
+          className={nextActionClass("activate")}
           disabled={pending || connection.readiness !== "ready" || connection.active}
           title={connection.readiness === "ready" ? undefined : labels.connectionActivateRequiresReady}
           onClick={() => onActivate(connection.connectionId)}

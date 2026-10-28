@@ -2363,12 +2363,23 @@
     border-radius: var(--radius-sm);
   }
 
+  /* The current-companion badge. Measured off the computed styles at 11px/600:
+     the accent rose `#c8787d` on the burgundy plate `#2f1d22` is 4.88:1, which
+     clears AA's 4.5 floor by 0.38 and leaves the one word that says WHICH companion
+     is in play the weakest text on its row. The ink is lifted toward the same
+     `--palette-gray-100` every other piece of light text on this surface uses, so the
+     chip keeps the brand rose it is recognised by (the scale has no lighter rose
+     member: `--palette-burgundy-base` is the lightest, and the only lighter warm
+     members are gold and cream, which would stop reading as the accent) and gains
+     the separation. `color-mix` is the token file's own idiom for exactly this (the
+     selected row's wash uses it), so no new colour literal is introduced. Measured
+     after: `#d39698` on `#2f1d22` = 6.51:1. */
   .companion-current-badge {
     font-style: normal;
     font-size: 11px;
     font-weight: 600;
     padding: 2px 8px;
-    color: var(--accent);
+    color: color-mix(in srgb, var(--accent) 75%, var(--palette-gray-100));
     background-color: var(--palette-burgundy-dark);
     border: 1px solid var(--palette-burgundy-border);
     border-radius: var(--radius-xs);
@@ -3651,19 +3662,29 @@
     margin-inline: auto;
   }
 
-  /* The Settings surface's four field groups and the Chats panel's own action row
-     were the last two blocks still hugging the region's left edge while the
-     content they belong to sat centred. Measured at 1440x900: the four group
-     headings and the connection read-back row all started at x=16 while the fields
-     they name centred at x=400, and the Chats panel's "new chat" button sat at
-     x=16 while the list it acts on centred at x=400 - a 384 px jump between a
-     section title and its own section, and between a control and the thing it
-     acts on. Both take the measure and the centring the blocks inside them already
-     have, so a title, its fields and its read-back rows are one column. */
+  /* The Settings surface's field groups and the Chats panel's own action row
+     were the last blocks still hugging the region's left edge while the content
+     they belong to sat centred. Measured at 1440x900: the group headings and the
+     connection read-back row all started at x=16 while the fields they name centred
+     at x=400, and the Chats panel's "new chat" button sat at x=16 while the list it
+     acts on centred at x=400 - a 384 px jump between a section title and its own
+     section, and between a control and the thing it acts on. Both take the measure
+     and the centring the blocks inside them already have, so a title, its fields and
+     its read-back rows are one column.
+
+     The Game companion's prompt addition was appended to this surface after that
+     pass and was never added here, so it alone spanned the region: measured at
+     1440x900, its section and its textarea were 1408 px on a left edge of 16 while
+     the four sibling groups around it were 640 px centred on 400 - the field the
+     player types a whole instruction into was the one field on the surface that did
+     not keep the column every other field keeps. It takes the same measure as its
+     siblings; at 400x800 the region is already narrower than the measure, so nothing
+     moves there (measured: 368 px before, 368 px after). */
   [data-language-settings],
   [data-voice-settings],
   [data-connection-settings],
   [data-model-profiles],
+  [data-game-prompt-addition],
   .surface-content > .button-group {
     width: 100%;
     max-width: var(--management-form-measure);
