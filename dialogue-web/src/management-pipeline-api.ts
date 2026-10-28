@@ -92,6 +92,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.language.update"
     | "settings.delivery.read"
     | "settings.delivery.update"
+    | "settings.game-prompt.read"
+    | "settings.game-prompt.update"
     | "settings.connection.read"
     | "settings.connection.create"
     | "settings.connection.test"
@@ -149,6 +151,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.language.update"
     | "tavern.operation.settings.delivery.read"
     | "tavern.operation.settings.delivery.update"
+    | "tavern.operation.settings.game-prompt.read"
+    | "tavern.operation.settings.game-prompt.update"
     | "tavern.operation.settings.connection.read"
     | "tavern.operation.settings.connection.create"
     | "tavern.operation.settings.connection.test"
@@ -1046,6 +1050,8 @@ const OPERATION_IDS = [
   "settings.language.update",
   "settings.delivery.read",
   "settings.delivery.update",
+  "settings.game-prompt.read",
+  "settings.game-prompt.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -1114,6 +1120,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.settings.language.update",
   "tavern.operation.settings.delivery.read",
   "tavern.operation.settings.delivery.update",
+  "tavern.operation.settings.game-prompt.read",
+  "tavern.operation.settings.game-prompt.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
