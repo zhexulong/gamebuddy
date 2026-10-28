@@ -172,6 +172,7 @@ export type GameStatePanelProps = Readonly<{
     toggleCreateForm(): void;
     setContinuityIdentity(value: string): void;
     confirmCabin(choice: StardewCabinChoiceV1): void;
+    refreshCabins(): void;
   }>;
 }>;
 
@@ -256,6 +257,7 @@ export function GameStatePanel({
       // really failed.
       awaitsSession={game !== null && game.game.instance.status === "none"}
       onConfirm={handlers.confirmCabin}
+      onRefresh={handlers.refreshCabins}
     />
   );
   return (
@@ -745,11 +747,22 @@ function CabinHandoff({
   labels,
   awaitsSession,
   onConfirm,
+  onRefresh,
 }: {
   state: CabinViewState;
   labels: Messages;
   awaitsSession: boolean;
   onConfirm(choice: StardewCabinChoiceV1): void;
+  /**
+   * Re-read the cabin projection.
+   *
+   * Without this the panel could only ever show what was true at mount. Measured 2026-10-28: `readCabins()`
+   * runs from one `useEffect` keyed on `ready` (`GameSurface.tsx:146-150`), so a player who started the game
+   * and loaded the farm SAW `stardewCabinsUnavailable` forever - there is no poll, no game event stream, and
+   * there was no control here to ask again. The only recovery was reloading the browser, which loses the
+   * Game surface's own attachment.
+   */
+  onRefresh?(): void;
 }) {
   return (
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
@@ -765,6 +778,16 @@ function CabinHandoff({
             {labels.stardewCabinsUnavailable}
           </p>
         ))}
+      {/*
+        Offered for BOTH unavailable shapes, and it is the only thing on this panel that can change the answer.
+        The failing state and the not-yet state look identical to a player and have the same cure, so one
+        control covers both rather than making the player work out which silence they are reading.
+      */}
+      {state.kind === "unavailable" && onRefresh !== undefined && (
+        <button type="button" className="game-secondary-action" onClick={onRefresh}>
+          {labels.stardewCabinsRefresh}
+        </button>
+      )}
       {state.kind === "uncertain" && (
         <p className="game-status" data-tone="warning" role="status">
           {labels.stardewCabinConfirmationUncertain}

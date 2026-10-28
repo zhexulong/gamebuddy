@@ -436,6 +436,22 @@ export function ComposedReferenceGameApp() {
         commit(problemView(error, messages(current.locale)));
         return;
       }
+      // ANY other failure puts the words back.
+      //
+      // Measured 2026-10-28: the field was cleared at `setInputText("")` BEFORE the await, so an offline send, a
+      // 503, or a transient network error destroyed what the player had typed - the optimistic bubble was the only
+      // copy left and it is not editable. A draft that survives is the difference between "send failed" and "I lost
+      // my paragraph".
+      //
+      // Only when the field is still empty: a player who started typing again while the request was in flight owns
+      // the field now, and overwriting that would be the same defect pointing the other way.
+      if (inputTextRef.current.length === 0) {
+        setInputText(text);
+        inputTextRef.current = text;
+      }
+      commit({ ...current, session: current.session.withPending(null) });
+      commit(problemView(error, messages(current.locale)));
+      return;
     }
     startPolling();
   };

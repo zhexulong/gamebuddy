@@ -1098,6 +1098,7 @@ export function GameSurface({
           toggleCreateForm: () => setCreateFormOpen((open) => !open),
           setContinuityIdentity: setContinuityIdentityInput,
           confirmCabin: (choice) => void handleCabinConfirmation(choice),
+          refreshCabins: () => void readCabins(),
         }}
       />
       <StardewInstallationDiscovery

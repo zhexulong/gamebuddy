@@ -80,7 +80,8 @@ const en = {
   // Naming that mismatch is the whole point: "reload the page" alone told the
   // player nothing about what happened or why a reload is the way forward.
   stardewCabinsUnavailable:
-    "Cabins can only be read while the game you launched is starting up, and this page read them once, when it opened. Load your farm, then reload this page to pick a cabin - reloading only reopens this tab, and the game keeps running.",
+    "Cabins are read while the game you launched is starting up. Load your farm, then read them again.",
+  stardewCabinsRefresh: "Read cabins again",
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
   stardewCabinsEmpty:
@@ -1060,8 +1061,8 @@ const zh: Messages = {
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
-  stardewCabinsUnavailable:
-    "小屋只能在启动游戏的过程中读取，而这个页面只在刚打开时读过一次。请先载入你的农场，再重新加载本页来选小屋——重新加载只是重开这个标签页，游戏不会停。",
+  stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
+  stardewCabinsRefresh: "再读一次小屋",
   stardewCabinsAwaitingSession:
     "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
   stardewCabinsEmpty:
