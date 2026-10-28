@@ -123,6 +123,19 @@ export class CompanionEventPump {
   readonly #lifecycle = new Map<string, WorldFact>();
   readonly #worldFacts = new Map<string, WorldFact>();
   readonly #inputs: PlayerInput[] = [];
+  /**
+   * What each held PROGRESS slot last TOLD the model, by slot key (see `progressStateIdentity`).
+   *
+   * The windows below keep one fact per slot, but the surviving fact was re-delivered into every later
+   * batch, so a body that never left its tile was described again and again. Measured 2026-10-27 on a
+   * twelve-minute session: `input` reached 114,569 tokens against a 131,072 window and the model answered
+   * `stopReason: "length"` twice; the fact traffic by semantic kind was `route_progress` 859,
+   * `execution_settled_succeeded` 219, `body_idle` 211, `execution_started` 184.
+   *
+   * A fact whose slot already told the model this exact state carries no information, so it stays behind.
+   * It still triggers nothing either way (see `#hasPendingFactTrigger`): progress never minted a turn.
+   */
+  readonly #deliveredProgress = new Map<string, string>();
   #retryBatch: PendingBatch | undefined;
   /** Facts the bounds dropped instead of closing the bridge (see the full-queue branch of `enqueueFact`). */
   #droppedFacts = 0;
@@ -141,6 +154,9 @@ export class CompanionEventPump {
       if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
       return;
     }
+    // An execution that has SETTLED can publish no further progress, so its record is dead weight. Dropping
+    // it here keeps the record bounded by the in-flight executions instead of by the session's action count.
+    if (isTerminalExecutionFact(fact)) this.#forgetSettledProgress(fact);
     const destination =
       fact.kind === "execution_receipt"
         ? this.#receipts
@@ -166,12 +182,7 @@ export class CompanionEventPump {
     // correlationId per event, so keying these by correlationId gave every per-tile observation its own slot -
     // and one long agent turn's 129 route observations filled the 128-entry window, which closed the bridge
     // mid-run (measured 2026-10-17). Collapsing them is what the receipt half of the same traffic already does.
-    const key =
-      fact.kind === "world_fact"
-        ? worldFactKey(fact)
-        : isProgressSemanticEvent(fact)
-          ? progressSemanticEventKey(fact)
-          : fact.correlationId;
+    const key = factSlotKey(fact);
     if (!destination.has(key) && destination.size >= limit) {
       // FULL - and there are two different situations here that must not be answered the same way.
       //
@@ -205,6 +216,13 @@ export class CompanionEventPump {
    * already admitted and may be older than what is in the window now, so re-admitting them would let an
    * older fact evict a newer one - the opposite of what the bound is for.
    */
+  /** Forget both slots a settled execution could still be holding. Neither can publish again. */
+  #forgetSettledProgress(fact: WorldFact): void {
+    this.#deliveredProgress.delete(factSlotKey(fact));
+    const executionId = fact.executionId;
+    if (executionId !== undefined) this.#deliveredProgress.delete(executionProgressSlotKey(executionId));
+  }
+
   #readmit(fact: WorldFact): void {
     const destination =
       fact.kind === "execution_receipt"
@@ -214,12 +232,7 @@ export class CompanionEventPump {
           : fact.kind === "world_fact"
             ? this.#worldFacts
             : this.#lifecycle;
-    const key =
-      fact.kind === "world_fact"
-        ? worldFactKey(fact)
-        : isProgressSemanticEvent(fact)
-          ? progressSemanticEventKey(fact)
-          : fact.correlationId;
+    const key = factSlotKey(fact);
     if (!destination.has(key)) destination.set(key, fact);
   }
   public enqueuePlayerInput(input: PlayerInput): void {
@@ -243,6 +256,7 @@ export class CompanionEventPump {
     this.#lifecycle.clear();
     this.#worldFacts.clear();
     this.#inputs.length = 0;
+    this.#deliveredProgress.clear();
     this.#retryBatch = undefined;
   }
 
@@ -298,7 +312,13 @@ export class CompanionEventPump {
     this.#lifecycle.clear();
     const worldFacts = [...this.#worldFacts.values()].sort(compareWorldFacts);
     this.#worldFacts.clear();
-    const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts];
+    // A held PROGRESS fact whose slot already delivered this exact state says nothing new, so it does not
+    // enter the batch at all. It is dropped rather than readmitted: re-delivering it is the defect, and the
+    // slot's CURRENT state is what the next changed fact will carry.
+    const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts].filter((fact) => {
+      if (!isHeldProgressFact(fact)) return true;
+      return this.#deliveredProgress.get(factSlotKey(fact)) !== progressStateIdentity(fact);
+    });
     // takeBatch is called only when input/fact triggering is already known.
     // Hold is represented by retaining latest state in the pump, never by an
     // empty Pi delivery.
@@ -387,6 +407,13 @@ export class CompanionEventPump {
     const dropped = facts.slice(0, facts.length - chosen.length);
     for (const fact of dropped) this.#readmit(fact);
 
+    // Remember what the model was just told by each held progress slot. Recorded for what the batch actually
+    // CARRIES: a fact the byte bound pushed into a later batch was not delivered and must still go out.
+    for (const fact of composed.batchFacts) {
+      if (!isHeldProgressFact(fact)) continue;
+      this.#deliveredProgress.set(factSlotKey(fact), progressStateIdentity(fact));
+    }
+
     return Object.freeze({
       batchId,
       disposition,
@@ -438,7 +465,18 @@ function isProgressSemanticEvent(fact: WorldFact): boolean {
 }
 
 function isHeldFact(fact: WorldFact): boolean {
-  return fact.kind === "snapshot" || isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
+  return fact.kind === "snapshot" || isHeldProgressFact(fact);
+}
+
+/**
+ * A fact that is HELD latest-only AND describes movement rather than an outcome: the two progress classes the
+ * pump already collapses into one slot each.
+ *
+ * The snapshot is deliberately not here. It is held too, but it is the world the rest of a batch describes, so a
+ * batch that carried facts without it would describe a state the model cannot see.
+ */
+function isHeldProgressFact(fact: WorldFact): boolean {
+  return isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
@@ -465,8 +503,38 @@ function isTerminalExecutionFact(fact: WorldFact): boolean {
 function progressSemanticEventKey(fact: WorldFact): string {
   const executionId = fact.executionId;
   return typeof executionId === "string" && executionId.length > 0
-    ? `progress:${executionId}`
+    ? executionProgressSlotKey(executionId)
     : `progress:${String(fact.payload.kind)}`;
+}
+
+function executionProgressSlotKey(executionId: string): string {
+  return `progress:${executionId}`;
+}
+
+/**
+ * Which pending-window slot a fact occupies. ONE spelling: `enqueueFact`, `#readmit` and the delivered-progress
+ * record all ask this, so a fact cannot be held under one key and compared under another.
+ */
+function factSlotKey(fact: WorldFact): string {
+  if (fact.kind === "world_fact") return worldFactKey(fact);
+  if (isProgressSemanticEvent(fact)) return progressSemanticEventKey(fact);
+  return fact.correlationId;
+}
+
+/**
+ * What a held progress fact TELLS the model, as a comparable string.
+ *
+ * The per-observation counters are excluded, because they advance on every publish of an unchanged state: the
+ * Mod mints a fresh wire message id and a fresh revision for each receipt it publishes, and each body trace
+ * carries the game tick it was sampled at. Counting those as content is exactly the defect - a body standing
+ * still on `64,15` re-observed forty times would read as forty facts.
+ *
+ * Everything else is content: the kind, the state, the reason, the location, the tile, the active execution and
+ * its phase. A change in any of them is a change the model has not been told.
+ */
+function progressStateIdentity(fact: WorldFact): string {
+  const { eventId: _eventId, correlationId: _correlationId, occurredAtMs: _occurredAtMs, ...stable } = fact;
+  return JSON.stringify(stable, (key, value) => (key === "tick" || key === "revision" ? undefined : value));
 }
 
 function factEventId(fact: WorldFact): string {
