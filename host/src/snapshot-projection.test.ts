@@ -368,3 +368,109 @@ test("the projection leaves weather to the turn-level environment line rather th
   assert.notDeepEqual(spent, rain);
   assert.match(spent.text, /Stamina=12/);
 });
+
+/**
+ * Measured 2026-10-28 (round6): a `ShippingMenu` owned the screen for 31 minutes while the last projection the
+ * model saw said `Actionable: true` at 22:30 and the game stood at 06:00. `actionable` was not wrong - the modal
+ * family is admitted precisely when it is false, and `dismiss_modal` is one - but it reads as "nothing is in the
+ * way", and the missing half was the one that explained why nothing else could happen.
+ *
+ * `actorDispositionKind`/`actorDispositionDetail` carry that half (`farmhandexecutioncontroller.cs:2401`).
+ */
+const modalSource: Snapshot = {
+  revision: 1_019,
+  location: "FarmHouse",
+  tile: { x: 9, y: 9 },
+  stamina: 270,
+  exhausted: false,
+  health: 100,
+  actionable: true,
+  capabilities: ["dismiss_modal"],
+  catalogRevision: 4,
+  enabledActionIds: ["dismiss_modal"],
+  presentationLocale: "en-US",
+  timeOfDay: 600,
+  dayOfMonth: 5,
+  seasonIndex: 0,
+  year: 1,
+  weather: "sunny",
+};
+
+test("a modal holding the screen is named in the projection, beside an actionable flag that still reads true", () => {
+  const projection = projectGameSnapshotContext(
+    {
+      ...modalSource,
+      actorDispositionKind: "modal",
+      actorDispositionDetail: "ShippingMenu",
+      actorDispositionActionOwned: false,
+    },
+    1_000,
+    1_250,
+  );
+  if (!projection.available) throw new Error("projection_unavailable");
+
+  // The modal the Mod named reaches the text the model reads, by its own class name.
+  assert.match(projection.text, /Modal: ShippingMenu/);
+  // The boolean is untouched and still correct: the modal family is admitted while it is true.
+  assert.match(projection.text, /Actionable: true/);
+  // And the text says plainly why nothing else can proceed, rather than leaving the flag to imply there is no obstacle.
+  assert.match(projection.text, /no other action can run until it is cleared/);
+  assert.match(projection.text, /game clock does not advance/);
+  // The countermeasure is the mechanism that already exists, named.
+  assert.match(projection.text, /dismiss_modal/);
+  // The Mod's owner binary reaches the line too: this menu was pushed by the world, not by the companion's own action.
+  assert.match(projection.text, /opened by the game, not by your action/);
+
+  const own = projectGameSnapshotContext(
+    {
+      ...modalSource,
+      actorDispositionKind: "modal",
+      actorDispositionDetail: "LetterViewerMenu",
+      actorDispositionActionOwned: true,
+    },
+    1_000,
+    1_250,
+  );
+  if (!own.available) throw new Error("projection_unavailable");
+  assert.match(own.text, /Modal: LetterViewerMenu/);
+  assert.match(own.text, /opened by your own action/);
+});
+
+test("a snapshot with no modal in the way renders no modal line at all", () => {
+  // Three cases, because an implementation that always prints a placeholder passes the modal case alone.
+  const idle = projectGameSnapshotContext(
+    { ...modalSource, actorDispositionKind: "idle", actorDispositionDetail: null },
+    1_000,
+    1_250,
+  );
+  const absent = projectGameSnapshotContext(modalSource, 1_000, 1_250);
+  // The detail field carries a TRANSIENT kind while the actor is briefly busy. It is not a modal and must not be named
+  // as one: `eating` is not a menu, and no modal action clears it.
+  const transient = projectGameSnapshotContext(
+    { ...modalSource, actorDispositionKind: "transient", actorDispositionDetail: "eating" },
+    1_000,
+    1_250,
+  );
+  // A modal disposition whose class name went unreported has nothing to name. It must render nothing rather than an
+  // empty label: "Modal: " alone reads as a modal whose name was lost, and the model has no countermeasure for it.
+  const unnamed = projectGameSnapshotContext(
+    { ...modalSource, actorDispositionKind: "modal", actorDispositionDetail: null },
+    1_000,
+    1_250,
+  );
+  for (const projection of [idle, absent, transient, unnamed]) {
+    if (!projection.available) throw new Error("projection_unavailable");
+    assert.doesNotMatch(projection.text, /Modal/);
+    assert.doesNotMatch(projection.text, /dismiss_modal/);
+    assert.equal(projection.movement.holdingModal, null);
+  }
+  // Positive control: these are silent because no modal holds the actor, not because the projection is fixed text.
+  const held = projectGameSnapshotContext(
+    { ...modalSource, actorDispositionKind: "modal", actorDispositionDetail: "ShippingMenu" },
+    1_000,
+    1_250,
+  );
+  if (!held.available) throw new Error("projection_unavailable");
+  assert.notEqual(held.text, idle.text);
+  assert.equal(held.movement.holdingModal, "ShippingMenu");
+});

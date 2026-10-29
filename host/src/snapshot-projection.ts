@@ -17,6 +17,10 @@ export interface MovementContextProjection {
   readonly location: string;
   readonly tile: { readonly x: number; readonly y: number };
   readonly actionable: boolean;
+  /** The modal class holding the screen, or null when nothing does. */
+  readonly holdingModal: string | null;
+  /** Whether the companion's own newest execution opened `holdingModal`; null when there is no modal or it went unreported. */
+  readonly holdingModalActionOwned: boolean | null;
   readonly warpsCount: number;
   readonly doorsCount: number;
 }
@@ -77,7 +81,7 @@ export type GameSnapshotContextProjection = Readonly<
       readonly movement: MovementContextProjection;
       readonly farming: FarmingContextProjection;
       readonly inventory: InventoryContextProjection;
-        readonly pets: readonly PetContextProjection[];
+      readonly pets: readonly PetContextProjection[];
       readonly petBowls: readonly PetBowlContextProjection[];
       readonly slimeHutchTroughs: readonly SlimeHutchTroughContextProjection[];
     }
@@ -95,9 +99,42 @@ export function projectMovementContext(snapshot: Snapshot): MovementContextProje
     location: snapshot.location,
     tile: Object.freeze({ ...snapshot.tile }),
     actionable: snapshot.actionable,
+    holdingModal: holdingModalOf(snapshot),
+    holdingModalActionOwned: holdingModalActionOwnedOf(snapshot),
     warpsCount: snapshot.warps?.length ?? 0,
     doorsCount: snapshot.doorTargets?.length ?? 0,
   });
+}
+
+/**
+ * The modal the Mod says holds the screen, or null when nothing does.
+ *
+ * `actionable` answers "may an action run", and a modal does not make that false - the modal family is admitted
+ * precisely because `dismiss_modal` is one - so the flag reads as "nothing is in the way" while a menu owns the
+ * screen. Measured 2026-10-28: a `ShippingMenu` held a FarmHouse for 31 minutes and the game clock stood at 06:00
+ * while the last projection the model saw said `Actionable: true` at 22:30.
+ *
+ * `actorDispositionDetail` is `ModalType ?? TransientKind` (`farmhandexecutioncontroller.cs:2401`), so the kind is
+ * consulted first: `eating` is a transient body lock, and naming it as a modal would point the model at a tool that
+ * refuses to clear it.
+ */
+function holdingModalOf(snapshot: Snapshot): string | null {
+  if (snapshot.actorDispositionKind !== "modal") return null;
+  const detail = snapshot.actorDispositionDetail;
+  // An empty name is not a modal: rendering it would publish a label that says nothing.
+  return typeof detail === "string" && detail.length > 0 ? boundedUtf8(detail, MAX_PROJECTION_STRING_BYTES) : null;
+}
+
+/**
+ * Whether the companion's own newest execution opened the modal (`ModalActionOwned`), so the model can tell a menu
+ * its last action raised from one the world pushed.
+ *
+ * Null rather than `false` when the field is absent: an older Mod that omits it has said nothing, and a `false`
+ * default would report a world-opened menu no one measured.
+ */
+function holdingModalActionOwnedOf(snapshot: Snapshot): boolean | null {
+  if (snapshot.actorDispositionKind !== "modal") return null;
+  return typeof snapshot.actorDispositionActionOwned === "boolean" ? snapshot.actorDispositionActionOwned : null;
 }
 
 export function projectFarmingContext(snapshot: Snapshot): FarmingContextProjection {
@@ -188,8 +225,7 @@ export function projectGameSnapshotContext(
   sampledAtMs: number,
   nowMs: number,
 ): GameSnapshotContextProjection {
-  if (snapshot === null || snapshot === undefined)
-    return unavailableProjection("unavailable");
+  if (snapshot === null || snapshot === undefined) return unavailableProjection("unavailable");
   if (!isSnapshotInput(snapshot)) return unavailableProjection("invalid");
 
   const movementSource = projectMovementContext(snapshot);
@@ -221,6 +257,13 @@ export function projectGameSnapshotContext(
       `- Snapshot Revision: #${snapshot.revision} (Sampled: ${sampledAgeMs}ms ago)`,
       `- Time: ${formatClock(clock.timeOfDay)}, Season: ${seasonName}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
+      ...(movement.holdingModal === null
+        ? []
+        : [
+            // Next to the flag the model misread, and saying what the flag leaves out: a modal IS an action, so
+            // `Actionable: true` is not the promise it looks like.
+            `- Modal: ${movement.holdingModal} - owns the screen${openedBy(movement.holdingModalActionOwned)}: the game clock does not advance and no other action can run until it is cleared; dismiss_modal closes an informational menu, answer_dialogue a question`,
+          ]),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,
       `- Pets: ${pets.length > 0 ? pets.map((pet) => `${pet.petType}(${pet.stationary ? "stationary" : "moving"})`).join(", ") : "none within range"}]`,
@@ -258,6 +301,12 @@ function unavailableProjection(reasonCode: "unavailable" | "invalid"): GameSnaps
   });
 }
 
+/** Renders the modal's owner only when the Mod reported one; an unmeasured owner says nothing. */
+function openedBy(actionOwned: boolean | null): string {
+  if (actionOwned === null) return "";
+  return actionOwned ? " (opened by your own action)" : " (opened by the game, not by your action)";
+}
+
 function boundedAge(sampledAtMs: number, nowMs: number): number {
   if (!Number.isFinite(sampledAtMs) || !Number.isFinite(nowMs)) return 0;
   return Math.min(MAX_SNAPSHOT_AGE_MS, Math.max(0, Math.trunc(nowMs - sampledAtMs)));
@@ -289,9 +338,12 @@ function isSnapshotInput(value: Snapshot): boolean {
     Number.isFinite(value.stamina) &&
     typeof value.exhausted === "boolean" &&
     Number.isFinite(value.health) &&
-    (value.timeOfDay === undefined || (Number.isSafeInteger(value.timeOfDay) && value.timeOfDay >= 0 && value.timeOfDay <= 2600)) &&
-    (value.dayOfMonth === undefined || (Number.isSafeInteger(value.dayOfMonth) && value.dayOfMonth >= 1 && value.dayOfMonth <= 28)) &&
-    (value.seasonIndex === undefined || (Number.isSafeInteger(value.seasonIndex) && value.seasonIndex >= 0 && value.seasonIndex <= 3)) &&
+    (value.timeOfDay === undefined ||
+      (Number.isSafeInteger(value.timeOfDay) && value.timeOfDay >= 0 && value.timeOfDay <= 2600)) &&
+    (value.dayOfMonth === undefined ||
+      (Number.isSafeInteger(value.dayOfMonth) && value.dayOfMonth >= 1 && value.dayOfMonth <= 28)) &&
+    (value.seasonIndex === undefined ||
+      (Number.isSafeInteger(value.seasonIndex) && value.seasonIndex >= 0 && value.seasonIndex <= 3)) &&
     (value.year === undefined || (Number.isSafeInteger(value.year) && value.year >= 1)) &&
     typeof value.actionable === "boolean" &&
     Array.isArray(value.capabilities) &&
@@ -333,12 +385,7 @@ function isSnapshotInput(value: Snapshot): boolean {
         ))) &&
     (value.toolSlots === undefined ||
       (Array.isArray(value.toolSlots) &&
-        value.toolSlots.every(
-          (tool) =>
-            tool !== null &&
-            typeof tool === "object" &&
-            typeof tool.label === "string",
-        )))
+        value.toolSlots.every((tool) => tool !== null && typeof tool === "object" && typeof tool.label === "string")))
   );
 }
 
