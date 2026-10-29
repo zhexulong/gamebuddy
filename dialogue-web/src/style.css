@@ -2803,6 +2803,39 @@
     flex: 0 0 auto;
   }
 
+  /* The cabin panel's own refresh: same surface as its siblings, without the primary weight, because the panel offers no other
+   control and a lone primary would read as a recommendation rather than a repair. */
+  .game-secondary-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: var(--touch-target-min);
+    padding: 0 14px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      background-color var(--motion-duration-fast) var(--motion-ease-out),
+      border-color var(--motion-duration-fast) var(--motion-ease-out),
+      color var(--motion-duration-fast) var(--motion-ease-out);
+  }
+
+  .game-secondary-action:hover:not(:disabled) {
+    background-color: var(--palette-gray-700);
+    border-color: var(--border-strong);
+  }
+
+  .game-secondary-action:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   /* The single next action a ready state offers reads as the primary action; the
    same command offered twice keeps its second reading as a secondary. */
   .game-action.primary {
