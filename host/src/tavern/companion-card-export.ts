@@ -71,6 +71,11 @@ type TavernCardBookEntry = Readonly<{
    * entry that loses them selects where its author excluded it.
    */
   secondary_keys?: readonly string[];
+  /**
+   * The spec's flag for the gate: "if `true`, require a key from both `keys` and `secondary_keys`
+   * to trigger the entry", and `secondary_keys` is "ignored if selective == false".
+   */
+  selective?: boolean;
   /** SillyTavern's mode for the secondary words: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. */
   selectiveLogic?: 0 | 1 | 2 | 3;
   /** Always-on membership; absent when the entry is keyword-gated. */
@@ -278,8 +283,16 @@ function examplesToMesExample(examples: readonly Readonly<{ user: string; compan
  * The card's `character_book`, or absent when the companion has no book (or an
  * empty one). A book's `alwaysOnPremise` has no V2/V3 field and is not invented;
  * the entries and the declared scan depth are the facts the format carries, and
- * the durable entry's trigger words, its secondary gate (the words and the mode
- * that combines them) and its always-on flag all round-trip.
+ * the durable entry's trigger words, its secondary gate (the words, the flag that
+ * applies them and the mode that combines them) and its always-on flag all
+ * round-trip.
+ *
+ * The entry fields this product has no fact for are left out rather than defaulted,
+ * because a default is an authorial claim: `insertion_order` and `position` (where
+ * in the prompt the entry goes: `WorldBookEntry` has no placement, and its trigger
+ * words are matched per turn instead), `extensions.depth`/`role` (the same, for a
+ * depth-injected entry) and `enabled`/`disable` (every durable entry is one the
+ * import kept, so `enabled: false` would be a lie and `enabled: true` a tautology).
  */
 function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined {
   if (book === null || book === undefined || book.entries.length === 0) return undefined;
@@ -293,7 +306,16 @@ function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined 
           ...(entry.keys === undefined || entry.keys.length === 0 ? {} : { keys: Object.freeze([...entry.keys]) }),
           ...(entry.secondaryKeys === undefined || entry.secondaryKeys.length === 0
             ? {}
-            : { secondary_keys: Object.freeze([...entry.secondaryKeys]) }),
+            : {
+                secondary_keys: Object.freeze([...entry.secondaryKeys]),
+                // The spec's own gate flag: `secondary_keys` is "ignored if selective == false", and
+                // `selective: true` means "require a key from both `keys` and `secondary_keys`".
+                // This product states that rule as the entry simply carrying secondary words (the
+                // per-turn selector applies them whenever `secondaryKeys` is present), so the flag is
+                // entailed by the field beside it, not a separate fact - and it is written exactly
+                // when the words are, never on an entry that has no gate.
+                selective: true,
+              }),
           ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
           ...(entry.constant === true ? { constant: true } : {}),
         }),

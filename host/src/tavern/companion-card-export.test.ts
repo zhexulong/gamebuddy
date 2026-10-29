@@ -554,6 +554,60 @@ test("a world book's always-on premise is dropped because the card format has no
   assert.deepEqual(entry.candidate!.worldBookCandidates[0]?.keys, ["温室"]);
 });
 
+/**
+ * The V2/V3 entry has TWO fields for one fact: `secondary_keys` and the `selective` flag that
+ * says to apply them. The spec's own comment on `secondary_keys` is "ignored if selective ==
+ * false", so a card that writes the words without the flag hands another client a gate it will
+ * not apply - the entry then fires on its primary words alone, in exactly the situations its
+ * author excluded.
+ *
+ * This product does not store `selective`: `extractCharacterBook` reads `secondary_keys` and
+ * `selectiveLogic`, and the per-turn selector applies them whenever `secondaryKeys` is present.
+ * "The entry carries secondary words" IS "the gate applies" here, so the flag is entailed by the
+ * record rather than a separate fact - which is why it can be written without inventing one.
+ */
+test("an entry with a secondary gate exports the flag that makes another client honour it", () => {
+  const entryOf = (value: Partial<WorldBook["entries"][number]>) =>
+    Object.freeze({
+      entryId: value.entryId ?? "e1",
+      title: value.title ?? "温室",
+      content: value.content ?? "温室是她修好的。",
+      scope: "setting" as const,
+      provenance: "st-card-import" as const,
+      tokenBudget: "small" as const,
+      ...value,
+    });
+  const book: WorldBook = Object.freeze({
+    schemaVersion: 1 as const,
+    worldBookId: "worldbook-selective",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: Object.freeze([
+      // The card's gate, with no mode declared: the words alone are the gate.
+      entryOf({ entryId: "gated", secondaryKeys: Object.freeze(["mood:quiet"]) }),
+      // The same gate with a declared mode.
+      entryOf({ entryId: "gated-mode", secondaryKeys: Object.freeze(["雨"]), selectiveLogic: 3 as const }),
+      // Primary trigger words, no gate at all.
+      entryOf({ entryId: "plain", keys: Object.freeze(["温室"]) }),
+      // Always-on membership, no gate at all.
+      entryOf({ entryId: "always", constant: true }),
+    ]),
+  });
+  const entries = buildCompanionCard({ name: "Amber", worldBook: book }).data.character_book!.entries;
+
+  // Every entry that carries secondary words claims the gate...
+  assert.deepEqual(entries[0]?.secondary_keys, ["mood:quiet"]);
+  assert.equal(entries[0]?.selective, true);
+  assert.deepEqual(entries[1]?.secondary_keys, ["雨"]);
+  assert.equal(entries[1]?.selective, true);
+  assert.equal(entries[1]?.selectiveLogic, 3);
+  // ...and no entry without them claims one.
+  for (const index of [2, 3]) {
+    assert.equal(Object.hasOwn(entries[index]!, "secondary_keys"), false, `entry ${index} grew a gate`);
+    assert.equal(Object.hasOwn(entries[index]!, "selective"), false, `entry ${index} claimed a gate it lacks`);
+  }
+});
+
 test("an export refuses by name when a record will not fit the importer's own card bounds", () => {
   const tooLongEntry = "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1);
   assert.throws(
