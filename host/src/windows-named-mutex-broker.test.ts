@@ -2,11 +2,9 @@ import assert from "node:assert/strict";
 import { type ChildProcess, fork, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   WindowsNamedMutexBroker,
   WindowsNamedMutexBrokerError,
@@ -916,12 +914,27 @@ test(
 );
 
 test("production broker exposes no request or killForTest control-plane API", async () => {
-  assert.equal("request" in WindowsNamedMutexBroker.prototype, false);
-  assert.equal("killForTest" in WindowsNamedMutexBroker.prototype, false);
-  // This test runs from the compiled verification artifact, so inspect the
-  // emitted module that is actually executed rather than a source-only path.
-  const source = await readFile(fileURLToPath(new URL("./windows-named-mutex-broker.js", import.meta.url)), "utf8");
-  assert.doesNotMatch(source, /public\s+(?:async\s+)?(?:request|killForTest)\b/);
+  // A member reaches a caller through the instance (inheriting the prototype) or
+  // through the module's exports. Both are read from the module that is actually
+  // executed, so TypeScript's compile-time `private` cannot make one invisible: an
+  // erased `public`/`private` modifier never survives into the artifact, which is
+  // why a source-text search for `public request` could not have failed here.
+  const broker = new WindowsNamedMutexBroker();
+  assert.equal("request" in broker, false);
+  assert.equal("killForTest" in broker, false);
+  const brokerModule = await import("./windows-named-mutex-broker.js");
+  assert.deepEqual(
+    Object.keys(brokerModule).sort(),
+    [
+      "WindowsNamedMutexBroker",
+      "WindowsNamedMutexBrokerError",
+      "WindowsNamedMutexLease",
+      "boundedSidecarDiagnostic",
+      "resolvePowershellExecutable",
+      "windowsNamedMutexName",
+    ],
+    "the broker module's published surface drifted: a control-plane export must not ride along with it",
+  );
 });
 
 test("the sidecar is resolved by absolute path so a reduced PATH cannot fake an exit", () => {
