@@ -219,6 +219,80 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * A brand-new player who confirmed their installation still has one control to press.
+   *
+   * Confirming a game folder publishes a ready installation registration, and the Host
+   * counts that registration as `prerequisites: "met"`
+   * (`host/src/game-browser/game-browser-state-provider.ts:76`) while the lifecycle is
+   * still untouched: no owner, no staged attempt, `instance.status: "none"` and no
+   * expected generation. The client's staging controls used to require
+   * `prerequisites: "unknown"`, so the confirmation that fixed one dead end opened
+   * another: both "Enable companion play" and "Set up Stardew Valley" disappeared, and
+   * the launch control needs an expected generation the lifecycle had not minted yet.
+   *
+   * The journey is the real one - confirm the candidate the scan offers, then read the
+   * control the surface offers next.
+   */
+  test("a player who just confirmed their installation is still offered the next control", async ({ page }) => {
+    let reads = 0;
+    let confirmed = false;
+    const stateReads: string[] = [];
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) =>
+      route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
+    );
+    await page.route(DISCOVERY_ROUTE, (route) => {
+      const body = reads === 0 ? foundInstallation : { apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] };
+      reads += 1;
+      return route.fulfill(jsonOk(body));
+    });
+    await page.route(CONFIRM_ROUTE, (route) => {
+      confirmed = true;
+      return route.fulfill(jsonOk({ apiVersion: 1, status: "registered" }));
+    });
+    // The Host's projection before and after the registration: the ready registration is
+    // the only thing that moves, exactly as `game-browser-state-provider.ts` derives it.
+    await page.route("**/api/composed-reference-game/v1/state", (route) => {
+      stateReads.push(confirmed ? "met" : "unknown");
+      const body = {
+        ...root,
+        game: {
+          ...root.game,
+          game: {
+            ...root.game.game,
+            prerequisites: confirmed
+              ? { status: "met", detectedGame: "Stardew Valley", missingItems: [] }
+              : root.game.game.prerequisites,
+          },
+        },
+      };
+      return route.fulfill(jsonOk(body));
+    });
+
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    await panel(page).getByRole("button", { name: "Confirm", exact: true }).click();
+    await expect(panel(page)).toHaveAttribute("data-state", "confirmed");
+    // The surface reread the authoritative projection after the registration, and the
+    // Host's own word for the installation has moved to `met`.
+    await expect.poll(() => stateReads.includes("met")).toBe(true);
+
+    const gamePanel = page.getByTestId("game-state-panel");
+    const guide = gamePanel.getByTestId("game-start-guide");
+    // One obvious next action, and it is the one that logically follows an installation
+    // the Host has not started anything for: enable companion play.
+    const activate = guide.locator('[data-guide-step="1"]').getByTestId("game-activate");
+    await expect(activate).toHaveCount(1);
+    await expect(activate).toBeVisible();
+    expect(await activate.isEnabled(), "the confirmed installation leaves a control the player can press").toBe(true);
+    await expect(guide.locator('[data-guide-step="1"]').getByTestId("game-setup")).toHaveCount(1);
+    // Nothing was staged, so no expected generation exists and launching is not on offer.
+    await expect(gamePanel.getByTestId("game-launch")).toHaveCount(0);
+  });
+
+  /**
    * The wrong folder is named as the wrong folder.
    *
    * Picking a folder that holds no game used to end in the same place as a scan that could

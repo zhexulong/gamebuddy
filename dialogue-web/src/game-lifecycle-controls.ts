@@ -7,16 +7,25 @@ import type { GameBrowserStateV1 } from "./composed-reference-game-browser-api";
  *
  * The frozen `game_browser_api/v1` vocabulary these gates read means:
  *
- * - `prerequisites: "unknown"` + `instance.status: "none"` + no generation is
- *   the pre-activation shape: nothing detected, nothing launched, no expected
- *   Player Host instance.
+ * - `instance.status: "none"` + no expected generation is the pre-activation
+ *   shape: nothing is running and no launch can be started, whether or not the
+ *   player has already registered an installation. This is where activation and
+ *   setup belong - activation is what stages the attempt they precede.
  * - `prerequisites: "met"` + `instance.status: "none"` + the exact expected
- *   generation is the activated-but-not-launched shape: the lifecycle is ready
- *   to start a Player Host and nothing is running. This is where the launch
- *   control belongs.
+ *   generation >= 1 is the activated-but-not-launched shape: the lifecycle is
+ *   ready to start a Player Host and nothing is running. This is where the
+ *   launch control belongs.
  * - `instance.status: "launching"` means a launch is actually in flight (and
  *   `"running"`/`"crashed"` mean a Player Host is attached/failed), so neither
  *   is a state from which a launch may be started.
+ *
+ * What separates the first two shapes is the expected generation, not
+ * `prerequisites`: that flag turns `met` as soon as the Host holds a ready
+ * installation registration, which the player produces by confirming their game
+ * folder - before any activation. Reading `prerequisites: "unknown"` as the
+ * test for "not activated yet" therefore retired both staging controls at the
+ * exact moment a first-run player confirmed their installation, and the surface
+ * offered no control at all.
  *
  * A client-side guard must not add a further condition of its own here: these
  * three flags are exactly what the Host's projection distinguishes, and the
@@ -47,8 +56,8 @@ export function deriveGameLifecycleControlAvailability(
   if (!view.ready || view.game === null) return NO_CONTROLS;
   const { instance, prerequisites } = view.game.game;
   const nothingRunning = instance.status === "none";
-  const preActivation = nothingRunning && prerequisites.status === "unknown";
   const launchable = nothingRunning && prerequisites.status === "met" && instance.generation >= 1;
+  const preActivation = nothingRunning && !launchable;
   return Object.freeze({
     activationAvailable: preActivation && instance.generation < 1,
     setupAvailable: preActivation,

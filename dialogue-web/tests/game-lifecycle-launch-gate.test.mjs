@@ -63,12 +63,18 @@ function lifecycleReader(view) {
   return Object.freeze({ readRoleLifecycleView: async () => view });
 }
 
-function readState(lifecycleView, readiness) {
+function installationReader(value) {
+  return Object.freeze({ readInstallationView: async () => value });
+}
+
+function readState(lifecycleView, readiness, installation) {
   return createGameBrowserStateProvider(
     gameProfile,
     lifecycleReader(lifecycleView),
     attachmentReader(),
     launchReadinessReader(readiness),
+    undefined,
+    installation === undefined ? undefined : installationReader(installation),
   ).readState(CONTEXT);
 }
 
@@ -161,4 +167,57 @@ test("a running lifecycle stays running and is never a launch-from-idle candidat
     launchAvailable: false,
     launchGeneration: null,
   });
+});
+
+/**
+ * The first run after the player confirms their installation.
+ *
+ * Confirming a game folder publishes a ready registration, and the state provider
+ * counts that registration as `prerequisites: "met"` (`game-browser-state-provider.ts:76`).
+ * The lifecycle itself is untouched - no owner, no staged attempt, no expected
+ * generation - so the projection is `met` / `none` / generation 0, which is neither
+ * the pre-activation shape the staging controls used to require (`prerequisites:
+ * "unknown"`) nor the activated shape the launch control requires (generation >= 1).
+ *
+ * The failure this catches: reading `prerequisites` as the word for "was activation
+ * done" retired both staging controls the moment the installation was confirmed, and
+ * with no expected generation the launch control was not offered either - a brand-new
+ * player who had just confirmed their installation was left with no control at all.
+ */
+test("a confirmed installation with no staged attempt still offers the player activation", async () => {
+  const idleFacadeView = await facadeViewFor("idle");
+  const gameState = await readState(idleFacadeView, { status: "none", generation: 0 }, "registered");
+
+  // The installation registration is what the player just produced; it is not evidence
+  // that anything was activated.
+  assert.equal(gameState.game.prerequisites.status, "met");
+  assert.deepEqual(gameState.game.instance, { status: "none", gameTitle: null, generation: 0 });
+
+  assert.deepEqual(clientControls(gameState), {
+    activationAvailable: true,
+    setupAvailable: true,
+    launchAvailable: false,
+    launchGeneration: null,
+  });
+});
+
+/**
+ * No player-reachable lifecycle shape is a control dead end: whenever nothing is
+ * running, exactly one of the three lifecycle controls is offered, and the player is
+ * never shown nothing to press. The population is derived from the two flags the
+ * browser contract distinguishes rather than from a hand-written list of states, so a
+ * future projection shape cannot reintroduce the dead end silently.
+ */
+test("every nothing-running lifecycle shape offers the player a lifecycle control", async () => {
+  const idleFacadeView = await facadeViewFor("idle");
+  const deadEnds = [];
+  for (const installation of ["absent", "registered"])
+    for (const generation of [0, 1]) {
+      const gameState = await readState(idleFacadeView, { status: generation === 1 ? "ready" : "none", generation }, installation);
+      const controls = clientControls(gameState);
+      if (!controls.activationAvailable && !controls.setupAvailable && !controls.launchAvailable)
+        deadEnds.push({ installation, generation, prerequisites: gameState.game.prerequisites.status });
+    }
+
+  assert.deepEqual(deadEnds, []);
 });
