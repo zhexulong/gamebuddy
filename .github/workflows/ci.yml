@@ -347,15 +347,17 @@ jobs:
       # The project includes those files from their one location in the suite - it holds no copy - and
       # its runner asserts that before it builds, so a forked snapshot cannot go green while the
       # originals drift. It also prints how much of the suite it did NOT run, and the step is named to
-      # be unreadable as "the integration suite passed": the two steps below are the only evidence
-      # about the other 115 files, and they run only where a licensed game folder is configured.
-      # The project's file list is DERIVED, never maintained: this gate builds the suite's files
-      # against GameBuddy.Stardew.Core alone, drops every file the compiler refuses, and repeats
-      # until a build succeeds. That fixpoint is the compiler's own answer to "which files are
-      # game-free", so the gate cannot agree with a hand-edited list - the list has to agree with
-      # it. It fails by name in both directions: a headless file left out of the lane (its tests
-      # would run nowhere) and a game-dependent file put in it (the lane would go red for a reason
-      # unrelated to the change that broke it).
+      # be unreadable as "the integration suite passed": the two gated steps below are the only
+      # evidence about the other 115 files, and they run only where a licensed game folder is
+      # configured.
+      #
+      # The project's file list is DERIVED, never maintained: the gate below builds the suite's files
+      # against GameBuddy.Stardew.Core alone, drops every file the compiler refuses, and repeats until
+      # a build succeeds. That fixpoint is the compiler's own answer to "which files are game-free",
+      # so the gate cannot agree with a hand-edited list - the list has to agree with it. It fails by
+      # name in both directions: a headless file left out of the lane (its tests would run nowhere)
+      # and a game-dependent file put in it (the lane would go red for a reason unrelated to the
+      # change that broke it).
       - name: Stardew no-game subset matches the compiler
         run: node tools/audit-stardew-nogame-subset.mjs
       - name: Stardew no-game test subset (not the integration suite)
