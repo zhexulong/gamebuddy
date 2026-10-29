@@ -19,7 +19,7 @@ import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protoc
  */
 
 /** One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set. */
-type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
+type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[]; description?: string }>;
 
 /**
  * The tool one action must be holding, as the surface itself declares it, or the surface's silence.
@@ -85,13 +85,16 @@ export type PublishedPlanAction = Readonly<{
 }>;
 
 /**
- * What a `slot` argument on a tool action means, in the companion's terms.
+ * What a `slot` argument means when the SURFACE says nothing about it.
  *
- * Written down because the wrong reading of `slot` is invisible until the Mod refuses the hit: `cut_weeds` takes the
- * scythe's slot, not the scythe's place in a tool order the companion has to recall.
+ * Corrected 2026-10-29. This used to read "never a backpack index", which is false: all thirteen actions that take a
+ * `slot` read `Game1.player.Items[slot]` - a backpack index - and only the tool family additionally requires it to
+ * equal `Farmer.CurrentToolIndex` (`resourcetoolactions.cs:27`). Three sub-meanings that one sentence could not cover,
+ * so each action's own argument now carries its own `description` and this constant is the FALLBACK for a surface that
+ * publishes none, not the authority for all of them.
  */
 export const PLAN_TOOL_SLOT_MEANING =
-  "A `slot` argument on a tool action is a TOOL slot: the index that tool occupies in `snapshot.toolSlots`, never a backpack index and never derived from tool order, and `snapshot.currentToolSlot` is the slot of the tool the farmer is holding now.";
+  "A `slot` argument is a BACKPACK index - the same index `snapshot.toolSlots` uses for tools. A tool action additionally requires it to be the held tool (`snapshot.currentToolSlot`); an item action accepts any pack index. When the action's own arguments carry a `description`, that is the authority for it.";
 
 type PlanNode = BodyProgramCandidateRequest["nodes"][number];
 type PlanArgument = PlanNode["arguments"][string];
@@ -245,11 +248,14 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
   if (descriptor === undefined) return undefined;
   if (Array.isArray(descriptor.arguments)) {
     const declared = descriptor.arguments.map((argument) =>
-      Object.freeze(
-        argument.enum === undefined
-          ? { name: argument.name, type: argument.type }
-          : { name: argument.name, type: argument.type, enum: Object.freeze([...argument.enum]) },
-      ),
+      Object.freeze({
+        name: argument.name,
+        type: argument.type,
+        ...(argument.enum === undefined ? {} : { enum: Object.freeze([...argument.enum]) }),
+        // Carried through because it is the reason `plan_shape` answers better than a name can: the Mod says what the
+        // argument means, and an absent description stays absent rather than becoming an empty string.
+        ...(argument.description === undefined ? {} : { description: argument.description }),
+      }),
     );
     return declared.every((argument) => argument.name.length > 0 && argument.type.length > 0) ? declared : undefined;
   }
@@ -257,11 +263,12 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
   if (schema === undefined) return undefined;
   return Object.freeze(
     Object.entries(schema).map(([name, declared]) =>
-      Object.freeze(
-        declared.enum === undefined
-          ? { name, type: declared.type }
-          : { name, type: declared.type, enum: Object.freeze([...declared.enum]) },
-      ),
+      Object.freeze({
+        name,
+        type: declared.type,
+        ...(declared.enum === undefined ? {} : { enum: Object.freeze([...declared.enum]) }),
+        ...(declared.description === undefined ? {} : { description: declared.description }),
+      }),
     ),
   );
 }

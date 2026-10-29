@@ -17,9 +17,29 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
   "lifecycle",
   "kind",
 ]);
+
+/**
+ * Action fields the Mod may omit, so the action's key set is a SUBSET of `ACTION_SURFACE_ACTION_KEYS ∪ this set`.
+ *
+ * `approach` reached the artifact in `eea94e3f` and was never added here, so the package check has been failing on
+ * the four actions that declare it - and passing on the ninety-one that do not, because `exactKeys` compares against
+ * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
+ * this session.
+ */
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
+/**
+ * Longest prose the artifact may carry in one place: an argument's `description`.
+ *
+ * Separate from `ACTION_SURFACE_MAX_IDENTIFIER_LENGTH` because the two measure different things. An identifier is a
+ * NAME and 128 characters is generous; a description is a SENTENCE, and the whole point of publishing it is that the
+ * Mod's own words about an argument reach the model instead of a Host-side paragraph covering every action at once.
+ * The bound still exists so a future build cannot spend the agent's context by accident; it is the same 512 the Host
+ * validator and the bridge apply, so a value that passes here cannot fail later.
+ */
+export const ACTION_SURFACE_MAX_DESCRIPTION_LENGTH = 512;
 const ACTION_SURFACE_MAX_IDENTITY_VERSION = 2_147_483_647;
 const ACTION_SURFACE_MAX_JSON_DEPTH = 8;
 const ACTION_SURFACE_MAX_DATA_NODES = 2048;
@@ -27,6 +47,17 @@ const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
 export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
+/** A `tool:<category>` claim key: a symbolic resource whose subject is a tool category. */
+const TOOL_CLAIM_KEY = /^tool:[a-z][a-z0-9_]{1,63}$/;
+/**
+ * The values a resource claim may carry.
+ *
+ * `ScopePlayer` is the actor claim, and it is the ONLY value an `embodied_actor` key takes. `AnyUpgrade` and
+ * `BasicOnly` are the upgrade-level halves of a `tool:<category>` claim, added when a tool requirement started
+ * travelling the pipeline (`987e3587`). This set was not widened then, so the package check has been failing on every
+ * tool action since - measured 2026-10-29 on `HEAD`, before any change of this session.
+ */
+const RESOURCE_CLAIM_VALUES = new Set(["ScopePlayer", "AnyUpgrade", "BasicOnly"]);
 // Three-rung ladder: experimental -> live_verified -> published.
 // `live_verified` means the action passed a real live run on its required
 // topology; `published` additionally requires independent review.
@@ -111,13 +142,13 @@ function isArray(value, code = "invalid_data") {
   }
 }
 
-function assertPlainJsonData(value, state = { active: new Set(), nodes: 0 }, depth = 0) {
+function assertPlainJsonData(value, state = { active: new Set(), nodes: 0 }, depth = 0, stringLimit = ACTION_SURFACE_MAX_IDENTIFIER_LENGTH) {
   if (depth > ACTION_SURFACE_MAX_JSON_DEPTH) fail("bounds");
 
   if (value === null) return;
   switch (typeof value) {
     case "string":
-      if (value.length > ACTION_SURFACE_MAX_IDENTIFIER_LENGTH) fail("bounds");
+      if (value.length > stringLimit) fail("bounds");
       return;
     case "boolean":
       return;
@@ -159,7 +190,15 @@ function assertPlainJsonData(value, state = { active: new Set(), nodes: 0 }, dep
       for (const key of keys) {
         const descriptor = dataDescriptor(value, key);
         if (!descriptor.enumerable) fail("invalid_data");
-        assertPlainJsonData(descriptor.value, state, depth + 1);
+        // `description` is the one field that carries a SENTENCE rather than a name, so it is measured against the
+        // prose bound. Every other key keeps the identifier bound, which is what stops a future field from quietly
+        // becoming a place to store paragraphs.
+        assertPlainJsonData(
+          descriptor.value,
+          state,
+          depth + 1,
+          key === "description" ? ACTION_SURFACE_MAX_DESCRIPTION_LENGTH : stringLimit,
+        );
       }
     }
   } finally {
@@ -187,6 +226,31 @@ function exactKeys(value, expected, location) {
   for (const key of expected) dataDescriptor(value, key, `invalid_${location}_shape`);
 }
 
+/**
+ * The action shape: the required keys, plus any OPTIONAL key the Mod actually sent.
+ *
+ * A separate function rather than a flag on `exactKeys`, because the two answer different questions. `exactKeys` is
+ * for maps whose key set is fixed; an action has a fixed CORE and a set of fields a surface may omit. Checking them
+ * with one rule made every action without `approach` fail and every action WITH it pass, which is the inverse of what
+ * the check is for.
+ */
+function actionKeys(value) {
+  const keys = ownKeys(value, "invalid_action_shape");
+  const required = ACTION_SURFACE_ACTION_KEYS;
+  for (const key of required) {
+    if (!keys.includes(key)) fail("invalid_action_shape");
+    dataDescriptor(value, key, "invalid_action_shape");
+  }
+  for (const key of keys) {
+    if (required.includes(key)) continue;
+    if (!ACTION_SURFACE_OPTIONAL_ACTION_KEYS.includes(key)) {
+      if (DYNAMIC_PUBLICATION_FIELDS.has(key)) fail("dynamic_publication_field");
+      fail("invalid_action_shape");
+    }
+    dataDescriptor(value, key, "invalid_action_shape");
+  }
+}
+
 function skipWhitespace(text, index) {
   while (index < text.length && /[\u0020\u0009\u000a\u000d]/.test(text[index])) index += 1;
   return index;
@@ -204,7 +268,11 @@ function parseStringEnd(text, start) {
       } catch {
         fail("invalid_json");
       }
-      if (value.length > ACTION_SURFACE_MAX_IDENTIFIER_LENGTH) fail("bounds");
+      // The TOKENIZER bounds one string token; which KEYS may hold a long string is decided afterwards by
+      // `assertPlainJsonData`, where `description` is the only field measured against the prose bound. Keeping the two
+      // limits apart here would mean this pass had to understand the schema, which is exactly the coupling the
+      // structure pass exists to avoid.
+      if (value.length > ACTION_SURFACE_MAX_DESCRIPTION_LENGTH) fail("bounds");
       return { value, index: index + 1 };
     }
     if (character === "\\") {
@@ -305,8 +373,20 @@ function validateTypedMap(value, location, entriesAreObjects) {
     if (entriesAreObjects) {
       if (!isObject(entry) || isArray(entry) || prototypeOf(entry) !== Object.prototype) fail("invalid_action");
       const hasEnum = ownKeys(entry, "invalid_action").includes("enum");
-      exactKeys(entry, hasEnum ? ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS : ARGUMENT_SCHEMA_ENTRY_KEYS, `${location}_entry`);
+      const hasDescription = ownKeys(entry, "invalid_action").includes("description");
+      // `description` is OPTIONAL, so the exact-key set is the base set plus it only when present. Anything else is
+      // still refused by name: an unrecognised key would be a field a consumer silently ignores.
+      const base = hasEnum ? ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS : ARGUMENT_SCHEMA_ENTRY_KEYS;
+      exactKeys(entry, hasDescription ? [...base, "description"] : base, `${location}_entry`);
       if (!ACTION_VALUE_TYPES.has(dataDescriptor(entry, "type").value)) fail("invalid_action");
+      if (hasDescription) {
+        // The argument's MEANING, in the Mod's own words. Bounded like every other published string: an unbounded one
+        // would let a future build spend the agent's context by accident, and empty is refused because a present-but-
+        // empty description says nothing while an ABSENT one means "the name is the whole story".
+        const description = dataDescriptor(entry, "description").value;
+        if (typeof description !== "string" || description.length === 0 || description.length > 512)
+          fail("invalid_action");
+      }
       if (hasEnum) validateEnumVocabulary(dataDescriptor(entry, "enum").value);
     } else if (!ACTION_VALUE_TYPES.has(entry)) {
       fail("invalid_action");
@@ -322,8 +402,14 @@ function validateResourceTemplate(value) {
   for (const claim of claims) {
     if (!isObject(claim) || isArray(claim) || prototypeOf(claim) !== Object.prototype) fail("invalid_action");
     exactKeys(claim, ["key", "value"], "resource_claim");
-    validateIdentifier(dataDescriptor(claim, "key").value, "invalid_resource_claim_key");
-    if (dataDescriptor(claim, "value").value !== "ScopePlayer") fail("invalid_resource_claim_value");
+    const claimKey = dataDescriptor(claim, "key").value;
+    // A tool claim's key names a tool CATEGORY after `tool:`, so the plain identifier rule refuses it. Both shapes are
+    // validated rather than the prefix being stripped unchecked: an unrecognised key is exactly what this code is for.
+    if (typeof claimKey !== "string" || (!IDENTIFIER.test(claimKey) && !TOOL_CLAIM_KEY.test(claimKey))) {
+      fail("invalid_resource_claim_key");
+    }
+    const claimValue = dataDescriptor(claim, "value").value;
+    if (!RESOURCE_CLAIM_VALUES.has(claimValue)) fail("invalid_resource_claim_value");
   }
 }
 
@@ -331,7 +417,7 @@ function validateAction(value, seenActionIds) {
   if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) {
     fail("invalid_action");
   }
-  exactKeys(value, ACTION_SURFACE_ACTION_KEYS, "action");
+  actionKeys(value);
 
   const actionId = validateIdentifier(dataDescriptor(value, "actionId").value, "invalid_action_id");
   const identityVersion = dataDescriptor(value, "identityVersion").value;

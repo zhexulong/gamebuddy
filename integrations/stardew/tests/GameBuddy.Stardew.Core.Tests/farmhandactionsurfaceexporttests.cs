@@ -29,9 +29,11 @@ public sealed class FarmhandActionSurfaceExportTests
             projection.IdentityVersion.Should().Be(source.IdentityVersion);
             projection.Lifecycle.Should().Be(source.Lifecycle.ToWireValue());
             projection.Kind.Should().Be(source.Kind.ToWireValue());
+            // The description is part of the equality: the projected schema must carry the Mod's own words, or a
+            // surface could drop them and nothing here would notice.
             projection.ArgumentSchema.Should().Equal(descriptor.Arguments.ToDictionary(
                 argument => argument.Name,
-                argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum)));
+                argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description)));
             projection.OutputFacts.Should().Equal(descriptor.OutputFacts);
             projection.ResourceTemplate.Claims.Should().Equal(descriptor.ResourceTemplate.Select(claim =>
                 new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())));
@@ -82,10 +84,17 @@ public sealed class FarmhandActionSurfaceExportTests
         string second = FarmhandActionSurfaceExport.SerializeToJson();
 
         first.Should().Be(second);
+        // Compactness is a claim about the SERIALIZER, not about the payload: no newline and no tab say the writer
+        // emits no formatting whitespace. It used to assert `NotContain(" ")` as well, which happened to hold only
+        // because every string in the artifact was an identifier. The moment a Mod-owned `description` carries a
+        // sentence, a space inside a JSON string is not formatting and the assertion was refusing the very field it
+        // should have been checking. Measured 2026-10-29.
         first.Should().NotContain("\n");
         first.Should().NotContain("\r");
-        first.Should().NotContain(" ");
         first.Should().NotContain("\t");
+        // ...and no space BETWEEN tokens: strip the string literals and what is left must have none.
+        System.Text.RegularExpressions.Regex.Replace(first, "\"(?:[^\"\\\\]|\\\\.)*\"", "\"\"")
+            .Should().NotContain(" ");
         first.Should().Contain("{\"schema\":\"gamebuddy-action-descriptors/v1\"");
         first.Should().Contain("\"catalogRevision\":1");
         first.Should().Contain("\"actionId\":\"move_to_tile\"");

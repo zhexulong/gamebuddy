@@ -28,7 +28,7 @@ type SurfaceAction = Readonly<{
   actionId: string;
   lifecycle: string;
   kind: string;
-  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
 }>;
@@ -60,12 +60,15 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
 /** The surface's own declaration of one action's arguments, in the order the artifact lists them. */
 function surfaceArguments(
   actionId: string,
-): readonly Readonly<{ name: string; type: string; enum?: readonly string[] }>[] {
+): readonly Readonly<{ name: string; type: string; enum?: readonly string[]; description?: string }>[] {
   const action = SURFACE.find((candidate) => candidate.actionId === actionId);
   assert.ok(action, `${actionId} is on the published surface`);
-  return Object.entries(action.argumentSchema ?? {}).map(([name, declared]) =>
-    declared.enum === undefined ? { name, type: declared.type } : { name, type: declared.type, enum: declared.enum },
-  );
+  return Object.entries(action.argumentSchema ?? {}).map(([name, declared]) => ({
+    name,
+    type: declared.type,
+    ...(declared.enum === undefined ? {} : { enum: declared.enum }),
+    ...(declared.description === undefined ? {} : { description: declared.description }),
+  }));
 }
 
 const ACTIONS = planActionsFromRegistrations(REGISTRATIONS);
@@ -749,4 +752,59 @@ test("equipFor resolves the declared category from the pack, and names the categ
   );
   // An id the vocabulary does not have answers with that name, and the host adds the ids it DOES have.
   assert.equal(refusalOf(compile("builder.equipFor('brew_potion');")), "plan_script_unknown_action:brew_potion");
+});
+
+test("a published argument description reaches the plan shape, because the Mod owns the meaning", () => {
+  // Measured 2026-10-29: `PLAN_TOOL_SLOT_MEANING` said a `slot` is "never a backpack index". All thirteen actions that
+  // take a `slot` read `Game1.player.Items[slot]` - it IS a backpack index - and three of them additionally require it
+  // to equal `Farmer.CurrentToolIndex`. One Host-side sentence could not be true for both families, so the meaning now
+  // travels per argument, from the handler that enforces it.
+  const withDescription: readonly ActionRegistration[] = [
+    Object.freeze({
+      actionId: "cut_weeds",
+      familyId: "resource_gathering",
+      identityVersion: 1,
+      lifecycle: "live_verified" as ActionRegistration["lifecycle"],
+      kind: "execution" as ActionRegistration["kind"],
+      descriptor: {
+        arguments: [
+          { name: "x", type: "integer" },
+          { name: "y", type: "integer" },
+          { name: "slot", type: "integer", description: "The TOOL's backpack slot, which must also be the held one." },
+        ],
+      },
+    }),
+  ];
+  const [action] = planActionsFromRegistrations(withDescription);
+  assert.ok(action, "the action is plannable");
+  assert.deepEqual(
+    action.arguments.map((argument) => argument.name),
+    ["x", "y", "slot"],
+  );
+  assert.equal(
+    action.arguments[2]?.description,
+    "The TOOL's backpack slot, which must also be the held one.",
+    "the Mod's own words for the argument survive into what a plan shape answers",
+  );
+  // An argument the surface does not describe stays UNDESCRIBED rather than becoming an empty string: absent is how a
+  // surface says "the name is the whole story", and an empty description would be a label that says nothing.
+  assert.equal(action.arguments[0]?.description, undefined);
+  assert.equal("description" in (action.arguments[0] ?? {}), false);
+});
+
+test("the surface artifact carries a slot description for every action whose slot has a rule", () => {
+  // The artifact is what the Mod publishes and the Host reads, so this is the one place the two sides are compared.
+  // It fails by NAME when a `slot` argument loses its description, which is the drift the previous design could not
+  // detect: a Host paragraph is not compared against anything.
+  const slotActions = SURFACE.filter((action) => action.argumentSchema?.slot !== undefined);
+  assert.ok(slotActions.length > 0, "the surface declares actions with a slot argument");
+  const described = slotActions.filter((action) => (action.argumentSchema?.slot?.description ?? "").length > 0);
+  assert.deepEqual(
+    slotActions
+      .filter((action) => (action.argumentSchema?.slot?.description ?? "").length === 0)
+      .map((action) => action.actionId),
+    [],
+    "every action whose `slot` has a rule states that rule in its own words; an undescribed one is a guess the model makes",
+  );
+  assert.ok(described.length === slotActions.length);
 });

@@ -142,7 +142,7 @@ public sealed record BridgeTile(float X, float Y);
 /// <summary>Deterministic Mod-declared action identity projected on hello_ack.
 /// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as
 /// the registration authority and rejects unknown extra action IDs.</summary>
-public sealed record FarmhandActionArgumentWire(string Name, string Type, IReadOnlyList<string>? Enum = null);
+public sealed record FarmhandActionArgumentWire(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
 public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string Value);
 public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
 public sealed record FarmhandActionPostconditionWire(string Name);

@@ -40,7 +40,17 @@ public sealed record FarmhandActionDescriptorProjection(
 /// </summary>
 public sealed record FarmhandActionArgumentSchema(
     string Type,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Enum = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Enum = null,
+    /// <summary>
+    /// What this argument MEANS, in the words of the handler that enforces it.
+    ///
+    /// Published per argument because one sentence for a shared argument name cannot be true for every action that
+    /// takes it: measured 2026-10-29, every action taking a `slot` reads a backpack index (`Items[slot]`), while the
+    /// Host's single paragraph claimed it is "never a backpack index", and three of those actions additionally require
+    /// the slot to equal `Farmer.CurrentToolIndex`. Sourced from `FarmhandActionArgument.Description`, so a change to the
+    /// rule and a change to its words are the same edit.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null);
 public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandActionResourceTemplateValueProjection> Claims);
 public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
 public sealed record FarmhandActionPostcondition(string Name);
@@ -89,7 +99,7 @@ public static class FarmhandActionSurfacePublication
             ?? throw new InvalidOperationException("Farmhand action registration requires a descriptor.");
         Dictionary<string, FarmhandActionArgumentSchema> argumentSchema = descriptor.Arguments.ToDictionary(
             argument => argument.Name,
-            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum),
+            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description),
             StringComparer.Ordinal);
         if (argumentSchema.Count != descriptor.Arguments.Count)
             throw new InvalidOperationException("Farmhand action descriptor argument names must be unique.");

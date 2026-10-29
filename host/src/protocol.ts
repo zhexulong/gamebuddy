@@ -1381,11 +1381,20 @@ export type ActionDescriptorArgument = Readonly<{
   type: string;
   enum?: readonly string[];
   boundedEnumValues?: readonly string[];
+  /**
+   * What this argument MEANS, in the Mod's own words.
+   *
+   * The field exists because a single Host-side sentence about a shared argument name cannot be true for every action
+   * that takes it. Measured 2026-10-29: `PLAN_TOOL_SLOT_MEANING` said a `slot` is "never a backpack index", and all
+   * thirteen actions that take a `slot` read a backpack index - three of them additionally require it to be the held
+   * tool. The meaning belongs to the action, so the action's owner states it and it cannot drift from the handler.
+   */
+  description?: string;
 }>;
 
 export type ActionRegistrationDescriptor = Readonly<{
   arguments?: readonly ActionDescriptorArgument[];
-  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[] }>>;
+  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
   /** Mod-owned opt-in required before Host can project pickup_forage sceneTarget. */
   sceneTarget?: Readonly<{
     type: string;
@@ -4346,9 +4355,16 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     if (!Array.isArray(value.arguments) || value.arguments.length > 32) return false;
     for (const arg of value.arguments) {
       if (!isRecord(arg)) return false;
-      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues"])) return false;
+      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues", "description"])) return false;
       if (typeof arg.name !== "string" || !/^[a-z][a-zA-Z0-9_]{0,63}$/.test(arg.name)) return false;
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
+      if ("description" in arg && arg.description !== undefined) {
+        // Bounded like every other published string: an unbounded one would be a way for a future Mod build to spend
+        // the agent's context by accident. Empty is refused because a present-but-empty description is a label that
+        // says nothing, and an ABSENT one is how the surface says "the name is the whole story".
+        if (typeof arg.description !== "string" || arg.description.length === 0 || arg.description.length > 512)
+          return false;
+      }
       if ("enum" in arg && arg.enum !== undefined) {
         if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;
         if (!arg.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;

@@ -261,6 +261,9 @@ function createBodyProgramTools(
               ...(shape.legalActionIds === undefined ? {} : { legalActionIds: shape.legalActionIds }),
               ...(shape.legalFamilies === undefined ? {} : { legalFamilies: shape.legalFamilies }),
             });
+          // `toolSlotMeaning` stays as the FALLBACK for an argument the surface describes nothing about. The
+          // authoritative word for any particular action is that action's own `arguments[].description`, carried from
+          // the Mod's declaration through the wire - so this field shrinking to a fallback is the point, not a loss.
           return planDetails({ actions: shape.actions, toolSlotMeaning: PLAN_TOOL_SLOT_MEANING });
         },
       }),

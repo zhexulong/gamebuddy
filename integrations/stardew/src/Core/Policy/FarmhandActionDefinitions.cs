@@ -25,7 +25,7 @@ public enum FarmhandResourceTemplateValue
     /// a wrong promise.</summary>
     BasicOnly = 3,
 }
-public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null);
+public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
 /// handler requires to be the current tool, and whose value half is the upgrade-level requirement
@@ -328,8 +328,8 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(nu
         // terminal the game's own non-interactive callers use. Experimental: each stays off the
         // default Agent surface until it passes its own native-local live gate, and promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
-        E("equip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_equipped", "Farmer.Equip"), FarmhandActionLifecycle.LiveVerified),
-        E("unequip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_unequipped", "Farmer.Equip"), FarmhandActionLifecycle.LiveVerified),
+        E("equip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "Backpack slot HOLDING the wearable to equip. `snapshot.toolSlots` lists tools only, so this is NOT a tool slot."), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_equipped", "Farmer.Equip"), FarmhandActionLifecycle.LiveVerified),
+        E("unequip_wearable", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "Backpack slot the wearable is taken OFF into. It must be EMPTY: an occupied destination is refused by name (`wearable_destination_slot_occupied`)."), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "wearable_unequipped", "Farmer.Equip"), FarmhandActionLifecycle.LiveVerified),
         E("dismount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(Array.Empty<FarmhandActionArgument>(), new Dictionary<string, string>(), EmbodiedActorResource, "write", "transport_dismounted", "Horse.dismount"), FarmhandActionLifecycle.LiveVerified),
     // WIA §4.2 modal-handling family: the ONE action that may run while the
     // world holds a modal. `dismiss_modal` only closes an informational native
@@ -454,11 +454,24 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(nu
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, descriptor);
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
     private static FarmhandActionDescriptor A(IReadOnlyDictionary<string,string>? facts = null, IReadOnlyList<FarmhandActionResourceTemplateClaim>? resources = null, string postcondition = "native_action_postcondition", params (string,string)[] args) => new(args.Select(x => new FarmhandActionArgument(x.Item1,x.Item2)).ToArray(), facts ?? new Dictionary<string,string>(), resources ?? EmbodiedActorResource, resources is { Count: 0 } ? "read" : "write", postcondition);
+
+    /// <summary>
+    /// What `slot` means on an action that consumes a held tool.
+    ///
+    /// Published per ARGUMENT rather than as one Host-side paragraph, because the families disagree: a tool action's
+    /// slot must equal `Farmer.CurrentToolIndex` and hold that exact tool (`resourcetoolactions.cs:27`), while an item
+    /// action's slot is any pack index. One sentence covering both was false for one of them - measured 2026-10-29, the
+    /// Host carried exactly such a sentence ("never a backpack index") that is false for all four of them.
+    /// </summary>
+    private const string ToolSlotMeaning = "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you.";
+
+    /// <summary>What `slot` means on an action that consumes an inventory item: any backpack index, no tool rule.</summary>
+    private const string ItemSlotMeaning = "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.";
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
     private static FarmhandActionDescriptor TargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => A(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
-    private static FarmhandActionDescriptor SlotTargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => A(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
+    private static FarmhandActionDescriptor SlotTargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => new(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), ToolResource(toolCategory, toolUpgrade), "write", "native_action_postcondition");
     private static FarmhandActionDescriptor TargetItem() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor PickupForage() => new(
         new[]
@@ -474,7 +487,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(nu
         "native_action_postcondition",
         null,
         new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
-    private static FarmhandActionDescriptor SlotTarget() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("slot","integer"),("expectedTargetId","string"));
+    private static FarmhandActionDescriptor SlotTarget() => new(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition");
 
     /// <summary>
     /// load_building_chest carries a required `slot` because the native Load branch reads
@@ -487,7 +500,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(nu
     /// chest" id.
     /// </summary>
     private static FarmhandActionDescriptor BuildingChestLoad() => new(
-        new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") },
+        new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, "The backpack slot holding the item to load. This action SELECTS that slot for the native call and restores the previous selection after, so it need not be the held one now - but it is not a tool slot."), new FarmhandActionArgument("expectedTargetId", "string") },
         new Dictionary<string, string>(),
         EmbodiedActorResource,
         "write",

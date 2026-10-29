@@ -262,7 +262,7 @@ string? bodyProgramUnavailableReason = null,
                  registration.Kind.ToWireValue(),
                  registration.Descriptor is { } descriptor
                      ? new FarmhandActionDescriptorWire(
-                         descriptor.Arguments.Select(argument => new FarmhandActionArgumentWire(argument.Name, argument.Type, argument.Enum)).ToArray(),
+                         descriptor.Arguments.Select(argument => new FarmhandActionArgumentWire(argument.Name, argument.Type, argument.Enum, argument.Description)).ToArray(),
                          new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal),
                          new FarmhandActionResourceTemplateWire(descriptor.ResourceTemplate.Select(claim =>
                              new FarmhandActionResourceTemplateClaimWire(claim.Key, claim.Value.ToString())).ToArray()),
