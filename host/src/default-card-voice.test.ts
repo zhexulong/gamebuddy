@@ -3,7 +3,13 @@ import test from "node:test";
 
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
-import { DEFAULT_IDENTITY_PROFILE, renderIdentityProfile } from "./identity-profile.js";
+import {
+  buildChatCompanionSystemPrompt,
+  buildGameCompanionSystemPrompt,
+  DEFAULT_IDENTITY_PROFILE,
+  renderIdentityProfile,
+  validateIdentityProfile,
+} from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -221,6 +227,49 @@ test("the card's directive reaches the person before it reaches any later craft 
     `a later section (${firstLater.text} at ${firstLater.at}) now opens before the clause that answers ` +
       `the player (at ${personAt}); that is the order that produced the report.`,
   );
+});
+
+test("the game's body channel stays on the Game surface, out of the Chat prompt the card also feeds", () => {
+  // Measured defect: the shipped card's directive named `stardew_express_emote` and
+  // `stardew_face_direction` and forbade asterisk beats, and the directive renders into BOTH
+  // surfaces. On Chat no such tool is mounted and the asterisk IS the beat the renderer draws,
+  // so the card's clause was false there - while on Game the Host's own conduct already states
+  // both facts, which is why the card can lose them without the Game losing anything.
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const chat = buildChatCompanionSystemPrompt(profile, "zh-CN");
+  const game = buildGameCompanionSystemPrompt(profile, "zh-CN");
+  const EMOTE_TOOLS = /stardew_express_emote|stardew_face_direction/u;
+  assert.doesNotMatch(chat, EMOTE_TOOLS, "the Chat prompt tells her to move a body this surface does not mount");
+  assert.match(game, EMOTE_TOOLS, "the Game prompt must keep the body channel it really has");
+  // The Game conduct is Host-owned, so removing the card's duplicate cannot have emptied it.
+  assert.match(game, /Write no bracketed stage direction at all/u);
+});
+
+test("the Host's asterisk permission outranks an authored voice that forbids the asterisk form", () => {
+  // Shape A fixes the card this product ships, and nothing else: the ST card format has no
+  // surface-scoped field, so a third-party card's "no asterisks" still lands in the Chat prompt
+  // verbatim (asserted below) and still renders LAST, because the card's directive comes after
+  // the Host floor. A sentence that merely restated the syntax would therefore lose the
+  // argument; this one names the conflict and which side wins, so the later text has an answer
+  // to resolve against instead of being the last word by default.
+  const forbiddingText = "绝不写星号动作，也不要在文字里做任何动作描写。";
+  const forbidding = validateIdentityProfile({
+    ...DEFAULT_COMPANION_PRESET.profile,
+    characterVoice: { text: forbiddingText, source: "card" },
+  });
+  const chat = buildChatCompanionSystemPrompt(forbidding, "zh-CN");
+  assert.ok(chat.includes(forbiddingText), "the authored directive still reaches Chat verbatim");
+  assert.match(
+    chat,
+    /even if an authored voice forbids it/u,
+    "the Chat block must say the asterisk form draws as the beat even against an authored prohibition",
+  );
+  assert.match(
+    chat,
+    /the surface decides what it draws, not the voice/u,
+    "naming WHY it wins is what makes it decisive",
+  );
+  assert.match(chat, /does not stop that asterisk from drawing as the beat/u);
 });
 
 test("the preset's examples reach the system prompt under a labelled dialogue block", () => {

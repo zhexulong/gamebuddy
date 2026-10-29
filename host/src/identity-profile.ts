@@ -462,10 +462,22 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
  * (`vendor/pi-koe/src/speakable-text.ts` treats it as stage direction, not
  * speech), and the native chat box has its own presentation dehydration
  * (`companion-speech-dehydration.ts`).
+ *
+ * THE LAST SENTENCE IS THE ONE THAT WINS, and it exists because the card speaks
+ * after this block. Measured on the shipped card before this existed: the Chat
+ * prompt carried this permission at index 747 and the card's own "打字里不用星号"
+ * at 4219, so the surface instruction reached the model first and the authored
+ * prohibition reached it last - and a prohibition that speaks last is the rule.
+ * The shipped card no longer says it, but the ST card format has no
+ * surface-scoped field, so a third-party card's "no asterisks" still lands in
+ * this prompt verbatim. There is exactly one place able to answer that, and it
+ * is here: state who decides. A restatement of the syntax would lose the
+ * argument; naming the conflict and the winner does not.
  */
 const CHAT_SURFACE_DIVERGENCE = [
   `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`,
   "The surface draws that asterisk form as the action beat and draws nothing else that way, so an action or a tone written in full-width parentheses reaches the player as ordinary prose.",
+  "This holds even if an authored voice forbids it: the surface decides what it draws, not the voice, and an instruction not to write asterisks does not stop that asterisk from drawing as the beat.",
 ].join(" ");
 
 /**
