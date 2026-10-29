@@ -337,6 +337,29 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
       - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests --no-restore
+      # The part of the Stardew suite that needs no game at all. GameBuddy.Stardew.Integration.Tests
+      # references the Mod project, so its build package demands a licensed game folder and a hosted
+      # runner can never build it - which is why the two steps below are gated. That gate is honest
+      # about the project and dishonest about a SUBSET: measured by compiling the suite's files against
+      # GameBuddy.Stardew.Core alone, 33 of its 148 files need neither the game nor the Mod assembly,
+      # and those 165 tests ran nowhere on a hosted runner until now.
+      #
+      # The project includes those files from their one location in the suite - it holds no copy - and
+      # its runner asserts that before it builds, so a forked snapshot cannot go green while the
+      # originals drift. It also prints how much of the suite it did NOT run, and the step is named to
+      # be unreadable as "the integration suite passed": the two steps below are the only evidence
+      # about the other 115 files, and they run only where a licensed game folder is configured.
+      # The project's file list is DERIVED, never maintained: this gate builds the suite's files
+      # against GameBuddy.Stardew.Core alone, drops every file the compiler refuses, and repeats
+      # until a build succeeds. That fixpoint is the compiler's own answer to "which files are
+      # game-free", so the gate cannot agree with a hand-edited list - the list has to agree with
+      # it. It fails by name in both directions: a headless file left out of the lane (its tests
+      # would run nowhere) and a game-dependent file put in it (the lane would go red for a reason
+      # unrelated to the change that broke it).
+      - name: Stardew no-game subset matches the compiler
+        run: node tools/audit-stardew-nogame-subset.mjs
+      - name: Stardew no-game test subset (not the integration suite)
+        run: node integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/run-nogame-tests.mjs
       # The integration suite's own source says no game, Host receiver or schema is involved, but its
       # project references the mod project, so the Stardew mod build package runs and requires a licensed
       # game folder that a hosted runner does not have. Gated on an explicitly configured game path rather

@@ -1,0 +1,128 @@
+# Every file of GameBuddy.Stardew.Integration.Tests that this project does NOT compile.
+#
+# The list exists so the included subset cannot shrink unnoticed: run-nogame-tests.mjs asserts that
+# included + this file == the suite directory, and names any file that is in neither. A new test in
+# the suite therefore either joins the project (it needs no game) or gets a line here (it does).
+#
+# The reason column is the measurement, not an opinion: every type name the compiler could not
+# resolve was looked up in what this repository declares. `mod-assembly` means it is declared under
+# integrations/stardew outside src/Core (Handlers, Navigation, Sensory, ModEntry, ExecutionManager,
+# ...); `game` means it is declared nowhere in this repository, so the game, SMAPI, xTile, XNA or
+# LiteNetLib provides it. Reproduce with a compile of the suite against Core only.
+#
+# file	why	evidence (first unresolved names)
+acceptednavigationexecutiontests.cs	mod-assembly	Navigation, AcceptedNavigationExecution, DerivedDestinationSet, INavigationConnectivitySource, INavigationWorldSource
+AcceptSpecialOrderActionTests.cs	mod-assembly	Handlers
+ActionDefinitionRoutingParityTests.cs	mod-assembly	Handlers
+ActorStateActionTests.cs	mod-assembly	Handlers
+AdmissionForkReconciliationTests.cs	mod-assembly	ActorWorldFacts
+AnimalProductSingleToolTests.cs	mod-assembly	Handlers
+ApproachClassificationTests.cs	mod-assembly	Navigation, Xna, ExecutionManager, Farmer, Game1
+AudioSilenceContractTests.cs	game	IAudioCategory, Options, StardewValley
+BodyHoldAttributionTests.cs	mod-assembly	ActorWorldFacts
+BodyOwnerNamingTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, FarmhandExecutionJournalState, IModGlobalDataPersistence
+BridgeReceiptProjectionTests.cs	mod-assembly	BridgeSession
+bridgeruntimeattestationderivationtests.cs	mod-assembly	ModEntry, BridgeRuntimeAttestation
+bridgesessionpublicationtests.cs	mod-assembly	BridgeSession, LocalPipeBridge
+BuildingChestActionTests.cs	mod-assembly	Handlers
+CandidateActionExecutionTests.cs	mod-assembly	Handlers, BridgeHello, FarmhandExecutionJournalState, IModGlobalDataPersistence
+CandidateActionLifecycleFixTests.cs	mod-assembly	Handlers, BridgeHello, BridgeSession, ExecutionManager, Farmer
+ClaimMuseumRewardActionTests.cs	mod-assembly	Handlers
+ClearDebrisApproachTests.cs	mod-assembly	ExecutionManager
+ClearDebrisOrthogonalityTests.cs	mod-assembly	Handlers
+ClearStepMoveTests.cs	mod-assembly	Xna, Farmer, Game1, GameLocation, LocalMoveSpec
+CompanionCabinProvisioningTests.cs	mod-assembly	CompanionCabinProvisioning, CompanionCabinState, CabinFootprint, CabinPadFact, CompanionCabinFact
+CompanionPresentationRefusalTests.cs	mod-assembly	CompanionPresentationPolicyTests
+ConfigScopePersistTests.cs	mod-assembly	ModConfig, StardewModdingAPI
+ContainerActionTests.cs	mod-assembly	Handlers
+CookRecipeActionTests.cs	mod-assembly	Handlers
+CrabPotCollectActionTests.cs	mod-assembly	Handlers
+CraftItemActionTests.cs	mod-assembly	Handlers
+DeclaredArgumentAcceptanceTests.cs	mod-assembly	Navigation
+DeclaredToolSelectionTests.cs	mod-assembly	Axe, DeclaredToolResolution, FishingRod, Hoe, Item
+DestinationSearchByteBudgetEquivalenceTests.cs	mod-assembly	Navigation, DestinationSearchResult, NavigationBindingContext
+destinationsearchtests.cs	mod-assembly	Navigation, DerivedDestinationSet, DestinationSearchResult, NavigationBindingContext, NavigationSourceNode
+DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
+EnterExitDoorGateTests.cs	mod-assembly	Handlers
+FacilityActionTests.cs	mod-assembly	Handlers
+FarmhandExecutionJournalTests.cs	mod-assembly	FarmhandExecutionAdmission, FarmhandExecutionJournalRecord, FarmhandExecutionJournalState, FarmhandExecutionReceipt, IModGlobalDataPersistence
+FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
+HeldRequestAbsorptionTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState
+HeldToolProjectionTests.cs	game	Axe, Farmer, Hoe, Item, Lantern
+HollowRingStepOutTests.cs	mod-assembly	ExecutionManager, FarmhandExecutionJournal
+hostfarmhandprovisionerpublicationtests.cs	game	IDataHelper, StardewModdingAPI
+ItemTileActionTests.cs	mod-assembly	Handlers
+LevelUpMilestoneChoiceTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, IClickableMenu, LevelUpMenu
+LevelUpProfessionPairTests.cs	mod-assembly	ExecutionManager
+LocalPipeBridgeOutboundQueueTests.cs	mod-assembly	LocalPipeBridge, PipeOutbound, PipeOutboundCompletion
+MailboxDiscoveryAndApproachTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
+MineLadderDescentTests.cs	mod-assembly	ExecutionManager
+ModalAdmissionTests.cs	mod-assembly	ExecutionManager, Farmer, FarmhandExecutionJournalState, IClickableMenu, IModGlobalDataPersistence
+ModalAnswerDialogueTests.cs	mod-assembly	Xna, DialogueBox, ExecutionManager, Farmer, GameLocation
+ModalDismissActionTests.cs	mod-assembly	DialogueBox, ExecutionManager, Farmer, IClickableMenu, Netcode
+ModEntryBodyProgramJournalRootTests.cs	mod-assembly	ModEntry, StardewModdingAPI
+ModTraceExportTests.cs	mod-assembly	ModTrace, ModTraceRecorder
+MoveApproachSubstitutionTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
+MoveLocationChangeReleaseTests.cs	mod-assembly	NavigationWarpLifecycle, DummyMonitor, ExecutionManager
+NativeFarmingContractTests.cs	mod-assembly	StardewModdingAPI, Handlers
+NativeItemPredicateTests.cs	mod-assembly	NativeItemPredicates
+nativelanendpointtargetsurfacetests.cs	game	StardewValley
+NativeNoticeObserverTests.cs	mod-assembly	Sensory, HUDMessage, StardewValley
+NativeToolContractTests.cs	mod-assembly	Handlers
+navigationexecutioncoordinatortests.cs	mod-assembly	Navigation, DerivedDestinationSet, INavigationConnectivitySource, INavigationWorldSource, NavigationDestinationBinding
+navigationexecutionmanagertests.cs	mod-assembly	Navigation, Xna, DerivedDestinationSet, ExecutionManager, INavigationConnectivitySource
+NavigationOutcomeEvidenceTests.cs	mod-assembly	Navigation, NavigationDestinationAccessEvidence, NavigationOutcome
+NavigationReadOnlySessionTests.cs	mod-assembly	Navigation, BridgeSession, DerivedDestinationSet, NavigationSourceNode
+NavigationReferenceStoreTests.cs	mod-assembly	Navigation, NavigationBindingContext
+NavigationRoutePlannerTests.cs	mod-assembly	Navigation, NavigationDestinationBinding, NavigationOrdinaryWarpLegs, NavigationOrdinaryWarpTopology, NavigationTransitionLeg
+NpcDialoguePagerTests.cs	mod-assembly	StardewModdingAPI, Sensory, BridgeSession, Dialogue, DialogueBox
+NpcGiftActionTests.cs	mod-assembly	Handlers
+PetBowlWateringActionTests.cs	mod-assembly	Handlers
+PlaySessionFixturePlacementTests.cs	game	Xna, Point
+ProgramControllerCompositionTests.cs	mod-assembly	ModEntry
+ProvisioningConfigCompatibilityTests.cs	mod-assembly	NativeChatIngressPolicy, FarmhandProvisionerConfig, HostFarmhandProvisioningConfig
+ReachabilityProbeTests.cs	game	Xna
+ReachableApproachTests.cs	game	Xna
+RequestedSlotRefusalEvidenceTests.cs	game	Axe, Hoe, Item, StardewValley, Tool
+RideBusActionTests.cs	mod-assembly	ExecutionManager, Farmer, Netcode, StardewValley
+RideMinecartActionTests.cs	mod-assembly	Handlers
+SaplingApproachWiringTests.cs	mod-assembly	Xna, ExecutionManager, Farm, Farmer, Game1
+SaplingPlantTests.cs	mod-assembly	Handlers
+SceneObservationDenseKindTests.cs	mod-assembly	Navigation, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext
+SceneObservationGroundTests.cs	mod-assembly	Navigation, SceneObservationContext
+SceneObservationResourceKindTests.cs	mod-assembly	Navigation, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext
+SceneObservationTests.cs	mod-assembly	Navigation, BridgeSession, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext
+SceneObservationWaterSourceTests.cs	mod-assembly	Navigation
+SceneObservationWorldLayerTests.cs	mod-assembly	Navigation, StardewValley
+SceneReachabilityTests.cs	mod-assembly	Navigation, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext, SceneObservationInput
+ScopeBoundActorAdmissionTests.cs	mod-assembly	Handlers, ExecutionManager, FarmhandExecutionJournalState, IModGlobalDataPersistence, Netcode
+ScytheActionTests.cs	mod-assembly	Handlers
+SendMultiplayerChatTests.cs	mod-assembly	CompanionSessionHosting, ExecutionManager, Farmer, LocalizedContentManager, Multiplayer
+SettlementMenuTerminalTests.cs	mod-assembly	ModEntry
+SettlementWithoutLifecycleTests.cs	game	IClickableMenu, StardewValley
+ShipItemActionTests.cs	mod-assembly	Handlers
+ShipItemApproachWiringTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
+ShopMenuHeadlessProbe.cs	game	StardewValley
+ShopOpeningPreflightTests.cs	mod-assembly	Navigation
+SleepAndAdvanceDayLifecycleTests.cs	mod-assembly	SleepAndAdvanceDayLifecycleConfig
+SlimeHutchTroughActionTests.cs	mod-assembly	Handlers
+StardewBodyControllerPathGoalTests.cs	mod-assembly	StardewBodyController
+StumpActionTests.cs	mod-assembly	Handlers
+TalkToNpcActionTests.cs	mod-assembly	Handlers
+TaskDeliveryActionTests.cs	mod-assembly	Handlers
+TerminalReceiptObservabilityTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager
+TileOpenedShopTests.cs	mod-assembly	ExecutionManager
+ToggleAnimalDoorActionTests.cs	mod-assembly	Handlers
+UseItemConsumableOnlyTests.cs	mod-assembly	Handlers
+UseObeliskActionTests.cs	mod-assembly	ExecutionManager, Farmer, StardewValley
+VirtualConnectivityEdgeTests.cs	mod-assembly	Navigation, NavigationDestinationBinding, NavigationOrdinaryWarpLegs, NavigationOrdinaryWarpTopology, NavigationTransitionLeg
+WarpThreeWayRuleTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
+WaterSourceLandmarkTests.cs	mod-assembly	Navigation, NavigationSourceNode
+WindowModeContractTests.cs	mod-assembly	ModEntry
+WindowsBodyProgramJournalStoreTests.cs	mod-assembly	WindowsBodyProgramJournalStore
+WithdrawSiloHayActionTests.cs	mod-assembly	Handlers
+WorldCreationBootstrapTests.cs	mod-assembly	StardewValley, WorldCreationBootstrap, WorldCreationConfig
+WorldCreationDecisionTests.cs	mod-assembly	Options, StardewValley, WorldCreationConfig, WorldSaveIdentity
+WorldInterruptionTests.cs	mod-assembly	Xna, ActorDispositionKind
+WorldMapProjectionTests.cs	mod-assembly	Navigation, DerivedDestinationSet, NavigationBindingContext, NavigationDestination, NavigationSourceNode
+WorldModelTests.cs	mod-assembly	ActorDispositionKind, ActorWorldFacts
