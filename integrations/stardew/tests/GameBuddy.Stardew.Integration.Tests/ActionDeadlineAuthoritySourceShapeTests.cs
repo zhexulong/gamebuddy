@@ -15,7 +15,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// This pins the single authority: the session accepts a deadline up to the requested action's published
 /// watchdog, and falls back to the ordinary bound only when an action publishes none.
 /// </summary>
-public sealed class ActionDeadlineAuthorityTests
+public sealed class ActionDeadlineAuthoritySourceShapeTests
 {
     private const string RepositoryRelativeRoot = "../../../../../../../";
 

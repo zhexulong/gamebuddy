@@ -21,7 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// and the honest terminal when the world does not change. The native clearing itself, the ejected
 /// debris and the stale-target negatives belong to the native-local fixture gate.
 /// </summary>
-public sealed class ClearFishPondActionTests
+public sealed class ClearFishPondActionSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.pondactions.cs";
 

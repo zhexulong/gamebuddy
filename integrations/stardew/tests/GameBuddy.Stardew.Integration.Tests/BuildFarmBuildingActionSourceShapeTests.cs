@@ -25,7 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// the honest terminal when the world does not change. The native construction itself and the
 /// stale-target negative belong to the native-local fixture gate.
 /// </summary>
-public sealed class BuildFarmBuildingActionTests
+public sealed class BuildFarmBuildingActionSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.buildfarmbuildingactions.cs";
 

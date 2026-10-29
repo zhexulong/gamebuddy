@@ -25,7 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// is never left permanently owned.
 /// </para>
 /// </summary>
-public sealed class ToolApproachContractTests
+public sealed class ToolApproachContractSourceShapeTests
 {
     private static string Read(string relative) => File.ReadAllText(RepositorySourcePath(relative));
 

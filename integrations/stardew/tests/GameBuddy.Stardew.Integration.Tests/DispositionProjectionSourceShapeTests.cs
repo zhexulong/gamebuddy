@@ -9,7 +9,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// halves that matter: every kind the classifier can produce is expressible on the wire, and the snapshot
 /// reads the value the controller already computed rather than deriving its own.
 /// </summary>
-public class DispositionProjectionTests
+public class DispositionProjectionSourceShapeTests
 {
     private static string ReadSource(params string[] relativeParts) =>
         File.ReadAllText(Path.Combine(new[] { RepositoryRoot() }.Concat(relativeParts).ToArray()));

@@ -23,7 +23,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// produced headless, because the chest and player inventory live behind a live Game1. The
 /// native-local chain gate owns the live claim.
 /// </summary>
-public sealed class ChestRetrieveRollbackActionTests
+public sealed class ChestRetrieveRollbackActionSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.containeractions.cs";
 

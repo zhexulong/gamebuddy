@@ -24,7 +24,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// player and speaker a headless probe process cannot build, so the live settlement belongs to the
 /// native-local modal chain gate.
 /// </summary>
-public sealed class AnswerDialogueNpcQuestionDispatchTests
+public sealed class AnswerDialogueNpcQuestionDispatchSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.modalactions.cs";
 
