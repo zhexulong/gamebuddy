@@ -20,7 +20,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { ADVISORY, runAudit } from "./audit-totality.mjs";
+import { ADVISORY_READINGS, runAudit } from "./audit-totality.mjs";
 
 function write(root, path, text) {
   const file = join(root, path);
@@ -274,6 +274,26 @@ test("an optional answer is one answer, and a real second answer still fails", (
   }
 });
 
-test("the class is advisory, and the set says so", () => {
-  assert.equal(ADVISORY.has("duplication"), true, "the class reports without deciding the run");
+test("the class blocks: its promotion condition is the finding itself", () => {
+  // It used to be advisory for the same reason `hygiene` still is - a ruling nobody had taken. That stopped being true
+  // when the class learned that an optional answer is ONE answer: what is left is a crowded decider whose declared
+  // answer admits two or more answers a caller has to tell apart, which is a defect and not a decision. The tree reports
+  // zero of those today, so blocking costs nothing and a red from this class now names a real divergence.
+  assert.deepEqual(
+    ADVISORY_READINGS.filter((entry) => entry.className === "duplication"),
+    [],
+    "duplication must not be listed as an advisory reading: its findings are defects, not an unmade ruling",
+  );
+  const root = fixture();
+  try {
+    const crowded = runAudit({ root, only: ["duplication"] }).find((entry) => entry.id === "duplication");
+    assert.notEqual(crowded, undefined);
+    assert.equal(
+      crowded.violations.some((violation) => violation.advisory === true),
+      false,
+      "no finding of this class may be marked advisory, or the exit code would ignore it",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

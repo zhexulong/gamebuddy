@@ -25,7 +25,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { ADVISORY, formatReport, runAudit, totals } from "./audit-totality.mjs";
+import { ADVISORY_READINGS, formatReport, runAudit, totals, unprovenReadings } from "./audit-totality.mjs";
 
 function write(root, path, text) {
   const file = join(root, path);
@@ -612,6 +612,98 @@ test("hygiene: what production reads stays green, what only a test reads goes re
   }
 });
 
+test("a hygiene site defect blocks while the test-only export reading does not", () => {
+  const root = fixture();
+  try {
+    // Two findings of two kinds in ONE class, and the exit code has to separate them. The class used to be advisory as a
+    // whole, so a hand-added `@ts-ignore` - a site that is wrong on its own terms - was printed and then ignored by the
+    // exit code. That is the shape the complaint named.
+    write(root, "host/src/suppressed-store.ts", "// @ts-ignore\nexport const suppressed = 1;\n");
+    write(root, "host/src/only-a-test-exports.ts", "export const readOnlyByTests = 1;\n");
+    write(
+      root,
+      "host/src/only-a-test-exports.test.ts",
+      'import test from "node:test";\nimport { readOnlyByTests } from "./only-a-test-exports.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+    );
+    const results = runAudit({ root, only: ["hygiene"] });
+    const summary = totals(results);
+    const byKind = (kind) =>
+      results.flatMap((result) => result.violations).filter((violation) => violation.kind === kind);
+    assert.equal(byKind("suppression directive").length, 1, "the fixture must carry exactly one suppression directive");
+    assert.equal(byKind("test-only export").length, 1, "and exactly one test-only export");
+    assert.equal(summary.blocking, 1, `the site defect decides the run:\n${formatReport(results)}`);
+    assert.equal(summary.advisory, 1, "the pending-ruling reading does not");
+    assert.match(
+      formatReport(results),
+      /^\s+hygiene\s+1\s+advisory finding\(s\) of test-only export/mu,
+      "the section names the advisory kind and its count, not the class alone",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the audit says out loud what it cannot call clean, so its output cannot be read as a pass", (t) => {
+  const root = fixture();
+  try {
+    // The complaint that produced this section: the scanner said NOT clean in a note among thirty other notes and
+    // exited 0, so a reader - or an agent - took "exit 0" for "nothing is wrong". The section is now a place in the
+    // report with its own heading, one line per class and reading, and a count on every line.
+    const results = runAudit({ root });
+    const report = formatReport(results);
+    assert.match(report, /^NOT CLEAN - readings this run walked but cannot prove:$/mu);
+    const summary = totals(results);
+    assert.match(
+      report.split("\n")[0],
+      new RegExp(`\\(${summary.blocking} blocking, ${summary.advisory} advisory\\)`, "u"),
+      "the summary line must separate what blocks from what does not, instead of printing one total",
+    );
+
+    // The fixture's own readings: it declares a cap with a paired writer, so `bounds` has nothing unpaired, and it
+    // has no test-only export, so `hygiene` has nothing pending. Every line the section prints must therefore be one
+    // of the fixture's real gaps - and when it has none, it says so in words rather than printing an empty list.
+    const section = report.slice(report.indexOf("NOT CLEAN"));
+    const rows = section
+      .split("\n")
+      .slice(1)
+      .filter((line) => /^\s{2}\S/u.test(line) && !line.includes("note") && !line.includes("(none:"));
+    for (const row of rows)
+      assert.match(
+        row,
+        /^\s{2}\S+\s+\d+\s+\S/u,
+        `every unproven line names its class, its count and its reading: ${row}`,
+      );
+
+    // The other direction: a reading that acquires a count must appear here with THAT count. The injection is a real
+    // unpaired cap - the fixture's `notes` cap loses its writer constant - so the section has to move.
+    const store = "host/src/note-store.ts";
+    const original = read(root, store);
+    write(root, store, original.replace("const MAX_NOTES = 10;", "const SOMETHING_ELSE = 10;"));
+    try {
+      const broken = runAudit({ root });
+      const brokenRows = unprovenReadings(broken);
+      const boundsRow = brokenRows.find((row) => row.className === "bounds");
+      assert.notEqual(
+        boundsRow,
+        undefined,
+        `an unpaired cap must be named in the unproven section:\n${formatReport(broken)}`,
+      );
+      assert.ok(boundsRow.count > 0, "the row carries the count it walked, never a bare label");
+      assert.match(boundsRow.reading, /no writer constant paired/u);
+      t.diagnostic(`${boundsRow.className}: ${boundsRow.count} -> ${boundsRow.reading}`);
+    } finally {
+      write(root, store, original);
+    }
+    assert.deepEqual(
+      unprovenReadings(runAudit({ root })).filter((row) => row.className === "bounds"),
+      [],
+      "the section empties again once the writer constant is restored, so it is a reading and not a permanent line",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("hygiene reports by kind with a bounded sample, and the unbounded reading keeps every site", () => {
   const root = fixture();
   try {
@@ -680,9 +772,9 @@ test("the audit reports its own shape and --only narrows the run", () => {
     assert.equal(summary.classes, 11);
     assert.ok(summary.declared > 0, "the audit must walk something");
     assert.deepEqual(
-      [...ADVISORY].sort(),
-      ["duplication", "hygiene"],
-      "a class leaves ADVISORY when its findings stop being a ruling the owner has not taken",
+      ADVISORY_READINGS.map((entry) => `${entry.className}: ${entry.kind}`),
+      ["hygiene: test-only export"],
+      "a reading leaves ADVISORY_READINGS when its findings stop being a ruling the owner has not taken",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

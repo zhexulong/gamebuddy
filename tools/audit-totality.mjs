@@ -511,7 +511,15 @@ function runBounds(sources) {
         .map((entry) => `${entry.schema}.${entry.property}=${entry.limit ?? entry.expression}@${entry.where}`)
         .join(", ")}${unpairedRows > 8 ? `, +${unpairedRows - 8} more` : ""}`,
     );
-  return { declared: caps.length, violations, notes };
+  return {
+    declared: caps.length,
+    violations,
+    notes,
+    unproven:
+      unpairedRows === 0
+        ? []
+        : [{ count: unpairedRows, reading: "declared cap(s) with no writer constant paired to them" }],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -755,9 +763,15 @@ function runRefusal(sources) {
   notes.push(
     `refusal: ${comparisons} capacity comparison(s) across ${constants.length} cap constant(s), ${named} name their code, ${delegated} answered by a predicate (named by its caller), ${bounds.length} bound the value instead of refusing it, ${scopeless} outside any function`,
   );
+  const unproven = [];
   for (const kind of ["narrows", "discards"]) {
     const ofKind = bounds.filter((bound) => bound.kind === kind);
     if (ofKind.length === 0) continue;
+    const reading =
+      kind === "narrows"
+        ? "capacity comparison(s) that trim the collection (break/slice/filter) instead of refusing"
+        : "capacity comparison(s) that discard the value (return null/undefined) instead of refusing";
+    unproven.push({ count: ofKind.length, reading });
     notes.push(
       `refusal: NOT audited here - ${ofKind.length} comparison(s) ${kind === "narrows" ? "trim the collection (break/slice/filter)" : "discard the value (return null/undefined)"} instead of refusing the operation: ${ofKind
         .slice(0, 6)
@@ -765,7 +779,7 @@ function runRefusal(sources) {
         .join(", ")}${ofKind.length > 6 ? `, +${ofKind.length - 6} more` : ""}`,
     );
   }
-  return { declared: constants.length, violations, notes };
+  return { declared: constants.length, violations, notes, unproven };
 }
 
 // ---------------------------------------------------------------------------
@@ -911,7 +925,12 @@ function runReadPath(sources) {
   notes.push(
     `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${within} bounded by a constant that names it, ${unbound} capped field(s) no reachable constant names (NOT clean: the producer is bounded outside the read path's dependency tree)`,
   );
-  return { declared: sites.length, violations, notes };
+  return {
+    declared: sites.length,
+    violations,
+    notes,
+    unproven: unbound === 0 ? [] : [{ count: unbound, reading: "capped field(s) no reachable constant names" }],
+  };
 }
 
 /** The capacity constants whose declaring module is in a read path's own dependency tree. */
@@ -940,10 +959,16 @@ export function runAudit({ root = DEFAULT_ROOT, only = null } = {}) {
       rank: auditClass.rank,
       title: auditClass.title,
       declared: outcome.declared,
-      violations: outcome.violations.map((violation) => ({ ...violation, class: auditClass.id })),
+      // Each finding says for itself whether it decides the run: a class can carry a reading an owner ruling is
+      // pending on beside a site defect that must block, and only the finding knows which it is.
+      violations: outcome.violations.map((violation) => ({
+        ...violation,
+        class: auditClass.id,
+        ...(advisoryReadingFor(auditClass.id, violation.kind) === undefined ? {} : { advisory: true }),
+      })),
       notes: outcome.notes ?? [],
+      unproven: outcome.unproven ?? [],
     };
-    result.advisory = ADVISORY.has(result.id);
     results.push(result);
     byId.set(result.id, result);
   }
@@ -970,28 +995,63 @@ const SAMPLE_MESSAGE = 160;
 
 export function totals(results) {
   const violations = results.flatMap((result) => result.violations);
-  // Advisory classes still report; they do not decide the exit code, and `ADVISORY` states why each one is listed.
-  // The count below is the count that was found, advisory or not.
-  const blocking = results.filter((result) => result.advisory !== true).flatMap((result) => result.violations);
+  // A violation is advisory when its own reading is one the owner has not ruled on (`ADVISORY_READINGS`). Everything
+  // else decides the exit code, including the defect kinds inside a class that also carries an advisory reading.
+  const blocking = violations.filter((violation) => violation.advisory !== true);
   return {
     classes: results.length,
     declared: results.reduce((total, result) => total + result.declared, 0),
     violations: violations.length,
     blocking: blocking.length,
     advisory: violations.length - blocking.length,
+    /** Every reading this run walked without proving clean, advisory findings included: the section's own count. */
+    unproven: unprovenReadings(results).length,
   };
+}
+
+/**
+ * The readings this run cannot call clean, as `[class, count, reading]` rows.
+ *
+ * Two different things share this list on purpose, because a reader who has to tell them apart is a reader who can
+ * mistake one for clean: findings an owner has not ruled on (they print as violations and here) and quantities a class
+ * walked without being able to prove (they print only here).
+ */
+export function unprovenReadings(results) {
+  const rows = [];
+  for (const result of results) {
+    for (const entry of result.unproven)
+      rows.push({ className: result.id, count: entry.count, reading: entry.reading });
+    const advisory = result.violations.filter((violation) => violation.advisory === true);
+    if (advisory.length === 0) continue;
+    const kinds = [...new Set(advisory.map((violation) => violation.kind).filter((kind) => kind !== undefined))];
+    rows.push({
+      className: result.id,
+      count: advisory.length,
+      reading: `advisory finding(s)${kinds.length === 0 ? "" : ` of ${kinds.join(", ")}`} - an owner ruling is pending, so these do not decide the run`,
+    });
+  }
+  return rows;
 }
 
 export function formatReport(results, { all = false } = {}) {
   const summary = totals(results);
   const lines = [
-    `audit-totality: ${summary.classes} classes, ${summary.declared} declared items walked, ${summary.violations} violations`,
+    `audit-totality: ${summary.classes} classes, ${summary.declared} declared items walked, ${summary.violations} violations (${summary.blocking} blocking, ${summary.advisory} advisory), ${summary.unproven} reading(s) this run cannot call clean`,
   ];
   const width = Math.max(...results.map((result) => result.id.length), 8);
   for (const result of results)
     lines.push(
       `  ${result.id.padEnd(width)}  ${String(result.declared).padStart(5)} declared  ${String(result.violations.length).padStart(4)} violation(s)  ${result.title}`,
     );
+  // The section that exists because a note among thirty other notes reads as clean. Every quantity this run walked
+  // without proving prints here, one line per class and reading, with its count - so "0 blocking" can never be the
+  // only thing a reader takes away. It prints even when it is empty, and then says so in words.
+  lines.push("", "NOT CLEAN - readings this run walked but cannot prove:");
+  const unproven = unprovenReadings(results);
+  if (unproven.length === 0) lines.push("  (none: every reading this run walked was proved clean)");
+  else
+    for (const row of unproven)
+      lines.push(`  ${row.className.padEnd(width)}  ${String(row.count).padStart(5)}  ${row.reading}`);
   for (const note of results.flatMap((result) => result.notes)) lines.push(`  note  ${note}`);
   const ranked = [...results.flatMap((result) => result.violations)].sort((left, right) => left.rank - right.rank);
   if (ranked.length === 0) return lines.join("\n");
@@ -1037,7 +1097,6 @@ function parseArguments(argv) {
   }
   return options;
 }
-
 function main() {
   const options = parseArguments(process.argv.slice(2));
   const results = runAudit(options);
@@ -1045,6 +1104,8 @@ function main() {
   if (options.json) process.stdout.write(`${JSON.stringify({ summary, results }, null, 2)}\n`);
   else process.stdout.write(`${formatReport(results, { all: options.all })}\n`);
   process.exitCode = summary.blocking > 0 ? 1 : 0;
+  // A reading this run cannot call clean is not a pass. The audit reports it and still exits 0 only because every such
+  // reading has a named reason above - it is not silent, which was the complaint that produced this section.
 }
 
 // ---------------------------------------------------------------------------
@@ -2233,7 +2294,7 @@ function runDuplication(sources) {
       `duplication: crowded by construction, cannot diverge - each answers exactly one outcome, so no two call sites can receive answers that disagree: ${constructors.join("; ")}`,
     );
   notes.push(
-    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more answers a caller has to tell apart (a boolean, or a union of two or more members that are not the absence of an answer). It reports ${diverging} such decider(s) today${diverging === 0 ? ", so nothing here blocks; the class stays advisory only because no such decider exists yet" : ", which is why it is advisory: promoting it now would veto a plurality this tree already holds, and resolving that plurality is a product edit"}`,
+    `duplication: promotion condition - this class is blocking for a crowded decider whose declared answer admits two or more answers a caller has to tell apart (a boolean, or a union of two or more members that are not the absence of an answer). It reports ${diverging} such decider(s) today, and every one of them is a finding that decides the run`,
   );
   notes.push(
     "duplication: what it cannot see - two implementations with different names (nothing here reads intent), a decision inlined into a caller with no decider function at all, and a decider whose second consumer reaches it through an `export *` barrel with no `index.ts`, which the specifier resolver does not follow",
@@ -2350,47 +2411,48 @@ function runDelegated(sources, gate) {
 // ---------------------------------------------------------------------------
 
 /**
- * Classes whose findings print but do not fail the run.
+ * The readings whose findings print but do not fail the run, each with the ruling it awaits.
  *
- * A class belongs here for one reason: its findings are a ruling the owner has not taken, so a red from it would
- * veto an unmade decision rather than report a defect this repository already holds wrong. That is not a licence
- * for a rule that cannot read its own fixture - such a rule would be a broken gate, and every rule here is proved
- * clean-then-red-then-clean on the scratch tree before it is trusted.
+ * Membership is per READING, not per class, and that is the point: a class is a rule, but a reading inside it is a
+ * defect or a decision, and the two deserve different answers. `hygiene` carries one of each - `test-only export` is
+ * 160 findings of one pattern that one ruling settles, while `suppression directive` and `commented-out code` are site
+ * defects with none today, so those two block and cannot come back unnoticed.
  *
- * `hygiene` is the member, and the argument is its own note: every one of its 152 findings is one pattern, a Host
- * export no production code reaches, which one ruling settles - accept it wholesale and withdraw the rule, or treat
- * it as one defect and sweep it mechanically. Until that ruling exists the class reports by kind with counts and a
- * bounded sample, and it does not block.
+ * A reading belongs here for ONE reason: its findings are a ruling the owner has not taken, so a red from it would veto
+ * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
+ * that cannot read its own fixture - every rule here is proved clean-then-red-then-clean on the scratch tree.
  *
- * That count only became a reading when the importer detection was resolved (`759b588a`). The scan it replaced keyed
- * importers by the bare name of an `import` declaration, so an export the declaring module itself names - a constant
- * the file uses, `MAX_PLAN_NODES` at `body-program-script.ts:66`, with a test importing it - was reported as a
- * production path with no production consumer, and an import that renamed the binding cleared the wrong symbol. 286 of
- * the 287 findings the fix removed were the first shape; the rest moved to the declaration a re-export list aliases.
- * The class now resolves a relative specifier to the module it names, treats a re-export barrel as transparent, and
- * counts a module's own use of its export; its own test proves both directions, and the 152 that remain are real.
+ * `test-only export` (160 today): every finding is one pattern - a Host export no production code reaches - so one
+ * ruling settles all of them (move the helper to a test-support module, or drop the export); editing sites one at a
+ * time is not the fix. That count only became a reading when the importer detection was resolved (`759b588a`): the
+ * scan it replaced keyed importers by the bare name of an `import` declaration, so an export the declaring module
+ * itself names was reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287
+ * findings that fix removed were that shape; the rest moved to the declaration a re-export list aliases. The class now
+ * resolves a relative specifier, treats a re-export barrel as transparent, and counts a module's own use of its
+ * export, and the 160 that remain are real.
  *
- * `read-path` left this list when the rule learned the namespaced schema reference the product writes (`e9efd15e`):
- * its fixture now resolves the site, goes red on a projection bounded above the schema it validates against, and
- * goes green again, so it blocks - and the real tree reports `0 cap(s) that the projection can exceed`.
- *
- * `bounds`, `fields` and `routes` are not here. Their heuristics were triaged, and each now compares only what
- * it can prove: a cap is paired with a constant only when that constant names the same property, a field counts
- * as produced or read when the side that produces or reads it spells the name in any form (property, shorthand,
- * JSX attribute, binding, literal), and a route table entry is checked as an entry rather than as an occurrence
- * of the word `routeId`. What remains uncertain - a cap no constant names, a field no source spells while the
- * schema around it is used - prints as a note and is never reported as a violation, so a green run means the
- * class found nothing it can prove, not that it stopped looking.
- *
- * `duplication` is still here, but no longer because of a defect it reports: since the class learned that an
- * optional answer is one answer, `resolveWindowsPowerShell` (`string | undefined`) is a constructor like the
- * other two - its `undefined` is "this environment names no SystemRoot", and every call site applies the same
- * `?? "powershell.exe"`, so no two of them can disagree. The class reports zero diverging deciders today, and
- * the note says so. It stays advisory for the reason every class here does: a red from it would veto a ruling
- * the owner has not taken rather than report a defect this repository holds wrong. The promotion condition is
- * unchanged and still testable - a crowded decider whose answer is a boolean or a union of two real answers.
+ * Nothing else is listed. `read-path` left this list when the rule learned the namespaced schema reference the product
+ * writes (`e9efd15e`), and it reports `0 cap(s) that the projection can exceed`. `bounds`, `fields`, `routes`,
+ * `refusal`, `codes`, `prompt`, `promises` and `duplication` were each triaged to compare only what they can prove,
+ * so each blocks - `duplication` included, because its promotion condition is the finding itself (a crowded decider
+ * whose answer is a boolean or a union of two real answers), it reports zero of those today, and a red from it
+ * therefore names a defect rather than an unmade decision.
  */
-export const ADVISORY = Object.freeze(new Set(["hygiene", "duplication"]));
+export const ADVISORY_READINGS = Object.freeze(
+  [
+    {
+      className: "hygiene",
+      kind: "test-only export",
+      reason:
+        "one pattern across every finding, settled by a single owner ruling - accept the surface wholesale and withdraw the rule, or sweep it mechanically into test-support modules",
+    },
+  ].map(Object.freeze),
+);
+
+/** Whether one finding is a reading an owner ruling is still pending on. */
+function advisoryReadingFor(className, kind) {
+  return ADVISORY_READINGS.find((entry) => entry.className === className && entry.kind === kind);
+}
 
 export const CLASSES = Object.freeze([
   ...CLASS_IMPLEMENTATIONS,
