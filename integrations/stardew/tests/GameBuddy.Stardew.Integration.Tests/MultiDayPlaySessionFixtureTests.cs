@@ -13,6 +13,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// alone has nothing to do in it. The composition is the point, so it is pinned here rather than left to
 /// the dispatcher's reading order.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class MultiDayPlaySessionFixtureTests
 {
     private const string RepositoryRelativeRoot = "../../../../../../../";

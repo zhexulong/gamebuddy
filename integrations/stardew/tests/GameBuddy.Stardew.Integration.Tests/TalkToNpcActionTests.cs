@@ -34,6 +34,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// talk itself, the observed dialogue and the refusal paths against a live world belong to
 /// the native-local fixture gate.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class TalkToNpcActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.npcactions.cs";

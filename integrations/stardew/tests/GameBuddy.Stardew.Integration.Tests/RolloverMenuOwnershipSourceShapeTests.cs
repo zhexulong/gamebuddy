@@ -24,6 +24,7 @@ namespace GameBuddy.Stardew.Core.Tests;
 ///   LevelUpMenu   GRANTS a perk when it closes, and on a milestone it grants whichever branch was picked. Closing it
 ///                 takes a permanent decision, so the lifecycle must NOT take it.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class RolloverMenuOwnershipSourceShapeTests
 {
     [Fact]

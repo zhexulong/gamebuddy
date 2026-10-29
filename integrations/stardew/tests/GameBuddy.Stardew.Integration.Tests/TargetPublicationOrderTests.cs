@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// that existed - a dictionary enumeration reaching a `Take` without passing through the ordering helper - and it
 /// names each remaining place so the next one is not discovered by a live run.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class TargetPublicationOrderTests
 {
     private static readonly string[] WalkingOrderDiscoveries =

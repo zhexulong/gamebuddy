@@ -23,6 +23,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Like its sibling lane tests, the structural assertions run without a Game1 harness;
 /// the live door transaction belongs to the native-local gate these pins support.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class EnterExitWarpActionSourceShapeTests
 {
     private const string FixtureFile = "ModEntry.Fixtures.EnterExitWarpAction.cs";

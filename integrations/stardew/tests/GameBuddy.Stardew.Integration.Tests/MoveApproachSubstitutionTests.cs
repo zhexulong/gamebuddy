@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// named no cause). The selection below is the deterministic half of the fix, so it
 /// is tested as arithmetic rather than through a live game.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public class MoveApproachSubstitutionTests
 {
     private static string RepositorySourcePath(string relative)

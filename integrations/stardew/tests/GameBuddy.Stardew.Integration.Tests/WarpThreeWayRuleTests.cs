@@ -42,6 +42,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// gets wrong.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class WarpThreeWayRuleTests
 {
     private const string MovementActions = "integrations/stardew/farmhandexecutioncontroller.movementactions.cs";

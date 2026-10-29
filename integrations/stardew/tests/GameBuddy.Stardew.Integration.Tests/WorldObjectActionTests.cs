@@ -26,6 +26,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Structural assertions run without a Game1 harness; the native mutations, the observed
 /// postconditions and every negative case belong to the live gates.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class WorldObjectActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.worldobjectactions.cs";

@@ -22,6 +22,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Like its sibling lane tests, these are structural pins; the live native transaction
 /// belongs to the native-local gate these pins support.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class EnterMineLadderSourceShapeTests
 {
     private const string FixtureFile = "ModEntry.Fixtures.EnterMineLadder.cs";

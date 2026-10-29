@@ -22,6 +22,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// These cases pin the GUARD, not the dispatch: the helper is called from `OnDayStarted` when no lifecycle is live,
 /// and what a test can verify without a running game is that it refuses every menu whose close would take a decision.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class SettlementWithoutLifecycleTests
 {
     // Internal to the Mod assembly, which a referenced assembly cannot reach by name.

@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///      crossing the blocker tile), not a cheap passability scan -- the
 ///      planner's collisions include things isTilePassable misses.
 /// </summary>
+[Trait("kind", "source-shape")]
 public class MoveStallProbeFixtureSourceShapeTests
 {
     private static string RepositorySourcePath(string relative)

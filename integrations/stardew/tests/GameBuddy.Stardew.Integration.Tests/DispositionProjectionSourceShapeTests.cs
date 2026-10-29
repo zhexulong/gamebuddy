@@ -9,6 +9,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// halves that matter: every kind the classifier can produce is expressible on the wire, and the snapshot
 /// reads the value the controller already computed rather than deriving its own.
 /// </summary>
+[Trait("kind", "source-shape")]
 public class DispositionProjectionSourceShapeTests
 {
     private static string ReadSource(params string[] relativeParts) =>

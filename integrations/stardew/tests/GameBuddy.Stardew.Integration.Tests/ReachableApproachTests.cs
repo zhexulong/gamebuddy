@@ -28,6 +28,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// test and the wiring is what was missing, not the rule.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class ReachableApproachTests
 {
     private static HashSet<(int X, int Y)> Tiles(params (int X, int Y)[] tiles) => new(tiles);

@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// move by name; a travel or a navigation whose warp this is keeps ownership through its own
 /// postcondition (CompleteTravelAfterWarp / CompleteNavigationAfterWarp).
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class MoveLocationChangeReleaseTests
 {
     private const string WarpLifecycleRelativePath = "integrations/stardew/NavigationWarpLifecycle.cs";

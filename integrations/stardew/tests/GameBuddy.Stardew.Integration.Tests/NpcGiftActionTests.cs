@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// behavior belongs to the native-local fixture lane (receipt + limit deltas +
 /// no modal residue) via the env-gated probe below.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class NpcGiftActionTests
 {
     private const string DecompiledNpcRelativePath = @"ref\external\StardewValleyDecompiled\Stardew Valley\StardewValley\NPC.cs";

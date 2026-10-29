@@ -35,6 +35,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// (scenarios native_equip_wearable_v1 / native_unequip_wearable_v1 /
 /// native_unequip_wearable_inventory_full_v1 / native_dismount_transport_v1).
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class ActorStateActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.actorstateactions.cs";

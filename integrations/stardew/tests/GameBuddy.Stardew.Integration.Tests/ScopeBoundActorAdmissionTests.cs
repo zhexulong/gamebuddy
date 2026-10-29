@@ -34,6 +34,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// from the Mod source (<see cref="CoveredActionSet_EqualsTheSourceDerivedGuardedActionSet"/>),
 /// so a guard added to, removed from, or re-dispatched within these partials fails here.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class ScopeBoundActorAdmissionTests
 {
     private const string ScopePlayerId = "1001";

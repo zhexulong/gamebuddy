@@ -28,6 +28,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// (host/src/stardew-game-integration-adapter.ts) names `collection_overflow_pending`
 /// plus exactly the eighteen other keys, so the receipt keeps that shape.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class ClaimMailAttachmentOverflowCleanupSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.itemtileactions.cs";

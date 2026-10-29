@@ -15,6 +15,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// measures the difference this harvest made, rather than reporting the inventory's absolute state (which would let
 /// an earlier harvest's quality masquerade as this one's).
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class HarvestQualityProjectionSourceShapeTests
 {
     private const string RepositoryRelativeRoot = "../../../../../../../";

@@ -31,6 +31,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// toggle itself, the observed world change and the stale-target negative case belong to the
 /// native-local fixture gate (scenario native_toggle_animal_door_v1).
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class ToggleAnimalDoorActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.animaldooractions.cs";

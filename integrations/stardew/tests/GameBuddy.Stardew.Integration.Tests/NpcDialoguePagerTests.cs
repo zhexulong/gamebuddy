@@ -30,6 +30,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <see cref="Source_NpcDialoguePager_MutatesOnlyThroughTheNativeClick"/>; real
 /// live cover for the advance belongs to the Lane D4 live gate.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class NpcDialoguePagerTests
 {
     private const string Token = "pager_token_0123456789abcdef";

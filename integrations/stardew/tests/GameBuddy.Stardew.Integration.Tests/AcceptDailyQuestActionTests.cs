@@ -23,6 +23,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// single, and the honest terminal when the world does not change. The live gate - the offer, the
 /// quest-log write and the stale negative - belongs to the native-local fixture runner.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class AcceptDailyQuestActionTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.questactions.cs";

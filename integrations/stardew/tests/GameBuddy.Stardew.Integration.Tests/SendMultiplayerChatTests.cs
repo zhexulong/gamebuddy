@@ -31,6 +31,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// The multiplayer topology facts, the egress field and the lobby dictionary are Game1 statics, so
 /// each probe saves and restores them (the suite serializes its assembly for exactly this reason).
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class SendMultiplayerChatTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.chatactions.cs";

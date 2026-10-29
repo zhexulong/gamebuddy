@@ -19,6 +19,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// deliberately a source test rather than a behaviour test, and it is honest about that: the
 /// behaviour it protects is only reachable with a real game body.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class BodySettledOwnershipSourceShapeTests
 {
     private static string Source(string relativePath) =>

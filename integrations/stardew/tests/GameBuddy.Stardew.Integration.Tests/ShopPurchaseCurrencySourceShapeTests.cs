@@ -22,6 +22,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// those key names and <c>money_after &lt; money_before</c>), so the values now carry the currency
 /// amount under the unchanged keys.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class ShopPurchaseCurrencySourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.shopactions.cs";

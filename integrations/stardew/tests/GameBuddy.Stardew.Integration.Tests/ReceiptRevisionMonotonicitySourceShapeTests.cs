@@ -19,6 +19,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// shared counter on both sides of a mutation. These assertions are source-level because the funnel is called
 /// from ~120 native mint sites; a live run is the only other place the ordering is observable.
 /// </summary>
+[Trait("kind", "source-shape")]
 public sealed class ReceiptRevisionMonotonicitySourceShapeTests
 {
     private const string RepositoryRelativeRoot = "../../../../../../../";

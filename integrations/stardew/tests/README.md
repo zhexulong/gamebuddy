@@ -1,3 +1,48 @@
+## Two kinds of test in `GameBuddy.Stardew.Integration.Tests`
+
+**A source-shape pin is a test whose body reads a repository file (`File.ReadAllText`/`ReadAllLines`/`ReadAllBytes`) and asserts on its text (`Should().Contain`/`NotContain`) instead of constructing and calling product code.** Its opposite, a behaviour test, builds the real objects and calls them.
+
+Measured today at `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests` - 148 files, 1013 test methods:
+
+| Kind | Files | Meaning |
+| --- | --- | --- |
+| shape-only | 16 | every test is a source-shape pin |
+| mixed | 54 | some pins, some behaviour tests |
+| behaviour-only | 75 | no pins |
+| ambiguous | 2 | a pin whose assertion is inside a custom helper the definition cannot see through; the gate lists it and leaves the file alone |
+
+The trait is `[Trait("kind", "source-shape")]`, and it is on shape-only classes **only**. A mixed file does not get it: the trait would tell a reader - and `--filter` - that the whole class pins text, when half of it exercises behaviour. Mixed files say so in a `// MIXED SHAPE AND BEHAVIOUR:` comment above the class instead. Shape-only files are named `<Subject>SourceShapeTests.cs`, so the file name carries the same fact the trait does.
+
+Run only the behaviour tests:
+
+```powershell
+dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --filter kind!=source-shape
+```
+
+Run only the pins:
+
+```powershell
+dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --filter kind=source-shape
+```
+
+### Why a pin exists at all
+
+The game assembly cannot load on a CI runner: the Mod's tests need a real Stardew Valley install, and a headless runner has no `Game1`, no player and no live location. A pin therefore asserts *which native members an action writes, and that no menu path is driven*, by reading the Mod's own source. That is weaker than exercising the behaviour, and it is the strongest thing available without a game. **Do not convert a pin into an integration test, and do not reword its assertions to match new code** - a pin that follows the code it pins has stopped pinning anything.
+
+### The gate
+
+`tools/audit-stardew-test-shape.mjs` derives its population from file content on every run - never from a list - and fails when a file drifts:
+
+- a shape-only file without the trait, or without the `SourceShapeTests.cs` suffix;
+- a behaviour-only or mixed file carrying the trait;
+- a mixed file with no `// MIXED SHAPE AND BEHAVIOUR:` line, or one too short to say why.
+
+```powershell
+node tools/audit-stardew-test-shape.mjs          # counts + findings
+node tools/audit-stardew-test-shape.mjs --list   # every file with its kind
+node tools/audit-stardew-test-shape.mjs --json   # the full report
+```
+
 # Stardew checked projection-contract executables
 
 These are explicit console contract-test executables, not automatically discovered unit-test-framework projects. Both projects are included in `GameBuddy.sln`; therefore a solution build compiles each executable and cannot silently omit either checked projection.
