@@ -17,8 +17,37 @@ import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject }
  * drawer is open at all.
  */
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/**
+ * The elements that could be a tab stop. Which of them actually ARE is not answered
+ * here: that is the browser's answer, read in `focusStops`, because a hand-written
+ * predicate over tag and `disabled` disagrees with the browser - and every disagreement
+ * made this trap intercept at the wrong element and let focus out of a modal drawer.
+ */
+const FOCUS_CANDIDATE_SELECTOR = "a, button, input, select, textarea, summary, [tabindex]";
+
+/**
+ * The stops a Tab press can reach inside the panel, in DOM order, by the browser's own
+ * two answers:
+ *
+ *  - `tabIndex >= 0` is the tab order. It is `-1` for anything the page took out of it
+ *    (`tabindex="-1"`, whatever the tag) - which is how the avatar section's hidden
+ *    `<input type="file">` stays programmatically clickable and out of the walk - and
+ *    `:disabled` covers the control that keeps `tabIndex` 0 while refusing focus.
+ *  - `checkVisibility()` is "the browser would render and focus this". The old proxy was
+ *    `offsetParent`, which is a different question: a `<summary>` in a CLOSED `<details>`
+ *    still has an `offsetParent` and a client rect, and the browser will not focus it.
+ *
+ * The active element is kept even when it fails `checkVisibility()`, so a control being
+ * focused as the drawer closes still counts.
+ */
+function focusStops(panel: HTMLElement): HTMLElement[] {
+  return [...panel.querySelectorAll<HTMLElement>(FOCUS_CANDIDATE_SELECTOR)].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.matches(":disabled") &&
+      (element === document.activeElement || element.checkVisibility()),
+  );
+}
 
 export type ContextDrawerProps = Readonly<{
   /** The drawer heading, which is also the dialog's accessible name. */
@@ -73,9 +102,7 @@ export function ContextDrawer({
     if (event.key !== "Tab") return;
     const panel = panelRef.current;
     if (panel === null) return;
-    const focusable = [...panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(
-      (element) => element.offsetParent !== null || element === document.activeElement,
-    );
+    const focusable = focusStops(panel);
     const first = focusable.at(0);
     const last = focusable.at(-1);
     if (first === undefined || last === undefined) return;
