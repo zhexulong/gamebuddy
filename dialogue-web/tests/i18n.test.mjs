@@ -4,6 +4,7 @@ import {
   applyDocumentLocale,
   messages,
   persistLocale,
+  recordLabel,
   resolveLocale,
 } from "../src/i18n.ts";
 import { turnFailureText } from "../src/components/turn-failure-text.ts";
@@ -65,6 +66,38 @@ test("messages returns complete dictionary with identical keys for en and zh-CN"
     assert.ok(typeof enMessages[key] === "string" && enMessages[key].length > 0, `en.${key} is empty`);
     assert.ok(typeof zhMessages[key] === "string" && zhMessages[key].length > 0, `zh.${key} is empty`);
   }
+});
+
+/**
+ * A record's name ends in whatever script it ends in, and a label resumes in its own.
+ *
+ * The settings label read `Operator gateway (developer only) · deepseek-v4.1-flash思考强度`:
+ * the Chinese template resumes in Chinese and a Latin tail carries no separator of its own, so
+ * the two scripts ran together as one word. The same label is also the English one, whose own
+ * text already supplies a space, and it is used for a Chinese record (`聊天`) as well - so the
+ * separator belongs to the substitution and all four shapes are pinned here.
+ */
+test("the thinking-level label separates a Latin tail and leaves a Chinese record untouched", () => {
+  const latin = "Operator gateway (developer only) · deepseek-v4.1-flash";
+  const zh = messages("zh-CN");
+  const en = messages("en");
+
+  assert.equal(recordLabel(zh.thinkingLevelOf, latin), `${latin} 思考强度`);
+  assert.equal(recordLabel(en.thinkingLevelOf, latin), `${latin} thinking level`);
+  // A Chinese record takes no space: `聊天` already ends where the Chinese label resumes.
+  assert.equal(recordLabel(zh.thinkingLevelOf, "聊天"), "聊天思考强度");
+  assert.equal(recordLabel(en.thinkingLevelOf, "聊天"), "聊天 thinking level");
+
+  // Exactly one space at the join in every shape - never two, never none beside Latin text.
+  for (const [template, record] of [
+    [zh.thinkingLevelOf, latin],
+    [en.thinkingLevelOf, latin],
+    [zh.thinkingLevelOf, "聊天"],
+    [en.thinkingLevelOf, "聊天"],
+  ]) {
+    assert.doesNotMatch(recordLabel(template, record), /\s{2,}/u, `${record} joins with a doubled space`);
+  }
+  assert.ok(recordLabel(zh.thinkingLevelOf, latin).endsWith(" 思考强度"));
 });
 
 test("the zero-message anchor keeps its companion placeholder in both locales", () => {

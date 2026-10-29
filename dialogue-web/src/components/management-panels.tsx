@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { problemTextWithCode } from "../composed-problem-view";
-import { type Locale, messages } from "../i18n";
+import { type Locale, messages, recordLabel } from "../i18n";
 import { memoryNotebookLabels } from "./memory-notebook-labels";
 import {
   CONNECTION_API_SHAPES,
@@ -260,9 +260,7 @@ export function ModelProfileEditor({
       <h3>{surfaceLabel}</h3>
       {/* The field's label names the record it writes. `surfaceLabel` is already the card's own
           heading, so the label and the heading that scopes it cannot disagree. */}
-      <label htmlFor={`model-profile-level-${surface}`}>
-        {labels.thinkingLevelOf.replace("{{record}}", surfaceLabel)}
-      </label>
+      <label htmlFor={`model-profile-level-${surface}`}>{recordLabel(labels.thinkingLevelOf, surfaceLabel)}</label>
       <input
         id={`model-profile-level-${surface}`}
         className="form-input"
@@ -890,7 +888,7 @@ export function ConnectionRow({
           {/* This select writes one saved connection's own level, so its label names that
               connection rather than restating the bare field word the two profile editors and
               this row were all announcing. */}
-          {labels.thinkingLevelOf.replace("{{record}}", connection.label)}
+          {recordLabel(labels.thinkingLevelOf, connection.label)}
         </label>
         <select
           id={`connection-level-${connection.connectionId}`}

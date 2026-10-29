@@ -1805,6 +1805,33 @@ const zh: Messages = {
   gamePromptAdditionUnavailable: "暂时无法读取这些指令。",
 } satisfies Record<MessageKey, string>;
 
+/**
+ * One label template's `{{record}}`, substituted together with the separator the join needs.
+ *
+ * A record's name ends in the script its author wrote it in (`deepseek-v4.1-flash`, `聊天`) and
+ * the label resumes in the catalogue's own, so the join cannot be left to whichever side happens
+ * to be written first: `{{record}}思考强度` rendered `…deepseek-v4.1-flash思考强度`, one word in two
+ * scripts. A template that already separates its halves (the English `{{record}} thinking level`)
+ * keeps that space and gains nothing, and two Chinese characters stay adjacent, which is how the
+ * language is written.
+ */
+export const RECORD_PLACEHOLDER = "{{record}}";
+
+/**
+ * A character that reads as part of the same word as what follows it: a Latin letter or digit
+ * with no space after it runs into the next script (`…flash思考强度`). CJK does not - two Chinese
+ * characters, or a Chinese record and a Chinese label, are written adjacent.
+ */
+const LATIN_TAIL = /[A-Za-z0-9]$/u;
+
+export function recordLabel(template: string, record: string): string {
+  const [before, ...after] = template.split(RECORD_PLACEHOLDER);
+  if (after.length === 0) return template;
+  const rest = after.join(RECORD_PLACEHOLDER);
+  const join = LATIN_TAIL.test(record) && !/^\s/u.test(rest) ? " " : "";
+  return `${before}${record}${join}${rest}`;
+}
+
 export function messages(locale: Locale): Messages {
   return locale === "zh-CN" ? zh : en;
 }
