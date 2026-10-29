@@ -10,6 +10,7 @@ import test from "node:test";
 import {
   admitStardewInstallation,
   recheckAdmittedStardewInstallation,
+  STARDEW_REPARSE_POINT_REFUSED,
   type AdmittedStardewInstallation,
 } from "./stardew-installation-admission.js";
 import { consumeAdmittedStardewInstallation } from "./stardew-installation-admission.core.js";
@@ -80,7 +81,9 @@ test("strict candidates reject before invoking the inspector and expose one reda
   ];
   for (const value of badCandidates) {
     let invoked = false;
-    const inspector = chainInspector([validChain(), validChain()], [], () => { invoked = true; });
+    const inspector = chainInspector([validChain(), validChain()], [], () => {
+      invoked = true;
+    });
     await rejectsRedacted(() => admitStardewInstallation(inspector, value));
     assert.equal(invoked, false, value);
   }
@@ -102,19 +105,70 @@ test("malformed chains, wrong kinds, and reparse objects all fail closed", async
   const malformedLength = validChain().slice(0, 3);
   const wrongAncestor = replace(validChain(), 1, identity("regular_file", "00000000000000000000000000000002"));
   const wrongLeaf = replace(validChain(), 3, identity("directory", "00000000000000000000000000000004"));
-  const reparseAncestor = replace(validChain(), 1, identity("directory", "00000000000000000000000000000002", { isReparsePoint: true }));
-  const reparseLeaf = replace(validChain(), 3, identity("regular_file", "00000000000000000000000000000004", { isReparsePoint: true }));
-  const malformedIdentity = replace(validChain(), 1, Object.freeze({
-    objectKind: "directory",
-    isReparsePoint: false,
-    volumeIdentity,
-    fileId: "not-an-id",
-  }) as WindowsPathObjectIdentity);
-  const mixedVolume = replace(validChain(), 1, identity("directory", "00000000000000000000000000000002", {
-    volumeIdentity: "fedcba9876543210",
-  }));
+  const malformedIdentity = replace(
+    validChain(),
+    1,
+    Object.freeze({
+      objectKind: "directory",
+      isReparsePoint: false,
+      volumeIdentity,
+      fileId: "not-an-id",
+    }) as WindowsPathObjectIdentity,
+  );
+  const mixedVolume = replace(
+    validChain(),
+    1,
+    identity("directory", "00000000000000000000000000000002", {
+      volumeIdentity: "fedcba9876543210",
+    }),
+  );
 
-  for (const chain of [malformedLength, wrongAncestor, wrongLeaf, reparseAncestor, reparseLeaf, malformedIdentity, mixedVolume]) {
+  for (const chain of [malformedLength, wrongAncestor, wrongLeaf, malformedIdentity, mixedVolume]) {
+    await rejectsRedacted(() => admitStardewInstallation(chainInspector([chain, chain], []), candidate));
+  }
+});
+
+/**
+ * A reparse point in the chain is refused by its own name, and nothing else is.
+ *
+ * The refusals were one message: a shortcut, a junction or an MO2 virtual folder was
+ * reported exactly as a malformed chain or a forged capability, so the player read the
+ * generic "this folder cannot be used" with no hint that the cause was the path itself.
+ * The two are now distinct, and the boundary is asserted from both sides: a reparse
+ * point (ancestor or the mod-loader leaf) mints the reparse refusal, while every other
+ * inadmissible chain keeps the unnamed one.
+ */
+test("a reparse point in the chain is its own refusal, and other inadmissible chains keep the unnamed one", async () => {
+  const reparseAncestor = replace(
+    validChain(),
+    1,
+    identity("directory", "00000000000000000000000000000002", { isReparsePoint: true }),
+  );
+  const reparseLeaf = replace(
+    validChain(),
+    3,
+    identity("regular_file", "00000000000000000000000000000004", { isReparsePoint: true }),
+  );
+
+  for (const chain of [reparseAncestor, reparseLeaf]) {
+    await assert.rejects(
+      () => admitStardewInstallation(chainInspector([chain, chain], []), candidate),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, STARDEW_REPARSE_POINT_REFUSED);
+        assert.equal(error.message.includes("Stardew"), false);
+        assert.equal(error.message.includes(volumeIdentity), false);
+        return true;
+      },
+    );
+  }
+  // The neighbouring refusals did not acquire the new name: a chain of the wrong length, a
+  // wrong object kind and a malformed identity stay the unnamed admission failure.
+  for (const chain of [
+    validChain().slice(0, 3),
+    replace(validChain(), 1, identity("regular_file", "00000000000000000000000000000002")),
+    replace(validChain(), 3, identity("directory", "00000000000000000000000000000004")),
+  ]) {
     await rejectsRedacted(() => admitStardewInstallation(chainInspector([chain, chain], []), candidate));
   }
 });
@@ -124,20 +178,40 @@ test("replacement between the first and second chain fails for every identity fi
   const replacements = [
     replace(base, 2, identity("directory", "ffffffffffffffffffffffffffffffff")),
     replace(base, 2, identity("directory", "00000000000000000000000000000003", { volumeIdentity: "fedcba9876543210" })),
-    replace(base, 2, identity("directory", "00000000000000000000000000000003", { isReparsePoint: true })),
     replace(base, 3, identity("directory", "00000000000000000000000000000004")),
   ];
 
   for (const second of replacements) {
     await rejectsRedacted(() => admitStardewInstallation(chainInspector([base, second], []), candidate));
   }
+  // A reparse point that appears only in the second read is a reparse refusal, not an unnamed
+  // one: the path really does resolve through a link, which is the fact the player can act on.
+  await assert.rejects(
+    () =>
+      admitStardewInstallation(
+        chainInspector(
+          [base, replace(base, 2, identity("directory", "00000000000000000000000000000003", { isReparsePoint: true }))],
+          [],
+        ),
+        candidate,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, STARDEW_REPARSE_POINT_REFUSED);
+      return true;
+    },
+  );
 });
 
 test("nonidentical volume and object kind across otherwise valid successive chains fail", async () => {
   const base = validChain();
-  const volumeReplacement = replace(base, 3, identity("regular_file", "00000000000000000000000000000004", {
-    volumeIdentity: "fedcba9876543210",
-  }));
+  const volumeReplacement = replace(
+    base,
+    3,
+    identity("regular_file", "00000000000000000000000000000004", {
+      volumeIdentity: "fedcba9876543210",
+    }),
+  );
   const kindReplacement = replace(base, 3, identity("directory", "00000000000000000000000000000004"));
 
   await rejectsRedacted(() => admitStardewInstallation(chainInspector([base, volumeReplacement], []), candidate));
@@ -145,7 +219,9 @@ test("nonidentical volume and object kind across otherwise valid successive chai
 });
 
 test("helper failure, forged inspector, and absent inspector all map to one redacted failure", async () => {
-  const failedHelper = createTestWindowsReparseInspector(() => { throw new Error(`missing ${executable}`); });
+  const failedHelper = createTestWindowsReparseInspector(() => {
+    throw new Error(`missing ${executable}`);
+  });
   await rejectsRedacted(() => admitStardewInstallation(failedHelper, candidate));
   await rejectsRedacted(() => admitStardewInstallation(Object.freeze({}), candidate));
   await rejectsRedacted(() => admitStardewInstallation(undefined as never, candidate));
@@ -185,14 +261,18 @@ test("controlled-use seam fresh-rereads and passes only root/executable to its c
 
 test("controlled-use seam rejects forged/absent installation before callback and stays redacted", async () => {
   let called = false;
-  await rejectsRedacted(() => consumeAdmittedStardewInstallation(
-    Object.freeze({}) as AdmittedStardewInstallation,
-    () => { called = true; return undefined; },
-  ));
-  await rejectsRedacted(() => consumeAdmittedStardewInstallation(
-    undefined as never,
-    () => { called = true; return undefined; },
-  ));
+  await rejectsRedacted(() =>
+    consumeAdmittedStardewInstallation(Object.freeze({}) as AdmittedStardewInstallation, () => {
+      called = true;
+      return undefined;
+    }),
+  );
+  await rejectsRedacted(() =>
+    consumeAdmittedStardewInstallation(undefined as never, () => {
+      called = true;
+      return undefined;
+    }),
+  );
   assert.equal(called, false);
 });
 
@@ -201,10 +281,12 @@ test("controlled-use seam rejects changed identity before callback with zero cal
   const changed = replace(base, 2, identity("directory", "ffffffffffffffffffffffffffffffff"));
   const admitted = await admitStardewInstallation(chainInspector([base, base, changed], []), candidate);
   let called = false;
-  await rejectsRedacted(() => consumeAdmittedStardewInstallation(
-    admitted,
-    () => { called = true; return undefined; },
-  ));
+  await rejectsRedacted(() =>
+    consumeAdmittedStardewInstallation(admitted, () => {
+      called = true;
+      return undefined;
+    }),
+  );
   assert.equal(called, false);
 });
 

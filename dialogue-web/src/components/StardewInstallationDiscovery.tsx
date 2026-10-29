@@ -190,6 +190,13 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
         setState("not-stardew-installation");
         return;
       }
+      // The third, and the one about the path: the folder reaches the game through a
+      // shortcut, a junction or a virtual folder, so the fix is to pick the game's real
+      // installation folder. Both controls that lead here report it.
+      if ("status" in result && result.status === "reparse_point") {
+        setState("reparse-point");
+        return;
+      }
       // A registration that named no cause stays unnamed. `source-unavailable` is
       // reserved for a source the scan could not read, and this was not a scan.
       if ("status" in result && result.status === "unavailable") {

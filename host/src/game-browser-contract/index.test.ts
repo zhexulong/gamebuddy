@@ -158,6 +158,10 @@ test("Game installation discovery contract is redacted and exact", () => {
     Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "not_stardew_installation" }),
     true,
   );
+  // And a linked folder - a shortcut, a junction, an MO2 virtual folder - is its own
+  // outcome: the game and the mod loader may both be there, and the player still has to
+  // pick the real installation folder.
+  assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "reparse_point" }), true);
   assert.equal(
     Compile(GameDiscoveryMutationResultV1Schema).Check({
       apiVersion: 1,

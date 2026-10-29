@@ -810,6 +810,12 @@ const en = {
   // their folder; the sentence says what to do rather than only what is wrong.
   gameInstallationNotStardewInstallation:
     "That folder is not a Stardew Valley installation. Choose the game folder that contains Stardew Valley.exe.",
+  // The third selection refusal a player can fix, and the one about the path rather than its
+  // content: a shortcut, a junction or a virtual folder names the game without being where it
+  // lives, and the Mod is loaded from the real folder. The sentence names the shapes a player
+  // actually has - a desktop shortcut, a Mod Organizer 2 instance - and what to pick instead.
+  gameInstallationReparsePoint:
+    "That folder is a shortcut, a junction or a virtual folder (for example a Mod Organizer 2 instance). Choose the game's real installation folder, the one that holds Stardew Valley.exe itself, not a link to it.",
   // A registration the Host could not name a cause for. It says nothing it cannot know:
   // not that the folder is wrong, not that the search failed.
   gameInstallationSelectionUnavailable: "That folder could not be used. Choose another game folder.",
@@ -1653,6 +1659,8 @@ const zh: Messages = {
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
   gameInstallationNotStardewInstallation:
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
+  gameInstallationReparsePoint:
+    "这个文件夹是快捷方式、目录联接（junction）或虚拟文件夹（例如 Mod Organizer 2 的实例）。请选择游戏真正的安装文件夹，也就是直接包含 Stardew Valley.exe 的那个文件夹，而不是指向它的链接。",
   gameInstallationSelectionUnavailable: "无法使用这个文件夹，请重新选择游戏文件夹。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",

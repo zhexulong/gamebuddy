@@ -13,6 +13,15 @@ const identityHex128 = /^[a-f0-9]{32}$/;
 
 declare const admittedStardewInstallationBrand: unique symbol;
 
+/**
+ * The bounded refusal a chosen folder mints when the path to its mod loader resolves through a
+ * reparse point: a shortcut, a junction, or a virtual folder such as a Mod Organizer 2 instance.
+ *
+ * It carries its own name because the player can act on it - pick the game's real installation
+ * folder - and the unnamed admission failure cannot say so.
+ */
+export const STARDEW_REPARSE_POINT_REFUSED = "stardew_installation_reparse_point";
+
 /** Opaque proof that one exact installation path passed this slice's identity-chain admission. */
 export type AdmittedStardewInstallation = object & {
   readonly [admittedStardewInstallationBrand]: true;
@@ -53,26 +62,27 @@ export async function admitStardewInstallation(
 
     const capability = Object.freeze({}) as AdmittedStardewInstallation;
     admittedInstallations.add(capability);
-    admittedInstallationStates.set(capability, Object.freeze({
-      inspector,
-      root: gameDirectoryCandidate,
-      executable,
-      identityChain: secondChain,
-    }));
+    admittedInstallationStates.set(
+      capability,
+      Object.freeze({
+        inspector,
+        root: gameDirectoryCandidate,
+        executable,
+        identityChain: secondChain,
+      }),
+    );
     return capability;
-  } catch {
-    throw admissionFailed();
+  } catch (error) {
+    throw refusalOf(error);
   }
 }
 
 /** Rechecks the exact admitted SMAPI identity without revealing its path. */
-export async function recheckAdmittedStardewInstallation(
-  installation: AdmittedStardewInstallation,
-): Promise<void> {
+export async function recheckAdmittedStardewInstallation(installation: AdmittedStardewInstallation): Promise<void> {
   try {
     await readFreshAdmittedInstallationState(installation);
-  } catch {
-    throw admissionFailed();
+  } catch (error) {
+    throw refusalOf(error);
   }
 }
 
@@ -102,7 +112,12 @@ async function readFreshAdmittedInstallationState(
 
 function assertStrictInstallationCandidate(candidate: string): number {
   if (process.platform !== "win32" || typeof candidate !== "string") throw admissionFailed();
-  if (candidate.length === 0 || candidate.length > 32 * 1024 || candidate.includes("/") || !/^[A-Za-z]:\\/.test(candidate)) {
+  if (
+    candidate.length === 0 ||
+    candidate.length > 32 * 1024 ||
+    candidate.includes("/") ||
+    !/^[A-Za-z]:\\/.test(candidate)
+  ) {
     throw admissionFailed();
   }
   if (driveRoot.test(candidate)) return 0;
@@ -135,7 +150,8 @@ function assertAdmissibleChain(chain: readonly WindowsPathObjectIdentity[], expe
   if (!Array.isArray(chain) || chain.length !== expectedCount) throw admissionFailed();
   for (let index = 0; index < chain.length; index++) {
     const identity = chain[index];
-    if (!validIdentity(identity) || identity.isReparsePoint) throw admissionFailed();
+    if (!validIdentity(identity)) throw admissionFailed();
+    if (identity.isReparsePoint) throw reparsePointRefused();
     const expectedKind = index === chain.length - 1 ? "regular_file" : "directory";
     if (identity.objectKind !== expectedKind) throw admissionFailed();
   }
@@ -185,4 +201,16 @@ function chainsEqual(
 
 function admissionFailed(): Error {
   return new Error("stardew_installation_admission_failed");
+}
+
+function reparsePointRefused(): Error {
+  return new Error(STARDEW_REPARSE_POINT_REFUSED);
+}
+
+/**
+ * A refusal that names its own cause keeps that name across the admission's catch-alls; every
+ * other fault becomes the one unnamed failure, which claims nothing about the folder.
+ */
+function refusalOf(error: unknown): Error {
+  return error instanceof Error && error.message === STARDEW_REPARSE_POINT_REFUSED ? error : admissionFailed();
 }

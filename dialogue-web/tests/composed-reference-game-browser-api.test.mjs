@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ComposedReferenceGameProblemError,
@@ -308,6 +311,61 @@ test("installation discovery is strict, uses opaque candidate IDs, and gates mut
   ]) {
     const badTransport = transport(jsonResponse(bad));
     await assert.rejects(createComposedReferenceGameBrowserApi(badTransport.fetch).readStardewInstallationDiscovery(), ComposedReferenceGameProtocolError);
+  }
+});
+
+/**
+ * Every selection refusal the Host can publish is decoded by the client mirror, including the
+ * third one.
+ *
+ * The mirror is hand-written and its closed list is what decides whether a legal reply is read
+ * as an answer or as protocol corruption. A `reparse_point` reply - a shortcut, a junction or an
+ * MO2 virtual folder - reaching a mirror that does not know it is not a missing sentence; it is
+ * the whole mutation turning into `invalid_stardew_installation_mutation`, and the player is
+ * told nothing about their folder at all.
+ */
+test("the client mirror decodes every selection refusal the contract declares, by derivation", async () => {
+  // The population is the Host contract's own union, read from its declaration rather than
+  // restated here, so a member added there is checked the moment it is declared.
+  const contractSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "host", "src", "game-browser-contract", "index.ts"),
+    "utf8",
+  );
+  const union = contractSource.match(/export const GameDiscoveryMutationResultV1Schema = Type\.Union\(\[([\s\S]*?)\]\);/u);
+  assert.notEqual(union, null, "GameDiscoveryMutationResultV1Schema must stay a union of strict objects");
+  const members = [...union[1].matchAll(/Type\.Literal\("([a-z_]+)"\)/gu)].map((match) => match[1]);
+  assert.deepEqual(
+    [...members].sort(),
+    [
+      "accepted",
+      "cancelled",
+      "mod_loader_missing",
+      "not_stardew_installation",
+      "registered",
+      "reparse_point",
+      "unavailable",
+    ],
+    "the contract's declared statuses are read from its own declaration",
+  );
+  for (const status of members) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status }));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    assert.deepEqual(
+      await api.openStardewInstallationPicker(),
+      { apiVersion: 1, status },
+      `the mirror must decode the contract's declared ${status}`,
+    );
+  }
+  // And the closed list still refuses what the contract does not declare.
+  for (const status of ["shortcut", "reparse", "linked_folder"]) {
+    const recorder = transport(jsonResponse(root()), jsonResponse({ apiVersion: 1, status }));
+    const api = createComposedReferenceGameBrowserApi(recorder.fetch);
+    await api.bootstrap(HANDLE);
+    await assert.rejects(
+      api.openStardewInstallationPicker(),
+      (error) => error instanceof ComposedReferenceGameProtocolError && error.reason === "invalid_stardew_installation_mutation",
+    );
   }
 });
 

@@ -295,6 +295,11 @@ export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: Api
  * `not_stardew_installation` is the other: the chosen folder holds no Stardew Valley
  * executable at all, so registering it can only fail later. It is distinct for the same
  * reason - `unavailable` says nothing about the folder the player just picked.
+ *
+ * `reparse_point` is the third: the chosen folder's path reaches the game through a
+ * shortcut, a junction or a virtual folder, so the installation it names is not the one
+ * the player will launch. It is distinct because the fix is one the player performs -
+ * pick the game's real installation folder.
  */
 export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
@@ -303,6 +308,7 @@ export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("mod_loader_missing") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("not_stardew_installation") }),
+  strictObject({ apiVersion: ApiVersion, status: Type.Literal("reparse_point") }),
 ]);
 export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationResultV1Schema>;
 
