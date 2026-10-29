@@ -164,6 +164,15 @@ internal sealed class SleepAndAdvanceDayLifecycle
     internal bool IsAwaitingEligibility => this.phase == Phase.AwaitingEligibility;
 
     /// <summary>
+    /// True once this lifecycle has handed its terminal back and stopped owning anything.
+    ///
+    /// `Update` reports completion and the Mod then drops the handle, so a caller that must act only when NOTHING owns
+    /// the rollover menus needs to see both that state and the dropped handle. Exposed as a property rather than
+    /// inferred from the phase because a finished lifecycle keeps reporting its last phase.
+    /// </summary>
+    internal bool IsFinished => this.finished;
+
+    /// <summary>
     /// The terminal's disposition of a morning-after settlement menu, named so a receipt can state it.
     /// </summary>
     internal enum SettlementMenuOutcome
@@ -792,6 +801,26 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// `DialogueBox` carries a question, so neither is residue a terminal may settle.
     /// </summary>
     internal static bool IsRolloverSettlementMenu(IClickableMenu? activeMenu) => activeMenu is ShippingMenu;
+
+    /// <summary>
+    /// Settle a standing morning-after summary when NO lifecycle owns it.
+    ///
+    /// A lifecycle exists only because `advance_day` started one (`RequestLocalAdvanceDay`). A night the engine took
+    /// by its own 2:00 AM pass-out has no lifecycle, so the ownership this file describes has nobody to discharge it -
+    /// and `shouldTimePass` returns false while any `activeClickableMenu` is non-null (Game1.cs:9300-9303), so the
+    /// clock does not advance either. Measured 2026-10-28 (`round6`): day 6 began with the summary standing, the
+    /// world stayed at 06:00 for 31 real minutes, and the run died.
+    ///
+    /// The same seam, for the same reason. `okClicked` only starts the outro (ShippingMenu.cs:690-696) and settles
+    /// nothing - the settlement happened before the menu existed - so this takes no decision and may be done on the
+    /// companion's behalf. A `LevelUpMenu` grants a perk when it closes, which is why this refuses anything else.
+    /// </summary>
+    internal static SettlementMenuOutcome SettleStandingSettlementMenuWithoutLifecycle(IClickableMenu? standing)
+    {
+        if (!IsRolloverSettlementMenu(standing))
+            return SettlementMenuOutcome.NotPresent;
+        return EngineShippingCommit((ShippingMenu)standing!) ? SettlementMenuOutcome.Committed : SettlementMenuOutcome.CommitUnavailable;
+    }
 
     /// <summary>
     /// The commit decision, separated from the live game so the whole table can be pinned without a running instance.

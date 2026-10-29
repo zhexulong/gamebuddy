@@ -1372,6 +1372,19 @@ public sealed partial class ModEntry : Mod
     private void OnDayStarted(object? sender, DayStartedEventArgs e)
     {
         this.sleepLifecycle?.ObserveDayStarted();
+        // A day that begins with the summary still standing, and no lifecycle to commit it, is the pass-out night.
+        //
+        // The lifecycle is the ordinary owner of this menu (`Phase.AwaitingModal`), but it exists only because
+        // `advance_day` started one - so a night the engine took by its own 2:00 AM pass-out has nobody to discharge
+        // the obligation. `shouldTimePass` then returns false while the menu is up (Game1.cs:9300-9303), which means
+        // the companion can neither act nor wait the blockage out. Measured 2026-10-28 (`round6`): the clock sat at
+        // 06:00 for 31 real minutes and the run died.
+        //
+        // Committed here rather than by the harness, because a harness that clicks it proves the harness: in a real
+        // session nobody is standing at the screen. This is the same engine seam the lifecycle and `dismiss_modal`
+        // reach for, on the one menu whose close takes no decision.
+        if (this.sleepLifecycle is null || this.sleepLifecycle.IsFinished)
+            SleepAndAdvanceDayLifecycle.SettleStandingSettlementMenuWithoutLifecycle(Game1.activeClickableMenu);
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
