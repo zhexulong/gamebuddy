@@ -188,23 +188,38 @@ test("the card's own directive states a register, and states it as speech", () =
  * once; a failure names which one drifted so the next edit knows what to fix.
  */
 const PERSON_FIRST_CLAUSE = /落到他的句子上|接住人|先接住玩家/u;
-const BODY_CHANNEL_CLAUSE = /交给游戏里那个身体|动作交给自己身体/u;
 
-test("the card's directive tells her to answer the person before it tells her how to carry her body", () => {
+/**
+ * One `【…】` section heading of the card's directive, as the card writes them: at the start of a
+ * line. A name in brackets inside a sentence (`…伙伴【琥珀】`) is not a section, and counting it
+ * here would measure the order against the preamble instead of the card's own craft sections.
+ */
+const SECTION_HEADING = /^【[^】]+】/gmu;
+
+test("the card's directive reaches the person before it reaches any later craft rule", () => {
+  // The invariant is ORDER, and the clause it was originally ordered against - "the body
+  // goes to the game in stardew_express_emote / stardew_face_direction" - was deleted
+  // with the two surface-bound clauses of this bullet, because the Host's own Game floor
+  // states that channel (identity-profile.ts, GAME_SURFACE_INTERACTION_CONDUCT) and the
+  // Chat surface draws the asterisk instead. The force is kept rather than dropped: the
+  // clause that made her answer the person has to stay the card's FIRST craft instruction,
+  // which is the position that beat the measured farm report. Its neighbours are derived
+  // from the card's own headings, so a new section that drifts in front of it fails here.
   const directive = DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "";
   const personAt = directive.search(PERSON_FIRST_CLAUSE);
-  const bodyAt = directive.search(BODY_CHANNEL_CLAUSE);
   assert.ok(
     personAt >= 0,
     `the directive no longer names answering the player as its own rule; the guard looks for ` +
       `${PERSON_FIRST_CLAUSE}. The measured failure it protects against is a status question answered ` +
       "with a farm report, and the phrasing moved out from under it.",
   );
-  assert.ok(bodyAt >= 0, `the directive no longer names the body channel; the guard looks for ${BODY_CHANNEL_CLAUSE}.`);
+  const headings = [...directive.matchAll(SECTION_HEADING)].map((match) => ({ at: match.index ?? 0, text: match[0] }));
+  const [, firstLater] = headings;
+  assert.ok(firstLater !== undefined, "the directive's sections are what this order is measured against");
   assert.ok(
-    personAt < bodyAt,
-    `the body clause now precedes the person clause, which is the order that produced the report: ` +
-      `answering the player begins at ${personAt}, carrying her body at ${bodyAt}.`,
+    personAt < firstLater.at,
+    `a later section (${firstLater.text} at ${firstLater.at}) now opens before the clause that answers ` +
+      `the player (at ${personAt}); that is the order that produced the report.`,
   );
 });
 
