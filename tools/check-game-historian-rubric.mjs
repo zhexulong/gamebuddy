@@ -38,7 +38,11 @@ const codes = (result) => result.violations.map((entry) => entry.obligation);
 function fixtureChecks() {
   // A story the rubric accepts: narrative text, a title, and a first tier.
   const healthy = checkHistorianRubric([compartment()]);
-  check("a_narrative_compartment_passes", healthy.violations.length === 0, codes(healthy).join(",") || undefined);
+  check(
+    "a_narrative_compartment_passes",
+    healthy.passed && healthy.violations.length === 0,
+    codes(healthy).join(",") || undefined,
+  );
   check(
     "every_obligation_is_named_in_the_result",
     healthy.checkedObligations.length === 5,
@@ -73,8 +77,18 @@ function fixtureChecks() {
   );
 
   // An empty corpus is not a pass: a run that wrote nothing has no narrative to judge, and calling that green is
-  // exactly the "gate passes while the behaviour is absent" shape.
-  check("no_compartments_is_not_a_pass", checkHistorianRubric([]).compartmentsChecked === 0);
+  // exactly the "gate passes while the behaviour is absent" shape. Asserted on the VERDICT, not on the count: a
+  // count of zero is true of every implementation, including one that returns `passed: true` for an empty input,
+  // so an assertion about it could never fail and would prove nothing. The empty result here must have inspected
+  // nothing AND not be a pass - the two facts together are what the name claims.
+  const nothingToJudge = checkHistorianRubric([]);
+  check(
+    "no_compartments_is_not_a_pass",
+    nothingToJudge.compartmentsChecked === 0 &&
+      nothingToJudge.violations.length === 0 &&
+      nothingToJudge.passed === false,
+    `passed=${String(nothingToJudge.passed)} compartmentsChecked=${String(nothingToJudge.compartmentsChecked)}`,
+  );
 }
 
 /** Every run directory under `root` that carries a captured runtime root. */
@@ -105,7 +119,7 @@ function judgeRuntimeRoot(runtimeRoot, label) {
   const result = checkHistorianRubric(compartments);
   check(
     `${label}_compartments`,
-    result.violations.length === 0,
+    result.passed,
     result.violations.map((entry) => `historian_rubric_violation:${entry.obligation}@${entry.where}`).join(",") ||
       undefined,
   );

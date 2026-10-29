@@ -65,7 +65,9 @@ export function readCompartments(root) {
  * Apply the mechanical obligations to `compartments`.
  *
  * Returns one row per compartment plus the aggregate, so a report can show WHICH compartment broke an
- * obligation instead of only that something did.
+ * obligation instead of only that something did. `passed` is the verdict and it needs something to have been
+ * judged: an empty corpus is `passed: false` with no violations, because "there was no narrative" and "the
+ * narrative was bad" are different findings and only one of them is a defect.
  */
 export function checkHistorianRubric(compartments) {
   const violations = [];
@@ -81,6 +83,10 @@ export function checkHistorianRubric(compartments) {
   return Object.freeze({
     compartmentsChecked: compartments.length,
     violations: Object.freeze(violations),
+    // The verdict, stated here rather than left for each caller to re-derive: an empty corpus has nothing to
+    // judge, and `violations: []` alone reads as green to a caller that inspects only the list. Something must
+    // have been judged for a pass to mean anything; with nothing judged this is `passed: false`, not a failure.
+    passed: compartments.length > 0 && violations.length === 0,
     // Named so a reader can see the scope: these are the obligations this function can decide.
     checkedObligations: Object.freeze([
       "no-role-labels",

@@ -30,11 +30,7 @@ test("the legacy third-person log voice fails, per compartment", () => {
   ]);
   assert.deepEqual(
     result.violations.map((violation) => `${violation.obligation}@${violation.where}`),
-    [
-      "no-role-labels@sequence 3",
-      "no-transcript-references@sequence 3",
-      "no-role-labels@sequence 4",
-    ],
+    ["no-role-labels@sequence 3", "no-transcript-references@sequence 3", "no-role-labels@sequence 4"],
   );
 });
 
@@ -54,6 +50,10 @@ test("an empty run is reported as checked-zero, never as a pass", () => {
   assert.equal(result.compartmentsChecked, 0);
   assert.deepEqual(result.violations, []);
   assert.ok(result.checkedObligations.length > 0);
+  // Nothing to judge is not a green verdict: the count of zero is a fact about the input, not about the
+  // narrative, and a caller reading only `violations` would see an empty list and call it clean.
+  assert.equal(result.passed, false);
+  assert.equal(checkHistorianRubric([compartment({})]).passed, true);
 });
 
 test("the prompt variant is read from the bundle the generation actually carries", () => {
