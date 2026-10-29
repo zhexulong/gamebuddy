@@ -2,12 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Gamepad2, MessagesSquare, Settings, SlidersHorizontal, Users } from "lucide-react";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
-import {
-  type BrowserDraftV1,
-  type BrowserEventV1,
-  type BrowserMessageV1,
-  TavernProblemError,
-} from "../reference-pipeline-api";
+import type { BrowserDraftV1, BrowserEventV1 } from "../reference-pipeline-api";
 import {
   createReferencePipelineSession,
   type PendingSubmission,
@@ -84,6 +79,16 @@ export function ComposedReferenceGameApp() {
   // seeding effect below); what stays here is the closed outcome line its
   // Save/Discard report through.
   const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
+  /**
+   * The last send this surface refused, in the refusal's own sentence.
+   *
+   * The words go back into the field, and this is what stands beside them: a refusal is a fact
+   * about one attempt, so it is reported where the player can act on it and never replaces the
+   * conversation the attempt was written into. It is spent by the next turn-starting mutation
+   * (`beginTurnMutation`, shared by send and regenerate) and by adopting another Chat, because
+   * past either point it describes an attempt that no longer stands.
+   */
+  const [sendFailure, setSendFailure] = useState<string | null>(null);
   // A created Chat whose chosen opening could not be committed. The Chat itself is durable and the
   // player is landed in it either way, so this is the one fact left to state: it opens on the
   // default opening. It clears when another switch lands.
@@ -391,6 +396,10 @@ export function ComposedReferenceGameApp() {
     try {
       const pending = pendingSubmission(idempotencyKey, current.session.snapshot);
       commit({ ...current, session: current.session.withPending(pending) });
+      // The last refusal described the last attempt, and this attempt is the answer to it. Cleared here
+      // rather than in the handler because this is the seam both turn-starting mutations share - send and
+      // regenerate - so neither can leave a sentence about an attempt it already superseded on screen.
+      setSendFailure(null);
       return pending;
     } catch (error) {
       commit(problemView(error, messages(current.locale)));
@@ -431,17 +440,17 @@ export function ComposedReferenceGameApp() {
         { csrfToken: current.session.snapshot.csrfToken, idempotencyKey },
       );
     } catch (error) {
-      if (error instanceof TavernProblemError && !error.retryable) {
-        commit({ ...current, session: current.session.withPending(null) });
-        commit(problemView(error, messages(current.locale)));
-        return;
-      }
-      // ANY other failure puts the words back.
+      // A failed send costs the attempt, never the paragraph.
       //
       // Measured 2026-10-28: the field was cleared at `setInputText("")` BEFORE the await, so an offline send, a
       // 503, or a transient network error destroyed what the player had typed - the optimistic bubble was the only
       // copy left and it is not editable. A draft that survives is the difference between "send failed" and "I lost
       // my paragraph".
+      //
+      // The refusal's own branch needs this MORE than the retryable one, not less: `payload_too_large` tells the
+      // player to send a smaller text, and a text that was thrown away cannot be shortened. Whether retrying can
+      // help is a fact about the next attempt, and the sentence already carries it ("try again in a moment" versus
+      // "send a smaller one"); it was never a fact about whose words these are.
       //
       // Only when the field is still empty: a player who started typing again while the request was in flight owns
       // the field now, and overwriting that would be the same defect pointing the other way.
@@ -449,8 +458,15 @@ export function ComposedReferenceGameApp() {
         setInputText(text);
         inputTextRef.current = text;
       }
+      // The sentence stands beside the words rather than in place of them. A refused send says nothing about the
+      // conversation behind it - the transcript and this shell's snapshot are still what they were, and the
+      // pending record is spent - so replacing the whole surface with a problem page would take away the field
+      // the words were just put back into, and report a state fault that did not happen. The one line is the same
+      // sentence that page drew, from the same place: `composedProblemView` is the owner of which words a failure
+      // earns, and its `detail` is what a one-line notice has room for. The read that leaves the chat unreadable
+      // is a different failure, and that path still commits the problem view.
+      setSendFailure(problemView(error, messages(current.locale)).detail);
       commit({ ...current, session: current.session.withPending(null) });
-      commit(problemView(error, messages(current.locale)));
       return;
     }
     startPolling();
@@ -855,6 +871,9 @@ export function ComposedReferenceGameApp() {
     if (draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present)
       throw new ReferencePipelineSessionError("state_reconciliation_required");
     setPreview(null);
+    // The refusal's sentence described an attempt in the conversation this mount is leaving, so it
+    // is not a fact about the one it adopts.
+    setSendFailure(null);
     const base = createReferencePipelineSession(root.chat);
     const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
@@ -1244,7 +1263,7 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 pending={chatMutation}
                 pendingPlayerMessage={pendingOptimisticMessage}
-                notice={pollFailure ? labels().chatFailed : (terminalTurnNotice ?? openingNotice)}
+                notice={pollFailure ? labels().chatFailed : (sendFailure ?? terminalTurnNotice ?? openingNotice)}
                 replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
