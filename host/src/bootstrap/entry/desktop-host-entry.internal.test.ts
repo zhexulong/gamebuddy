@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -250,13 +251,23 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   );
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
 
-  const rootValidation = source.indexOf("const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot)");
-  const securityCheck = source.indexOf("Promise.all(roots.map((root) => inspectWindowsPathSecurity(inspector, root)))");
-  const mint = source.indexOf("const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)");
-  const acknowledgement = source.indexOf("writeAcknowledgement(frame)");
-  assert.ok(
-    rootValidation >= 0 && securityCheck >= 0 && rootValidation < mint && rootValidation < acknowledgement,
-    "root security validation must precede mint and acknowledgement",
+  // Root validation, the security inspection it performs and the mint all sit in
+  // runDesktopHostBootstrap's own straight-line body, so their source order is
+  // their execution order. They are read from that body rather than from the file:
+  // over the whole module `indexOf` also matches the helper declarations below and
+  // any comment mentioning them, and a marker that moved into a helper answers -1,
+  // which compares less than every other position and passes.
+  const bootstrapBody = functionBody(source, "runDesktopHostBootstrap");
+  const validationBody = functionBody(source, "validateRootLayout");
+  assert.match(validationBody, /inspectWindowsPathSecurity\(inspector, root\)/);
+  assertStatementOrder(
+    bootstrapBody,
+    [
+      "const rootLayout = await validateRootLayout(frame.rootLayout, artifactRoot)",
+      "const rootAuthority = mintDesktopRootLayoutCapability(rootLayout)",
+      "await writeAcknowledgement(frame)",
+    ],
+    "root validation must precede the mint and the acknowledgement",
   );
 });
 

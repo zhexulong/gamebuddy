@@ -23,6 +23,7 @@ import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/
 import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
+import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -1028,12 +1029,25 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.doesNotMatch(source, /stardew-player-host-process-owner/);
   assert.doesNotMatch(source, /stardew-ai-client-process-owner/);
   assert.doesNotMatch(source, /node:child_process/);
-  const compositionCallIndex = source.search(compositionCall);
-  const acknowledgementIndex = source.indexOf("await writeAcknowledgement(frame)");
-  assert.ok(compositionCallIndex >= 0);
-  assert.ok(acknowledgementIndex >= 0);
-  assert.ok(compositionCallIndex < acknowledgementIndex);
-  assert.ok(source.indexOf("consumeDesktopRootLayoutCapability(rootAuthority)") >= 0);
+  // One statement order, read from inside the ONE function that runs it. The
+  // composition call and the acknowledgement are both statements of
+  // runDesktopHostBootstrap, so their source order is their execution order; the
+  // assertion is scoped to that body because the same text also occurs in the
+  // factory's declaration (line-level) and in comments, and an `indexOf` over the
+  // whole module would silently compare the wrong occurrence - or pass on a `-1`
+  // after the call was extracted into a helper.
+  const bootstrapBody = functionBody(source, "runDesktopHostBootstrap");
+  assertStatementOrder(
+    bootstrapBody,
+    ["createDesktopProductCompositionForBootstrap(", "await writeAcknowledgement(frame)"],
+    "the composition must be built before bootstrap readiness is published",
+  );
+  // The consumed authority stays inside the factory that consumes it, one level
+  // below the call site: the bootstrap passes the minted capability across and
+  // never reads the layout back out of it.
+  const factoryBody = functionBody(source, "createDesktopProductCompositionForBootstrap");
+  assert.match(factoryBody, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
+  assert.doesNotMatch(bootstrapBody, /consumeDesktopRootLayoutCapability\(/);
   // The status channel is one more frame type on the SAME channel and the SAME framing (one JSON
   // object plus one newline), announced immediately before the step it names and always before the
   // acknowledgement; the acknowledgement keeps its own schema and stays the only frame that ends
@@ -1043,19 +1057,21 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // Formatting-tolerant: the write callback is a block the formatter may break across lines.
   assert.match(source, /process\.stdout\.write\(\s*bytes,\s*\(\) => \{\s*process\.stdout\.off\("error", onError\);\s*resolveWrite\(\);\s*\}\);/);
   assert.match(source, /process\.stdout\.end\(acknowledgement/);
-  for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest", "guardian-session", "provisioning"]) {
-    assert.ok(source.includes(`await writeStatus("${stage}")`), `missing status stage ${stage}`);
-  }
-  // The pre-acknowledgement status stages are ordered by the composition
-  // construction inside runDesktopHostBootstrap: the private composition factory
-  // (below the acknowledgement in source order) writes `guardian-session` and
-  // `provisioning` when it runs. The runtime status sequence is pinned exactly
-  // by the statuses test, so the ordering assertion covers the four stages
-  // written in the call site before the acknowledgement only.
-  for (const stage of ["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"]) {
-    assert.ok(source.indexOf(`await writeStatus("${stage}")`) < acknowledgementIndex, `stage ${stage} must precede the acknowledgement`);
-  }
-  assert.ok(source.indexOf("deployCompanionGameMod(artifactRoot)") < acknowledgementIndex, "the Mod step must precede the acknowledgement");
+  // Everything the pre-acknowledgement path does, in one ordered list read from
+  // runDesktopHostBootstrap's own body. The two later stages (`guardian-session`,
+  // `provisioning`) are written by the private composition factory that this body
+  // calls, so they are ordered by the call above rather than positionally here; the
+  // runtime status sequence itself is pinned exactly by the statuses test.
+  assertStatementOrder(
+    bootstrapBody,
+    [
+      ...["bootstrap-frame", "root-layout", "voice-surface", "deployment-manifest"].map((stage) => `await writeStatus("${stage}")`),
+      "deployCompanionGameMod(artifactRoot)",
+      "createDesktopProductCompositionForBootstrap(",
+      "await writeAcknowledgement(frame)",
+    ],
+    "every pre-acknowledgement step must precede the acknowledgement",
+  );
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.
   assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);
@@ -1065,7 +1081,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.doesNotMatch(source, /installDesktopGuardianSessionFactoryForTest/);
   // The composition call site inside runDesktopHostBootstrap precedes the
   // acknowledgement: the formal bootstrap builds the product composition
-  // before publishing bootstrap readiness.
+  // before publishing bootstrap readiness (asserted with the step order above).
   // The composition must stay a static binding: a deferred relative dynamic
   // import would be rejected by the production artifact validator, and the
   // release closure already weaves the whole product chain at build time.
