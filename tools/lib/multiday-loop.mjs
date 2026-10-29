@@ -78,9 +78,9 @@ export function readHeldMenu(snapshot) {
 export function decideHeldMenu(menuType) {
   if (menuType === null) return Object.freeze({ kind: "none", menuType: null });
   if (WAIT_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "wait", menuType });
-  // `ShippingMenu` is committed by the night lifecycle itself (`SleepAndAdvanceDayLifecycle`), which is where the
-  // sleep path already is. The loop waits like it does for the other engine-owned modals: a summary still standing
-  // after the product's own path could not close it is a named stop, not a task for the harness.
+  // The settlement summary's commit lives in `SleepAndAdvanceDayLifecycle`, so this loop waits for it rather than
+  // clicking it. Waiting is not ignoring: a summary that stands with nothing changing behind it expires as
+  // `rollover_menu_deadlock` (`unattendedHoldReason`), not as a slow night.
   if (DISMISSIBLE_ROLLOVER_MENUS.includes(menuType)) return Object.freeze({ kind: "wait", menuType });
   if (menuType === LEVEL_UP_MENU) return Object.freeze({ kind: "respond_level_up", menuType });
   return Object.freeze({ kind: "blocked", menuType, reasonCode: `actor_held_by_unclosable_menu:${menuType}` });
@@ -92,6 +92,57 @@ export function classifyActorHold(snapshot) {
   if (kind === "event") return Object.freeze({ hold: "cutscene", reasonCode: "actor_held_by_cutscene" });
   if (kind === "pass_out") return Object.freeze({ hold: "pass_out", reasonCode: "actor_passed_out" });
   return Object.freeze({ hold: null, reasonCode: null });
+}
+
+/**
+ * The facts one observation publishes, as one comparable string.
+ *
+ * A menu standing is not by itself a stall: a save on a big farm stands for a while with the game's own clock
+ * running behind it. What separates "slow" from "nothing owns this" is that every published fact stops moving at
+ * once, so the comparison covers what the Mod actually sends each pass rather than the menu type alone.
+ */
+function observedFactsKey(snapshot) {
+  return JSON.stringify([
+    snapshot?.dayOfMonth ?? null,
+    snapshot?.timeOfDay ?? null,
+    snapshot?.actionable === true,
+    snapshot?.actorDispositionKind ?? null,
+    snapshot?.actorDispositionDetail ?? null,
+    snapshot?.activeExecution == null ? null : true,
+  ]);
+}
+
+/**
+ * Name a spent budget for what it watched, when what it watched was a deadlock.
+ *
+ * `541775c2` moved the settlement summary's commit into `SleepAndAdvanceDayLifecycle`, and that is why this loop
+ * waits instead of clicking it: a harness that clicks proves the harness. But the lifecycle exists only when
+ * `advance_day` started one. Measured 2026-10-28 (`round6`): the companion never dispatched it, the engine's 02:00
+ * pass-out took the night, the day began with the summary standing, and the wait spent 31 of that run's 45.79
+ * minutes before answering `night_never_started` - a word that reads exactly like a slow night. The evidence that
+ * distinguishes the two was already in hand: the same menu type, without one published fact moving, and nothing in
+ * flight. This names it, and it does NOT close the menu - the owner is the lifecycle's, and a harness that dismisses
+ * it measures itself.
+ *
+ * The population comes from the loop's OWN decision rather than a second list: `wait` is exactly the set of menus
+ * nothing here will ever close, which is what makes "unattended" a fact about this loop rather than a guess about the
+ * game. `respond_level_up` is acted on, and `blocked` stops at once, so neither can stand unattended.
+ */
+function unattendedHoldReason({ hold, actionableChanged, inFlight, at }) {
+  if (hold === null) return null;
+  if (decideHeldMenu(hold.menuType).kind !== "wait") return null;
+  // One observation is not "unchanged": there is nothing to have stayed the same across.
+  if (hold.unchangedObservations < 2) return null;
+  // An execution in flight IS an owner. The world may be stalled for some other reason, and the deadlock word would be
+  // a claim about a menu nothing observed to be unattended.
+  if (inFlight !== null && inFlight !== undefined) return null;
+  return [
+    `rollover_menu_deadlock:${hold.menuType}`,
+    `held_ms=${String(at - hold.since)}`,
+    `unchanged_ms=${String(at - hold.unchangedSince)}`,
+    `unchanged_observations=${String(hold.unchangedObservations)}`,
+    `actionable_changed=${String(actionableChanged)}`,
+  ].join(":");
 }
 
 /**
@@ -120,6 +171,12 @@ export async function watchRollover(
   const attempts = new Map();
   // Menu types whose close the ENGINE is completing: waited for, never re-sent.
   const deadline = now() + timeoutMs;
+  // The hold under watch and the facts under it: how long the same menu has stood, how long NOTHING the Mod publishes
+  // has changed, and whether the actor was ever free. Together these are what tells a slow night from one nothing is
+  // closing, and the expiry at the bottom of this loop reports the difference by name.
+  let holdUnderWatch = null;
+  let actionableAtFirstObservation = null;
+  let actionableChanged = false;
   for (;;) {
     const aborted = abort === null ? null : abort();
     if (aborted !== null && aborted !== undefined) {
@@ -129,6 +186,28 @@ export async function watchRollover(
     const dayNow = typeof snapshot?.dayOfMonth === "number" ? snapshot.dayOfMonth : null;
     const menuType = readHeldMenu(snapshot);
     const decision = decideHeldMenu(menuType);
+    const observedNow = now();
+    const factsKey = observedFactsKey(snapshot);
+    if (menuType === null) {
+      holdUnderWatch = null;
+    } else if (holdUnderWatch === null || holdUnderWatch.menuType !== menuType) {
+      holdUnderWatch = {
+        menuType,
+        since: observedNow,
+        factsKey,
+        unchangedSince: observedNow,
+        unchangedObservations: 1,
+      };
+    } else if (holdUnderWatch.factsKey !== factsKey) {
+      holdUnderWatch.factsKey = factsKey;
+      holdUnderWatch.unchangedSince = observedNow;
+      holdUnderWatch.unchangedObservations = 1;
+    } else {
+      holdUnderWatch.unchangedObservations += 1;
+    }
+    const actionable = snapshot?.actionable === true;
+    if (actionableAtFirstObservation === null) actionableAtFirstObservation = actionable;
+    else if (actionable !== actionableAtFirstObservation) actionableChanged = true;
     // A menu that was HELD and is now gone was closed by whoever owns it. That is the only observation the harness has
     // for the shipping summary now that the night lifecycle commits it: the loop does not click, so a receipt would be a
     // fiction, but "it was there and now it is not" is a fact the world hands over for free.
@@ -174,9 +253,20 @@ export async function watchRollover(
       }
     }
     if (now() >= deadline) {
+      // Two different worlds can spend the same budget, and they used to share one word: a night that is genuinely
+      // slow, and a menu that stood for the whole watch with nothing moving behind it. The second has an owner that
+      // does not exist, and the reader of the result must not have to guess which happened.
+      const deadlock = unattendedHoldReason({
+        hold: holdUnderWatch,
+        actionableChanged,
+        inFlight: snapshot?.activeExecution ?? null,
+        at: now(),
+      });
       return Object.freeze({
         crossed: false,
-        reasonCode: `night_not_observed:${String(snapshot?.actorDispositionKind ?? "unknown")}:${String(snapshot?.actorDispositionDetail ?? "none")}`,
+        reasonCode:
+          deadlock ??
+          `night_not_observed:${String(snapshot?.actorDispositionKind ?? "unknown")}:${String(snapshot?.actorDispositionDetail ?? "none")}`,
         menus,
         dayAfter: dayNow,
       });

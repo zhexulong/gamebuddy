@@ -183,6 +183,91 @@ test("an expired wait names what was holding the actor", async () => {
   assert.equal(outcome.reasonCode, "night_not_observed:modal:SaveGameMenu");
 });
 
+test("a menu that stands while no observed fact moves is named a DEADLOCK, not a spent budget", async () => {
+  // Measured 2026-10-28 (`round6`): the companion never dispatched `advance_day`, the engine's 02:00 pass-out took
+  // the night, the day began with the settlement summary standing, and the watch spent 31 of a 45.79-minute run before
+  // answering `night_never_started`. Nothing was going to close that menu and nothing was acting on it: the same menu
+  // type stood and not one fact the Mod publishes moved. That is a deadlock, and it must not be spelled with the word
+  // a slow night uses - a reader of the result had to guess which of the two had happened.
+  //
+  // The harness clock advances (that is what spends the budget) while the WHOLE snapshot is frozen, including
+  // `timeOfDay`: the engine is not running the day either. The mismatch between the two clocks is the deadlock.
+  const frozen = { ...held("ShippingMenu", 7), timeOfDay: 2610 };
+  const scripted = world([frozen]);
+  let clock = 0;
+  const outcome = await watchRollover(scripted, {
+    dayBefore: 6,
+    timeoutMs: 600_000,
+    pollIntervalMs: 250,
+    now: () => clock,
+    sleep: async () => {
+      clock += 250;
+    },
+  });
+  assert.equal(outcome.crossed, false);
+  assert.match(outcome.reasonCode, /^rollover_menu_deadlock:ShippingMenu:/u);
+  assert.match(outcome.reasonCode, /held_ms=\d+/u);
+  assert.match(outcome.reasonCode, /unchanged_ms=\d+/u);
+  assert.match(outcome.reasonCode, /unchanged_observations=\d+/u);
+  assert.match(outcome.reasonCode, /actionable_changed=false/u);
+  assert.doesNotMatch(
+    outcome.reasonCode,
+    /night_not_observed/u,
+    "the slow-night word must not be reused for a night nothing owns",
+  );
+  assert.deepEqual(scripted.dismissals, [], "naming the deadlock must not become closing the menu");
+});
+
+test("the same menu standing while the game's own clock runs is a SLOW night, not a deadlock", async () => {
+  // The mirror case, and the whole reason the verdict reads evidence instead of a menu name: the SAME
+  // `ShippingMenu` stands in both tests, and only the published facts differ. Something is running behind this one,
+  // so it is a night being slow - and a slow night must not be reported as abandoned, or the deadlock word stops
+  // meaning anything.
+  let minute = 18 * 60;
+  const moving = {
+    async observe() {
+      minute += 1;
+      return { ...held("ShippingMenu", 7), timeOfDay: Math.floor(minute / 60) * 100 + (minute % 60) };
+    },
+    async dismiss() {
+      throw new Error("the loop must never dismiss the summary");
+    },
+  };
+  let clock = 0;
+  const outcome = await watchRollover(moving, {
+    dayBefore: 6,
+    timeoutMs: 300_000,
+    pollIntervalMs: 250,
+    now: () => clock,
+    sleep: async () => {
+      clock += 60_000;
+    },
+  });
+  assert.equal(outcome.crossed, false);
+  assert.equal(outcome.reasonCode, "night_not_observed:modal:ShippingMenu");
+  assert.doesNotMatch(outcome.reasonCode, /deadlock/u, "a moving world is not a deadlock");
+});
+
+test("an execution in flight is an owner, so a standing menu is not a deadlock", async () => {
+  // The third shape, and the one that keeps the word honest: if an action is executing, whatever holds the menu may
+  // still be answered by it. Reporting a deadlock there would be a claim about ownership that nothing observed.
+  const inFlight = { ...held("ShippingMenu", 7), timeOfDay: 2610, activeExecution: { executionId: "exec-1" } };
+  const scripted = world([inFlight]);
+  let clock = 0;
+  const outcome = await watchRollover(scripted, {
+    dayBefore: 6,
+    timeoutMs: 60_000,
+    pollIntervalMs: 250,
+    now: () => clock,
+    sleep: async () => {
+      clock += 250;
+    },
+  });
+  assert.equal(outcome.crossed, false);
+  assert.equal(outcome.reasonCode, "night_not_observed:modal:ShippingMenu");
+  assert.deepEqual(scripted.dismissals, []);
+});
+
 test("the companion ends the day: the loop delivers days and watches the nights between them", async () => {
   const delivered = [];
   const watched = [];
