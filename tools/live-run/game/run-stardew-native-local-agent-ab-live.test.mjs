@@ -10,7 +10,8 @@ import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { classifyNight } from "../../lib/multiday-baseline.mjs";
 import { buildFailureSnapshot } from "../../lib/failure-dump.mjs";
-import { executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 
@@ -496,14 +497,17 @@ test("morning_routine is a self-directed session whose output is a capability au
   // nothing, and still passed: a session that only moved/looked/equipped must not be
   // reported as a played session.
   assert.match(RUNNER_SOURCE, /const NON_ACCOMPLISHMENT_ACTIONS = Object\.freeze\(/);
-  // One derivation of the three lists: the verdict reads it and the result publishes it (summarizeDispatchedActions).
+  // One derivation of the three lists: the verdict and the builder both read it (summarizeDispatchedActions), and it
+  // reads BOTH channels of an execution - the flat frames and the program journal - because a run whose work all went
+  // through Body Programs has an empty `actionTrace` and used to be summarised as having done nothing.
   assert.match(
     RUNNER_SOURCE,
     /accomplished: succeeded\.filter\(\(actionId\) => !NON_ACCOMPLISHMENT_ACTIONS\.has\(actionId\)\),/,
   );
   assert.match(
     RUNNER_SOURCE,
-    /const \{ attempted: attemptedActionIds, accomplished: accomplishedActionIds \} =\s*summarizeDispatchedActions\(actionTrace\);/,
+    /const sessionDispatch = summarizeDispatchedActions\(actionTrace, programOutcomesAtTeardown \?\? \[\], programSubmissions\);/,
+    "the session's own summary is read from the flat trace AND the program record, not the flat trace alone",
   );
   assert.match(RUNNER_SOURCE, /return "nothing_accomplished";/);
   // Run M did 17 native actions over fifteen minutes and never said a word to the player:
@@ -1193,6 +1197,7 @@ test("a run that cannot bind its own session record publishes no timings, naming
 
 test("the assembly logs a tool-timing disagreement by name", async () => {
   const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
+    executedActionIds,
     NON_ACCOMPLISHMENT_ACTIONS: new Set(),
     phaseTimings: { runStartedAtMs: 1, marks: {} },
     lastObservedSnapshot: null,
@@ -1298,6 +1303,111 @@ test("the turn waiter does not give up five seconds after a program finishes", (
   );
   // The verdict mapping still understands an unsettled turn, which is what makes a genuine one visible.
   assert.match(RUNNER_SOURCE, /entry\.error === "agent_turn_timeout"/u);
+});
+
+test("a second turn does not answer with the first turn's program", async () => {
+  // The turn waiter polls `client.programStatus` for the program THE TURN submitted, and breaks when that program is
+  // terminal. The id used to be one run-long module binding written by the submit wrapper and never reset, so turn 2
+  // polled turn 1's already-`succeeded` program, broke at second zero - before the `i % 10` block - and the heartbeat
+  // stall detector inside that block was blind for every turn after the first. The falsifier is behavioural, against
+  // the real function: turn 1 submits and succeeds, turn 2 submits nothing, and the world is silent during turn 2.
+  const declaredStallMs = Number(
+    /const MOD_HEARTBEAT_STALL_MS = ([\d_]+);/u.exec(RUNNER_SOURCE)[1].replaceAll("_", ""),
+  );
+  const programSubmissions = [];
+  const actionTrace = [];
+  const factLog = [];
+  const statusQueries = [];
+  let heartbeatSilentMs = 0;
+  let heartbeatSamples = 0;
+  let turnsSubmitted = 0;
+  const client = {
+    programStatus: async ({ programId }) => {
+      statusQueries.push(programId);
+      return programId === "p_day1"
+        ? { code: "found", snapshot: { programId, state: "succeeded", nodes: [] } }
+        : { code: "not_found", snapshot: null };
+    },
+    state: { snapshot: { revision: 1 } },
+  };
+  const build = new Function(
+    "actionTrace",
+    "factLog",
+    "programSubmissions",
+    "client",
+    "presentedSummary",
+    "SCENARIO",
+    "sampleAdvertisedActions",
+    "submitPlayerPrompt",
+    "shouldAbandonTurnForTransport",
+    "sampleModHeartbeat",
+    "MOD_HEARTBEAT_STALL_MS",
+    "bridgeDisconnections",
+    "waitForSessionQuiet",
+    `let worldStallReason = null;
+let turnStartedAtMs = null;
+${extractRunnerFunction(RUNNER_SOURCE, "runAgentTurn").source}
+return { runAgentTurn, stall: () => worldStallReason };`,
+  );
+  const { runAgentTurn, stall } = build(
+    actionTrace,
+    factLog,
+    programSubmissions,
+    client,
+    "",
+    "memory_covenant",
+    () => {},
+    // Turn 1 submits and is admitted; turn 2 submits nothing and is admitted. Neither admission waits on the stall
+    // detector: a fixture whose completion depended on the very check under test could only ever hang, never fail.
+    async () => {
+      turnsSubmitted += 1;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (turnsSubmitted === 1) {
+        // AFTER the turn's own cursor was taken, because a real submission arrives mid-turn: the wait loop starts as
+        // soon as the prompt is admitted and the companion submits only once it has decided what to do.
+        programSubmissions.push(Object.freeze({ programId: "p_day1", code: "accepted", accepted: true }));
+        return { accepted: true };
+      }
+      return { accepted: true };
+    },
+    shouldAbandonTurnForTransport,
+    () => {
+      heartbeatSamples += 1;
+      return { count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: heartbeatSilentMs };
+    },
+    declaredStallMs,
+    Object.freeze([]),
+    async (turn) => turn,
+  );
+  const previousWaitSeconds = process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
+  process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = "5";
+  try {
+    const firstTurn = await runAgentTurn("first turn", {});
+    assert.deepEqual(statusQueries, ["p_day1"], "turn 1 polls the program turn 1 submitted");
+    assert.equal(firstTurn.turn.steerObserved, true, "the fixture's turn 1 did reach the session");
+    assert.equal(stall(), null, "a turn whose program succeeded is not a stall");
+
+    heartbeatSilentMs = declaredStallMs + 30_000;
+    statusQueries.length = 0;
+    const samplesBefore = heartbeatSamples;
+    const secondTurn = await runAgentTurn("second turn", {});
+
+    assert.match(
+      String(stall()),
+      new RegExp(`^world_stopped_advancing:silent_ms=${String(declaredStallMs + 30_000)}:`, "u"),
+      "the stall detector must still fire on a turn that submitted nothing",
+    );
+    assert.ok(heartbeatSamples > samplesBefore, "the detector was consulted during the second turn");
+    assert.deepEqual(statusQueries, [], "turn 2 submitted nothing, so it must ask nothing about turn 1's program");
+    assert.equal(
+      secondTurn.turn.steerObserved,
+      false,
+      "arrival is judged by what THIS turn did, not by a program an earlier turn submitted",
+    );
+  } finally {
+    if (previousWaitSeconds === undefined) delete process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
+    else process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = previousWaitSeconds;
+  }
 });
 
 test("the night watcher outlives the day turn it accompanies", () => {
@@ -1613,10 +1723,28 @@ test("the runner assembles its result in exactly one place, so no exit path can 
   assert.ok(exitsAt > 0 && finallyAt > exitsAt, "the run's try/catch must exist");
   const exits = RUNNER_SOURCE.slice(exitsAt, finallyAt);
   assert.equal((exits.match(/await buildRunResult\(\{/g) ?? []).length, 2, "the passed and crashed exits both use it");
-  // The one literal: from the builder's `const result = {` to its closing brace.
+  // The one literal: from the builder's `const result = {` to its matching close, counted rather than searched
+  // for. `indexOf("\n  };")` finds the END OF A NESTED OBJECT first - `summarizePresentationEvidence()` and its
+  // siblings sit three levels deep in this literal - and the slice then stops before fields that come after them.
+  // That made `toolTiming` read as "not published exactly once" while it was published, which is a test bug that
+  // looks exactly like the defect the test exists for.
   const literalAt = builder.indexOf("const result = {");
   assert.ok(literalAt > 0, "the builder must build one result literal");
-  const literal = builder.slice(literalAt, builder.indexOf("\n  };", literalAt));
+  const openAt = builder.indexOf("{", literalAt);
+  let depth = 0;
+  let closeAt = -1;
+  for (let index = openAt; index < builder.length; index += 1) {
+    if (builder[index] === "{") depth += 1;
+    else if (builder[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        closeAt = index;
+        break;
+      }
+    }
+  }
+  assert.ok(closeAt > openAt, "the result literal must be balanced");
+  const literal = builder.slice(literalAt, closeAt + 1);
   for (const field of [
     "attemptedActionIds",
     "succeededActionIds",
@@ -1629,9 +1757,14 @@ test("the runner assembles its result in exactly one place, so no exit path can 
     "startedAtMs",
     "endedAtMs",
   ]) {
+    // A PUBLICATION inside the literal is `<field>:` OR the shorthand `<field>,` - both are keys of the result.
     const key = new RegExp(`^\\s*${field}[:,]`, "gm");
     assert.equal((literal.match(key) ?? []).length, 1, `${field} must be published exactly once, by the builder`);
-    assert.equal((exits.match(key) ?? []).length, 0, `${field} must not be published by an exit path`);
+    // An exit publishes by KEY. A bare `<field>,` there is an argument in a call (`summarizeDispatchedActions(...)`),
+    // which is how this check tripped once the exit path started handing the record in to be summarised - and an
+    // argument is not a second publication. A second result literal is what the assertions below this loop forbid.
+    const exitKey = new RegExp(`^\\s*${field}:`, "gm");
+    assert.equal((exits.match(exitKey) ?? []).length, 0, `${field} must not be published by an exit path`);
   }
   // `bundle` and `capture` are assigned rather than keyed, and both assignments are the builder's own.
   for (const field of ["bundle", "capture"]) {
@@ -1648,6 +1781,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   // The falsifier for the field the 131-dispatch run lost: the REAL builder, evaluated against a synthetic trace, must
   // answer with what the trace holds - on the crashed path, which is the one that published nothing.
   const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
+    executedActionIds,
     NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
     phaseTimings: { runStartedAtMs: 1, marks: {} },
     lastObservedSnapshot: null,
@@ -1712,6 +1846,92 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   });
 });
 
+test("a run whose work all went through programs publishes a non-empty attempted list", async () => {
+  // THE RUN SHAPE THE EVALUATOR GOT WRONG. Every action now runs through a Body Program, so `actionTrace` is empty
+  // while the companion tills, plants and harvests: the evaluator read that one channel, answered `attempted: []`, and
+  // the verdict then reported `nothing_accomplished` for a session that worked all day. The fixture is a program that
+  // dispatched its nodes and a trace that holds no row at all - what a real run of this shape produces.
+  //
+  // The action id is NOT in the flat trace, NOT in the journal's `native_dispatch` event (program/node/attempt/cursor
+  // only) and NOT in `nodeOutcomes` (`{ nodeId, state }` only). It exists in the candidate the Host submitted, so the
+  // join key is `(programId, nodeId)` - and that is what this fixture exercises end to end, through the REAL builder.
+  const programOutcomesAtTeardown = [
+    {
+      programId: "plan_morning_1",
+      accepted: true,
+      observed: true,
+      source: "bridge",
+      dispatched: 3,
+      executions: [
+        { nodeId: "n01", nodeAttempt: 1, cursor: 2 },
+        { nodeId: "n02", nodeAttempt: 1, cursor: 4 },
+        { nodeId: "n03", nodeAttempt: 1, cursor: 6 },
+      ],
+      nodeOutcomes: [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "succeeded" },
+        { nodeId: "n03", state: "failed" },
+      ],
+    },
+  ];
+  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
+    executedActionIds,
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+    phaseTimings: { runStartedAtMs: 1, marks: {} },
+    lastObservedSnapshot: null,
+    lastObservedPose: null,
+    actionTrace: [],
+    programSubmissions: [
+      {
+        programId: "plan_morning_1",
+        code: "accepted",
+        accepted: true,
+        nodes: [
+          { nodeId: "n01", actionId: "harvest_crop" },
+          { nodeId: "n02", actionId: "plant_seed" },
+          { nodeId: "n03", actionId: "water_crop" },
+        ],
+      },
+    ],
+    // The read is CARRIED, as the run's own pre-teardown read is: the builder must not have to ask a closed bridge.
+    programOutcomes: [],
+    sampleProgramOutcomes: async () => {
+      throw new Error("the carried read must be used, not a second query");
+    },
+    programExecutionRows,
+    executionTraceInvariant,
+    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+    multidayOutcome: null,
+    SCENARIO: "morning_routine",
+    LEGACY_LADDER: null,
+    historianRubricOutcome: null,
+    runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
+    summarizeActionCadence: () => ({ spans: [] }),
+    summarizePresentationEvidence: () => ({ pieces: [] }),
+    readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+    buildFailureSnapshot: (input) => input,
+    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+    closeCapture: async () => ({ state: "closed" }),
+    writeFile: async () => {},
+    join: (...parts) => parts.join("/"),
+  });
+  const result = await buildRunResult({
+    state: "passed",
+    error: null,
+    settlement: null,
+    programOutcomesAtTeardown,
+  });
+  assert.deepEqual(
+    result.attemptedActionIds,
+    ["harvest_crop", "plant_seed", "water_crop"],
+    "a run with an empty flat trace and three dispatched nodes attempted three actions",
+  );
+  assert.deepEqual(result.succeededActionIds, ["harvest_crop", "plant_seed"], "the failed node is an attempt only");
+  // The count identity is a different question and is unchanged by this: the flat half is genuinely zero.
+  assert.equal(result.executionTrace.flat, 0);
+  assert.equal(result.executionTrace.programDispatches, 3);
+});
+
 test("an error that escapes the run still publishes the work it had already recorded", async () => {
   // The `g149tool` finding: 184 s of real work - accepted programs, route progress, successful and refused receipts -
   // met a run that ended `runner_failed_before_reporting`, and its artifact carried `state`, `scenario`, `reason`,
@@ -1744,6 +1964,7 @@ test("an error that escapes the run still publishes the work it had already reco
       "writeFailureDump",
     ],
     {
+      executedActionIds,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,

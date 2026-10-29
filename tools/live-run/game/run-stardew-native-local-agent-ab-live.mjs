@@ -99,6 +99,7 @@ import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
+  executedActionIds,
   executionTraceInvariant,
   FLAT_EXECUTION_VIA,
   PROGRAM_TRACE_FILE,
@@ -1225,20 +1226,22 @@ const NON_ACCOMPLISHMENT_ACTIONS = Object.freeze(
 );
 
 /**
- * What the run's own dispatch trace says it tried (`attempted`), succeeded at (`succeeded`), and changed
- * (`accomplished`).
+ * What the run tried (`attempted`), succeeded at (`succeeded`), and changed (`accomplished`).
+ *
+ * Both CHANNELS of an execution are read, each from its own source (`execution-trace.mjs`): the flat request frames the
+ * runner sent, and the nodes the Mod ran natively in a Body Program. An action id is counted once however many times it
+ * was dispatched, so a run that batched everything through programs is no longer summarised as having done nothing -
+ * measured 2026-10-22, when every action went through a program, `actionTrace` held zero rows and a session that tilled,
+ * planted and harvested was reported `nothing_accomplished`.
  *
  * The verdict reads attempted and accomplished (moving, looking and re-equipping is not playing); the result publishes
  * the same three lists under its own names. One derivation, so the verdict and the artifact cannot disagree about what
  * the run did.
  */
-function summarizeDispatchedActions(trace) {
-  const actionIds = (entries) => [
-    ...new Set(entries.map((entry) => entry.action).filter((action) => typeof action === "string")),
-  ];
-  const succeeded = actionIds(trace.filter((entry) => entry.state === "succeeded"));
+function summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions) {
+  const { attempted, succeeded } = executedActionIds({ actionTrace, programOutcomes, programSubmissions });
   return Object.freeze({
-    attempted: actionIds(trace),
+    attempted,
     succeeded,
     accomplished: succeeded.filter((actionId) => !NON_ACCOMPLISHMENT_ACTIONS.has(actionId)),
   });
@@ -1359,6 +1362,15 @@ async function runAgentTurn(text, tools) {
   // Dispatches issued BEFORE this turn: evidence of arrival must be caused by the turn, not by the run's
   // earlier traffic.
   const dispatchesBeforeTurn = actionTrace.length;
+  // The program THIS turn submitted, read the same way: `programSubmissions` is the run's cumulative history, so the
+  // turn's own submissions are the ones past this cursor. It was a run-long binding (`agentProgramId`) mutated by the
+  // submit wrapper, and turn 2 therefore polled turn 1's terminal program, broke at second zero, and never reached the
+  // heartbeat sample below - one turn's result answering another turn's question.
+  const submissionsBeforeTurn = programSubmissions.length;
+  const turnProgramId = () =>
+    programSubmissions.length > submissionsBeforeTurn
+      ? (programSubmissions[programSubmissions.length - 1]?.programId ?? null)
+      : null;
   // How long one delivered turn may wait before the harness stops waiting. For an
   // open play session this is a HARNESS bound, not a product verdict (design 1432:
   // timeouts belong to the harness), so a self-directed session gets a budget that fits dozens of
@@ -1379,8 +1391,9 @@ async function runAgentTurn(text, tools) {
     if (transportLoss.abandon) {
       return { status: "failed", turn, error: transportLoss.reasonCode };
     }
+    const programId = turnProgramId();
     try {
-      if (agentProgramId !== null) status = await client.programStatus({ programId: agentProgramId });
+      if (programId !== null) status = await client.programStatus({ programId });
     } catch {}
     if (
       status?.code === "found" &&
@@ -1392,7 +1405,7 @@ async function runAgentTurn(text, tools) {
         JSON.stringify({
           seconds: i,
           programStatus: status,
-          agentProgramId,
+          programId,
           // Submissions and what became of them. `accepted: 0` is the interesting case: the companion chose the batching
           // path and nothing went through it.
           programSubmissions: Object.freeze([...programSubmissions]),
@@ -1439,7 +1452,7 @@ async function runAgentTurn(text, tools) {
   if (SCENARIO === "morning_routine" || SCENARIO === "multiday_routine")
     turn = await waitForSessionQuiet(turn, { dispatchesBeforeTurn, timeoutMs: turnWaitSeconds * 1000 });
   turn.steerObserved =
-    agentProgramId !== null ||
+    turnProgramId() !== null ||
     (typeof presentedSummary === "string" && presentedSummary.length > 0) ||
     // The turn's own effects: a dispatch it issued is proof the steer reached the session. `factLog.length > 0`
     // used to stand here and proved almost nothing — any Mod fact, including an unrelated body trace, made it
@@ -2356,6 +2369,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
   const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
   if (dispatched === undefined) {
+    // `night_never_started:` stays the prefix because that IS the finding - no `advance_day` ever started a night. The
+    // suffix is the watch's own reason, and since `rollover_menu_deadlock` exists it says WHICH kind of night never
+    // started: one nothing was closing, or one that was merely slow. Flattening the two back into one word here would
+    // throw away the distinction the loop just took the trouble to observe.
     return Object.freeze({
       terminal: null,
       after: afterNight,
@@ -2498,7 +2515,7 @@ function findProtectedCovenantShipment(receipts, protectedItemId) {
 // otherwise the run's own health report sees zero rejections while the session
 // shows real ones.
 const actionTrace = [];
-// Every submission, kept as its own record: `agentProgramId` alone says a program EXISTS, not that anything ran
+// Every submission, kept as its own record: a program id alone says a program EXISTS, not that anything ran
 // through it. Measured 2026-10-20 by an audit of the Pi session logs: one run submitted ten programs and executed
 // zero actions through them while still making 883 individual tool calls - and the run's own result could not say
 // so, because a submission left no trace in it. A path that ships and does nothing is worse than an absent one.
@@ -2633,10 +2650,6 @@ client.execute = async (request) => {
     throw error;
   }
 };
-// Capture the Agent-authored program id from any submit the runtime tools send
-// over this connection; the Agent chooses the id autonomously, so a fixed
-// programId probe can never observe it.
-let agentProgramId = null;
 // Every submission and the per-program records: declared with the run's record above `actionTrace`.
 /** Page size for the journal read: the wire caps an events page at 32 (validateBodyProgramEventsResult). */
 const PROGRAM_EVENTS_PAGE_SIZE = 32;
@@ -2774,20 +2787,30 @@ async function sampleProgramOutcomes() {
 }
 const originalProgramSubmit = client.programSubmit.bind(client);
 client.programSubmit = async (program) => {
-  if (program?.programId !== undefined) agentProgramId = program.programId;
+  // The Agent chooses the id autonomously, so a fixed probe can never observe it: the request's own id is the one the
+  // bridge validates the answer against (`local-stardew-bridge.ts`, `snapshot.programId !== request.programId`).
+  const programId = program?.programId ?? null;
   // Stamped BEFORE the await: the wait the ledger measures is the Mod's, not the transport's.
-  ledger.record("world.dispatch", { via: "program", programId: program?.programId ?? null });
+  ledger.record("world.dispatch", { via: "program", programId });
   const submit = await originalProgramSubmit(program);
-  if (submit?.snapshot?.programId !== undefined) agentProgramId = submit.snapshot.programId;
   programSubmissions.push(
     Object.freeze({
-      programId: program?.programId ?? null,
+      programId,
       code: submit?.code ?? null,
       // `accepted` means the Mod took it; nothing here claims a node ran.
       accepted: submit?.code === "accepted",
+      // The nodes as they were SUBMITTED, with the action each one names. This is the only record of that join: the
+      // journal's `native_dispatch` event carries program/node/attempt/cursor and no action id, and the per-node outcome
+      // carries `{ nodeId, state }` only, so `(programId, nodeId)` against these entries is how a program execution is
+      // attributed to an action. Without it a run whose work all went through programs reports that it did nothing.
+      nodes: Object.freeze(
+        (program?.nodes ?? []).map((node) =>
+          Object.freeze({ nodeId: node?.nodeId ?? null, actionId: node?.actionId ?? null }),
+        ),
+      ),
     }),
   );
-  console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId: agentProgramId, code: submit?.code }));
+  console.error("AGENT_PROGRAM_SUBMIT", JSON.stringify({ programId, code: submit?.code }));
   return submit;
 };
 const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(client, identity, {
@@ -3368,8 +3391,24 @@ try {
   // session cut off mid-turn is not a completed session, so it is reported as
   // `blocked` with the turn error named — findings never fail this rung, but a
   // truncated session does. Its output is still the audit either way.
-  const { attempted: attemptedActionIds, accomplished: accomplishedActionIds } =
-    summarizeDispatchedActions(actionTrace);
+  // The Mod's own record is read HERE, once, before the summary that decides the verdict below: this is the last point
+  // that is true for both the pass and the fail path, and it is before the single `runtime.close()` in the finally.
+  // Reading it in the finally handed both assembly sites `null`, and the builder then fell back to asking a bridge that
+  // was already shut - `read_failed:bridge_not_authenticated` for sixteen programs whose receipts had settled all night.
+  // A summary that saw only the flat trace answered `nothing_accomplished` for a run whose work all went through Body
+  // Programs (measured 2026-10-22: every action batched, `actionTrace` empty, the till/plant/harvest all performed).
+  try {
+    programOutcomesAtTeardown = await sampleProgramOutcomes();
+    programOutcomesReadAtSubmissionCount = programSubmissions.length;
+  } catch (error) {
+    process.stderr.write(
+      `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
+    );
+  }
+  // Both CHANNELS of an execution, each from its own source: the flat request frames the runner sent, and the nodes a
+  // program ran natively (joined to their action ids through the submissions).
+  const sessionDispatch = summarizeDispatchedActions(actionTrace, programOutcomesAtTeardown ?? [], programSubmissions);
+  const { attempted: attemptedActionIds, accomplished: accomplishedActionIds } = sessionDispatch;
   // The session's own terminal record, read from THIS run's surface session directory - the one the Game runtime was
   // materialized with `gameSessionId` under - and nowhere else. It is what separates "the companion chose not to
   // speak" from "the turn died at the provider": before this, a real run whose turn ended in `stopReason: "error"`
@@ -3582,19 +3621,6 @@ try {
   });
   // One assembly for EVERY exit path (see buildRunResult): what this path observed goes in as evidence, and the
   // builder owns what the result publishes.
-  //
-  // The journal is read HERE, once, because this is the last point that is true for both the pass and the fail
-  // path and it is before the single `runtime.close()` in the finally. Reading it in the finally handed both
-  // assembly sites `null`, and the builder then fell back to asking a bridge that was already shut -
-  // `read_failed:bridge_not_authenticated` for sixteen programs whose receipts had settled all night.
-  try {
-    programOutcomesAtTeardown = await sampleProgramOutcomes();
-    programOutcomesReadAtSubmissionCount = programSubmissions.length;
-  } catch (error) {
-    process.stderr.write(
-      `[program-outcomes] pre-teardown read failed: ${String(error?.message ?? error).slice(0, 160)}\n`,
-    );
-  }
   const result = await buildRunResult({
     // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
     // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
@@ -4012,7 +4038,6 @@ async function buildRunResult({
                 },
           atMs: Date.now(),
         });
-  const dispatched = summarizeDispatchedActions(actionTrace);
   // Read the Mod's own journal NOW, once per run: this is assembly time, so the per-program execution facts are
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
   // binding `writeRunBundle` reads, so both result paths publish the same read without a second query.
@@ -4021,6 +4046,9 @@ async function buildRunResult({
   // about the program. Falling back to a live read keeps the paths that assemble while the bridge is still up.
   const carried = evidence.programOutcomesAtTeardown;
   programOutcomes = carried ?? (await sampleProgramOutcomes());
+  // What the run tried and changed, read from BOTH channels once the program record is in hand: the builder is the
+  // single place every exit assembles its result, so the crashed path answers exactly what the passed one would.
+  const dispatched = summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions);
   // The executions those programs dispatched, as trace rows, and the count identity they have to satisfy together with
   // the flat request frames: rows == flat dispatches + the observed programs' `dispatched` counts. Published on the
   // result because this identity is the one that was silently broken - a run with 22 submissions and program

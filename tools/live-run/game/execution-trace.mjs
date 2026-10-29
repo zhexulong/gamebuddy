@@ -63,6 +63,74 @@ export function programExecutionRows(programOutcomes) {
 }
 
 /**
+ * Node states in which the Mod has not yet attempted anything: the node waits for its turn, for admission, or was
+ * skipped/abandoned by a dependency. They are named as a NEGATIVE list on purpose - a state added later counts as an
+ * attempt rather than disappearing from the summary, which is the direction that cannot hide work.
+ */
+export const NODE_STATES_WITHOUT_ATTEMPT = Object.freeze(
+  new Set(["pending", "awaiting_host_admission", "host_admitted", "skipped_dependency", "abandoned"]),
+);
+
+/**
+ * The distinct actions the run TRIED and the distinct ones it SUCCEEDED at, read from both channels of an execution.
+ *
+ * A flat dispatch is a request frame the runner sent; a program execution is a node the Mod ran natively. They are two
+ * facts, so each is read from its own source - `via: "flat"` rows in the trace, and the journal's execution/state rows
+ * in `programOutcomes`. What they share is the ACTION: a program execution carries the journal's own identity
+ * (`programId`, `nodeId`, `nodeAttempt`, `cursor`) and never an action id, and `nodeOutcomes` carries `{ nodeId, state }`
+ * only, so the action id can be joined from exactly one place - the candidate the Host submitted, whose nodes carry
+ * `actionId`. The join key is therefore `(programId, nodeId)` against `programSubmissions[].nodes`.
+ *
+ * The result is a set of action ids, so the same action dispatched through both channels - or retried twice - is one
+ * entry: the two channels are counted from their own sources, and the action is counted once.
+ */
+export function executedActionIds({ actionTrace, programOutcomes, programSubmissions } = {}) {
+  const attempted = new Set();
+  const succeeded = new Set();
+  const record = (actionId, didSucceed) => {
+    if (typeof actionId !== "string" || actionId.length === 0) return;
+    attempted.add(actionId);
+    if (didSucceed) succeeded.add(actionId);
+  };
+  // The flat channel: a REFUSED dispatch is a row too, so an action the bridge stopped stays an attempt.
+  for (const row of actionTrace ?? []) record(row?.action, row?.state === "succeeded");
+  // The action id per node, as submitted: the only source that names it, so nothing here is ever guessed.
+  const actionIdOfNode = new Map();
+  for (const submission of programSubmissions ?? []) {
+    if (typeof submission?.programId !== "string") continue;
+    for (const node of submission?.nodes ?? []) {
+      if (typeof node?.nodeId !== "string" || typeof node?.actionId !== "string") continue;
+      actionIdOfNode.set(nodeKey(submission.programId, node.nodeId), node.actionId);
+    }
+  }
+  for (const outcome of programOutcomes ?? []) {
+    // An unobserved program is absent evidence, not a measured zero: it contributes no attempt at all.
+    if (outcome?.observed !== true || typeof outcome.programId !== "string") continue;
+    const dispatchedNodes = new Set();
+    for (const execution of outcome.executions ?? [])
+      if (typeof execution?.nodeId === "string") dispatchedNodes.add(execution.nodeId);
+    const stateOfNode = new Map();
+    for (const node of outcome.nodeOutcomes ?? [])
+      if (typeof node?.nodeId === "string")
+        stateOfNode.set(node.nodeId, typeof node.state === "string" ? node.state : null);
+    for (const nodeId of new Set([...dispatchedNodes, ...stateOfNode.keys()])) {
+      const state = stateOfNode.get(nodeId) ?? null;
+      // A dispatch IS an attempt; a state past admission is the Mod recording what the attempt became. An unreadable
+      // state with no dispatch is neither.
+      const wasAttempted = dispatchedNodes.has(nodeId) || (state !== null && !NODE_STATES_WITHOUT_ATTEMPT.has(state));
+      if (!wasAttempted) continue;
+      record(actionIdOfNode.get(nodeKey(outcome.programId, nodeId)), state === "succeeded");
+    }
+  }
+  return Object.freeze({ attempted: Object.freeze([...attempted]), succeeded: Object.freeze([...succeeded]) });
+}
+
+/** The join key between a journal node (`(programId, nodeId)`) and the candidate the Host submitted. */
+function nodeKey(programId, nodeId) {
+  return `${programId}\u001f${nodeId}`;
+}
+
+/**
  * The row-count invariant, and what it was measured from.
  *
  * `ok` compares the rows this run is about to publish against the counts the programs themselves reported, so a

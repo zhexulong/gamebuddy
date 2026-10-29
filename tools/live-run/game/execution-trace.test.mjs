@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  executedActionIds,
   executionTraceInvariant,
   programExecutionRows,
   readExecutionTrace,
@@ -106,6 +107,122 @@ test("two flat dispatches and one three-node program are five rows, each saying 
     assert.equal(merged.flat.present, true);
     assert.equal(merged.program.present, true);
   });
+});
+
+test("a program that dispatched its nodes is counted, though the flat trace the evaluator used to read is empty", () => {
+  // Run-shaped, measured 2026-10-22 and again on every run since: every action goes through a Body Program, so
+  // `actionTrace` holds no row while the companion tills, plants and harvests. The evaluator read that file alone, so
+  // the session that did the work was reported `nothing_accomplished`. The action id is not in the flat trace, not in
+  // the execution rows (`native_dispatch` carries only the journal's program/node/attempt/cursor identity) and not in
+  // `nodeOutcomes` (node id and state only): it exists in ONE place, the candidate the Host submitted, whose nodes carry
+  // `actionId`. The join key is therefore (programId, nodeId).
+  const actionTrace = [];
+  const programSubmissions = [
+    {
+      programId: "plan_16_a93f3dbf3576006d",
+      code: "accepted",
+      accepted: true,
+      nodes: [
+        { nodeId: "n01", actionId: "till_soil" },
+        { nodeId: "n02", actionId: "plant_seed" },
+      ],
+    },
+  ];
+  const programOutcomes = [
+    {
+      programId: "plan_16_a93f3dbf3576006d",
+      accepted: true,
+      observed: true,
+      dispatched: 2,
+      executions: [
+        { nodeId: "n01", nodeAttempt: 1, cursor: 2 },
+        { nodeId: "n02", nodeAttempt: 1, cursor: 4 },
+      ],
+      nodeOutcomes: [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "failed" },
+      ],
+    },
+  ];
+  assert.deepEqual(actionTrace, [], "the file the evaluator read holds no row at all");
+  const summary = executedActionIds({ actionTrace, programOutcomes, programSubmissions });
+  assert.deepEqual(summary.attempted, ["till_soil", "plant_seed"], "both nodes are attempts on their own action ids");
+  assert.deepEqual(summary.succeeded, ["till_soil"], "and only the node the journal settled as succeeded is one");
+});
+
+test("the two channels are counted from their own sources, and neither counts the other's work twice", () => {
+  // A flat dispatch and a program execution ARE different facts - a request frame the runner sent versus a node the Mod
+  // ran natively - so both are read, from their own source, and the identity that keeps them apart is the channel, not a
+  // guess about the action id.
+  const actionTrace = [
+    { via: "flat", action: "harvest_crop", state: "succeeded" },
+    // Rows written before `via` existed are still flat dispatches.
+    { action: "water_crop", state: "rejected" },
+  ];
+  const programSubmissions = [
+    {
+      programId: "p1",
+      accepted: true,
+      nodes: [
+        { nodeId: "n01", actionId: "harvest_crop" },
+        { nodeId: "n02", actionId: "plant_seed" },
+        { nodeId: "n03", actionId: "till_soil" },
+      ],
+    },
+  ];
+  const programOutcomes = [
+    {
+      programId: "p1",
+      accepted: true,
+      observed: true,
+      dispatched: 3,
+      executions: [
+        { nodeId: "n01", nodeAttempt: 1, cursor: 1 },
+        { nodeId: "n02", nodeAttempt: 1, cursor: 3 },
+        { nodeId: "n01", nodeAttempt: 2, cursor: 5 },
+      ],
+      // n03 never dispatched and never left `pending`: a node waiting its turn is not an attempt.
+      nodeOutcomes: [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "failed" },
+        { nodeId: "n03", state: "pending" },
+      ],
+    },
+  ];
+  const summary = executedActionIds({ actionTrace, programOutcomes, programSubmissions });
+  // `harvest_crop` was dispatched through BOTH channels and retried, and is one attempted action; `plant_seed` was
+  // attempted and failed.
+  assert.deepEqual(summary.attempted, ["harvest_crop", "water_crop", "plant_seed"]);
+  assert.deepEqual(
+    summary.succeeded,
+    ["harvest_crop"],
+    "a rejected flat frame and a failed node are attempts, not successes",
+  );
+
+  // An unobserved program is absent evidence, not a measured zero: it adds nothing rather than a `dispatched: 0` shape,
+  // and it never invents an action id for a node whose candidate was not recorded.
+  const unobserved = executedActionIds({
+    actionTrace: [],
+    programOutcomes: [
+      {
+        programId: "p_unreadable",
+        accepted: true,
+        observed: false,
+        dispatched: null,
+        executions: [],
+        nodeOutcomes: [],
+      },
+      programOutcomes[0],
+    ],
+    programSubmissions: [{ programId: "p_unreadable", accepted: true, nodes: [] }],
+  });
+  assert.deepEqual(unobserved.attempted, [], "an unobserved program contributes no attempt");
+  const noCandidate = executedActionIds({
+    actionTrace: [],
+    programOutcomes,
+    programSubmissions: [],
+  });
+  assert.deepEqual(noCandidate.attempted, [], "a node with no recorded action id is not guessed into one");
 });
 
 test("a program whose journal could not be read contributes no rows and does not break the identity", async () => {

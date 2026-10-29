@@ -295,6 +295,21 @@ test("the harness does not nudge a companion that ended its day without sleeping
   assert.match(RUNNER, /companion_did_not_sleep/u);
 });
 
+test("a night the watch named a deadlock is not flattened back into a bare `night_never_started`", () => {
+  // The loop's `rollover_menu_deadlock` reaches the run record only if this exit keeps the suffix. The prefix is the
+  // finding (no `advance_day` started a night), and the suffix is WHICH kind of night it was - so an exit that dropped
+  // the watch's reason would undo the distinction one layer along, where nobody would look for it.
+  const watcher = RUNNER.slice(
+    RUNNER.indexOf("async function watchNightRollover(day"),
+    RUNNER.indexOf("async function startVoiceLane"),
+  );
+  assert.match(
+    watcher,
+    /reasonCode: `night_never_started:\$\{String\(outcome\.reasonCode \?\? "companion_did_not_sleep"\)\}`/u,
+    "the watch's own reason is the suffix: a deadlock and a slow night must not share one word",
+  );
+});
+
 test("the night's day-before baseline is read BEFORE the wait, not after it", () => {
   // Measured 2026-10-28 (`round6`): the watch began on spring 5, the engine's 02:00 pass-out crossed to spring 6, the
   // wait noticed the moved calendar and returned, and the baseline was re-read afterwards - so it recorded 6, the day
