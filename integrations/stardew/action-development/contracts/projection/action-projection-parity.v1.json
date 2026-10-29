@@ -401,6 +401,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:watering_can",
+              "value": "AnyUpgrade"
             }
           ]
         },
@@ -592,7 +596,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -625,7 +630,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -928,7 +934,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
           },
           "expectedTargetId": {
             "type": "string"
@@ -940,6 +947,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:axe",
+              "value": "BasicOnly"
             }
           ]
         },
@@ -961,7 +972,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
           },
           "expectedTargetId": {
             "type": "string"
@@ -973,6 +985,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:pickaxe",
+              "value": "BasicOnly"
             }
           ]
         },
@@ -994,7 +1010,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1027,7 +1044,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1060,7 +1078,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1164,7 +1183,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1532,7 +1552,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1544,6 +1565,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:axe",
+              "value": "BasicOnly"
             }
           ]
         },
@@ -1601,7 +1626,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1613,6 +1639,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:scythe",
+              "value": "AnyUpgrade"
             }
           ]
         },
@@ -1634,7 +1664,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
           },
           "expectedTargetId": {
             "type": "string"
@@ -1646,6 +1677,10 @@
             {
               "key": "embodied_actor",
               "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:scythe",
+              "value": "AnyUpgrade"
             }
           ]
         },
@@ -2006,7 +2041,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The backpack slot holding the item to load. This action SELECTS that slot for the native call and restores the previous selection after, so it need not be the held one now - but it is not a tool slot."
           },
           "expectedTargetId": {
             "type": "string"
@@ -2069,7 +2105,8 @@
             "type": "integer"
           },
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
           },
           "expectedTargetId": {
             "type": "string"
@@ -2390,7 +2427,8 @@
         "kind": "execution",
         "argumentSchema": {
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Backpack slot HOLDING the wearable to equip. `snapshot.toolSlots` lists tools only, so this is NOT a tool slot."
           },
           "expectedQualifiedItemId": {
             "type": "string"
@@ -2420,7 +2458,8 @@
         "kind": "execution",
         "argumentSchema": {
           "slot": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Backpack slot the wearable is taken OFF into. It must be EMPTY: an occupied destination is refused by name (`wearable_destination_slot_occupied`)."
           },
           "expectedTargetId": {
             "type": "string"
