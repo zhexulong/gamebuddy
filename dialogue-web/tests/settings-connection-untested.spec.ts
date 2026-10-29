@@ -290,6 +290,12 @@ test.describe("an untested connection states the step it still needs", () => {
       .locator("[data-connection-row] button.primary")
       .click();
     await expect.poll(stubs.tests).toBe(1);
+    // The route answering is not the panel re-rendering: the row states its own readiness, so wait for that rather than for the
+    // request, then read a settled DOM.
+    await expect(page.getByTestId("settings-surface").locator("[data-connection-row]")).toHaveAttribute(
+      "data-readiness",
+      "ready",
+    );
 
     const after = await page.getByTestId("settings-surface").locator("[data-connection-row]").evaluate((row) => {
       const buttons = [...row.querySelectorAll<HTMLButtonElement>("button")];

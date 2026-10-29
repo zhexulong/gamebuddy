@@ -6986,10 +6986,11 @@ test("a cabin list read before the game started says what happened, and why relo
   await page.goto(`/?after-launch=1#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const handoff = page.locator(".stardew-cabin-handoff");
-  await expect(handoff).toContainText("Cabins can only be read while the game you launched is starting up");
-  // What happened (the read ran when the page opened), what to do, and that doing it costs nothing.
-  await expect(handoff).toContainText("reload this page to pick a cabin");
-  await expect(handoff).toContainText("the game keeps running");
+  await expect(handoff).toContainText("Cabins are read while the game you launched is starting up");
+  // What happened (the read ran while the game was starting), then the next step: load the farm and read again, using the control the
+  // panel offers rather than a page reload.
+  await expect(handoff).toContainText("Load your farm, then read them again");
+  await expect(handoff.locator("button", { hasText: "Read cabins again" })).toBeVisible();
   await expect(handoff, "no internal vocabulary reaches the player").not.toContainText("Host");
   // A state with a next step, not a fault: a warning tone here taught the player that a correct first
   // run had broken.

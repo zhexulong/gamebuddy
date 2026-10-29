@@ -518,10 +518,26 @@ test("gate 3: every text tone clears WCAG AA on its effective background", async
     await page.waitForTimeout(200);
     const measured = await page.evaluate((testId: string) => {
       const parse = (value: string): [number, number, number, number] => {
-        const match = value.match(/rgba?\(([^)]+)\)/);
-        if (match === null) return [0, 0, 0, 0];
-        const parts = match[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
-        return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+        const legacy = value.match(/rgba?\(([^)]+)\)/);
+        if (legacy !== null) {
+          const parts = legacy[1]!.split(",").map((part) => Number.parseFloat(part.trim()));
+          return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0, parts[3] ?? 1];
+        }
+        // CSS Color 4: what a modern Chromium computes `color-mix()` to. The channels are 0..1 floats, so scaling by 255 is the same
+        // mapping `rgba()` uses - not a different measurement, the same one in another spelling.
+        const modern = value.match(/^color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)$/u);
+        if (modern !== null) {
+          const channel = (part: string): number => Math.round(Number.parseFloat(part) * 255);
+          return [
+            channel(modern[1]!),
+            channel(modern[2]!),
+            channel(modern[3]!),
+            modern[4] === undefined ? 1 : Number.parseFloat(modern[4]),
+          ];
+        }
+        // An unknown function is not transparent black: measuring it as black is how this gate reported a 6.51:1 badge as 1.32:1.
+        // Throwing fails the gate loudly instead of inventing a colour - a new syntax should stop this measurement, not be skipped.
+        throw new Error(`unparsed colour: ${value}`);
       };
       const effective = (element: Element): [number, number, number] | null => {
         const stack: [number, number, number, number][] = [];
