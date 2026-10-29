@@ -294,3 +294,31 @@ test("the harness does not nudge a companion that ended its day without sleeping
   assert.doesNotMatch(RUNNER, /dispatchedAdvanceDaySince/u);
   assert.match(RUNNER, /companion_did_not_sleep/u);
 });
+
+test("the night's day-before baseline is read BEFORE the wait, not after it", () => {
+  // Measured 2026-10-28 (`round6`): the watch began on spring 5, the engine's 02:00 pass-out crossed to spring 6, the
+  // wait noticed the moved calendar and returned, and the baseline was re-read afterwards - so it recorded 6, the day
+  // the night ENDED on. The crossing check at the end of the watch then compared 6 against 6 and could only answer
+  // "not advanced", whatever else the night did.
+  //
+  // The assertion is an ORDER, because that is the defect: `startDay` is captured before `waitForNightToBegin` runs and
+  // `dayBefore` is derived from it.
+  const watcher = RUNNER.slice(
+    RUNNER.indexOf("async function watchNightRollover(day"),
+    RUNNER.indexOf("async function startVoiceLane"),
+  );
+  const startDayAt = watcher.indexOf("const startDay =");
+  const waitAt = watcher.indexOf("await waitForNightToBegin()");
+  const dayBeforeAt = watcher.indexOf("const dayBefore =");
+  assert.ok(startDayAt >= 0, "the watcher captures the day it began on");
+  assert.ok(waitAt >= 0, "the watcher waits for the night to begin");
+  assert.ok(dayBeforeAt >= 0, "the watcher needs a day-before baseline");
+  assert.ok(startDayAt < waitAt, "the day is captured before the wait moves it");
+  assert.ok(waitAt < dayBeforeAt, "the baseline is derived after the wait returns");
+  assert.match(watcher, /const dayBefore = Number\.isInteger\(startDay\)/u);
+  assert.doesNotMatch(
+    watcher,
+    /const dayBefore = client\.state\?\.snapshot\?\.dayOfMonth/u,
+    "a late re-read records the day the night ended on",
+  );
+});

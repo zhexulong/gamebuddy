@@ -2152,7 +2152,16 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   if (neverStarted !== null) {
     return Object.freeze({ terminal: null, after: await observeQuietly(), menus: [], reasonCode: neverStarted });
   }
-  const dayBefore = client.state?.snapshot?.dayOfMonth;
+  // The day this watch began on - which is NOT the day the world is on once the wait above is over.
+  //
+  // This used to be re-read HERE, after `waitForNightToBegin` had already returned, and that made "the day before the
+  // night" mean "the day after it" on every night the engine took by its own pass-out. Measured 2026-10-28
+  // (`round6`): the watch began on spring 5, the 02:00 pass-out crossed to spring 6 at 02:12:43, the wait noticed the
+  // moved calendar at 02:12:44 and returned, and `dayBefore` was read as 6 - so the night's own crossing check at the
+  // end compared 6 against 6 and could only ever answer "not advanced". `startDay` is the same fact read before the
+  // wait, and on a night the companion sleeps it is the identical value the late read produced, so this is the same
+  // number wherever the late read was right.
+  const dayBefore = Number.isInteger(startDay) ? startDay : (client.state?.snapshot?.dayOfMonth ?? null);
   /**
    * Settle the level-up menu the rollover raised, with the ONE choice that takes no decision.
    *
