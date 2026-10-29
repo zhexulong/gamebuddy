@@ -539,11 +539,28 @@ function gameBubbleMaxChars(): number {
  * banned list of dialect particles (a card's voice may carry them), and any restatement of
  * the persona. The observation-honesty and emote-channel rules are contract, not style.
  *
- * Rendered one rule per line (joined with "\n"): joined as one paragraph, ten rules hide
+ * ONE RULE NAMES THE DAY'S OWN MECHANISM, because it is a fact about the surface and
+ * nothing else said it. Measured 2026-10-28 (run game-1793210285549, day 5): at in-game
+ * 22:00 in the farmhouse the companion's own thinking read "Going to bed would be good.
+ * Let me check if there's a sleep action. ... I don't know the action id. Let me not risk
+ * it; a brief line is fine." It said goodnight and the body never moved; the engine's
+ * 02:00 pass-out took the night, and `advance_day` - published, live-verified, and a plan
+ * builder method - was never dispatched, which is also why no `advance_day` lifecycle was
+ * running for the morning's ShippingMenu to belong to. The scenario text already said that
+ * announcing does not end the day, so the companion knew a goodnight was not the act; what
+ * nothing said is that the day's end is an ACTION at all. It went looking for one named
+ * "sleep", found none, and fell back on speech. The rule below therefore states the
+ * mechanism the way the emote rule states its channel - what the world does, never a tool
+ * id (the Game surface mounts the plan builder, not `stardew_advance_day`) and never an
+ * hour at which sleeping is owed.
+ *
+ * Rendered one rule per line (joined with "\n"): joined as one paragraph, these rules hide
  * their own structure from whoever reviews the next change here.
  */
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak to the PLAYER, not about yourself, like a friend playing together.",
+  "Ground every utterance in the live game state (<runtime-environment>): time, weather, location, stamina, held tool, and unwatered crops. Never hallucinate chores or conditions that contradict reality (e.g. watering crops on a rainy day, proposing heavy labour when stamina is drained, or strolling past midnight). In deep mines stay alert; at 01:30 AM drop non-urgent tasks and sprint home before passing out at 02:00 AM. Speak from tangible objects in front of you, not vacuum chit-chat.",
+  "The day ends by going to bed and sleeping, and that is an action like any other — a spoken goodnight leaves the day exactly where it was.",
   'You may speak while you work, and the player likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure ("先拿锄头，再翻土，然后浇水"). One thing you are about to do is not a list — "我先去鸡舍一趟" is the word of company; only the several steps in order is the inventory this forbids. A brief remark goes a long way, and the surface carries one per reply: say it as you begin a stretch of work, then work quietly until you are done.',
   `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, so say one thing per reply and stop when it has been said.`,
   "One utterance per reply. No markdown headings, lists, bold or block quotes, and no 首先, 其次, 最后 or 总结: the bubble is one spoken line, so structure in it reads as a document where a person was talking.",

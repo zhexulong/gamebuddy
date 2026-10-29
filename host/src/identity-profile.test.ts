@@ -149,6 +149,32 @@ test("the step-list ban names the one thing it does not forbid, so a plan is not
   assert.match(game, /work quietly until you are done/);
 });
 
+test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
+  // Measured 2026-10-28 (run game-1793210285549, day 5). At in-game 22:00, standing in the
+  // farmhouse, the companion's own thinking read: "Going to bed would be good. Let me check if
+  // there's a sleep action. ... I don't know the action id. Let me not risk it; a brief line is
+  // fine." It said "屋里十点了，我把灯拧小点……" and nothing moved. The engine's 02:00 pass-out took
+  // the night, and `advance_day` - published, live-verified, and a plan-builder method - was never
+  // dispatched. The scenario text HAD said 只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去, so the
+  // companion knew announcing was not the act; what nothing said is that the day's end is an
+  // ACTION at all, in the same vocabulary as every other action. It went looking for one named
+  // "sleep", found none, and chose silence.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /The day ends by going to bed and sleeping, and that is an action like any other/);
+  // The failure itself, ruled out as the mechanism: a spoken goodnight leaves the day untouched.
+  assert.match(game, /leaves the day exactly where it was/);
+  // It stays a fact about how a day ends, never a nightly duty: the conduct already grounds the
+  // clock and the 02:00 pass-out, and an order to sleep at a stated hour would be the per-turn
+  // obligation no card asked for.
+  assert.doesNotMatch(game, /you must (go to bed|sleep)/iu);
+  // The mechanism is NOT named as an id either. That arm is already held elsewhere rather than
+  // restated here: `dialogue-web/tests/prompt-tool-name-gate.test.mjs` (prompt-tool.2) reads the
+  // registry's ids and fails a bare `advance_day` in any prompt text, and prompt-tool.1 fails a
+  // `stardew_*` name no module declares - both derived from the authorities, so neither goes stale.
+  // Chat has no day to end, so it carries none of this.
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /The day ends by going to bed/u);
+});
+
 test("the system prompt states the action syntax and no longer prescribes the turn's form", () => {
   // Owner ruling: "the prompt governs the floor, the card governs the form; anything
   // that governs form gets deleted." Two shared constraints prescribed the SHAPE of a
