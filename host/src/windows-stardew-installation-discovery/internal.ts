@@ -36,7 +36,7 @@ export function installationLocationLabel(installRoot: string): string | null {
 }
 export type StardewInstallationCandidate = Readonly<{
   candidateId: string;
-  source: "steam-registry" | "steam-vdf" | "known-location";
+  source: "steam-registry" | "steam-vdf" | "known-location" | "gog";
   label: string;
   displayPath: string;
   location: string | null;
@@ -49,7 +49,14 @@ export type DiscoveryDiagnostic =
   | "invalid-app-manifest"
   | "no-candidates"
   | "source-unavailable"
-  | "candidate-invalid";
+  | "candidate-invalid"
+  // The GOG proposal source's own three failures (`stardew-game-install/gog-source.ts`).
+  // They keep their own names rather than being folded into the Steam ones above: a
+  // player whose Galaxy registry could not be read is not a player whose Steam client
+  // is missing, and the surface says which search it could not run.
+  | "gog-unavailable"
+  | "gog-metadata-unreadable"
+  | "gog-metadata-malformed";
 export type StardewInstallationDiscoveryResult = Readonly<{
   candidates: readonly StardewInstallationCandidate[];
   diagnostics: readonly DiscoveryDiagnostic[];

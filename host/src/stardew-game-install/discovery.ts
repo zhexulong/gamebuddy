@@ -109,6 +109,27 @@ export async function probeStardewGameRoot(installRoot: string): Promise<Stardew
 }
 
 /**
+ * The GOG proposal the setup-time discovery panel reads, paired with the probe that turns a
+ * proposal into an offerable candidate.
+ *
+ * They travel as one value because the panel must not accept GOG's roots unprobed: two of them
+ * are unconditional default layouts, so an unprobed proposal would put a row on a Steam-only
+ * player's screen naming a game that is not on their machine. The probe is this module's own
+ * `probeStardewGameRoot`, the same read `requireStardewGameInstalled`,
+ * `requireStardewModLoaderInstalled` and the Mod deployment decide on - so a candidate GOG
+ * produced reaches `registerInstallationLocator`'s admission with the facts a Steam one does.
+ */
+export function createWindowsGogDiscoveryProposal(): Readonly<{
+  read: ReturnType<typeof createWindowsGogInstallationSource>["read"];
+  probe: typeof probeStardewGameRoot;
+}> {
+  return Object.freeze({
+    read: createWindowsGogInstallationSource().read,
+    probe: probeStardewGameRoot,
+  });
+}
+
+/**
  * The launch-time mod-loader requirement, read through the same probe every
  * installation decision uses.
  *

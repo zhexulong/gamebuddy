@@ -8,6 +8,7 @@ export {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
   STARDEW_SMAPI_EXECUTABLE_FILE,
+  createWindowsGogDiscoveryProposal,
   discoverStardewGameInstallation,
   probeStardewGameRoot,
   requireStardewGameInstalled,

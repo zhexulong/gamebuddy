@@ -9,6 +9,7 @@ import {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
   STARDEW_SMAPI_EXECUTABLE_FILE,
+  createWindowsGogDiscoveryProposal,
   discoverStardewGameInstallation,
   probeStardewGameRoot,
   requireStardewGameInstalled,
@@ -256,4 +257,29 @@ test("a path that cannot be read is not reported as a folder without a game", as
   await assert.rejects(requireStardewGameInstalled("C:\\gamebuddy\u0000unreadable"), (error: unknown) => {
     return error instanceof Error && error.message !== STARDEW_NOT_A_STARDEW_INSTALL;
   });
+});
+
+/**
+ * The GOG proposal the setup panel reads is the real GOG source paired with THIS module's own
+ * probe. The pairing is the point: GOG's two default library layouts are unconditional guesses,
+ * so the panel must be able to ask a proposal whether the game is really in it before offering
+ * it - and the probe it asks has to be the same read every other installation decision uses,
+ * or a candidate GOG produced could clear a bar a Steam candidate would fail.
+ */
+test("the GOG discovery proposal pairs the real source with the shared probe", async () => {
+  const proposal = createWindowsGogDiscoveryProposal();
+  assert.equal(proposal.probe, probeStardewGameRoot);
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-gog-proposal-"));
+  try {
+    await writeFile(join(root, STARDEW_GAME_EXECUTABLE_FILE), "game");
+    await writeFile(join(root, STARDEW_SMAPI_EXECUTABLE_FILE), "smapi");
+    // The shared probe answers for a real folder, which is what makes a proposal offerable.
+    assert.deepEqual(await proposal.probe(root), { readable: true, gameExecutable: true, smapi: true });
+    // `read` is the real GOG source's own read, not a second copy of it; it is deliberately not
+    // called here, because on a real machine it reads the player's Galaxy configuration and
+    // registry. The source's own suite owns that behaviour (`gog-source.test.ts`).
+    assert.equal(typeof proposal.read, "function");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

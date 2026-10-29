@@ -1,2 +1,7 @@
-export { createStardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProvider, type StardewInstallationDiscoveryProviderResult } from "./provider.js";
+export {
+  createStardewInstallationDiscoveryProvider,
+  type StardewGogInstallRootSource,
+  type StardewInstallationDiscoveryProvider,
+  type StardewInstallationDiscoveryProviderResult,
+} from "./provider.js";
 export { createWindowsSteamInstallationSource, type StardewSteamSource } from "./source.js";
