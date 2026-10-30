@@ -2664,15 +2664,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Project the native weather flags onto one stable token for the snapshot.
-    /// Same macro-context rule as the date fields: plain reads of Game1 state,
-    /// no interpretation, no advice about what the weather implies. Lightning
-    /// only occurs while raining in the native game, so the order below puts the
-    /// more specific flag first; "unknown" is only used by the world-not-ready
-    /// placeholder snapshot, never in a live world.
+    /// The native weather, as one stable token.
+    ///
+    /// The flags are not siblings: green rain IS rain (`GameLocation.IsGreenRainingHere` is
+    /// `IsRainingHere() && GetWeather().IsGreenRain`, GameLocation.cs:1445-1452), so it must be read BEFORE the plain
+    /// rain flag or green rain can never be named. Measured 2026-10-29: the companion was told "雨天" during green
+    /// rain, which is a different day in this game - the green-rain day is the one where weeds and debris cover the
+    /// farm, and it is exactly the day a companion should recognise.
     /// </summary>
     private static string ProjectWeather()
     {
+        // Green rain is a rain SUBTYPE: checked first, or `isRaining` answers for it.
+        if (Game1.IsGreenRainingHere()) return "green_rain";
         if (Game1.isLightning) return "lightning";
         if (Game1.isRaining) return "rain";
         if (Game1.isSnowing) return "snow";

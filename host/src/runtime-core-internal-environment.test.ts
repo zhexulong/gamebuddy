@@ -176,10 +176,19 @@ test("formatGameWeather maps stable token to localized human phrase", () => {
   assert.equal(formatGameWeather("rain", true), "天气：雨天");
   assert.equal(formatGameWeather("snow", true), "天气：下雪");
   assert.equal(formatGameWeather("lightning", true), "天气：雷雨");
-  assert.equal(formatGameWeather("debris", true), "天气：风沙");
+  // Green rain is a rain SUBTYPE in the native game (`GameLocation.IsGreenRainingHere` is
+  // `IsRainingHere() && GetWeather().IsGreenRain`), so a token that reached this map has already been named by the
+  // Mod's own projection. Without an entry it fell through to "雨天", which is the one day of the year where the farm
+  // fills with weeds and debris.
+  assert.equal(formatGameWeather("green_rain", true), "天气：绿雨");
+  // `isDebrisWeather` is petals drifting in spring and leaves in autumn. "风沙" described a calm spring afternoon as a
+  // dust storm, which is a different season and a different thing to plan for.
+  assert.equal(formatGameWeather("debris", true), "天气：飘花");
   assert.equal(formatGameWeather("unknown", true), "天气：未知天气");
   assert.equal(formatGameWeather("sunny", false), "weather: sunny");
   assert.equal(formatGameWeather("rain", false), "weather: rainy");
+  assert.equal(formatGameWeather("green_rain", false), "weather: green rain");
+  assert.equal(formatGameWeather("debris", false), "weather: petals drifting");
   assert.equal(formatGameWeather("lightning", false), "weather: thunderstorm");
 });
 

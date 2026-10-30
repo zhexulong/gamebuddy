@@ -196,17 +196,24 @@ const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
 const WEATHER_NAMES_ZH: Record<string, string> = {
   sunny: "晴天",
   rain: "雨天",
+  // The 1.6 green-rain day: it IS raining (GameLocation.cs:1445-1452), and it is the day the farm fills with
+  // weeds and debris. Naming it "雨天" hides the one fact that explains what the player will find outside.
+  green_rain: "绿雨",
   snow: "下雪",
   lightning: "雷雨",
-  debris: "风沙",
+  // `isDebrisWeather` is drifting petals in spring and leaves in autumn - NOT airborne sand. "风沙" told the player
+  // the wrong season: a spring afternoon was described as a dust storm.
+  debris: "飘花",
   unknown: "未知天气",
 };
 const WEATHER_NAMES_EN: Record<string, string> = {
   sunny: "sunny",
   rain: "rainy",
+  green_rain: "green rain",
   snow: "snowy",
   lightning: "thunderstorm",
-  debris: "windy",
+  // Not "windy": the native flag is about drifting petals and leaves, and the weather itself is calm.
+  debris: "petals drifting",
   unknown: "unknown weather",
 };
 
