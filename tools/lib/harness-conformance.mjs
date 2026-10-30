@@ -390,6 +390,10 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-commit-staging.mjs", reason: "reads the git index; no offline rule set" },
   { gate: "check-crab-pot-output-fixture-contract.mjs", reason: "requires --contract input" },
   { gate: "check-dependency-risk.mjs", reason: "static report; falsifier in check-dependency-risk.test.mjs" },
+  {
+    gate: "check-dependency-audit.mjs",
+    reason: "judges a live `pnpm audit` against the assessment file; falsifier in check-dependency-audit.test.mjs",
+  },
   { gate: "check-diff.mjs", reason: "runs git diff --check; no offline rule set" },
   { gate: "check-dist-runtime-exports.mjs", reason: "reads the built dist; no offline rule set" },
   { gate: "check-duplicated-authority.mjs", reason: "static source gate; no offline rule set" },
