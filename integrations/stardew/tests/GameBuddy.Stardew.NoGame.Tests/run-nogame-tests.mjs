@@ -16,7 +16,7 @@
  *
  *   - the included set is what this project's `<Compile Include>` lines name;
  *   - the excluded set is `excluded-files.tsv` beside this file, one line per file that needs the
- *     game or the Mod assembly;
+ *     game, the Mod assembly, or the gitignored decompiled reference tree under `/ref/`;
  *   - the population is what the suite directory contains.
  *
  * A file in the suite that is in neither set fails the run by name. That is the one drift that
@@ -72,7 +72,9 @@ function includedFiles() {
   return included.sort();
 }
 
-/** The excluded set: `<file>\t<mod-assembly|game>\t<evidence>`, comments and blank lines skipped. */
+/** The excluded set: `<file>\t<mod-assembly|game|reference-tree>\t<evidence>`, comments and blank
+ *  lines skipped. The reason must be one this runner prints a count for, so a typo cannot drop a
+ *  file from the totals it reports. */
 function excludedFiles() {
   const rows = [];
   for (const line of readFileSync(EXCLUSIONS, "utf8").split(/\r?\n/u)) {
@@ -108,8 +110,16 @@ if (overlap.length > 0) {
   );
 }
 
-const byReason = { "mod-assembly": 0, game: 0 };
-for (const row of excluded) byReason[row.why] = (byReason[row.why] ?? 0) + 1;
+const REASONS = ["mod-assembly", "game", "reference-tree"];
+const unknownReasons = [...new Set(excluded.map((row) => row.why))].filter((why) => !REASONS.includes(why));
+if (unknownReasons.length > 0) {
+  throw new Error(
+    `stardew_nogame_tests_reason_unknown: ${unknownReasons.join(", ")} is not one of ${REASONS.join(", ")} - ` +
+      "the counts below are derived from these names, so an unlisted one would vanish from them",
+  );
+}
+const byReason = Object.fromEntries(REASONS.map((why) => [why, 0]));
+for (const row of excluded) byReason[row.why] += 1;
 
 /** `Passed: 165, Total: 165` from the run's summary line. */
 function testCount(output) {
@@ -143,7 +153,8 @@ process.stdout.write(
   `${[
     `stardew_nogame_tests: ${total === null ? "?" : total} tests across ${included.length} files`,
     `stardew_nogame_tests: ${excluded.length} of the suite's ${suite.length} files NOT run here ` +
-      `(${byReason["mod-assembly"]} need the Mod assembly, ${byReason.game} need the game)`,
+      `(${byReason["mod-assembly"]} need the Mod assembly, ${byReason.game} need the game, ` +
+      `${byReason["reference-tree"]} read the gitignored decompiled reference tree under /ref/)`,
     "stardew_nogame_tests: this is the Core-only subset, not the integration suite; the files above run",
     "stardew_nogame_tests: only where GAMEBUDDY_STARDEW_GAME_PATH is configured for the gated steps",
   ].join("\n")}\n`,

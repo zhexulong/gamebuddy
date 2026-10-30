@@ -10,6 +10,12 @@
 # ...); `game` means it is declared nowhere in this repository, so the game, SMAPI, xTile, XNA or
 # LiteNetLib provides it. Reproduce with a compile of the suite against Core only.
 #
+# `reference-tree` is the other measurement, for a file the compiler ACCEPTS: it compiles against
+# Core alone but its source reads the decompiled game under /ref/, which is gitignored, so a hosted
+# checkout has no tree for it to read and it cannot run in this lane whatever the compiler says.
+# Reproduce by compiling the suite against Core only and checking which survivors name
+# `StardewValleyDecompiled`.
+#
 # file	why	evidence (first unresolved names)
 acceptednavigationexecutiontests.cs	mod-assembly	Navigation, AcceptedNavigationExecution, DerivedDestinationSet, INavigationConnectivitySource, INavigationWorldSource
 AcceptSpecialOrderActionTests.cs	mod-assembly	Handlers
@@ -104,6 +110,7 @@ ShipItemActionTests.cs	mod-assembly	Handlers
 ShipItemApproachWiringTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
 ShopMenuHeadlessProbe.cs	game	StardewValley
 ShopOpeningPreflightTests.cs	mod-assembly	Navigation
+ShopPurchaseCurrencySourceShapeTests.cs	reference-tree	StardewValleyDecompiled (ShopMenu.cs :304/:371/:885-888, Utility.cs :4217); /ref/ is gitignored, so a hosted checkout has no reference tree
 SleepAndAdvanceDayLifecycleTests.cs	mod-assembly	SleepAndAdvanceDayLifecycleConfig
 SlimeHutchTroughActionTests.cs	mod-assembly	Handlers
 StardewBodyControllerPathGoalTests.cs	mod-assembly	StardewBodyController

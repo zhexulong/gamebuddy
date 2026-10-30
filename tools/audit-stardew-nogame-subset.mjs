@@ -13,18 +13,22 @@
  *   - A file that starts touching the game stays in, and the no-game lane goes red for a
  *     reason that has nothing to do with the change that broke it.
  *
- * So the population is not maintained. It is DERIVED, on every run, by the only authority that
- * can answer the question: the compiler. A file is game-free exactly when the C# compiler links
- * it against `GameBuddy.Stardew.Core` and nothing else. The derivation below asks the compiler
- * directly - it builds every file, drops the ones that fail, and repeats until the build
- * succeeds. That is a fixpoint of the same question the project asks, so the gate cannot agree
- * with a hand-edited list by construction; the list has to agree with the compiler.
+ * So the population is not maintained. It is DERIVED, on every run, from the two authorities that
+ * can answer the question. A file RUNS in the no-game lane exactly when (1) the compiler links it
+ * against `GameBuddy.Stardew.Core` and nothing else and (2) its source reads no gitignored
+ * machine-local input. The derivation below asks the compiler directly - it builds every file,
+ * drops the ones that fail, and repeats until a build succeeds - and then drops the surviving
+ * files whose source names the decompiled tree under `/ref/`. Both steps are fixpoints of the
+ * questions the project actually asks, so the gate cannot agree with a hand-edited list by
+ * construction; the list has to agree with them.
  *
- * A static scan over source text was measured and rejected: it disagreed with the compiler on
+ * A static scan for game-layer TYPES was measured and rejected: it disagreed with the compiler on
  * 14 of the 148 files (10 it called game-free that the compiler refused, 4 the reverse) because
- * many files name game-layer types only inside documentation and string literals while the
- * types they really fail on (`ExecutionManager`, `DerivedDestinationSet`) are declared inside
- * mod files that do touch the game. A discriminator that is wrong 14 times cannot gate.
+ * many files name those types only inside documentation and string literals while the types they
+ * really fail on (`ExecutionManager`, `DerivedDestinationSet`) are declared inside mod files that
+ * do touch the game. A discriminator that is wrong 14 times cannot gate. Asking the source which
+ * gitignored directory it reads is a different question - the compiler cannot answer it, and no
+ * C# test can read that tree without spelling the name - so it is measured, not maintained.
  *
  * Usage:
  *   node tools/audit-stardew-nogame-subset.mjs            # gate; exits 1 on drift
@@ -47,6 +51,23 @@ const CORE_PROJECT = join(ROOT, "integrations/stardew/src/Core/GameBuddy.Stardew
 /** Upper bound on fixpoint rounds. Each round removes at least one file, so the loop terminates
  *  well before this; the cap only stops a pathological build from spinning forever. */
 const MAX_ROUNDS = 12;
+
+/**
+ * The decompiled game sources the suite's drift anchors read.
+ *
+ * `/ref/` is gitignored, so a hosted checkout carries no reference tree at all. That makes "compiles
+ * against `GameBuddy.Stardew.Core` alone" necessary but not sufficient: a file can compile there and
+ * still be unable to RUN, because its test reads a line of the decompiled game. The compiler is the
+ * authority for the first question and the source text is the authority for the second - a C# test
+ * cannot reach this tree without spelling this directory name, so the token is exact rather than a
+ * guess at types the compiler already resolves.
+ */
+const REFERENCE_TREE = "StardewValleyDecompiled";
+
+/** Whether one suite file reads the gitignored decompiled tree. */
+function readsReferenceTree(name) {
+  return readFileSync(join(SUITE_DIR, name), "utf8").includes(REFERENCE_TREE);
+}
 
 /** The suite's top-level `.cs` files - the population the subset is drawn from. */
 export function suiteFiles() {
@@ -153,9 +174,10 @@ function build(project) {
 }
 
 /**
- * Derive the game-free set by asking the compiler, round after round: build everything, drop
- * every file the build names, build again, until a build succeeds. The surviving set is the
- * answer, and it is derived rather than declared.
+ * Derive the runnable no-game set by asking the compiler, round after round: build everything,
+ * drop every file the build names, build again, until a build succeeds; then drop the files that
+ * survive but read the gitignored decompiled tree. The remaining set is the answer, and it is
+ * derived rather than declared.
  */
 export function deriveGameFreeFiles() {
   const preamble = probePreamble();
@@ -170,8 +192,10 @@ export function deriveGameFreeFiles() {
       const project = writeProbe(scratch, remaining, preamble);
       const result = build(project);
       if (result.ok) {
+        const referenceTree = remaining.filter(readsReferenceTree);
         return {
-          derived: remaining,
+          derived: remaining.filter((name) => !referenceTree.includes(name)),
+          referenceTree,
           refused: [...refused].sort(),
           rounds,
           total: all.length,
@@ -182,6 +206,7 @@ export function deriveGameFreeFiles() {
       if (named.length === 0) {
         return {
           derived: null,
+          referenceTree: [],
           refused: [...refused].sort(),
           rounds,
           total: all.length,
@@ -197,7 +222,15 @@ export function deriveGameFreeFiles() {
       }
       remaining = remaining.filter((name) => !refused.has(name));
     }
-    return { derived: null, refused: [...refused].sort(), rounds, total: all.length, exit: 1, stalled: [] };
+    return {
+      derived: null,
+      referenceTree: [],
+      refused: [...refused].sort(),
+      rounds,
+      total: all.length,
+      exit: 1,
+      stalled: [],
+    };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -221,6 +254,7 @@ function main(argv) {
   }
 
   const derived = derivedResult.derived;
+  const referenceTree = derivedResult.referenceTree;
   const project = projectFiles();
   const missing = derived.filter((name) => !project.includes(name));
   const extra = project.filter((name) => !derived.includes(name));
@@ -228,13 +262,21 @@ function main(argv) {
     ...missing.map((file) => ({
       file,
       rule: "headless_file_not_included",
-      detail: `compiles against GameBuddy.Stardew.Core alone, so the no-game lane must run it; add it to the <Compile Include> list`,
+      detail: `compiles against GameBuddy.Stardew.Core alone and reads no gitignored input, so the no-game lane must run it; add it to the <Compile Include> list`,
     })),
-    ...extra.map((file) => ({
-      file,
-      rule: "included_file_not_headless",
-      detail: `the compiler refused it without a game, so it cannot run in the no-game lane; remove it from the <Compile Include> list`,
-    })),
+    ...extra.map((file) =>
+      referenceTree.includes(file)
+        ? {
+            file,
+            rule: "included_file_needs_reference_tree",
+            detail: `its source reads ${REFERENCE_TREE}, which /ref/ gitignores, so a hosted checkout has no tree for it to read; remove it from the <Compile Include> list and record the reason in excluded-files.tsv`,
+          }
+        : {
+            file,
+            rule: "included_file_not_headless",
+            detail: `the compiler refused it without a game, so it cannot run in the no-game lane; remove it from the <Compile Include> list`,
+          },
+    ),
   ];
 
   if (json) {
@@ -246,6 +288,7 @@ function main(argv) {
           included: project.length,
           rounds: derivedResult.rounds,
           refused: derivedResult.refused.length,
+          referenceTree: referenceTree.length,
           findings,
         },
         null,
@@ -256,18 +299,21 @@ function main(argv) {
     for (const name of derived) {
       process.stdout.write(`headless  ${name}\n`);
     }
+    for (const name of referenceTree) {
+      process.stdout.write(`reference-tree  ${name}\n`);
+    }
     for (const name of derivedResult.refused) {
       process.stdout.write(`needs-game  ${name}\n`);
     }
   } else {
     process.stdout.write(
       `${[
-        `stardew_nogame_subset: ${derived.length} of ${derivedResult.total} suite files compile against GameBuddy.Stardew.Core alone`,
-        `stardew_nogame_subset: ${derivedResult.refused.length} need a game or the Mod assembly, and the project includes ${project.length}`,
+        `stardew_nogame_subset: ${derived.length} of ${derivedResult.total} suite files compile against GameBuddy.Stardew.Core alone and read no gitignored input`,
+        `stardew_nogame_subset: ${derivedResult.refused.length} need a game or the Mod assembly, ${referenceTree.length} compile headless but read the gitignored ${REFERENCE_TREE} tree${referenceTree.length === 0 ? "" : ` (${referenceTree.join(", ")})`}, and the project includes ${project.length}`,
         ...findings.map((finding) => `stardew_nogame_subset: ${finding.rule}: ${finding.file} - ${finding.detail}`),
         findings.length === 0
-          ? "stardew_nogame_subset: the project's file list matches the compiler exactly"
-          : `stardew_nogame_subset: ${findings.length} file(s) disagree with the compiler`,
+          ? "stardew_nogame_subset: the project's file list matches the compiler and the reference-tree measurement exactly"
+          : `stardew_nogame_subset: ${findings.length} file(s) disagree with the measurements`,
       ].join("\n")}\n`,
     );
   }

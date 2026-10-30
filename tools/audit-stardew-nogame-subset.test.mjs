@@ -14,18 +14,34 @@ const PROJECT = join(
   ROOT,
   "integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/GameBuddy.Stardew.NoGame.Tests.csproj",
 );
+const SUITE_DIR = join(ROOT, "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests");
 
 test("the derivation asks the compiler, so it cannot agree with a hand-edited list", () => {
   const result = deriveGameFreeFiles();
   assert.equal(result.derived === null, false, "the compiler must accept some subset");
   assert.ok(result.rounds >= 1);
   assert.equal(result.total, suiteFiles().length);
-  assert.equal(result.derived.length + result.refused.length, result.total);
+  assert.equal(result.derived.length + result.referenceTree.length + result.refused.length, result.total);
 });
 
-test("the project compiles exactly the files the compiler accepts without a game", () => {
+test("the project compiles exactly the headless files that read no gitignored input", () => {
   const derived = deriveGameFreeFiles();
   assert.deepEqual(projectFiles(), derived.derived);
+});
+
+test("no file that reads the gitignored reference tree is compiled into the no-game lane", () => {
+  const derived = deriveGameFreeFiles();
+  const included = projectFiles();
+  const offenders = derived.referenceTree.filter((name) => included.includes(name));
+  assert.deepEqual(offenders, [], `reference-tree readers in the no-game lane: ${offenders.join(", ")}`);
+  // The measurement is only a measurement if every member names the tree: a set that stopped being
+  // derived from the source would pass the assertion above while reading nothing.
+  for (const name of derived.referenceTree) {
+    assert.ok(
+      readFileSync(join(SUITE_DIR, name), "utf8").includes("StardewValleyDecompiled"),
+      `${name} does not name the gitignored decompiled tree`,
+    );
+  }
 });
 
 test("no game-free file is left out of the no-game lane", () => {
