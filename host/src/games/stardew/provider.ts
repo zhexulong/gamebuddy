@@ -97,6 +97,7 @@ export function createStardewGamePresentationProjection(
     operationIds: [
       "game.state.read",
       "game.prerequisites.setup",
+      "game.prerequisites.smapi.install",
       "game.launch",
       "game.stop",
       "game.resume",
@@ -128,6 +129,7 @@ export function createStardewGamePresentationProjection(
   const lifecycleActivationBindingSink = Object.freeze({
     ...coordinator.activationOwner,
     gameDiscovery: createStardewGameDiscoveryBinding(coordinator.activationOwner),
+    modLoaderInstall: coordinator.activationOwner.installModLoader.bind(coordinator.activationOwner),
   });
   return Object.freeze({
     gameProfile,

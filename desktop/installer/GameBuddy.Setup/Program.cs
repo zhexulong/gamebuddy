@@ -13,8 +13,10 @@ internal static class Program
 {
     private const string EmbeddedPayloadResourceName = "payload.zip";
 
-    // The installed uninstaller runs on its own, so it is installed as the whole
-    // framework-dependent application, not just its apphost.
+    // The installed uninstaller has to run on its own, from the program root, with no Setup
+    // beside it. A self-contained single-file Release build IS one image, so the set is
+    // whichever of these the build produced: the apphost plus assembly set of a
+    // framework-dependent build, or the single self-contained executable.
     private static readonly string[] UninstallerExecutableSet =
     [
         "GameBuddy.Setup.exe",
@@ -48,19 +50,42 @@ internal static class Program
         }
         catch (Exception)
         {
-            // An unexpected failure is still a failed setup. The runtime's own
-            // report would be a stack trace carrying installed paths, so it is
-            // replaced by one bounded code.
-            Console.Error.WriteLine(SetupOutcome.Code(SetupFailure.PayloadUnavailable));
+            // An unexpected failure is still a failed setup. The runtime's own report would be a
+            // stack trace carrying installed paths, so it is replaced by one bounded code.
+            //
+            // The code is `installer_failed`, not a named cause: this used to reuse
+            // `payload_unavailable`, so an uninstall that could not delete its own program root
+            // reported a payload problem - a cause that names the wrong layer and sends the reader
+            // looking at the archive instead of at the file lock.
+            Console.Error.WriteLine(SetupOutcome.Code(SetupFailure.Unhandled));
             return 1;
         }
     }
 
     private static void Install(SetupLayout layout, SetupRequest request)
     {
+        // A completed removal left a marker outside the program root; it is stale the moment a new
+        // program root is laid down, and leaving it would make a later "did the removal finish?"
+        // check read this install's absence of a removal.
+        try
+        {
+            File.Delete(RemovalMarkerPath(layout));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // A leftover marker cannot change what this install writes, so it never fails one.
+        }
+
         LayPayloadIntoProgramRoot(OpenPayload(), layout);
         InstallUninstaller(layout);
         SetupRegistration.Write(layout, request.DisplayVersion ?? CurrentDisplayVersion());
+        // Last, and never a precondition: the product is installed and registered by the
+        // three steps above, so a desktop folder this process cannot write leaves the player
+        // with a working install reachable from Start rather than a half-finished setup.
+        DesktopShortcut.TryCreate(
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Path.Combine(layout.ProgramRoot, SetupLayout.LauncherEntryRelativePath),
+            layout.ProgramRoot);
     }
 
     /// <summary>
@@ -83,7 +108,15 @@ internal static class Program
 
     private static void Uninstall(SetupLayout layout, SetupRequest request)
     {
-        if (SetupLayout.IsRunningFrom(layout.ProgramRoot))
+        DesktopShortcut.Remove(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+        // Which branch is chosen decides whether the program root can be removed at all, and the
+        // two branches used to be indistinguishable from outside: the scheduled one reported the
+        // same `installer_ok` whether or not its child ever ran. Naming it on stdout makes the
+        // uninstall's own account checkable, and costs nothing a player would notice.
+        var runningFromProgramRoot = SetupLayout.IsRunningFrom(layout.ProgramRoot);
+        Console.WriteLine($"uninstall_strategy:{(runningFromProgramRoot ? "scheduled" : "synchronous")}");
+        layout.WriteBranchDiagnostics();
+        if (runningFromProgramRoot)
         {
             // The uninstaller cannot delete the directory it is executing from.
             // It stages the removal and hands it to the command processor, which
@@ -121,30 +154,63 @@ internal static class Program
 
     private static void ScheduleProgramRootRemoval(SetupLayout layout, SetupRequest request)
     {
+        var roots = DisposableRootArguments(layout, request).Where(Directory.Exists).ToArray();
+        if (roots.Length == 0)
+        {
+            return;
+        }
+
+        // The removal is done by a detached command processor, because this process cannot
+        // delete the directory it is executing from. Two things have to be true for that to be
+        // an actual uninstall rather than a silent no-op, and the previous version had neither:
+        //
+        //  1. The child must outlive this process. With `UseShellExecute = false` the child
+        //     inherits this process's console/job, so it was torn down or lost its stdin when
+        //     Setup exited - measured: the uninstaller reported `installer_ok` in 0.23s and the
+        //     whole program root was still there 8 seconds later. `UseShellExecute = true`
+        //     launches through the shell, so the child is independent of the parent's lifetime.
+        //
+        //  2. Its outcome has to be observable. The script now writes a marker file next to the
+        //     registration after the removals, so "the directory is gone" stops being an
+        //     assumption: the next install (or `--uninstall` run) can tell a completed removal
+        //     from one that never ran.
         var removals = string.Join(
             " & ",
-            DisposableRootArguments(layout, request)
-                .Where(Directory.Exists)
-                .Select(path => $"rmdir /s /q \"{path}\" > nul 2>&1")
-                .ToArray());
-        // ping is the portable stand-in for `timeout`, which needs an interactive
-        // console. The short delay lets this process exit so the running
-        // uninstaller image is no longer locked when its directory is removed.
-        var command = $"/c ping -n 3 127.0.0.1 > nul 2>&1 & {removals}";
+            roots.Select(path => $"rmdir /s /q \"{path}\" > nul 2>&1").ToArray());
+        // `ping` is the portable stand-in for `timeout`, which needs an interactive console. The
+        // delay lets this process exit so the running image is no longer locked when its
+        // directory is removed.
+        var marker = $"\"{RemovalMarkerPath(layout)}\"";
+        var command =
+            $"/c ping -n 3 127.0.0.1 > nul 2>&1 & {removals} & " +
+            $"echo removed > {marker}";
         var start = new System.Diagnostics.ProcessStartInfo("cmd.exe", command)
         {
             CreateNoWindow = true,
-            UseShellExecute = false,
+            UseShellExecute = true,
+            WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
         };
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(RemovalMarkerPath(layout))!);
             System.Diagnostics.Process.Start(start)?.Dispose();
         }
-        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception exception) when (
+            exception is InvalidOperationException
+                or System.ComponentModel.Win32Exception
+                or IOException
+                or UnauthorizedAccessException)
         {
             throw new SetupException(SetupFailure.UninstallUnavailable);
         }
     }
+
+    /// <summary>
+    /// Where a scheduled removal records that it finished. It lives outside the program root,
+    /// because the program root is what the removal deletes.
+    /// </summary>
+    private static string RemovalMarkerPath(SetupLayout layout) =>
+        Path.Combine(layout.LocalApplicationData, "GameBuddy", "uninstall-removal-complete.txt");
 
     private static void RemoveDisposableRoots(SetupLayout layout, SetupRequest request)
     {
@@ -226,15 +292,26 @@ internal static class Program
 
         var targetDirectory = Path.GetDirectoryName(target)!;
         Directory.CreateDirectory(targetDirectory);
-        // The framework-dependent app is more than its apphost: the uninstaller
-        // must run on its own from the program root, without the Setup that
-        // installed it and without any repository checkout.
+        // The uninstaller must run on its own from the program root, without the Setup that
+        // installed it and without any repository checkout. Which files that takes depends on
+        // how this build was produced: a self-contained single-file Release is one image, while
+        // a framework-dependent build is an apphost plus its assembly and configuration.
+        //
+        // The executable is required; the rest are copied only when this build emitted them.
+        // Requiring the whole set would make a correct single-file Release fail its own install,
+        // and requiring only the executable would ship an uninstaller that cannot start on the
+        // framework-dependent builds the tests use.
         foreach (var file in UninstallerExecutableSet)
         {
             var sourceFile = Path.Combine(source, file);
             if (!File.Exists(sourceFile))
             {
-                throw new SetupException(SetupFailure.UninstallUnavailable);
+                if (StringComparer.Ordinal.Equals(file, "GameBuddy.Setup.exe"))
+                {
+                    throw new SetupException(SetupFailure.UninstallUnavailable);
+                }
+
+                continue;
             }
 
             var targetFile = Path.Combine(targetDirectory, file);

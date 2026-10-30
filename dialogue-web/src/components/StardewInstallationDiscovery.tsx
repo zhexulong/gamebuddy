@@ -3,6 +3,7 @@ import type {
   StardewInstallationCandidateV1,
   StardewInstallationDiscoveryV1,
   ComposedReferenceGameBrowserApi,
+  StardewModLoaderInstallResultV1,
 } from "../composed-reference-game-browser-api";
 import { observedProblemCode } from "../composed-problem-view";
 import {
@@ -12,9 +13,11 @@ import {
   installationHintLabel,
   installationSourceLabel,
   installationStateLabel,
+  modLoaderInstallLabel,
   type InstallationDiscoveryState,
 } from "../game-presentation";
 import type { Messages } from "../i18n";
+import { newIdempotencyKey } from "./composed-reference-game-view";
 
 type Props = {
   api: Pick<
@@ -24,6 +27,7 @@ type Props = {
     | "retryStardewInstallationDiscovery"
     | "cancelStardewInstallationDiscovery"
     | "openStardewInstallationPicker"
+    | "installStardewModLoader"
   >;
   labels: Messages;
   /**
@@ -103,6 +107,17 @@ const isConfirmableCandidate = (status: StardewInstallationCandidateV1["status"]
   status === "candidate" || status === "admission_required";
 export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
+  /**
+   * What the one-click mod-loader install last reported, or `null` when it has not run.
+   *
+   * It is separate from the discovery state because the two answer different questions: the
+   * discovery state is "which folder do we use", and this is "did the loader get installed"
+   * - which only exists once a folder has been named and refused for exactly that reason.
+   */
+  const [modLoaderInstall, setModLoaderInstall] = useState<StardewModLoaderInstallResultV1["status"] | null>(null);
+  const [steamLaunchOption, setSteamLaunchOption] = useState<string | null>(null);
+  const [steamCopy, setSteamCopy] = useState<"idle" | "copied" | "failed">("idle");
+  const modLoaderInstallKey = useRef<string | undefined>(undefined);
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   // What is outstanding, which gates the rendered controls; a ref would not re-render
@@ -248,6 +263,57 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
   // A confirmation is a Host operation with no cancel of its own, so it is the
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
+  /**
+   * Copies the launch option into the player's clipboard.
+   *
+   * The clipboard belongs to the browser, not to the Host: a Host-side copy would need a
+   * desktop session the Host may not have (a headless run measured `clip.exe` exiting 1), so
+   * the write happens here through the platform's own async clipboard API. A refusal is
+   * reported rather than swallowed, and the string stays selectable either way.
+   */
+  const copyLaunchOption = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      if (mounted.current) setSteamCopy("copied");
+    } catch {
+      if (mounted.current) setSteamCopy("failed");
+    }
+  };
+  /**
+   * Installs the shipped mod loader into the folder the Host just refused for that reason.
+   *
+   * The command carries an idempotency key and nothing else, and it is minted once per
+   * attempt and reused across a retry of the same attempt: a retry after a network failure
+   * must replay the same Host operation rather than start a second install that could
+   * interleave with the first.
+   */
+  const installModLoader = async () => {
+    if (busy) return;
+    setPending("action");
+    setModLoaderInstall(null);
+    try {
+      modLoaderInstallKey.current ??= newIdempotencyKey();
+      const outcome = await api.installStardewModLoader({
+        apiVersion: 1,
+        idempotencyKey: modLoaderInstallKey.current,
+      });
+      modLoaderInstallKey.current = undefined;
+      if (!mounted.current) return;
+      setModLoaderInstall(outcome.status);
+      setSteamLaunchOption(outcome.steamLaunchOption ?? null);
+      setSteamCopy("idle");
+      if (outcome.status !== "installed" && outcome.status !== "current") return;
+      // The folder is admissible now, so the panel states that outcome and hands the surface
+      // above it the admitted installation - the same contract every other admission uses.
+      await read(true);
+      if (mounted.current) setState("confirmed");
+      onAdmitted?.();
+    } catch (error) {
+      if (mounted.current) setState(installationDiscoveryFailureState(observedProblemCode(error)));
+    } finally {
+      setPending("none");
+    }
+  };
   return (
     <section
       className="game-installation-panel"
@@ -302,6 +368,56 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
         <p className="installation-state" role="status">
           {labels.gameInstallationConfirming}
         </p>
+      )}
+      {/*
+        The one control that resolves the refusal above, offered exactly in that state.
+        It is not a second way to choose a folder: the Host writes into the folder this
+        panel just named, and the command carries no path. A player whose folder lacks the
+        mod loader used to be sent to a website from here; this is the step that ends
+        inside the product.
+      */}
+      {state === "mod-loader-missing" && (
+        <div className="game-actions" data-testid="game-mod-loader-install">
+          <button type="button" className="game-action primary" disabled={busy} onClick={() => void installModLoader()}>
+            {labels.gameModLoaderInstallAction}
+          </button>
+          <p className="game-subpanel-note">{labels.gameModLoaderInstallHint}</p>
+        </div>
+      )}
+      {modLoaderInstall !== null && (
+        <p className="installation-state" role="status" data-mod-loader-outcome={modLoaderInstall}>
+          {modLoaderInstallLabel(labels, modLoaderInstall)}
+        </p>
+      )}
+      {/*
+        The Steam launch option, offered exactly when the Host published one - which is the
+        two success outcomes. Steam starts the game itself, so without this the loader is
+        installed and still never runs; the card is the last step that has to happen in
+        Steam's own UI, and it carries the exact string so the player does not have to
+        assemble a path by hand.
+      */}
+      {steamLaunchOption !== null && (
+        <div className="installation-steam-option" data-testid="game-steam-launch-option">
+          <h5 className="section-subtitle">{labels.gameSteamLaunchOptionTitle}</h5>
+          <p className="game-subpanel-note">{labels.gameSteamLaunchOptionDetail}</p>
+          <div className="installation-steam-option-value">
+            <code>{steamLaunchOption}</code>
+            <button
+              type="button"
+              className="game-action"
+              onClick={() => {
+                void copyLaunchOption(steamLaunchOption);
+              }}
+            >
+              {labels.gameSteamLaunchOptionCopy}
+            </button>
+          </div>
+          {steamCopy !== "idle" && (
+            <p className="game-subpanel-note" role="status" data-copy-outcome={steamCopy}>
+              {steamCopy === "copied" ? labels.gameSteamLaunchOptionCopied : labels.gameSteamLaunchOptionCopyFailed}
+            </p>
+          )}
+        </div>
       )}
       <div className="game-actions">
         <button type="button" className="game-action" disabled={pickerDisabled} onClick={() => void action("picker")}>

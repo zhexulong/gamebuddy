@@ -12,8 +12,10 @@ import {
   installationCandidateLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
+  installationSourceLabel,
   installationStateLabel,
   instanceLabel,
+  modLoaderInstallLabel,
   outcomeLabel,
 } from "../src/game-presentation.ts";
 
@@ -57,6 +59,7 @@ const INSTALLATION_STATES = [
   "result-unavailable",
   "mod-loader-missing",
   "not-stardew-installation",
+  "reparse-point",
   "selection-unavailable",
   "confirmed",
   "expired",
@@ -171,7 +174,18 @@ test("the installation sentence follows the transport's own answer", () => {
   assert.equal(installationDiscoveryState(1, []), "candidates");
   assert.equal(installationDiscoveryState(1, ["registry-unavailable"]), "candidates");
   // A scan that could not read a source says so, from the Host's own diagnostics.
-  for (const diagnostic of ["source-unavailable", "registry-unavailable", "vdf-unreadable", "vdf-malformed", "invalid-app-manifest"])
+  for (const diagnostic of [
+    "source-unavailable",
+    "registry-unavailable",
+    "vdf-unreadable",
+    "vdf-malformed",
+    "invalid-app-manifest",
+    // The GOG source's own failures. A player whose Galaxy registry could not be read is a
+    // player whose search could not run, not one whose game is absent.
+    "gog-unavailable",
+    "gog-metadata-unreadable",
+    "gog-metadata-malformed",
+  ])
     assert.equal(installationDiscoveryState(0, [diagnostic]), "source-unavailable", diagnostic);
   assert.equal(installationDiscoveryState(0, ["registry-unavailable", "invalid-app-manifest"]), "source-unavailable");
   assert.equal(installationDiscoveryState(0, ["source-unavailable", "no-candidates"]), "source-unavailable");
@@ -233,6 +247,106 @@ test("a selection refusal names its cause, and an unnamed one says only what it 
   );
 });
 
+/**
+ * The third selection refusal, and the sentence that has to name the fix.
+ *
+ * A shortcut, a junction or an MO2 virtual folder holds the game and the mod loader - so the
+ * two older refusals cannot be what refuses it - and it reached the player as the generic
+ * "that folder could not be used", which names no cause and no action. The sentence has to say
+ * what the path is and which folder to pick instead, in both languages.
+ */
+test("a linked folder is refused as a link, in words that name the folder to pick instead", () => {
+  const en = installationStateLabel(messages("en"), "reparse-point");
+  const zh = installationStateLabel(messages("zh-CN"), "reparse-point");
+  for (const [locale, sentence] of [
+    ["en", en],
+    ["zh-CN", zh],
+  ]) {
+    assert.ok(sentence.length > 0, `${locale} reparse-point sentence is empty`);
+    assert.notEqual(sentence, "reparse-point", `${locale} reparse-point is rendered raw`);
+    // The three shapes a player's folder can be, named rather than implied.
+    assert.match(sentence, /shortcut|快捷方式/u, `${locale} names the shortcut case`);
+    assert.match(sentence, /junction|联接/u, `${locale} names the junction case`);
+    assert.match(sentence, /Mod Organizer 2/u, `${locale} names the virtual-folder case`);
+    // And the fix: the game's real folder, not a link to it.
+    assert.match(sentence, /Stardew Valley\.exe/u, `${locale} says which folder holds the game`);
+  }
+  // Each of the three selection refusals says something the other two do not: the collapsed
+  // state was exactly this - one sentence standing for three different fixes.
+  const states = ["mod-loader-missing", "not-stardew-installation", "reparse-point"];
+  for (const locale of ["en", "zh-CN"]) {
+    const sentences = states.map((state) => installationStateLabel(messages(locale), state));
+    assert.equal(new Set(sentences).size, states.length, `${locale} selection refusals do not share one sentence`);
+    assert.ok(
+      !sentences.includes(installationStateLabel(messages(locale), "selection-unavailable")),
+      `${locale} a named refusal is not the unnamed one`,
+    );
+  }
+});
+
+/**
+ * The panel's list of source-read failures is a hand copy of the Host's `DiscoveryDiagnostic`
+ * union, so it drifts the moment the Host adds a member - and the drift is silent and harmful:
+ * a diagnostic the panel does not know reads as "no installation was found", which is a
+ * statement about the player's machine the Host never made. That is exactly how the GOG
+ * diagnostics would have been lost.
+ *
+ * So the population is derived from the Host's own declaration and the exclusions are named:
+ * every member of `DiscoveryDiagnostic` that does not name the absence of a candidate must make
+ * the panel say the search could not run. A new member fails here until someone decides which
+ * of the two it is.
+ */
+test("the panel knows every discovery diagnostic the Host can send, by derivation", () => {
+  const hostSource = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "..", "host", "src", "windows-stardew-installation-discovery", "internal.ts"),
+    "utf8",
+  );
+  const union = hostSource.match(/export type DiscoveryDiagnostic =([\s\S]*?);/u);
+  assert.notEqual(union, null, "DiscoveryDiagnostic must be declared as a union literal");
+  const members = [...union[1].matchAll(/"([a-z0-9-]+)"/gu)].map((match) => match[1]);
+  assert.ok(members.length >= 8, `derived ${members.length} members; the union parse is wrong`);
+  // The two members that describe a candidate rather than a failed read. They are named here
+  // rather than inferred, so a third one has to be a decision somebody makes.
+  const NAMES_ABSENCE_NOT_FAILURE = ["no-candidates", "candidate-invalid"];
+  const failures = [];
+  for (const member of members) {
+    if (NAMES_ABSENCE_NOT_FAILURE.includes(member)) continue;
+    if (installationDiscoveryState(0, [member]) !== "source-unavailable")
+      failures.push(`${member} reads as a finding about the machine, not a search that could not run`);
+  }
+  assert.deepEqual(failures, []);
+});
+
+/**
+ * Every source the discovery session can declare reads as a sentence, never as the member -
+ * and the GOG source in particular, because the panel now receives its candidates: a row found
+ * through Galaxy used to fall to the generic `other` sentence, which says less than the Host
+ * knows without saying anything untrue. The list is the discovery session's own `source` union
+ * (`host/src/windows-stardew-installation-discovery/internal.ts`), so a source added there is a
+ * source this test asks about.
+ */
+test("each declared discovery source reads as its own sentence in both languages", () => {
+  const SOURCES = ["steam-registry", "steam-vdf", "known-location", "gog"];
+  const en = messages("en");
+  const zh = messages("zh-CN");
+  for (const source of SOURCES) {
+    const value = installationSourceLabel(en, source);
+    assert.ok(value.length > 0, `en source ${source} is empty`);
+    assert.notEqual(value, source, `en source ${source} is rendered raw`);
+    assert.ok(!value.includes("_"), `en source ${source} still reads like an enumeration`);
+    assert.notEqual(
+      installationSourceLabel(zh, source),
+      value,
+      `source ${source} is not translated`,
+    );
+  }
+  // The GOG sentence names the store, so a player can tell it from the Steam rows beside it.
+  assert.match(installationSourceLabel(en, "gog"), /GOG/u);
+  assert.match(installationSourceLabel(zh, "gog"), /GOG/u);
+  // A source this build has no sentence for still describes a candidate the Host published.
+  assert.equal(installationSourceLabel(en, "epic-games-store"), en.gameInstallationSourceOther);
+});
+
 test("a candidate's own line carries where it is, so two installations are not one row twice", () => {
   const en = messages("en");
   const zh = messages("zh-CN");
@@ -269,4 +383,38 @@ test("the capability summary says how many capabilities are published, or says i
   assert.equal(capabilitiesLabel(en, { available: true, count: 7 }), "7 available");
   assert.equal(capabilitiesLabel(en, { available: false, count: 0 }), en.gameCapabilitiesUnavailable);
   assert.equal(capabilitiesLabel(messages("zh-CN"), { available: true, count: 7 }), "7 项可用");
+});
+
+test("every mod-loader install outcome renders a localized player outcome, never the raw code", () => {
+  // The set is restated here so a new Host outcome cannot reach a player as a code.
+  const MOD_LOADER_INSTALL_STATUSES = [
+    "installed",
+    "current",
+    "game_installation_not_found",
+    "installation_conflict",
+    "game_dependencies_missing",
+    "mods_directory_not_writable",
+    "mod_loader_payload_unavailable",
+    "mod_loader_install_incomplete",
+  ];
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const rendered = new Set();
+    for (const status of MOD_LOADER_INSTALL_STATUSES) {
+      const value = modLoaderInstallLabel(labels, status);
+      assert.ok(typeof value === "string" && value.length > 0, `${locale} ${status} is empty`);
+      assert.notEqual(value, status, `${locale} ${status} is rendered raw`);
+      assert.ok(!value.includes("_"), `${locale} ${status} still reads like an enum`);
+      // Every outcome must say something distinguishable: a player reading two different
+      // failures as one sentence learns nothing about which one they are in.
+      assert.ok(!rendered.has(value), `${locale} ${status} duplicates another outcome's sentence`);
+      rendered.add(value);
+    }
+    // A write and a no-op are different facts and must not read as the same success.
+    assert.notEqual(
+      modLoaderInstallLabel(labels, "installed"),
+      modLoaderInstallLabel(labels, "current"),
+      `${locale} claims a write it may not have made`,
+    );
+  }
 });

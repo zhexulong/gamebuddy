@@ -17,6 +17,21 @@ const COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID = "gamebuddy.chat-core.reference
 const COMPOSED_REFERENCE_GAME_PROFILE_ID_GAME = "gamebuddy.game.preview" as const;
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+/**
+ * The mod-loader install outcomes, in one place so the type and the runtime validator cannot
+ * drift apart. The Host declares the same set (`StardewModLoaderInstallResultV1Schema`);
+ * `contract-mirror-keys-gate` and this module's own tests hold the two equal.
+ */
+const MOD_LOADER_INSTALL_STATUSES = Object.freeze([
+  "installed",
+  "current",
+  "game_installation_not_found",
+  "installation_conflict",
+  "game_dependencies_missing",
+  "mods_directory_not_writable",
+  "mod_loader_payload_unavailable",
+  "mod_loader_install_incomplete",
+] as const);
 const OPAQUE_HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const MAX_GAME_LABEL_LENGTH = 256;
 const MAX_CABIN_DISPLAY_LABEL_LENGTH = 128;
@@ -290,6 +305,30 @@ export type StardewInstallationMutationV1 = Readonly<{
     | "reparse_point";
 }>;
 
+/**
+ * One-click mod-loader install outcome.
+ *
+ * `installed` and `current` are kept apart on purpose: a re-click must not tell the player
+ * the app wrote something it did not. The rest are the bounded causes the Host reports, each
+ * with a different thing for the player to do, so none of them collapses into `unavailable`.
+ */
+export type StardewModLoaderInstallResultV1 = Readonly<{
+  apiVersion: 1;
+  status: (typeof MOD_LOADER_INSTALL_STATUSES)[number];
+  /**
+   * The Steam launch option that starts the game through the loader, present exactly on
+   * `installed` and `current`.
+   *
+   * It carries the loader's absolute path, which discovery deliberately never publishes. The
+   * difference is who already knows the facts: discovery redacts paths because a player who
+   * has not picked a folder must not receive a map of their disk, while this value exists only
+   * after the player named that exact folder themselves and this session installed into it.
+   * Without the real path the "paste this into Steam" card would leave the player assembling
+   * the string by hand - the round trip this flow exists to remove.
+   */
+  steamLaunchOption?: string;
+}>;
+
 type StardewCabinChoicesV1 = Readonly<{
   apiVersion: 1;
   choices: readonly StardewCabinChoiceV1[];
@@ -303,6 +342,12 @@ type StardewCabinConfirmationRequestV1 = Readonly<{
 }>;
 
 type GameSetupRequestV1 = Readonly<{
+  apiVersion: 1;
+  idempotencyKey: string;
+}>;
+
+/** The one-click mod-loader install carries nothing but its idempotency key. */
+type StardewModLoaderInstallRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
 }>;
@@ -410,6 +455,13 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   retryStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1>;
   cancelStardewInstallationDiscovery(): Promise<StardewInstallationMutationV1>;
   openStardewInstallationPicker(): Promise<StardewInstallationMutationV1>;
+  /**
+   * The one-click mod-loader install, for the game folder the Host has bound.
+   *
+   * It takes no folder argument: the Host writes into the registration's own locator, so
+   * this client method cannot point it anywhere else.
+   */
+  installStardewModLoader(request: StardewModLoaderInstallRequestV1): Promise<StardewModLoaderInstallResultV1>;
   confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1>;
 }>;
 
@@ -683,6 +735,29 @@ function validateStardewInstallationMutation(value: unknown): StardewInstallatio
   )
     throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_mutation");
   return Object.freeze({ apiVersion: 1, status: value.status as StardewInstallationMutationV1["status"] });
+}
+
+function validateStardewModLoaderInstallResult(value: unknown): StardewModLoaderInstallResultV1 {
+  if (
+    !isRecord(value) ||
+    value.apiVersion !== 1 ||
+    !(MOD_LOADER_INSTALL_STATUSES as readonly string[]).includes(value.status as string)
+  )
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
+  const status = value.status as StardewModLoaderInstallResultV1["status"];
+  const succeeded = status === "installed" || status === "current";
+  if (succeeded) {
+    // The launch option is what makes the success usable; a success that omits it would render
+    // as a card with an empty box, so it is required exactly where it exists.
+    if (!hasExactKeys(value, ["apiVersion", "status", "steamLaunchOption"]))
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
+    if (!isBoundedString(value.steamLaunchOption, 1, 4096))
+      throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
+    return Object.freeze({ apiVersion: 1, status, steamLaunchOption: value.steamLaunchOption as string });
+  }
+  if (!hasExactKeys(value, ["apiVersion", "status"]))
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
+  return Object.freeze({ apiVersion: 1, status });
 }
 
 function validateStardewCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {
@@ -1299,6 +1374,26 @@ export function createComposedReferenceGameBrowserApi(
           body: JSON.stringify({ apiVersion: 1 }),
         },
         validateStardewInstallationMutation,
+      );
+    },
+    async installStardewModLoader(request: StardewModLoaderInstallRequestV1): Promise<StardewModLoaderInstallResultV1> {
+      if (
+        !isRecord(request) ||
+        !hasExactKeys(request, ["apiVersion", "idempotencyKey"]) ||
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey)
+      )
+        throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_request");
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/prerequisites/smapi",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+          body: JSON.stringify(request),
+        },
+        validateStardewModLoaderInstallResult,
       );
     },
     async confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1> {

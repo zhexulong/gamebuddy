@@ -21,7 +21,7 @@
     "audit:stardew-scene-kind-projection": "node tools/audit-stardew-scene-kind-projection.mjs",
     "audit:stardew-test-shape": "node tools/audit-stardew-test-shape.mjs",
     "build": "pnpm --dir vendor/pi-koe run build:all && pnpm --filter @gamebuddy/companion-host build && pnpm --filter @gamebuddy/dialogue-web build",
-    "build:desktop-launcher": "dotnet build desktop/GameBuddy.Desktop/GameBuddy.Desktop.csproj -c Release",
+    "build:desktop-launcher": "dotnet publish desktop/GameBuddy.Desktop/GameBuddy.Desktop.csproj -c Release -o desktop/dist/launcher",
     "build:player-distribution": "pnpm build:desktop-launcher && node host/scripts/package-player-distribution.mjs host/dist desktop/dist/payload.zip",
     "build:stardew": "dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release",
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
@@ -270,7 +270,12 @@
     "run:post-history-live": "node tools/live-run/chat/run-post-history-live.mjs",
     "test:silent-failure": "node --test tools/lib/silent-failure.test.mjs",
     "check:stardew-mod-folder-name": "node tools/check-stardew-mod-folder-name.mjs",
-    "test:stardew-mod-folder-name": "node --test tools/check-stardew-mod-folder-name.test.mjs"
+    "test:stardew-mod-folder-name": "node --test tools/check-stardew-mod-folder-name.test.mjs",
+    "check:sandbox-acceptance": "node tools/sandbox/run-sandbox-acceptance.mjs",
+    "test:sandbox-configs": "python tools/sandbox/validate-sandbox-configs.py",
+    "test:sandbox-verdict": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/sandbox/prove-verdict-rule.ps1",
+    "test:sandbox-wiring": "python tools/sandbox/prove-recorder-isolates-runs.py && python tools/sandbox/prove-driver-gate-paths.py",
+    "run:sandbox-level3": "python tools/sandbox/run-blackbox.py"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

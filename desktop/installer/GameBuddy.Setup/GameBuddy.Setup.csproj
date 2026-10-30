@@ -13,6 +13,31 @@
     <Version>0.0.0</Version>
   </PropertyGroup>
 
+  <!--
+    A Release installer carries its own runtime, for the same reason the launcher does: it is
+    the FIRST thing a player runs, on a machine that has nothing installed yet. A
+    framework-dependent Setup.exe starts with the platform's "you need .NET 8.0 Desktop
+    Runtime" dialog before a single line of this installer runs, which is the exact dialog the
+    self-contained launcher exists to prevent - and it would arrive one step EARLIER, when the
+    player has no product at all to fall back on. The sandbox/clean-machine check in
+    `design/` found this: the launcher was self-contained and the installer that launches it
+    was not.
+
+    The uninstaller is a copy of this same executable (Program.InstallUninstaller), so making
+    Setup self-contained makes the installed uninstaller self-contained too - one decision,
+    not two.
+
+    Scoped to Release so the test project and the developer loop keep building against the SDK
+    that is already present.
+  -->
+  <PropertyGroup>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+
   <!-- The installer is deliberately standalone: it never references the launcher
        assembly, so the copy of itself it installs into the program root can run
        with its own files only. -->
@@ -32,13 +57,26 @@
     <GameBuddyPlayerDistributionPayload Condition="'$(GameBuddyPlayerDistributionPayload)' == ''">$(MSBuildThisFileDirectory)..\..\dist\payload.zip</GameBuddyPlayerDistributionPayload>
   </PropertyGroup>
 
-  <Target Name="EmbedPlayerDistributionPayload" BeforeTargets="PrepareForBuild">
+  <!--
+    The payload is declared as an ITEM AT EVALUATION TIME, not added by a target.
+
+    Measured failure this fixes: with the resource added inside a target (`BeforeTargets`
+    `PrepareForBuild`, and again with `CoreCompile`), the build succeeded, the file existed and
+    the property pointed at it - and the produced assembly listed ZERO manifest resources, so
+    `Program.OpenPayload` threw `installer_payload_unavailable` at install time. The SDK captures
+    `@(EmbeddedResource)` while evaluating the project, so an item added by a target is not in
+    the set the compiler is given. A target can read the item and fail the build, but it cannot
+    contribute one; and nothing before this asserted the resource was there, which is why the
+    defect only appeared when Setup was actually run.
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="$(GameBuddyPlayerDistributionPayload)" LogicalName="payload.zip" Condition="Exists('$(GameBuddyPlayerDistributionPayload)')" />
+  </ItemGroup>
+
+  <Target Name="RequirePlayerDistributionPayload" BeforeTargets="CoreCompile">
     <Error Condition="'$(Configuration)' == 'Release' and !Exists('$(GameBuddyPlayerDistributionPayload)')"
            Code="GBPAY001"
            Text="installer_payload_unavailable: no player-distribution payload archive was found at '$(GameBuddyPlayerDistributionPayload)'. Run `pnpm build:player-distribution`, or pass -p:GameBuddyPlayerDistributionPayload=&lt;payload.zip&gt;. A Release Setup.exe is never built without the generation it installs." />
-    <ItemGroup Condition="Exists('$(GameBuddyPlayerDistributionPayload)')">
-      <EmbeddedResource Include="$(GameBuddyPlayerDistributionPayload)" LogicalName="payload.zip" />
-    </ItemGroup>
     <Warning Condition="'$(Configuration)' != 'Release' and !Exists('$(GameBuddyPlayerDistributionPayload)')"
              Code="GBPAY002"
              Text="installer_payload_absent: the Debug build has no player-distribution payload, so the produced Setup.exe can only be used for the uninstall path." />
@@ -87,8 +125,9 @@
            Code="GBSIGN002"
            Text="installer_signing_tool_unavailable: signtool.exe was not found. Set -p:GameBuddySignToolPath=&lt;path&gt;. An unsigned Setup.exe is never published." />
     <ItemGroup>
-      <!-- Both the apphost and the managed assembly are signed: the uninstaller the
-           installer places in the program root is a copy of exactly these two files. -->
+      <!-- Both the apphost and the managed assembly are signed when they exist. A
+           self-contained single-file publish collapses them into one image, so the target set
+           is whatever the publish actually produced rather than a fixed pair. -->
       <SetupSigningTarget Include="$(TargetDir)$(AssemblyName).exe" Condition="Exists('$(TargetDir)$(AssemblyName).exe')" />
       <SetupSigningTarget Include="$(TargetDir)$(AssemblyName).dll" Condition="Exists('$(TargetDir)$(AssemblyName).dll')" />
     </ItemGroup>

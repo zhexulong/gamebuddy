@@ -10,9 +10,13 @@ import type {
   ConstructedUnmountedGameSemanticFacade,
 } from "./continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.js";
 import { randomBytes, randomUUID } from "node:crypto";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { admitStardewInstallation, type AdmittedStardewInstallation } from "./stardew-installation-admission.js";
+import {
+  admitStardewInstallation,
+  STARDEW_REPARSE_POINT_REFUSED,
+  type AdmittedStardewInstallation,
+} from "./stardew-installation-admission.js";
 import {
   publishStardewReadyInstallationRegistration,
   readStardewInstallationRegistration,
@@ -20,9 +24,13 @@ import {
 import {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
+  STARDEW_SMAPI_EXECUTABLE_FILE,
+  createWindowsGogDiscoveryProposal,
   requireStardewGameInstalled,
   requireStardewModLoaderInstalled,
 } from "./stardew-game-install/discovery.js";
+import { deploySmapiPayload } from "./stardew-game-install/smapi-deployment.js";
+import { readSmapiPayload } from "./stardew-game-install/smapi-payload.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
@@ -81,6 +89,8 @@ import type {
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
   StardewCabinConfirmResultV1,
+  StardewModLoaderInstallCommandV1,
+  StardewModLoaderInstallResultV1,
   StardewPlayerSettingsCommandV1,
   StardewPlayerSettingsV1,
 } from "./game-browser-contract/index.js";
@@ -327,11 +337,20 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
  * `mod_loader_missing` is the refusal a player can act on: the folder holds
  * Stardew Valley but no mod loader, so the Companion Mod can never load in it.
  * `not_stardew_installation` is the other one: the folder holds no game at all, so
- * there is nothing there to accept. `unavailable` is every other refusal, which names
- * no cause the player can fix.
+ * there is nothing there to accept. `reparse_point` is the third: the folder's path
+ * reaches the game through a shortcut, a junction or a virtual folder - a Mod
+ * Organizer 2 instance, for example - and the game's own installation folder is
+ * what the player must pick instead. `unavailable` is every other refusal, which
+ * names no cause the player can fix.
  */
 export type StardewInstallationSelectionResult = Readonly<{
-  status: "registered" | "cancelled" | "unavailable" | "mod_loader_missing" | "not_stardew_installation";
+  status:
+    | "registered"
+    | "cancelled"
+    | "unavailable"
+    | "mod_loader_missing"
+    | "not_stardew_installation"
+    | "reparse_point";
 }>;
 
 export type StardewInstallationDiscoveryView = Readonly<StardewInstallationDiscoveryProviderResult>;
@@ -451,6 +470,20 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   openInstallationPicker(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
   ): Promise<StardewInstallationSelectionResult>;
+  /**
+   * One-click mod-loader install, for the folder this lifecycle has already bound.
+   *
+   * It writes into a folder the player picked through `openInstallationPicker`, which is
+   * the only thing that can name one. A player whose game folder holds Stardew Valley but
+   * no loader sees exactly that refusal from the confirmation, and this is the action that
+   * resolves it without sending them to a website. It is idempotent per command key and
+   * reports `current` rather than `installed` when there was nothing to write, so a second
+   * click never claims to have changed anything.
+   */
+  installModLoader(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewModLoaderInstallCommandV1,
+  ): Promise<StardewModLoaderInstallResultV1>;
   /**
    * The player's own Stardew settings, read and written through the one durable
    * record (`stardew/player-settings.json`).
@@ -994,6 +1027,13 @@ function createCoordinator(
   createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   installationDiscovery?: StardewInstallationDiscoveryProvider,
+  /**
+   * The admitted generation root whose `native/smapi/` payload this lifecycle installs.
+   * It is supplied by the production entry (the only party that knows the admitted
+   * generation) and is absent in the internal test join, where the mod-loader install is
+   * therefore refused as `mod_loader_payload_unavailable`.
+   */
+  hostArtifactRoot?: string,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -1369,6 +1409,7 @@ function createCoordinator(
       | "game_disconnect"
       | "game_endgame"
       | "game_create"
+      | "mod_loader_install"
       | "settings_read"
       | "settings_update",
     callback: (browserSessionId: string, expiresAtMs: number) => T,
@@ -1643,11 +1684,13 @@ function createCoordinator(
   /**
    * The outcome a registration refusal names.
    *
-   * Registration refuses for several causes, and only two of them are facts the player
+   * Registration refuses for several causes, and three of them are facts the player
    * can act on: a folder holding Stardew Valley but no mod loader, where the Companion
-   * Mod can never load, and a folder holding no game at all. Reporting either as
-   * `unavailable` told a player their installation search had failed - on a machine where
-   * the search had found their game, or when they had picked the wrong folder. Every
+   * Mod can never load; a folder holding no game at all; and a folder whose path
+   * reaches the game through a shortcut, a junction or a virtual folder such as a Mod
+   * Organizer 2 instance. Reporting any of them as `unavailable` told a player their
+   * installation search had failed - on a machine where the search had found their
+   * game, or when they had picked the wrong folder or a link to the right one. Every
    * other cause stays `unavailable`, which claims no cause at all.
    */
   const registrationRefusal = (error: unknown): StardewInstallationSelectionResult =>
@@ -1657,13 +1700,48 @@ function createCoordinator(
           ? ("mod_loader_missing" as const)
           : error instanceof Error && error.message === STARDEW_NOT_A_STARDEW_INSTALL
             ? ("not_stardew_installation" as const)
-            : ("unavailable" as const),
+            : error instanceof Error && error.message === STARDEW_REPARSE_POINT_REFUSED
+              ? ("reparse_point" as const)
+              : ("unavailable" as const),
     });
+  /**
+   * The folder a `mod_loader_missing` refusal just named, remembered for the one action that
+   * can resolve it.
+   *
+   * A registration refused for a missing mod loader writes nothing, so the folder is
+   * deliberately NOT bound - binding it would hand the launch path a folder whose game would
+   * start vanilla. But the player has already told us which folder holds their game, and the
+   * one-click install has to act on exactly that one; asking them to pick it again is the
+   * round trip this whole flow exists to remove. So the refusal's own folder is held here,
+   * for this lifecycle only, and cleared by every other selection: a later confirm or picker
+   * (a different folder, or the same one) supersedes it, and a cancellation drops it.
+   */
+  let modLoaderPendingLocator: string | undefined;
+  /**
+   * Picks a folder, registers it, and remembers the folder a `mod_loader_missing` refusal named.
+   *
+   * Two outcomes share one helper so every route that can produce that refusal leaves the same
+   * thing behind: `registered`, or `cancelled` for a dismissed dialog. A refusal is thrown to the
+   * caller, exactly as before, because each caller names it with `registrationRefusal` and only
+   * the picker also has to remember the folder.
+   */
   const selectAndRegisterPlayerHostInstallation = async (): Promise<boolean> => {
     const result = await selectStardewFolder(folderPicker);
-    if (result.status === "cancelled") return false;
-    await registerInstallationLocator(result.path);
-    return true;
+    if (result.status === "cancelled") {
+      modLoaderPendingLocator = undefined;
+      return false;
+    }
+    const locator = result.path;
+    try {
+      await registerInstallationLocator(locator);
+      modLoaderPendingLocator = undefined;
+      return true;
+    } catch (error) {
+      // The refusal is the caller's to name; the folder is remembered here because this is where
+      // it is known, and only a mod-loader refusal is actionable by the one-click install.
+      modLoaderPendingLocator = registrationRefusal(error).status === "mod_loader_missing" ? locator : undefined;
+      throw error;
+    }
   };
 
   const setupPlayerHost = (
@@ -2779,10 +2857,22 @@ function createCoordinator(
     consumeBrowserAdmission(admission, "discovery_confirm", async () => {
       if (isClosing() || installationDiscoveryProvider === undefined)
         return Object.freeze({ status: "unavailable" as const });
+      let locator: string;
       try {
-        return await registerInstallationLocator(installationDiscoveryProvider.confirm(candidateId));
+        locator = installationDiscoveryProvider.confirm(candidateId);
       } catch (error) {
         return registrationRefusal(error);
+      }
+      try {
+        const registered = await registerInstallationLocator(locator);
+        modLoaderPendingLocator = undefined;
+        return registered;
+      } catch (error) {
+        const outcome = registrationRefusal(error);
+        // Only the refusal this action can resolve is remembered; every other cause leaves the
+        // player with a different next step and no folder to write into.
+        modLoaderPendingLocator = outcome.status === "mod_loader_missing" ? locator : undefined;
+        return outcome;
       }
     });
   const retryInstallationDiscovery = (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) =>
@@ -2811,6 +2901,109 @@ function createCoordinator(
     });
 
   const playerSettingsStore = new StardewPlayerSettingsStore(runtimeRoot);
+
+  /**
+   * The folder the player's registration currently binds, for operations that act on the
+   * bound installation rather than on a fresh choice. It is read through the same
+   * registration the launch path gates on, so this cannot name a folder the lifecycle would
+   * not launch.
+   *
+   * A live attempt is deliberately NOT a refusal here: the attempt is precisely what a
+   * missing mod loader blocks, so an install that refused while one was staged could never
+   * be the thing that unblocks it. What the locator may not be is absent or unreadable.
+   */
+  const readRegisteredLocator = async (): Promise<string> => {
+    const registration = await readStardewInstallationRegistration(runtimeRoot);
+    if (registration === null || registration.state !== "ready" || registration.locator === null)
+      throw new Error("stardew_registered_installation_unavailable");
+    return registration.locator;
+  };
+
+  /**
+   * The folder a one-click install should write into.
+   *
+   * The remembered folder comes first: it is the one the player just named and the one whose
+   * refusal this action resolves, and it is deliberately not bound yet - a folder that cannot
+   * load the Mod must not be what the launch path gates on. A bound installation is the
+   * fallback, which is the "player has the game, just not the loader" shape. Neither exists
+   * means nothing has named a folder, and there is nothing to install into.
+   */
+  const readModLoaderInstallLocator = async (): Promise<string> =>
+    modLoaderPendingLocator ?? (await readRegisteredLocator());
+
+  /**
+   * The Steam launch option that starts the game through the loader.
+   *
+   * Steam's own launch-option syntax needs the loader's absolute path, and `%command%` is the
+   * placeholder Steam replaces with the game's normal command line - so the loader is given
+   * the game's arguments while Steam still tracks the session. The value is quoted because
+   * the games library commonly sits under a folder name with a space in it.
+   */
+  const steamLaunchOptionFor = (locator: string): string =>
+    `"${win32.join(locator, STARDEW_SMAPI_EXECUTABLE_FILE)}" %command%`;
+
+  /**
+   * One-click mod-loader install into the bound game folder. See the activation owner's
+   * declaration for why it exists and what each outcome means.
+   *
+   * The payload is read from this generation's own `native/smapi/` on every install rather
+   * than cached: a generation is immutable, so the read is the cheapest possible proof that
+   * what is written is what was published, and a payload that no longer matches its manifest
+   * refuses instead of installing half a loader.
+   */
+  const modLoaderInstalls = new Map<
+    string,
+    Readonly<{ browserSessionId: string; promise: Promise<StardewModLoaderInstallResultV1> }>
+  >();
+  const installModLoader = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewModLoaderInstallCommandV1,
+  ): Promise<StardewModLoaderInstallResultV1> =>
+    consumeBrowserAdmission(admission, "mod_loader_install", (browserSessionId) => {
+      const prior = modLoaderInstalls.get(command.idempotencyKey);
+      if (prior !== undefined) {
+        if (prior.browserSessionId !== browserSessionId)
+          return Promise.reject(new Error("stardew_mod_loader_install_idempotency_conflict"));
+        return prior.promise;
+      }
+      if (isClosing()) return Promise.reject(new Error("stardew_lifecycle_closing"));
+      let promise!: Promise<StardewModLoaderInstallResultV1>;
+      promise = (async () => {
+        let payload;
+        try {
+          if (hostArtifactRoot === undefined) throw new Error("stardew_smapi_payload_root_unavailable");
+          payload = await readSmapiPayload(hostArtifactRoot);
+        } catch {
+          // A generation without a verifiable payload cannot install one. It is its own
+          // outcome rather than a generic fault: the player's action (reinstall the app)
+          // differs from every other failure here.
+          return { apiVersion: 1 as const, status: "mod_loader_payload_unavailable" as const };
+        }
+        const locator = await readModLoaderInstallLocator();
+        const result = await deploySmapiPayload({ installRoot: locator, payload });
+        if (result.kind === "failed") {
+          return {
+            apiVersion: 1 as const,
+            status:
+              result.failure === "deployment_incomplete" ? ("mod_loader_install_incomplete" as const) : result.failure,
+          };
+        }
+        // The folder can now load the Mod, so it becomes the bound installation. A folder
+        // that was already bound stays at its revision: registration is only touched when
+        // the install is what made it ready.
+        if (modLoaderPendingLocator !== undefined) {
+          await registerInstallationLocator(modLoaderPendingLocator);
+          modLoaderPendingLocator = undefined;
+        }
+        return {
+          apiVersion: 1 as const,
+          status: result.kind,
+          steamLaunchOption: steamLaunchOptionFor(locator),
+        };
+      })();
+      modLoaderInstalls.set(command.idempotencyKey, Object.freeze({ browserSessionId, promise }));
+      return promise;
+    });
 
   /**
    * The player-owned settings as the route publishes them.
@@ -2900,6 +3093,7 @@ function createCoordinator(
     retryInstallationDiscovery,
     cancelInstallationSelection,
     openInstallationPicker,
+    installModLoader,
     readPlayerSettings,
     updatePlayerSettings,
   });
@@ -3300,6 +3494,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   createWorldBindingSeam?: StardewWorldCreationSeamFactory,
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
+  hostArtifactRoot?: string,
 ): StardewProductionLifecycleCoordinator {
   return createCoordinator(
     manifest,
@@ -3317,6 +3512,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     createWorldBindingSeam,
     containedRuntimeTeardown,
     installationDiscoveryProvider,
+    hostArtifactRoot,
   );
 }
 
@@ -3406,6 +3602,17 @@ export function createStardewProductionLifecycleCoordinator(
     game,
     createWorldBindingSeam,
     containedRuntimeTeardown,
-    createStardewInstallationDiscoveryProvider({ source: createWindowsSteamInstallationSource() }),
+    // Steam and GOG are both mounted, in that order: a GOG or Game-Pass-shaped player
+    // whose game no Steam library holds would otherwise be told nothing was found on a
+    // machine where it is installed. Whichever source produced a candidate, confirming
+    // it runs the same `registerInstallationLocator` admission - the source only proposes.
+    createStardewInstallationDiscoveryProvider({
+      source: createWindowsSteamInstallationSource(),
+      gog: createWindowsGogDiscoveryProposal(),
+    }),
+    // The admitted generation root this build runs from. The one-click mod-loader install
+    // reads its payload from here, so what a player's game folder receives is the payload
+    // that shipped with the app they launched.
+    hostArtifactRoot,
   );
 }

@@ -256,6 +256,16 @@ export async function startComposedReferenceGameStaticShellComposition(
         : (() => {
             throw new Error("composed_reference_game_settings_operations_mismounted");
           })()),
+    // The one-click mod-loader install travels on the same binding sink, so a lifecycle owner
+    // either supplies it or the route is absent - there is no second seam a callback could
+    // reach this through.
+    ...(options.lifecycleActivationBindingSink?.modLoaderInstall === undefined
+      ? {}
+      : {
+          modLoaderInstall: options.lifecycleActivationBindingSink.modLoaderInstall.bind(
+            options.lifecycleActivationBindingSink,
+          ),
+        }),
   });
   const referenceHandler = createReferencePipelineDialogueWebDelegatedHandler({
     profile: options.profile.tavernProfile,

@@ -13,6 +13,11 @@ internal enum SetupFailure
     ProgramRootUnavailable,
     RegistrationUnavailable,
     UninstallUnavailable,
+    /// <summary>
+    /// A failure this installer did not classify. It exists so an unexpected exception cannot be
+    /// reported as a cause it is not: the code says only that setup failed, which is what is known.
+    /// </summary>
+    Unhandled,
 }
 
 internal sealed class SetupException(SetupFailure failure) : Exception
@@ -30,6 +35,7 @@ internal static class SetupOutcome
         SetupFailure.ProgramRootUnavailable => "installer_program_root_unavailable",
         SetupFailure.RegistrationUnavailable => "installer_registration_unavailable",
         SetupFailure.UninstallUnavailable => "installer_uninstall_unavailable",
+        SetupFailure.Unhandled => "installer_failed",
         _ => "installer_failed",
     };
 }

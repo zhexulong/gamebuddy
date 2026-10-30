@@ -1,4 +1,5 @@
 import type { GameBrowserStateV1 } from "./composed-reference-game-browser-api";
+import type { StardewModLoaderInstallResultV1 } from "./composed-reference-game-browser-api";
 import type { Messages } from "./i18n";
 
 /**
@@ -159,6 +160,10 @@ export type InstallationDiscoveryState =
   // The chosen folder holds no Stardew Valley at all. The second selection refusal the
   // player can fix, and - like `mod-loader-missing` - never a search outcome.
   | "not-stardew-installation"
+  // The chosen folder reaches the game through a shortcut, a junction or a virtual folder
+  // (a Mod Organizer 2 instance, for example). The third selection refusal the player can
+  // fix, and the one whose fix is about the path rather than what sits at its end.
+  | "reparse-point"
   // A registration the Host could not name a cause for (it is stopping, or the write
   // itself failed). `source-unavailable` is reserved for a source that could not be
   // read; nothing here was a search.
@@ -183,6 +188,12 @@ const SOURCE_READ_FAILURE_DIAGNOSTICS: readonly string[] = [
   "vdf-unreadable",
   "vdf-malformed",
   "invalid-app-manifest",
+  // The GOG source's three failures. Without them a player whose Galaxy registry could not be
+  // read - and whose Steam libraries hold no game - was told no installation was found, which
+  // is a statement about their machine that the Host never made.
+  "gog-unavailable",
+  "gog-metadata-unreadable",
+  "gog-metadata-malformed",
 ];
 
 /**
@@ -243,6 +254,8 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
       return labels.gameInstallationModLoaderMissing;
     case "not-stardew-installation":
       return labels.gameInstallationNotStardewInstallation;
+    case "reparse-point":
+      return labels.gameInstallationReparsePoint;
     case "selection-unavailable":
       return labels.gameInstallationSelectionUnavailable;
     case "confirmed":
@@ -260,7 +273,7 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
  * Where the scan found one installation, as player text.
  *
  * `source` is the discovery session's own vocabulary - `steam-registry |
- * steam-vdf | known-location` (`host/src/windows-stardew-installation-discovery/
+ * steam-vdf | known-location | gog` (`host/src/windows-stardew-installation-discovery/
  * internal.ts`) - and design/104 §10 forbids rendering a wire member as player
  * text, which is what the panel did with it. A value this build has no sentence
  * for still describes a candidate the Host published, so it reads as the plain
@@ -274,6 +287,8 @@ export function installationSourceLabel(labels: Messages, source: string): strin
       return labels.gameInstallationSourceSteamVdf;
     case "known-location":
       return labels.gameInstallationSourceKnownLocation;
+    case "gog":
+      return labels.gameInstallationSourceGog;
     default:
       return labels.gameInstallationSourceOther;
   }
@@ -403,4 +418,35 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
     ]),
     waiting: summary.available ? null : labels.gameBoardWaiting,
   });
+}
+
+/**
+ * The one-click mod-loader install outcome, as player text.
+ *
+ * Exhaustive over the Host's frozen set so a new outcome cannot silently render as nothing:
+ * `installed` and `current` are kept apart because claiming a write that did not happen is
+ * the defect this wording exists to avoid, and each failure names the player's own next step
+ * rather than the code the Host minted.
+ */
+export function modLoaderInstallLabel(labels: Messages, status: StardewModLoaderInstallResultV1["status"]): string {
+  switch (status) {
+    case "installed":
+      return labels.gameModLoaderInstallInstalled;
+    case "current":
+      return labels.gameModLoaderInstallCurrent;
+    case "game_installation_not_found":
+      return labels.gameModLoaderInstallGameMissing;
+    case "installation_conflict":
+      return labels.gameModLoaderInstallConflict;
+    case "game_dependencies_missing":
+      return labels.gameModLoaderInstallDependenciesMissing;
+    case "mods_directory_not_writable":
+      return labels.gameModLoaderInstallNotWritable;
+    case "mod_loader_payload_unavailable":
+      return labels.gameModLoaderInstallPayloadUnavailable;
+    case "mod_loader_install_incomplete":
+      return labels.gameModLoaderInstallIncomplete;
+    default:
+      return exhaustive(status);
+  }
 }

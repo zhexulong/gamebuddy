@@ -64,14 +64,67 @@ internal sealed class SetupLayout
     {
         try
         {
-            var running = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
             var candidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
-            return StringComparer.OrdinalIgnoreCase.Equals(running, candidate) ||
-                running.StartsWith(candidate + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            // The executable's OWN path decides this, not `AppContext.BaseDirectory`.
+            //
+            // Measured: for a self-contained single-file image, BaseDirectory is the managed
+            // entry assembly's base - which is the host's own location in some runtimes and an
+            // extraction cache in others, but is not a reliable answer to "which folder does this
+            // .exe live in". The uninstaller used that answer to choose its removal strategy, got
+            // `false` while it was in fact running from inside the program root, and then tried a
+            // synchronous delete of the directory holding its own locked image - which cannot
+            // succeed and reported `installer_ok` anyway. `Environment.ProcessPath` is the path of
+            // the image actually executing, so it answers the question that matters.
+            var runningImage = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(runningImage))
+            {
+                var imageDirectory = Path.GetDirectoryName(Path.GetFullPath(runningImage));
+                if (imageDirectory is not null)
+                {
+                    var imageFolder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(imageDirectory));
+                    if (StringComparer.OrdinalIgnoreCase.Equals(imageFolder, candidate) ||
+                        imageFolder.StartsWith(candidate + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            var baseDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+            return StringComparer.OrdinalIgnoreCase.Equals(baseDirectory, candidate) ||
+                baseDirectory.StartsWith(candidate + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Writes the two paths the branch decision is made from, next to the user registry marker.
+    /// A branch this installer chose wrongly is otherwise invisible: both branches print the same
+    /// success code, and the difference between "the removal ran" and "the removal was never
+    /// scheduled" is the whole defect. The paths are the product's own fixed layout, so nothing
+    /// here is a secret.
+    /// </summary>
+    internal void WriteBranchDiagnostics()
+    {
+        try
+        {
+            var directory = Path.Combine(LocalApplicationData, "GameBuddy");
+            Directory.CreateDirectory(directory);
+            File.WriteAllLines(
+                Path.Combine(directory, "uninstall-branch.txt"),
+                [
+                    $"processPath={Environment.ProcessPath}",
+                    $"baseDirectory={AppContext.BaseDirectory}",
+                    $"programRoot={ProgramRoot}",
+                    $"runningFromProgramRoot={IsRunningFrom(ProgramRoot)}",
+                ]);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Diagnostics never change the operation's outcome.
         }
     }
 

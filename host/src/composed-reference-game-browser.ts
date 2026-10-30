@@ -29,6 +29,8 @@ import {
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
   type StardewCabinConfirmResultV1,
+  type StardewModLoaderInstallCommandV1,
+  type StardewModLoaderInstallResultV1,
   type StardewPlayerSettingsCommandV1,
   type StardewPlayerSettingsV1,
   type GameDiscoveryReadResultV1,
@@ -128,6 +130,17 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
       command: StardewPlayerSettingsCommandV1,
     ): Promise<StardewPlayerSettingsV1>;
   }>;
+  /**
+   * The one-click mod-loader install for the folder the Host has bound.
+   *
+   * It is a single POST with a command that carries nothing but its idempotency key: the
+   * folder is the registration's, and a body naming one would be a second way to point a
+   * write at a directory.
+   */
+  modLoaderInstall?: (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    command: StardewModLoaderInstallCommandV1,
+  ) => Promise<StardewModLoaderInstallResultV1>;
 }>;
 
 /**
@@ -172,6 +185,7 @@ export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonl
   confirmCabinChoice?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["confirm"];
   readPlayerSettings?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewSettings"]>["read"];
   updatePlayerSettings?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewSettings"]>["update"];
+  modLoaderInstall?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["modLoaderInstall"]>;
 }>;
 
 type BrowserSession = Readonly<{
@@ -206,6 +220,7 @@ const DISCOVERY_CONFIRM_PATH = `${DISCOVERY_PATH}/confirm`;
 const DISCOVERY_RETRY_PATH = `${DISCOVERY_PATH}/retry`;
 const DISCOVERY_CANCEL_PATH = `${DISCOVERY_PATH}/cancel`;
 const DISCOVERY_PICKER_PATH = `${DISCOVERY_PATH}/manual-picker`;
+const MOD_LOADER_INSTALL_PATH = `${GAME_PATH}/prerequisites/smapi`;
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
 const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
 const STARDEW_SETTINGS_PATH = "/api/composed-reference-game/v1/game/stardew/settings";
@@ -427,6 +442,22 @@ function gameSetupProblemCode(error: unknown): string {
     case "stardew_game_setup_failed":
       return distinguishableLifecycleProblemCode(error, "game_unavailable");
     case "stardew_player_host_launch_not_staged":
+      return "game_prerequisites_missing";
+    default:
+      return "state_unavailable";
+  }
+}
+
+function modLoaderInstallProblemCode(error: unknown): string {
+  if (!(error instanceof Error)) return "state_unavailable";
+  switch (error.message) {
+    case "stardew_mod_loader_install_idempotency_conflict":
+      return "idempotency_conflict";
+    case "stardew_lifecycle_closing":
+      return distinguishableLifecycleProblemCode(error, "game_unavailable");
+    case "stardew_registered_installation_unavailable":
+      // The install acts on the bound folder, so no bound folder is a prerequisite the
+      // player resolves by picking one - the same refusal the launch path names.
       return "game_prerequisites_missing";
     default:
       return "state_unavailable";
@@ -760,8 +791,8 @@ type LifecycleAdmissionOperation =
   | "game_reopen"
   | "game_disconnect"
   | "game_endgame"
-  | "game_create";
-
+  | "game_create"
+  | "mod_loader_install";
 type LifecycleActivationAdmissionState = {
   readonly issuer: object;
   readonly session: BrowserSession;
@@ -920,6 +951,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     operation = "game_endgame";
   } else if (request.method === "POST" && requestUrl.pathname === GAME_CREATE_PATH) {
     operation = "game_create";
+  } else if (request.method === "POST" && requestUrl.pathname === MOD_LOADER_INSTALL_PATH) {
+    operation = "mod_loader_install";
   } else {
     return null;
   }
@@ -1082,6 +1115,11 @@ export function createComposedReferenceGameBrowserRequestHandler(
   const gameSetupMounted = options.profile.gameProfile?.operationIds.includes("game.prerequisites.setup") === true;
   if (gameSetupMounted !== (options.gameSetup !== undefined)) {
     throw new Error("Composed reference-game setup operation is mismounted");
+  }
+  const modLoaderInstallMounted =
+    options.profile.gameProfile?.operationIds.includes("game.prerequisites.smapi.install") === true;
+  if (modLoaderInstallMounted !== (options.modLoaderInstall !== undefined)) {
+    throw new Error("Composed reference-game mod-loader install operation is mismounted");
   }
   const gameLaunchMounted = options.profile.gameProfile?.operationIds.includes("game.launch") === true;
   if (gameLaunchMounted !== (options.gameLaunch !== undefined)) {
@@ -1530,6 +1568,46 @@ export function createComposedReferenceGameBrowserRequestHandler(
         response.end();
       } catch (error) {
         sendLifecycleProblem(response, 409, error, gameSetupProblemCode(error));
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === MOD_LOADER_INSTALL_PATH && request.method === "POST") {
+      if (!isEmptyQuery(requestUrl) || options.modLoaderInstall === undefined) {
+        sendProblem(
+          response,
+          options.modLoaderInstall === undefined ? 404 : 409,
+          options.modLoaderInstall === undefined ? "not_found" : "malformed_request",
+        );
+        return;
+      }
+      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+        lifecycleActivationIssuer,
+        request,
+        origin,
+      );
+      if (admission === null) {
+        sendProblem(response, 401, "unauthorized");
+        return;
+      }
+      let command: unknown;
+      try {
+        command = JSON.parse((await readBody(request, MAX_BOOTSTRAP_BODY_BYTES)).toString("utf8"));
+      } catch {
+        sendProblem(response, 409, "malformed_request");
+        return;
+      }
+      if (!GameBrowserValidatorsV1.StardewModLoaderInstallCommandV1Schema.Check(command)) {
+        sendProblem(response, 409, "malformed_request");
+        return;
+      }
+      try {
+        const result = await options.modLoaderInstall(admission, command as StardewModLoaderInstallCommandV1);
+        if (!GameBrowserValidatorsV1.StardewModLoaderInstallResultV1Schema.Check(result))
+          throw new Error("stardew_mod_loader_install_projection_invalid");
+        sendJson(response, 200, result);
+      } catch (error) {
+        sendLifecycleProblem(response, 409, error, modLoaderInstallProblemCode(error));
       }
       return;
     }

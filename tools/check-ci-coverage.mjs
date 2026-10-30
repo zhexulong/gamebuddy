@@ -171,6 +171,12 @@ const REGISTER = Object.freeze([
     detail: "measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) over 731 files at HEAD",
   },
   { script: "lint:eslint", reason: "debt", detail: "measured 11 errors in dialogue-web/src at HEAD" },
+  {
+    script: "check:sandbox-acceptance",
+    reason: "arguments",
+    detail:
+      "needs `--setup <path>` pointing at an assembled GameBuddy.Setup.exe (447 MB, built by build:player-distribution); a fresh checkout has no such artifact, so it exits 1 with setup_path_required",
+  },
 ]);
 
 function readScripts(root) {

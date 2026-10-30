@@ -11,6 +11,32 @@
     <AssemblyName>GameBuddy.Desktop</AssemblyName>
     <RootNamespace>GameBuddy.Desktop</RootNamespace>
   </PropertyGroup>
+  <!--
+    A Release build of the launcher carries its own runtime.
+
+    The defect this closes: a framework-dependent build starts with the platform's "you need
+    .NET 8.0 Desktop Runtime" dialog on any machine that has not installed it - before a single
+    line of this product runs, so the player sees a Microsoft installer prompt for a runtime
+    they were never told about and the product looks broken. Nothing about the launcher needs
+    the machine's shared runtime, so Release is published self-contained, for one runtime
+    identifier, as one file.
+
+    It is scoped to Release on purpose: the test project and the developer's debug loop build
+    framework-dependently against the SDK that is already present.
+  -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- The single-file host reads its own directory, and every native library the launcher
+         needs (WPF's included) has to live inside the one file: with extraction disabled the
+         publish left six native DLLs beside the exe, which is not the "double-click one file"
+         the player downloads. Measured on win-x64: enabling it leaves exactly
+         GameBuddy.Desktop.exe (+ .pdb) in the publish output. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
   </ItemGroup>
