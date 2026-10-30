@@ -43,7 +43,12 @@ import {
  * It is always mounted while the shell has a ready view and returns null when it
  * is not the selected surface, so its state survives a surface switch exactly as
  * it did inside the shell (a peer surface that resets its in-flight attempt on
- * every AppBar click would forget a resume the player is watching).
+ * every AppBar click would forget a resume the player is watching). The one thing
+ * an arrival does add is the shell's own re-read of the projection it renders,
+ * taken in the shell's arrival effect rather than here: that read must not touch
+ * this surface's in-flight attempt, and it must not discard the conversation's
+ * streaming preview the way a Game operation's `rereadGame` does. When it fails,
+ * the shell hands this surface the refusal's sentence as `arrivalNotice`.
  */
 export function GameSurface({
   selected,
@@ -57,6 +62,7 @@ export function GameSurface({
   isCancelled,
   composedApi,
   managementApi,
+  arrivalNotice,
   restoreFocusTo,
 }: {
   selected: boolean;
@@ -70,6 +76,15 @@ export function GameSurface({
   isCancelled: () => boolean;
   composedApi: ComposedReferenceGameBrowserApi;
   managementApi: ManagementPipelineApi;
+  /**
+   * The shell's own arrival refresh for this surface failed, in the refusal's own sentence.
+   *
+   * The panel keeps the projection the shell already holds - a refresh that failed did not make it
+   * wrong - so this line is what keeps the surface honest about a read that never happened. The
+   * shell owns the sentence because the shell owns the read; this surface owns where the player
+   * reads it.
+   */
+  arrivalNotice: string | null;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   const [cabinView, setCabinView] = useState<CabinViewState>({ kind: "loading" });
@@ -1047,6 +1062,15 @@ export function GameSurface({
       className="surface-game"
       restoreFocusTo={restoreFocusTo}
     >
+      {/* The shell's arrival refresh could not be made, so the panel below is the projection it
+          already held and this says so. It sits above the panel rather than inside it: the fact is
+          about the read, not about any group's contents, and a status line inside the region would
+          move when a group renders. */}
+      {arrivalNotice !== null && (
+        <p className="game-status" data-tone="danger" role="status" data-testid="game-arrival-notice">
+          {arrivalNotice}
+        </p>
+      )}
       {/* Installation discovery is a sibling of the Game state region,
           never inside it, so the region's scope stays exactly its own
           controls (its Retry/Cancel would otherwise make the region's
