@@ -1,0 +1,4 @@
+#!/bin/sh
+# Report - never block - when a commit touches a file that keeps being fixed.
+# Escape hatch: git commit --no-verify.
+exec node "tools/scripts/commit-msg.mjs" "$1"
