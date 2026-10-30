@@ -14,6 +14,7 @@ import { executedActionIds, executionTraceInvariant, programExecutionRows } from
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 // The program tool's description is presented material, but the runner mounts the Host's tool definitions rather
@@ -2192,4 +2193,141 @@ test("lineage is attached only when the receipt carries it, never synthesised", 
     RUNNER_SOURCE.indexOf("// Capture the Agent-authored program id"),
   );
   assert.match(execute, /\.\.\.\(traceLineage\(receipt\) \?\? \{\}\)/);
+});
+
+/** One `execution_receipt` fact exactly as the runner's recorder projects it: identity flattened, receipt kept whole. */
+function recordedActionReceipt(actionId, reasonCode, state = "succeeded", requestId = `req_${actionId}`) {
+  const receipt = {
+    executionId: `exec_${requestId}`,
+    requestId,
+    actionId,
+    state,
+    reasonCode,
+    revision: 1,
+    evidence: null,
+  };
+  return {
+    type: "execution_receipt",
+    reasonCode,
+    requestId,
+    executionId: receipt.executionId,
+    worldFactPayload: receipt,
+  };
+}
+
+test("a day's work is read from the receipts both dispatch channels produce", () => {
+  // THE MEASURED DEFECT (round7, 2026-10-29). `accomplishedSince` walked `actionTrace.slice(startIndex)`, and
+  // `actionTrace` records FLAT single-step dispatches only: that run's file was 0 bytes while all 251 physical actions
+  // ran through 53 `stardew_plan_work` batches. So `nextDayAccomplishedActionIds` came back empty and the baseline
+  // reported `next_day_produced_no_farm_work` about a day that cut 86 weeds and broke 48 rocks.
+  //
+  // The receipts are the authority for BOTH channels and they name their own action: the Mod stamps `actionId` onto
+  // every published receipt from the router's own binding (`ExecutionManager.AddTrace`), so a program node's terminal
+  // arrives in the same fact log as a flat dispatch's, carrying `weeds_cut`/`rock_source_broken` verbatim. What a
+  // receipt proves is what the counter needs - the action reached its DECLARED terminal with a success state - and
+  // that is strictly stronger than `executedActionIds`, which answers attempt/success from node state and can never
+  // name a reason code.
+  const factLog = [
+    // 86 weeds and 48 rocks, as that day produced them: every one a succeeded/terminal receipt.
+    ...Array.from({ length: 86 }, (_, index) =>
+      recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", `weed_${index}`),
+    ),
+    ...Array.from({ length: 48 }, (_, index) =>
+      recordedActionReceipt("break_rock_source", "rock_source_broken", "succeeded", `rock_${index}`),
+    ),
+    recordedActionReceipt("harvest_crop", "crop_harvested"),
+    recordedActionReceipt("plant_seed", "seed_planted"),
+    recordedActionReceipt("water_crop", "crop_watered"),
+    // What the day also did, and what must NOT count: motion, gear, and the task's own progress reports.
+    recordedActionReceipt("move_to_tile", "target_reached"),
+    recordedActionReceipt("equip_tool", "tool_equipped"),
+    recordedActionReceipt("advance_day", "day_advanced"),
+    recordedActionReceipt("dismiss_modal", "modal_dismissed"),
+    // A non-receipt fact in the same log is not work either.
+    { type: "world_fact", reasonCode: null, requestId: null, worldFactPayload: { kind: "day_started" } },
+  ];
+  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
+    factLog,
+    actionTrace: [],
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile", "equip_tool"]),
+    STARDEW_PUBLISHED_ACTION_GATES,
+  })[1];
+
+  assert.deepEqual(
+    accomplishedSince(0),
+    ["break_rock_source", "cut_weeds", "harvest_crop", "plant_seed", "water_crop"],
+    "the day cut weeds, broke rocks, harvested, planted and watered - an empty flat trace does not unmake any of it",
+  );
+
+  // The CODE path, not just the number: the read is the fact log's, and the flat trace is no longer a source at all.
+  // A dispatch row is not evidence of a terminal, and the join it used to need (`fact.requestId === entry.requestId`)
+  // disappeared with it - the receipt carries the action id itself.
+  const body = accomplishedSince.toString();
+  assert.match(body, /factLog\.slice\(startFactIndex\)/u, "the window is the fact log's own position");
+  assert.match(body, /recordedReceipt\(fact\)/u, "the receipt is read from where the recorder puts it");
+  assert.match(body, /receipt\.actionId/u, "the action is named by the Mod's receipt, never guessed");
+  assert.doesNotMatch(body, /actionTrace/u, "the flat trace is not a source of terminals");
+  assert.doesNotMatch(body, /entry\.requestId/u, "there is no trace row to join the receipt against");
+
+  // The window is real: a receipt recorded before this day began is not this day's work.
+  assert.deepEqual(accomplishedSince(factLog.length), [], "nothing recorded since now is no work");
+  const afterFirst = accomplishedSince(factLog.length - 8);
+  assert.ok(
+    afterFirst.every((actionId) => ["harvest_crop", "plant_seed", "water_crop"].includes(actionId)),
+    `only receipts inside the window count, got ${JSON.stringify(afterFirst)}`,
+  );
+});
+
+test("a receipt that only progressed an action is an attempt, never work", () => {
+  // The bar this counter must not lower. `executedActionIds` answers "this action was attempted" from a dispatch or a
+  // node state past admission; the baseline asks the stronger question - did the action reach its DECLARED terminal -
+  // because crediting an attempt as work turns a false negative into a false positive.
+  const factLog = [
+    // Dispatched and still running: an attempt, and nothing more.
+    recordedActionReceipt("cut_weeds", "accepted", "accepted", "r1"),
+    recordedActionReceipt("cut_weeds", "controller_started", "running", "r2"),
+    // A succeeded receipt carrying a PROGRESS code instead of the registered terminal: the action moved, it did not finish.
+    recordedActionReceipt("harvest_crop", "tool_approach_completed", "succeeded", "r3"),
+    // A terminal code with the wrong state: refused work is not credited.
+    recordedActionReceipt("break_rock_source", "rock_source_broken", "rejected", "r4"),
+    recordedActionReceipt("plant_seed", "seed_planted", "failed", "r5"),
+    // An action with no published gate declares no terminal, so nothing can prove it finished.
+    recordedActionReceipt("fridge_store", "item_stored", "succeeded", "r6"),
+    // And the one action that IS a registered gate with a success state, so the test cannot pass by counting nothing.
+    recordedActionReceipt("water_crop", "crop_watered", "succeeded", "r7"),
+  ];
+  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
+    factLog,
+    actionTrace: [],
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+    STARDEW_PUBLISHED_ACTION_GATES,
+  })[1];
+  assert.deepEqual(accomplishedSince(0), ["water_crop"], "only the receipt that finished its declared action is work");
+
+  // A night the engine crossed by itself has no `advance_day` receipt at all; it must never read as farm work.
+  const nightOnly = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
+    factLog: [recordedActionReceipt("advance_day", "day_advanced")],
+    actionTrace: [],
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(),
+    STARDEW_PUBLISHED_ACTION_GATES,
+  })[1];
+  assert.deepEqual(nightOnly(0), [], "crossing the day is the loop's own producer, not what the loop produces");
+});
+
+test("one action dispatched through both channels is one accomplishment", () => {
+  // A flat dispatch and a program node are different EXECUTIONS of possibly the same action. The counter answers which
+  // ACTIONS produced work, so `cut_weeds` done both ways - or done eighty-six times the same way - is one entry.
+  const factLog = [
+    recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", "flat_1"),
+    recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", "program_1"),
+    recordedActionReceipt("cut_weeds", "weeds_cut", "partially_succeeded", "program_2"),
+    recordedActionReceipt("break_rock_source", "rock_source_broken", "succeeded", "flat_2"),
+  ];
+  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
+    factLog,
+    actionTrace: [],
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(),
+    STARDEW_PUBLISHED_ACTION_GATES,
+  })[1];
+  assert.deepEqual(accomplishedSince(0), ["break_rock_source", "cut_weeds"], "one action, counted once");
 });

@@ -1939,36 +1939,43 @@ const MULTIDAY_CROSSINGS = (() => {
 })();
 
 /**
- * What one day accomplished, read from the RECEIPTS rather than from the companion's prose.
+ * What one day accomplished, read from the RECEIPTS its dispatches produced on EITHER channel.
  *
- * The join is the audit's own: an action's dispatch in the trace, its terminal receipt in the fact log, and
- * the registered success terminal from the published gate table. Counting the dispatch alone would credit an
- * attempt as work; counting the companion's own summary would credit a claim as work.
+ * A fact proves one thing about one action: it reached its DECLARED terminal, in a success state. Both halves are
+ * required and neither is an attempt. A receipt's `actionId` is stamped by the Mod from the router's own dispatch
+ * binding (`ExecutionManager.AddTrace`), which is the same binding a Body Program node goes through, so a program
+ * node's terminal arrives in this log naming its action - `weeds_cut`, `rock_source_broken` - exactly as a flat
+ * dispatch's does. That is why the log, not the trace, is the source here; see `execution-trace.mjs` for why the two
+ * dispatch CHANNELS are two files, and `executedActionIds` for the weaker question (attempt and node state) it answers.
+ *
+ * Measured 2026-10-29 (`round7`): this walked `actionTrace`, whose file was 0 bytes for a run that ran all 251 physical
+ * actions through 53 `stardew_plan_work` batches, so a day that cut 86 weeds and broke 48 rocks was reported
+ * `next_day_produced_no_farm_work`. Counting a dispatch alone would have credited those 251 attempts as work; counting
+ * the receipt credits only the actions whose own registered terminal came back.
  */
-function accomplishedSince(startIndex) {
+function accomplishedSince(startFactIndex) {
   const accomplished = new Set();
-  for (const entry of actionTrace.slice(startIndex)) {
+  for (const fact of factLog.slice(startFactIndex)) {
+    // The receipt, from where the recorder puts it: its identity is flattened onto the entry, but the receipt ITSELF
+    // - and with it the terminal `state` - stays whole under `worldFactPayload` (see `recordedReceipt`).
+    const receipt = recordedReceipt(fact);
+    if (receipt === null || typeof receipt.actionId !== "string") continue;
+    const actionId = receipt.actionId;
     // A day that only walked, looked around, posed and slept has NOT produced farm work, and for the
     // multi-day rule that is the difference between a loop and one rollover. Without this filter the day's own
     // `advance_day` (whose terminal is `day_advanced`, a registered gate) always landed in the set - so
     // `next_day_produced_no_farm_work` could never fire and "the companion kept working" was unprovable
     // (measured 2026-10-17: the rule's own producer made it unreachable).
-    if (NON_ACCOMPLISHMENT_ACTIONS.has(entry.action)) continue;
+    if (NON_ACCOMPLISHMENT_ACTIONS.has(actionId)) continue;
     // The task's own progress reports are not work either.
-    if (entry.action === "advance_day" || entry.action === "dismiss_modal" || entry.action === "respond_level_up")
-      continue;
-    const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === entry.action)?.terminalReasonCode;
+    if (actionId === "advance_day" || actionId === "dismiss_modal" || actionId === "respond_level_up") continue;
+    // The registered terminal is the only code that can tell an action that FINISHED from one that only progressed;
+    // an action with no published gate declares no terminal, so no receipt can prove it finished.
+    const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === actionId)?.terminalReasonCode;
     if (expected === undefined) continue;
-    const terminal = factLog.find((fact) => {
-      const receipt = recordedReceipt(fact);
-      return (
-        receipt !== null &&
-        fact.requestId === entry.requestId &&
-        receipt.reasonCode === expected &&
-        (receipt.state === "succeeded" || receipt.state === "partially_succeeded")
-      );
-    });
-    if (terminal !== undefined) accomplished.add(entry.action);
+    if (receipt.reasonCode !== expected) continue;
+    if (receipt.state !== "succeeded" && receipt.state !== "partially_succeeded") continue;
+    accomplished.add(actionId);
   }
   return [...accomplished].sort();
 }
@@ -3175,7 +3182,10 @@ try {
     const crossing = await runMultiDayLoop({
       crossNights: MULTIDAY_CROSSINGS,
       dayTurn: async (day) => {
-        const before = actionTrace.length;
+        // The day's work starts HERE, and both windows this turn needs are opened at the same moment: the day scope
+        // asks the trace where it began, and the accomplishment counter asks the FACT LOG where it began - the log is
+        // where a terminal receipt lands, whichever channel dispatched it.
+        const factsBefore = factLog.length;
         // The night watcher waits for THIS promise to settle before deciding the companion chose not to sleep,
         // so it can tell "the night has not started" from "there will be no night".
         const settled = deferred();
@@ -3212,9 +3222,9 @@ try {
             }
           }
           // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
-          // the "the companion kept working" half of the baseline, and it is computed from the trace rather than
-          // from the companion's prose.
-          return Object.freeze({ accomplishedActionIds: accomplishedSince(before) });
+          // the "the companion kept working" half of the baseline, and it is computed from the receipts rather than
+          // from the companion's prose or from either dispatch channel's file.
+          return Object.freeze({ accomplishedActionIds: accomplishedSince(factsBefore) });
         } finally {
           settled.resolve();
         }
