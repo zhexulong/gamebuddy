@@ -1210,9 +1210,9 @@ export type WorldInfoSurfaceSource = Readonly<{
  * The player's own addition to the Game companion's instructions.
  *
  * `record` is what the Host has stored (and its revision is the CAS every write carries);
- * `draft` is what the field currently shows. A save adopts the Host's read-back into both, so
- * the field never keeps text the store refused; a lost race re-reads the authority instead of
- * overwriting it with the stale form.
+ * `draft` is what the field currently shows. The two follow different owners: an accepted save
+ * adopts the Host's read-back into both, and a refused one adopts only the record, so the next
+ * save CASes on the revision the Host holds while the field keeps exactly what the player typed.
  */
 type GamePromptAdditionView =
   | Readonly<{ kind: "loading" }>
@@ -1567,10 +1567,11 @@ export function SettingsSurfacePanel({
   /**
    * Writes the player's prompt addition.
    *
-   * The validated read-back is the only value the panel then shows, so a rejected write never
-   * leaves the player looking at text the store does not hold. A lost race is the one refusal
-   * worth re-reading for: another tab's save is the authority, and the field adopts it rather
-   * than overwriting it with this one's draft.
+   * An accepted write is the Host's read-back, so both the record and the field become what the
+   * store holds. A refusal must not: the addition in the field is the player's own text, and a
+   * failed save that replaced it with the stored copy would answer her by deleting what she was
+   * writing. So a refusal re-reads only the record - its revision is what the retry CASes on,
+   * which is what makes the retry possible instead of looping on the revision that already lost.
    */
   const savePromptAddition = (): void => {
     if (promptAdditionView.kind !== "ready" || promptAdditionView.pending) return;
@@ -1587,9 +1588,11 @@ export function SettingsSurfacePanel({
       } catch (error) {
         try {
           const restated = await api.readGamePromptAddition();
-          setPromptAdditionView({ kind: "ready", record: restated, draft: restated.addition, pending: false });
+          setPromptAdditionView({ kind: "ready", record: restated, draft: view.draft, pending: false });
         } catch {
-          setPromptAdditionView({ kind: "error" });
+          // The refusal stands on its own: the field keeps her text and the next save CASes on
+          // the revision this panel still holds.
+          setPromptAdditionView({ ...view, pending: false });
         }
         report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
