@@ -171,7 +171,30 @@ function main() {
     }
   }
 
-  if (failing && options.enforce) process.exit(1);
+ 	if (failing && options.enforce) process.exit(1);
+
+	// Self-verification report (tools/lib/harness-conformance.mjs gate 5). The gate's own falsifiers live in
+	// check-hot-file-falsifier.test.mjs; this line records what THIS run actually judged, so a run that
+	// silently read an empty history cannot pass as a clean one.
+	console.log(
+		JSON.stringify({
+			gate: "check-hot-file-falsifier",
+			status: failing && options.enforce ? "failed" : "passed",
+			mode: options.enforce ? "enforce" : "report-only",
+			checks: [
+				{
+					id: "history-derived-hot-set",
+					status: derived.hot.size > 0 && derived.fixCommitCount > 0 ? "passed" : "failed",
+					detail: `${derived.hot.size} hot files from ${derived.fixCommitCount} fix commits in ${options.windowDays}d`,
+				},
+				{
+					id: "falsifier-named-when-hot-file-touched",
+					status: result.needsFalsifier && options.enforce ? "failed" : "passed",
+					detail: `${result.hotFilesTouched.length} hot files touched, falsifier ${result.falsifierPresent ? "present" : "absent"}`,
+				},
+			],
+		}),
+	);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
