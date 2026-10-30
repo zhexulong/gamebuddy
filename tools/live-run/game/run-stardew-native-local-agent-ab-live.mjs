@@ -3498,7 +3498,14 @@ try {
   // (`<timestamp>_<sessionId>.jsonl`), NOT the surface session id the runner minted. Read where the record is read, so
   // the two can never describe different sessions.
   const contextSummary = collectContextSummary({
-    runDir: capture.dir,
+    // The SOURCE root, not `capture.dir`: the store is copied into the capture directory by `closeCapture`, which runs
+    // AFTER this read. Pointing at `capture.dir` here is why the first run with this reader published
+    // `context_db_not_found` about a store that was on disk the whole time - measured 2026-10-30, whose context.db held
+    // 52,563 active tokens and 24 compartments while the result said the file did not exist.
+    runDir: runtimeRoot,
+    // `collectContextSummary` joins `runtime-root/contexts/...` under the run directory, which is the layout of a
+    // CAPTURE. A live runtime root has `contexts/...` directly, so this call passes the path shape it actually holds.
+    contextsRoot: join(runtimeRoot, "contexts"),
     sessionId: sessionIdFromSessionRecord(sessionSearch.path),
   });
   // The Magic Context store's own account of this run.

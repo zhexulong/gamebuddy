@@ -23,8 +23,8 @@ import { join } from "node:path";
  * run's own session id. Summing the table without the filter reports another run's work.
  * </p>
  */
-export function collectContextSummary({ runDir, sessionId }) {
-  const dbPath = findContextDb(runDir);
+export function collectContextSummary({ runDir, contextsRoot, sessionId }) {
+  const dbPath = findContextDb(runDir, contextsRoot);
   if (dbPath === null) return Object.freeze({ observed: false, reasonCode: "context_db_not_found" });
   if (typeof sessionId !== "string" || sessionId.length === 0)
     return Object.freeze({ observed: false, reasonCode: "session_id_missing", dbPath });
@@ -119,10 +119,17 @@ export function collectContextSummary({ runDir, sessionId }) {
  * handful of tags. An empty or absent tree returns null rather than a fabricated path.
  * </p>
  */
-function findContextDb(runDir) {
-  if (typeof runDir !== "string" || !existsSync(runDir)) return null;
-  const roots = join(runDir, "runtime-root", "contexts");
-  if (!existsSync(roots)) return null;
+function findContextDb(runDir, contextsRoot) {
+  // Two layouts, and the caller says which one it holds: a CAPTURE keeps the runtime root nested
+  // (`<run>/runtime-root/contexts`), while a LIVE root has `contexts` directly. Guessing produced
+  // `context_db_not_found` for a store that existed.
+  const roots =
+    typeof contextsRoot === "string"
+      ? contextsRoot
+      : typeof runDir === "string" && existsSync(runDir)
+        ? join(runDir, "runtime-root", "contexts")
+        : null;
+  if (roots === null || !existsSync(roots)) return null;
   let best = null;
   for (const contextEntry of safeReadDir(roots)) {
     const candidate = join(roots, contextEntry, "data", "cortexkit", "magic-context", "context.db");
