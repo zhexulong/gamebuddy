@@ -162,7 +162,8 @@ test("Farmhand presentation port strips Magic Context's §N§ self-tag before th
     hostAdmission(),
   );
   assert.equal(writes[0]?.text, "已经进屋了，被窝那边我去占着。");
-  // The companion-language hook sees the same clean text the bubble does.
+  // The companion-language hook sees the same text minus the `§N§` marker; only an
+  // inline audio tag is ever projected differently, because only the voice performs one.
   assert.deepEqual(presented, ["已经进屋了，被窝那边我去占着。"]);
   // Ordinary text with no marker is passed through byte for byte.
   await port.present(
@@ -177,6 +178,89 @@ test("Farmhand presentation port strips Magic Context's §N§ self-tag before th
     hostAdmission(),
   );
   assert.equal(writes[1]?.text, "我在这里。");
+});
+
+test("the Game bubble drops the voice's inline audio tags while the voice hook keeps them", async () => {
+  const interruption = createCompanionInterruption();
+  const epoch = createFarmhandPresentationEpochAdmission(interruption);
+  const bubbles: unknown[] = [];
+  const voiced: string[] = [];
+  const bridge = {
+    state: { snapshot: { revision: 5 } },
+    async presentCompanionText(request: Record<string, unknown>) {
+      bubbles.push(request.text);
+    },
+  };
+  const port = createFarmhandCompanionPresentationPort(bridge as never, epoch, (text) => {
+    voiced.push(text);
+  });
+  // The prompt asks the model to carry tone in brackets (`（轻声）`, `（有点得意）`,
+  // `(softly)`, `[pause]`) so the voice channel can PERFORM it instead of saying it
+  // (identity-profile's Game conduct rule). The bubble has no voice to perform with, so
+  // printing the tag there reads as the companion having said the direction: a live run
+  // drew `（轻声）种子我已经帮你种好啦。` above the farmer's head.
+  //
+  // One `present()` call feeds both channels, so both assertions belong in this one run:
+  // a fix that tidies the bubble by deleting the tag from the shared string passes the
+  // bubble half and fails the voice half, which is the exact regression to guard.
+  const cases = [
+    { text: "（轻声）种子我已经帮你种好啦。", bubble: "种子我已经帮你种好啦。" },
+    { text: "种子（轻声）我已经种好了。", bubble: "种子我已经种好了。" },
+    { text: "(softly) Seeds are planted.", bubble: "Seeds are planted." },
+    { text: "[pause] 我看看。", bubble: "我看看。" },
+    { text: "我在这里。", bubble: "我在这里。" },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    await port.present(
+      {
+        surface: "game",
+        expressionId: `expression_tag_${index}`,
+        sessionId: "session_tag",
+        sourceEventId: `source_tag_${index}`,
+        text: entry.text,
+        locale: "zh-CN",
+      },
+      hostAdmission(),
+    );
+    // The bubble loses the direction and keeps every word around it: no stray space
+    // where a full-width tag was cut out of the middle of a sentence, and no lost word.
+    assert.equal(bubbles[index], entry.bubble);
+    // The voice keeps the direction byte for byte, which is the whole reason it exists.
+    assert.equal(voiced[index], entry.text);
+  }
+});
+
+test("a piece that is nothing but a direction is not written to the bubble, and still reaches the voice", async () => {
+  const interruption = createCompanionInterruption();
+  const epoch = createFarmhandPresentationEpochAdmission(interruption);
+  const writes: Record<string, unknown>[] = [];
+  const voiced: string[] = [];
+  const bridge = {
+    state: { snapshot: { revision: 6 } },
+    async presentCompanionText(request: Record<string, unknown>) {
+      writes.push(request);
+    },
+  };
+  const port = createFarmhandCompanionPresentationPort(bridge as never, epoch, (text) => {
+    voiced.push(text);
+  });
+  // A piece that is only a direction is what the bubble projection can empty, and the Mod
+  // refuses empty text (`companion_presentation_text_empty`): a failed commit ends the whole
+  // turn's admission, so a cosmetic strip would silently cost the rest of the turn. There is
+  // nothing for the bubble to show, and the voice still gets something to perform.
+  await port.present(
+    {
+      surface: "game",
+      expressionId: "expression_direction_only",
+      sessionId: "session_direction_only",
+      sourceEventId: "source_direction_only",
+      text: "（轻声）",
+      locale: "zh-CN",
+    },
+    hostAdmission(),
+  );
+  assert.deepEqual(writes, []);
+  assert.deepEqual(voiced, ["（轻声）"]);
 });
 
 test("stripMagicContextSelfTag removes every §N§ marker and leaves clean text untouched", () => {

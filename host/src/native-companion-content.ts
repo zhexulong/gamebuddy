@@ -55,12 +55,15 @@ export type NativeCompanionContentEvent =
  * Stage direction is `*...*`, never a bracket. An inline bracket group such as
  * `（轻声）` is a prosody direction the voice channel performs instead of
  * speaking, and `dehydrateCompanionSpeech` deliberately preserves it for that
- * lane - so `"strip"` passes it through to the bubble as well. That is the
- * accepted cost, not an oversight: the same text feeds `onPreviewDelta` into
- * `voiceSink.append`, and a projection here that removed the tag to tidy the
- * bubble would delete the emotion channel that consumer reads. Both surfaces
- * therefore keep it, and the Chat renderer is the one that dresses it (a leading
- * run as a badge, `MOOD_TAG_CLASS`); the bubble prints it as her words.
+ * lane - so `"strip"` passes it through to the sinks as well. That is not the
+ * bubble's last word: the same text feeds `onPreviewDelta` into
+ * `voiceSink.append`, so a projection HERE that removed the tag to tidy the
+ * bubble would delete the emotion channel that consumer reads. The two channels
+ * diverge instead at the one place the voice and the bubble are separately
+ * addressed - `farmhand-companion-presentation.ts` gives the bridge
+ * `stripInlineAudioTags(text)` and the companion-language hook `text`, so the
+ * bubble loses the direction and the voice keeps it. The Chat renderer is the
+ * one that dresses it (a leading run as a badge, `MOOD_TAG_CLASS`).
  */
 export type StageDirectionPresentation = "strip" | "keep";
 

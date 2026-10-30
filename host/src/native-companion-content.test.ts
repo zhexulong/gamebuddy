@@ -224,13 +224,14 @@ test("strips roleplay stage direction when the surface cannot draw it (Game bubb
   assert.deepEqual(finals, ["早安!今天天气真好。"]);
 });
 
-test("passes an inline prosody tag through to the Game bubble, because the voice lane reads the same text", async () => {
+test("passes an inline prosody tag through to the presentation port, because the voice lane performs it", async () => {
   // A `（轻声）` is a direction the voice channel performs instead of speaking, so the
-  // dehydrator preserves it (`companion-speech-dehydration.ts`) and the Game preview
-  // lane feeds the raw delta into `voiceSink.append`. `"strip"` therefore removes
-  // stage-direction BEATS and never a bracket group: a projection here that tidied the
-  // bubble by removing the tag would delete the emotion channel of the very consumer
-  // this text also serves. The bubble printing the tag is the accepted cost.
+  // dehydrator preserves it (`companion-speech-dehydration.ts`). This observer is NOT where
+  // the two channels diverge: the text it commits feeds both the bridge write and the
+  // companion-language hook, and stripping here would delete the emotion channel of the
+  // voice consumer before the split exists. The bubble's own projection happens at that
+  // split (`farmhand-companion-presentation.ts`, `stripInlineAudioTags`), which is the one
+  // place the voice and the bubble are separately addressed.
   const fx = fakeSession();
   const finals: string[] = [];
   const observer = attach(fx, {
