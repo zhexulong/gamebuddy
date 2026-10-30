@@ -75,7 +75,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MovingTargetApproachTests.cs" Link="MovingTargetApproachTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MultiDayPlaySessionFixtureTests.cs" Link="MultiDayPlaySessionFixtureTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NameEntityActionTests.cs" Link="NameEntityActionTests.cs" />
-    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetTests.cs" Link="PlantableTargetSlotBudgetTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetSourceShapeTests.cs" Link="PlantableTargetSlotBudgetSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ReceiptRevisionMonotonicitySourceShapeTests.cs" Link="ReceiptRevisionMonotonicitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />

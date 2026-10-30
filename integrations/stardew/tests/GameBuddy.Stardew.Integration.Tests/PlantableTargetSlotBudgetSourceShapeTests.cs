@@ -21,7 +21,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// is honest for a tree and useless for a seed). What is pinned here is the budget itself: a per-slot window, and no
 /// family-wide counter a later slot can find already spent.
 /// </summary>
-public sealed class PlantableTargetSlotBudgetTests
+[Trait("kind", "source-shape")]
+public sealed class PlantableTargetSlotBudgetSourceShapeTests
 {
     [Theory]
     [InlineData("private static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(")]
