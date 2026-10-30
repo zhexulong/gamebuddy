@@ -1083,7 +1083,12 @@ function configureNativeLocalPlayerBootstrap(
   assertFixtureLogicalName(logicalSaveName);
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
-  const result = structuredClone(config);
+  // `config` is null on a root that has never been bootstrapped - `readJsonIfPresent` reports ENOENT as null, which is
+  // the honest answer to "is there a config". Cloning null yields null, and the first assignment then throws
+  // `Cannot set properties of null`, so the one situation bootstrap exists for - a root with no config at all - was the
+  // one it could not handle. An empty object is the same statement in the form the rest of this function needs: there is
+  // nothing to preserve yet.
+  const result = structuredClone(config ?? {});
   result.NativeLocalPlayerFixture = {
     Enable: true,
     LogicalSaveName: logicalSaveName,

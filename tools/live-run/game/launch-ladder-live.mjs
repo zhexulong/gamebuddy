@@ -144,24 +144,14 @@ async function waitForFreeFixture(deadlineMs = Date.now() + 45 * 60 * 1000) {
   }
 }
 
-const binding = fs
-  .readdirSync(fixtureRoot)
-  .filter((name) => name.endsWith(".native-local-binding.json"))
-  .map((name) => path.join(fixtureRoot, name))
-  .find((file) => {
-    try {
-      // `saveName` is the LOGICAL name the fixture and the driver contract use
-      // (`SaveName` must equal `TemplateName`, because a native save embeds its
-      // directory name). The binding records both that and the physical slot it
-      // observed. Comparing against `observedSaveSlot` here made every logical name
-      // look unbound, which is why the launcher could not start a run at all.
-      const recorded = JSON.parse(fs.readFileSync(file, "utf8"));
-      return recorded.logicalSaveName === saveName || recorded.observedSaveSlot === saveName;
-    } catch {
-      return false;
-    }
-  });
-if (!binding) throw new Error(`no native-local binding for save ${saveName}`);
+// The binding file's PATH is derived from the save name - the fixture names it `<saveName>.native-local-binding.json`
+// (`launch-stardew-navigation-fixture.ps1:46`) - and the file is WRITTEN by the prepare step below.
+//
+// This used to be a directory scan followed by `if (!binding) throw`, both of which ran BEFORE preparing. So on a root
+// that did not exist yet the launcher could not rebuild the very thing it was about to build: it died with a raw
+// `ENOENT: scandir`, and after that check was made tolerant it died with "no native-local binding" instead. A path is
+// knowable before the file exists; whether the file exists is a question only preparing can answer.
+const binding = path.join(fixtureRoot, `${saveName}.native-local-binding.json`);
 
 /**
  * Who owns the fixture transaction right now, as recorded by its owner. Reading the

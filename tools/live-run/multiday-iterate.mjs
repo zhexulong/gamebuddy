@@ -24,14 +24,54 @@ const skipBuild = args.includes("--no-build");
 const labelIndex = args.indexOf("--label");
 const label = labelIndex >= 0 ? args[labelIndex + 1] : "loop";
 
-/** The fixture save both the fixture profile and the launcher name. One value, because a mismatch reads as no_launch. */
-const SAVE = "GameBuddyFixtureStable2_451844707";
+/**
+ * The fixture save both the fixture profile and the launcher name, read from the binding that owns it.
+ *
+ * It used to be one hard-coded slot (`GameBuddyFixtureStable2_451844707`). A native save embeds a unique id that the
+ * GAME assigns, so that literal only ever named the one save created on 2026-10-09: bootstrap a fresh root - which is
+ * what a cleared `%LOCALAPPDATA%\GameBuddy` forces - and every run after it dies in `prepare` with
+ * "Fixture template directory is missing: .../451844707", naming a directory nobody asked for.
+ *
+ * The binding is the authority: `observedSaveSlot` is the slot the fixture itself recorded after the game created it.
+ * Absent a binding the literal remains, so a machine that has never bootstrapped keeps the answer it had.
+ */
+function resolveFixtureSave() {
+  const fixturesRoot =
+    process.env.GAMEBUDDY_STARDEW_FIXTURE_ROOT ??
+    (RUNTIME_ROOT === null ? null : path.join(RUNTIME_ROOT, "stardew-fixtures"));
+  const fallback = "GameBuddyFixtureStable2_451844707";
+  if (fixturesRoot === null || !fs.existsSync(fixturesRoot)) return fallback;
+  // More than one binding means this root has bootstrapped more than once; the newest observed slot is the one the
+  // current template directory belongs to, because bootstrap writes the template and the binding together.
+  const candidates = [];
+  for (const name of fs.readdirSync(fixturesRoot)) {
+    if (!name.endsWith(".native-local-binding.json")) continue;
+    try {
+      const recorded = JSON.parse(fs.readFileSync(path.join(fixturesRoot, name), "utf8"));
+      const slot = recorded?.observedSaveSlot;
+      if (typeof slot !== "string" || slot.length === 0) continue;
+      candidates.push({ slot, at: fs.statSync(path.join(fixturesRoot, name)).mtimeMs });
+    } catch {
+      continue;
+    }
+  }
+  if (candidates.length === 0) return fallback;
+  candidates.sort((left, right) => right.at - left.at);
+  const chosen = candidates[0].slot;
+  console.log(`[fixture] using the bootstrapped save slot from its binding: ${chosen}`);
+  return chosen;
+}
+
 const SCENARIO = "multiday_routine";
 const ACTION = "play_session_multi_day";
 
 const GAME_PATH = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
 const GAME_DIR = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
 const RUNTIME_ROOT = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "GameBuddy") : null;
+// Resolved here, AFTER `RUNTIME_ROOT`, because the binding lookup reads the root this script cleans and builds (see
+// `resolveFixtureSave`). Declaring it above that constant read an uninitialised binding and threw
+// `Cannot access 'RUNTIME_ROOT' before initialization`.
+const SAVE = resolveFixtureSave();
 
 function run(command, argv, { allowFailure = false } = {}) {
   process.stdout.write(`\n$ ${command} ${argv.join(" ")}\n`);

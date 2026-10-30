@@ -96,20 +96,30 @@ test("the runner reads the run manifest under the same Game session path the run
 
 test("a model profile is filled only where one is missing, never overwritten", () => {
   assert.match(RUNNER_SOURCE, /const usesDisposableRoot = !usesConfiguredRuntimeRoot;/);
-  // The gate is now "the root has no profile", not "the root is disposable": a configured root without one used to
-  // fall through to the Host's default model, which is not in the runtime's own catalog, and the run died with
-  // `provider_error:404 model_not_found` while its manifest said `deepseek-v4-flash` (measured 2026-10-21). Filling a
-  // gap is safe; overwriting an operator's choice would not be, so the gate must READ before it writes.
-  const gapGate = RUNNER_SOURCE.indexOf("if (!hasModelProfile)");
-  const profileRead = RUNNER_SOURCE.indexOf("const hasModelProfile");
-  assert.ok(profileRead >= 0 && gapGate > profileRead, "the profile is READ before anything is decided");
-  // The write is pinned as a pair with its gate, because the path literal itself now appears earlier (in the constant
-  // that the gate reads), so a character-position comparison cannot express "the gate precedes the write".
+  // The invariant is READ BEFORE WRITE, and it is asserted on the DECISION rather than on one literal gate.
+  //
+  // This used to pin `if (!hasModelProfile)` and the write below it. That gate could not express the real rule: a root
+  // whose profile exists but carries `modelId` without `providerId` HAS a file and still has no usable model - which is
+  // exactly the state the old filler produced, and the reason every live run died at
+  // `gameplay_subagent_requires_model_and_integration`. Replacing the gate with a per-surface `needsProvider` check is
+  // the fix, so the assertion is now: the profile is read first, the decision is a per-surface gap test, and an
+  // existing pair is never rewritten.
+  const profileRead = RUNNER_SOURCE.indexOf("const existingProfile");
+  const decision = RUNNER_SOURCE.indexOf("const needsProvider");
+  const write = RUNNER_SOURCE.indexOf('if (needsProvider("chat") || needsProvider("game"))');
+  assert.ok(profileRead >= 0, "the profile is READ before anything is decided");
+  assert.ok(decision > profileRead, "the decision comes after the read");
+  assert.ok(write > decision, "the write comes after the decision");
+  // The gap test must look at BOTH halves: `providerId` is the half the old filler omitted, and a rule that checked only
+  // `modelId` would pass on the broken file.
   assert.match(
     RUNNER_SOURCE,
-    /if \(!hasModelProfile\)\s*await writeFile\(\s*modelProfilePath/,
-    "the write goes to the path that was read",
+    /existingProfile\[surface\]\?\.providerId === undefined[\s\S]{0,200}existingProfile\[surface\]\?\.modelId === undefined/,
+    "the gap test looks at provider AND model, not at whether a file exists",
   );
+  // An operator's existing choice survives: every field falls back to what was already there.
+  assert.match(RUNNER_SOURCE, /providerId: existingProfile\?\.chat\?\.providerId \?\? PROVIDER/);
+  assert.match(RUNNER_SOURCE, /modelId: existingProfile\?\.game\?\.modelId \?\? MODEL/);
 });
 
 test("the runner enforces a companion-interaction gate on every speaking scenario", () => {

@@ -86,6 +86,19 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private const int ObeliskTargetDiscoveryRadius = 12;
 
     /// <summary>
+    /// The most obelisk targets one observation publishes.
+    ///
+    /// Nothing in the game caps how many obelisk BUILDINGS a farm may hold - `location.buildings`
+    /// grows with the farm, and a player may commission the same obelisk type more than once - so
+    /// this list needs a ceiling of its own. That ceiling is not cosmetic: the Host refuses a
+    /// snapshot family that exceeds its admitted entry cap by CLOSING the bridge, so an unbounded
+    /// list would end the session on a large farm rather than merely truncate. This is the
+    /// producer half of one number; `tools/check-stardew-snapshot-family-bounds.mjs` holds it
+    /// equal to the Host's cap for `obeliskTargets`.
+    /// </summary>
+    private const int MaximumPublishedObeliskTargets = 32;
+
+    /// <summary>
     /// The building-type -> destination mapping, read from
     /// <c>Building.TryPerformObeliskWarp</c>'s switch (Building.cs:1011-1028). It is
     /// owned here rather than delegated to that method because the destination is
@@ -308,7 +321,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
         }
 
-        return targets;
+        return targets.Take(MaximumPublishedObeliskTargets).ToArray();
     }
 
     /// <summary>

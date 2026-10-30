@@ -2888,17 +2888,45 @@ process.stderr.write(
 // g114journal). Filling a GAP is safe and is not the same as overwriting an operator's choice; a root that has a profile
 // keeps it untouched.
 const modelProfilePath = join(runtimeRoot, "settings", "model-profiles.json");
-const hasModelProfile = await readFile(modelProfilePath, "utf8").then(
-  () => true,
-  () => false,
+// FILL A GAP, never overwrite an operator's choice - and `providerId` is a gap the old filler could not see.
+//
+// This used to write the file only when it was ABSENT, and the file it wrote carried `modelId` with no `providerId`.
+// `resolveSurfaceModelSelection` uses a surface's own provider/model only when BOTH are present (model-selection.ts:81),
+// so that file fell through to the product's active connection, which a disposable root does not have - `no_model`,
+// `modelConfig: undefined`, and then `gameplay_subagent_requires_model_and_integration` with nothing naming a model.
+//
+// A root that ALREADY has both is left byte-for-byte alone: that is the operator's choice, and the comment above has
+// always promised not to touch it. A root written by the OLD filler has a `modelId` and no provider, which is exactly
+// the gap this closes.
+const existingProfile = await readFile(modelProfilePath, "utf8").then(
+  (text) => JSON.parse(text),
+  () => null,
 );
-if (!hasModelProfile)
+const PROVIDER = "cpa-oai";
+const MODEL = "deepseek-v4.1-flash";
+const needsProvider = (surface) =>
+  existingProfile === null ||
+  existingProfile[surface]?.providerId === undefined ||
+  existingProfile[surface]?.modelId === undefined;
+if (needsProvider("chat") || needsProvider("game"))
   await writeFile(
     modelProfilePath,
     JSON.stringify({
       schemaVersion: 1,
-      chat: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
-      game: { revision: 0, modelId: "deepseek-v4.1-flash", thinkingLevel: "low" },
+      // The provider is the same `cpa-oai` the credential above is filed under in `auth.json`, so the pair cannot
+      // disagree. `thinkingLevel` is preserved from a profile that already had one.
+      chat: {
+        revision: existingProfile?.chat?.revision ?? 0,
+        providerId: existingProfile?.chat?.providerId ?? PROVIDER,
+        modelId: existingProfile?.chat?.modelId ?? MODEL,
+        thinkingLevel: existingProfile?.chat?.thinkingLevel ?? "low",
+      },
+      game: {
+        revision: existingProfile?.game?.revision ?? 0,
+        providerId: existingProfile?.game?.providerId ?? PROVIDER,
+        modelId: existingProfile?.game?.modelId ?? MODEL,
+        thinkingLevel: existingProfile?.game?.thinkingLevel ?? "low",
+      },
     }),
   );
 const manifestPath = join(root, "manifest.json");
