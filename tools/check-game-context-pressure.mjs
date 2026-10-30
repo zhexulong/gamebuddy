@@ -27,6 +27,12 @@
  *   node tools/check-game-context-pressure.mjs                       # fixture checks only, offline
  *   node tools/check-game-context-pressure.mjs --run-dir DIR
  *   node tools/check-game-context-pressure.mjs --run-dir DIR --all
+ *
+ * The default run ends with a self-verification report (`game_context_pressure/v1`): its offline fixture
+ * checks ARE the falsifier, because each one asserts that this gate's own judgement reports the violation
+ * it exists to catch - the measured over-window session, the oversized denominator that hides it, and an
+ * unknown model that must not inherit the largest window. A judge that stopped reporting violations would
+ * turn those five checks red instead of printing a green gate.
  */
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -224,22 +230,27 @@ function main() {
     }
   }
 
-  const failures = [...offline.filter((entry) => entry.status === "failed")];
-  for (const { verdict } of judged) {
-    for (const violation of verdict.violations)
-      failures.push({ id: violation.code, status: "failed", detail: violation.detail });
-  }
+  const violations = judged.flatMap(({ verdict }) =>
+    verdict.violations.map((violation) => ({ id: violation.code, status: "failed", detail: violation.detail })),
+  );
+  const unmeasured = judged.length === 0 && runDirIndex >= 0;
+  const entries = [...offline, ...violations];
+  const failed = entries.filter((entry) => entry.status === "failed");
 
-  for (const entry of [...offline, ...failures.filter((failure) => !offline.includes(failure))]) {
-    console.log(
-      `${entry.status === "passed" ? "PASS" : "FAIL"} ${entry.id}${entry.detail ? ` (${entry.detail})` : ""}`,
-    );
-  }
-  if (judged.length === 0 && runDirIndex >= 0) {
-    console.log("UNMEASURED no session carried a token reading - this is not a pass");
-  }
+  // The self-verification report: every rule this gate can report red, with its own outcome. The fixture checks
+  // above are part of it, so the default run proves the judgement can fire rather than only that it printed.
+  process.stdout.write(
+    `${JSON.stringify({
+      gate: "game_context_pressure/v1",
+      mode: runDirIndex >= 0 ? "run_dir" : "fixtures",
+      ...(runDirIndex >= 0 ? { runDir: args[runDirIndex + 1], judgedSessions: judged.length } : {}),
+      status: failed.length > 0 ? "failed" : "passed",
+      ...(unmeasured ? { unmeasured: "no session carried a token reading - this is not a pass" } : {}),
+      checks: entries,
+    })}\n`,
+  );
 
-  process.exit(failures.length === 0 ? 0 : 1);
+  process.exit(failed.length === 0 ? 0 : 1);
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/gu, "/").split("/").pop())) main();

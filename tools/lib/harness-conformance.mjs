@@ -304,6 +304,7 @@ export function checkExperimentalRunners({
  */
 const GATES_WITH_FALSIFIER = Object.freeze([
   "check-evidence-bundle.mjs",
+  "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
