@@ -107,7 +107,20 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
                     reasonCode = "ordinary_warp_target_identity_invalid";
                     return false;
                 }
-                if (warp.X < 0 || warp.Y < 0 || warp.X > 1000 || warp.Y > 1000)
+                // A SOURCE coordinate may be NEGATIVE, and that is the native engine's own encoding for an edge exit.
+                //
+                // In a Stardew map, walking off the west edge warps from `X = -1` and walking off the north edge warps
+                // from `Y = -1`; the tile is outside the grid because the trigger IS the boundary. Town's own map asset
+                // declares its exits that way: `-1 53 BusStop 42 23`, `-1 54 BusStop 42 23`, `-1 55 BusStop 42 23`,
+                // `79 -1 Mountain 15 40`, `80 -1 Mountain 15 40`, `-1 89 Forest 118 25`, `-1 90 Forest 118 25`. Only the
+                // south Beach warps (`53 110 Beach 38 0`) are non-negative.
+                //
+                // MEASURED 2026-10-30 (`round9`): this guard dropped every negative-axis exit, so Town's published
+                // `warps` contained Beach alone, the topology gave Town one outgoing edge, and `navigate_to_destination`
+                // to the Farm was a legal `destination_unreachable` - which the companion then hit three times trying to
+                // get home. The destination still has to be inside a real map, so `TargetX`/`TargetY` keep the strict
+                // check below.
+                if (warp.X < -1 || warp.Y < -1 || warp.X > MaximumTileCoordinate || warp.Y > MaximumTileCoordinate)
                     continue;
                 if (!CoordinateInRange(warp.TargetX, warp.TargetY))
                     continue;
@@ -278,8 +291,22 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     private static bool InRange(int x, int y, int targetX, int targetY) =>
         CoordinateInRange(x, y) && CoordinateInRange(targetX, targetY);
 
+    /// <summary>
+    /// A coordinate INSIDE a map. Arrival tiles are ordinary map cells, so the floor is zero.
+    ///
+    /// <para>
+    /// Do not use this for a warp's SOURCE column: an edge exit triggers from `-1` (west or north), which is outside
+    /// every map by construction - see `DiscoverWarps` for the map asset that spells its exits that way.
+    /// </para>
+    /// </summary>
     private static bool CoordinateInRange(int x, int y) =>
-        x >= 0 && y >= 0 && x <= 1000 && y <= 1000;
+        x >= 0 && y >= 0 && x <= MaximumTileCoordinate && y <= MaximumTileCoordinate;
+
+    /// <summary>
+    /// The largest legal tile index any coordinate may carry, source or destination. One bound for both checks, so a
+    /// later reader cannot tighten one of them and leave the other.
+    /// </summary>
+    private const int MaximumTileCoordinate = 1000;
 
     private static Warp? ResolveDoorWarp(GameLocation location, Point point)
     {

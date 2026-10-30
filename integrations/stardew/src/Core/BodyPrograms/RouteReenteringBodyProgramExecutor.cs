@@ -261,9 +261,50 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         NodeExecutionBinding execution,
         LocalExecutionReceipt receipt)
     {
-        switch (receipt.State)
+        return ToTerminal(grant, execution, receipt, receipt.State);
+    }
+
+    /// <summary>
+    /// The receipt-state to outcome mapping, separated from <see cref="ToTerminal(HostAdmissionGrant, NodeExecutionBinding, LocalExecutionReceipt)"/>
+    /// so a test can ask it directly which states settle a node.
+    ///
+    /// <para>
+    /// The `default` arm is the load-bearing one: it answers `null`, which the controller reads as "keep waiting". That
+    /// is correct ONLY for the states that mean the native body has not finished this attempt. `Blocked`, `Invalidated`
+    /// and `Expired` were in it, and all three are decisions the Mod already declares terminal in
+    /// `ModEntry.IsUnconfirmedTerminal` - so a node the delivery tracker had given up on stayed bound-Running for the
+    /// rest of the run (measured 2026-10-30, `round9`).
+    /// </para>
+    /// </summary>
+    internal static BodyProgramNodeOutcome? OutcomeForTerminalState(ExecutionState state) =>
+        state switch
         {
-            case ExecutionState.Succeeded:
+            ExecutionState.Succeeded => BodyProgramNodeOutcome.Succeeded,
+            ExecutionState.Failed => BodyProgramNodeOutcome.Failed,
+            ExecutionState.Rejected => BodyProgramNodeOutcome.Failed,
+            ExecutionState.Cancelled => BodyProgramNodeOutcome.Cancelled,
+            ExecutionState.Uncertain => BodyProgramNodeOutcome.Uncertain,
+            ExecutionState.PartiallySucceeded => BodyProgramNodeOutcome.Failed,
+            ExecutionState.Blocked => BodyProgramNodeOutcome.Failed,
+            ExecutionState.Invalidated => BodyProgramNodeOutcome.Cancelled,
+            ExecutionState.Expired => BodyProgramNodeOutcome.Failed,
+            // Accepted / Running / MeaningfulProgress: the native body has not finished this exact tuple. Nothing else
+            // may reach here - a state added to `ModEntry.IsUnconfirmedTerminal` must gain an arm above, or it reads as
+            // an unfinished attempt.
+            _ => null,
+        };
+
+    private BodyProgramTerminalResult? ToTerminal(
+        HostAdmissionGrant grant,
+        NodeExecutionBinding execution,
+        LocalExecutionReceipt receipt,
+        ExecutionState state)
+    {
+        BodyProgramNodeOutcome? outcome = OutcomeForTerminalState(state);
+        if (outcome is null) return null;
+        switch (outcome.Value)
+        {
+            case BodyProgramNodeOutcome.Succeeded:
                 IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
                 return new BodyProgramTerminalResult(
                     execution,
@@ -272,36 +313,20 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     receipt.ExecutionId,
                     receipt.Evidence,
                     $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
-            case ExecutionState.Failed:
-            case ExecutionState.Rejected:
-                // The authority refuses this shape for a non-success outcome: `TryComplete` requires Facts to be a
-                // non-null (empty) set and ReceiptId/Evidence/PostconditionVerification to be absent, because a node
-                // that claims no effect must not present proof of one. Sending `null` facts WITH evidence made every
-                // Failed/Rejected node fail that gate as InvalidInput, and the controller then replaced it with an
-                // unknown settlement - which is how a one-frame animation cooldown (`player_not_actionable`)
-                // quarantined a whole save scope (measured 2026-10-19: node h2 of east_harvest, on disk).
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
-            case ExecutionState.Cancelled:
+            case BodyProgramNodeOutcome.Cancelled:
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null);
-            case ExecutionState.Uncertain:
-                // `Uncertain` is a TERMINAL the action minted: it ran, and its own postcondition could not confirm the
-                // effect. It is not "still running".
-                //
-                // Leaving it in `default` made the executor answer `null` = "keep waiting", so the node stayed
-                // bound-Running forever while the ledger replayed the same receipt for the same RequestId. Every one of
-                // the eleven `... ? Succeeded : Uncertain` returns in the tool families could reach this - including the
-                // bounded swing loops that give up at their cap. Uncertain is exactly the outcome that must NOT be
-                // retried (the side effect may already exist), so it settles the node as the unknown it is.
+            case BodyProgramNodeOutcome.Uncertain:
+                // A terminal the action minted: it ran, and its own postcondition could not confirm the effect. It must
+                // NOT be retried (the side effect may already exist), so it settles the node as the unknown it is.
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null);
-            case ExecutionState.PartiallySucceeded:
-                // Also terminal, and also previously fell through to `null`. The swing loops no longer mint it
-                // (`clear_debris` now swings to removal inside one request), but crafting and cooking still do, and a
-                // partial success is a settled fact about this attempt - not an invitation to wait.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
             default:
-                // Accepted / Running / MeaningfulProgress / Blocked / Invalidated - the native body has not reached a
-                // terminal state for this exact tuple; remain bound-Running.
-                return null;
+                // Failed, and the authority refuses this shape for a non-success outcome: `TryComplete` requires Facts
+                // to be a non-null (empty) set and ReceiptId/Evidence/PostconditionVerification to be absent, because a
+                // node that claims no effect must not present proof of one. Sending `null` facts WITH evidence made
+                // every Failed/Rejected node fail that gate as InvalidInput, and the controller then replaced it with an
+                // unknown settlement - which is how a one-frame animation cooldown (`player_not_actionable`) quarantined
+                // a whole save scope (measured 2026-10-19: node h2 of east_harvest, on disk).
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
         }
     }
 

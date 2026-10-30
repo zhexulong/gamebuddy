@@ -27,35 +27,49 @@ const label = labelIndex >= 0 ? args[labelIndex + 1] : "loop";
 /**
  * The fixture save both the fixture profile and the launcher name, read from the binding that owns it.
  *
- * It used to be one hard-coded slot (`GameBuddyFixtureStable2_451844707`). A native save embeds a unique id that the
- * GAME assigns, so that literal only ever named the one save created on 2026-10-09: bootstrap a fresh root - which is
- * what a cleared `%LOCALAPPDATA%\GameBuddy` forces - and every run after it dies in `prepare` with
- * "Fixture template directory is missing: .../451844707", naming a directory nobody asked for.
- *
- * The binding is the authority: `observedSaveSlot` is the slot the fixture itself recorded after the game created it.
- * Absent a binding the literal remains, so a machine that has never bootstrapped keeps the answer it had.
+ * <p>
+ * A native save embeds a unique id that the GAME assigns, so there is no value this file can carry that is right on two
+ * machines. It was once one hard-coded slot, which only ever named the save created on 2026-10-09: bootstrap a fresh
+ * root - which a cleared `%LOCALAPPDATA%\GameBuddy` forces - and every run after it dies in `prepare` with "Fixture
+ * template directory is missing: .../451844707", naming a directory nobody asked for.
+ * </p>
+ * <p>
+ * THE FALLBACK IS GONE. It used to return that literal when no binding existed, on the theory that a machine that had
+ * never bootstrapped should "keep the answer it had" - but a machine that has never bootstrapped has no answer, and the
+ * literal made the failure arrive as a missing template directory twenty lines later instead of as the one thing the
+ * operator can act on. Measured 2026-10-30: a cleared root produced
+ * `Fixture template directory is missing: GameBuddyFixtureStable2_451844707` and exit 1, which says nothing about the
+ * missing bootstrap that caused it.
+ * </p>
  */
 function resolveFixtureSave() {
   const fixturesRoot =
     process.env.GAMEBUDDY_STARDEW_FIXTURE_ROOT ??
     (RUNTIME_ROOT === null ? null : path.join(RUNTIME_ROOT, "stardew-fixtures"));
-  const fallback = "GameBuddyFixtureStable2_451844707";
-  if (fixturesRoot === null || !fs.existsSync(fixturesRoot)) return fallback;
+  if (fixturesRoot === null)
+    throw new Error(
+      "no fixture root: LOCALAPPDATA is unset and GAMEBUDDY_STARDEW_FIXTURE_ROOT is not provided, so no binding can exist",
+    );
   // More than one binding means this root has bootstrapped more than once; the newest observed slot is the one the
   // current template directory belongs to, because bootstrap writes the template and the binding together.
   const candidates = [];
-  for (const name of fs.readdirSync(fixturesRoot)) {
-    if (!name.endsWith(".native-local-binding.json")) continue;
-    try {
-      const recorded = JSON.parse(fs.readFileSync(path.join(fixturesRoot, name), "utf8"));
-      const slot = recorded?.observedSaveSlot;
-      if (typeof slot !== "string" || slot.length === 0) continue;
-      candidates.push({ slot, at: fs.statSync(path.join(fixturesRoot, name)).mtimeMs });
-    } catch {
-      continue;
+  if (fs.existsSync(fixturesRoot)) {
+    for (const name of fs.readdirSync(fixturesRoot)) {
+      if (!name.endsWith(".native-local-binding.json")) continue;
+      try {
+        const recorded = JSON.parse(fs.readFileSync(path.join(fixturesRoot, name), "utf8"));
+        const slot = recorded?.observedSaveSlot;
+        if (typeof slot !== "string" || slot.length === 0) continue;
+        candidates.push({ slot, at: fs.statSync(path.join(fixturesRoot, name)).mtimeMs });
+      } catch {
+        continue;
+      }
     }
   }
-  if (candidates.length === 0) return fallback;
+  if (candidates.length === 0)
+    throw new Error(
+      `no fixture binding under ${fixturesRoot}: bootstrap the native-local fixture root once (\`node tools/bootstrap-stardew-native-local-player-fixture.mjs\` with the fixture profile loaded, then launch the game so it writes the save), and this run can resolve the slot the game assigned`,
+    );
   candidates.sort((left, right) => right.at - left.at);
   const chosen = candidates[0].slot;
   console.log(`[fixture] using the bootstrapped save slot from its binding: ${chosen}`);
