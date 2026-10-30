@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "392f2348a419526b8b861fcdcb3a6179358f9b84ff147361935b99c700ddc66a"
+        "value": "a07dfe48a4dabde19df1cfd97c84e4dcad34c9d50ee6a3175c0fed910aaa4261"
       }
     ]
   },
@@ -3280,7 +3280,7 @@
     {
       "type": "library",
       "name": "dompurify",
-      "version": "3.4.16",
+      "version": "3.4.17",
       "licenses": [
         {
           "license": {
@@ -3892,7 +3892,7 @@
     {
       "type": "library",
       "name": "fast-uri",
-      "version": "3.1.8",
+      "version": "3.1.9",
       "licenses": [
         {
           "license": {
@@ -8608,7 +8608,7 @@
     {
       "type": "library",
       "name": "undici",
-      "version": "8.10.2",
+      "version": "8.12.2",
       "licenses": [
         {
           "license": {
@@ -8698,7 +8698,7 @@
     {
       "type": "library",
       "name": "vite",
-      "version": "8.2.1",
+      "version": "8.3.3",
       "licenses": [
         {
           "license": {
@@ -8986,7 +8986,7 @@
     {
       "type": "library",
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.6.7",
       "licenses": [
         {
           "license": {

@@ -1,0 +1,4 @@
+{
+  "comment": "Advisories that the audit reports in this workspace and that a reader has looked at. Read by tools/check-dependency-audit.mjs. One entry per GitHub advisory id. `reason` must name a fact a reader can go and check - a version, a code path, a release date - never a disposition. An entry whose advisory no longer appears in `pnpm audit` fails the gate, so a deferral cannot outlive its advisory.",
+  "assessments": []
+}
