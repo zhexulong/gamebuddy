@@ -35,6 +35,7 @@ import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
+import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
@@ -740,6 +741,22 @@ function agentTurnFailureReason(outcome) {
  * reason and the directory searched, never a neighbour's numbers. `searched` stays in the answer because a reader has
  * to tell a missing session from a reader looking in the wrong place.
  */
+/**
+ * The session id the Magic Context store keys on, read from the session record's own name.
+ *
+ * `<timestamp>_<sessionId>.jsonl` is the shape `findRunSessionJsonl` already selects by, and `context.db`'s
+ * `tags.session_id` holds exactly that second field - verified against the 2026-10-29 run, whose record
+ * `2026-10-29T18-01-38-566Z_01a188d3-1a06-7103-bff6-bb3975370191.jsonl` matches 29 compartments and 191 tags.
+ *
+ * Returns undefined rather than a guess when the name does not have that shape: a wrong id would report another
+ * session's totals as this run's.
+ */
+function sessionIdFromSessionRecord(path) {
+  if (typeof path !== "string") return undefined;
+  const name = path.split(/[\\/]/u).at(-1) ?? "";
+  return /_(?<id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/u.exec(name)?.groups?.id;
+}
+
 function findRunSessionJsonl(sessionDir) {
   const searched = Object.freeze([String(sessionDir)]);
   const unbound = Object.freeze({
@@ -1267,6 +1284,9 @@ function deriveSessionVerdict({
   sessionSpoken,
   accomplishedActionIds,
   multidayAssessment,
+  // The whole session's last model answer, because the wall is a fact about the MODEL and not about the pipe. Only
+  // `stopReason` is read here; the outcome object carries much more and none of it belongs in a verdict.
+  agentTurnOutcome,
 }) {
   if (worldStallReason !== null) return "world_stopped_advancing";
   if (sessionTurns.length === 0) return "no_turns";
@@ -1275,6 +1295,12 @@ function deriveSessionVerdict({
   if (unsettledTurns.some((entry) => entry.error === "agent_turn_timeout")) return "turn_timeout";
   if (unsettledTurns.length > 0) return "turn_unsettled";
   if (turnFailureReason !== undefined) return "turn_failed";
+  // A turn that ended at the context wall did not merely time out or lose its pipe: the model was cut off mid-thought
+  // and every later turn inherited the same full window. `bridge_disconnected` is what a run LOOKS like when this
+  // happens - the pipe closes because nothing more is sent - so naming the pipe first reports a symptom and hides the
+  // cause. Measured 2026-10-29 (`round7`): 178 assistant turns, `stopReason: "length"` at 139,899 tokens, one-token
+  // outputs, then `pipe_closed` and a `night_watched_over_a_dead_bridge` verdict that named neither.
+  if (agentTurnOutcome?.stopReason === "length") return "context_exhausted";
   // A transport that died mid-run cannot support a behaviour claim: the companion's own line may simply never have
   // been presented, so silence would be reported for a fault in the pipe.
   if (bridgeDisconnections.length > 0) return "bridge_disconnected";
@@ -3434,6 +3460,28 @@ try {
       ? Object.freeze({ observed: false, reason: sessionSearch.reason, searched: sessionSearch.searched })
       : readAgentTurnOutcome(sessionSearch.path);
   const turnFailureReason = agentTurnFailureReason(agentTurnOutcome);
+  // The Magic Context store's own account of this run.
+  //
+  // The store has always been written into the run directory and nothing read it, so a whole layer of a live run was
+  // invisible: no fold boundary, no record of whether a tool result was ever reclaimed. That is how the 2026-10-29 run
+  // could end `stopReason: "length"` at 139,899 tokens with 78 MB of evidence sitting unopened beside it.
+  //
+  // The session id is the one the store keys on: the tail of this run's own session record name
+  // (`<timestamp>_<sessionId>.jsonl`), NOT the surface session id the runner minted. Read where the record is read, so
+  // the two can never describe different sessions.
+  const contextSummary = collectContextSummary({
+    runDir: capture.dir,
+    sessionId: sessionIdFromSessionRecord(sessionSearch.path),
+  });
+  // The Magic Context store's own account of this run.
+  //
+  // The store has always been written into the run directory, and nothing read it, so a whole layer of a live run was
+  // invisible: no `tokensBefore`, no fold boundary, no record of whether a tool result was ever reclaimed. That is how
+  // the 2026-10-29 run could end `stopReason: "length"` at 139,899 tokens with this file - 78 MB of evidence - sitting
+  // unopened beside it.
+  //
+  // The session id is the one the store keys on, which is the tail of this run's own session record name
+  // (`<timestamp>_<sessionId>.jsonl`), not the surface session id the runner minted.
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
     .map((entry) => ({ goalIndex: entry.goalIndex, error: entry.turn?.error ?? "unsettled" }));
@@ -3463,6 +3511,7 @@ try {
     accomplishedActionIds,
     // Present only for the multi-day scenario, where it is the run's own baseline judgement.
     multidayAssessment: multidayOutcome?.assessment ?? null,
+    agentTurnOutcome,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
@@ -3680,6 +3729,9 @@ try {
     // redacted provider message). Published so a verdict of `turn_failed` is auditable rather than
     // asserted, and so `silent` can be told apart from `nobody could read it`.
     agentTurnOutcome,
+    // What the store recorded about this same session: active vs reclaimed tokens, the tools that held them, and where
+    // the fold boundary stood. Published for every scenario, because a context wall is not a multi-day fact.
+    contextSummary,
     // Named when the world stopped rather than the turn finishing: the turn never settles in that case, so without
     // this the verdict could only say `turn_unsettled` and the freeze would have to be inferred from a log gap.
     worldStallReason,
@@ -4127,6 +4179,11 @@ async function buildRunResult({
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: summarizePresentationEvidence(),
+    // What the Magic Context store recorded about THIS run's own session: how many tokens are still active, how many
+    // were reclaimed and by which drop mode, which tools held them, and where the fold boundary stood. Read from the
+    // store rather than inferred, because a run that ends at `stopReason: "length"` is a question about this layer and
+    // this layer used to publish nothing at all.
+    context: evidence.contextSummary ?? Object.freeze({ observed: false, reasonCode: "context_summary_not_read" }),
     // The failure dump, built from the same facts the bundle publishes, so the verdict and the dump cannot disagree
     // about why the run is red.
     failure,
