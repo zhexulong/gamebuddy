@@ -38,6 +38,13 @@
  * than a skip - a gate that silently narrows its population is a gate that has stopped
  * working.
  *
+ * What this cannot prove, said plainly: it reads the module that imports the sanitizer, so it
+ * sees that module's own sinks. If a consumer in *another* module wrapped the sanitised string
+ * in a template engine, this file would not see it - the claim is about the module that owns the
+ * sanitised value, which is also the only place DOMPurify's options can be set. `sanitizer.5`
+ * fails if that module ever stops being the one that renders the value, which is the drift that
+ * would move the sink somewhere this reads as clean.
+ *
  * The dependency side is not re-asserted here: `manifest-boundary.test.mjs` already pins the
  * renderer's runtime dependency list to exactly five packages, so a template engine added as
  * a dependency fails there. What this file pins is the *sink*, which is the half a dependency
