@@ -283,7 +283,7 @@
     "knip": "6.34.0",
     "stylelint": "17.16.0",
     "stylelint-value-no-unknown-custom-properties": "6.1.1",
-    "typescript-eslint": "8.71.0",
+    "typescript-eslint": "8.72.1",
     "web-tree-sitter": "0.26.11"
   },
   "workspaces": [
