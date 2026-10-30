@@ -2911,22 +2911,41 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeTreeSaplingTarget>();
+        int heldStacks = player.Items
+            .OfType<StardewValley.Object>()
+            .Count(item => StardewValley.Object.isWildTreeSeed(item.ItemId) && item.Stack >= 1);
+        int rowLimit = PlantableTargetRows.PerSlotRowLimit(heldStacks);
         List<BridgeTreeSaplingTarget> result = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
             if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
+            // This stack's OWN window, and a stack's rows are its NEAREST: the scan below walks x then y from the far
+            // corner, so ordering happens before the window trims, which is what makes the window mean "nearest"
+            // rather than "whichever tiles the loops reached first".
+            List<BridgeTreeSaplingTarget> rowsForThisStack = new();
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
                 {
                     Vector2 tile = new(x, y);
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius) || !CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, x, y))
                         continue;
-                    result.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
+                    rowsForThisStack.Add(new BridgeTreeSaplingTarget(BuildTreeSaplingTargetId(location, slot, x, y, sapling.QualifiedItemId), slot, x, y, sapling.QualifiedItemId, RequireDisplayName(sapling.QualifiedItemId)));
                 }
             }
+            result.AddRange(TargetOrdering.NearestFirstByChebyshev(
+                rowsForThisStack,
+                player.TilePoint.X,
+                player.TilePoint.Y,
+                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
         }
+        // A stack is independent of every other stack - a row in slot A can never address slot B's item - so ordering
+        // each stack's own window IS the whole list's order, and the stacks stay in inventory order. The reason the
+        // order matters at all: `MAX_PLAN_NODES` is 16, so one script uses at most sixteen rows, and Chebyshev is the
+        // metric the range gate will apply (a tile nearer by Manhattan can still be further from being in range).
+        // Measured 2026-10-29, `round7`: 7.2 KB of these rows per observation, in scan order, so the sixteen a script
+        // could reach soonest were scattered.
         return result;
     }
 
@@ -3882,14 +3901,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSeedTarget>();
+        int heldStacks = player.Items
+            .OfType<StardewValley.Object>()
+            .Count(item => item.Category == StardewValley.Object.SeedsCategory);
+        int rowLimit = PlantableTargetRows.PerSlotRowLimit(heldStacks);
         List<BridgeSeedTarget> result = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
             if (item is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
                 continue;
-            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius && result.Count < 64; x++)
+            // THIS STACK'S OWN WINDOW. The guard used to be one family-wide `result.Count < 64`, tested on both loops,
+            // which the first held stack spent in full: 169 candidate tiles against a 64-row budget meant every later
+            // seed slot published nothing at all, so `plant_seed` had no address for the second crop the companion was
+            // carrying. Measured 2026-10-29 (`round7`): 64 rows, all from one stack, on 14 of 33 observations.
+            List<BridgeSeedTarget> rowsForThisStack = new();
+            for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
-                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius && result.Count < 64; y++)
+                for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= player.TilePoint.Y + TargetDiscoveryRadius; y++)
                 {
                     Vector2 tile = new(x, y);
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
@@ -3899,10 +3927,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                         || dirt.crop is not null
                         || !dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false))
                         continue;
-                    result.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId)));
+                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId)));
                 }
             }
+            // Nearest first, THEN the window: the scan walks x then y from the far corner, so trimming first would keep
+            // whichever tiles the loops reached first. Chebyshev, through `TargetOrdering`, because that is the metric
+            // the range gate applies - a tile nearer by Manhattan can still be further from being in range.
+            result.AddRange(TargetOrdering.NearestFirstByChebyshev(
+                rowsForThisStack,
+                player.TilePoint.X,
+                player.TilePoint.Y,
+                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
         }
+        // A stack is independent of every other stack - a row in slot A can never address slot B's item, and
+        // `ExecutePlantSeed` recomputes `BuildSeedTargetId` from slot AND tile and refuses on a mismatch - so ordering
+        // within each stack's window IS the whole list's order, and the stacks stay in inventory order. Nothing is
+        // renumbered: every id here is exactly the one the action will recompute.
         return result;
     }
 
