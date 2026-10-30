@@ -1195,6 +1195,16 @@ type MemoryOriginFilter = "all" | "player" | "companion";
 /** The panel heading, which also names the filter group below it. */
 const MEMORY_TITLE_ID = "tavern-memory-title";
 
+/**
+ * What one `memory.mutate` attempt did, as the control that sent it needs to know.
+ *
+ * `void` was the old answer, and it made "did it land?" unknowable at the control: every field that
+ * cleared itself did so before the request settled, so an offline write or a refusal destroyed what
+ * the player typed. `refused` carries the same sentence the panel reports, so a control with a
+ * field can say it beside the text it kept.
+ */
+export type MemoryMutationOutcome = Readonly<{ kind: "saved" }> | Readonly<{ kind: "refused"; text: string }>;
+
 export function MemoryPanel({
   memoryView,
   labels,
@@ -1215,7 +1225,7 @@ export function MemoryPanel({
       | { operation: "archive"; handle: string }
       | { operation: "update_chapter"; handle: string; content: string }
       | { operation: "delete_chapter"; handle: string },
-  ) => void;
+  ) => Promise<MemoryMutationOutcome>;
 }>): ReactElement {
   const statusText = (status: string, pinned: boolean): string => {
     const base = MEMORY_STATUS_LABELS[status]?.[locale === "zh-CN" ? "zh" : "en"] ?? status;
@@ -1237,6 +1247,9 @@ export function MemoryPanel({
   // per-open, so switching chapters never carries one draft into another.
   const [correctingHandle, setCorrectingHandle] = useState<string | null>(null);
   const [chapterDraft, setChapterDraft] = useState("");
+  // Why the last chapter save was refused, shown beside the draft that is still in the field.
+  const [chapterRefusal, setChapterRefusal] = useState<string | null>(null);
+  const [chapterSaving, setChapterSaving] = useState(false);
   const rows = memoryView.kind === "ready" ? memoryView.rows : [];
   const chapters = memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.chapters : [];
   const needle = search.trim().toLowerCase();
@@ -1332,19 +1345,44 @@ export function MemoryPanel({
                         onChange={(event) => setChapterDraft(event.target.value)}
                         rows={3}
                       />
+                      {/* The refusal sits under the draft it is about: the words stay in the
+                            field, and the correction closes only once the Host kept it. */}
+                      {chapterRefusal !== null && (
+                        <p role="status" className="error-banner" data-memory-chapter-refusal>
+                          {chapterRefusal}
+                        </p>
+                      )}
                       <div className="memory-chapter-actions">
                         <button
                           type="button"
                           className="small-button"
-                          disabled={chapterDraft.trim().length === 0}
+                          disabled={chapterSaving || chapterDraft.trim().length === 0}
                           onClick={() => {
-                            onMutate({ operation: "update_chapter", handle: chapter.handle, content: chapterDraft });
-                            setCorrectingHandle(null);
+                            setChapterSaving(true);
+                            void (async () => {
+                              const outcome = await onMutate({
+                                operation: "update_chapter",
+                                handle: chapter.handle,
+                                content: chapterDraft,
+                              });
+                              setChapterSaving(false);
+                              if (outcome.kind === "saved") {
+                                setChapterRefusal(null);
+                                setCorrectingHandle(null);
+                              } else setChapterRefusal(outcome.text);
+                            })();
                           }}
                         >
                           {labels.memoryChapterSave}
                         </button>
-                        <button type="button" className="small-button" onClick={() => setCorrectingHandle(null)}>
+                        <button
+                          type="button"
+                          className="small-button"
+                          onClick={() => {
+                            setChapterRefusal(null);
+                            setCorrectingHandle(null);
+                          }}
+                        >
                           {labels.memoryChapterCancel}
                         </button>
                       </div>
@@ -1364,6 +1402,7 @@ export function MemoryPanel({
                         className="small-button"
                         onClick={() => {
                           setChapterDraft(chapter.content);
+                          setChapterRefusal(null);
                           setCorrectingHandle(chapter.handle);
                         }}
                       >
@@ -1372,7 +1411,9 @@ export function MemoryPanel({
                       <button
                         type="button"
                         className="small-button"
-                        onClick={() => onMutate({ operation: "delete_chapter", handle: chapter.handle })}
+                        onClick={() => {
+                          void onMutate({ operation: "delete_chapter", handle: chapter.handle });
+                        }}
                       >
                         {labels.memoryChapterRemove}
                       </button>
@@ -1446,7 +1487,9 @@ export function MemoryPanel({
               labels={labels}
               mutationAvailable={mutationAvailable}
               onUpdate={(content) => onMutate({ operation: "update", handle: item.handle, content })}
-              onArchive={() => onMutate({ operation: "archive", handle: item.handle })}
+              onArchive={() => {
+                void onMutate({ operation: "archive", handle: item.handle });
+              }}
             />
           ))}
         </div>
@@ -1482,12 +1525,25 @@ export function MemoryPanel({
   );
 }
 
+/**
+ * The player's own new memory: one field and the verb that writes it.
+ *
+ * The field is released only when the write succeeded. `onCreate` answers with what happened, so a
+ * refusal leaves the text exactly where it was written and says beside it what the Host answered -
+ * clearing first, as this form did, spent the player's words on an attempt that never landed.
+ */
 export function MemoryCreateForm({
   label,
   contentLabel,
   onCreate,
-}: Readonly<{ label: string; contentLabel: string; onCreate: (content: string) => void }>): ReactElement {
+}: Readonly<{
+  label: string;
+  contentLabel: string;
+  onCreate: (content: string) => Promise<MemoryMutationOutcome>;
+}>): ReactElement {
   const [content, setContent] = useState("");
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   return (
     <div className="composer-actions">
       <textarea
@@ -1497,13 +1553,25 @@ export function MemoryCreateForm({
         onChange={(event) => setContent(event.target.value)}
         rows={2}
       />
+      {refusal !== null && (
+        <p role="status" className="error-banner" data-memory-create-refusal>
+          {refusal}
+        </p>
+      )}
       <button
         type="button"
         className="small-button primary"
-        disabled={content.trim().length === 0}
+        disabled={saving || content.trim().length === 0}
         onClick={() => {
-          onCreate(content.trim());
-          setContent("");
+          setSaving(true);
+          void (async () => {
+            const outcome = await onCreate(content.trim());
+            setSaving(false);
+            if (outcome.kind === "saved") {
+              setRefusal(null);
+              setContent("");
+            } else setRefusal(outcome.text);
+          })();
         }}
       >
         {label}
@@ -1528,16 +1596,20 @@ export function MemoryRow({
   categoryText: string;
   labels: ReturnType<typeof messages>;
   mutationAvailable: boolean;
-  onUpdate: (content: string) => void;
+  onUpdate: (content: string) => Promise<MemoryMutationOutcome>;
   onArchive: () => void;
 }>): ReactElement {
   const [editing, setEditing] = useState(false);
   const [content, setContent] = useState(item.content);
+  // Why the last save of this row was refused, shown beside the text it is about.
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const beginEditing = (): void => {
     // A conflict replaces the item with the authoritative reread. Reset this
     // local draft at the transition into edit mode so a previous rejected
     // value can never be submitted against the fresh projection revision.
     setContent(item.content);
+    setRefusal(null);
     setEditing(true);
   };
   return (
@@ -1562,16 +1634,28 @@ export function MemoryRow({
       ) : (
         <p>{item.content}</p>
       )}
+      {editing && refusal !== null && (
+        <p role="status" className="error-banner" data-memory-item-refusal>
+          {refusal}
+        </p>
+      )}
       {mutationAvailable && item.status !== "archived" && (
         <div className="composer-actions">
           {editing ? (
             <button
               type="button"
               className="small-button"
-              disabled={content.trim().length === 0}
+              disabled={saving || content.trim().length === 0}
               onClick={() => {
-                onUpdate(content.trim());
-                setEditing(false);
+                setSaving(true);
+                void (async () => {
+                  const outcome = await onUpdate(content.trim());
+                  setSaving(false);
+                  if (outcome.kind === "saved") {
+                    setRefusal(null);
+                    setEditing(false);
+                  } else setRefusal(outcome.text);
+                })();
               }}
             >
               {labels.save}

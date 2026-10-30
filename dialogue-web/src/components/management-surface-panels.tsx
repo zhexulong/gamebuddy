@@ -68,6 +68,7 @@ import {
   LanguageSettingsPanel,
   type LanguageView,
   MemoryPanel,
+  type MemoryMutationOutcome,
   type MemoryView,
   ModelProfilesPanel,
   type ModelProfilesView,
@@ -1156,10 +1157,12 @@ export function MemorySurfacePanel({
       | Readonly<{ operation: "archive"; handle: string }>
       | Readonly<{ operation: "update_chapter"; handle: string; content: string }>
       | Readonly<{ operation: "delete_chapter"; handle: string }>,
-  ): void => {
+  ): Promise<MemoryMutationOutcome> => {
     const projectionRevision = view.kind === "ready" || view.kind === "empty" ? view.projectionRevision : null;
-    if (projectionRevision === null) return;
-    void (async () => {
+    // Nothing to CAS on means the write was never sent: the caller's field must keep the text for
+    // the retry that can actually land.
+    if (projectionRevision === null) return Promise.resolve({ kind: "refused", text: labels.failure });
+    return (async () => {
       try {
         const result = await api.mutateMemory(
           { apiVersion: 1, expectedProjectionRevision: projectionRevision, ...input },
@@ -1167,17 +1170,22 @@ export function MemorySurfacePanel({
         );
         setView(memoryViewOf(result));
         report({ kind: "success", text: labels.success });
+        return { kind: "saved" } as const;
       } catch (error) {
         // The rejection may still hide a committed change (a same-cookie stale
         // tab hits the projection conflict), so the authoritative projection is
         // re-read BEFORE the failure is reported: a rejected write never appears
-        // as saved.
+        // as saved. A re-read that itself fails leaves the projection this panel
+        // already holds on screen - rendering `error` in its place would unmount the
+        // authoring form, and the player's unsent words with it.
         try {
           setView(memoryViewOf(await api.readMemory()));
         } catch {
-          setView({ kind: "error" });
+          // The refusal stands on its own; the rows stay as they were read.
         }
-        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
+        const text = problemTextWithCode(labels.failure, error, labels);
+        report({ kind: "failure", text });
+        return { kind: "refused", text } as const;
       }
     })();
   };
