@@ -113,7 +113,7 @@ function bracketBody(source, open, close, from = 0) {
 }
 
 /** Inner text of `const SNAPSHOT_KEYS = [ ... ] as const;`. */
-function arrayLiteralBody(source, anchor) {
+export function arrayLiteralBody(source, anchor) {
   const at = source.indexOf(anchor);
   if (at < 0) throw new Error(`decision_closure_anchor_not_found:${anchor}`);
   const body = bracketBody(source, "[", "]", at + anchor.length - 1);
@@ -127,7 +127,7 @@ function arrayLiteralBody(source, anchor) {
  * Only the first `{` level is read: a nested `Readonly<{ ... }>` (a target entry,
  * a tile) is one field's typed value, not another field of the projection.
  */
-function projectionFields(source, typeName) {
+export function projectionFields(source, typeName) {
   const anchor = `type ${typeName} = Readonly<{`;
   const at = source.indexOf(anchor);
   if (at < 0) throw new Error(`decision_closure_type_not_found:${typeName}`);

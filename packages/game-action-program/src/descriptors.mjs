@@ -1,8 +1,48 @@
 import { deepFreeze, isPlainDataObject } from "./model.mjs";
 
-const DESCRIPTOR_KEYS = new Set(["actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition"]);
+// The member vocabulary this projection admits, keyed by the shape it governs. It is the ONE spelling both the
+// validator below and the drift check in `tools/audit-stardew-decision-closure.test.mjs` read: the check compares it
+// with the Host's own registration whitelist (`protocol.ts` `KNOWN_ACTION_DESCRIPTOR_KEYS`), because the two describe
+// the same fact - which members a published descriptor may carry - and they disagreed in silence once already.
+const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
+  "actionId",
+  "identityVersion",
+  "lifecycle",
+  "kind",
+  "argumentSchema",
+  "outputFacts",
+  "resourceTemplate",
+  "effect",
+  "postcondition",
+]);
+// The members a producer may ADD to the required set. `approach` is optional because the Mod's serializer omits it
+// when an action declares no standing precondition (`JsonIgnoreCondition.WhenWritingNull`), and it is a member the
+// Host's own registration descriptor already accepts. Refusing it here only made the published surface unreadable to
+// the one consumer of this module, which then reported it as "not parseable by the Host descriptor whitelist" while
+// the Host parsed it happily.
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach"]);
+// `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
+// a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
+// descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
+const ARGUMENT_SCHEMA_REQUIRED_KEYS = Object.freeze(["type"]);
+const ARGUMENT_SCHEMA_OPTIONAL_KEYS = Object.freeze(["enum", "description"]);
+
+export const DESCRIPTOR_PROJECTION_VOCABULARY = Object.freeze({
+  descriptor: Object.freeze({
+    required: DESCRIPTOR_REQUIRED_KEYS,
+    optional: DESCRIPTOR_OPTIONAL_KEYS,
+  }),
+  argumentSchemaEntry: Object.freeze({
+    required: ARGUMENT_SCHEMA_REQUIRED_KEYS,
+    optional: ARGUMENT_SCHEMA_OPTIONAL_KEYS,
+  }),
+});
+
+const DESCRIPTOR_KEYS = new Set(DESCRIPTOR_REQUIRED_KEYS);
+const OPTIONAL_DESCRIPTOR_KEYS = new Set(DESCRIPTOR_OPTIONAL_KEYS);
+const ARGUMENT_SCHEMA_REQUIRED_KEY_SET = new Set(ARGUMENT_SCHEMA_REQUIRED_KEYS);
+const ARGUMENT_SCHEMA_OPTIONAL_KEY_SET = new Set(ARGUMENT_SCHEMA_OPTIONAL_KEYS);
 const PROJECTION_KEYS = new Set(["schema", "catalogRevision", "actions"]);
-const ARGUMENT_SCHEMA_KEYS = new Set(["type", "enum"]);
 const RESOURCE_TEMPLATE_KEYS = new Set(["claims"]);
 const RESOURCE_CLAIM_KEYS = new Set(["key", "value"]);
 const POSTCONDITION_KEYS = new Set(["name"]);
@@ -14,12 +54,18 @@ const LIFECYCLES = new Set(["published", "live_verified", "experimental"]);
 const KINDS = new Set(["execution", "read_only"]);
 const EFFECTS = new Set(["read", "write"]);
 const RESOURCE_TEMPLATE_VALUES = new Set(["ScopePlayer", "AnyUpgrade", "BasicOnly"]);
+// A relation word plus the distance it allows; the bounds are the Host's own for the identical field.
+const APPROACH_KEYS = new Set(["relation"]);
+const APPROACH_OPTIONAL_KEYS = new Set(["withinTiles"]);
+const MAX_APPROACH_RELATION_LENGTH = 64;
 const MAX_ACTIONS = 128;
 const MAX_ARGUMENTS = 32;
 const MAX_FACTS = 32;
 const MAX_RESOURCE_CLAIMS = 16;
 const MAX_IDENTITY_VERSION = 2_147_483_647;
 const MAX_STRING_LENGTH = 128;
+// An argument's `description` is a SENTENCE, not a name, so it is measured against the same 512 the Host applies to it.
+const MAX_DESCRIPTION_LENGTH = 512;
 const MAX_VOCABULARY_VALUES = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 // A tool requirement's claim key is `tool:<category>`: the category is the KEY half of the claim and the
@@ -97,7 +143,7 @@ export function descriptorMap(projection) {
 }
 
 function isValidDescriptor(descriptor) {
-  if (!isPlainDataObject(descriptor) || !sameKeys(descriptor, DESCRIPTOR_KEYS)) return false;
+  if (!sameKeysOrOptional(descriptor, DESCRIPTOR_KEYS, OPTIONAL_DESCRIPTOR_KEYS)) return false;
   const actionId = ownValue(descriptor, "actionId");
   const identityVersion = ownValue(descriptor, "identityVersion");
   const lifecycle = ownValue(descriptor, "lifecycle");
@@ -107,6 +153,9 @@ function isValidDescriptor(descriptor) {
   const resourceTemplate = ownValue(descriptor, "resourceTemplate");
   const effect = ownValue(descriptor, "effect");
   const postcondition = ownValue(descriptor, "postcondition");
+  // `sameKeysOrOptional` proved every present member is a data property, so INVALID here means ABSENT rather than
+  // unreadable: the Mod omits the declaration entirely instead of sending a null one.
+  const approach = ownValue(descriptor, "approach");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -116,7 +165,31 @@ function isValidDescriptor(descriptor) {
     && validOutputFacts(outputFacts)
     && validResourceTemplate(resourceTemplate)
     && EFFECTS.has(effect)
-    && validPostcondition(postcondition);
+    && validPostcondition(postcondition)
+    && (approach === INVALID || validApproach(approach));
+}
+
+/**
+ * Where the body must stand before the action can happen: a relation word and, optionally, the distance it allows.
+ *
+ * The rules are the Host's own (`protocol.ts` `isValidActionDescriptor`), deliberately not looser: a descriptor this
+ * gateway admits and the Host then refuses would be the same drift seen from the other side. One non-empty relation of
+ * at most 64 characters, an optional `withinTiles` that is a positive safe integer, and no third field - a member
+ * beside them would be a precondition nobody enforces. `withinTiles` is ABSENT when the Mod states no distance, which
+ * is never the same statement as zero tiles.
+ */
+function validApproach(value) {
+  const keys = dataKeys(value);
+  if (keys === null) return false;
+  if (!keys.every((key) => APPROACH_KEYS.has(key) || APPROACH_OPTIONAL_KEYS.has(key))) return false;
+  if (!keys.includes("relation")) return false;
+  const relation = ownValue(value, "relation");
+  if (typeof relation !== "string" || relation.length === 0 || relation.length > MAX_APPROACH_RELATION_LENGTH) {
+    return false;
+  }
+  if (!keys.includes("withinTiles")) return true;
+  const withinTiles = ownValue(value, "withinTiles");
+  return Number.isSafeInteger(withinTiles) && withinTiles > 0;
 }
 
 function validArgumentSchema(value) {
@@ -132,16 +205,26 @@ function validArgumentSchema(value) {
  * that rejects it cannot read the domain it is supposed to project.
  */
 function validArgumentSchemaEntry(entry) {
-  if (entry === INVALID || !isPlainDataObject(entry)) return false;
-  const keys = dataKeys(entry);
-  if (keys === null || keys.length > ARGUMENT_SCHEMA_KEYS.size) return false;
-  if (!keys.every((key) => ARGUMENT_SCHEMA_KEYS.has(key))) return false;
-  if (!keys.includes("type") || !VALUE_TYPES.has(ownValue(entry, "type"))) return false;
-  if (!keys.includes("enum")) return true;
+  if (entry === INVALID || !sameKeysOrOptional(entry, ARGUMENT_SCHEMA_REQUIRED_KEY_SET, ARGUMENT_SCHEMA_OPTIONAL_KEY_SET)) {
+    return false;
+  }
+  if (!VALUE_TYPES.has(ownValue(entry, "type"))) return false;
+  const description = ownValue(entry, "description");
+  if (description !== INVALID && !validArgumentDescription(description)) return false;
   const vocabulary = ownValue(entry, "enum");
+  if (vocabulary === INVALID) return true;
   return isDenseArray(vocabulary, MAX_VOCABULARY_VALUES)
     && vocabulary.length > 0
     && vocabulary.every((member) => typeof member === "string" && member.length > 0 && member.length <= MAX_STRING_LENGTH);
+}
+
+/**
+ * What an argument means, in the words of the handler that enforces it. The Host applies the identical rule to the
+ * same field when it arrives as an `arguments` entry: a present-but-empty description is a label that says nothing,
+ * and an absent one is how the surface says "the name is the whole story".
+ */
+function validArgumentDescription(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_DESCRIPTION_LENGTH;
 }
 
 function validOutputFacts(value) {
@@ -203,6 +286,15 @@ function sameKeys(value, keys) {
   if (!isPlainDataObject(value)) return false;
   const actual = dataKeys(value);
   return actual !== null && actual.length === keys.size && actual.every((key) => keys.has(key));
+}
+
+/** The required set, plus members a producer may add. Nothing outside the two sets is admitted. */
+function sameKeysOrOptional(value, required, optional) {
+  if (!isPlainDataObject(value)) return false;
+  const actual = dataKeys(value);
+  return actual !== null
+    && actual.every((key) => required.has(key) || optional.has(key))
+    && [...required].every((key) => actual.includes(key));
 }
 
 function dataKeys(value) {
