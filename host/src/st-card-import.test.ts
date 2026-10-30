@@ -1372,8 +1372,15 @@ async function shippedPresetCard(): Promise<unknown> {
 test("an imported card's secondary trigger words and selective logic survive the durable book and select by that logic", async () => {
   // The shipped reviewed card declares no gate, so it must come through exactly as
   // before: its own trigger words, and no field its card never wrote.
-  const shipped = previewStCard(await shippedPresetCard());
-  assert.equal(shipped.worldBookCandidates.length, 7);
+  const shippedCard = (await shippedPresetCard()) as {
+    data: { character_book: { entries: readonly Readonly<{ enabled?: boolean }>[] } };
+  };
+  const shipped = previewStCard(shippedCard);
+  // The count is derived from the card's own enabled entries rather than written here, so
+  // adding or disabling an entry in the reviewed card updates the expectation with it
+  // instead of leaving a stale literal that no longer describes anything.
+  const shippedEnabled = shippedCard.data.character_book.entries.filter((entry) => entry.enabled !== false);
+  assert.equal(shipped.worldBookCandidates.length, shippedEnabled.length);
   assert.deepEqual(shipped.worldBookCandidates[0]?.keys, ["农场", "开拓", "伙伴", "约定"]);
   for (const entry of shipped.worldBookCandidates) {
     assert.equal(Object.hasOwn(entry, "secondaryKeys"), false, `${entry.entryId} grew a gate its card never wrote`);

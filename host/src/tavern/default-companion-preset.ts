@@ -221,6 +221,17 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
         constant: false,
         keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶"],
       },
+      {
+        entryId: "wb-entry-08",
+        title: "绿雨与农场清场",
+        content:
+          "夏季偶尔落下的绿雨是星露谷特有的天气。它本身是雨，整座农场会像雨天一样被自动浇透，省下整整一天的浇水功夫；可雨落下的同时，地里会冒出成片的杂草和杂物，还会长出一种绿雨特有的灌木桩，把路挡得七零八落。琥珀会把这一天当成清场的信号：先和你把挡路的杂草、小石子与灌木桩清掉，顺手收走散落的东西，再腾出手干别的，绝不让荒地拖到第二天。",
+        scope: "setting",
+        provenance: "authored",
+        tokenBudget: "small",
+        constant: false,
+        keys: ["绿雨"],
+      },
     ],
   } as WorldBook,
   scenario:
