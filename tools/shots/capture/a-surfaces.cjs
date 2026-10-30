@@ -106,6 +106,56 @@ async function barFacts(page) {
   });
 }
 
+// A fixed 900 ms wait measured whatever the frame happened to hold at that instant. That is how
+// shots-final60 recorded the settings surface at scrollHeight 844 while shots-final61 recorded 2423
+// for the same viewport and the same container geometry: one of the two read a skeleton whose inner
+// forms had not mounted yet. Waiting for a duration cannot distinguish "settled" from "not started".
+//
+// This waits for a fact instead. It returns how the wait ended, and the caller writes that verdict
+// beside the numbers, so a reading taken from an unsettled frame can no longer look like a reading
+// taken from a settled one. Swallowing a timeout would put the defect straight back.
+async function waitForSurfaceSettled(page, testid) {
+  const deadline = Date.now() + 8000;
+  let last = null;
+  let previous = null;
+  while (Date.now() < deadline) {
+    const sample = await page.evaluate((id) => {
+      const region = document.querySelector(`section[data-testid="${id}"]`);
+      if (region === null) return { mounted: false, height: null, elements: 0 };
+      const content = region.querySelector(".surface-content");
+      if (content === null) return { mounted: true, height: null, elements: 0 };
+      return {
+        mounted: true,
+        height: content.scrollHeight,
+        elements: content.querySelectorAll("*").length,
+      };
+    }, testid);
+    // Three consecutive identical samples, not two: a form that mounts in two waves (container, then
+    // its fields) can be momentarily stable between the waves, and two samples would accept it.
+    const settled =
+      sample.mounted &&
+      sample.height !== null &&
+      sample.height > 0 &&
+      sample.elements > 0 &&
+      last !== null &&
+      last.height === sample.height &&
+      last.elements === sample.elements &&
+      previous !== null &&
+      previous.height === sample.height &&
+      previous.elements === sample.elements;
+    if (settled) return { settled: true, height: sample.height, elements: sample.elements };
+    previous = last;
+    last = sample;
+    await page.waitForTimeout(100);
+  }
+  return {
+    settled: false,
+    height: last === null ? null : last.height,
+    elements: last === null ? null : last.elements,
+    mounted: last !== null && last.mounted,
+  };
+}
+
 async function activate(page, label) {
   const trigger = page.locator(".app-bar-more-trigger");
   if ((await trigger.count()) > 0 && (await trigger.isVisible())) {
@@ -151,9 +201,10 @@ async function activate(page, label) {
     }
     for (const surface of SURFACES) {
       const how = await activate(page, surface.label);
-      await page.waitForTimeout(900);
+      const wait = await waitForSurfaceSettled(page, surface.testid);
       const facts = await page.evaluate(measure, surface.testid);
       say(`--- ${surface.label} (${surface.testid}) @ ${size.tag} via ${how}`);
+      say(`settled=${wait.settled} elements=${wait.elements} heightAtRest=${wait.height}`);
       say(JSON.stringify(facts));
       say(
         `${surface.label} @ ${size.tag}: surfaceHeader position=${facts.heading?.headerPosition} clipPath=${facts.heading?.headerClipPath} box=${JSON.stringify(facts.heading?.headerBox)} headingBox=${JSON.stringify(facts.heading?.box)} headingPainted=${facts.heading?.painted} headingInTheVisualFlow=${facts.heading?.inTheVisualFlow} headingClientRects=${facts.heading?.clientRects} regionAccessibleName=${JSON.stringify(facts.regionAccessibleName)} contentTop=${facts.contentTop}`,
