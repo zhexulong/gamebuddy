@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
+import { MAX_PLAN_NODES } from "./body-program-script.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import type { Snapshot } from "./protocol.js";
@@ -10,6 +10,11 @@ import { boundObservedSnapshot } from "./stardew-observation-budget.js";
  * W5: the observation payload is the largest per-turn cost the Host hands the model. Measured on the
  * 2026-10-26 multi-day run (26 calls, 643,712 bytes, mean 24,758): two families carried bytes no
  * dispatch decision can consume, and both are bounded here.
+ *
+ * The same measurement on 2026-10-29 (`round7`, 33 calls, 1,720 KB, 90.6% of every tool result) added
+ * two plantable CATALOGUES: `seedTargets` and `treeSaplingTargets` published 64 rows for a single held
+ * stack. A row there is addressable, so the bound is sized by what a plan can actually name - one plan
+ * holds MAX_PLAN_NODES nodes - rather than by an arbitrary cap.
  *
  * Everything a dispatched action needs to be issued - target ids, tiles, tool slots, inventory,
  * clock and calendar - must survive the bound unchanged. An EMPTY family stays present, because a
@@ -71,8 +76,10 @@ interface Observation {
   readonly published: Readonly<Record<string, unknown>>;
   /** The bound's operator accounting, which the provider never sends. */
   readonly budget: Readonly<{
-    elidedVillagerCoordinates: number;
+    elidedVillagerRows: number;
     withheldUnavailableRecipes: number;
+    withheldDistantSeedTargets: number;
+    withheldDistantSaplingTargets: number;
     bytesRemoved: number;
   }>;
 }
@@ -111,7 +118,7 @@ async function observe(candidate: Snapshot): Promise<Observation> {
   };
 }
 
-test("an observation drops the coordinates of villagers that are not in the actor's location", async () => {
+test("an observation drops the coordinates and the redundant flag of villagers outside the actor's location", async () => {
   const { published } = await observe(snapshot);
   const whereabouts = published.villagerWhereabouts as readonly Readonly<Record<string, unknown>>[];
 
@@ -120,16 +127,19 @@ test("an observation drops the coordinates of villagers that are not in the acto
   const marlon = whereabouts.find((row) => row.npcName === "Marlon");
   assert.ok(marlon !== undefined, "an off-location villager must still be named");
   assert.equal(marlon.location, "AdventureGuild");
-  assert.equal(marlon.inCurrentLocation, false);
-  // And the fact no action could use is gone.
+  // And the facts no action could use are gone. The tile is unreachable from here; the flag could only have
+  // said `false`, because this row is elided exactly when both signals already said "elsewhere".
+  assert.deepEqual(Object.keys(marlon).sort(), ["displayName", "location", "npcName"]);
   assert.equal("x" in marlon, false, "an off-location tile is unreachable and must not be published");
   assert.equal("y" in marlon, false);
+  assert.equal("inCurrentLocation" in marlon, false, "a `false` here restates the elision it was elided for");
 
   // Positive control: the villager standing here keeps the tile an action is dispatched at.
   const abigail = whereabouts.find((row) => row.npcName === "Abigail");
   assert.ok(abigail !== undefined);
   assert.equal(abigail.x, 70);
   assert.equal(abigail.y, 20);
+  assert.equal(abigail.inCurrentLocation, true, "a row that IS here keeps every field, flag included");
 });
 
 test("an observation publishes only currently craftable recipes and counts the rest", async () => {
@@ -191,6 +201,113 @@ test("an empty target family stays present so a plan loop over it still runs", a
   assert.deepEqual(published.machineTargets, []);
 });
 
+/**
+ * One catalog-shaped family: `count` plantable tiles in rotation around the actor's own tile, every row
+ * in ONE stack, the way the Mod publishes 64 rows for a single seed slot.
+ */
+function catalogue(
+  count: number,
+  { slot, item }: Readonly<{ slot: number; item: string }>,
+  origin = { x: 64, y: 15 },
+): readonly Readonly<{
+  targetId: string;
+  slot: number;
+  x: number;
+  y: number;
+  qualifiedItemId: string;
+  displayName: string;
+}>[] {
+  return Array.from({ length: count }, (_, index) => ({
+    targetId: `target_${String(index).padStart(3, "0")}`,
+    slot,
+    x: origin.x + (index % 6),
+    y: origin.y + Math.floor(index / 6),
+    qualifiedItemId: item,
+    displayName: item,
+  }));
+}
+
+test("a plantable catalogue is published nearest-first and no plan can name a row it withheld", async () => {
+  // Measured 2026-10-29 `round7`: 64 rows in ONE stack on 22 of 33 observations (7.2 KB of the 32.8 KB
+  // largest), while one plan holds MAX_PLAN_NODES nodes and so can plant at most that many times.
+  const rows = catalogue(64, { slot: 13, item: "(O)309" });
+  const { published, budget } = await observe({
+    ...snapshot,
+    seedTargets: [],
+    treeSaplingTargets: rows,
+  });
+  const kept = published.treeSaplingTargets as readonly Readonly<{ targetId: string; x: number; y: number }>[];
+  const distance = (row: Readonly<{ x: number; y: number }>) =>
+    Math.max(Math.abs(row.x - snapshot.tile.x), Math.abs(row.y - snapshot.tile.y));
+
+  assert.equal(kept.length, MAX_PLAN_NODES, "one stack keeps exactly one plan's worth of choices");
+  assert.equal(budget.withheldDistantSaplingTargets, rows.length - MAX_PLAN_NODES);
+
+  // The window is the NEAREST rows, in that order: a script that slices the list (`slice(0, 6)`) gets the tiles
+  // it can reach soonest, and `[0]` is the nearest of all rather than whatever the Mod's scan happened to hit first.
+  const ranked = [...rows].sort((left, right) => distance(left) - distance(right));
+  assert.deepEqual(
+    kept.map((row) => row.targetId),
+    ranked.slice(0, MAX_PLAN_NODES).map((row) => row.targetId),
+    "the published prefix is exactly the nearest rows a plan can name",
+  );
+  assert.equal(
+    distance(kept[MAX_PLAN_NODES - 1]!),
+    distance(ranked[MAX_PLAN_NODES - 1]!),
+    "the last published row is on the window's edge - nothing farther survived",
+  );
+  assert.ok(
+    distance(kept[0]!) < distance(ranked[0]!) + 1,
+    "the first published row is the nearest tile, not a far corner",
+  );
+
+  // Every row that survives keeps the identity a plan echoes: nothing is re-typed or renumbered.
+  for (const row of kept) assert.equal(typeof row.targetId, "string");
+});
+
+test("each held stack keeps its own window, so a plan that mixes two seeds still has both", async () => {
+  const first = catalogue(30, { slot: 7, item: "(O)474" });
+  const second = catalogue(30, { slot: 14, item: "(O)770" });
+  const { published, budget } = await observe({
+    ...snapshot,
+    treeSaplingTargets: [],
+    seedTargets: [...first, ...second],
+  });
+  const kept = published.seedTargets as readonly Readonly<{ slot: number }>[];
+
+  assert.equal(kept.filter((row) => row.slot === 7).length, MAX_PLAN_NODES);
+  assert.equal(kept.filter((row) => row.slot === 14).length, MAX_PLAN_NODES);
+  assert.equal(budget.withheldDistantSeedTargets, 60 - 2 * MAX_PLAN_NODES);
+});
+
+test("a plantable family that already fits a plan's reach is published untouched", async () => {
+  // The bound must not touch the ordinary case: a family with no more rows than one plan can name is
+  // copied through, so its byte count and its order are exactly what the Mod published.
+  const rows = catalogue(MAX_PLAN_NODES, { slot: 13, item: "(O)309" });
+  const { published, budget } = await observe({ ...snapshot, seedTargets: [], treeSaplingTargets: rows });
+
+  assert.deepEqual(published.treeSaplingTargets, rows);
+  assert.equal(budget.withheldDistantSaplingTargets, 0);
+  assert.equal(budget.withheldDistantSeedTargets, 0);
+});
+
+test("a withheld plantable tile is counted in the payload, not silently missing", async () => {
+  // The refusal this bound could otherwise cause: a plan names a tile, the tile is absent from the
+  // observation, and nothing says why. The count makes "not published" legible as "too far to matter".
+  const { published } = await observe({
+    ...snapshot,
+    seedTargets: [],
+    treeSaplingTargets: catalogue(40, { slot: 13, item: "(O)309" }),
+  });
+  const disclosed = published.observationBudget as Readonly<{
+    withheldDistantSaplingTargets: number;
+    withheldDistantSeedTargets: number;
+  }>;
+
+  assert.equal(disclosed.withheldDistantSaplingTargets, 40 - MAX_PLAN_NODES);
+  assert.equal(disclosed.withheldDistantSeedTargets, 0, "a family that fit did not withhold anything");
+});
+
 test("the bound reports the NET bytes the model stops receiving", async () => {
   const { published, budget } = await observe(snapshot);
 
@@ -203,7 +320,7 @@ test("the bound reports the NET bytes the model stops receiving", async () => {
     "the reported saving must equal the measured payload difference",
   );
   assert.ok(budget.bytesRemoved > 0, "on a real-shaped payload the bound must be a net saving");
-  assert.equal(budget.elidedVillagerCoordinates, 2);
+  assert.equal(budget.elidedVillagerRows, 2);
   assert.equal(budget.withheldUnavailableRecipes, 3);
 });
 
@@ -224,7 +341,7 @@ test("an observation with nothing to bound is published unchanged and disclosed 
   assert.deepEqual(published.villagerWhereabouts, clean.villagerWhereabouts);
   assert.deepEqual(published.craftingRecipeTargets, clean.craftingRecipeTargets);
   assert.equal(budget.bytesRemoved, 0);
-  assert.equal(budget.elidedVillagerCoordinates, 0);
+  assert.equal(budget.elidedVillagerRows, 0);
   assert.equal(budget.withheldUnavailableRecipes, 0);
 });
 
