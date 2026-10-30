@@ -576,9 +576,8 @@ test("the editor says when an edit reaches a conversation, because a running one
 });
 
 /**
- * A save the Host refused because the book moved on says THAT, and the editor keeps the
- * revision it was opened on - so the surface never silently rebases a write over a change
- * the player never saw.
+ * A save the Host refused because the book moved on says THAT, and a re-read that returns the same
+ * revision keeps the save refused - a refusal is never turned into a silent success.
  */
 test("a save refused because the book changed says the book changed, not that it failed", async ({ page }) => {
   const book = {
@@ -635,9 +634,11 @@ test("a save refused because the book changed says the book changed, not that it
   expect(Math.round(noticeBox!.x), "the refusal sits on the draft's own column").toBe(Math.round(draftBox!.x));
   expect(Math.round(noticeBox!.width), "and takes the draft's own measure").toBe(Math.round(draftBox!.width));
 
-  // The read-back is the truth: the list shows the book that is actually there, while the
-  // editor still CASes on the revision it was opened on, so a second save refuses again
-  // rather than overwriting the change nobody showed her.
+  // The read-back is the truth: the list shows the book that is actually there, and the revision
+  // the next save CASes on follows it. This stub never moves the book on, so the re-read hands back
+  // revision 7 again and the second save is refused for the same reason - what the editor inherited
+  // is the latest revision, never a refusal reported as a success. (A conflict the book DOES move
+  // under is the retry journey in `world-book-conflict-retry.spec.ts`.)
   await expect(block.locator("[data-companion-world-book-count]")).toHaveText("她自己的世界书里有 1 条词条");
   await block.locator("[data-companion-world-book-save]").click();
   await expect(notice).toContainText("她的世界书在你读取之后已被改动");

@@ -295,14 +295,24 @@ function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: M
  * never reads as an empty book. A book that exists is editable even when it carries no
  * entries: an empty book is exactly the one a player has to be able to add to.
  *
- * The draft PINS the revision the read carried. A save that would overwrite a change
- * the player never saw must keep failing until she reopens the editor on the book that
- * is actually there, so the editor's CAS is never silently rebased by a read-back.
+ * The draft carries two different things with two different owners: the revision its save
+ * CASes on, which follows the book (`submit` moves it to the revision a conflict re-read
+ * returns), and the entries, which belong to the player and are never taken from a read.
  */
 type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "absent" }>
   | Readonly<{ kind: "ready"; handle: string; worldBook: CompanionWorldBookV1 }>;
+
+/**
+ * The outcome of one read of the book: the projection, or the fact that the read failed.
+ *
+ * The two are separate because they are separate facts to the editor. `absent` projects as "she
+ * has no book" and renders no block; a failed read is not a book state at all, and re-rendering
+ * a ready surface as `absent` because one re-read failed would unmount the editor and the
+ * player's unsigned entries with it.
+ */
+type CompanionWorldBookRead = Readonly<{ kind: "read"; view: CompanionWorldBookView }> | Readonly<{ kind: "failed" }>;
 
 /** One entry being edited, with its trigger words as the player typed them. */
 type CompanionWorldBookEntryDraft = Readonly<{
@@ -322,9 +332,20 @@ type CompanionWorldBookEntryDraft = Readonly<{
 
 type CompanionWorldBookDraft = Readonly<{
   handle: string;
-  /** The durable revision the editor was opened on; the save CASes on exactly this. */
+  /**
+   * The durable revision the next save CASes on: the one the read carried, and after a
+   * conflict refusal the one the re-read carries. It follows the book; the entries below
+   * never do, because they are what the player wrote.
+   */
   expectedRevision: number;
   entries: readonly CompanionWorldBookEntryDraft[];
+  /**
+   * The titles the book carried when this editor opened, so a conflict can name the rows the
+   * book no longer has while the player's version of them stays in the editor. Empty for a
+   * fresh editor over an empty book, and never rewritten: it is the snapshot the edit is
+   * measured against, not a projection of the book.
+   */
+  openedTitles: readonly string[];
 }>;
 
 /** The one outcome line this section reports, so two operations never print two notices. */
@@ -368,6 +389,14 @@ function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
  */
 function companionWorldBookDraftIsComplete(draft: CompanionWorldBookDraft): boolean {
   return draft.entries.every((entry) => entry.title.trim().length > 0 && entry.content.trim().length > 0);
+}
+
+/**
+ * Whether this refusal is the one the editor can move on from: the book changed under a save
+ * whose revision was already stale, which the Host states as `companion_world_book_conflict`.
+ */
+function isCompanionWorldBookConflict(error: unknown): boolean {
+  return error instanceof TavernProblemError && error.code === "companion_world_book_conflict";
 }
 
 /**
@@ -418,18 +447,21 @@ function CompanionWorldBookSection({
   // replaces the first and no stale arm can fire on another entry.
   const [armed, setArmed] = useState<string | null>(null);
 
-  const readOnce = async (): Promise<CompanionWorldBookView> => {
+  const readOnce = async (): Promise<CompanionWorldBookRead> => {
     try {
       // The book belongs to the mounted companion, exactly as the persona,
       // scenario, opening and directive do: the surface reads the current
       // library entry's own book and no other companion's.
       const list = await api.listCompanions();
       const current = list.companions.find((entry) => entry.isCurrent);
-      if (current === undefined) return { kind: "absent" };
+      if (current === undefined) return { kind: "read", view: { kind: "absent" } };
       const worldBook = await api.readCompanionWorldBook(current.handle);
-      return worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" };
+      return {
+        kind: "read",
+        view: worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" },
+      };
     } catch {
-      return { kind: "absent" };
+      return { kind: "failed" };
     }
   };
 
@@ -437,7 +469,9 @@ function CompanionWorldBookSection({
     let active = true;
     void (async () => {
       const next = await readOnce();
-      if (active) setView(next);
+      // The mount has no earlier view to keep, so a failed first read renders no block rather
+      // than a book state it did not read.
+      if (active) setView(next.kind === "read" ? next.view : { kind: "absent" });
     })();
     return () => {
       active = false;
@@ -451,6 +485,7 @@ function CompanionWorldBookSection({
       handle: view.handle,
       expectedRevision: view.worldBook.revision,
       entries: view.worldBook.entries.map(toCompanionWorldBookEntryDraft),
+      openedTitles: view.worldBook.entries.map((entry) => entry.title),
     });
     setArmed(null);
     setNotice(null);
@@ -459,8 +494,12 @@ function CompanionWorldBookSection({
   /**
    * Saves the whole list. The Host's own reply is the new projection, so a saved book
    * is re-rendered from what it returned rather than from what the editor asked for; a
-   * refusal re-reads the book BEFORE it is reported, so the surface shows the truth and
-   * the editor keeps the revision it was opened on.
+   * refusal re-reads the book BEFORE it is reported, so the surface shows the truth.
+   *
+   * A conflict is the one refusal the editor moves on from: the re-read's revision becomes the
+   * revision the next save CASes on, so pressing save again lands instead of resending a
+   * revision that already lost. The entries are not taken from that read - they are the
+   * player's, and a rebase that replaced them would answer a refusal by deleting her work.
    */
   const submit = (): void => {
     if (draft === null || !companionWorldBookDraftIsComplete(draft)) return;
@@ -485,7 +524,25 @@ function CompanionWorldBookSection({
         setDraft(null);
       } catch (error) {
         failure = companionWorldBookRefusal(labels, error, messages(locale));
-        setView(await readOnce());
+        const reread = await readOnce();
+        // A re-read that failed leaves the surface as it was: the editor and the player's
+        // entries stay, and the refusal is reported on its own.
+        const rereadView = reread.kind === "read" ? reread.view : null;
+        if (rereadView !== null) setView(rereadView);
+        if (isCompanionWorldBookConflict(error) && rereadView !== null && rereadView.kind === "ready") {
+          const revision = rereadView.worldBook.revision;
+          if (revision !== null) {
+            setDraft((current) => (current === null ? null : { ...current, expectedRevision: revision }));
+            const removed = target.openedTitles.filter(
+              (title) => !rereadView.worldBook.entries.some((entry) => entry.title === title),
+            );
+            if (removed.length > 0)
+              failure = `${failure} ${labels.companionWorldBookConflictEntryGone.replace(
+                "{{titles}}",
+                removed.join(labels.companionWorldBookKeySeparator),
+              )}`;
+          }
+        }
       } finally {
         setSaving(false);
       }

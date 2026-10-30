@@ -256,6 +256,11 @@ export type CharacterLabels = Readonly<{
    * store could not follow - and "could not save" would point at the wrong fault.
    */
   companionWorldBookConflict: string;
+  /**
+   * The rows a conflict re-read no longer finds, appended to that sentence: the player's version
+   * of them stays in the editor, but the book it is about to be saved onto does not have them.
+   */
+  companionWorldBookConflictEntryGone: string;
   companionWorldBookAbsent: string;
   companionWorldBookInvalid: string;
   companionWorldBookUnreadable: string;
@@ -540,7 +545,9 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookRemoveConfirm: 'Remove the entry "{{title}}"?',
   companionWorldBookSave: "Save her own book",
   companionWorldBookConflict:
-    "Her own book changed after you read it, so nothing was saved. Close this editor, reopen it on the book that is there now, and make your change again.",
+    "Her own book changed after you read it, so nothing was saved. Your entries are still here and saving again will apply them to the book that is there now.",
+  companionWorldBookConflictEntryGone:
+    "Her book no longer has these entries, so they are not the ones you opened: {{titles}}. Your version of their text is still in this editor, and saving again will put it back.",
   companionWorldBookAbsent: "She has no own world book to edit.",
   companionWorldBookInvalid:
     "The Host cannot keep this as it stands - every entry needs a title and text, and a field may be over its limit. Nothing was saved.",
@@ -799,7 +806,9 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookRemoveConfirm: "要移除「{{title}}」这条词条吗？",
   companionWorldBookSave: "保存她自己的世界书",
   companionWorldBookConflict:
-    "她的世界书在你读取之后已被改动，所以这次没有保存。请关闭编辑器，在现在这本世界书上重新打开，再改一次。",
+    "她的世界书在你读取之后已被改动，所以这次没有保存。你写的词条都还在，再保存一次就会写进她现在的世界书。",
+  companionWorldBookConflictEntryGone:
+    "这些词条已经不在她的世界书里了，已经不是你打开时的那几条：{{titles}}。它们的内容仍在这个编辑器里，再保存一次就会把它们写回去。",
   companionWorldBookAbsent: "她还没有自己的世界书可编辑。",
   companionWorldBookInvalid: "Host 无法保留这次改动——每条词条都需要标题和正文，也可能有字段超出上限。这次没有保存。",
   companionWorldBookUnreadable: "无法读取她自己的世界书，这次没有保存。",
