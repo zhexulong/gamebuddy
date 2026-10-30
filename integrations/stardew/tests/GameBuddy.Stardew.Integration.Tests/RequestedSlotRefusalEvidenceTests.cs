@@ -48,8 +48,10 @@ public sealed class RequestedSlotRefusalEvidenceTests
         DescribeSlot(new List<Item?> { Hoe(), null }, requestedSlot: 1, heldSlot: 0, actionId: "chop_stump")
             .Should().Be("slot=1;holds=none;held=hoe;tool_slot=none;tool_refusal=tool_not_owned:axe");
 
+        // An UPGRADED axe now SATISFIES `chop_stump`, because the claim is `AnyUpgrade` - the old `BasicOnly` demanded
+        // the level-0 tier the game does not require (see `FarmhandResourceTemplateValue.BasicOnly`).
         DescribeSlot(new List<Item?> { Axe(upgradeLevel: 1) }, requestedSlot: 0, heldSlot: 0, actionId: "chop_stump")
-            .Should().Be("slot=0;holds=axe;held=axe;tool_slot=none;tool_refusal=tool_upgrade_insufficient:axe:0:1");
+            .Should().Be("slot=0;holds=axe;held=axe;tool_slot=0;tool_refusal=none");
     }
 
     [Fact]

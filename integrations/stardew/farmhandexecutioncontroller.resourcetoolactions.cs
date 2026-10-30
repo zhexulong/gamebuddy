@@ -128,9 +128,9 @@ internal sealed partial class ExecutionManager
 
     /// <summary>
     /// Executes break_rock_source against the current world, re-validating the target because an approach leg may have
-    /// taken several ticks. The tool is not the caller's to name: the action's own registration claims
-    /// `tool:pickaxe` with `BasicOnly`, so this selects the basic pickaxe it needs and restores the actor's own
-    /// selection afterwards. Shared by the in-range path and the post-approach path so the two cannot drift.
+    /// taken several ticks. The tool is not the caller's to name: the action's own registration claims `tool:pickaxe`,
+    /// so this selects the best owned pickaxe it needs and restores the actor's own selection afterwards. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
     /// </summary>
     private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
@@ -537,9 +537,18 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The upgrade-level range one claim value permits: `BasicOnly` is exactly the basic tool (the native handlers
-    /// refuse an upgraded one by name), and every other word - `AnyUpgrade` today - is every level. A word this Mod
-    /// does not know says nothing about level, which is the same reading the Host publishes for the claim.
+    /// The upgrade-level range one claim value permits: `BasicOnly` is exactly the basic tool, and every other word -
+    /// `AnyUpgrade` today - is every level. A word this Mod does not know says nothing about level, which is the same
+    /// reading the Host publishes for the claim.
+    ///
+    /// <para>
+    /// NO ACTION DECLARES `BasicOnly` ANY MORE, and the reason is worth keeping here: its old docblock said the native
+    /// handlers "refuse an upgraded one by name". Checked against the game, that is backwards - `Pickaxe` refuses
+    /// `UpgradeLevel &lt; 2` (it demands more than basic, and only for boulder tiles the target predicate excludes) and
+    /// `Axe` refuses no upgrade level at all. So the range admitted exactly the tier the game rejects. The value is kept
+    /// because the BodyProgram wire vocabulary carries it (`BodyProgramResourceTemplateValue.ToolBasicOnly`), so a
+    /// persisted journal from a build that emitted it still reads; nothing produces it now.
+    /// </para>
     /// </summary>
     private static (int Minimum, int Maximum) DeclaredToolUpgradeBounds(FarmhandResourceTemplateValue requirement) =>
         requirement switch

@@ -41,7 +41,12 @@ public sealed class DeclaredToolSelectionTests
     {
         Claim("cut_weeds").Should().Be(new FarmhandActionResourceTemplateClaim("tool:scythe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("cut_grass").Should().Be(new FarmhandActionResourceTemplateClaim("tool:scythe", FarmhandResourceTemplateValue.AnyUpgrade));
-        Claim("break_rock_source").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pickaxe", FarmhandResourceTemplateValue.BasicOnly));
+        // `break_rock_source` and `chop_tree_source` claim ANY upgrade level: `BasicOnly` demanded the level-0 tier the
+        // game does not require and refused every tier it accepts, so the action would have stopped working the moment a
+        // player upgraded (see `FarmhandResourceTemplateValue.BasicOnly` for the native lines that refute its docblock).
+        Claim("break_rock_source").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pickaxe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("chop_tree_source").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("chop_stump").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_crop").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
         Claim("till_soil").Should().BeNull();
@@ -91,23 +96,25 @@ public sealed class DeclaredToolSelectionTests
     }
 
     [Fact]
-    public void AnUpgradedPickaxeDoesNotSatisfyTheBasicOnlyClaim()
+    public void AnUpgradedPickaxeSatisfiesTheClaimAndIsPreferred()
     {
-        // `break_rock_source` claims `BasicOnly` because the native guard refuses an upgraded pickaxe by name, so an
-        // upgraded one is a NAMED tier refusal rather than a silent wrong tool: need is the claim's floor, have the
-        // best owned level.
+        // The INVERSE of what this test asserted until 2026-10-30, and the reason comes from the game rather than taste:
+        // `Pickaxe` refuses `UpgradeLevel < 2` (Pickaxe.cs:186) - it demands MORE than the basic tier - and `Axe` refuses
+        // no upgrade level at all. The old `BasicOnly` claim therefore admitted the one tier the game rejects and refused
+        // every tier it accepts, so a player who upgraded an axe would have lost tree-felling permanently.
         DeclaredToolResolution upgradedOnly = Resolve(new List<Item?> { Pickaxe(upgradeLevel: 1) }, "break_rock_source");
 
-        upgradedOnly.RefusalCode.Should().Be("tool_upgrade_insufficient:pickaxe:0:1");
-        upgradedOnly.Slot.Should().Be(-1, "no slot can be named when no owned tool satisfies the claim");
+        upgradedOnly.RefusalCode.Should().BeNull("an upgraded pickaxe is the tool the game expects");
+        upgradedOnly.Slot.Should().Be(0);
 
-        // With both owned, the claim picks the basic one even though the upgraded one outranks it.
+        // With both owned the BEST one wins - the opposite ranking to the old one, because the requirement is a floor
+        // rather than a pinned tier.
         DeclaredToolResolution both = Resolve(
             new List<Item?> { Axe(upgradeLevel: 0), Pickaxe(upgradeLevel: 2), Pickaxe(upgradeLevel: 0) },
             "break_rock_source");
 
         both.RefusalCode.Should().BeNull();
-        both.Slot.Should().Be(2);
+        both.Slot.Should().Be(1, "the level-2 pickaxe outranks the level-0 one");
     }
 
     [Fact]
@@ -116,9 +123,9 @@ public sealed class DeclaredToolSelectionTests
         // "you do not own one" and "you own the wrong tier" are different repairs: the first cannot be fixed by the Mod,
         // the second means the surface promised something the pack cannot satisfy.
         Resolve(new List<Item?> { Axe(upgradeLevel: 0) }, "cut_weeds").RefusalCode.Should().Be("tool_not_owned:scythe");
-        Resolve(new List<Item?> { Pickaxe(upgradeLevel: 3) }, "break_rock_source").RefusalCode
-            .Should().Be("tool_upgrade_insufficient:pickaxe:0:3");
-        Resolve(new List<Item?>(), "water_crop").RefusalCode.Should().Be("tool_not_owned:watering_can");
+        // An upgraded pickaxe now SATISFIES the claim, so a tier mismatch is only reachable through a claim that
+        // declares a floor above the owned level - `ResolveDeclaredTool` still refuses by name when one does.
+        Resolve(new List<Item?> { Pickaxe(upgradeLevel: 3) }, "break_rock_source").RefusalCode.Should().BeNull();
     }
 
     [Fact]

@@ -14,15 +14,47 @@ public enum FarmhandResourceTemplateValue
     ScopePlayer = 1,
 
     /// <summary>
-    /// `tool:&lt;category&gt;`: any upgrade level of that tool category satisfies the claim (minimum level 0).
+    /// `tool:&lt;category&gt;`: a tool of that category at ANY upgrade level satisfies the claim; among the owned ones the
+    /// best is selected and ties go to the smallest slot.
+    ///
+    /// <para>
+    /// There used to be a `BasicOnly` value here, `(0, 0)`, declared by `chop_tree_source` and `break_rock_source` on the
+    /// axe/pickaxe and by `chop_stump` - while `water_crop`, `cut_weeds` and `cut_grass` in the SAME file declared
+    /// `AnyUpgrade`. Two spells for one question cannot both be right.
+    /// </para>
+    /// <para>
+    /// The claim's own docblock justified `BasicOnly` by "the native handler refuses an upgraded pickaxe". I checked that
+    /// against the game (`ref/external/.../Pickaxe.cs`, `Axe.cs`) and it is false: `Pickaxe` refuses `UpgradeLevel < 2`,
+    /// i.e. it demands MORE than basic, and only for BILLBOARD/boulder tiles that `IsOneHitBreakableStone` excludes
+    /// anyway; `Axe` has no upgrade-level refusal at all. So `(0, 0)` admitted exactly the tier the game rejects and
+    /// refused every tier it accepts: the two actions would have permanently stopped working the moment a player
+    /// upgraded an axe, which is the first week of a normal playthrough.
+    /// </para>
+    /// <para>
+    /// No live run caught it because every run so far starts from level-0 tools - measured 2026-10-30: `toolSlots`
+    /// reported `upgradeLevel: 0` for axe, hoe, watering can, pickaxe and scythe. A defect that only appears after an
+    /// upgrade is invisible to a harness that never upgrades.
+    /// </para>
     /// </summary>
     AnyUpgrade = 2,
 
     /// <summary>
-    /// `tool:&lt;category&gt;`: only the level-0 (basic) tool of that category satisfies the claim. The handlers select
-    /// the tool their claim names, so an upgraded one is refused by name
-    /// (`tool_upgrade_insufficient:&lt;category&gt;:&lt;need&gt;:&lt;have&gt;`) rather than silently used: "any axe" would be
-    /// a wrong promise.</summary>
+    /// `tool:&lt;category&gt;`: exactly the level-0 tool. NO ACTION DECLARES THIS.
+    ///
+    /// <para>
+    /// It is kept because the BodyProgram wire vocabulary carries it
+    /// (`BodyProgramResourceTemplateValue.ToolBasicOnly`), so a journal written by a build that emitted it still reads.
+    /// </para>
+    /// <para>
+    /// `chop_tree_source`, `break_rock_source` and `chop_stump` used to declare it, justified by "the native handler
+    /// refuses an upgraded pickaxe". Checked against the game, that is backwards: `Pickaxe` refuses
+    /// `UpgradeLevel &lt; 2` - it demands MORE than basic, and only for boulder tiles the target predicate excludes -
+    /// and `Axe` refuses no upgrade level at all. `(0, 0)` therefore admitted exactly the tier the game rejects and
+    /// refused every tier it accepts, so those actions would have stopped working the moment a player upgraded an axe.
+    /// No live run caught it because every run starts from level-0 tools (measured 2026-10-30: `upgradeLevel: 0` for
+    /// all five tool slots).
+    /// </para>
+    /// </summary>
     BasicOnly = 3,
 }
 public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
@@ -228,8 +260,8 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // Declares the axe its handler requires, like break_rock_source declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.
-        E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.BasicOnly)),
-        E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.BasicOnly)), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
+        E("chop_tree_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade)),
+        E("break_rock_source", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade)), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget()), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget()),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
@@ -257,7 +289,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
-        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.BasicOnly), FarmhandActionLifecycle.LiveVerified),
+        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
         // below. A scythe has no upgrade ladder, so "any" is exact.
