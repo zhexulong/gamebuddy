@@ -117,7 +117,7 @@ type PlanArgumentRequirement = Readonly<{
  * numbering (the wrapper the script is run inside does not count), and it is `null` when the engine blamed a line
  * that is not in the script at all: an unclosed group is reported where the wrapper's closing brace sits.
  */
-export type PlanScriptThrow = Readonly<{ message: string; line: number | null }>;
+type PlanScriptThrow = Readonly<{ message: string; line: number | null }>;
 
 export type CompiledPlan =
   | Readonly<{

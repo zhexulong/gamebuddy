@@ -23,7 +23,7 @@ const DRIVE_ROOT = /^[A-Za-z]:\\$/;
  * (permissions, a read-only volume, a locked file) and `deployment_incomplete` is anything
  * else that stopped the payload from landing in full.
  */
-export type SmapiDeploymentFailure =
+type SmapiDeploymentFailure =
   | "game_installation_not_found"
   | "installation_conflict"
   | "game_dependencies_missing"

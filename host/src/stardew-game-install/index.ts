@@ -18,13 +18,6 @@ export {
   type StardewGameRootProbe,
 } from "./discovery.js";
 export {
-  deploySmapiPayload,
-  type SmapiDeploymentFailure,
-  type SmapiDeploymentInput,
-  type SmapiDeploymentResult,
-} from "./smapi-deployment.js";
-export { readSmapiPayload, type SmapiPayload, type SmapiPayloadFile } from "./smapi-payload.js";
-export {
   decideStardewCompanionModDeployment,
   deployStardewCompanionMod,
   isCanonicalWindowsDirectory,

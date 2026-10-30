@@ -150,14 +150,14 @@
     "integrations/stardew/action-development/src/devkit-local/**",
     "tools/lib/voice-final-gate-server.mjs",
     "tools/fixtures/chat-run-audit/memory-probes/**",
-    "tools/.tmp-*",
-    "vendor/**"
+    "tools/.tmp-*"
   ],
   "ignoreBinaries": [
     "playwright",
     "pwsh",
     "where.exe",
     "taskkill.exe",
-    "game-action"
+    "game-action",
+    "reg"
   ]
 }

@@ -8,11 +8,10 @@ const SAFE_RELATIVE_PATH = /^[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-
 const SHA256 = /^[a-f0-9]{64}$/;
 const VERSION = /^\d+\.\d+\.\d+$/;
 
-export const SMAPI_PAYLOAD_DESTINATION = "native/smapi";
-export const SMAPI_PAYLOAD_LOADER_FILE = "StardewModdingAPI.exe";
-export const SMAPI_MODS_DIRECTORY = "Mods";
+const SMAPI_PAYLOAD_DESTINATION = "native/smapi";
+const SMAPI_PAYLOAD_LOADER_FILE = "StardewModdingAPI.exe";
 
-export type SmapiPayloadFile = Readonly<{ path: string; size: number; sha256: string }>;
+type SmapiPayloadFile = Readonly<{ path: string; size: number; sha256: string }>;
 
 /**
  * The verified SMAPI payload one generation ships.
