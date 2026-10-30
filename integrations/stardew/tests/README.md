@@ -2,14 +2,19 @@
 
 **A source-shape pin is a test whose body reads a repository file (`File.ReadAllText`/`ReadAllLines`/`ReadAllBytes`) and asserts on its text (`Should().Contain`/`NotContain`) instead of constructing and calling product code.** Its opposite, a behaviour test, builds the real objects and calls them.
 
-Measured today at `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests` - 148 files, 1013 test methods:
+Every file in this project is classified on every run by reading its contents, so the counts live in the gate's output rather than in this paragraph - a number written here is a measurement that goes stale on the next commit, and that is the same defect as a pin that follows the code it pins.
 
-| Kind | Files | Meaning |
-| --- | --- | --- |
-| shape-only | 16 | every test is a source-shape pin |
-| mixed | 54 | some pins, some behaviour tests |
-| behaviour-only | 75 | no pins |
-| ambiguous | 2 | a pin whose assertion is inside a custom helper the definition cannot see through; the gate lists it and leaves the file alone |
+| Kind | Meaning |
+| --- | --- |
+| shape-only | every test is a source-shape pin |
+| mixed | some pins, some behaviour tests |
+| behaviour-only | no pins |
+| ambiguous | a pin whose assertion is inside a custom helper the definition cannot see through; the gate lists it and leaves the file alone |
+| no tests | a file the runner does not collect a test from |
+
+```powershell
+node tools/audit-stardew-test-shape.mjs          # the current counts, then any findings
+```
 
 The trait is `[Trait("kind", "source-shape")]`, and it is on shape-only classes **only**. A mixed file does not get it: the trait would tell a reader - and `--filter` - that the whole class pins text, when half of it exercises behaviour. Mixed files say so in a `// MIXED SHAPE AND BEHAVIOUR:` comment above the class instead. Shape-only files are named `<Subject>SourceShapeTests.cs`, so the file name carries the same fact the trait does.
 
