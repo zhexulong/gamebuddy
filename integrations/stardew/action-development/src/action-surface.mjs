@@ -26,7 +26,7 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
  * this session.
  */
-export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach"]);
+const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
@@ -39,7 +39,7 @@ export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
  * The bound still exists so a future build cannot spend the agent's context by accident; it is the same 512 the Host
  * validator and the bridge apply, so a value that passes here cannot fail later.
  */
-export const ACTION_SURFACE_MAX_DESCRIPTION_LENGTH = 512;
+const ACTION_SURFACE_MAX_DESCRIPTION_LENGTH = 512;
 const ACTION_SURFACE_MAX_IDENTITY_VERSION = 2_147_483_647;
 const ACTION_SURFACE_MAX_JSON_DEPTH = 8;
 const ACTION_SURFACE_MAX_DATA_NODES = 2048;

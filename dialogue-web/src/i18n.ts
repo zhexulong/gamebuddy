@@ -1815,7 +1815,7 @@ const zh: Messages = {
  * keeps that space and gains nothing, and two Chinese characters stay adjacent, which is how the
  * language is written.
  */
-export const RECORD_PLACEHOLDER = "{{record}}";
+const RECORD_PLACEHOLDER = "{{record}}";
 
 /**
  * A character that reads as part of the same word as what follows it: a Latin letter or digit

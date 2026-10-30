@@ -24,7 +24,7 @@ const ACTIVE_PROGRAM_STATE = "active";
  * How often a waiting call re-reads. The bridge round-trip this rides on is cheap; the cost being avoided is a model
  * turn between polls, not a network hop.
  */
-export const PROGRAM_STATUS_POLL_INTERVAL_MS = 250;
+const PROGRAM_STATUS_POLL_INTERVAL_MS = 250;
 
 /**
  * The largest wait a caller may ask for.

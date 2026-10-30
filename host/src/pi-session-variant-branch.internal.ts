@@ -160,10 +160,6 @@ export function selectPiVariantEntry(
  * is the projection's own tail - read through the same pairing every other operation uses, so an edit that
  * replaced the text is read as the text it now contributes.
  */
-export function piActivePathTailReplyText(session: PiVariantBranchSession): string | null {
-  const replies = modelCarriedRows(session).filter((row) => row.role === "companion");
-  return replies.length === 0 ? null : replies[replies.length - 1]!.text;
-}
 
 /**
  * The reply text one session entry contributes, or `null` when it carries none.
@@ -171,7 +167,7 @@ export function piActivePathTailReplyText(session: PiVariantBranchSession): stri
  * The same projection the transcript row was written from (`chatTranscriptAssistantText`), which is what makes
  * "the entry that carries the variant the player chose" an exact question rather than a positional guess.
  */
-export function piEntryReplyText(session: PiVariantBranchSession, entryId: string): string | null {
+function piEntryReplyText(session: PiVariantBranchSession, entryId: string): string | null {
   const entry = session.sessionManager.getEntry(entryId);
   if (entry?.type !== "message") return null;
   return chatTranscriptAssistantText(entry.message);
