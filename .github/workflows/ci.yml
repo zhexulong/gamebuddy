@@ -340,16 +340,17 @@ jobs:
       # The part of the Stardew suite that needs no game at all. GameBuddy.Stardew.Integration.Tests
       # references the Mod project, so its build package demands a licensed game folder and a hosted
       # runner can never build it - which is why the two steps below are gated. That gate is honest
-      # about the project and dishonest about a SUBSET: measured by compiling the suite's files against
-      # GameBuddy.Stardew.Core alone, 33 of its 148 files need neither the game nor the Mod assembly,
-      # and those 165 tests ran nowhere on a hosted runner until now.
+      # about the project and dishonest about a SUBSET: the files that need neither the game nor the
+      # Mod assembly only compile against GameBuddy.Stardew.Core, and those tests ran nowhere on a
+      # hosted runner before the project below existed. Neither count is written here; the runner
+      # prints both, because a count in a comment rots the first time a suite file is added.
       #
       # The project includes those files from their one location in the suite - it holds no copy - and
       # its runner asserts that before it builds, so a forked snapshot cannot go green while the
       # originals drift. It also prints how much of the suite it did NOT run, and the step is named to
       # be unreadable as "the integration suite passed": the two gated steps below are the only
-      # evidence about the other 115 files, and they run only where a licensed game folder is
-      # configured.
+      # evidence about the files it does not compile, and they run only where a licensed game folder
+      # is configured.
       #
       # The project's file list is DERIVED, never maintained: the gate below builds the suite's files
       # against GameBuddy.Stardew.Core alone, drops every file the compiler refuses, and repeats until

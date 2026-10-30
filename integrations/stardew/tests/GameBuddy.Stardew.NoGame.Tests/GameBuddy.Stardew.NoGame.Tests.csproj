@@ -7,14 +7,16 @@
     set below is what a measurement produced, not what a reader guessed: a file belongs here
     when it compiles against GameBuddy.Stardew.Core and nothing else, i.e. it needs neither the
     game (StardewValley / SMAPI / xTile / XNA / Netcode) nor the Mod assembly (Handlers,
-    Navigation, Sensory, ModEntry, ExecutionManager, ...). 115 of the suite's 148 files fail
-    that test. `excluded-files.tsv` records all 115 with the unresolved name that decided each, and
-    `run-nogame-tests.mjs` fails if a suite file is in neither set — a test cannot leave this lane by
-    gaining a game dependency without someone writing down why. The pair is a partition of the
-    suite, and a shrinking included set is exactly the failure this project exists to expose.
+    Navigation, Sensory, ModEntry, ExecutionManager, ...). `excluded-files.tsv` records every
+    excluded file with the unresolved name that decided it, and `run-nogame-tests.mjs` fails if a
+    suite file is in neither set — a test cannot leave this lane by gaining a game dependency
+    without someone writing down why. The pair is a partition of the suite, and a shrinking
+    included set is exactly the failure this project exists to expose. Neither count is repeated
+    here: the runner prints them, and `tools/audit-stardew-nogame-subset.mjs` fails when this list
+    and the compiler disagree about even one file.
 
     This is the Core-only half of the Stardew suite. It is NOT the integration suite: the
-    game-gated steps in .github/workflows/ci.yml remain the only evidence about the other 115
+    game-gated steps in .github/workflows/ci.yml remain the only evidence about the excluded
     files, and they run only where a licensed game folder is configured.
 
     A file that becomes game-free later does not join automatically - add its line here. That
@@ -73,6 +75,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MovingTargetApproachTests.cs" Link="MovingTargetApproachTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MultiDayPlaySessionFixtureTests.cs" Link="MultiDayPlaySessionFixtureTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NameEntityActionTests.cs" Link="NameEntityActionTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetTests.cs" Link="PlantableTargetSlotBudgetTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ReceiptRevisionMonotonicitySourceShapeTests.cs" Link="ReceiptRevisionMonotonicitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />
