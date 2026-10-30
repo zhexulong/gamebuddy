@@ -69,8 +69,13 @@ overrides:
   'tsx>esbuild': 0.28.2
   # ajv ^3.0.1 and knip ^1.8.0 both admit the vulnerable resolutions, so these
   # transitive-only packages cannot be raised by `pnpm update`.
-  'ajv>fast-uri': 3.1.8
+  'ajv>fast-uri': 3.1.9
   'knip>smol-toml': 1.9.1
+  # pi-coding-agent names undici as an exact pin (`"undici": "8.10.2"`), not a
+  # range, so no `pnpm update` can move it. 8.12.2 is the patched release and is
+  # applied to the whole graph so the workspace keeps one undici instance
+  # (openai's `undici` peer then adopts the same copy).
+  undici: 8.12.2
   # typescript-eslint's own packages depend on each other with carets
   # (`^8.71.0`), so a fresh resolution always pulls the newest sibling - which
   # the minimumReleaseAge policy then refuses while that release is hours old.
