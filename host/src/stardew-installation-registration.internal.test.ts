@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
@@ -38,7 +38,9 @@ const legacyActionDevelopmentProfileFields = [
   "nativeClientConfigFile",
 ] as const;
 
-function record(overrides: Partial<StardewInstallationRegistrationRecordV1> = {}): StardewInstallationRegistrationRecordV1 {
+function record(
+  overrides: Partial<StardewInstallationRegistrationRecordV1> = {},
+): StardewInstallationRegistrationRecordV1 {
   return {
     schema: "gamebuddy-stardew-installation-registration/v1",
     binding: { rootLayoutVersion: 1 },
@@ -59,8 +61,10 @@ async function fixture(): Promise<{ root: string; path: string; dispose(): Promi
   };
 }
 
-function lockHelper() {
+/** The bound reclaimer answers the lock module's requests; `onRequest` counts them. */
+function lockHelper(onRequest?: () => void) {
   return createTestWindowsStaleLockReclaimer(() => {
+    onRequest?.();
     const child = Object.assign(new EventEmitter(), {
       stdin: new PassThrough(),
       stdout: new PassThrough(),
@@ -100,15 +104,153 @@ function lockHelper() {
 test.beforeEach(() => bindWindowsStaleLockReclaimer(lockHelper()));
 test.after(() => bindWindowsStaleLockReclaimer(undefined));
 
+/**
+ * The assertions below are about the reclaimer being *consulted*, so they bind a helper that
+ * counts its requests; a read that reaches it at all is reaching the exclusive lock path.
+ */
+function countingLock(checks: { requests: number }) {
+  return lockHelper(() => {
+    checks.requests += 1;
+  });
+}
+
+/** A live foreign owner's lock record: fresh, well-formed, and its pid is not this process. */
+async function writeForeignHeldLock(lockPath: string): Promise<void> {
+  await writeFile(
+    lockPath,
+    JSON.stringify({ token: "4d2c7b1a-6f3e-4a5b-9c8d-0e7f6a5b4c3d", pid: 999_999_999, createdAtMs: Date.now() }),
+    "utf8",
+  );
+}
+
+test("a read never creates, waits on, or consults a lock file", async () => {
+  const checks = { requests: 0 };
+  bindWindowsStaleLockReclaimer(countingLock(checks));
+  const subject = await fixture();
+  try {
+    assert.deepEqual(await publishStardewInstallationRegistration(subject.root, null, record()), record());
+    // Publishing does take the exclusive lock, so its helper traffic is not the read's.
+    const requestsAfterPublish = checks.requests;
+    await assert.rejects(lstat(pathLockPath(subject.path)), { code: "ENOENT" });
+
+    assert.deepEqual(await readStardewInstallationRegistration(subject.root), record());
+    assert.equal(
+      await readStardewInstallationRegistration(join(subject.root, "absent-runtime-root")),
+      null,
+      "an absent record is null, and reading it neither creates a root nor a lock",
+    );
+    await assert.rejects(lstat(join(subject.root, "absent-runtime-root")), { code: "ENOENT" });
+    assert.equal(checks.requests, requestsAfterPublish, "no read reached the lock reclaimer");
+    await assert.rejects(lstat(pathLockPath(subject.path)), { code: "ENOENT" });
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("a read returns the record while another owner holds the lock, and still refuses what it refused", async () => {
+  const subject = await fixture();
+  try {
+    const ready = record();
+    await publishStardewInstallationRegistration(subject.root, null, ready);
+    // A fresh, well-formed owner that is not this process: reclaim answers `valid_owner_fresh`
+    // and the lock stays a barrier for every writer for the whole five-minute window.
+    await writeForeignHeldLock(pathLockPath(subject.path));
+    assert.deepEqual(await readStardewInstallationRegistration(subject.root), ready);
+
+    // The marker check still governs the read while the lock is held by someone else.
+    const markerPath = join(subject.root, "stardew-installation-registration", "owner-transaction.json");
+    await writeFile(
+      markerPath,
+      JSON.stringify({
+        schema: "gamebuddy-stardew-installation-owner-transaction/v1",
+        operation: "prepare_bind",
+        bootstrapCorrelation: "bootstrap_01",
+        registrationRevision: 2,
+        ownerRecordRevision: 1,
+      }),
+      "utf8",
+    );
+    await assert.rejects(readStardewInstallationRegistration(subject.root), {
+      message: "stardew_installation_registration_unavailable",
+    });
+    await rm(markerPath);
+
+    // The byte re-verification still governs it: a non-canonical spelling of a valid record is
+    // refused rather than returned, and the foreign lock neither hides nor manufactures that.
+    await writeFile(subject.path, JSON.stringify({ ...ready, revision: 2 }, null, 2), "utf8");
+    await assert.rejects(readStardewInstallationRegistration(subject.root), {
+      message: "stardew_installation_registration_unavailable",
+    });
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("publish and the owner transaction still take the exclusive lock", async () => {
+  const checks = { requests: 0 };
+  bindWindowsStaleLockReclaimer(countingLock(checks));
+  const subject = await fixture();
+  try {
+    // Each writer's release goes through the reclaimer, so the count moves exactly when a
+    // writer holds and releases the lock; a read never moves it at all.
+    assert.deepEqual(await publishStardewInstallationRegistration(subject.root, null, record()), record());
+    assert.ok(checks.requests > 0, "publishing releases its lock through the reclaimer");
+    const requestsAfterPublish = checks.requests;
+    await readStardewInstallationRegistration(subject.root);
+    await readStardewInstallationRegistration(subject.root);
+    assert.equal(checks.requests, requestsAfterPublish);
+    await withStardewLifecycleInstallationRegistrationOwner(subject.root, async () => "done");
+    assert.ok(checks.requests > requestsAfterPublish, "the owner transaction releases its lock through the reclaimer");
+  } finally {
+    await subject.dispose();
+  }
+});
+
+test("a read still refuses a registration directory that is a link, record or no record", async (t) => {
+  const real = await fixture();
+  const linked = await fixture();
+  const linkLeaf = join(linked.root, "stardew-installation-registration");
+  try {
+    await publishStardewInstallationRegistration(real.root, null, record());
+    try {
+      await symlink(
+        join(real.root, "stardew-installation-registration"),
+        linkLeaf,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM" || (error as NodeJS.ErrnoException).code === "EACCES") {
+        t.skip("symbolic links are not permitted in this environment");
+        return;
+      }
+      throw error;
+    }
+    // The same bytes are returned through the real directory and refused through the link, so
+    // the boundary re-verification the lock used to cover is still covered by the read itself.
+    assert.deepEqual(await readStardewInstallationRegistration(real.root), record());
+    await assert.rejects(readStardewInstallationRegistration(linked.root), {
+      message: "stardew_installation_registration_unavailable",
+    });
+    // And with no record behind the link at all, the answer is still `unavailable`, never the
+    // `null` that means "no registration": a path that resolves elsewhere is not evidence about
+    // this runtime root. The lock's own chain verification was what covered this case.
+    await rm(join(real.root, "stardew-installation-registration", "registration.json"));
+    assert.equal(await readStardewInstallationRegistration(real.root), null);
+    await assert.rejects(readStardewInstallationRegistration(linked.root), {
+      message: "stardew_installation_registration_unavailable",
+    });
+  } finally {
+    await real.dispose();
+    await linked.dispose();
+  }
+});
+
 test("publishes and strict-reads canonical ready and invalid records only at the root-bound path", async () => {
   const subject = await fixture();
   try {
     const ready = record();
     assert.deepEqual(await publishStardewInstallationRegistration(subject.root, null, ready), ready);
-    assert.equal(
-      await readFile(subject.path, "utf8"),
-      JSON.stringify(ready),
-    );
+    assert.equal(await readFile(subject.path, "utf8"), JSON.stringify(ready));
     assert.deepEqual(await readStardewInstallationRegistration(subject.root), ready);
 
     const invalid = record({ revision: 2, state: "invalid", locator: null });
@@ -149,7 +291,11 @@ test("strict parser rejects malformed schemas, unsafe structures, unowned produc
       await writeFile(subject.path, JSON.stringify(value), "utf8");
       await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
     }
-    await writeFile(subject.path, `{"schema":"gamebuddy-stardew-installation-registration/v1","schema":"wrong"}`, "utf8");
+    await writeFile(
+      subject.path,
+      `{"schema":"gamebuddy-stardew-installation-registration/v1","schema":"wrong"}`,
+      "utf8",
+    );
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
     await writeFile(subject.path, `${JSON.stringify({ ...record(), locator: sentinelLocator })}\n`, "utf8");
     await rejectsRedacted(() => readStardewInstallationRegistration(subject.root), sentinelLocator);
@@ -177,39 +323,41 @@ test("publish requires the exact predecessor and refuses active pointer records 
   const subject = await fixture();
   try {
     await publishStardewInstallationRegistration(subject.root, null, record());
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, null, record({ revision: 1 })), {
+      message: "stardew_installation_registration_conflict",
+    });
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 2, record({ revision: 3 })), {
+      message: "stardew_installation_registration_conflict",
+    });
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, record({ revision: 3 })), {
+      message: "invalid_stardew_installation_registration_publish",
+    });
     await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, null, record({ revision: 1 })),
-      { message: "stardew_installation_registration_conflict" },
-    );
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 2, record({ revision: 3 })),
-      { message: "stardew_installation_registration_conflict" },
-    );
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, record({ revision: 3 })),
-      { message: "invalid_stardew_installation_registration_publish" },
-    );
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2, activeAttempt: { bootstrapCorrelation: "attempt_01" } })),
+      publishStardewInstallationRegistration(
+        subject.root,
+        1,
+        record({ revision: 2, activeAttempt: { bootstrapCorrelation: "attempt_01" } }),
+      ),
       { message: "invalid_stardew_installation_registration_publish" },
     );
     const symbolBearing = record({ revision: 2 });
     Object.defineProperty(symbolBearing, Symbol("unexpected"), { value: true, enumerable: true });
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, symbolBearing),
-      { message: "stardew_installation_registration_unavailable" },
-    );
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, symbolBearing), {
+      message: "stardew_installation_registration_unavailable",
+    });
     const prototypeBearing = Object.assign(Object.create({ inherited: true }), record({ revision: 2 }));
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, prototypeBearing),
-      { message: "stardew_installation_registration_unavailable" },
-    );
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, prototypeBearing), {
+      message: "stardew_installation_registration_unavailable",
+    });
 
-    await writeFile(subject.path, JSON.stringify(record({ activeAttempt: { bootstrapCorrelation: "attempt_01" } })), "utf8");
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })),
-      { message: "stardew_installation_registration_busy" },
+    await writeFile(
+      subject.path,
+      JSON.stringify(record({ activeAttempt: { bootstrapCorrelation: "attempt_01" } })),
+      "utf8",
     );
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })), {
+      message: "stardew_installation_registration_busy",
+    });
   } finally {
     await subject.dispose();
   }
@@ -229,7 +377,10 @@ test("safe-boundary failures are fail-closed", async (t) => {
       }
       throw error;
     }
-    await rejectsRedacted(() => publishStardewInstallationRegistration(subject.root, null, record({ locator: sentinelLocator })), sentinelLocator);
+    await rejectsRedacted(
+      () => publishStardewInstallationRegistration(subject.root, null, record({ locator: sentinelLocator })),
+      sentinelLocator,
+    );
     await assert.rejects(readFile(pathLockPath(subject.path), "utf8"), { code: "ENOENT" });
   } finally {
     await subject.dispose();
@@ -261,11 +412,12 @@ test("sole owner locked transaction binds and releases only a matching pointer w
       assert.equal(paired.revision, 2);
       await storage.clearMarker(prepareMarker);
     });
-    assert.deepEqual((await readStardewInstallationRegistration(subject.root))?.activeAttempt, { bootstrapCorrelation: "bootstrap_01" });
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 2, record({ revision: 3 })),
-      { message: "stardew_installation_registration_busy" },
-    );
+    assert.deepEqual((await readStardewInstallationRegistration(subject.root))?.activeAttempt, {
+      bootstrapCorrelation: "bootstrap_01",
+    });
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 2, record({ revision: 3 })), {
+      message: "stardew_installation_registration_busy",
+    });
     await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       await storage.writeMarker(settlementMarker);
       const released = await storage.releaseSettledPointer(2, settlementMarker);
@@ -303,9 +455,12 @@ test("owner transaction rejects stale and mismatched settlement markers without 
       await storage.clearMarker(prepareMarker);
     });
     await writeFile(markerPath, JSON.stringify({ ...settlementMarker, registrationRevision: 2 }), "utf8");
-    await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
-      await storage.releaseSettledPointer(2, settlementMarker);
-    }), { message: "stardew_installation_registration_unavailable" });
+    await assert.rejects(
+      withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+        await storage.releaseSettledPointer(2, settlementMarker);
+      }),
+      { message: "stardew_installation_registration_unavailable" },
+    );
     // The intentionally mismatched settlement marker stays on disk and the
     // record revision is never rewritten. Public read is unavailable while a
     // marker exists, so the revision is asserted inside the owner lock.
@@ -330,10 +485,13 @@ test("owner transaction rejects a mismatched bind marker and leaves the durable 
   };
   try {
     await publishStardewInstallationRegistration(subject.root, null, record());
-    await assert.rejects(withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
-      await storage.writeMarker(marker);
-      await storage.bindPreparedPointer(1, { ...marker, bootstrapCorrelation: "other" });
-    }), { message: "stardew_installation_registration_unavailable" });
+    await assert.rejects(
+      withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
+        await storage.writeMarker(marker);
+        await storage.bindPreparedPointer(1, { ...marker, bootstrapCorrelation: "other" });
+      }),
+      { message: "stardew_installation_registration_unavailable" },
+    );
     await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })), {
       message: "stardew_installation_registration_unavailable",
     });
@@ -360,19 +518,20 @@ test("owner transaction locator replacement preserves the pointer and rejects st
     });
     await withStardewLifecycleInstallationRegistrationOwner(subject.root, async (storage) => {
       const replaced = await storage.replaceActiveAttemptLocator(2, "bootstrap_01", "D:\\Games\\Stardew Valley");
-      assert.deepEqual(replaced, record({
-        revision: 3,
-        locator: "D:\\Games\\Stardew Valley",
-        activeAttempt: { bootstrapCorrelation: "bootstrap_01" },
-      }));
-      await assert.rejects(
-        storage.replaceActiveAttemptLocator(2, "bootstrap_01", "E:\\Games\\Stardew Valley"),
-        { message: "stardew_installation_registration_conflict" },
+      assert.deepEqual(
+        replaced,
+        record({
+          revision: 3,
+          locator: "D:\\Games\\Stardew Valley",
+          activeAttempt: { bootstrapCorrelation: "bootstrap_01" },
+        }),
       );
-      await assert.rejects(
-        storage.replaceActiveAttemptLocator(3, "foreign_attempt", "E:\\Games\\Stardew Valley"),
-        { message: "stardew_installation_registration_conflict" },
-      );
+      await assert.rejects(storage.replaceActiveAttemptLocator(2, "bootstrap_01", "E:\\Games\\Stardew Valley"), {
+        message: "stardew_installation_registration_conflict",
+      });
+      await assert.rejects(storage.replaceActiveAttemptLocator(3, "foreign_attempt", "E:\\Games\\Stardew Valley"), {
+        message: "stardew_installation_registration_conflict",
+      });
     });
   } finally {
     await subject.dispose();
@@ -392,14 +551,12 @@ test("public read and publish are unavailable when owner-transaction marker is p
   try {
     await publishStardewInstallationRegistration(subject.root, null, record());
     await writeFile(markerPath, JSON.stringify(marker), "utf8");
-    await assert.rejects(
-      readStardewInstallationRegistration(subject.root),
-      { message: "stardew_installation_registration_unavailable" },
-    );
-    await assert.rejects(
-      publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })),
-      { message: "stardew_installation_registration_unavailable" },
-    );
+    await assert.rejects(readStardewInstallationRegistration(subject.root), {
+      message: "stardew_installation_registration_unavailable",
+    });
+    await assert.rejects(publishStardewInstallationRegistration(subject.root, 1, record({ revision: 2 })), {
+      message: "stardew_installation_registration_unavailable",
+    });
     const markerBytes = await readFile(markerPath, "utf8");
     assert.equal(markerBytes, JSON.stringify(marker));
   } finally {
@@ -409,10 +566,13 @@ test("public read and publish are unavailable when owner-transaction marker is p
 
 test("source exposes no browser, action-development, recovery, or independent fence seam", async () => {
   const source = await readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8");
-  assert.doesNotMatch(source, /browser\/|action-development|readView|recovery|fence|AdmittedStardewInstallation|consumeAdmitted/);
+  assert.doesNotMatch(
+    source,
+    /browser\/|action-development|readView|recovery|fence|AdmittedStardewInstallation|consumeAdmitted/,
+  );
   assert.doesNotMatch(source, /export (?:async )?function (?:prepare|settle|recover|clear|bind|replace).*Attempt/);
-   assert.match(source, /export async function withStardewLifecycleInstallationRegistrationOwner/);
-   assert.doesNotMatch(source, /export async function withStardewInstallationRegistrationOwnerTransaction/);
+  assert.match(source, /export async function withStardewLifecycleInstallationRegistrationOwner/);
+  assert.doesNotMatch(source, /export async function withStardewInstallationRegistrationOwnerTransaction/);
   assert.doesNotMatch(source, /export (?:async )?function replaceStardewInstallationRegistrationLocator/);
 });
 
@@ -421,7 +581,8 @@ test("product registration and lifecycle composition do not accept legacy action
     readFile(new URL("./stardew-installation-registration.internal.js", import.meta.url), "utf8"),
     readFile(new URL("./stardew-production-lifecycle-coordinator.internal.js", import.meta.url), "utf8"),
   ]);
-  const legacyProfileAuthority = /gamebuddy-action-target-profile\/v1|action-development(?:[\\/]|\b)|profileFile|gameInstallPath|modsPath|releaseDir|fixtureTransactionRoot|nativeFixtureRoot|runtimeLeaseRoot|runtimeLeaseIdentity|nativeClientConfigFile|--profile/;
+  const legacyProfileAuthority =
+    /gamebuddy-action-target-profile\/v1|action-development(?:[\\/]|\b)|profileFile|gameInstallPath|modsPath|releaseDir|fixtureTransactionRoot|nativeFixtureRoot|runtimeLeaseRoot|runtimeLeaseIdentity|nativeClientConfigFile|--profile/;
   for (const source of sources) assert.doesNotMatch(source, legacyProfileAuthority);
   // `bootstrapId` is the current bootstrap owner record's own identity, read by
   // the crashed-world-slot recovery path (`bootstrapFacts: { bootstrapId:

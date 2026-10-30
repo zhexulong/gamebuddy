@@ -240,21 +240,28 @@ export async function withStardewLifecycleInstallationRegistrationOwner<T>(
  * Reads the one Host-private registration record rooted at the caller's
  * canonical runtime root. Missing storage is distinct from malformed storage;
  * neither condition projects a browser-visible state from this isolated slice.
+ *
+ * This read takes no lock. The record is published by atomic rename, so a
+ * reader sees whole bytes, and `readCurrentRecord` re-verifies those bytes and
+ * the path boundary before returning them; the owner-transaction marker is what
+ * marks an in-flight mutation and it is checked first. The exclusive lock bought
+ * a read nothing it needs, and taking it made every read depend on a writer's
+ * lock: a `.lock` residue that `reclaimStaleLock` correctly keeps for a live
+ * owner (this process is that owner) then turned each state read into a timeout.
+ * Only publish and the owner transaction serialize, and they still do.
  */
 export async function readStardewInstallationRegistration(
   runtimeRoot: string,
 ): Promise<StardewInstallationRegistrationRecordV1 | null> {
   try {
     const path = registrationPath(runtimeRoot);
-    return await withPathLock(
-      path,
-      async () => {
-        const root = resolve(runtimeRoot);
-        if ((await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root)) !== null) throw unavailable();
-        return await readCurrentRecord(path, runtimeRoot);
-      },
-      { containmentRoot: runtimeRoot },
-    );
+    const root = resolve(runtimeRoot);
+    // Without a containment root: the existing directory chain is verified and nothing is
+    // created, so a replaced registration directory is still refused while a runtime root that
+    // simply does not exist yet remains an absent record.
+    await verifySafePathBoundary(path);
+    if ((await readOwnerTransactionMarker(ownerTransactionMarkerPath(root), root)) !== null) throw unavailable();
+    return await readCurrentRecord(path, runtimeRoot);
   } catch {
     throw unavailable();
   }

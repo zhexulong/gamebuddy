@@ -84,8 +84,10 @@ function reclaimingLockHelper(): ChildProcess {
           if (raw === undefined) result = "missing";
           else {
             const owner = JSON.parse(raw) as { token?: string };
-            if (owner.token === request.token) { await rm(absolute, { force: true }); result = "released"; }
-            else result = "kept_token_mismatch";
+            if (owner.token === request.token) {
+              await rm(absolute, { force: true });
+              result = "released";
+            } else result = "kept_token_mismatch";
           }
         }
       } catch {
@@ -145,10 +147,19 @@ async function createRoot(): Promise<string> {
 async function assertStillBlocked(operation: Promise<unknown>, windowMs = 500): Promise<void> {
   const marker = Symbol("pending");
   const raced = await Promise.race([
-    operation.then(() => "settled" as const, (error: unknown) => `rejected:${String((error as Error)?.message ?? error)}`),
-    new Promise<typeof marker>((resolveTimer) => { setTimeout(() => resolveTimer(marker), windowMs); }),
+    operation.then(
+      () => "settled" as const,
+      (error: unknown) => `rejected:${String((error as Error)?.message ?? error)}`,
+    ),
+    new Promise<typeof marker>((resolveTimer) => {
+      setTimeout(() => resolveTimer(marker), windowMs);
+    }),
   ]);
-  assert.equal(raced, marker, `expected the operation to stay blocked while a live foreign owner holds the lock, got ${String(raced)}`);
+  assert.equal(
+    raced,
+    marker,
+    `expected the operation to stay blocked while a live foreign owner holds the lock, got ${String(raced)}`,
+  );
   // Its eventual rejection is expected (lock timeout); swallow it so it does not
   // surface as an unhandled rejection during the wait.
   void operation.catch(() => undefined);
@@ -161,11 +172,7 @@ async function assertStillBlocked(operation: Promise<unknown>, windowMs = 500): 
  * minutes, so the fixture rewrites them instead of waiting. The owner token
  * shape is preserved, so the selector still parses a real owner record.
  */
-async function ageLockPastStaleWindow(
-  lockPath: string,
-  pid: number,
-  offsetMs = STALE_LOCK_MS + 5_000,
-): Promise<void> {
+async function ageLockPastStaleWindow(lockPath: string, pid: number, offsetMs = STALE_LOCK_MS + 5_000): Promise<void> {
   const owner = JSON.parse(await readFile(lockPath, "utf8")) as Record<string, unknown>;
   await writeFile(lockPath, JSON.stringify({ ...owner, pid, createdAtMs: Date.now() - offsetMs }), "utf8");
   const staleAt = new Date(Date.now() - offsetMs);
@@ -187,32 +194,49 @@ async function spawnLockHolder(root: string): Promise<LockHolder> {
   // The worker takes the lock through the production seam and holds it for as
   // long as its stdin stays open. It never touches the record bytes, so the
   // parent is blocked purely by the lock.
-  await writeFile(workerPath, [
-    `import { withPathLock, bindWindowsStaleLockReclaimer } from ${JSON.stringify(lockModuleUrl)};`,
-    `bindWindowsStaleLockReclaimer(undefined);`,
-    `const release = new Promise((resolveRelease) => {`,
-    `  process.stdin.on("data", (chunk) => { if (chunk.toString("utf8").includes("release")) resolveRelease(); });`,
-    `  process.stdin.on("end", resolveRelease);`,
-    `});`,
-    `await withPathLock(${JSON.stringify(registrationPath)}, async () => {`,
-    `  process.stdout.write("LOCKED\\n");`,
-    `  await release;`,
-    `});`,
-    `process.stdout.write("RELEASED\\n");`,
-  ].join("\n"), "utf8");
+  await writeFile(
+    workerPath,
+    [
+      `import { withPathLock, bindWindowsStaleLockReclaimer } from ${JSON.stringify(lockModuleUrl)};`,
+      `bindWindowsStaleLockReclaimer(undefined);`,
+      `const release = new Promise((resolveRelease) => {`,
+      `  process.stdin.on("data", (chunk) => { if (chunk.toString("utf8").includes("release")) resolveRelease(); });`,
+      `  process.stdin.on("end", resolveRelease);`,
+      `});`,
+      `await withPathLock(${JSON.stringify(registrationPath)}, async () => {`,
+      `  process.stdout.write("LOCKED\\n");`,
+      `  await release;`,
+      `});`,
+      `process.stdout.write("RELEASED\\n");`,
+    ].join("\n"),
+    "utf8",
+  );
 
   const child = spawn(process.execPath, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
-  child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString("utf8")).slice(-4096); });
-  const exited = new Promise<void>((resolveExit) => { child.once("exit", () => resolveExit()); });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString("utf8")).slice(-4096);
+  });
+  const exited = new Promise<void>((resolveExit) => {
+    child.once("exit", () => resolveExit());
+  });
   await new Promise<void>((resolveLocked, rejectLocked) => {
-    const timer = setTimeout(() => rejectLocked(new Error(`lock holder never acquired; stderr=${stderr || "<empty>"}`)), 10_000);
+    const timer = setTimeout(
+      () => rejectLocked(new Error(`lock holder never acquired; stderr=${stderr || "<empty>"}`)),
+      10_000,
+    );
     let buffer = "";
     child.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
-      if (buffer.includes("LOCKED")) { clearTimeout(timer); resolveLocked(); }
+      if (buffer.includes("LOCKED")) {
+        clearTimeout(timer);
+        resolveLocked();
+      }
     });
-    child.once("error", (error) => { clearTimeout(timer); rejectLocked(error); });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      rejectLocked(error);
+    });
   });
   return Object.freeze({
     pid: child.pid!,
@@ -225,7 +249,7 @@ async function spawnLockHolder(root: string): Promise<LockHolder> {
   });
 }
 
-test("a live second process holding the registration lock blocks every registration operation", async () => {
+test("a live second process holding the registration lock blocks every registration writer", async () => {
   const root = await createRoot();
   await publishStardewInstallationRegistration(root, null, readyRecord());
   const lockPath = join(root, `${REGISTRATION_RELATIVE}.lock`);
@@ -258,11 +282,10 @@ test("a live second process holding the registration lock blocks every registrat
     const ownerPending = withStardewLifecycleInstallationRegistrationOwner(root, async () => "unreachable");
     pending.push(ownerPending.catch(() => undefined));
     await assertStillBlocked(ownerPending);
-    // Reading also takes the lock, so a blocked read is redacted as unavailable
-    // rather than observing a half-owned registration.
-    const readPending = readStardewInstallationRegistration(root);
-    pending.push(readPending.catch(() => undefined));
-    await assertStillBlocked(readPending);
+    // A read takes no lock, so the foreign owner cannot block it: the same record is returned
+    // while the writer's barrier is up. This is the defect that poisoned a live Host's composed
+    // root - a kept .lock residue whose owner is alive must never be able to stop a read.
+    assert.equal((await readStardewInstallationRegistration(root))?.revision, 1);
     assert.equal(JSON.parse(await readFile(join(root, REGISTRATION_RELATIVE), "utf8")).revision, 1);
 
     // Release, then drain every blocked attempt before asserting on the record:
@@ -273,6 +296,9 @@ test("a live second process holding the registration lock blocks every registrat
     await holder.release();
     await Promise.all(pending);
   } finally {
+    // Release first: an assertion that fails while the foreign owner still holds the lock must
+    // fail in seconds, not leave the holder child alive and hang the file.
+    await holder.release().catch(() => undefined);
     await holder.exited.catch(() => undefined);
   }
 
@@ -299,15 +325,19 @@ test("the registration lock is released once the attempt is bound, so the refusa
   // Binding the attempt takes the lock for the preparation scope only.
   const harness = createHarness();
   const browserSessionId = "browser-lock-scope";
-  const confirmed = harness.composition.broker.confirm({
-    playerId: "player-1", companionId: "companion-1", browserSessionId, expiresAtMs: 5_000,
-  }).consume(browserSessionId);
+  const confirmed = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId,
+      expiresAtMs: 5_000,
+    })
+    .consume(browserSessionId);
   await harness.testCore.reserveOwnedPlayerHostBootstrapForActivation(root, confirmed);
 
-  assert.deepEqual(
-    (await readStardewInstallationRegistration(root))?.activeAttempt,
-    { bootstrapCorrelation: "bootstrap-1" },
-  );
+  assert.deepEqual((await readStardewInstallationRegistration(root))?.activeAttempt, {
+    bootstrapCorrelation: "bootstrap-1",
+  });
   // The preparation scope is closed: no lock residue is left behind.
   await assert.rejects(readFile(lockPath, "utf8"), /ENOENT/);
   // And a competing rewrite is refused by the pointer rule, which is only
