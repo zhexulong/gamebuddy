@@ -1,0 +1,28 @@
+<Configuration>
+  <!--
+    Black-box recorder: the smallest configuration that can report WHY a logon command fails.
+
+    Every earlier attempt could not distinguish "the logon command never ran" from "it ran and the mapped
+    folder was missing", because both leave the host share empty. So the recorder writes C:\boot.log on the
+    GUEST's own drive and copies itself there first - a mount failure after that point cannot take the
+    recorder with it.
+
+    The command is deliberately free of shell redirections (`>`, `2>&1`, `&`) for one measured reason: those
+    characters are XML metacharacters, and an unescaped `>` in <Command> made the whole configuration fail to
+    parse with "An error occurred while parsing EntityName". The platform reported that only in a dialog the
+    host cannot read, so the sandbox silently did nothing and the failure looked like "logon commands do not
+    run here". `tools/sandbox/validate-sandbox-configs.py` now rejects any configuration with this defect.
+    Batch-file redirection happens inside record.ps1 instead, where no XML parser is involved.
+  -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\Users\long\gamebuddy-sandbox</HostFolder>
+      <SandboxFolder>C:\gamebuddy-share</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <Networking>Disable</Networking>
+  <LogonCommand>
+    <Command>cmd.exe /c "copy /y C:\gamebuddy-share\record.ps1 C:\record.ps1 &amp; powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\record.ps1"</Command>
+  </LogonCommand>
+</Configuration>

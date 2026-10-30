@@ -35,7 +35,12 @@ import {
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
 const repositoryRoot = resolve(hostRoot, "..");
-const DEFAULT_LAUNCHER_BUNDLE = resolve(repositoryRoot, "desktop", "GameBuddy.Desktop", "bin", "Release", "net8.0-windows");
+const DEFAULT_LAUNCHER_BUNDLE = resolve(repositoryRoot, "desktop", "dist", "launcher");
+/**
+ * The launcher directory the packaging step reads, exported so the gate that holds it equal
+ * to `build:desktop-launcher`'s publish directory reads the value rather than restating it.
+ */
+export const launcherBundleDefaultForTesting = DEFAULT_LAUNCHER_BUNDLE;
 const LAUNCHER_ENTRY = "GameBuddy.Desktop.exe";
 const PACKAGE_SCHEMA = "gamebuddy-player-distribution-package/v1";
 // Debug symbols are not part of a shipped payload, and a `.pdb` can carry source paths

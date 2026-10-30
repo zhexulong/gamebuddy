@@ -28,6 +28,17 @@ const POINTER_SCHEMA = "gamebuddy-host-production-current/v2";
 const RUNTIME_ADMISSION_SCHEMA = "host-runtime-admission/v1";
 const BOOTSTRAP_STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
 const STARDEW_MOD_ENTRY = "native/stardew-mod/GameBuddy/GameBuddy.Stardew.dll";
+/**
+ * The mod-loader payload a player's game folder is brought to by one click, and the licence
+ * its LGPL terms require beside it. Both must be in a generation by name: the install reads
+ * the manifest and copies exactly what it declares, so a generation without them can only
+ * refuse the install - after the player has already chosen their game folder.
+ */
+const SMAPI_PAYLOAD_ENTRIES = Object.freeze({
+  smapiLoader: "native/smapi/win-x64/StardewModdingAPI.exe",
+  smapiManifest: "native/smapi/payload-manifest.json",
+  smapiLicense: "native/smapi/SMAPI-LICENSE.txt",
+});
 const DESKTOP_BUNDLE_ENTRY = "GameBuddy.Desktop.exe";
 const BOOTSTRAP_PROBE_TIMEOUT_MS = 60_000;
 
@@ -284,6 +295,11 @@ export async function reportPackagingCompleteness({ outputRoot, generationRoot, 
     hostBuild: await present("main.js"),
     modBuild: await present(STARDEW_MOD_ENTRY),
     desktopBundle,
+    ...Object.fromEntries(
+      await Promise.all(
+        Object.entries(SMAPI_PAYLOAD_ENTRIES).map(async ([piece, path]) => [piece, await present(path)]),
+      ),
+    ),
   });
 }
 

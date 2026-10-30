@@ -1,0 +1,247 @@
+{
+  "schema": "gamebuddy-smapi-payload-manifest/v1",
+  "version": "4.5.2",
+  "sourceUrl": "https://github.com/Pathoschild/SMAPI/releases/download/4.5.2/SMAPI-4.5.2-installer.zip",
+  "sourceArchiveSha256": "dd01ddca7b566bfe0d3b3d2d03833496abc56c53da976241f2ab443f5484acc4",
+  "sourceArchiveEntry": "internal/windows/install.dat",
+  "license": {
+    "file": "SMAPI-LICENSE.txt",
+    "sha256": "cff5ab18b027a9476ae47d171f3c94ace089279dbd73c1ccfbd5b43f014769cb"
+  },
+  "root": "win-x64",
+  "files": [
+    {
+      "path": "Mods/ConsoleCommands/ConsoleCommands.dll",
+      "size": 99328,
+      "sha256": "6a6caddc54feed287ca5d33deca69de967b2b9076c6e4be0388e06ad9f1ae4cd"
+    },
+    {
+      "path": "Mods/ConsoleCommands/manifest.json",
+      "size": 280,
+      "sha256": "c8b9e122b396b7f0eafe9982345bec854a10db3a1016fa91bc76d1ba50998392"
+    },
+    {
+      "path": "Mods/SaveBackup/SaveBackup.dll",
+      "size": 22528,
+      "sha256": "3b69a10d0444575440a6e8f06a40fbae9859bb3a5a97b1a2e43904f8de3481c7"
+    },
+    {
+      "path": "Mods/SaveBackup/manifest.json",
+      "size": 271,
+      "sha256": "ba91bb110206b95bb91391fa483740d4eae943e9144615950182b355609996a2"
+    },
+    {
+      "path": "StardewModdingAPI.dll",
+      "size": 1037824,
+      "sha256": "5e4c51bb3cd6616f5adcb804769dbb7c6872b2478fab786fb4ca00c72c7456bf"
+    },
+    {
+      "path": "StardewModdingAPI.exe",
+      "size": 166912,
+      "sha256": "53c6d30b591428c30c39d91577df608c8632068cbce57efbc47e0822a2365d4b"
+    },
+    {
+      "path": "StardewModdingAPI.exe.config",
+      "size": 110,
+      "sha256": "25c362d68168cd7a86b21f2b4817c4144660a295b525b21638d15ffd48c9d33e"
+    },
+    {
+      "path": "StardewModdingAPI.runtimeconfig.json",
+      "size": 574,
+      "sha256": "a3c897cc8c0b0acb3b1f9617a9dde27ff240195e30fcb95457b75de9c8a40f7f"
+    },
+    {
+      "path": "StardewModdingAPI.xml",
+      "size": 904473,
+      "sha256": "b9ef3b8dbc5bf589285d37f5e930a8628813a6d962a1d998b229f166684fe13d"
+    },
+    {
+      "path": "smapi-internal/0Harmony.dll",
+      "size": 241152,
+      "sha256": "4c5497325157c3855c45119098f34eff6009613db0e2e9c245a7ff46bc45da89"
+    },
+    {
+      "path": "smapi-internal/0Harmony.xml",
+      "size": 229837,
+      "sha256": "31d8d36a4e8ca80bb01993f9d7d7350410997afddc897a519876660d5511283e"
+    },
+    {
+      "path": "smapi-internal/Markdig.dll",
+      "size": 481280,
+      "sha256": "469997fbd3988d6c7665cf23c9bceb635e504f02dabd6ef7bff674a47a3c0a71"
+    },
+    {
+      "path": "smapi-internal/Mono.Cecil.Mdb.dll",
+      "size": 39936,
+      "sha256": "28cb367972bdc1cd43e4006306af2fd96d37f4ed4b239ee90e1dc7237a93af7f"
+    },
+    {
+      "path": "smapi-internal/Mono.Cecil.Pdb.dll",
+      "size": 90112,
+      "sha256": "a332332633fbcb20e8d50e49b4db7bd1557721417122cf0c5f4c42f2332391d0"
+    },
+    {
+      "path": "smapi-internal/Mono.Cecil.dll",
+      "size": 361472,
+      "sha256": "831dca77470d85cb6ffbea3072daa7a3df5b7c9fcfd9c3f43674a9be99d4bfcf"
+    },
+    {
+      "path": "smapi-internal/MonoMod.Common.dll",
+      "size": 155136,
+      "sha256": "b89cc8f3d8fbaee1bcef0d132ac05f0486b6aefb01a9ecf26af2b36c30fd0ed7"
+    },
+    {
+      "path": "smapi-internal/Newtonsoft.Json.dll",
+      "size": 723368,
+      "sha256": "a28c251dfe36d881e9e2462e171441b8b0ec156fe3f452602c9149b1b9efe05b"
+    },
+    {
+      "path": "smapi-internal/Pathoschild.Http.Client.dll",
+      "size": 59904,
+      "sha256": "b56344e04c86857c01459471c244570d39177ed7ad9f2de682b7c7fa2d1858c0"
+    },
+    {
+      "path": "smapi-internal/Pintail.dll",
+      "size": 68608,
+      "sha256": "1b0e4efa86445e7f2e1498129cc1aba8005f26833ec4632aece1a601f1c54be2"
+    },
+    {
+      "path": "smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll",
+      "size": 13824,
+      "sha256": "8b9b2376954a78cb16843b3ba4196b364f55a828997b9411ccdf98520b8a23c8"
+    },
+    {
+      "path": "smapi-internal/SMAPI.Toolkit.CoreInterfaces.xml",
+      "size": 9428,
+      "sha256": "2e33c2bc316a06dc676ae7f9ce28a4ec83b4d048d64b84fae9f6f03d05e202cd"
+    },
+    {
+      "path": "smapi-internal/SMAPI.Toolkit.dll",
+      "size": 162304,
+      "sha256": "36f6116eb4490014aa4fcedc8cbf71c0146f77c2f47502e52cd143c0decbfc96"
+    },
+    {
+      "path": "smapi-internal/SMAPI.Toolkit.xml",
+      "size": 183511,
+      "sha256": "58b9c22348e305cc797f2198911953c1db98200ec78c5c5e27fa2b5e09b64c97"
+    },
+    {
+      "path": "smapi-internal/System.Net.Http.Formatting.dll",
+      "size": 189360,
+      "sha256": "61fb9dfd0bf26b6a5be8a2aac62611c0034330fad2fac7ab112a146129f125d1"
+    },
+    {
+      "path": "smapi-internal/TMXTile.dll",
+      "size": 52224,
+      "sha256": "e71ff780e56da8dfb9f8fcd169a9f56d6556538374e8b080709ca0b0772e0167"
+    },
+    {
+      "path": "smapi-internal/VdfConverter.dll",
+      "size": 17408,
+      "sha256": "0fe39ef54b12307bfadfd4f7fa400ca5f94d6b35efa15f7a42e3fa4bb9946e7c"
+    },
+    {
+      "path": "smapi-internal/blacklist.json",
+      "size": 1806,
+      "sha256": "bed4fd14d0b911c2fe6acb72c2af6708325306054834e1df86e4f161d4c6add6"
+    },
+    {
+      "path": "smapi-internal/config.json",
+      "size": 6665,
+      "sha256": "e1ed3c2f95230655aa014b2c69db231a2c7ed103336c4b5f57176c08917787b3"
+    },
+    {
+      "path": "smapi-internal/i18n/de.json",
+      "size": 3201,
+      "sha256": "4e88a4c46bd790610b0679b4aab75875878574c4a2cc8d98ec3eca9611c30c7b"
+    },
+    {
+      "path": "smapi-internal/i18n/default.json",
+      "size": 3188,
+      "sha256": "bdccadba5ef40a522258a518aa5f7bde93c316648859b2bec6c403644ba36aa7"
+    },
+    {
+      "path": "smapi-internal/i18n/es.json",
+      "size": 3482,
+      "sha256": "ee4818442ae3e54186fb741e966e863d50638a161dc7c27327ddfcd3a6253786"
+    },
+    {
+      "path": "smapi-internal/i18n/fr.json",
+      "size": 3789,
+      "sha256": "ea9ebaedc99bd8793cf0f16580976e703716ec5cd5259116cdf040a7dd623f9a"
+    },
+    {
+      "path": "smapi-internal/i18n/hu.json",
+      "size": 3198,
+      "sha256": "e91a3ac8da097db8cc77c9b04cebc294c20345d0936c23e3028f19c79aeae3f3"
+    },
+    {
+      "path": "smapi-internal/i18n/id.json",
+      "size": 3454,
+      "sha256": "388ddb48338029e2d724a0fed683e0cc5a6cf1cff515029c95b489a2fec4360c"
+    },
+    {
+      "path": "smapi-internal/i18n/it.json",
+      "size": 3203,
+      "sha256": "a9ba723c4a7bfef0efd12445b630f50898a01c10f79ce2c6754c26ec5fc4d2f6"
+    },
+    {
+      "path": "smapi-internal/i18n/ja.json",
+      "size": 3205,
+      "sha256": "932090fe380f67fcd99d2edec1ab38d14a458b084779e903937c293efdde12ad"
+    },
+    {
+      "path": "smapi-internal/i18n/ko.json",
+      "size": 3205,
+      "sha256": "c8764b00f40cb3b855901e7b96e328d4e2708e27e25a3481bc980136aca15714"
+    },
+    {
+      "path": "smapi-internal/i18n/pl.json",
+      "size": 3218,
+      "sha256": "6808207e00c76f2629b0392165cdbb0ff2565053b9fc51c66c4c1d8b32ae1738"
+    },
+    {
+      "path": "smapi-internal/i18n/pt.json",
+      "size": 3540,
+      "sha256": "a2e7120233db3bc6e19fe1369401d6cb0305776b1b489a0ecf75722f2e8dca3d"
+    },
+    {
+      "path": "smapi-internal/i18n/ru.json",
+      "size": 5198,
+      "sha256": "94fe9c6e9d3365eb649ac9132400de4b4634e90af66569a2b8b8618833778fa1"
+    },
+    {
+      "path": "smapi-internal/i18n/th.json",
+      "size": 6335,
+      "sha256": "0b7fe8abe9f0aafb97c16eaf2259d7ea116d5fd792c800ecfb6875261f79bbdd"
+    },
+    {
+      "path": "smapi-internal/i18n/tr.json",
+      "size": 3198,
+      "sha256": "15119f50bc5cac2a88d340ba21674fa4ec50d42580d1e47906365b24ddf0b6c6"
+    },
+    {
+      "path": "smapi-internal/i18n/uk.json",
+      "size": 3227,
+      "sha256": "d9966b060e997d326a57d5ad12214c259e263eb408ad5c51080c6ff37d7da6db"
+    },
+    {
+      "path": "smapi-internal/i18n/zh.json",
+      "size": 3202,
+      "sha256": "351514d1bcd4457235a4aa342e674952d893838c70087275920dffe31d637d91"
+    },
+    {
+      "path": "smapi-internal/metadata.json",
+      "size": 44996,
+      "sha256": "e134b4f73f0c572792f4a5d4a972a69ae0ed5c9edbebf1dc61629e8e15a33682"
+    },
+    {
+      "path": "steam_appid.txt",
+      "size": 6,
+      "sha256": "199f71bc8b15760aae5e2b1f108f762645a2a02b37510074ec9c1d909cd980dd"
+    }
+  ],
+  "playerOwnedFiles": [
+    "smapi-internal/config.json"
+  ]
+}

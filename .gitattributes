@@ -1,6 +1,12 @@
 # GameBuddy-owned text is always LF so diagnostics and snapshots do not depend on core.autocrlf.
 * text=auto eol=lf
 
+# Windows batch files must keep CRLF: cmd.exe misparses a .cmd that uses bare LF, reporting
+# "was unexpected at this time" instead of running it. That failure was measured on
+# tools/sandbox/sandbox-verify.cmd, which then reported nothing at all - the script never started.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 # Explicit binary assets must never be EOL-normalized.
 *.7z binary
 *.bmp binary

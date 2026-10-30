@@ -55,6 +55,12 @@ async function publishFixture({ entries = undefined, omit = [] } = {}) {
     [join(generationRoot, "runtime", "README.md"), "readme"],
     [join(generationRoot, "bootstrap", "entry", "desktop-host-entry.internal.js"), "export {};\n"],
     [join(generationRoot, "native", "stardew-mod", "GameBuddy", "GameBuddy.Stardew.dll"), "mod"],
+    // The mod-loader payload the one-click install copies into a player's game folder, and the
+    // licence its LGPL terms require beside it. A generation carries all three or the install
+    // can only refuse after the player has already chosen their folder.
+    [join(generationRoot, "native", "smapi", "win-x64", "StardewModdingAPI.exe"), "loader"],
+    [join(generationRoot, "native", "smapi", "payload-manifest.json"), "{\n"],
+    [join(generationRoot, "native", "smapi", "SMAPI-LICENSE.txt"), "licence\n"],
     [join(generationRoot, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox" })],
   ]);
   for (const path of omit) files.delete(path);
@@ -94,6 +100,33 @@ function stubbedSpawn({ resolutionIntoRepository = false } = {}) {
   return { spawn, calls };
 }
 
+test("a generation without the mod-loader payload or its licence is incomplete by name", async () => {
+  // The defect this pins: the one-click install reads this payload by manifest, so a
+  // generation that lost it - or kept the loader but dropped the LGPL text - can only refuse
+  // the install, after the player already picked their game folder. The packaging report
+  // names the missing piece instead of letting the download ship.
+  for (const [omit, piece] of [
+    [join("native", "smapi", "win-x64", "StardewModdingAPI.exe"), "smapiLoader"],
+    [join("native", "smapi", "payload-manifest.json"), "smapiManifest"],
+    [join("native", "smapi", "SMAPI-LICENSE.txt"), "smapiLicense"],
+  ]) {
+    const fixture = await publishFixture();
+    try {
+      await rm(join(fixture.generationRoot, omit));
+      const packaging = await reportPackagingCompleteness({
+        outputRoot: fixture.root,
+        generationRoot: fixture.generationRoot,
+      });
+      assert.equal(packaging[piece], "absent", piece);
+      // The pieces that were not omitted are still reported, so the failure names which one
+      // is missing rather than "the package is broken".
+      assert.notEqual(packaging.offlineRuntime, "absent");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("the assertion copies the generation outside the repository and starts it with the packaged runtime", async () => {
   const fixture = await publishFixture();
   const { spawn, calls } = stubbedSpawn();
@@ -109,6 +142,9 @@ test("the assertion copies the generation outside the repository and starts it w
       hostBuild: `generations/${GENERATION}/main.js`,
       modBuild: `generations/${GENERATION}/native/stardew-mod/GameBuddy/GameBuddy.Stardew.dll`,
       desktopBundle: "absent",
+      smapiLoader: `generations/${GENERATION}/native/smapi/win-x64/StardewModdingAPI.exe`,
+      smapiManifest: `generations/${GENERATION}/native/smapi/payload-manifest.json`,
+      smapiLicense: `generations/${GENERATION}/native/smapi/SMAPI-LICENSE.txt`,
     });
     // Both probes run the packaged runtime by absolute path, never a PATH node,
     // and both run from inside the moved tree.
