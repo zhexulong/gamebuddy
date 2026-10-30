@@ -302,6 +302,25 @@ export class CompanionHostService {
    * `unobserved` until a turn has been delivered (and whenever a flush had nothing to deliver).
    */
   #lastTurnOutcome: CompanionTurnOutcome = "unobserved";
+  /**
+   * Consecutive delivered turns that ended with the model doing nothing (a spoken line, no action), with no pending
+   * delivery to justify another one.
+   *
+   * <p>
+   * MEASURED 2026-10-30 (`round9`): the companion came home at in-game 18:20, said "进屋了。门槛上的泥磕掉了，手也搓干净
+   * 了，锅我架上了。", and stopped. `stop=stop`, no tool call, world static - so `EventPump.hasPendingDelivery` was false,
+   * the `finally` in `flushSoon` saw nothing pending, and nothing woke another turn. `rx` froze at 415/415 and the clock
+   * stopped, which meant the 22:00 milestone this pipeline DOES publish (`day_5_2200` appeared in the previous run) could
+   * never arrive - a Stardew clock only moves while an action is being taken.
+   * </p>
+   * <p>
+   * The self-lock is the whole point: a static world mints no fact, and the companion is the only thing that moves the
+   * world. So a turn that ended after dialogue alone must not be indistinguishable from a turn that found nothing to do.
+   * TWO is the bound, because a companion is usually right to speak first and act second - it says one line and then
+   * works on the next turn - while a model that will not act should not spend turns indefinitely.
+   * </p>
+   */
+  #idleTurnsWithoutWork = 0;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelayMs = 50;
   #closed = false;
@@ -949,6 +968,11 @@ export class CompanionHostService {
         // Retained so a caller that awaits player input can report it instead of guessing from silence.
         const outcome = await this.loop.flush();
         this.#lastTurnOutcome = outcome ?? "unobserved";
+        // What the turn DID, which `outcome` cannot say: `completed` covers both "acted" and "only spoke". A flush that
+        // delivered nothing leaves the counter alone - it is not evidence either way.
+        if (outcome === "completed")
+          this.#idleTurnsWithoutWork = this.loop.pump.turnProducedWork ? 0 : this.#idleTurnsWithoutWork + 1;
+        else if (outcome !== undefined) this.#idleTurnsWithoutWork = 0;
       }
       this.#retryDelayMs = 50;
     } catch (error) {
@@ -976,7 +1000,35 @@ export class CompanionHostService {
         // Otherwise a rejected provider turn would recurse in this finally.
         if (this.#retryDelayMs === 50) void this.flushSoon().catch(() => undefined);
       }
+      // The liveness arm: asked even when the pump has nothing pending, because that is the whole defect. Placed in the
+      // same `finally` so a turn that spoke only re-arms exactly once; `#turnOwesAnother` carries the bound.
+      else if (this.#retryTimer === undefined && this.#turnOwesAnother()) {
+        void this.flushSoon().catch(() => undefined);
+      }
     }
+  }
+
+  /**
+   * Whether another turn is owed even though the pump has nothing to deliver.
+   *
+   * <p>
+   * This is the ONE place that decides it. Before this existed the answer was `hasPendingDelivery` alone, and that made
+   * "the model chose to speak only" identical to "there is nothing to do" - see `#idleTurnsWithoutWork` for the run that
+   * proved it. The pump still owns delivery; this owns LIVENESS.
+   * </p>
+   * <p>
+   * `#idleTurnsWithoutWork` cannot be inferred from `#lastTurnOutcome`: `completed` means the turn settled, not that it
+   * produced work, and a turn that spoke AND acted also reports `completed`. The counter is incremented by the flush that
+   * knows what the turn did.
+   * </p>
+   */
+  #turnOwesAnother(): boolean {
+    if (this.#closed || !this.#integrationAdmissionOpen) return false;
+    // A pending delivery is the ordinary reason, unchanged.
+    if (this.loop.pump.hasPendingDelivery) return true;
+    // The second reason, and the defect: the last turn settled without producing work, so the world is exactly where it
+    // was and nothing will move it. Bounded, so a model that answers with dialogue forever costs two turns, not the run.
+    return this.#idleTurnsWithoutWork > 0 && this.#idleTurnsWithoutWork < 2 && this.#lastTurnOutcome === "completed";
   }
 
   private scheduleRetry(): void {

@@ -282,6 +282,18 @@ export class CompanionEventPump {
     return this.#retryBatch !== undefined || this.#inputs.length > 0 || this.#hasPendingFactTrigger();
   }
 
+  /**
+   * Whether the most recently DELIVERED turn ran any tool, or only spoke.
+   *
+   * <p>
+   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's event stream. `false` for a
+   * turn that produced dialogue and nothing else - the shape that let a 2026-10-30 run stop at in-game 18:20 and freeze
+   * the clock, which then made the pipeline's own 22:00 milestone unreachable (`#idleTurnsWithoutWork` in HostService has
+   * the full account).
+   * </p>
+   */
+  public turnProducedWork = false;
+
   /** Authenticated player input has been accepted but is not yet Pi-consumed. */
   public get hasPendingPlayerInput(): boolean {
     return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;

@@ -208,6 +208,17 @@ export class CompanionLoop {
     const cancelled = new Promise<void>((resolve) => {
       resolveCancelled = resolve;
     });
+    // Did this turn DO anything, or only speak?
+    //
+    // MEASURED 2026-10-30 (`round9`): the companion came home at in-game 18:20, said one line about putting a pot on, and
+    // stopped with `stop=stop` and no tool call. The pump had nothing pending, so nothing woke another turn - and because a
+    // Stardew clock only advances while an action is taken, the 22:00 milestone that WOULD have told it to sleep could never
+    // arrive. The world cannot break that lock by itself: the companion is the only thing that moves it.
+    //
+    // `turnOutcome` cannot answer this: `completed` covers both "acted" and "only spoke". So the turn records the one fact
+    // that separates them - whether Pi emitted a tool call for this batch - and `HostService` uses it to decide whether
+    // another turn is owed.
+    let producedWork = false;
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
@@ -245,6 +256,11 @@ export class CompanionLoop {
         return "unobserved";
       }
       unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
+        // Any tool execution in this batch is work: the model chose an action rather than only speaking. Read from the raw
+        // event stream because this is the only layer that sees it - the pump sees batches, and `turnOutcome` collapses
+        // "acted" and "spoke" into `completed`. `tool_execution_start` is the one event type that fires for every tool a
+        // turn runs, including a `stardew_plan_work` batch, and it is the SDK's own name for it.
+        if (event.type === "tool_execution_start") producedWork = true;
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
           // Pi has now put this exact batch into its active context. Open the
           // presentation lineage *at this boundary*, not after
@@ -456,6 +472,7 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
+      this.pump.turnProducedWork = producedWork;
       if (batchId !== undefined) {
         try {
           this.volatileContext?.clear(batchId);
