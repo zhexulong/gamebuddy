@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "artifactKind": "dependency_risk_acceptances",
-  "snapshotId": "zod-4.6.7-zero-advisories",
+  "snapshotId": "pi-runtime-1.4.0-zero-advisories",
   "lockfileHashes": {
-    "pnpm-lock.yaml": "a07dfe48a4dabde19df1cfd97c84e4dcad34c9d50ee6a3175c0fed910aaa4261",
+    "pnpm-lock.yaml": "a90139bcbad748481176efa8875c39869dfb55720927dd46320b6daa8e954cc9",
     "vendor/magic-context/bun.lock": "5f8b0c7089743ea645277846664bfdeab59115ad8919048204ccc963047301ef",
     "integrations/stardew/packages.lock.json": "7b2b7f4f8325e4a144e8a73b6dbc805a499940be6204d7d5f6ccb8e0e64ec660"
   },

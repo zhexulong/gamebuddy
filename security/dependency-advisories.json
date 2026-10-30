@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "artifactKind": "dependency_advisory_snapshot",
-  "snapshotId": "zod-4.6.7-zero-advisories",
-  "generatedAt": "2026-10-30T13:10:12.914Z",
+  "snapshotId": "pi-runtime-1.4.0-zero-advisories",
+  "generatedAt": "2026-10-30T14:57:06.472Z",
   "scanner": {
     "identity": "pnpm-audit",
     "version": "pnpm@11.1.3",
@@ -12,7 +12,7 @@
   "lockfiles": {
     "pnpm-lock.yaml": {
       "present": true,
-      "sha256": "a07dfe48a4dabde19df1cfd97c84e4dcad34c9d50ee6a3175c0fed910aaa4261"
+      "sha256": "a90139bcbad748481176efa8875c39869dfb55720927dd46320b6daa8e954cc9"
     },
     "vendor/magic-context/bun.lock": {
       "present": true,

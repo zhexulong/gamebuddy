@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "a07dfe48a4dabde19df1cfd97c84e4dcad34c9d50ee6a3175c0fed910aaa4261"
+        "value": "a90139bcbad748481176efa8875c39869dfb55720927dd46320b6daa8e954cc9"
       }
     ]
   },
@@ -752,7 +752,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-agent-core",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -770,7 +770,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-ai",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -788,7 +788,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-codemode",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -806,7 +806,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-coding-agent",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -824,7 +824,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-mcp",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -842,7 +842,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-telemetry",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -860,7 +860,7 @@
     {
       "type": "library",
       "name": "@earendil-works/pi-tui",
-      "version": "1.2.0",
+      "version": "1.4.0",
       "licenses": [
         {
           "license": {
@@ -6100,6 +6100,24 @@
         {
           "type": "website",
           "url": "https://marked.js.org"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "marked-cjk-friendly",
+      "version": "0.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/tats-u/markdown-cjk-friendly#readme"
         }
       ]
     },
