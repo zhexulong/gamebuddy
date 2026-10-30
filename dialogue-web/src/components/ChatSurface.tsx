@@ -30,6 +30,10 @@ export function ChatSurface({
   notice,
   replyTruncated,
   onSwipe,
+  onSwipeRemove,
+  onSwipeRemoveConfirm,
+  onSwipeRemoveCancel,
+  swipeRemoveArmedHandle,
   onRegenerate,
   onOpeningVariant,
   onRewind,
@@ -69,7 +73,10 @@ export function ChatSurface({
   chatTitle: string | null;
   labels: Messages;
   /** The chat mutation in flight and the message it belongs to, if any. */
-  pending: Readonly<{ kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete"; handle: string }> | null;
+  pending: Readonly<{
+    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    handle: string;
+  }> | null;
   /**
    * The optimistic player message: the text just sent, shown until the authoritative one lands.
    * It is handed to the timeline, which owns the scrolling section - rendering it beside the
@@ -86,6 +93,11 @@ export function ChatSurface({
    */
   replyTruncated: boolean;
   onSwipe: (messageHandle: string, direction: "prev" | "next") => void;
+  /** The variant discard and its confirmation, and the one message whose discard is armed. */
+  onSwipeRemove: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveConfirm: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveCancel: () => void;
+  swipeRemoveArmedHandle: string | null;
   onRegenerate: (messageHandle: string) => void;
   onOpeningVariant: (messageHandle: string, direction: "prev" | "next") => void;
   onRewind: (messageHandle: string, expectedOrder: number) => void;
@@ -139,6 +151,10 @@ export function ChatSurface({
         labels={labels}
         pending={pending}
         onSwipe={onSwipe}
+        onSwipeRemove={onSwipeRemove}
+        onSwipeRemoveConfirm={onSwipeRemoveConfirm}
+        onSwipeRemoveCancel={onSwipeRemoveCancel}
+        swipeRemoveArmedHandle={swipeRemoveArmedHandle}
         onRegenerate={onRegenerate}
         onOpeningVariant={onOpeningVariant}
         onRewind={onRewind}

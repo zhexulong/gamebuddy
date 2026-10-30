@@ -956,7 +956,9 @@
   .rewind-confirm-yes,
   .rewind-confirm-no,
   .delete-confirm-yes,
-  .delete-confirm-no {
+  .delete-confirm-no,
+  .swipe-remove-confirm-yes,
+  .swipe-remove-confirm-no {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -971,14 +973,16 @@
   }
 
   .rewind-confirm-yes,
-  .delete-confirm-yes {
+  .delete-confirm-yes,
+  .swipe-remove-confirm-yes {
     color: var(--danger);
     background-color: color-mix(in srgb, var(--danger) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
   }
 
   .rewind-confirm-no,
-  .delete-confirm-no {
+  .delete-confirm-no,
+  .swipe-remove-confirm-no {
     color: var(--text-secondary);
     background-color: transparent;
     border: 1px solid var(--border-subtle);
@@ -991,13 +995,15 @@
   }
 
   .rewind-confirm-yes:hover:not(:disabled),
-  .delete-confirm-yes:hover:not(:disabled) {
+  .delete-confirm-yes:hover:not(:disabled),
+  .swipe-remove-confirm-yes:hover:not(:disabled) {
     background-color: color-mix(in srgb, var(--danger) 18%, transparent);
     border-color: var(--danger);
   }
 
   .rewind-confirm-yes:disabled,
-  .delete-confirm-yes:disabled {
+  .delete-confirm-yes:disabled,
+  .swipe-remove-confirm-yes:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -1009,7 +1015,8 @@
      at 400 px. */
   .edit-btn,
   .delete-btn,
-  .copy-btn {
+  .copy-btn,
+  .swipe-remove-btn {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1);
@@ -1029,7 +1036,8 @@
 
   .edit-btn:hover:not(:disabled),
   .delete-btn:hover:not(:disabled),
-  .copy-btn:hover:not(:disabled) {
+  .copy-btn:hover:not(:disabled),
+  .swipe-remove-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
     border-color: var(--border-strong);
@@ -1037,7 +1045,8 @@
 
   .edit-btn:disabled,
   .delete-btn:disabled,
-  .copy-btn:disabled {
+  .copy-btn:disabled,
+  .swipe-remove-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -6063,19 +6072,22 @@
    The two thresholds are the strip's own arithmetic, not round numbers: 464 px is
    the narrowest column at which a four-action row still fits wearing its words
    (76 + 138 + 68 + 84 + three 6 px gaps = 384 for the player's row, and the widest
-   row that can overflow is her worded set), and 664 px is where her paged strip's
-   max-content - copy 76 + pager 136 + rewind 138 + edit 68 + delete 84 + four
-   6 px gaps = 526 - plus the 85% row and its avatar actually fits one line. Above
-   them the words come back and the strip is one line; below them the words are
-   retired and the pager takes the line beneath the actions. Both readings are
-   measured, above and below: at 560x900 her paged row is `action+action+
-   action+action | swipe-controls` (102 px), and at 1440x900 every row is one line
-   with its words.
+   row that can overflow is her worded set), and 712 px is where her paged strip's
+   max-content plus the 85% row and its avatar actually fits one line. Above them
+   the words come back and the strip is one line; below them the words are retired
+   and the pager takes the line beneath the actions.
+
+   The pager was 136 px until the variant discard joined it: a third 44 px control
+   plus the two 4 px inner gaps it adds is 48 px, and 184 is what the box now
+   measures at both widths. 712 is the old 664 moved by that same 48 - the threshold
+   is a function of this box, so it cannot stay behind the box it names - and the
+   defect-7 sweep (every integer width from 340 to 820) is what proves the new one
+   leaves no stranded control rather than the arithmetic alone.
 
    The rules are IDENTICAL to the ones the media query held - this block changes
    only what the condition asks - so the 400 px result it was written for is
    exactly what it was: her paged reply `action+action+action+action |
-   swipe-controls`, 98 px, the pager still 136 px wide, every target 44 px.
+   swipe-controls`, 98 px, the pager 184 px wide, every target 44 px.
 
    Appended block; the rules above are untouched.
    ========================================================================== */
@@ -6105,7 +6117,7 @@
     }
   }
 
-  @container (max-width: 663px) {
+  @container (max-width: 711px) {
     /* A zero-height break, so the stepper starts a new line without being STRETCHED across it:
        `flex-basis: 100%` on the stepper itself also forces the line but sizes its box to the whole
        column (measured 301 px instead of its own 136), and the stepper's box is a number the

@@ -22,6 +22,10 @@ export function Timeline({
   labels,
   preview = null,
   onSwipe,
+  onSwipeRemove,
+  onSwipeRemoveConfirm,
+  onSwipeRemoveCancel,
+  swipeRemoveArmedHandle = null,
   onRegenerate,
   onOpeningVariant,
   onRewind,
@@ -68,6 +72,14 @@ export function Timeline({
     swipeNextAtLast: string;
     swipePreviousBusy: string;
     swipeNextBusy: string;
+    /**
+     * The variant-discard control and the confirmation it opens. Like the two arrows it sits between it
+     * carries no visible word, so only the name, the prompt and the affirmative exist; the negative answer
+     * is the row's shared `deleteConfirmNo`.
+     */
+    swipeRemoveName: string;
+    swipeRemoveConfirmPrompt: string;
+    swipeRemoveConfirmYes: string;
     regenerateVariant: string;
     /**
      * The line a reply carries when the generation that wrote it stopped at the model's length
@@ -109,6 +121,16 @@ export function Timeline({
     copyNoticeFailed: string;
   };
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
+  /**
+   * Discarding one variant of a reply: the arm names the reply and the index the page rendered, the
+   * confirm sends it, and the cancel closes the arm. The control is offered only where the Host
+   * published more than one variant of the row, because a reply with one has nothing to remove.
+   */
+  onSwipeRemove?: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveConfirm?: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveCancel?: () => void;
+  /** The one message whose variant discard is armed, if any. */
+  swipeRemoveArmedHandle?: string | null;
   onRegenerate?: (messageHandle: string) => void;
   /** The new-chat opening choice for the first message; offered only when the Host publishes one. */
   onOpeningVariant?: (messageHandle: string, direction: "prev" | "next") => void;
@@ -142,7 +164,7 @@ export function Timeline({
    * regenerate affordance of another.
    */
   pending?: Readonly<{
-    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
     handle: string;
   }> | null;
   /**
@@ -203,6 +225,9 @@ export function Timeline({
    */
   const atBottomRef = useRef(true);
   const onSwipeRef = useRef(onSwipe);
+  const onSwipeRemoveRef = useRef(onSwipeRemove);
+  const onSwipeRemoveConfirmRef = useRef(onSwipeRemoveConfirm);
+  const onSwipeRemoveCancelRef = useRef(onSwipeRemoveCancel);
   const onRegenerateRef = useRef(onRegenerate);
   const onOpeningVariantRef = useRef(onOpeningVariant);
   const onRewindRef = useRef(onRewind);
@@ -220,6 +245,9 @@ export function Timeline({
   // would re-render (and re-parse its Markdown) on every token.
   useLayoutEffect(() => {
     onSwipeRef.current = onSwipe;
+    onSwipeRemoveRef.current = onSwipeRemove;
+    onSwipeRemoveConfirmRef.current = onSwipeRemoveConfirm;
+    onSwipeRemoveCancelRef.current = onSwipeRemoveCancel;
     onRegenerateRef.current = onRegenerate;
     onOpeningVariantRef.current = onOpeningVariant;
     onRewindRef.current = onRewind;
@@ -233,6 +261,15 @@ export function Timeline({
 
   const handleSwipe = useCallback((messageHandle: string, direction: "prev" | "next") => {
     onSwipeRef.current?.(messageHandle, direction);
+  }, []);
+  const handleSwipeRemove = useCallback((messageHandle: string, targetIndex: number) => {
+    onSwipeRemoveRef.current?.(messageHandle, targetIndex);
+  }, []);
+  const handleSwipeRemoveConfirm = useCallback((messageHandle: string, targetIndex: number) => {
+    onSwipeRemoveConfirmRef.current?.(messageHandle, targetIndex);
+  }, []);
+  const handleSwipeRemoveCancel = useCallback(() => {
+    onSwipeRemoveCancelRef.current?.();
   }, []);
   const handleRegenerate = useCallback((messageHandle: string) => {
     onRegenerateRef.current?.(messageHandle);
@@ -264,6 +301,8 @@ export function Timeline({
   // A caller that passed no handler keeps no control: the bubble gates its
   // swipe/regenerate affordances on the handler being present.
   const swipeHandler = onSwipe === undefined ? undefined : handleSwipe;
+  const swipeRemoveHandler = onSwipeRemove === undefined ? undefined : handleSwipeRemove;
+  const swipeRemoveConfirmHandler = onSwipeRemoveConfirm === undefined ? undefined : handleSwipeRemoveConfirm;
   const regenerateHandler = onRegenerate === undefined ? undefined : handleRegenerate;
   const openingVariantHandler = onOpeningVariant === undefined ? undefined : handleOpeningVariant;
   const rewindHandler = onRewind === undefined ? undefined : handleRewind;
@@ -366,6 +405,10 @@ export function Timeline({
               labels={labels}
               pending={pending !== null && pending.handle === message.handle ? pending.kind : null}
               onSwipe={swipeHandler}
+              onSwipeRemove={swipeRemoveHandler}
+              onSwipeRemoveConfirm={swipeRemoveConfirmHandler}
+              onSwipeRemoveCancel={onSwipeRemoveCancel === undefined ? undefined : handleSwipeRemoveCancel}
+              swipeRemoveArmed={swipeRemoveArmedHandle === message.handle}
               onRegenerate={message.handle === regenerateHandle ? regenerateHandler : undefined}
               onOpeningVariant={openingVariantHandler}
               onRewind={rewindHandler}

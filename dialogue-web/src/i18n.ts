@@ -411,6 +411,15 @@ const en = {
   swipeNextAtLast: "Next variant (this is the last variant)",
   swipePreviousBusy: "Previous variant (unavailable while a reply is being generated)",
   swipeNextBusy: "Next variant (unavailable while a reply is being generated)",
+  // Discarding one variant of a reply. The two arrows beside it PAGE through the set; this one throws the
+  // attempt on screen away, which is why its name states the loss rather than a direction - and why the
+  // press arms a confirmation first, exactly as the row's two other destructive controls do. A reply left
+  // with no words is not a state the conversation has, so the control is absent on a single variant rather
+  // than present and refused. Like the arrows it sits between it has no visible word: the glyph is the
+  // whole visible control and the words live in the accessible name, which is the stepper's own rule.
+  swipeRemoveName: "Discard this variant: it is removed from this reply for good",
+  swipeRemoveConfirmPrompt: "Discard this variant? This cannot be undone.",
+  swipeRemoveConfirmYes: "Discard",
   regenerateVariant: "Regenerate",
   // Her reply was cut off, and the player is the one who can do something about it: this line sits
   // on that reply and names the Regenerate control on the same row. It is NOT one of the failure
@@ -1354,6 +1363,13 @@ const zh: Messages = {
   swipeNextAtLast: "下一个变体（这已经是最后一个变体）",
   swipePreviousBusy: "上一个变体（正在生成回复，暂时不可用）",
   swipeNextBusy: "下一个变体（正在生成回复，暂时不可用）",
+  // 丢弃一个变体。它两侧的箭头是在同一组里前后翻，而它把眼前这一版丢掉——所以名称说的是失去什么，
+  // 而不是方向；也因此按下后先确认一次，与这一行另外两个破坏性控件同一形状。回复若被删到一个字都不剩就
+  // 不再是这个对话里的状态，所以只有一个变体时控件不出现，而不是出现后一律被拒绝。与它两侧的箭头一样没有
+  // 可见文字：字形就是全部可见控件，词语在无障碍名称里，这正是这个翻页器自己的规则。
+  swipeRemoveName: "丢弃这个版本：它会从这条回复里彻底消失",
+  swipeRemoveConfirmPrompt: "丢弃这个版本？此操作无法撤销。",
+  swipeRemoveConfirmYes: "丢弃",
   regenerateVariant: "重新生成",
   // 她的回复被截断了，而能改变这件事的是玩家：这句话就落在那条回复上，并点名同一行的「重新生成」。
   // 它不属于上面的失败文案，读起来也不像失败——回复是真实存在的、就在屏幕上，只是写了一半。

@@ -23,7 +23,7 @@ import { messages } from "../src/i18n";
  *    strings that really differ rather than by a sentence that would pass either way.
  * 2. `is a 44 px target, and adding it did not cost the strip a control` - measured at 1440x900 and
  *    400x800 in the shipped composed shell. Every control is at least 44 px in both directions, all
- *    five are present, the action row is one line, and the pager keeps its own 136 px box on the line
+ *    five are present, the action row is one line, and the pager keeps its own 184 px box on the line
  *    beneath at 400 - the layout the fifth control forced, stated as a rule rather than a fallback.
  * 3. `is reachable and operable by keyboard alone` - focus it with Tab, activate with Enter and with
  *    Space, and read the clipboard back each time. Catches a control that only answers a pointer.
@@ -282,7 +282,7 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
       expect(measured.pager, where).not.toBeNull();
       expect(actions[0]!.centre, where).toBeLessThan(measured.pager!.centre);
       // The pager keeps its own box rather than being stretched across the line it now owns.
-      expect(measured.pager!.width, where).toBe(136);
+      expect(measured.pager!.width, where).toBe(184);
     }
   }
 });

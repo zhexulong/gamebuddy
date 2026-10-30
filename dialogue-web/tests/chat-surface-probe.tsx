@@ -66,6 +66,8 @@ type Model = Readonly<{
   rewindArmedHandle: string | null;
   /** The one message whose delete is armed, exactly as the shell projects it to Timeline. */
   deleteArmedHandle: string | null;
+  /** The one message whose variant discard is armed, exactly as the shell projects it. */
+  swipeRemoveArmed: Readonly<{ handle: string; targetIndex: number }> | null;
   /**
    * The Host's turn fact `BrowserTurnV1.truncated`, exactly as the composed shell projects it to
    * ChatSurface: true while the generation that wrote the visible reply stopped at the model's
@@ -81,6 +83,7 @@ let model: Model = {
   pending: null,
   rewindArmedHandle: null,
   deleteArmedHandle: null,
+  swipeRemoveArmed: null,
   replyTruncated: false,
 };
 let rerender: (() => void) | null = null;
@@ -91,8 +94,15 @@ const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: 
 /** Every delete control a journey pressed, in the same shape as the rewind's. */
 const deleteCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
 
-/** Every edit a journey saved, so a test can see the pair and the words the surface sent. */
-const editCalls: { handle: string; order: number; text: string }[] = [];
+  /** Every edit a journey saved, so a test can see the pair and the words the surface sent. */
+  const editCalls: { handle: string; order: number; text: string }[] = [];
+
+  /**
+   * Every press of the variant discard, in the shape the shell drives: the index the page rendered the
+   * variant at travels with the reply, and a refusal - the Host refusing the last variant by name - is the
+   * shell's to turn into a sentence, so the probe records the call and holds no outcome.
+   */
+  const swipeRemoveCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; targetIndex: number }[] = [];
 
 function Probe() {
   const [, bump] = useState(0);
@@ -157,6 +167,26 @@ function Probe() {
           rerender?.();
         }}
         deleteArmedHandle={model.deleteArmedHandle}
+        /*
+         * The variant discard drives the shell's own two-step shape, on the same three callbacks: the arm is
+         * presentation state, the confirm is the command, and the cancel closes it.
+         */
+        onSwipeRemove={(handle, targetIndex) => {
+          swipeRemoveCalls.push({ kind: "arm", handle, targetIndex });
+          model = { ...model, swipeRemoveArmed: { handle, targetIndex } };
+          rerender?.();
+        }}
+        onSwipeRemoveConfirm={(handle, targetIndex) => {
+          swipeRemoveCalls.push({ kind: "confirm", handle, targetIndex });
+          model = { ...model, swipeRemoveArmed: null };
+          rerender?.();
+        }}
+        onSwipeRemoveCancel={() => {
+          swipeRemoveCalls.push({ kind: "cancel", handle: "", targetIndex: -1 });
+          model = { ...model, swipeRemoveArmed: null };
+          rerender?.();
+        }}
+        swipeRemoveArmedHandle={model.swipeRemoveArmed === null ? null : model.swipeRemoveArmed.handle}
         pending={model.pending}
         replyTruncated={model.replyTruncated}
       />
@@ -241,9 +271,76 @@ const chatProbe = {
     model = { ...model, voice: state };
     rerender?.();
   },
-  setPending(pending: { kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete"; handle: string } | null): void {
+  setPending(
+    pending: {
+      kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+      handle: string;
+    } | null,
+  ): void {
     model = { ...model, pending };
     rerender?.();
+  },
+  /** Every arm, confirm and cancel this probe's variant discard has sent. */
+  swipeRemoveCalls(): readonly { kind: "arm" | "confirm" | "cancel"; handle: string; targetIndex: number }[] {
+    return [...swipeRemoveCalls];
+  },
+  resetSwipeRemoveCalls(): void {
+    swipeRemoveCalls.length = 0;
+  },
+  /**
+   * The variant discard as the player meets it: null when the row offers none, otherwise what it is named,
+   * the target it paints, the strip it sits in, and where it sits - `inPager` is the assertion that it is
+   * NOT a member of the paging pill, and `stripIndex` is its position among the strip's own children.
+   */
+  swipeRemoveControl(handle: string): {
+    ariaLabel: string | null;
+    title: string | null;
+    label: string | null;
+    width: number;
+    height: number;
+    stripHeight: number;
+    inPager: boolean;
+    stripIndex: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const button = li?.querySelector('[data-testid="message-swipe-remove"]') as HTMLButtonElement | null;
+    if (button === null || button === undefined) return null;
+    const rect = button.getBoundingClientRect();
+    const strip = li?.querySelector(".message-actions");
+    return {
+      ariaLabel: button.getAttribute("aria-label"),
+      title: button.getAttribute("title"),
+      label: (button.querySelector(".action-word")?.textContent ?? "").trim(),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      stripHeight: strip === null || strip === undefined ? 0 : Math.round(strip.getBoundingClientRect().height),
+      inPager: button.closest(".swipe-controls") !== null,
+      stripIndex: strip === null ? -1 : [...strip.children].indexOf(button),
+    };
+  },
+  /**
+   * The armed variant-discard confirmation on `handle`'s row: its prompt, its two answers, and how many of
+   * the row's ordinary controls are still rendered beside it (the confirmation replaces them, not sits
+   * among them).
+   */
+  swipeRemoveConfirm(handle: string): {
+    prompt: string | null;
+    yes: string | null;
+    no: string | null;
+    ordinaryControls: number;
+  } | null {
+    const li = document.querySelector(`li[data-handle="${handle}"]`);
+    const confirm = li?.querySelector('[data-testid="message-swipe-remove-confirm"]');
+    if (confirm === null || confirm === undefined) return null;
+    return {
+      prompt: confirm.querySelector(".message-confirm-prompt")?.textContent ?? null,
+      yes: confirm.querySelector('[data-testid="message-swipe-remove-confirm-yes"]')?.textContent ?? null,
+      no: confirm.querySelector('[data-testid="message-swipe-remove-confirm-no"]')?.textContent ?? null,
+      ordinaryControls:
+        li?.querySelectorAll(
+          '.swipe-controls, .regenerate-btn, [data-testid="message-rewind"], [data-testid="message-edit"], [data-testid="message-delete"]',
+        ).length ?? 0,
+    };
   },
   /** Every arm, confirm and cancel this probe's delete control has sent. */
   deleteCalls(): readonly { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] {
@@ -494,6 +591,51 @@ const chatProbe = {
       no: confirm.querySelector('[data-testid="message-rewind-confirm-no"]')?.textContent ?? null,
       ordinaryControls:
         (li?.querySelectorAll('.swipe-controls, .regenerate-btn, [data-testid="message-rewind"]').length ?? 0),
+    };
+  },
+  /**
+   * A reply position carrying an explicit variant set, as the Host publishes one: the active index, how
+   * many attempts the position holds, and the words of the one on screen. `swipeTo` moves within whatever
+   * set a row already has; this is how a journey creates one.
+   */
+  swipeSet(handle: string, currentIndex: number, totalSwipes: number, text: string): void {
+    const existing = model.transcript.find((m) => m.handle === handle);
+    const published: BrowserMessageV1 = Object.freeze({
+      handle,
+      role: existing?.role ?? "companion",
+      text,
+      locale: existing?.locale ?? "und",
+      order: existing?.order ?? 0,
+      revision: existing?.revision ?? 1,
+      swipeInfo: Object.freeze({
+        currentIndex,
+        totalSwipes,
+        label: `${currentIndex + 1}/${totalSwipes}`,
+        hasPrevious: currentIndex > 0,
+        hasNext: currentIndex < totalSwipes - 1,
+      }),
+    });
+    const idx = model.transcript.findIndex((m) => m.handle === handle);
+    const transcript =
+      idx === -1 ? [...model.transcript, published] : model.transcript.map((m, i) => (i === idx ? published : m));
+    model = { ...model, transcript };
+    rerender?.();
+  },
+  /** The variant-discard control's words in each catalogue, so a journey can pin both languages. */
+  swipeRemoveSentences(locale: "en" | "zh-CN"): {
+    name: string;
+    prompt: string;
+    yes: string;
+    no: string;
+    nextVariant: string;
+  } {
+    const catalogue = messages(locale);
+    return {
+      name: catalogue.swipeRemoveName,
+      prompt: catalogue.swipeRemoveConfirmPrompt,
+      yes: catalogue.swipeRemoveConfirmYes,
+      no: catalogue.deleteConfirmNo,
+      nextVariant: catalogue.swipeNext,
     };
   },
   /**

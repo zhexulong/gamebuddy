@@ -1,4 +1,14 @@
-import { ChevronLeft, ChevronRight, Copy, LoaderCircle, Pencil, RefreshCw, Scissors, Trash2 } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CircleMinus,
+  Copy,
+  LoaderCircle,
+  Pencil,
+  RefreshCw,
+  Scissors,
+  Trash2,
+} from "lucide-react";
 import { memo, type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
 import { browserMessageLanguageTag } from "../reference-pipeline-api";
@@ -264,6 +274,10 @@ export const MessageBubble = memo(function MessageBubble({
   companionDigest,
   playerLabel,
   onSwipe,
+  onSwipeRemove,
+  onSwipeRemoveConfirm,
+  onSwipeRemoveCancel,
+  swipeRemoveArmed = false,
   onRegenerate,
   onOpeningVariant,
   onRewind,
@@ -297,6 +311,19 @@ export const MessageBubble = memo(function MessageBubble({
   companionDigest?: string;
   playerLabel: string;
   onSwipe?: (messageHandle: string, direction: "prev" | "next") => void;
+  /**
+   * Discarding ONE variant of this reply - the one the row is showing, named by the index the Host
+   * published. Like every other destructive control on the strip, the first press only ARMS it and the
+   * confirmation is what sends it: a generation the player spent tokens on does not leave the set on a
+   * single click. A reply that would be left with nothing to read is refused by name
+   * (`chat_swipe_last_variant`), so the control is absent when the row has one variant and there is no
+   * press the Host could answer.
+   */
+  onSwipeRemove?: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveConfirm?: (messageHandle: string, targetIndex: number) => void;
+  onSwipeRemoveCancel?: () => void;
+  /** True for the one message whose variant removal is armed: its strip becomes that confirmation. */
+  swipeRemoveArmed?: boolean;
   onRegenerate?: (messageHandle: string) => void;
   /**
    * The new-chat opening choice: it is offered only where the Host published an unlocked
@@ -345,7 +372,7 @@ export const MessageBubble = memo(function MessageBubble({
    * command with its single-flight ref, and the control saying so is what keeps a
    * double click from looking like it did nothing.
    */
-  pending?: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | null;
+  pending?: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete" | null;
   /**
    * True only for the live streaming preview: the bubble then carries the
    * reading caret. The caret is inserted into the bubble's last block on every
@@ -382,6 +409,14 @@ export const MessageBubble = memo(function MessageBubble({
   labels: SwipeArrowLabels &
     Readonly<{
       swipeNavigation: string;
+      /**
+       * The variant-discard control, and the confirmation it opens. Like the two arrows it sits between it
+       * has no visible word - the glyph is the whole visible control and this is the accessible name - so
+       * there is no word key; the negative answer is the row's shared `deleteConfirmNo`.
+       */
+      swipeRemoveName: string;
+      swipeRemoveConfirmPrompt: string;
+      swipeRemoveConfirmYes: string;
       regenerateVariant: string;
       openingVariantDefault: string;
       openingVariantAlternate: string;
@@ -433,6 +468,19 @@ export const MessageBubble = memo(function MessageBubble({
   // The message's own swipe set, when the Host published more than one variant of
   // it. It is the same shape as the opening choice, and it reads the same way.
   const swipeSet = swipeInfo !== undefined && swipeInfo.totalSwipes > 1 ? swipeInfo : undefined;
+  /**
+   * The variant this row would discard, named by the index the Host published for the variant on
+   * screen. The control exists only where a discard is possible at all: a position with one variant
+   * has nothing to remove, and the Host refuses exactly that by name (`chat_swipe_last_variant`), so
+   * offering a button that could only ever be refused would be the dead-control defect.
+   */
+  const swipeRemovePoint = swipeSet === undefined || onSwipeRemove === undefined ? undefined : swipeSet.currentIndex;
+  /**
+   * One destructive arm at a time, so an armed discard steps the row's other controls aside exactly
+   * as an armed rewind does: a confirmation rendered among the controls it replaces is a mis-click
+   * waiting to happen.
+   */
+  const stripReplaced = rewindArmed || swipeRemoveArmed;
   /**
    * The rewind point is the row the conversation is cut back TO, and the cut KEEPS that row: it
    * drops everything after it, which is what makes a PLAYER row a legal point - their own line
@@ -524,6 +572,7 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const rewindPair = useArmedConfirmation(rewindArmed, () => onRewindCancel?.());
   const deletePair = useArmedConfirmation(deleteArmed, () => onDeleteCancel?.());
+  const swipeRemovePair = useArmedConfirmation(swipeRemoveArmed, () => onSwipeRemoveCancel?.());
   /**
    * The copy's receipt, and the row's only transient state.
    *
@@ -575,7 +624,7 @@ export const MessageBubble = memo(function MessageBubble({
    * ui-layout-tail.spec.ts item 5) and a control between them would be that defect again.
    */
   const copyControl =
-    copyPoint && !rewindArmed ? (
+    copyPoint && !stripReplaced ? (
       <button
         type="button"
         className="action-btn copy-btn"
@@ -622,6 +671,72 @@ export const MessageBubble = memo(function MessageBubble({
     deletePoint !== undefined ||
     editReplyPoint !== undefined ||
     copyPoint;
+  const swipeRemoveConfirmation = swipeRemoveArmed ? (
+    <div
+      className="message-confirm"
+      data-testid="message-swipe-remove-confirm"
+      onKeyDown={swipeRemovePair.onConfirmKeyDown}
+    >
+      <p className="message-confirm-prompt" role="status">
+        {labels.swipeRemoveConfirmPrompt}
+      </p>
+      <div className="message-confirm-actions">
+        <button
+          type="button"
+          className="action-btn swipe-remove-confirm-yes"
+          data-testid="message-swipe-remove-confirm-yes"
+          disabled={busy}
+          onClick={() => onSwipeRemoveConfirm?.(message.handle, swipeSet?.currentIndex ?? 0)}
+          title={labels.swipeRemoveConfirmYes}
+          aria-label={labels.swipeRemoveConfirmYes}
+        >
+          {labels.swipeRemoveConfirmYes}
+        </button>
+        <button
+          ref={swipeRemovePair.cancelRef}
+          type="button"
+          className="action-btn swipe-remove-confirm-no"
+          data-testid="message-swipe-remove-confirm-no"
+          onClick={swipeRemovePair.cancel}
+          title={labels.deleteConfirmNo}
+          aria-label={labels.deleteConfirmNo}
+        >
+          {labels.deleteConfirmNo}
+        </button>
+      </div>
+    </div>
+  ) : null;
+  /**
+   * The variant's own discard control, the last child of the variant group that pages the same set: one group,
+   * because "show me the next attempt", "show me the previous one" and "throw this attempt away" are three
+   * answers to the same question - and because the group already owns a line of its own at narrow widths
+   * (style.css's container query), which a sixth control in the actions row did not: measured 520x900, a
+   * discard in that row stranded the rewind-edit-delete block on a third line of its own.
+   *
+   * It wears the group's bare-glyph shape rather than the actions' worded one, so the pill keeps the width its
+   * other two controls give it, and its class is its own (`.swipe-remove-btn`) because `.swipe-btn` is the two
+   * paging arrows by name - several journeys enumerate exactly those two.
+   */
+  const swipeRemoveControl =
+    swipeRemovePoint === undefined || stripReplaced ? null : (
+      <button
+        ref={swipeRemovePair.triggerRef}
+        type="button"
+        className="swipe-remove-btn"
+        data-testid="message-swipe-remove"
+        disabled={busy}
+        {...(pending === "swipeRemove" ? { "data-busy": "true" as const } : {})}
+        onClick={() => onSwipeRemove?.(message.handle, swipeRemovePoint)}
+        title={labels.swipeRemoveName}
+        aria-label={labels.swipeRemoveName}
+      >
+        {pending === "swipeRemove" ? (
+          <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+        ) : (
+          <CircleMinus size={14} aria-hidden="true" />
+        )}
+      </button>
+    );
   /**
    * The rewind's own two-step pair, hoisted out of either side's strip. Both sides of the exchange
    * carry it now - a player rewinds to their own line to be answered again, and her reply keeps the
@@ -759,150 +874,154 @@ export const MessageBubble = memo(function MessageBubble({
             window can retire the word and keep the control: the `aria-label` is what
             names these four, and style.css's narrow strip block is where that is
             argued and measured. */}
-        {!(isPlayer || deleteArmed) && (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed) && (
-          <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
-            {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
+        {!(isPlayer || deleteArmed) &&
+          (hasControls || onRegenerate || rewindPoint !== undefined || rewindArmed || swipeRemoveArmed) && (
+            <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
+              {/* Her editor replaces the WHOLE strip rather than joining it, on the same rule the
                 player's row follows: the pager, the variant switcher, regenerate, the rewind and the
                 destructive Delete are exactly the controls an open Save/Cancel pair must not sit
                 beside. */}
-            {editReplyPoint !== undefined && editor !== null ? (
-              <MessageEditor
-                text={editor.text}
-                busy={busy}
-                canSave={editor.text.trim().length > 0 && editor.text !== message.text}
-                fieldLabel={labels.editReplyField}
-                saveLabel={labels.editMessageSave}
-                cancelLabel={labels.editMessageCancel}
-                onTextChange={(text) => setEditor({ text, sent: editor.sent })}
-                onCancel={() => setEditor(null)}
-                onSave={() => {
-                  setEditor({ text: editor.text, sent: editor.text });
-                  onEdit?.(message.handle, message.order, editor.text);
-                }}
-              />
-            ) : (
-              <>
-                {/* An armed rewind is this message's only control: the pager and regenerate step aside
-                for the confirmation the same way a Chats row's own strip does. */}
-                {rewindConfirmation}
-                {copyControl}
-                {copyReceipt}
-                {!rewindArmed && openingChoice && (
-                  <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                    {/* The glyph is the visible control and the number between the two
+              {editReplyPoint !== undefined && editor !== null ? (
+                <MessageEditor
+                  text={editor.text}
+                  busy={busy}
+                  canSave={editor.text.trim().length > 0 && editor.text !== message.text}
+                  fieldLabel={labels.editReplyField}
+                  saveLabel={labels.editMessageSave}
+                  cancelLabel={labels.editMessageCancel}
+                  onTextChange={(text) => setEditor({ text, sent: editor.sent })}
+                  onCancel={() => setEditor(null)}
+                  onSave={() => {
+                    setEditor({ text: editor.text, sent: editor.text });
+                    onEdit?.(message.handle, message.order, editor.text);
+                  }}
+                />
+              ) : (
+                <>
+                  {/* An armed rewind, or an armed variant discard, is this message's only control: the
+                pager and regenerate step aside for the confirmation the same way a Chats row's own
+                strip does. */}
+                  {rewindConfirmation}
+                  {swipeRemoveConfirmation}
+                  {copyControl}
+                  {copyReceipt}
+                  {!stripReplaced && openingChoice && (
+                    <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                      {/* The glyph is the visible control and the number between the two
                     is the state; the words live in the accessible name. Long labels
                     here are what wrapped the strip to two rows at 400 px, and in a
                     narrow chat the dialogue is what the player is reading - this is
                     Tavern's own `\u2039 1/3 \u203a` for the same reason. */}
-                    <SwipeArrow
-                      direction="prev"
-                      busy={busy}
-                      atEdge={openingChoice.index <= 0}
-                      labels={labels}
-                      onPress={() => onOpeningVariant?.(message.handle, "prev")}
-                    />
-                    <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
-                    <SwipeArrow
-                      direction="next"
-                      busy={busy}
-                      atEdge={openingChoice.index >= openingChoice.count - 1}
-                      labels={labels}
-                      onPress={() => onOpeningVariant?.(message.handle, "next")}
-                    />
-                  </div>
-                )}
-                {!rewindArmed && swipeSet && (
-                  <div className="swipe-controls" aria-label={labels.swipeNavigation}>
-                    <SwipeArrow
-                      direction="prev"
-                      busy={busy}
-                      atEdge={!swipeSet.hasPrevious}
-                      labels={labels}
-                      onPress={() => onSwipe?.(message.handle, "prev")}
-                    />
-                    <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
-                    <SwipeArrow
-                      direction="next"
-                      busy={busy}
-                      atEdge={!swipeSet.hasNext}
-                      labels={labels}
-                      onPress={() => onSwipe?.(message.handle, "next")}
-                    />
-                  </div>
-                )}
-                {!rewindArmed && onRegenerate && (
-                  <button
-                    type="button"
-                    className="action-btn regenerate-btn"
-                    disabled={busy}
-                    {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
-                    onClick={() => onRegenerate(message.handle)}
-                    title={labels.regenerateVariant}
-                    aria-label={labels.regenerateVariant}
-                  >
-                    {pending === "regenerate" ? (
-                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                    ) : (
-                      <RefreshCw size={14} aria-hidden="true" />
-                    )}
-                    <span className="action-word">{labels.regenerateVariant}</span>
-                  </button>
-                )}
-                {rewindControl}
-                {/* Her rows' own edit control, in the strip she already has rather than a second row of
+                      <SwipeArrow
+                        direction="prev"
+                        busy={busy}
+                        atEdge={openingChoice.index <= 0}
+                        labels={labels}
+                        onPress={() => onOpeningVariant?.(message.handle, "prev")}
+                      />
+                      <span className="swipe-indicator">{openingVariantWords(openingChoice, labels)}</span>
+                      <SwipeArrow
+                        direction="next"
+                        busy={busy}
+                        atEdge={openingChoice.index >= openingChoice.count - 1}
+                        labels={labels}
+                        onPress={() => onOpeningVariant?.(message.handle, "next")}
+                      />
+                    </div>
+                  )}
+                  {!stripReplaced && swipeSet && (
+                    <div className="swipe-controls" aria-label={labels.swipeNavigation}>
+                      <SwipeArrow
+                        direction="prev"
+                        busy={busy}
+                        atEdge={!swipeSet.hasPrevious}
+                        labels={labels}
+                        onPress={() => onSwipe?.(message.handle, "prev")}
+                      />
+                      <span className="swipe-indicator">{swipePosition(swipeSet.label)}</span>
+                      <SwipeArrow
+                        direction="next"
+                        busy={busy}
+                        atEdge={!swipeSet.hasNext}
+                        labels={labels}
+                        onPress={() => onSwipe?.(message.handle, "next")}
+                      />
+                      {swipeRemoveControl}
+                    </div>
+                  )}
+                  {!stripReplaced && onRegenerate && (
+                    <button
+                      type="button"
+                      className="action-btn regenerate-btn"
+                      disabled={busy}
+                      {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
+                      onClick={() => onRegenerate(message.handle)}
+                      title={labels.regenerateVariant}
+                      aria-label={labels.regenerateVariant}
+                    >
+                      {pending === "regenerate" ? (
+                        <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                      ) : (
+                        <RefreshCw size={14} aria-hidden="true" />
+                      )}
+                      <span className="action-word">{labels.regenerateVariant}</span>
+                    </button>
+                  )}
+                  {rewindControl}
+                  {/* Her rows' own edit control, in the strip she already has rather than a second row of
                 buttons, and in the same spot the player row's edit control takes (immediately before
                 the destructive Delete, which is where both rows end their strip). It is offered on every
                 one of her rows - the OPENING included, which is edited in place for this session alone
                 (the owner's ruling, 2026-10-20) - and it is the words one more thing a row can do to
                 itself, not a new group of them. */}
-                {!rewindArmed && editReplyPoint !== undefined && (
-                  <button
-                    type="button"
-                    className="action-btn edit-btn"
-                    data-testid="message-edit"
-                    disabled={busy}
-                    {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
-                    onClick={openEditor}
-                    title={labels.editReplyName}
-                    aria-label={labels.editReplyName}
-                  >
-                    {pending === "edit" ? (
-                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                    ) : (
-                      <Pencil size={14} aria-hidden="true" />
-                    )}
-                    <span className="action-word">{labels.editMessage}</span>
-                  </button>
-                )}
-                {!rewindArmed && deletePoint !== undefined && (
-                  <button
-                    ref={deletePair.triggerRef}
-                    type="button"
-                    className="action-btn delete-btn"
-                    data-testid="message-delete"
-                    disabled={busy}
-                    {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
-                    onClick={() => onDelete?.(message.handle, message.order)}
-                    title={labels.deleteMessageName}
-                    aria-label={labels.deleteMessageName}
-                  >
-                    {pending === "delete" ? (
-                      <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
-                    ) : (
-                      <Trash2 size={14} aria-hidden="true" />
-                    )}
-                    <span className="action-word">{labels.deleteMessage}</span>
-                  </button>
-                )}
-                {!rewindArmed && waitingNote !== null && (
-                  <span className="message-waiting" role="status">
-                    {waitingNote}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-        )}
+                  {!stripReplaced && editReplyPoint !== undefined && (
+                    <button
+                      type="button"
+                      className="action-btn edit-btn"
+                      data-testid="message-edit"
+                      disabled={busy}
+                      {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
+                      onClick={openEditor}
+                      title={labels.editReplyName}
+                      aria-label={labels.editReplyName}
+                    >
+                      {pending === "edit" ? (
+                        <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                      ) : (
+                        <Pencil size={14} aria-hidden="true" />
+                      )}
+                      <span className="action-word">{labels.editMessage}</span>
+                    </button>
+                  )}
+                  {!stripReplaced && deletePoint !== undefined && (
+                    <button
+                      ref={deletePair.triggerRef}
+                      type="button"
+                      className="action-btn delete-btn"
+                      data-testid="message-delete"
+                      disabled={busy}
+                      {...(pending === "delete" ? { "data-busy": "true" as const } : {})}
+                      onClick={() => onDelete?.(message.handle, message.order)}
+                      title={labels.deleteMessageName}
+                      aria-label={labels.deleteMessageName}
+                    >
+                      {pending === "delete" ? (
+                        <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                      ) : (
+                        <Trash2 size={14} aria-hidden="true" />
+                      )}
+                      <span className="action-word">{labels.deleteMessage}</span>
+                    </button>
+                  )}
+                  {!rewindArmed && waitingNote !== null && (
+                    <span className="message-waiting" role="status">
+                      {waitingNote}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         {/* The player's own row carries its own controls in the same strip the companion's reply
             uses rather than a second row of buttons: the words are already on the page, so the
             affordances that change them belong under them. The REWIND is one of them: rewinding to

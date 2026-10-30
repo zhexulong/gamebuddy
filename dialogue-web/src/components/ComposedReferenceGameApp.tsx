@@ -63,7 +63,7 @@ export function ComposedReferenceGameApp() {
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
     handle: string;
   }> | null>(null);
   // The rewind arm: the message the player asked to cut back to, and the order they were shown it
@@ -74,6 +74,10 @@ export function ComposedReferenceGameApp() {
   // A delete is destructive and has no undo, so the arm names the target and the confirmation below
   // the bubble is what sends it - the same shape the rewind arm and a Chats row's trash use.
   const [deleteArm, setDeleteArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
+  // The variant-discard arm: the reply the player asked to strip one variant from, and the variant index
+  // they were looking at. A discard destroys a generation they spent tokens on, so the arm names it and
+  // the confirmation is what sends it - the same shape the rewind and delete arms use.
+  const [swipeRemoveArm, setSwipeRemoveArm] = useState<Readonly<{ handle: string; targetIndex: number }> | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -89,6 +93,18 @@ export function ComposedReferenceGameApp() {
    * past either point it describes an attempt that no longer stands.
    */
   const [sendFailure, setSendFailure] = useState<string | null>(null);
+  /**
+   * The last variant discard this surface was refused, in the refusal's own sentence.
+   *
+   * A discard is the one mutation here whose control can VANISH on success (the reply falls back to a
+   * single variant), so a refusal cannot be left to the row: the player pressed a button, the variant is
+   * still there, and nothing said why. The Host refuses the last-position case by name
+   * (`chat_swipe_last_variant`) and the catalogue's sentence for it is what this line carries - the code
+   * is contract vocabulary and never printed (see `composed-problem-view.ts`). It is spent by the next
+   * arm of the same control and by adopting another Chat, because past either point it describes a press
+   * that no longer stands.
+   */
+  const [swipeRemoveNotice, setSwipeRemoveNotice] = useState<string | null>(null);
   // A created Chat whose chosen opening could not be committed. The Chat itself is durable and the
   // player is landed in it either way, so this is the one fact left to state: it opens on the
   // default opening. It clears when another switch lands.
@@ -731,6 +747,7 @@ export function ComposedReferenceGameApp() {
     // Only one destructive arm can be open at a time, so arming one drops the other: a row showing
     // two confirmations at once would leave the player unable to tell what the next press removes.
     setDeleteArm(null);
+    setSwipeRemoveArm(null);
     setRewindArm(Object.freeze({ handle: messageHandle, expectedOrder }));
   };
 
@@ -782,6 +799,7 @@ export function ComposedReferenceGameApp() {
 
   const handleDeleteArm = (messageHandle: string, expectedOrder: number): void => {
     setRewindArm(null);
+    setSwipeRemoveArm(null);
     setDeleteArm(Object.freeze({ handle: messageHandle, expectedOrder }));
   };
 
@@ -805,6 +823,65 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      await rereadChat().catch(() => {
+        commit(problemView(error, messages(current.locale)));
+      });
+    } finally {
+      chatMutationRef.current = false;
+      setChatMutation(null);
+    }
+  };
+
+  /**
+   * The variant discard's arm and its confirmation, the delete arm's own shape one row over. The arm
+   * names the reply and the variant index the page rendered, and it is dropped the moment the reply stops
+   * being one of the transcript's rows - a stale arm must never discard a variant of a reply the player
+   * is no longer looking at. The index itself is re-checked by the Host, which refuses a position that is
+   * not there rather than guessing.
+   */
+  useEffect(() => {
+    if (swipeRemoveArm === null) return;
+    if (mountedTranscript?.some((message) => message.handle === swipeRemoveArm.handle) === true) return;
+    setSwipeRemoveArm(null);
+  }, [swipeRemoveArm, mountedTranscript]);
+
+  const handleSwipeRemoveArm = (messageHandle: string, targetIndex: number): void => {
+    setSwipeRemoveNotice(null);
+    setRewindArm(null);
+    setDeleteArm(null);
+    setSwipeRemoveArm(Object.freeze({ handle: messageHandle, targetIndex }));
+  };
+
+  const handleSwipeRemoveCancel = (): void => {
+    setSwipeRemoveArm(null);
+  };
+
+  /**
+   * Discards the variant the player named and then rereads. The Host owns which variant is left showing -
+   * the discarded one may be the active one, and removing it moves the position - so the new
+   * `currentIndex` is READ back rather than computed here. A refusal is not silence: the Host refuses the
+   * last variant by name and that sentence is what the player reads, because a disappeared button with
+   * nothing said about it is exactly the state this control exists to avoid.
+   */
+  const handleSwipeRemoveConfirm = async (messageHandle: string, targetIndex: number): Promise<void> => {
+    const current = viewRef.current;
+    if (current.kind !== "ready") return;
+    if (chatMutationRef.current) return;
+    const selection = current.session.snapshot.selection;
+    if (selection === null) return;
+    setSwipeRemoveArm(null);
+    chatMutationRef.current = true;
+    setChatMutation(Object.freeze({ kind: "swipeRemove" as const, handle: messageHandle }));
+    try {
+      await tavernApiRef.current.removeSwipeVariant(
+        { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, targetIndex },
+        { csrfToken: current.session.snapshot.csrfToken },
+      );
+      await rereadChat();
+    } catch (error) {
+      // The refusal's own sentence, said out loud before the reread: a variant that did not leave is a
+      // fact about this press, and the words for it already exist in the catalogue.
+      setSwipeRemoveNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -874,6 +951,7 @@ export function ComposedReferenceGameApp() {
     // The refusal's sentence described an attempt in the conversation this mount is leaving, so it
     // is not a fact about the one it adopts.
     setSendFailure(null);
+    setSwipeRemoveNotice(null);
     const base = createReferencePipelineSession(root.chat);
     const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
@@ -1263,9 +1341,19 @@ export function ComposedReferenceGameApp() {
                 labels={labels()}
                 pending={chatMutation}
                 pendingPlayerMessage={pendingOptimisticMessage}
-                notice={pollFailure ? labels().chatFailed : (sendFailure ?? terminalTurnNotice ?? openingNotice)}
+                notice={
+                  pollFailure
+                    ? labels().chatFailed
+                    : (sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
+                }
                 replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
                 onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
+                onSwipeRemove={handleSwipeRemoveArm}
+                onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
+                  void handleSwipeRemoveConfirm(messageHandle, targetIndex)
+                }
+                onSwipeRemoveCancel={handleSwipeRemoveCancel}
+                swipeRemoveArmedHandle={swipeRemoveArm === null ? null : swipeRemoveArm.handle}
                 onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                 onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
                 onRewind={handleRewindArm}

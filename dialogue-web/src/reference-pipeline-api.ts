@@ -1032,6 +1032,20 @@ export type ReferencePipelineApi = Readonly<{
     }>,
     options: Readonly<{ csrfToken: string }>,
   ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
+  /**
+   * POST /api/tavern/v1/messages/swipe/remove with CSRF. Discards ONE variant of the reply at
+   * `targetIndex` - the position the page rendered - and answers the row as the durable read-back
+   * holds it, which is why the caller rereads rather than assuming which variant is now active.
+   */
+  removeSwipeVariant(
+    command: Readonly<{
+      apiVersion: 1;
+      selectionGeneration: number;
+      messageHandle: string;
+      targetIndex: number;
+    }>,
+    options: Readonly<{ csrfToken: string }>,
+  ): Promise<Readonly<{ apiVersion: 1; message: BrowserMessageV1 }>>;
   /** POST /api/tavern/v1/messages/regenerate with CSRF, idempotency-key */
   regenerate(
     command: Readonly<{
@@ -1154,6 +1168,22 @@ export function createReferencePipelineApi(fetchLike: typeof fetch = fetch): Ref
         fetchLike,
         "POST",
         "/api/tavern/v1/messages/swipe",
+        200,
+        (body) => {
+          if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
+            throw new TavernProtocolError();
+          return Object.freeze({ apiVersion: 1 as const, message: body.message });
+        },
+        { "Content-Type": "application/json", "x-csrf-token": options.csrfToken },
+        command,
+      );
+    },
+    async removeSwipeVariant(command, options) {
+      if (!isRecord(command) || !isOpaqueHandle(options.csrfToken)) throw new TavernProtocolError();
+      return exchange(
+        fetchLike,
+        "POST",
+        "/api/tavern/v1/messages/swipe/remove",
         200,
         (body) => {
           if (!isRecord(body) || body.apiVersion !== 1 || !isBrowserMessage(body.message))
