@@ -10,6 +10,7 @@ import {
   DISMISSIBLE_ROLLOVER_MENUS,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
+  nightCause,
   parseReceiptEvidence,
   WAIT_ROLLOVER_MENUS,
 } from "./multiday-baseline.mjs";
@@ -59,6 +60,41 @@ const DAY = (overrides = {}) => ({
 });
 
 const codes = (result) => result.violations.map((entry) => entry.code);
+
+/** A night the ENGINE took: no `advance_day`, no lifecycle, only the calendar as the witness. */
+const ENGINE_TAKEN_NIGHT = (overrides = {}) => ({
+  ...DAY({ day: overrides.day ?? 1, terminal: null, after: { dayBefore: 6, dayOfMonth: 7, timeOfDay: 600 } }),
+  cause: overrides.cause ?? "pass_out",
+});
+
+test("a night witnessed only by the calendar does not demand lifecycle edges it never had", () => {
+  // MEASURED 2026-10-30 (`round8`): both nights were the engine's 02:00 pass-out - ZERO `advance_day` receipts in the
+  // whole run - so no `SleepAndAdvanceDayLifecycle` existed to publish `saved_observed` or `day_started_observed`.
+  // `classifyNight`'s calendar branch returns exactly `{day_before, day_of_month}` and can never return them, so these
+  // two gates fired on every calendar night while the run's own timeline carried `lifecycle saving` twice and
+  // `day_started_day_5`/`day_started_day_6` as world facts. The edges existed; the witness does not read them.
+  const calendarNight = DAY({
+    day: 1,
+    terminal: null,
+    after: { dayOfMonth: 8, dayBefore: 7, timeOfDay: 610, seasonIndex: 0 },
+  });
+  const result = assessMultiDayBaseline({
+    dayRecords: [calendarNight, DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    !codes(result).includes("night_saved_edge_not_observed"),
+    `a calendar night has no save edge to observe: ${codes(result).join(",")}`,
+  );
+  assert.ok(!codes(result).includes("night_day_started_edge_not_observed"));
+  // The controls: a night with a RECEIPT but a missing edge must still be caught, or this exemption would have
+  // disabled the gates instead of scoping them.
+  const receiptMissingSave = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1, terminal: { evidence: EVIDENCE({ savedObserved: "false" }) } }), DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(codes(receiptMissingSave).includes("night_saved_edge_not_observed"));
+});
 
 test("a healthy two-day run passes, and the constants state the window", () => {
   const result = assessMultiDayBaseline({ dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })], daysRequested: 2 });
@@ -181,6 +217,90 @@ test("the receipt's totals must actually advance, and the world must agree with 
   assert.equal(dayOfMonthForTotalDays(7), 8);
   assert.equal(dayOfMonthForTotalDays(28), 1);
   assert.equal(dayOfMonthForTotalDays(-1), null);
+});
+
+test("a night the engine took alone is judged by its calendar, not by a lifecycle that never ran", () => {
+  // `saved_observed` and `day_started_observed` are edges the SLEEP LIFECYCLE observed for the night it crossed:
+  // SMAPI's `Saved` really arrived, and the new day really became playable. Both exist to prove the receipt's own
+  // `day_advanced` was earned rather than taken from a counter that raced ahead of the save. So they belong to the
+  // receipt that claimed the advance.
+  //
+  // A night the engine took by itself (`Game1.PassOutNewDay()` calls `NewDay(0f)` at 2:00 AM) has no receipt and no
+  // lifecycle, so the question cannot be put to it at all - there is nobody who could have observed those edges. The
+  // calendar is what witnesses that night, and `classifyNight` already refuses a night the calendar cannot show.
+  // Measured 2026-10-30: two such nights, and both edges were reported missing on both - a false negative that fired
+  // on every pass-out run.
+  const result = assessMultiDayBaseline({
+    dayRecords: [ENGINE_TAKEN_NIGHT(), DAY({ day: 2 })],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(result), [], `a pass-out night must not be red for edges no lifecycle could publish`);
+  assert.equal(result.passOutNights, 1);
+
+  // The falsifier for the relaxation: a night WITH a receipt is still asked for both edges, because a lifecycle ran
+  // and a receipt that does not say what it observed is exactly what those rules exist to catch.
+  const receiptWithoutEdges = assessMultiDayBaseline({
+    dayRecords: [
+      DAY({
+        terminal: {
+          state: "succeeded",
+          reasonCode: "day_advanced",
+          evidence: "state=passed;reason=day_advanced;day_before=6;days_before=6;day_after=7;days_after=7",
+        },
+      }),
+      DAY({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  assert.ok(codes(receiptWithoutEdges).includes("night_saved_edge_not_observed"));
+  assert.ok(codes(receiptWithoutEdges).includes("night_day_started_edge_not_observed"));
+});
+
+test("how a night ended is the witness that names it, and never a default", () => {
+  // The runner records HOW each night ended. Measured 2026-10-30: two nights the engine passed the actor out on were
+  // recorded `sleep`, because the record's cause was `passOutObserved ? "pass_out" : "sleep"` - a two-valued default
+  // whose second value claims the companion slept whenever the pass-out had not been observed. Nothing observed the
+  // pass-out on those nights either, so the claim was true of neither value, and the record said `sleep` anyway.
+  const sleeping = TERMINAL({ evidence: EVIDENCE({ enteredVia: "native_sleep_prompt" }) });
+  assert.equal(nightCause({ enteredVia: parseReceiptEvidence(sleeping.evidence).entered_via }), "sleep");
+  assert.equal(
+    nightCause({
+      enteredVia: parseReceiptEvidence(TERMINAL({ evidence: EVIDENCE({ enteredVia: "native_pass_out" }) }).evidence)
+        .entered_via,
+    }),
+    "pass_out",
+  );
+  // A night the engine took can have no receipt at all; the observation of its pass-out is then the only witness.
+  assert.equal(nightCause({ passOutObserved: true }), "pass_out");
+  // Nothing witnessed HOW it ended, so the night is neither called a sleep nor left unspoken: `engine` records that the
+  // night was taken and the attribution was not observed.
+  assert.equal(nightCause({}), "engine");
+  // The receipt wins over the runner's own note, and a note cannot upgrade an unproven night into a sleep.
+  assert.equal(nightCause({ enteredVia: "native_sleep_prompt", recorded: "pass_out" }), "sleep");
+  assert.equal(nightCause({ recorded: "sleep" }), "sleep");
+  // `engine` is a value in its own right and survives being written back through the record unread - so a re-judged run
+  // does not silently promote it to a sleep on the next pass.
+  assert.equal(nightCause({ recorded: "engine" }), "engine");
+});
+
+test("a record may not claim a sleep it has no receipt for", () => {
+  // The rule that makes the contradiction unrepresentable: `sleep` says the companion's own `advance_day` crossed the
+  // night, and only its lifecycle receipt can show that. A calendar-witnessed night that says `sleep` anyway is the
+  // exact record shape that read as a sleep for two pass-out nights (measured 2026-10-30).
+  const claimed = assessMultiDayBaseline({
+    dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "sleep" }), DAY({ day: 2 })],
+    daysRequested: 2,
+  });
+  assert.ok(
+    codes(claimed).includes("night_cause_claims_a_sleep_without_a_receipt"),
+    `a sleep with no receipt must be refused; got ${JSON.stringify(codes(claimed))}`,
+  );
+  // An unproven night says `engine` and is not a violation: the crossing is a fact and only the attribution is missing.
+  const unclaimed = assessMultiDayBaseline({
+    dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "engine" }), DAY({ day: 2 })],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(unclaimed), []);
 });
 
 test("the Mod's own night edges are required, not inferred", () => {

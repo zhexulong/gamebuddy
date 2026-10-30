@@ -108,6 +108,36 @@ export function dayOfMonthForTotalDays(totalDays) {
 }
 
 /**
+ * HOW a night ended, from the witnesses that can actually answer it. A night that crossed always gets an answer.
+ *
+ * The two attributions are not interchangeable, and only one of them can be faked:
+ *   - `pass_out` means the ENGINE took the night, and `Game1.PassOutNewDay()` calls `NewDay(0f)` itself. Two things
+ *     witness it - the Mod's `entered_via=native_pass_out` on a receipt, or the runner's own watch seeing the actor
+ *     held - and either alone is enough.
+ *   - `sleep` means the COMPANION's own `advance_day` crossed it, and ONLY the lifecycle receipt's
+ *     `entered_via=native_sleep_prompt` shows that. There is no observation that substitutes: `advance_day` is the
+ *     only thing that starts a lifecycle, so no receipt means no sleep.
+ *   - `engine` is what is left when the night WAS taken and nobody saw how.
+ *
+ * Measured 2026-10-30: the record's cause was `passOutObserved ? "pass_out" : "sleep"`, and both of that run's nights
+ * were the engine's 2:00 pass-out while the record said `sleep`. The false branch of that ternary reads as "the
+ * companion slept" but means only "no pass-out was observed" - a fact about the watch, not about the night, and on
+ * that run neither value had been observed at all. Zero `advance_day` dispatches existed to be the sleep.
+ *
+ * `engine` is NOT `null`. Null would say nothing is known about the night, which is false - the calendar moved, the
+ * save ran, the day started. `engine` says the crossing is a fact and its attribution is not, which is what a reader
+ * needs in order to distrust the attribution rather than the crossing. A night with no witness to the CROSSING never
+ * reaches this function: `classifyNight` has already refused it as `night_terminal_missing`.
+ */
+export function nightCause({ enteredVia = null, passOutObserved = false, recorded = null } = {}) {
+  if (enteredVia === "native_pass_out") return "pass_out";
+  if (enteredVia === "native_sleep_prompt") return "sleep";
+  if (passOutObserved === true) return "pass_out";
+  if (recorded === "sleep" || recorded === "pass_out" || recorded === "engine") return recorded;
+  return "engine";
+}
+
+/**
  * Did this night cross, and what says so?
  *
  * TWO witnesses, and the receipt is not always available. `actionTrace` records only FLAT dispatches, so a night
@@ -244,17 +274,20 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
       continue;
     }
     daysCrossed += 1;
-    // HOW the night ended: the product's own receipt first (`entered_via=native_pass_out` is what the Mod mints when
-    // the engine's pass-out pipeline took the night over), the runner's observation second. Published so a run whose
-    // nights were pass-outs is readable as such - and it is a description, never a verdict about the night.
+    // HOW the night ended: the product's own receipt first (`entered_via=native_sleep_prompt` / `native_pass_out` are
+    // what the Mod mints), the runner's observation second. Published so a run whose nights were pass-outs is readable
+    // as such - and it is a description, never a verdict about the night.
     const enteredVia = typeof night.facts.entered_via === "string" ? night.facts.entered_via : null;
-    const cause =
-      enteredVia === "native_pass_out"
-        ? "pass_out"
-        : enteredVia === "native_sleep_prompt"
-          ? "sleep"
-          : (record.cause ?? null);
+    const cause = nightCause({ enteredVia, recorded: record.cause ?? null });
     if (cause === "pass_out") passOutNights += 1;
+    // `sleep` is a claim that the COMPANION's own `advance_day` crossed the night, and only the lifecycle receipt that
+    // `advance_day` starts can show it. A record claiming one while the ONLY witness is the calendar (no receipt at all,
+    // so no lifecycle existed) is stating an event nobody observed - which is exactly the shape that read as "the
+    // companion slept" for two nights the engine had taken (measured 2026-10-30). `pass_out` needs no such proof: the
+    // runner's own observation of the hold is a witness, and the engine taking the night needs none, as recorded.
+    if (cause === "sleep" && night.witness === "calendar") {
+      violations.push(violation("night_cause_claims_a_sleep_without_a_receipt", `${where}.cause`));
+    }
 
     // Scope, enforced rather than assumed: this corpus proves consecutive days inside one season, with no
     // festival and no profession milestone. A night that left that window is a BLOCKED result, because the
@@ -266,10 +299,22 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
 
     // The Mod's own night facts. `saving_observed` is not required (a dismissed menu skips the
     // menu-owned save), but the two edges that DECIDE the terminal are.
-    if (night.facts.saved_observed !== "true") {
+    //
+    // UNLESS the night has no lifecycle to publish them. `classifyNight`'s calendar branch produces exactly
+    // `{ day_before, day_of_month }` - it can never produce `saved_observed` or `day_started_observed`, because no
+    // lifecycle ran. Requiring them there is a gate that cannot go green: measured 2026-10-30 (`round8`), both nights
+    // were the engine's 02:00 pass-out (ZERO `advance_day` receipts in the whole run), the calendar moved, and these
+    // two fired on both - while the run's own timeline carried `lifecycle saving` twice and `day_started_day_5` /
+    // `day_started_day_6` as world facts. The edges EXISTED; the witness simply does not read them.
+    //
+    // What a calendar night must prove instead is what the calendar can prove: that the day actually advanced, which
+    // `classifyNight` already decided (`advanced: true`) before this code runs. `night_terminal_missing` remains the
+    // violation for a night nobody witnessed at all.
+    const witnessedByCalendar = night.witness === "calendar";
+    if (!witnessedByCalendar && night.facts.saved_observed !== "true") {
       violations.push(violation("night_saved_edge_not_observed", `${where}.evidence.saved_observed`));
     }
-    if (night.facts.day_started_observed !== "true") {
+    if (!witnessedByCalendar && night.facts.day_started_observed !== "true") {
       violations.push(violation("night_day_started_edge_not_observed", `${where}.evidence.day_started_observed`));
     }
     // A claim of a save is only believable if the save boundary was ever entered. The lifecycle's own evidence now
@@ -277,7 +322,11 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     // anyway", because the two produce the same phase sequence (measured 2026-10-17/18: run g28 moved
     // `AwaitingSave -> AwaitingDayStart` exactly 300 frames after entering it - the budget, not a save - while
     // `is_saving=false` for the whole run).
-    if (night.facts.save_boundary_not_observed === "true" && night.facts.saved_observed === "true") {
+    if (
+      !witnessedByCalendar &&
+      night.facts.save_boundary_not_observed === "true" &&
+      night.facts.saved_observed === "true"
+    ) {
       violations.push(violation("night_claims_a_save_without_entering_the_save_boundary", `${where}.evidence`));
     }
 
@@ -376,6 +425,7 @@ const CHECKED_RULES = Object.freeze([
   "night_saved_edge_not_observed",
   "night_claims_a_save_without_entering_the_save_boundary",
   "night_day_started_edge_not_observed",
+  "night_cause_claims_a_sleep_without_a_receipt",
   "night_raised_unclosable_menu",
   "level_up_menu_not_resolved",
   "level_up_branch_chosen_by_harness",

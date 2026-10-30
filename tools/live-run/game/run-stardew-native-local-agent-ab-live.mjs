@@ -28,7 +28,13 @@ import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
-import { assessMultiDayBaseline, MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "../../lib/multiday-baseline.mjs";
+import {
+  assessMultiDayBaseline,
+  MAXIMUM_BASELINE_DAYS,
+  MINIMUM_BASELINE_DAYS,
+  nightCause,
+  parseReceiptEvidence,
+} from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import { countPriorMultidayRuns, dailyTaskFor, runOffsetFor } from "../../lib/multiday-daily-tasks.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
@@ -1138,6 +1144,12 @@ client.onFact((fact) => {
   ) {
     const entry = {
       type: fact.type,
+      // WHEN, on the run's own clock. Without it the timeline is an ordered list of events with no durations, and the
+      // question "how long did walking take" has no answer from any artifact - measured 2026-10-30: 3,348 timeline
+      // entries, **not one** carrying a timestamp, while a 32-minute run reported 950 `move_to_tile`, 1,145
+      // `tile_advanced` and 1,624 `body_trace` entries. A stall was invisible unless something else happened to
+      // record it.
+      atMs: Date.now(),
       reasonCode: fact.payload?.reasonCode,
       requestId: fact.payload?.requestId,
       executionId: fact.payload?.executionId,
@@ -2043,8 +2055,12 @@ async function watchNightThroughPassOut({
   let outcome = await watchOnce(Math.max(0, deadline - now()));
   for (;;) {
     for (const entry of outcome.menus ?? []) menuByType.set(entry.menuType, entry);
+    // The hold is read BEFORE either exit, because it is a fact about the NIGHT and not about which way the watch
+    // stopped. Testing `crossed === true` first meant a night that passed the actor out AND had already opened the next
+    // day was recorded as the companion's own sleep: the two are not alternatives, and only the break order made them
+    // look like it.
+    if (outcome.reasonCode === "actor_passed_out") passOutObserved = true;
     if (outcome.crossed === true || outcome.reasonCode !== "actor_passed_out") break;
-    passOutObserved = true;
     if (now() >= deadline) {
       outcome = Object.freeze({
         crossed: false,
@@ -2369,9 +2385,33 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
             : null,
       }),
   });
-  // HOW the night ended: the engine's 2:00 AM pass-out, or the companion's own sleep. It is a CAUSE on the day's
-  // record and never a verdict - the night was watched on to the day the engine opened.
-  const cause = outcome.passOutObserved === true ? "pass_out" : "sleep";
+  // The companion's own `advance_day` for THIS night, if it ever dispatched one, and the terminal receipt its
+  // lifecycle minted. Read here rather than after the crossing check because it is one of the witnesses that decides
+  // the cause, and a cause read from a receipt that has not been looked up yet is the hole the two-valued ternary hid.
+  const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
+  const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
+  // HOW the night ended, from the witnesses that can answer it. It is a CAUSE on the day's record and never a verdict -
+  // the night was watched on to the day the engine opened.
+  //
+  // THREE values, because `sleep` is a claim only one witness can support. `advance_day` is the only thing that starts
+  // a `SleepAndAdvanceDayLifecycle`, so `entered_via=native_sleep_prompt` on its receipt is the one proof that the
+  // COMPANION crossed the night. Nothing the harness observes can stand in for it - least of all the absence of a
+  // pass-out, which is a fact about a 250 ms poll and not about the night.
+  //
+  // MEASURED 2026-10-30 (`round8`): ZERO `advance_day` dispatches in the entire run - attempted, program and flat
+  // traces alike - because the companion refused in so many words ("Risky—player may want to do something. Better to
+  // not end day on my own."). Both nights reached 26:00 (`game_time=2600`) and the engine ran `NewDay` + `SaveGame.Save()`
+  // + "after save, starting spring 6/7 Y1": the 2:00 AM pass-out, on the farmhouse floor and then in the middle of Town.
+  // Both were recorded `cause: "sleep"`, which was the false branch of a two-valued ternary and meant only that the
+  // watch had not seen the hold. A night the engine takes is not a sleep, and calling it one is not a weak attribution -
+  // it is a statement about the companion that no artifact supports.
+  //
+  // `engine` is the third answer, and it is not `null`: the crossing IS witnessed (the calendar moved) and only the
+  // attribution is not. A reader must be able to distrust the attribution without doubting the night.
+  const cause = nightCause({
+    enteredVia: parseReceiptEvidence(terminal?.evidence).entered_via ?? null,
+    passOutObserved: outcome.passOutObserved === true,
+  });
   // Did the night actually pass? TWO answers, and the calendar is the one that cannot be faked by a dispatch path.
   //
   // `actionTrace` records only FLAT dispatches. Measured 2026-10-28 (`round5`): all 42 of that run's dispatches went
@@ -2393,14 +2433,12 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       terminal: null,
       after: Object.freeze({ ...afterNight, dayBefore }),
       menus: outcome.menus,
-      cause: outcome.passOutObserved === true ? "pass_out" : "sleep",
+      cause,
       release: "calendar_advanced",
       reasonCode: null,
     });
   }
-  // The night's own terminal: the receipt of the `advance_day` the COMPANION dispatched during this window.
-  const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
-  const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
+  // The night's own terminal, already read above because it is one of the cause's witnesses.
   if (dispatched === undefined) {
     // `night_never_started:` stays the prefix because that IS the finding - no `advance_day` ever started a night. The
     // suffix is the watch's own reason, and since `rollover_menu_deadlock` exists it says WHICH kind of night never

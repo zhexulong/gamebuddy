@@ -1506,8 +1506,34 @@ test("a pass-out mid-night is not the night's outcome: the watch runs on to the 
   assert.equal(held.reasonCode, "actor_held_by_cutscene");
   assert.equal(held.passOutObserved, false);
   assert.equal(cutscene.calls.length, 1, "a hold that is not the pass-out still stops the watch by name");
-  // ...and the day's record carries the cause the watch observed.
-  assert.match(RUNNER_SOURCE, /const cause = outcome\.passOutObserved === true \? "pass_out" : "sleep";/u);
+  // A single observation that is BOTH the hold and the crossing: `watchRollover` cannot currently produce one (it answers
+  // the hold before it looks at the calendar), but the recorder must not depend on that. The hold is a fact about the
+  // night, so it is read before either exit - reading it after the `crossed` test made a pass-out that surfaced with the
+  // crossing report `sleep`, which is a claim about the companion that nothing measured (2026-10-30: two such nights,
+  // both recorded `sleep`, both 02:00 pass-outs with zero `advance_day` dispatches in the entire run).
+  const together = await watchNightThroughPassOut({
+    watchOnce: scripted([{ crossed: true, reasonCode: "actor_passed_out", dayAfter: 7, menus: [] }]).watchOnce,
+    timeoutMs: 60_000,
+    pollIntervalMs: 0,
+    sleep: async () => {},
+  });
+  assert.equal(together.crossed, true, "the crossing keeps its own semantics");
+  assert.equal(together.passOutObserved, true, "a hold seen on the crossing observation is still a hold");
+  // ...and the day's record carries a cause the WITNESSES decide, not a two-valued default.
+  //
+  // This used to pin the literal `passOutObserved ? "pass_out" : "sleep"`, and the literal is exactly what drifted: its
+  // false branch meant "no pass-out was observed" and said "the companion slept". Measured 2026-10-30, both nights of a
+  // run were the engine's 2:00 pass-out and both were recorded `sleep`. So the assertion is on the DECISION now - what
+  // the record may claim, and from what - because that survives a rewrite of the expression while the defect does not.
+  assert.match(RUNNER_SOURCE, /const cause = nightCause\(\{/u, "the cause is decided by the shared witness function");
+  assert.match(
+    RUNNER_SOURCE,
+    /enteredVia: parseReceiptEvidence\(terminal\?\.evidence\)\.entered_via \?\? null,/u,
+    "a sleep is claimed only from the lifecycle receipt that proves one",
+  );
+  assert.match(RUNNER_SOURCE, /passOutObserved: outcome\.passOutObserved === true,/u);
+  // The two-valued default must not come back: absence of a pass-out is a fact about the poll, not about the night.
+  assert.doesNotMatch(RUNNER_SOURCE, /\? "pass_out"\s*:\s*"sleep"/u);
   assert.match(RUNNER_SOURCE, /record\.cause = nightCauses\.get\(record\.day\) \?\? null;/u);
 });
 
