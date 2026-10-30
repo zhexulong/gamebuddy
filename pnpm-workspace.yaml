@@ -48,13 +48,13 @@ overrides:
   # The Pi runtime is pinned as a set. pi's own ranges are carets (`@earendil-works/pi-ai": "^1.1.0"`),
   # so a bare bump of the entry package silently pulls the next minor of every sibling - and the
   # workspace's own supply-chain policy (minimumReleaseAge) then refuses the install, because those
-  # siblings were published hours ago. The five packages are one runtime and are upgraded together.
-  '@earendil-works/pi-agent-core': 1.2.0
-  '@earendil-works/pi-ai': 1.2.0
-  '@earendil-works/pi-codemode': 1.2.0
-  '@earendil-works/pi-mcp': 1.2.0
-  '@earendil-works/pi-telemetry': 1.2.0
-  '@earendil-works/pi-tui': 1.2.0
+  # siblings were published hours ago. These packages are one runtime and are upgraded together; `@earendil-works/pi-coding-agent` is the seventh and is pinned in host/package.json.
+  '@earendil-works/pi-agent-core': 1.4.0
+  '@earendil-works/pi-ai': 1.4.0
+  '@earendil-works/pi-codemode': 1.4.0
+  '@earendil-works/pi-mcp': 1.4.0
+  '@earendil-works/pi-telemetry': 1.4.0
+  '@earendil-works/pi-tui': 1.4.0
   # Transformers 4.2 permits sharp ^0.34.5; pin its current stable advisory
   # remediation rather than retaining the vulnerable 0.34.5 resolution.
   '@huggingface/transformers>sharp': 0.35.3
