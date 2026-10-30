@@ -306,7 +306,6 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-evidence-bundle.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
-  "check-hot-file-falsifier.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
   "check-live-run-silence.mjs",
