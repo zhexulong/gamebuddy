@@ -23,6 +23,8 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { selectAuthoredContextVolatileSourceRefs } from "./tavern/chat-thread-store.js";
 import { readWorldBook, validateWorldBook, writeWorldBook } from "./worldbook.js";
+import { buildCompanionCard } from "./tavern/companion-card-export.js";
+import { createWorldBookTools } from "./worldbook.js";
 import fc from "fast-check";
 
 function pngWithChara(json: string, keyword = "chara", paddingBytes = 0): Uint8Array {
@@ -243,10 +245,23 @@ test("a card that writes no interaction/expression material carries no persona d
   assert.doesNotMatch(renderIdentityProfile(DEFAULT_COMPANION_PRESET.profile), /Expression style:/u);
 });
 
-test("imported character-book entries are macro-rendered and an unrenderable entry is dropped", () => {
-  // The failure this catches: the worldbook candidate used to keep the card's
-  // raw `{{user}}`/`{{char}}` tokens, so the companion's own context and the
-  // worldbook tools read a literal brace placeholder instead of a name.
+/**
+ * The character book's own two rules, which are NOT the same rule and used to be one line apart.
+ *
+ * The card's macros are the reader's business: every reader of a world-book entry renders at its own
+ * seam (`worldbook.ts:231-232`, `catalog-service.ts:630-631`, `companion-world-book-service.ts:155`),
+ * so the decoder stores what the AUTHOR wrote. It used to store the rendering - `{{char}}` became
+ * "Macro Rae" - and because the card export writes the stored text straight back, a re-exported card
+ * no longer said `{{char}}` and was no longer the same character in another Tavern.
+ *
+ * The entry that cannot be rendered is still DROPPED: the render survives as the probe, not as the
+ * value. Both halves are asserted here, and the second is the one that would pass a careless fix - a
+ * decoder that stopped rendering entirely would keep `{{unknown_macro}}` and lose the drop.
+ */
+test("imported character-book entries keep the author's macros, and an unrenderable entry is dropped", () => {
+  // The failure this catches, in both directions: the worldbook candidate used to carry the
+  // rendering instead of the authored text (so it could not be exported back), and a fix that
+  // simply stopped rendering would carry a raw placeholder the runtime has to drop later.
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -263,9 +278,86 @@ test("imported character-book entries are macro-rendered and an unrenderable ent
   assert.equal(preview.worldBookCandidates.length, 1);
   const entry = preview.worldBookCandidates[0]!;
   assert.equal(entry.title, "Farm pact");
-  assert.equal(entry.content, "Macro Rae and User share the farm.");
-  assert.doesNotMatch(entry.content, /\{\{/u);
+  // The AUTHOR's text, macros intact - this is the round-trip half.
+  assert.equal(entry.content, "{{char}} and {{user}} share the farm.");
+  // The title is a player-facing label rather than authored prose the model reads, so it stays
+  // rendered: the surface prints it as the entry's name, and a name is not a macro channel.
+  assert.equal(entry.title, "Farm pact");
   assert.doesNotMatch(entry.title, /\{\{/u);
+  // The unrenderable entry left the set and was counted, which is what stops a raw `{{...}}`
+  // placeholder from being written into her book at all.
+  assert.deepEqual(
+    preview.losses.filter((loss) => loss.reason === "unrenderable_worldbook_entry"),
+    [{ field: "character_book.entries", reason: "unrenderable_worldbook_entry", count: 1 }],
+  );
+});
+
+test("a card's world-book macro survives a durable round trip, and the model still reads the name", async () => {
+  // The whole path, on the product's own functions: the decoder produces the entry, `worldbook.json` is
+  // written from it and read back the way the runtime reads it, the card export writes the entry it holds,
+  // and the authored-context catalog is asked what the model would receive.
+  //
+  // The failure this catches: when the decoder stored the RENDERING, `{{char}}` left her book as "琥珀" and
+  // the export wrote that back, so the re-exported card was a different character in another Tavern. The
+  // second half catches the careless fix - a decoder that simply stopped rendering would keep a raw
+  // placeholder in the book, so the DROP is asserted here too.
+  const card = JSON.stringify({
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: {
+      name: "琥珀",
+      description: "calm",
+      character_book: {
+        entries: [{ comment: "Greenhouse", content: "{{char}} is late again", keys: ["greenhouse"] }],
+      },
+    },
+  });
+  const report = decodeStCard(card);
+  const candidates = report.candidate?.worldBookCandidates ?? [];
+  assert.equal(candidates.length, 1);
+  // What the decoder hands on is the AUTHOR's text, macros and all.
+  assert.equal(candidates[0]?.content, "{{char}} is late again");
+
+  const dir = await mkdtemp(join(tmpdir(), "st-card-macro-round-trip-"));
+  try {
+    const path = join(dir, "worldbook.json");
+    await writeWorldBook(
+      path,
+      validateWorldBook({
+        schemaVersion: 1,
+        worldBookId: "worldbook_macro",
+        revision: 1,
+        alwaysOnPremise: "",
+        entries: candidates,
+      }),
+    );
+    // The DURABLE record holds the authored text, which is what makes the export able to write it back.
+    const durable = await readWorldBook(path);
+    assert.equal(durable.entries[0]?.content, "{{char}} is late again");
+
+    // The exported card carries the same authored text, so a re-import elsewhere rebuilds the same
+    // character rather than one whose prose happens to name her.
+    const exported = buildCompanionCard({ name: "琥珀", worldBook: durable });
+    assert.equal(exported.data.character_book?.entries[0]?.content, "{{char}} is late again");
+
+    // AND the runtime is unchanged: the readers render at their own seam, so the model receives her name
+    // rather than a brace placeholder. Driven through the REAL World Info tool the runtime installs
+    // (`runtime-core.internal.ts:1456` builds this exact pair), not a unit call on the renderer.
+    const [catalogTool, queryTool] = createWorldBookTools(
+      { metadata: { worldBookId: "worldbook_macro", revision: 1, canonicalHash: "y" }, book: durable },
+      undefined,
+      { char: "琥珀" },
+    );
+    const run = (tool: typeof catalogTool | undefined, params: unknown) =>
+      tool!.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+    // The catalog deliberately carries no body, so it must still be reachable by the entry's own name.
+    assert.match(JSON.stringify(await run(catalogTool, {})), /st-st-v3-1/u);
+    const published = JSON.stringify(await run(queryTool, { entryId: "st-st-v3-1" }));
+    assert.match(published, /琥珀 is late again/u);
+    assert.doesNotMatch(published, /\{\{/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 });
 
 test("safe decoder classifies accepted, opaque, and executable card fields without interpreting them", () => {

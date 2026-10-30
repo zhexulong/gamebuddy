@@ -679,13 +679,20 @@ function extractCharacterBook(
       if (raw.content !== undefined) unreadableContent += 1;
       return;
     }
-    // Card macros are part of the format, so the entry is rendered into authored
-    // content here - the same rendering `candidateToIdentityProfile` applies to
-    // the persona and examples. An entry the macro set cannot fully render is
-    // dropped rather than written into the companion's worldbook with a raw
-    // `{{...}}` placeholder - and the drop is counted below, never silent.
-    const renderedContent = renderWorldBookText(content, { char: charName });
-    if (hasUnrenderedMacro(renderedContent)) {
+    // Card macros are part of the format, and rendering them is the READER's job, not this
+    // decoder's: every reader renders at its own seam (`worldbook.ts:231-232` for the World Info
+    // tools, `catalog-service.ts:630-631` for the authored-context catalog,
+    // `companion-world-book-service.ts:155` for the surface), and the world book's own edit path
+    // already keeps the authored body for exactly this reason
+    // (`companion-world-book-service.ts:346`). Storing the rendered text here froze ONE run's
+    // rendering into her book - `{{char}}` became 琥珀 - and the card export writes that stored
+    // text straight back, so a re-exported card no longer said `{{char}}` and was no longer the
+    // same character in another Tavern.
+    //
+    // The render is still performed, but ONLY as the probe: an entry whose macro set cannot fully
+    // render is dropped rather than written into her world book, and the drop is counted below,
+    // never silent. The value STORED is the author's own text; the value TESTED is the rendering.
+    if (hasUnrenderedMacro(renderWorldBookText(content, { char: charName }))) {
       unrenderableContent += 1;
       return;
     }
@@ -715,7 +722,7 @@ function extractCharacterBook(
       Object.freeze({
         entryId: `st-${format}-${index + 1}`,
         title,
-        content: renderedContent,
+        content,
         scope: "setting" as const,
         provenance: "st-card-import" as const,
         tokenBudget: "small" as const,
