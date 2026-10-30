@@ -2227,17 +2227,22 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
   // receipt proves is what the counter needs - the action reached its DECLARED terminal with a success state - and
   // that is strictly stronger than `executedActionIds`, which answers attempt/success from node state and can never
   // name a reason code.
+  // The day's work, declared once: every receipt built here is recorded as what the fixture says the day did, so the
+  // expectation below is collected from this same log instead of being a second, hand-typed list of action ids.
+  const dayWork = [];
+  const workedReceipt = (actionId, reasonCode, requestId = `req_${actionId}`) => {
+    dayWork.push(actionId);
+    return recordedActionReceipt(actionId, reasonCode, "succeeded", requestId);
+  };
   const factLog = [
     // 86 weeds and 48 rocks, as that day produced them: every one a succeeded/terminal receipt.
-    ...Array.from({ length: 86 }, (_, index) =>
-      recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", `weed_${index}`),
-    ),
+    ...Array.from({ length: 86 }, (_, index) => workedReceipt("cut_weeds", "weeds_cut", `weed_${index}`)),
     ...Array.from({ length: 48 }, (_, index) =>
-      recordedActionReceipt("break_rock_source", "rock_source_broken", "succeeded", `rock_${index}`),
+      workedReceipt("break_rock_source", "rock_source_broken", `rock_${index}`),
     ),
-    recordedActionReceipt("harvest_crop", "crop_harvested"),
-    recordedActionReceipt("plant_seed", "seed_planted"),
-    recordedActionReceipt("water_crop", "crop_watered"),
+    workedReceipt("harvest_crop", "crop_harvested"),
+    workedReceipt("plant_seed", "seed_planted"),
+    workedReceipt("water_crop", "crop_watered"),
     // What the day also did, and what must NOT count: motion, gear, and the task's own progress reports.
     recordedActionReceipt("move_to_tile", "target_reached"),
     recordedActionReceipt("equip_tool", "tool_equipped"),
@@ -2255,7 +2260,7 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
 
   assert.deepEqual(
     accomplishedSince(0),
-    ["break_rock_source", "cut_weeds", "harvest_crop", "plant_seed", "water_crop"],
+    [...new Set(dayWork)].sort(),
     "the day cut weeds, broke rocks, harvested, planted and watered - an empty flat trace does not unmake any of it",
   );
 
