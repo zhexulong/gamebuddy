@@ -461,7 +461,23 @@ internal sealed partial class ExecutionManager
         if (warp is null || warp.TargetName is null or "")
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_not_available" : "warp_not_available", $"source={sourceX},{sourceY}");
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_out_of_range" : "warp_out_of_range", $"source={sourceX},{sourceY};door={warp.X},{warp.Y};target={warp.TargetName}:{warp.TargetX},{warp.TargetY}");
+        {
+            // The refusal used to name only the two tiles it compared, and they were both the caller's OWN values - so a
+            // live receipt read `source=3,12;door=3,12` next to `door_out_of_range`, which looks like the product
+            // refusing a fact it just proved. Measured 2026-10-30 (`round8`): 2 doors and 0 warps refused this way, and
+            // the message named no third tile, so nothing showed WHERE the actor actually was.
+            //
+            // `sourceX,sourceY` is the tile the CALLER named - a snapshot-derived coordinate that may be several tiles
+            // from the actor by the time the request lands. The gate is about the actor, so the actor's own tile is the
+            // one fact that makes this actionable; without it a reader cannot tell "wrong tile asked for" from "actor
+            // drifted since the snapshot".
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                isDoor ? "door_out_of_range" : "warp_out_of_range",
+                $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY}");
+        }
 
         LocalTravelSpec specification = new(
             executionId,

@@ -14,6 +14,8 @@ import {
   MAX_GAME_ENVIRONMENT_FACTS_BYTES,
   reloadMagicContextInRuntimeRoot,
 } from "./runtime-core.internal.js";
+import type { Snapshot } from "./protocol.js";
+import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -115,16 +117,11 @@ test("formatGameClock localizes the clock as a 24h reading plus the game day's t
   assert.equal(formatGameClock(2600, true), "02:00（深夜）");
 });
 
-test("the localized clock fact can actually fire the evening world-book entry, and the English one cannot", () => {
-  // "a key the book matches" is read from the owner's own compiled book, not a
-  // hand-kept list: a renamed key turns this red instead of drifting silently.
-  const entry = DEFAULT_COMPANION_PRESET.worldBook.entries.find(
-    (candidate) => candidate.title === "晚霞收工与作息节律",
-  );
-  assert.ok(entry !== undefined, "the owner's evening book entry must exist");
-  const keys = entry.keys ?? [];
-  assert.deepEqual(keys, ["晚霞", "傍晚", "收工", "深夜", "睡觉"]);
-  const evening = {
+test("the localized clock fact can fire a book entry the English clock cannot", () => {
+  // The population is read from the owner's own compiled book, not a hand-kept
+  // list: an entry that is renamed or re-keyed turns this red by naming itself.
+  const gated = DEFAULT_COMPANION_PRESET.worldBook.entries.filter((entry) => entry.constant !== true);
+  const evening: GameEnvironmentFactsSource = {
     timeOfDay: 1800,
     dayOfMonth: 19,
     seasonIndex: 2,
@@ -134,19 +131,59 @@ test("the localized clock fact can actually fire the evening world-book entry, a
     tile: { x: 64, y: 15 },
   };
   const zhFacts = formatGameEnvironmentFacts(evening, true);
-  assert.ok(zhFacts.includes("18:00（傍晚）"), `the Chinese clock line carries the band: ${zhFacts}`);
-  assert.ok(
-    keys.some((key) => zhFacts.includes(key)),
-    `Chinese facts must carry a book key so the evening entry can trigger: ${zhFacts}`,
-  );
   const enFacts = formatGameEnvironmentFacts(evening, false);
-  assert.equal(
-    keys.filter((key) => enFacts.includes(key)).length,
-    0,
-    `English facts must carry no Chinese book key: ${enFacts}`,
+  assert.ok(zhFacts.includes("18:00（傍晚）"), `the Chinese clock line carries the band: ${zhFacts}`);
+  const firedByZh = gated.filter((entry) => (entry.keys ?? []).some((key) => zhFacts.includes(key)));
+  assert.ok(
+    firedByZh.length > 0,
+    `the Chinese facts must carry a key of at least one book entry, or no entry can fire on the clock: ${zhFacts}`,
   );
+  for (const entry of firedByZh)
+    assert.equal(
+      (entry.keys ?? []).filter((key) => enFacts.includes(key)).length,
+      0,
+      `the English facts must carry none of ${entry.title}'s keys: ${enFacts}`,
+    );
 });
 
+test("the shipped book answers a green-rain day, which the rendered weather fact can name", () => {
+  // "The name green rain renders" is derived from the weather formatter, not
+  // quoted here: a renamed token turns this red by naming the drift, instead of
+  // pinning the entry to yesterday's word.
+  const weatherFact = formatGameWeather("green_rain", true);
+  const name = weatherFact.replace(/^天气：/u, "");
+  assert.equal(name, "绿雨", `the green-rain day must be named, not fall back: ${weatherFact}`);
+  const day: GameEnvironmentFactsSource = {
+    timeOfDay: 900,
+    dayOfMonth: 12,
+    seasonIndex: 1,
+    year: 1,
+    weather: "green_rain",
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+    stamina: 270,
+    exhausted: false,
+  };
+  const greenRainDay = formatGameEnvironmentFacts(day, true);
+  assert.ok(greenRainDay.includes(weatherFact), `the day's line carries the weather fact: ${greenRainDay}`);
+  const gated = DEFAULT_COMPANION_PRESET.worldBook.entries.filter((entry) => entry.constant !== true);
+  const fires = (facts: string, entry: (typeof gated)[number]): boolean =>
+    (entry.keys ?? []).some((key) => facts.includes(key));
+  const answered = gated.filter((entry) => (entry.keys ?? []).includes(name) && fires(greenRainDay, entry));
+  assert.equal(
+    answered.length,
+    1,
+    `exactly one entry must be keyed on the name the weather fact renders (${name}); the green-rain day is the one day the farm fills with weeds and debris, and a book that stays silent on it leaves the companion describing it as plain rain`,
+  );
+  // The same book on a sunny day: the entry exists for the condition, not for a
+  // word that is always present.
+  const sunnyDay = formatGameEnvironmentFacts({ ...day, weather: "sunny" }, true);
+  assert.equal(
+    answered.filter((entry) => fires(sunnyDay, entry)).length,
+    0,
+    `the green-rain entry must not fire on a sunny day: ${sunnyDay}`,
+  );
+});
 test("formatGameClock rejects out-of-range clocks", () => {
   assert.equal(formatGameClock(-5, false), "");
   assert.equal(formatGameClock(9999, false), "");
@@ -224,6 +261,7 @@ test("formatGameEnvironmentFacts carries the actor's current stamina, verbatim",
  * nor the tool in her hand - so "what are you holding" had to be guessed. Both
  * are plain native reads already on the wire (`Snapshot.tile`, `currentTool`,
  * and `toolSlots[].upgradeLevel` for the upgrade the handlers actually check).
+ * The tool's own naming is the test below this one.
  */
 test("formatGameEnvironmentFacts carries the actor's own tile and the tool she is holding", () => {
   const source = {
@@ -238,16 +276,105 @@ test("formatGameEnvironmentFacts carries the actor's own tile and the tool she i
     exhausted: false,
     currentTool: "(T)Hoe",
     currentToolSlot: 2,
-    toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2 }],
+    toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2, category: "hoe" }],
   };
 
   const en = formatGameEnvironmentFacts(source, false);
   assert.ok(en.includes("tile: (64, 15)"), `the English line must name her tile: ${en}`);
-  assert.ok(en.includes("holding: (T)Hoe (+2)"), `the English line must name the held tool and its upgrade: ${en}`);
+  assert.ok(en.includes("holding: hoe (+2)"), `the English line must name the held tool and its upgrade: ${en}`);
 
   const zh = formatGameEnvironmentFacts(source, true);
   assert.ok(zh.includes("脚下: (64, 15)"), `the Chinese line must name her tile: ${zh}`);
-  assert.ok(zh.includes("手持: (T)Hoe（+2）"), `the Chinese line must name the held tool and its upgrade: ${zh}`);
+  assert.ok(zh.includes("手持: 锄头（+2）"), `the Chinese line must name the held tool and its upgrade: ${zh}`);
+});
+
+/**
+ * The environment line is what she SPEAKS from, so it may not hand her an identifier to read aloud.
+ *
+ * Measured on a live session: the companion said "我们带着 (T)Hoe 去 Town". The cause was this line, which
+ * rendered `currentTool` verbatim - and `currentTool` is the native item identity (`(T)Hoe`, `(W)47` for the
+ * scythe), not a word a person says. The wire publishes the same tool twice: that identity beside
+ * `toolSlots[].category`, the Mod's own tool word (`FarmhandActionCatalog.ToolEnum`, the word `equip_tool` and
+ * every `tool:<category>` claim use). This test holds both halves at once, because they pull in opposite
+ * directions on purpose: the fact she speaks from carries the word, and the observation a plan is written
+ * against still carries the identity it must echo.
+ */
+test("a turn's environment line names the tool in words while the observation keeps the id a plan must echo", () => {
+  const source = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 64, y: 15 },
+    stamina: 270,
+    exhausted: false,
+    currentTool: "(T)Hoe",
+    currentToolSlot: 2,
+    toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2, category: "hoe" }],
+  };
+
+  const zh = formatGameEnvironmentFacts(source, true);
+  assert.equal(zh.includes("(T)"), false, `the Chinese line must not hand her a raw item id to say: ${zh}`);
+  assert.ok(zh.includes("手持: 锄头（+2）"), `the Chinese line names the tool and its upgrade: ${zh}`);
+
+  const en = formatGameEnvironmentFacts(source, false);
+  assert.equal(en.includes("(T)"), false, `the English line must not hand her a raw item id to say: ${en}`);
+  assert.ok(en.includes("holding: hoe (+2)"), `the English line names the tool and its upgrade: ${en}`);
+
+  // The primitive identity the tool handlers really check is a MeleeWeapon's `(W)47`, not a `(T)` name: the same
+  // mapping has to cover it, or the one tool whose id no label can ever say keeps reaching her.
+  const scythe = formatGameEnvironmentFacts(
+    {
+      ...source,
+      currentTool: "(W)47",
+      currentToolSlot: 3,
+      toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+    },
+    false,
+  );
+  assert.equal(scythe.includes("(W)"), false, `a scythe reported as (W)47 must still be named: ${scythe}`);
+  assert.ok(scythe.includes("holding: scythe"), scythe);
+
+  // The other half, through the real observation path: the id a plan echoes is untouched. A plan writes
+  // `entry.label === snapshot.currentTool` and copies `toolSlots[].slot`, so a line that also dropped these fields
+  // would trade one blindness for another.
+  const snapshot: Snapshot = {
+    ...source,
+    revision: 12,
+    health: 100,
+    actionable: true,
+    capabilities: ["water_crop"],
+    catalogRevision: 3,
+    enabledActionIds: ["water_crop"],
+    presentationLocale: "zh-CN",
+  };
+  const observed = boundObservedSnapshot(snapshot).snapshot;
+  assert.equal(observed.currentTool, "(T)Hoe", "the observation keeps the identity a plan compares against");
+  assert.deepEqual(observed.toolSlots, [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2, category: "hoe" }]);
+});
+
+/**
+ * An older Mod publishes a slot with no `category`, so there is no word to prefer. The fact must still say what
+ * she is holding rather than vanish: an unnameable tool is a smaller loss than a silent one.
+ */ test("a tool the wire publishes no word for keeps its identity rather than dropping the fact", () => {
+  const facts = formatGameEnvironmentFacts(
+    {
+      timeOfDay: 900,
+      dayOfMonth: 19,
+      seasonIndex: 0,
+      year: 1,
+      weather: "sunny",
+      location: "Farm",
+      tile: { x: 64, y: 15 },
+      currentTool: "(T)Hoe",
+      currentToolSlot: 2,
+      toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 0 }],
+    },
+    false,
+  );
+  assert.ok(facts.includes("holding: (T)Hoe"), `an unnamed tool is still reported: ${facts}`);
 });
 
 /**

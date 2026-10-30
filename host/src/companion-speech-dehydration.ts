@@ -16,10 +16,13 @@
  *    (`(thinking)`/`[thought]`/`（思考）`/`【内心】`).
  *  - `*...*` action beats are removed (multi-line allowed); `**...**` markdown
  *    emphasis keeps its content.
- *  - **Inline bracket audio tags are preserved.** Round/full-width/square
- *    brackets carry MiMo V2.5 tone/emotion tags (`（轻声）`, `[pause]`) which the
- *    synthesizer performs instead of speaking, so stripping them would delete
- *    the emotion channel. The Voice lane consumes this text unmodified.
+ *  - **Inline bracket audio tags are preserved by `dehydrateCompanionSpeech`.**
+ *    Round/full-width/square brackets carry MiMo V2.5 tone/emotion tags (`（轻声）`,
+ *    `[pause]`) which the synthesizer performs instead of speaking, so stripping
+ *    them here would delete the emotion channel. The Voice lane consumes this text
+ *    unmodified; the in-game bubble, which cannot perform a tag, takes
+ *    `stripInlineAudioTags` instead - the same one utterance projected for a
+ *    channel that shows words and nothing else.
  *  - Markdown `---` separators are removed.
  *  - Isolated punctuation orphaned by a removed beat (`：，`、`，、`、trailing
  *    `，`/`。` before another sentence) is collapsed so no bare separator
@@ -65,7 +68,9 @@ export function dehydrateCompanionSpeech(input: string): string {
     // the whole leading pause run (punctuation + spacing) so the dialogue
     // starts at its first real character.
     .replace(/^[,，、:：;；]+(?:\s*[,，、;；]+)*/, "")
-    .replace(/[,，、:：;；]{2,}/g, (match) => (match.includes("。") || match.includes(".") ? "。" : match.includes("?") ? "？" : ","))
+    .replace(/[,，、:：;；]{2,}/g, (match) =>
+      match.includes("。") || match.includes(".") ? "。" : match.includes("?") ? "？" : ",",
+    )
     // A colon that introduces stripped content must keep its introduction but
     // drop the stray comma-class pause directly after it (`： ，现在` → `： 现在`).
     .replace(/[：:]\s*[,，、;；]+/g, "： ")
@@ -81,12 +86,35 @@ export function dehydrateCompanionSpeech(input: string): string {
 const INLINE_TAG_RE = /（[^）]*）|\([^)]*\)|\[[^\]]*\]/g;
 
 /**
+ * The bubble-side projection of an utterance whose brackets are directions.
+ *
+ * `（轻声）种子我已经帮你种好啦。` is two things at once: the words the player reads, and
+ * a tone the voice channel performs. The voice needs the tag and reads it as
+ * performance; the in-game bubble has no voice to perform with, so the same tag
+ * printed above the farmer's head reads as the companion having SAID the
+ * direction. So the two channels take the one utterance differently, and this is
+ * the bubble's half: remove the bracketed group, keep every word around it.
+ *
+ * The tag is removed where it sits, never replaced by a space: a full-width tag
+ * cut out of the middle of a sentence must leave `种子我已经种好了。`, not
+ * `种子 我已经种好了。`. Whitespace the model itself wrote around a removed tag
+ * is collapsed, so an English `I said (softly) hello` keeps its single space and
+ * a leading `(softly) Seeds` starts at its first word.
+ */
+export function stripInlineAudioTags(input: string): string {
+  if (typeof input !== "string" || input.length === 0) return "";
+  return input.replace(INLINE_TAG_RE, "").replace(/\s+/g, " ").trim();
+}
+
+/**
  * True when dehydration leaves nothing speakable: either the text collapses to
  * empty, or it consists entirely of bracket tags. A tag-only reply would make
  * the synthesizer emit a short meaningless sound, so it is treated as "nothing
  * to say" — the caller rejects it instead of publishing empty speech.
+ *
+ * This is the bubble projection applied to the dehydrated utterance, which is
+exactly what `stripInlineAudioTags` is, so the two cannot drift apart.
  */
 export function isEmptyAfterDehydration(input: string): boolean {
-  const stripped = dehydrateCompanionSpeech(input).replace(INLINE_TAG_RE, " ").replace(/\s+/g, " ").trim();
-  return stripped.length === 0;
+  return stripInlineAudioTags(dehydrateCompanionSpeech(input)).length === 0;
 }

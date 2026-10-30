@@ -136,27 +136,44 @@ export function GameSurface({
    * Only one message is distinguishable to the player, and it is the one with a cure: the Host answers
    * `stardew_player_host_cabin_missing` when this world cannot host the companion YET, and the product's own
    * guidance is to have Robin build a cabin. Every other failure is a read that could not be made.
+   *
+   * `reread` rides along so the panel can say the player's own click was read, instead of re-rendering the identical
+   * screen with no sign anything happened.
    */
-  const cabinViewKindFor = (error: unknown): "missing" | "unavailable" => {
+  const cabinViewFor = (error: unknown, reread: boolean): CabinViewState => {
     const code = (error as { code?: unknown } | null)?.code;
-    return code === "stardew_player_host_cabin_missing" ? "missing" : "unavailable";
+    return code === "stardew_player_host_cabin_missing" ? { kind: "missing", reread } : { kind: "unavailable", reread };
   };
 
-  const readCabins = useCallback(async (): Promise<void> => {
-    setCabinView({ kind: "loading" });
-    try {
-      const result = await composedApi.readStardewCabins();
-      cabinIdempotencyKeysRef.current = new Map(
-        result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
-      );
-      setCabinView({ kind: "choices", choices: result.choices });
-    } catch (error) {
-      // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
-      // cabin for her YET and Robin can build one; everything else is a read that could not be made. Flattening them
-      // was why a player with no cabin retried the same read instead of building one.
-      setCabinView({ kind: cabinViewKindFor(error) });
-    }
-  }, [composedApi]);
+  /**
+   * Reads the cabin handoff.
+   *
+   * `reread` is true only when the player pressed the panel's own refresh control. An empty candidate list is the
+   * same fact as the Host's `stardew_player_host_cabin_missing` refusal - this world has no cabin the companion may
+   * use - so both land on `missing`, which is the one state that offers the cure and the control that asks again.
+   * Rendering the empty list as its own "nothing to confirm" note was the dead end: no control, and copy that sent
+   * the player to reload the page, which drops the Host connection and this surface's attachment with it.
+   */
+  const readCabins = useCallback(
+    async (reread = false): Promise<void> => {
+      setCabinView({ kind: "loading" });
+      try {
+        const result = await composedApi.readStardewCabins();
+        cabinIdempotencyKeysRef.current = new Map(
+          result.choices.map((choice) => [choice.choiceHandle, newIdempotencyKey()]),
+        );
+        setCabinView(
+          result.choices.length === 0 ? { kind: "missing", reread } : { kind: "choices", choices: result.choices },
+        );
+      } catch (error) {
+        // Two different situations, two different answers. `stardew_player_host_cabin_missing` means this world has no
+        // cabin for her YET and Robin can build one; everything else is a read that could not be made. Flattening them
+        // was why a player with no cabin retried the same read instead of building one.
+        setCabinView(cabinViewFor(error, reread));
+      }
+    },
+    [composedApi],
+  );
 
   useEffect(() => {
     if (!ready) return;
@@ -189,7 +206,7 @@ export function GameSurface({
     }
     const idempotencyKey = cabinIdempotencyKeysRef.current.get(choice.choiceHandle);
     if (idempotencyKey === undefined) {
-      setCabinView({ kind: "unavailable" });
+      setCabinView({ kind: "unavailable", reread: false });
       return;
     }
     cabinConfirmationActiveRef.current = true;
@@ -1113,7 +1130,7 @@ export function GameSurface({
           toggleCreateForm: () => setCreateFormOpen((open) => !open),
           setContinuityIdentity: setContinuityIdentityInput,
           confirmCabin: (choice) => void handleCabinConfirmation(choice),
-          refreshCabins: () => void readCabins(),
+          refreshCabins: () => void readCabins(true),
         }}
       />
       <StardewInstallationDiscovery

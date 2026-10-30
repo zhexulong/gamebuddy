@@ -272,6 +272,24 @@ test("the Game conduct fits one spoken turn inside the bubble the player reads f
   assert.match(game, /dropped from the bubble entirely/);
 });
 
+test("the Game conduct names the ids she may not say out loud, and keeps them where they do work", () => {
+  // Measured on a live session: the companion said "我们带着 (T)Hoe 去 Town". The fact line was the source and is
+  // fixed beside this (`formatGameEnvironmentFacts`, runtime-core.internal.ts), but the other half is speech: an id
+  // is a handle for an action argument, never a word the player hears. The rule names the concrete failures - the
+  // item identity, the mine's internal map name - and the word to say instead, because a bare "do not use ids" was
+  // already covered by the machine-vocabulary line beside it and did not stop this one.
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /Name the things you handle in words, never in the game's own ids/);
+  assert.match(game, /\(T\)Hoe/);
+  assert.match(game, /UndergroundMine10/);
+  assert.match(game, /矿洞第 10 层/);
+  // The ids are not banned outright: a plan argument and a snapshot comparison still need the exact value.
+  assert.match(game, /ids still belong wherever they do work/);
+  assert.match(game, /copied exactly into an action argument/);
+  // Chat has no world and no such ids, so the rule stays on the Game surface.
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
+});
+
 test("the Game conduct turns an obstacle and a service register into a person", () => {
   // Two registers the companion falls into when it has no line for them: the
   // Mod's reason for a refusal (a live run read `gift_given` / `quest_25_completed`

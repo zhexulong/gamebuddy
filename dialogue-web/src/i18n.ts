@@ -83,11 +83,10 @@ const en = {
     "Cabins are read while the game you launched is starting up. Load your farm, then read them again.",
   stardewCabinsMissing:
     "This world has no cabin she can live in yet. Have Robin build one on your farm, then read the cabins again.",
+  stardewCabinsReread: "Just read again: this is still the answer.",
   stardewCabinsRefresh: "Read cabins again",
   stardewCabinsAwaitingSession:
     "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
-  stardewCabinsEmpty:
-    "This farm has no empty cabin, so your companion has nowhere to live yet. Build one at Robin's carpenter shop in the game, then reload this page to choose it.",
   stardewCabinConfirm: "Confirm cabin",
   stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
   stardewCabinConfirmationUncertain:
@@ -806,6 +805,30 @@ const en = {
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   gameInstallationModLoaderMissing:
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
+  // The one-click mod-loader install. Every string here is an outcome the Host actually
+  // reports, and each names the player's own next step rather than a code.
+  gameModLoaderInstallAction: "Install SMAPI for me",
+  gameModLoaderInstallHint:
+    "GameBuddy copies the mod loader it ships into your game folder. Nothing else in that folder is touched.",
+  gameModLoaderInstallInstalled: "SMAPI is installed. Your game folder is ready.",
+  gameModLoaderInstallCurrent: "SMAPI was already in your game folder. Nothing was changed.",
+  gameModLoaderInstallGameMissing: "That folder no longer holds Stardew Valley. Choose your game folder again.",
+  gameModLoaderInstallConflict:
+    "That folder has files in the way that GameBuddy did not put there. Remove the old SMAPI files, or choose a clean game folder.",
+  gameModLoaderInstallDependenciesMissing:
+    "That game folder is incomplete: Stardew Valley's own dependency file is missing. Verify the game files in Steam or GOG, then try again.",
+  gameModLoaderInstallNotWritable:
+    "The game folder could not be written to. Close the game and try again, or check the folder's permissions.",
+  gameModLoaderInstallPayloadUnavailable:
+    "This build of GameBuddy does not carry the mod loader. Reinstall GameBuddy and try again.",
+  gameModLoaderInstallIncomplete: "The install did not finish. Nothing was left half-written; try again.",
+  // The Steam launch option, with the one step a player has to do by hand in Steam itself.
+  gameSteamLaunchOptionTitle: "Make Steam launch the mod loader",
+  gameSteamLaunchOptionDetail:
+    "Steam has to start Stardew Valley through SMAPI, or the companion never joins. In Steam: right-click the game, Properties, Launch Options, and paste this. Game time is still tracked.",
+  gameSteamLaunchOptionCopy: "Copy launch option",
+  gameSteamLaunchOptionCopied: "Copied.",
+  gameSteamLaunchOptionCopyFailed: "Copy failed. Select the text and copy it yourself.",
   // The other selection refusal a player can fix. The file name is what they look for in
   // their folder; the sentence says what to do rather than only what is wrong.
   gameInstallationNotStardewInstallation:
@@ -1085,11 +1108,10 @@ const zh: Messages = {
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
   stardewCabinsMissing: "这个世界还没有她能住的小屋。先请罗宾在农场盖一间，然后再读一次小屋。",
+  stardewCabinsReread: "刚刚又读了一次：现在的结果仍然是这样。",
   stardewCabinsRefresh: "再读一次小屋",
   stardewCabinsAwaitingSession:
     "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
-  stardewCabinsEmpty:
-    "这个农场还没有空着的小屋，同伴还没有地方住。请去游戏里罗宾的木匠铺建一间，然后重新加载本页来选它。",
   stardewCabinConfirm: "确认小屋",
   stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
   stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
@@ -1657,6 +1679,24 @@ const zh: Messages = {
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
+  gameModLoaderInstallAction: "帮我安装 SMAPI",
+  gameModLoaderInstallHint: "GameBuddy 会把自带的模组加载器复制到你的游戏目录，不会改动该目录里的其他文件。",
+  gameModLoaderInstallInstalled: "SMAPI 已安装，你的游戏目录已经就绪。",
+  gameModLoaderInstallCurrent: "你的游戏目录里已经有 SMAPI，没有做任何改动。",
+  gameModLoaderInstallGameMissing: "这个目录里已经找不到《星露谷物语》了。请重新选择游戏文件夹。",
+  gameModLoaderInstallConflict:
+    "这个目录里有 GameBuddy 没有写过的文件挡着。请先删除旧的 SMAPI 文件，或者换一个干净的游戏目录。",
+  gameModLoaderInstallDependenciesMissing:
+    "这个游戏目录不完整：缺少《星露谷物语》自己的依赖清单文件。请在 Steam 或 GOG 里验证游戏文件后重试。",
+  gameModLoaderInstallNotWritable: "无法写入游戏目录。请先关闭游戏再重试，或检查该目录的权限。",
+  gameModLoaderInstallPayloadUnavailable: "当前这个 GameBuddy 版本里没有模组加载器。请重新安装 GameBuddy 后再试。",
+  gameModLoaderInstallIncomplete: "安装没有完成。没有留下写了一半的文件，请再试一次。",
+  gameSteamLaunchOptionTitle: "让 Steam 通过模组加载器启动",
+  gameSteamLaunchOptionDetail:
+    "Steam 必须通过 SMAPI 启动《星露谷物语》，否则伴侣无法加入。在 Steam 里右键游戏 → 属性 → 启动选项，把下面的内容粘贴进去。游戏时长仍会照常记录。",
+  gameSteamLaunchOptionCopy: "复制启动选项",
+  gameSteamLaunchOptionCopied: "已复制。",
+  gameSteamLaunchOptionCopyFailed: "复制失败。请手动选中文本并复制。",
   gameInstallationNotStardewInstallation:
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
   gameInstallationReparsePoint:

@@ -83,6 +83,19 @@ const root = {
   game,
 };
 
+/**
+ * The panel's progress line for an in-flight Game operation.
+ *
+ * The panel renders one `role="status"` line per fact it has to state, and several of them
+ * can be true at once - a resume in flight while the cabin handoff, on the same panel, states
+ * that this farm has no cabin yet. A journey that means "the operation's own progress line"
+ * has to say which one it means; `[data-tone="progress"]` is the tone every in-flight line
+ * already carries.
+ */
+function progressStatus(panel: ReturnType<Page["getByRole"]>) {
+  return panel.locator('[role="status"][data-tone="progress"]');
+}
+
 const draft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
 
 /**
@@ -1122,7 +1135,7 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   await resume.dblclick();
   await expect.poll(() => resumeRequests).toBe(1);
   // The accepted admission keeps the attempt visibly in flight and disabled.
-  await expect(panel.getByRole("status")).toContainText("Resuming the game connection...");
+  await expect(progressStatus(panel)).toContainText("Resuming the game connection...");
   await expect(resume).toBeDisabled();
   // At least one authoritative reread confirms the projection is still the
   // same-generation attached/disconnected state rather than converged.
@@ -1130,7 +1143,7 @@ test("Game Resume stays in flight on an accepted admission while authoritative s
   await expect(panel).toContainText("ConnectionDisconnected");
   // The Resume stays visibly in progress and disabled across the rereads, with
   // no synthetic success/accepted/completion text projected.
-  await expect(panel.getByRole("status")).toContainText("Resuming the game connection...");
+  await expect(progressStatus(panel)).toContainText("Resuming the game connection...");
   await expect(resume).toBeDisabled();
   await expect(panel).not.toContainText("accepted");
   await expect(panel).not.toContainText("could not be resumed");
@@ -1282,7 +1295,7 @@ test("resume-phase syncing projection passes the browser gate, visualizes sync, 
   // projection renders instead of failing closed.
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(panel).toContainText("ConnectionSyncing");
-  await expect(panel.getByRole("status")).toContainText("Syncing the game connection...");
+  await expect(progressStatus(panel)).toContainText("Syncing the game connection...");
   // syncing is neither resumable nor connected, so no Resume/Stop control is
   // offered and the connected vocabulary is never claimed.
   await expect(panel.getByRole("button", { name: "Resume game" })).toHaveCount(0);
@@ -2311,14 +2324,24 @@ test("the product Memory surface authors through memory.mutate and shows the Hos
   await expect.poll(() => reads).toBe(2);
   await expect(surface.getByText(writtenContent, { exact: true })).toBeVisible();
 
-  // A refused write is re-read and reported, never rendered as a written memory.
+  // A refused write is re-read and reported, never rendered as a written memory. Two readings say
+  // so, and both are asserted: the surface's own banner reports the refusal, and the create field
+  // keeps the words it was refused for and names the same refusal beside them (the field is released
+  // only when the write lands, see `memory-authoring-keeps-the-words.spec.ts`).
   refuseWrites = true;
   memories = [];
   await surface.getByRole("textbox", { name: "Memory content" }).fill(refusedContent);
   await surface.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(surface.getByRole("status")).toContainText("The chat state could not be safely reconciled.");
+  const reconciliation = "The chat state could not be safely reconciled.";
+  await expect(surface.locator(".error-banner").first()).toContainText(reconciliation);
+  await expect(surface.locator("[data-memory-create-refusal]")).toHaveText(reconciliation);
+  await expect(surface.getByRole("textbox", { name: "Memory content" })).toHaveValue(refusedContent);
   await expect.poll(() => reads).toBe(3);
-  await expect(surface.getByText(refusedContent, { exact: true })).toHaveCount(0);
+  // The refusal did not become a row. The words are still in the field the player typed them into,
+  // which is where they must be until the write lands - so this reading is about the LIST, not the
+  // page: the earlier form of it matched any text in the surface, which a preserved draft would fail
+  // for the right reason and hide the assertion's actual subject.
+  await expect(surface.locator("[data-memory-state=ready] [role=listitem]")).toHaveCount(0);
   await expect(surface.locator("[data-memory-state=empty]")).toBeVisible();
 });
 
@@ -6997,13 +7020,38 @@ test("a cabin list read before the game started says what happened, and why relo
   expect(await handoff.locator("[data-tone]").first().getAttribute("data-tone")).toBe("info");
 });
 
-test("an empty cabin list names the next step instead of only the absence", async ({ page }) => {
+/**
+ * A farm with no cabin at all is a dead end unless the panel can ask again.
+ *
+ * Measured before this change: the empty answer rendered only a sentence that ended
+ * "then reload this page to choose it", and no control at all - the refresh button
+ * was mounted for `unavailable | missing` only, and an empty candidate list is
+ * neither. Reloading is the one thing that cannot be required here: it drops the
+ * Host connection and the Game surface's own session attachment, so the instruction
+ * destroyed the setup it was part of.
+ *
+ * The failure these catch:
+ *  - the only way out of "no cabin" is a page reload, which loses the session;
+ *  - the control exists but pressing it returns the identical screen, so the player
+ *    cannot tell a fresh answer from the one they already read.
+ */
+const RELOAD_INSTRUCTION = /reload|刷新本页|重新加载/iu;
+
+test("a farm with no cabin offers the refresh in place and never asks for a reload", async ({ page }) => {
+  let cabinReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
   );
-  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
-  );
+  // The frozen cabin DTO admits an empty list, and the Host answers the live no-cabin
+  // world with the typed refusal the second test pins. Both reach the panel as one fact.
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) => {
+    cabinReads += 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ apiVersion: 1, choices: [] }),
+    });
+  });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
   );
@@ -7011,8 +7059,70 @@ test("an empty cabin list names the next step instead of only the absence", asyn
   await page.goto(`/?empty-cabins=1#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const handoff = page.locator(".stardew-cabin-handoff");
-  await expect(handoff).toContainText("no empty cabin");
-  await expect(handoff, "the player is told what to build and where").toContainText("Robin's carpenter shop");
-  await expect(handoff, "and how the new cabin reaches this list").toContainText("reload this page to choose it");
+
+  await expect(handoff, "the player is told who builds it and where").toContainText("Have Robin build one on your farm");
   await expect(handoff).not.toContainText("No cabins are currently available.");
+
+  // (a) the control is present, in the state with no cabin.
+  const refresh = handoff.getByRole("button", { name: "Read cabins again" });
+  await expect(refresh, "no cabin is a state the player can ask again from").toBeVisible();
+
+  // (b) no rendered string tells the player to reload the page - not the handoff, not the
+  // step that holds it, not the panel around it.
+  expect(await handoff.innerText(), "the handoff asks for no reload").not.toMatch(RELOAD_INSTRUCTION);
+  expect(
+    await page.locator('[data-guide-step="3"]').innerText(),
+    "neither does the step the handoff sits in",
+  ).not.toMatch(RELOAD_INSTRUCTION);
+  expect(
+    await page.getByTestId("game-state-panel").innerText(),
+    "and the panel's own rendered text never asks for one",
+  ).not.toMatch(RELOAD_INSTRUCTION);
+
+  // The refresh is a live read on this session, not a reload: one more request to the
+  // cabin route, no navigation away from the mounted surface.
+  await refresh.click();
+  await expect(handoff, "a settled re-read that is still empty says which read this is")
+    .toContainText("Just read again: this is still the answer.");
+  expect(cabinReads, "the control re-read the cabins on the live connection").toBe(2);
+  await expect(page.getByTestId("game-surface"), "the surface is still the one that was mounted").toBeVisible();
+
+  // It is an answer, not a poll: no read happens without the player asking again.
+  await page.waitForTimeout(400);
+  expect(cabinReads, "nothing re-read the cabins behind the player's back").toBe(2);
+});
+
+test("the live no-cabin refusal offers the same refresh instead of a reload", async ({ page }) => {
+  // What the Host really answers for a loaded world that advertises no usable cabin:
+  // `readCabinChoices` refuses the empty list with `stardew_player_host_cabin_unavailable`
+  // (host/src/stardew-production-lifecycle-coordinator.internal.ts:1826), and the read
+  // route maps it to `stardew_player_host_cabin_missing`
+  // (host/src/composed-reference-game-browser.ts:641-646).
+  let cabinReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) => {
+    cabinReads += 1;
+    return route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ code: "stardew_player_host_cabin_missing", cause: "stardew_player_host_cabin_unavailable" }),
+    });
+  });
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
+  );
+
+  await page.goto(`/?no-cabin-refusal=1#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const handoff = page.locator(".stardew-cabin-handoff");
+  await expect(handoff).toContainText("Have Robin build one on your farm");
+  const refresh = handoff.getByRole("button", { name: "Read cabins again" });
+  await expect(refresh, "the refusal a player can fix still offers the ask-again control").toBeVisible();
+  expect(await handoff.innerText(), "the live refusal asks for no reload either").not.toMatch(RELOAD_INSTRUCTION);
+
+  await refresh.click();
+  await expect(handoff).toContainText("Just read again: this is still the answer.");
+  expect(cabinReads).toBe(2);
 });

@@ -1,4 +1,5 @@
 import type { CompanionInterruption, InterruptionSnapshot } from "./companion-interruption.js";
+import { stripInlineAudioTags } from "./companion-speech-dehydration.js";
 import type { CompanionTextPort, GameCompanionTextExpression, PresentationCommitAdmission } from "./presentation.js";
 import { RUN_SPAN_NAMES, type RunTrace } from "./run-trace.js";
 import type { StopSystemNotice } from "./system-notices.js";
@@ -102,34 +103,47 @@ export function createFarmhandCompanionPresentationPort(
       // mimicked into its reply is removed here, once, for both the bubble and the
       // companion-language hook.
       const text = stripMagicContextSelfTag(expression.text);
-      // No world revision is claimed. Presentation mutates no world state, and the Mod mints a new
-      // action-transaction revision for every receipt it publishes — progress receipts and
-      // auto-collected program nodes included — so the Host's last admitted revision is a cached
-      // projection, not the Mod's current one. Claiming it exactly refused eight successful tool
-      // selections' closing line in a live run (2026-10-22, `invalid_or_stale_companion_presentation`)
-      // with no way to tell which of six conditions had refused it. The STOP epoch is the ordering
-      // claim that does matter, and `expressionId` plus the Mod's fingerprint already make replay exact.
-      const write = () =>
-        bridge.presentCompanionText({
-          expressionId: expression.expressionId,
-          sourceEventId,
-          text,
-          locale: expression.locale,
-          presentationEpoch: epoch.epoch,
-        });
-      // One span per player-visible commit: its end is the moment the bubble landed, which is what the run's
-      // presentation evidence used to record by hand.
-      await (trace === undefined
-        ? write()
-        : trace.span(
-            RUN_SPAN_NAMES.present,
-            {
-              expressionId: expression.expressionId,
-              sourceEventId,
-              locale: expression.locale,
-            },
-            write,
-          ));
+      // The two channels take that one utterance differently, and this is where they diverge.
+      // A bracketed group is a prosody direction the voice performs instead of speaking
+      // (`（轻声）`, `(softly)`, `[pause]`); the bubble has no voice to perform with, so it
+      // prints the direction as her words. Only the bubble loses it - `text` below is handed
+      // to the hook unchanged, because dropping the tag there would delete the emotion
+      // channel it exists for.
+      const bubbleText = stripInlineAudioTags(text);
+      // Nothing but a direction is nothing to show, and the strip above is what can empty a
+      // piece that was not empty before. The Mod refuses empty text
+      // (`companion_presentation_text_empty`) and this presenter ends the turn's whole
+      // admission on a failed commit, so no write is attempted; the hook below still runs.
+      if (bubbleText.length > 0) {
+        // No world revision is claimed. Presentation mutates no world state, and the Mod mints a new
+        // action-transaction revision for every receipt it publishes — progress receipts and
+        // auto-collected program nodes included — so the Host's last admitted revision is a cached
+        // projection, not the Mod's current one. Claiming it exactly refused eight successful tool
+        // selections' closing line in a live run (2026-10-22, `invalid_or_stale_companion_presentation`)
+        // with no way to tell which of six conditions had refused it. The STOP epoch is the ordering
+        // claim that does matter, and `expressionId` plus the Mod's fingerprint already make replay exact.
+        const write = () =>
+          bridge.presentCompanionText({
+            expressionId: expression.expressionId,
+            sourceEventId,
+            text: bubbleText,
+            locale: expression.locale,
+            presentationEpoch: epoch.epoch,
+          });
+        // One span per player-visible commit: its end is the moment the bubble landed, which is what the run's
+        // presentation evidence used to record by hand.
+        await (trace === undefined
+          ? write()
+          : trace.span(
+              RUN_SPAN_NAMES.present,
+              {
+                expressionId: expression.expressionId,
+                sourceEventId,
+                locale: expression.locale,
+              },
+              write,
+            ));
+      }
       // Fire-and-forget companion-language hook (e.g. streaming TTS). A
       // throwing listener must never fail a presentation that already landed.
       if (onTextPresented !== undefined) {

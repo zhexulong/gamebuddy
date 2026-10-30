@@ -97,7 +97,8 @@ export type CabinViewState =
   | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
   | Readonly<{ kind: "admitted" }>
   | Readonly<{ kind: "uncertain" }>
-  | Readonly<{ kind: "unavailable" }>
+  /** The read could not be made, and the panel offers the control that makes it again. */
+  | Readonly<{ kind: "unavailable"; reread: boolean }>
   /**
    * No cabin this companion may use in the current host world.
    *
@@ -106,8 +107,12 @@ export type CabinViewState =
    * difference (`stardew_player_host_cabin_unavailable`); it was flattened to `state_unavailable` on the read route
    * until 2026-10-28, so the panel had one word for two situations and a player reading the wrong one retried
    * forever.
+   *
+   * `reread` is the shell's answer to "did my click do anything": true once the player asked again and the answer was
+   * still this state. Without it the refresh button under it is a control whose result is the screen the player is
+   * already looking at. The shell is the only party that knows, so it carries the fact rather than the panel guessing.
    */
-  | Readonly<{ kind: "missing" }>;
+  | Readonly<{ kind: "missing"; reread: boolean }>;
 
 type StatusDotTone = "progress" | "warning" | "danger" | "neutral";
 
@@ -793,10 +798,24 @@ function CabinHandoff({
             {labels.stardewCabinsUnavailable}
           </p>
         ))}
+      {/* What the refresh just found, stated where the control is: a player who has built
+          a cabin and pressed again needs to know the click was read, and that the answer
+          had not changed yet. It sits between the sentence and the control, so neither of
+          them moves when it appears. Both states the control is offered in report it - one
+          control that acknowledges the click in one state and silently repeats itself in
+          the other is the defect this button was added to fix. */}
+      {(state.kind === "missing" || state.kind === "unavailable") && state.reread && (
+        <p className="game-subpanel-note" role="status">
+          {labels.stardewCabinsReread}
+        </p>
+      )}
       {/*
         Offered for BOTH unavailable shapes, and it is the only thing on this panel that can change the answer.
         The failing state and the not-yet state look identical to a player and have the same cure, so one
-        control covers both rather than making the player work out which silence they are reading.
+        control covers both rather than making the player work out which silence they are reading. It is also
+        mounted for `missing`, which is where a farm with no cabin lands: reloading the page instead would drop
+        the Host connection and this surface's own session attachment, so the instruction to reload destroyed the
+        setup it belonged to.
       */}
       {(state.kind === "unavailable" || state.kind === "missing") && onRefresh !== undefined && (
         <button type="button" className="game-secondary-action" onClick={onRefresh}>
@@ -813,28 +832,25 @@ function CabinHandoff({
           {labels.stardewManifestAdmitted}
         </p>
       )}
-      {(state.kind === "choices" || state.kind === "confirming") &&
-        (state.choices.length === 0 ? (
-          <p className="game-subpanel-note">{labels.stardewCabinsEmpty}</p>
-        ) : (
-          <ul className="game-choice-list" data-testid="cabin-choice-list">
-            {state.choices.map((choice) => (
-              <li className="game-choice" key={choice.choiceHandle}>
-                <span className="game-choice-label">{choice.displayLabel}</span>
-                <button
-                  type="button"
-                  className="game-action"
-                  disabled={state.kind === "confirming"}
-                  aria-label={labels.stardewCabinConfirm}
-                  onClick={() => onConfirm(choice)}
-                >
-                  <Check size={16} aria-hidden="true" />
-                  {labels.stardewCabinConfirm}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ))}
+      {(state.kind === "choices" || state.kind === "confirming") && (
+        <ul className="game-choice-list" data-testid="cabin-choice-list">
+          {state.choices.map((choice) => (
+            <li className="game-choice" key={choice.choiceHandle}>
+              <span className="game-choice-label">{choice.displayLabel}</span>
+              <button
+                type="button"
+                className="game-action"
+                disabled={state.kind === "confirming"}
+                aria-label={labels.stardewCabinConfirm}
+                onClick={() => onConfirm(choice)}
+              >
+                <Check size={16} aria-hidden="true" />
+                {labels.stardewCabinConfirm}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }

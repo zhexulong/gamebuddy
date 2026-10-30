@@ -218,6 +218,41 @@ const WEATHER_NAMES_EN: Record<string, string> = {
 };
 
 /**
+ * The tools, named the way a person says them. The wire publishes a tool twice: `currentTool` /
+ * `toolSlots[].label` are the native item identity (`(T)Hoe`, `(W)47` for a scythe), which is the handle a
+ * plan compares against, and `toolSlots[].category` is the Mod's own tool word (`FarmhandActionCatalog.ToolEnum`),
+ * which is the word the `tool:<category>` claims and `equip_tool` use. A spoken turn needs the second: measured on
+ * a live session, the companion said "我们带着 (T)Hoe 去 Town" because the turn's fact line handed it the identity.
+ * English keeps the category word, snake_case turned back into words; Chinese names the tool. A category the
+ * tables do not have (an older Mod's `unknown`) keeps the identity, because dropping the fact would hide what she
+ * is holding. See `formatHeldTool`.
+ */
+const TOOL_NAMES_ZH: Record<string, string> = {
+  axe: "斧头",
+  pickaxe: "十字镐",
+  hoe: "锄头",
+  watering_can: "洒水壶",
+  fishing_rod: "钓竿",
+  weapon: "武器",
+  scythe: "镰刀",
+  shears: "剪刀",
+  milk_pail: "挤奶桶",
+  pan: "淘金盘",
+};
+const TOOL_NAMES_EN: Record<string, string> = {
+  axe: "axe",
+  pickaxe: "pickaxe",
+  hoe: "hoe",
+  watering_can: "watering can",
+  fishing_rod: "fishing rod",
+  weapon: "weapon",
+  scythe: "scythe",
+  shears: "shears",
+  milk_pail: "milk pail",
+  pan: "pan",
+};
+
+/**
  * The native clock, localized like its sibling facts. English keeps the game's
  * own 12h reading (`6:00 PM`); Chinese carries the 24h reading plus the game
  * day's time-of-day band. The band is required, not decorative: the companion's
@@ -342,10 +377,14 @@ function formatGameTile(tile: { readonly x: number; readonly y: number }, zh: bo
 }
 
 /**
- * The tool in her hand. The upgrade level is only on the wire beside the slot
- * that holds the tool, so it is read from there and only when the two agree - an
- * unmatched slot costs the level and never the name. A basic tool renders no
- * marker: the handlers require the basic one, so a marker is what an upgrade is.
+ * The tool in her hand, named the way the wire's own sibling names it.
+ *
+ * `currentTool` is the native item identity (`(T)Hoe`), which is the handle a plan compares against and which a
+ * spoken turn must never repeat; the same slot's `category` is the Mod's tool word, so the fact reads "hoe" /
+ * "锄头". The identity is kept only when no slot publishes a word for it, because an absent name is still better
+ * than an absent fact. The upgrade level is only on the wire beside the slot that holds the tool, so it is read
+ * from there and only when the two agree - an unmatched slot costs the level and never the name. A basic tool
+ * renders no marker: the handlers require the basic one, so a marker is what an upgrade is.
  */
 function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string {
   const tool = source.currentTool;
@@ -358,7 +397,9 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
   const upgradeLevel = occupant?.label === tool ? occupant.upgradeLevel : undefined;
   const upgrade = Number.isSafeInteger(upgradeLevel) ? (upgradeLevel as number) : 0;
   const level = upgrade > 0 ? (zh ? `（+${upgrade}）` : ` (+${upgrade})`) : "";
-  return `${zh ? "手持" : "holding"}: ${tool}${level}`;
+  const category = occupant?.category;
+  const name = (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ?? tool;
+  return `${zh ? "手持" : "holding"}: ${name}${level}`;
 }
 
 /**
