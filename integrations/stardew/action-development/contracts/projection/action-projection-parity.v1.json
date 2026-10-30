@@ -75,20 +75,17 @@
         "kind": "execution",
         "argumentSchema": {
           "x": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
           },
           "y": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
           }
         },
         "outputFacts": {},
         "resourceTemplate": {
-          "claims": [
-            {
-              "key": "embodied_actor",
-              "value": "ScopePlayer"
-            }
-          ]
+          "claims": []
         },
         "effect": "write",
         "postcondition": {
@@ -267,20 +264,17 @@
         "kind": "execution",
         "argumentSchema": {
           "x": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
           },
           "y": {
-            "type": "integer"
+            "type": "integer",
+            "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
           }
         },
         "outputFacts": {},
         "resourceTemplate": {
-          "claims": [
-            {
-              "key": "embodied_actor",
-              "value": "ScopePlayer"
-            }
-          ]
+          "claims": []
         },
         "effect": "write",
         "postcondition": {

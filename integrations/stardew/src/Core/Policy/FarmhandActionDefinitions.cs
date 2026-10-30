@@ -171,7 +171,7 @@ public static class FarmhandActionCatalog
     {
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("equip_tool", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("tool", "string", ToolEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "Game1.player.CurrentToolIndex")),
-        E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
+        E("travel", "transport_warps", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: false)),
         // Native 1.6 minecart travel is a distinct action, not a `travel`
         // objective family. Both the Mod's execution parser and
         // FarmhandExecutionAcceptance are exact-shape allow-lists with no
@@ -210,7 +210,7 @@ public static class FarmhandActionCatalog
 // (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
 // learned the precondition only by being refused. Declared here so `plan_shape` can say it instead.
-E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer")) with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }),
+E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: true)),
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage() with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem()),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
@@ -477,7 +477,46 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(nu
 
     /// <summary>What `slot` means on an action that consumes an inventory item: any backpack index, no tool rule.</summary>
     private const string ItemSlotMeaning = "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.";
+
+    /// <summary>
+    /// What `x`/`y` mean on a location-transition action: the WARP or DOOR tile you stand next to, never the tile you
+    /// end up on.
+    ///
+    /// Measured 2026-10-30 (`round8`): the companion was at `Farm:60,26` and called
+    /// `builder.enter_exit({ x: 64, y: 14 })` - the FarmHouse door's own source tile, which it had read from
+    /// `snapshot.warps[]`. The script COMPILED, and the runtime then refused with
+    /// `door_out_of_range source=64,14;door=64,14` because the actor was sixteen tiles away. The refusal carried
+    /// `requiredArguments: [{name:"x",type:"integer"},{name:"y",type:"integer"}]`, so the model already knew the
+    /// names - what it could not know is that these coordinates name the SOURCE side of a transition. Every other
+    /// action family in this catalog uses `x`/`y` for the tile being acted on, which makes the wrong reading the
+    /// natural one.
+    /// </summary>
+    private const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
+
+    /// <summary>
+    /// A location transition whose coordinates name the door/warp SOURCE tile.
+    ///
+    /// `enterExit` is true only for `enter_exit`, and the distinction is measured rather than stylistic: `execute`
+    /// resolves the warp from the coordinates and drives the transition itself, so `travel` reaches
+    /// `travel_completed` from wherever the actor stands - 15 receipts in the 2026-10-30 run, none refused for distance.
+    /// `enter_exit` additionally goes through the native door action, which needs the actor ADJACENT to the door tile
+    /// (`door_out_of_range source=64,14;door=64,14` while it stood at `60,26`). Declaring an approach for a
+    /// self-walking action is a false precondition: it tells the caller to do work the action will do.
+    /// </summary>
+    private static FarmhandActionDescriptor Transition(bool entersDoor) => new(
+        new[]
+        {
+            new FarmhandActionArgument("x", "integer", null, TransitionSourceTileMeaning),
+            new FarmhandActionArgument("y", "integer", null, TransitionSourceTileMeaning),
+        },
+        new Dictionary<string, string>(),
+        Array.Empty<FarmhandActionResourceTemplateClaim>(),
+        "write",
+        "native_action_postcondition")
+    {
+        Approach = entersDoor ? new FarmhandActionApproachRequirement("adjacent", 1) : null,
+    };
 
     private static FarmhandActionDescriptor TargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => A(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
