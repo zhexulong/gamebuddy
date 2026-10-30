@@ -2630,6 +2630,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "travel") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
+    // A WARP TILE the actor stands on, so it is an ORDINARY MAP CELL: `isTileCoordinate`, not the release below.
+    //
+    // A map may declare an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), but that coordinate is the
+    // BOUNDARY EVENT, not a tile anyone occupies - the actor walks to a legal cell beside it and the engine warps on the
+    // edge. `SelectSafeApproachTarget` is what resolves that neighbour, so the model still names a real tile here. The
+    // snapshot release below exists so the model can SEE the edge exits at all; this validator is about what it may ask
+    // for, and `-1` is not something it can stand on.
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "use_raft") {
     const args = value.args;
@@ -4245,8 +4252,8 @@ function isWarp(value: unknown): boolean {
   )
     return false;
   return (
-    isTileCoordinate(value.sourceX) &&
-    isTileCoordinate(value.sourceY) &&
+    isWarpSourceCoordinate(value.sourceX) &&
+    isWarpSourceCoordinate(value.sourceY) &&
     typeof value.targetLocation === "string" &&
     value.targetLocation.length > 0 &&
     value.targetLocation.length <= 256 &&
@@ -4254,6 +4261,10 @@ function isWarp(value: unknown): boolean {
     isTileCoordinate(value.targetY) &&
     (value.accessible === undefined || value.accessible === null || typeof value.accessible === "boolean")
   );
+}
+
+function isWarpSourceCoordinate(value: unknown): value is number {
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= -1 && value <= 1000;
 }
 
 /** The exact key set a wire active execution may carry. */

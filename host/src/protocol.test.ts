@@ -3516,6 +3516,49 @@ test("snapshot admits a warp's accessible as true, false, null or absent, and re
   ])
     assert.equal(diagnoseBridgeMessage(forWarp(malformed), scope, now), "invalid_snapshot:warps");
 });
+
+test("a warp's SOURCE may be an edge coordinate while its DESTINATION may not", () => {
+  // MEASURED 2026-10-30: releasing the Mod's negative-source filter without releasing this validator closed the bridge
+  // with `invalid_snapshot:warps` on the very first snapshot - the run died after 2 submissions. A Stardew map declares an
+  // edge exit with the source OUTSIDE the grid (`-1 53 BusStop 42 23`, `79 -1 Mountain 15 40`), which is the native
+  // engine's own encoding for "walk off this edge".
+  const withSource = (sourceX: number, sourceY: number) => ({
+    sourceX,
+    sourceY,
+    targetLocation: "BusStop",
+    targetX: 42,
+    targetY: 23,
+  });
+  const forWarp = (entry: Record<string, unknown>) =>
+    newEnvelope("snapshot", scope, { ...snapshot, warps: [entry] }, "snapshot_warp_edge_01", now);
+
+  // Town's own six edge exits: three west (`-1`, y in map) and two north (`x in map`, `-1`), plus Forest.
+  for (const entry of [
+    withSource(-1, 53),
+    withSource(-1, 54),
+    withSource(-1, 55),
+    withSource(79, -1),
+    withSource(80, -1),
+  ])
+    assert.equal(
+      diagnoseBridgeMessage(forWarp(entry), scope, now),
+      "accepted",
+      `an edge source is legal: ${JSON.stringify(entry)}`,
+    );
+
+  // The control, and the reason this is its own predicate rather than a relaxed `isTileCoordinate`: an arrival is a real
+  // map cell, so a negative destination stays refused. So does a source further outside than the one-tile boundary.
+  assert.equal(
+    diagnoseBridgeMessage(forWarp({ ...withSource(-1, 53), targetX: -1 }), scope, now),
+    "invalid_snapshot:warps",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(forWarp({ ...withSource(-1, 53), targetY: -1 }), scope, now),
+    "invalid_snapshot:warps",
+  );
+  assert.equal(diagnoseBridgeMessage(forWarp(withSource(-2, 53)), scope, now), "invalid_snapshot:warps");
+  assert.equal(diagnoseBridgeMessage(forWarp(withSource(53, -2)), scope, now), "invalid_snapshot:warps");
+});
 test("observe_scene result admits water_source affordance kind and rejects unknown kinds", () => {
   const scene = newEnvelope(
     "observe_scene_result",
