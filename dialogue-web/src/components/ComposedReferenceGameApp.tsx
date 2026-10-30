@@ -11,7 +11,6 @@ import {
 } from "../reference-pipeline-session";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView, declaredProblemSentence } from "../composed-problem-view";
-import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import {
   type ComposedPreviewV1,
@@ -183,6 +182,7 @@ export function ComposedReferenceGameApp() {
 
   const { shownSurface, openPanelOf } = useSurfaceRoute();
 
+  const bootstrap = useComposedBootstrap(localeRef, setPreview);
   const {
     view,
     viewRef,
@@ -196,7 +196,7 @@ export function ComposedReferenceGameApp() {
     pollFailure,
     setPollFailure,
     startPolling,
-  } = useComposedBootstrap(localeRef, setPreview);
+  } = bootstrap;
 
   const eventStreamEpoch =
     view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
@@ -1191,31 +1191,7 @@ export function ComposedReferenceGameApp() {
    */
   const mountedTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
 
-  /**
-   * The route a message the player sends from here would actually reach a model through.
-   *
-   * It is derived, never guessed: `readChatModelRoute` is the one function that reads the two
-   * settings projections and applies the Host's own precedence (an active connection, else the
-   * shipped Chat profile on this machine's operator gateway), and the conversation words itself
-   * from that answer alone. A mount that publishes neither read, or answers with something this
-   * client cannot read, keeps `unknown`: saying nothing is the only honest sentence then. The read
-   * is repeated whenever the conversation is shown again, so activating a connection in Settings
-   * clears the surface's own sentence without a reload.
-   */
-  const [chatModelRoute, setChatModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
-  const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
-  useEffect(() => {
-    if (!conversationShown || shownSurface !== CHAT_PANEL) return;
-    let active = true;
-    void readChatModelRoute(managementPipelineApiRef.current).then((route) => {
-      if (active) setChatModelRoute(route);
-    });
-    return () => {
-      active = false;
-    };
-  }, [conversationShown, shownSurface]);
-
-  const gameArrivalNotice = useArrivalReread({ shownSurface, viewRef, composedApiRef, localeRef, commit, rereadChat });
+  const arrivalReads = useArrivalReread(shownSurface, bootstrap, localeRef, rereadChat, managementPipelineApiRef);
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -1354,7 +1330,7 @@ export function ComposedReferenceGameApp() {
                 isGenerating={turnInFlight}
                 canStop={stopAvailable}
                 disabled={!submitAvailable}
-                modelRoute={chatModelRoute}
+                modelRoute={arrivalReads.chatModelRoute}
                 onOpenSettings={openSettings}
                 voice={view.session.snapshot.voice}
                 settingsAction={{
@@ -1389,7 +1365,7 @@ export function ComposedReferenceGameApp() {
               isCancelled={() => cancelledRef.current}
               composedApi={composedApiRef.current}
               managementApi={managementPipelineApiRef.current}
-              arrivalNotice={gameArrivalNotice}
+              arrivalNotice={arrivalReads.gameArrivalNotice}
               restoreFocusTo={gameEntryRef}
             />
             {shownSurface === CHATS_PANEL && (

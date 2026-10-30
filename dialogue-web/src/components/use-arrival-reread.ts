@@ -1,9 +1,10 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 import { type Locale, messages } from "../i18n";
+import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import { composedProblemView as problemView } from "../composed-problem-view";
-import type { ComposedReferenceGameBrowserApi } from "../composed-reference-game-browser-api";
+import type { ManagementPipelineApi } from "../management-pipeline-api";
 import { CHAT_PANEL, GAME_PANEL } from "../composed-surface-route";
-import type { ViewState } from "./composed-reference-game-view";
+import type { ComposedBootstrap } from "./use-composed-bootstrap";
 
 /**
  * The shell's arrival reread: the reads the shell takes when the player arrives at a surface.
@@ -23,7 +24,16 @@ import type { ViewState } from "./composed-reference-game-view";
  * timer. A read that fails commits the shell's problem view, so a conversation that cannot be
  * re-read says so instead of keeping the projection it had.
  *
- * The Game surface needs the same read, and it is taken here rather than in `GameSurface` because
+ * The conversation has a second arrival read: the route a message the player sends from here would
+ * actually reach a model through. It is derived, never guessed - `readChatModelRoute` is the one
+ * function that reads the two settings projections and applies the Host's own precedence (an active
+ * connection, else the shipped Chat profile on this machine's operator gateway), and the
+ * conversation words itself from that answer alone. A mount that publishes neither read, or answers
+ * with something this client cannot read, keeps `unknown`: saying nothing is the only honest
+ * sentence then. It is taken whenever the conversation is shown again, so activating a connection
+ * in Settings clears the surface's own sentence without a reload.
+ *
+ * The Game surface needs the same reread, and it is taken here rather than in `GameSurface` because
  * the composed root is the shell's own projection: every fact the panel renders - the connection,
  * the instance, the world and save, the last result - is that root's Game half, and the Host moves
  * it while another surface is open (a resume converging, a farm loading, a world ending). Measured
@@ -47,21 +57,14 @@ import type { ViewState } from "./composed-reference-game-view";
  * panel reading `Connected` after a read that never happened - so the sentence goes to the
  * surface, through the same catalogue sentence every other refusal on it uses.
  */
-export function useArrivalReread({
-  shownSurface,
-  viewRef,
-  composedApiRef,
-  localeRef,
-  commit,
-  rereadChat,
-}: {
-  shownSurface: string;
-  viewRef: RefObject<ViewState>;
-  composedApiRef: RefObject<ComposedReferenceGameBrowserApi>;
-  localeRef: RefObject<Locale>;
-  commit: (next: ViewState) => void;
-  rereadChat: () => Promise<void>;
-}): string | null {
+export function useArrivalReread(
+  shownSurface: string,
+  bootstrap: ComposedBootstrap,
+  localeRef: RefObject<Locale>,
+  rereadChat: () => Promise<void>,
+  managementApiRef: RefObject<ManagementPipelineApi>,
+): Readonly<{ gameArrivalNotice: string | null; chatModelRoute: ChatModelRoute }> {
+  const { view, viewRef, composedApiRef, commit } = bootstrap;
   // The ref is what keeps the first paint from paying for a second read: mount already read, so
   // only a *change* of surface is an arrival.
   const lastArrivedSurfaceRef = useRef<string>(shownSurface);
@@ -74,6 +77,8 @@ export function useArrivalReread({
    * that no longer stands.
    */
   const [gameArrivalNotice, setGameArrivalNotice] = useState<string | null>(null);
+  const [chatModelRoute, setChatModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
+  const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
   useEffect(() => {
     if (lastArrivedSurfaceRef.current === shownSurface) return;
     lastArrivedSurfaceRef.current = shownSurface;
@@ -92,5 +97,15 @@ export function useArrivalReread({
       })
       .catch((error: unknown) => setGameArrivalNotice(problemView(error, messages(localeRef.current)).detail));
   }, [shownSurface, commit]);
-  return gameArrivalNotice;
+  useEffect(() => {
+    if (!conversationShown || shownSurface !== CHAT_PANEL) return;
+    let active = true;
+    void readChatModelRoute(managementApiRef.current).then((route) => {
+      if (active) setChatModelRoute(route);
+    });
+    return () => {
+      active = false;
+    };
+  }, [conversationShown, shownSurface]);
+  return { gameArrivalNotice, chatModelRoute };
 }
