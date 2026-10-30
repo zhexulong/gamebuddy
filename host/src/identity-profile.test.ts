@@ -284,7 +284,7 @@ test("the Game conduct names the ids she may not say out loud, and keeps them wh
   assert.match(game, /UndergroundMine10/);
   assert.match(game, /矿洞第 10 层/);
   // The ids are not banned outright: a plan argument and a snapshot comparison still need the exact value.
-  assert.match(game, /ids still belong wherever they do work/);
+  assert.match(game, /ids keep their own place/);
   assert.match(game, /copied exactly into an action argument/);
   // Chat has no world and no such ids, so the rule stays on the Game surface.
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
