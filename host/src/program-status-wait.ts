@@ -48,6 +48,23 @@ export interface ProgramStatusWaitOutcome<TResult> {
 }
 
 /**
+ * How many consecutive polls with an unchanged snapshot end a wait early.
+ *
+ * An expired wait is the expensive outcome, and it is usually the predictable one: measured 2026-10-30, a 32-minute run
+ * issued **82 `program_status` calls with `waitMs` set, 2,084 s of requested waiting (34.7 min), and only 21 of them
+ * (26%) reached a terminal state**. The model had learned to wait instead of polling and then treated the wait as work.
+ *
+ * The wait already knows whether anything happened - `snapshotChanged` is that fact - so spending the remaining bound
+ * after several polls have seen nothing is spending the model's turn on news that cannot arrive. Two polls at the
+ * 250 ms interval is half a second of ``no change`` while the caller's own bound may be thirty seconds.
+ *
+ * The interval, not the bound, is what makes this safe: the journal publishes a node event per game-thread action, so a
+ * plan that is DOING anything differs within a second. A plan still waiting on its first admission can stay identical
+ * for longer, which is why the threshold is not one poll - the admitting Mod answers within a frame or not at all.
+ */
+const UNCHANGED_POLLS_BEFORE_EARLY_RETURN = 8;
+
+/**
  * Is this `program_status` payload finished?
  *
  * `active` is the only state that is still going. Everything else - `succeeded`, `failed`, `cancelled`,
@@ -87,19 +104,29 @@ export async function waitForTerminalProgramStatus<TResult>(
   const deadline = now() + bounded;
   let previous = first;
   let snapshotChanged = false;
+  let unchangedPolls = 0;
   const settle = (result: TResult, reachedTerminal: boolean) =>
     Object.freeze({ result, waited: Object.freeze({ reachedTerminal, snapshotChanged }) });
   // Every read passes through here, so the expiry read counts the same as any other: a plan that moved on the last
   // poll before the deadline is a plan that moved, and saying otherwise is the blindness this reports on.
   const readOnce = async (): Promise<TResult> => {
     const result = await read();
-    if (programSnapshot(result) !== programSnapshot(previous)) snapshotChanged = true;
+    if (programSnapshot(result) !== programSnapshot(previous)) {
+      snapshotChanged = true;
+      unchangedPolls = 0;
+    } else {
+      unchangedPolls++;
+    }
     previous = result;
     return result;
   };
   for (;;) {
     const remaining = deadline - now();
     if (remaining <= 0) return settle(await readOnce(), false);
+    // Nothing has moved for a while: hand back what is known NOW rather than what will still be known at the deadline.
+    // `snapshotChanged` tells the caller the same thing it would have told it thirty seconds later, and the run keeps
+    // its turn. The read is fresh, so the caller never receives a stale payload for this decision.
+    if (unchangedPolls >= UNCHANGED_POLLS_BEFORE_EARLY_RETURN) return settle(await readOnce(), false);
     await sleep(Math.min(remaining, PROGRAM_STATUS_POLL_INTERVAL_MS));
     const result = await readOnce();
     if (isTerminalProgramStatus(result)) return settle(result, true);

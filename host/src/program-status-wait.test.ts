@@ -57,6 +57,49 @@ function active(nodeStates: readonly string[], eventHighWater = 0) {
   };
 }
 
+test("a plan that publishes nothing ends the wait early instead of spending the caller's whole bound", async () => {
+  // The measured cost this closes: 2026-10-30, 82 calls with `waitMs` set, 2,084 s of requested waiting, and only 21
+  // of them ever reached a terminal state. A wait that has read the same snapshot eight times already knows the answer
+  // the caller would get at the deadline.
+  const clock = fakeTime();
+  let index = 0;
+  const outcome = await waitForTerminalProgramStatus(
+    async () => {
+      index++;
+      return active(["running"]);
+    },
+    active(["running"]),
+    30_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, false, "nothing moved, and that is what it reports");
+  // Eight unchanged polls at the 250 ms interval, not the thirty seconds that were asked for.
+  assert.ok(clock.now() < 5_000, `returned after ${clock.now()} ms of a 30,000 ms bound`);
+  assert.ok(index >= 8 && index <= 12, `read ${index} times`);
+});
+
+test("a plan that IS moving is still waited for to the deadline", async () => {
+  // The bound must survive for a plan that publishes progress: the early return is for silence, not for slowness.
+  const clock = fakeTime();
+  let index = 0;
+  const outcome = await waitForTerminalProgramStatus(
+    async () => {
+      index++;
+      // A different node state on every read, so every poll counts as movement.
+      return active([`running-${index}`]);
+    },
+    active(["running-0"]),
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, true);
+  assert.ok(clock.now() >= 1_000, `spent the whole bound: ${clock.now()} ms`);
+});
+
 test("a plan that settles while waiting returns the settled read and says it waited", async () => {
   const clock = fakeTime();
   const reads = [active(["running"]), active(["running"]), { code: "found", snapshot: { state: "succeeded" } }];
