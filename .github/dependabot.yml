@@ -1,0 +1,134 @@
+# Dependabot scheduling for the npm workspace.
+#
+# One entry, not three. `pnpm-workspace.yaml` lists `packages/*`, `host`,
+# `dialogue-web` and `integrations/stardew/action-development`, and every one of
+# them resolves through the single root `pnpm-lock.yaml`. Dependabot's npm
+# ecosystem reads `pnpm-workspace.yaml`, fetches each listed workspace
+# `package.json` (skipping excluded ones), and takes the root lockfile - so a
+# root entry already covers `dialogue-web` and `host`. Separate entries for
+# those directories would overlap the root's scan, which the format forbids:
+# "you must ensure that all values are unique and there is no overlap in
+# directories defined".
+#
+# `vendor/magic-context` (Bun, own `bun.lock`) and `vendor/pi-koe` (own pnpm
+# workspace) are submodules deliberately outside this workspace. Their files
+# belong to their own repositories, so they are not configured here.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+
+    # Weekly, Friday 09:00 Asia/Shanghai.
+    #
+    # Chosen from this repository's history rather than assumed. Measured over
+    # all 3184 commits, every one on a +0800 clock:
+    #
+    #   weekday   Sun 559, Mon 479, Tue 469, Wed 466, Thu 430, Sat 398,
+    #             Fri 383. Friday is the least busy day, so a scan on it is the
+    #             least likely to land in the middle of a batch.
+    #   hour      the day concentrates in an 18:00-03:00 band and is quiet in
+    #             the morning: Friday is 2 commits at 08:00, 6 at 09:00 and 6
+    #             at 10:00, against 22-32 in its evening hours. 09:00 is inside
+    #             that quiet window, so the job never races a stretch of work,
+    #             and the PR is waiting when the evening band opens instead of
+    #             sitting through a weekend.
+    #
+    # Weekly rather than daily because the workspace already refuses packages
+    # published less than a day old (`minimumReleaseAge: 1440`), so most of a
+    # daily scan would look at versions the install refuses anyway.
+    #
+    # `schedule` governs VERSION updates only - the option reference marks it
+    # "Version updates only". Security updates are not on this window: they are
+    # raised when an advisory alert appears, not when the schedule runs.
+    schedule:
+      interval: "weekly"
+      day: "friday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+
+    # Version updates only, stated so the number is not mistaken for a cap on
+    # security work: security update pull requests have "a separate, fixed
+    # limit of 10 open pull requests, which cannot be configured using
+    # open-pull-requests-limit". This bounds the version-update queue at one
+    # group PR per group below, plus a major.
+    open-pull-requests-limit: 5
+
+    # Deliberately absent, each because it would silently disable or delay a
+    # security update:
+    #
+    #   target-branch   naming one makes these settings stop applying to
+    #                   security updates, which always target the default
+    #                   branch.
+    #   ignore          an ignored dependency is filtered out of security
+    #                   updates too. The pinned dependency families below are
+    #                   grouped instead, which keeps their security updates.
+    #   cooldown        documented as "only available for version updates, not
+    #                   security updates", and the built-in 3-day cooldown
+    #                   "does not apply to security updates" either. pnpm is
+    #                   also not in the cooldown option's supported-manager
+    #                   table, so declaring it would assert something unverified.
+    #
+    # `applies-to: version-updates` is written out on EVERY group rather than
+    # left to the default. That is this file's answer to "security updates must
+    # not wait for the weekly window": there is no option that speeds security
+    # updates up - they are raised when an advisory appears - so the guarantee is
+    # made by keeping them out of every grouping and out of every filter above,
+    # and stating it, rather than by adding a knob. `applies-to` defaults to
+    # version updates, so a group added later without it would silently start
+    # bundling security fixes; writing it everywhere makes that omission visible
+    # in review.
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
+    # Groups are matched in order and a dependency joins the FIRST group it
+    # matches, so the two pinned families come first and are carved out of the
+    # general groups by `exclude-patterns`.
+    #
+    # Why the families need their own group at all: `pnpm-workspace.yaml` pins
+    # both as sets in `overrides`, with the reasoning checked in there - six
+    # `@earendil-works/pi-*` packages plus the `@earendil-works/pi-coding-agent`
+    # entry point the Host depends on directly, and eleven typescript-eslint
+    # packages. Each family's members depend on each other with carets, so a
+    # lone single-package PR is unmergeable by construction: raising one entry
+    # pulls the next release of every sibling, which `minimumReleaseAge` then
+    # refuses. Grouping raises them together, which is the only shape that can
+    # land. Majors stay out: a major in a pinned family is a migration, and is
+    # reviewed on its own.
+    groups:
+      pi-runtime:
+        applies-to: version-updates
+        patterns:
+          - "@earendil-works/pi-*"
+        update-types:
+          - "minor"
+          - "patch"
+      typescript-eslint:
+        applies-to: version-updates
+        patterns:
+          - "@typescript-eslint/*"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
+      runtime-minor-patch:
+        applies-to: version-updates
+        dependency-type: "production"
+        exclude-patterns:
+          - "@earendil-works/pi-*"
+        update-types:
+          - "minor"
+          - "patch"
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        exclude-patterns:
+          - "@earendil-works/pi-*"
+          - "@typescript-eslint/*"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
