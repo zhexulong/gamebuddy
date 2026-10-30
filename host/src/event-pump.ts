@@ -98,14 +98,19 @@ export const MAX_PENDING_WORLD_FACTS = 32;
  * further action for the rest of the run, while the companion stood in the farmhouse with
  * `can_move=True; navigate=idle`.
  *
- * 120_000 is roughly 30k tokens of batch on its own, leaving room for the prompt, the conversation and the
- * model's output inside any context window this product runs on. It is also four times the largest HEALTHY
- * batch observed in that run (ordinary ones were 8-60k characters), so it never splits a delivery that
- * already worked.
+ * 60_000 is roughly 15k tokens of batch on its own, leaving room for the prompt, the conversation and the
+ * model's output inside any context window this product runs on. It is also above the largest HEALTHY batch
+ * observed in that run (ordinary ones were 8-60k characters), so it rarely splits a delivery that already worked.
+ *
+ * THE REASON IT CAME DOWN FROM 120_000, and the number that fixes it: a fold run's non-emergency chunk ceiling is
+ * about 22,879 tokens, so a 120_000-byte batch (~45k tokens) is HALF A FOLD at best. Measured 2026-10-29 (`round7`):
+ * 29 successful fold runs, ten messages each, and three `gamebuddy_fact_batch` messages still uncleared - 104,972 of
+ * 123,130 input tokens (85%). A batch larger than the thing that consumes it cannot be consumed: every fold spends its
+ * whole budget on one delivery and the tail never shrinks. 60_000 keeps a batch inside one chunk.
  *
  * Overflow is not dropped: `takeBatch` puts it back and the next flush delivers it.
  */
-export const MAX_BATCH_BYTES = 120_000;
+export const MAX_BATCH_BYTES = 60_000;
 
 export interface CompanionTurnSink {
   /**
