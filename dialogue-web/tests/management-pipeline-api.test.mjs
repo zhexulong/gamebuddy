@@ -144,6 +144,36 @@ test("management Memory validators and client reject malformed, noncanonical, an
   assert.equal(calls, 0);
 });
 
+test("management Memory mutations accept every operation the contract declares, including the two chapter ones", () => {
+  const chapter = `${"C".repeat(42)}A`;
+  // Every alternative `MemoryMutationCommandV1Schema` declares, as the panel sends them. The two
+  // chapter operations were missing from the mirror while the panel rendered 修改 / 移除 for them,
+  // so a player's correction and removal were refused client-side before any fetch - controls that
+  // could never work. `contract-mirror-keys-gate` holds the union rule; this is the executed half.
+  const commands = [
+    { apiVersion: 1, operation: "create", expectedProjectionRevision: HANDLE, content: "A durable memory" },
+    { apiVersion: 1, operation: "update", expectedProjectionRevision: HANDLE, handle: chapter, content: "Corrected." },
+    { apiVersion: 1, operation: "archive", expectedProjectionRevision: HANDLE, handle: chapter },
+    {
+      apiVersion: 1,
+      operation: "update_chapter",
+      expectedProjectionRevision: HANDLE,
+      handle: chapter,
+      content: "We spent the first weeks putting the farm in order.",
+    },
+    { apiVersion: 1, operation: "delete_chapter", expectedProjectionRevision: HANDLE, handle: chapter },
+  ];
+  for (const command of commands) assert.deepEqual(validateMemoryMutationCommand(command), command);
+  // The closed shapes still hold for the new operations: a chapter command is not a row command.
+  const chapterCommand = commands[3];
+  assert.throws(() => validateMemoryMutationCommand({ ...chapterCommand, content: "" }), TavernProtocolError);
+  assert.throws(() => validateMemoryMutationCommand({ ...chapterCommand, extra: true }), TavernProtocolError);
+  assert.throws(
+    () => validateMemoryMutationCommand({ apiVersion: 1, operation: "delete_chapter", expectedProjectionRevision: HANDLE, handle: chapter, content: "x" }),
+    TavernProtocolError,
+  );
+});
+
 test("management Memory validators and client use exact read and CSRF-bound mutation routes", async () => {
   const read = memoryRead();
   assert.deepEqual(validateMemoryRead(read), read);

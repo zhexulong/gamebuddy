@@ -261,6 +261,79 @@ export function unmatchedKeySets(validators, shapes = contractShapes()) {
 
 const VALIDATORS = MIRROR_MODULES.flatMap((name) => validatorsOf(name));
 
+/**
+ * Every discriminated union the contract declares: `{ schema, key, members }`, where each member is
+ * one alternative's own declared keys and the discriminator value it is reachable by.
+ *
+ * Derived from the schemas, never listed here: a union is a schema whose `anyOf` members are all
+ * objects carrying the same literal-valued property (`operation`, `action`), and each member's value
+ * is the fact a client has to know to send it at all.
+ */
+export function discriminatedUnions(schemas, out = []) {
+  const walk = (node, path) => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach((member, index) => walk(member, `${path}[${index}]`));
+      return;
+    }
+    if (Array.isArray(node.anyOf)) {
+      const members = node.anyOf;
+      if (members.every((member) => member?.type === "object" && member.properties !== undefined)) {
+        for (const key of ["operation", "action"]) {
+          const values = members.map((member) => member.properties[key]?.const);
+          if (values.every((value) => typeof value === "string"))
+            out.push({
+              schema: path,
+              key,
+              members: members.map((member, index) => ({
+                value: values[index],
+                required: member.required ?? [],
+                declared: Object.keys(member.properties),
+              })),
+            });
+        }
+      }
+    }
+    for (const [name, value] of Object.entries(node)) walk(value, `${path}.${name}`);
+  };
+  for (const [name, schema] of Object.entries(schemas)) walk(schema, name);
+  return out;
+}
+
+/**
+ * Validators that claim one alternative of a discriminated union but cannot send another: a command
+ * the contract declares, the panel renders a control for, and the mirror refuses before any fetch.
+ *
+ * The defect this exists for: `isMemoryMutationCommand` accepted `create`/`update`/`archive` and
+ * rejected `update_chapter`/`delete_chapter`, which the contract declares
+ * (`MemoryMutationCommandV1Schema`) and the Memory panel offers as 修改 / 移除. Every such control
+ * was dead, and nothing reported it - the earlier rules only compare KEYS of a shape a validator
+ * claims, so an alternative it never claims is invisible to them.
+ *
+ * `validators` and `unions` are parameters so the mutation test below runs the rule the gate runs.
+ */
+export function unreachableUnionAlternatives(validators, unions = discriminatedUnions(TavernBrowserContractV1.schemas)) {
+  const findings = [];
+  for (const validator of validators) {
+    if (!looksLikeValidator(validator)) continue;
+    const known = new Set(validator.known);
+    for (const union of unions) {
+      // A validator is IN this union when one of its claimed key sets is one alternative's declared
+      // keys: that is the same evidence the key-set rules use, read as "this command is mine".
+      const claims = union.members.some((member) => validator.accepted.some((accepted) => sameKeys(accepted.keys, member.declared)));
+      if (!claims) continue;
+      const missing = union.members.map((member) => member.value).filter((value) => !known.has(value));
+      if (missing.length === 0) continue;
+      findings.push(
+        `${validator.file}:${validator.line}: ${validator.name} sends ${union.schema} ${union.key} values [${union.members
+          .map((member) => member.value)
+          .join(", ")}] but never learns ${missing.join(", ")}`,
+      );
+    }
+  }
+  return findings;
+}
+
 test("mirror-keys.1: a validator that keeps a declared contract key out is a finding", (t) => {
   const shapes = contractShapes();
   const validators = MIRROR_MODULES.flatMap((name) => validatorsOf(name));
@@ -287,6 +360,62 @@ test("mirror-keys.2: the enumeration is real, so a silently empty scan cannot pa
   t.diagnostic(
     `mirror-keys.2: ${claiming.length} validator(s) claim a declared shape; the message shape's optional facts are read from BrowserMessageV1Schema`,
   );
+});
+
+test("mirror-keys.4: a validator that cannot send every alternative of a declared union is a finding", (t) => {
+  const unions = discriminatedUnions(TavernBrowserContractV1.schemas);
+  const findings = unreachableUnionAlternatives(VALIDATORS, unions);
+  const memory = unions.filter((union) => union.schema.startsWith("MemoryMutationCommandV1Schema"));
+  t.diagnostic(
+    `mirror-keys.4: ${unions.length} discriminated union(s) derived from the contract ` +
+      `(${unions.map((union) => `${union.schema}:${union.members.length}`).join(", ")}); ` +
+      `the memory command's alternatives are [${(memory[0]?.members ?? []).map((member) => member.value).join(", ")}]; ` +
+      `${findings.length} violation(s)`,
+  );
+  // The enumeration is real in both directions: a contract that declares no union would make this
+  // rule vacuously green, and a memory command whose alternatives were not derived would let the
+  // exactly-broken validator pass.
+  assert.ok(unions.length >= 2, `expected the contract's discriminated unions, found ${unions.length}`);
+  assert.ok(
+    memory[0]?.members.some((member) => member.value === "update_chapter"),
+    "the memory union's chapter operations must come from MemoryMutationCommandV1Schema",
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    "a command the contract declares and the panel offers a control for must be sendable, not refused before the fetch",
+  );
+});
+
+test("mirror-keys.5 (mutation): a validator behind its union names the alternatives it cannot send", (t) => {
+  const unions = [
+    {
+      schema: "MemoryMutationCommandV1Schema",
+      key: "operation",
+      members: [
+        { value: "create", required: ["apiVersion", "operation", "expectedProjectionRevision", "content"], declared: ["apiVersion", "operation", "expectedProjectionRevision", "content"] },
+        { value: "update_chapter", required: ["apiVersion", "operation", "expectedProjectionRevision", "handle", "content"], declared: ["apiVersion", "operation", "expectedProjectionRevision", "handle", "content"] },
+        { value: "delete_chapter", required: ["apiVersion", "operation", "expectedProjectionRevision", "handle"], declared: ["apiVersion", "operation", "expectedProjectionRevision", "handle"] },
+      ],
+    },
+  ];
+  const behind = {
+    file: "management-pipeline-api.ts",
+    name: "isMemoryMutationCommand",
+    line: 2952,
+    accepted: [{ name: "MEMORY_MUTATION_CREATE_KEYS", keys: ["apiVersion", "operation", "expectedProjectionRevision", "content"], line: 1357 }],
+    known: ["create", "update", "archive"],
+  };
+  assert.deepEqual(unreachableUnionAlternatives([behind], unions), [
+    "management-pipeline-api.ts:2952: isMemoryMutationCommand sends MemoryMutationCommandV1Schema operation values [create, update_chapter, delete_chapter] but never learns update_chapter, delete_chapter",
+  ]);
+  const learning = { ...behind, known: [...behind.known, "update_chapter", "delete_chapter"] };
+  assert.deepEqual(unreachableUnionAlternatives([learning], unions), [], "a validator that can send every alternative is clean");
+  // A validator outside the union is not judged on it: the mirrors span four profiles, and a key set
+  // that happens to exist elsewhere must not be read as claiming this command.
+  const foreign = { ...behind, accepted: [{ name: "SOME_KEYS", keys: ["handle", "role"], line: 1 }] };
+  assert.deepEqual(unreachableUnionAlternatives([foreign], unions), []);
+  t.diagnostic("mirror-keys.5: the two chapter operations are named as unreachable; learning them clears the finding");
 });
 
 test("mirror-keys.3 (mutation): a planted contract key the validator omits is reported", (t) => {

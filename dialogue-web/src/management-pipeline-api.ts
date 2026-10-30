@@ -1362,6 +1362,19 @@ const MEMORY_MUTATION_UPDATE_KEYS = [
   "handle",
   "content",
 ] as const;
+/**
+ * The chapter operations the contract declares beside the row ones
+ * (`MemoryMutationCommandV1Schema`): a correction carries the body, a removal only the handle.
+ * They are key sets of their own because each command is a closed shape - a chapter command
+ * that also carried a row's fields would be a command neither side declares.
+ */
+const MEMORY_MUTATION_UPDATE_CHAPTER_KEYS = MEMORY_MUTATION_UPDATE_KEYS;
+const MEMORY_MUTATION_DELETE_CHAPTER_KEYS = [
+  "apiVersion",
+  "operation",
+  "expectedProjectionRevision",
+  "handle",
+] as const;
 const MEMORY_MUTATION_ARCHIVE_KEYS = ["apiVersion", "operation", "expectedProjectionRevision", "handle"] as const;
 const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
@@ -2964,6 +2977,14 @@ function isMemoryMutationCommand(value: unknown): value is MemoryMutationCommand
       isOpaqueHandle(value.handle) &&
       isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES)
     );
+  if (value.operation === "update_chapter")
+    return (
+      hasExactKeys(value, MEMORY_MUTATION_UPDATE_CHAPTER_KEYS) &&
+      isOpaqueHandle(value.handle) &&
+      isBoundedText(value.content, MAX_MEMORY_TEXT_UTF8_BYTES)
+    );
+  if (value.operation === "delete_chapter")
+    return hasExactKeys(value, MEMORY_MUTATION_DELETE_CHAPTER_KEYS) && isOpaqueHandle(value.handle);
   return (
     value.operation === "archive" && hasExactKeys(value, MEMORY_MUTATION_ARCHIVE_KEYS) && isOpaqueHandle(value.handle)
   );
