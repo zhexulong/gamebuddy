@@ -660,11 +660,39 @@ export type ProductionContinuityStore = Readonly<{
 
 const DB = "gamebuddy-continuity-v1.sqlite";
 /**
- * How long a write may wait for another writer's lock before failing. Named because the open path
- * and the provisioning admission check are two readings of one fact; the value itself is measured
- * in the commit that sets it.
+ * How long a write may wait for another writer's lock before failing.
+ *
+ * A commit's write-lock occupancy grows with the store's history, because every command
+ * transaction re-validates whole materialization. MEASURED with this store's own write path on
+ * this machine, seeding rows with SQL so the reading is about the write path rather than about
+ * how long the fixture takes to build:
+ *
+ *   rows      0: p50   4.7ms  max   7.6ms
+ *   rows  5 000: p50  19.1ms  max  27.5ms
+ *   rows 10 000: p50  31.7ms  max  38.1ms
+ *   rows 20 000: p50  62.0ms  max  80.6ms
+ *   rows 40 000: p50 189.6ms  max 241.2ms
+ *   rows 80 000: p50 400.4ms  max 472.8ms
+ *
+ * At 80 000 rows a legitimate commit already outlasts the 250 ms this store used to allow, so
+ * that budget did not bound a slow wait - it failed a normal one. A budget shorter than the
+ * longest legitimate commit is a race by construction, not a tuning choice.
+ *
+ * Why the number is 5 s and not the journal mode. `journal_mode=DELETE` is NOT the cause and
+ * changing it would not have narrowed this: the same file at the same row counts, measured with
+ * WAL instead, commits in 72.4 ms (20 000 rows) and 268.8 ms (80 000) against DELETE's 56.4 ms
+ * and 291.7 ms - indistinguishable, because the lock is held by the re-validation the store runs
+ * inside every transaction, not by an fsync. Only the journal machinery itself differs, and it is
+ * negligible beside that: a bare no-op commit is p50 0.16 ms under DELETE+FULL, 0.07 ms under
+ * WAL+FULL. So `synchronous=FULL` on a rollback journal stays exactly as it is - it is the
+ * authority's durability, and it costs a fraction of a millisecond - and the budget is the lever.
+ *
+ * 5 s clears the largest commit measured at any size above by more than 10x, and is the budget the
+ * sibling `chat-thread-store` already runs in this product. It is a contention budget, not a
+ * latency target: each operation carries its own `deadlineAtMs` admission check, so a caller that
+ * genuinely should give up still does, on its own deadline rather than on this one.
  */
-export const PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS = 250;
+export const PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS = 5000;
 
 const tableNames = [
   "production_active_selection",
@@ -835,10 +863,16 @@ export function openProductionContinuityStore(
   let closed = false;
   try {
     db.exec("PRAGMA foreign_keys=ON");
+    // The budget has to be in force before ANY statement that can contend, and that includes the
+    // ones that configure the journal. `PRAGMA journal_mode=DELETE` itself takes the write lock:
+    // measured against a writer held by another process it failed at 30.9 ms with the budget still
+    // at its default, and waited 1 525 ms and succeeded once the budget was set first. Setting the
+    // budget after `admit` (where it used to be) covered none of these statements, and setting it
+    // in the same `exec` as `journal_mode` was no better - statements in one `exec` still run in
+    // order, so journal_mode went first. It is its own statement for that reason.
+    db.exec(`PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`);
+    db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");
     admit(db, existed);
-    db.exec(
-      `PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`,
-    );
   } catch (error) {
     db.close();
     throw error;
