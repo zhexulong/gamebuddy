@@ -70,10 +70,24 @@ public sealed class TargetRowBudgetTests
         // A plantable stack's ceiling is what one plan can name, so a single held stack publishes a plan's worth rather
         // than its whole share of 64.
         TargetRowBudget.PerKeyRowLimit(1, TargetRowBudget.PlanNodes).Should().Be(TargetRowBudget.PlanNodes);
-        // A container's ceiling is how many rows it can hold at all, so a lone chest publishes whole, and a wider
-        // ceiling is still never allowed to exceed the family limit.
-        TargetRowBudget.PerKeyRowLimit(1, 36).Should().Be(36);
-        TargetRowBudget.PerKeyRowLimit(1, 1000).Should().Be(TargetRowBudget.FamilyRowLimit);
+        // A key whose own ceiling is genuinely SMALLER than a plan's keeps it: `Chest` holds 36 rows but a caller that
+        // knows it can only echo 8 asks for 8, and that is an answer, not a floor to raise.
+        TargetRowBudget.PerKeyRowLimit(1, 8).Should().Be(8);
+        TargetRowBudget.PerKeyRowLimit(2, 5).Should().Be(5);
+    }
+
+    [Fact]
+    public void ThePlanCeilingIsNotNegotiableByTheCaller()
+    {
+        // The generalisation let a caller pass its own ceiling, and `Chest.capacity` is 36 - so one 36-slot container
+        // published up to 36 pairs. A plan can name at most `PlanNodes`, so rows past that are targets no caller can
+        // echo, and they cost every other container the window it needed. Measured 2026-10-31: `PerKeyRowLimit(1, 36)`
+        // returned 36 where the pre-generalisation code returned 16.
+        foreach (int ceiling in new[] { 36, 1000, TargetRowBudget.FamilyRowLimit })
+        {
+            for (int keys = 0; keys <= 4; keys++)
+                TargetRowBudget.PerKeyRowLimit(keys, ceiling).Should().BeLessThanOrEqualTo(TargetRowBudget.PlanNodes);
+        }
     }
 
     [Fact]
@@ -82,6 +96,7 @@ public sealed class TargetRowBudgetTests
         // No qualifying key means the caller publishes nothing anyway; the value must still be a sane window rather
         // than a division by zero or a zero window that would silently stop publishing once a key appears.
         TargetRowBudget.PerKeyRowLimit(0, TargetRowBudget.PlanNodes).Should().Be(TargetRowBudget.PlanNodes);
-        TargetRowBudget.PerKeyRowLimit(0, 36).Should().Be(36);
+        TargetRowBudget.PerKeyRowLimit(0, 8).Should().Be(8);
+        TargetRowBudget.PerKeyRowLimit(0, 1000).Should().Be(TargetRowBudget.PlanNodes);
     }
 }
