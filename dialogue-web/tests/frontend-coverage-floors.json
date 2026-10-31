@@ -1,0 +1,9 @@
+{
+  "note": "Each `lines` floor is the MEASURED percentage of the whole-corpus run that introduced the gate, rounded down; `measured` records that reading so the next reader can see how far the floor has drifted. `modules` and `populationLines` are floors of their own: measured 2026-10-31, removing components/management-panels.tsx (87.1% covered) RAISED the rendered percentage from 88.17% to 88.31%, so a percentage-only floor stays green while the largest panel disappears. A group whose population shrank is a breach even when its number went up.",
+  "groups": {
+    "wire": { "measured": 88.94, "lines": 87, "modules": 4, "populationLines": 7234 },
+    "catalogue": { "measured": 99.8, "lines": 98, "modules": 3, "populationLines": 3024 },
+    "rendered": { "measured": 88.17, "lines": 86, "modules": 30, "populationLines": 15439 },
+    "state": { "measured": 82.02, "lines": 80, "modules": 16, "populationLines": 3181 }
+  }
+}
