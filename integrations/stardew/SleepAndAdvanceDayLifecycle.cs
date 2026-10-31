@@ -257,6 +257,26 @@ internal sealed class SleepAndAdvanceDayLifecycle
         return lifecycle;
     }
 
+    /// <summary>
+    /// Whether this lifecycle still has a way to commit a standing settlement sheet.
+    ///
+    /// <para>
+    /// The ONLY phase that commits one is <see cref="Phase.AwaitingModal"/> (`:424`), and that phase is reached from
+    /// exactly one place: `WalkToBed()` returning true (`:404-405`). A night the engine took by its own 2:00 AM pass-out
+    /// never walks to the bed - the engine moves the actor - so its lifecycle can sit in `AwaitingSave` or
+    /// `AwaitingReadyBarrier` for ever with no route to the commit.
+    /// </para>
+    /// <para>
+    /// MEASURED 2026-10-31: the clock read 2600 (02:00), the engine warped to FarmHouse and ran `NewDay`, the new day
+    /// opened at 600, and `menu=ShippingMenu` then stood for the rest of the run. A lifecycle from the previous
+    /// `advance_day` was still alive and NOT finished, so the day start's guard answered "someone owns this" and
+    /// skipped - while that someone had no way left to act. Four earlier commits (`1b70f08e`, `541775c2`, `4357a95b`,
+    /// `76c51da4`) all asked "has the lifecycle FINISHED", which is a question about its progress rather than about
+    /// its capability, and the two come apart exactly here.
+    /// </para>
+    /// </summary>
+    internal bool CanStillCommitSettlementMenu => !this.finished && this.phase == Phase.AwaitingModal;
+
     /// <summary>The native event edges this lifecycle consumes, forwarded by ModEntry.</summary>
     internal void ObserveSaved()
     {
@@ -841,7 +861,17 @@ internal sealed class SleepAndAdvanceDayLifecycle
         SleepAndAdvanceDayLifecycle? owner,
         IClickableMenu? standing)
     {
-        if (owner is not null && !owner.IsFinished)
+        // "No lifecycle can commit it" is a question about CAPABILITY, not about progress.
+        //
+        // This used to read `owner is not null && !owner.IsFinished` and return, i.e. it treated any unfinished
+        // lifecycle as an owner. But the only phase that commits a settlement sheet is `AwaitingModal`, which is
+        // reachable only through `WalkToBed()` - so a pass-out night's lifecycle, or a stale one left from an earlier
+        // `advance_day`, holds the guard while having no route to the commit. The menu then stands for the rest of the
+        // run with the clock frozen (measured 2026-10-31, and four prior attempts).
+        //
+        // A lifecycle that CAN still commit keeps its ownership, which is the property the earlier guard was protecting:
+        // two `okClicked` dispatches on one menu restart the outro and freeze the settlement (ShippingMenu.cs:690-696).
+        if (owner is not null && owner.CanStillCommitSettlementMenu)
             return;
         SettleStandingSettlementMenuWithoutLifecycle(standing);
     }
