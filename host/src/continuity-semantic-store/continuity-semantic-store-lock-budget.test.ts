@@ -416,6 +416,101 @@ test("no member that issues no writing statement takes the writer's lock", () =>
   );
 });
 
+/**
+ * A pure read does not take the writer's lock, but this journal mode still excludes it from a
+ * writer that holds EXCLUSIVE - and that wait is bounded by the WRITE budget, then fails.
+ *
+ * Two different locks, and only one of them was fixed by `4bb4cd0e`. A writer in RESERVED
+ * (`BEGIN IMMEDIATE`) leaves readers free, and the sibling test above proves this store's reads use
+ * that freedom. A writer in EXCLUSIVE excludes readers structurally: under `journal_mode=DELETE` a
+ * read takes SHARED for its own duration, and SHARED is what EXCLUSIVE is exclusive against. That is
+ * not a routing defect in the store, and no `readTransaction` change can remove it.
+ *
+ * MEASURED here on 2026-10-31 against another PROCESS holding `BEGIN EXCLUSIVE` plus one UPDATE on
+ * this store's DELETE-mode file, with the store's 5 000ms budget in force on the reader:
+ *
+ *   store.readChatCatalog()            6 930ms  database is locked
+ *   raw prepare().get(), no BEGIN      7 923ms  database is locked
+ *   raw BEGIN then SELECT              7 274ms  database is locked
+ *   PRAGMA query_only=ON/OFF               0ms  ok (a pragma touches no page)
+ *   the same reads against RESERVED        3-5ms ok
+ *
+ * So the wait outlasts the 5 000ms budget and the read then fails rather than proceeding - which is
+ * the shape a live run produced as a 10 s `/state` wait ending in a 409. The overshoot past the budget
+ * is SQLite's busy handler, which sleeps between retries and re-checks the clock only at a retry
+ * boundary. What the assertion below pins is the part that must stay true whatever the journal mode:
+ * the wait is BOUNDED, so a reader can never hang the shell indefinitely, and the failure names
+ * itself. A budget that silently stopped bounding this - a connection opened without it, a retry loop
+ * added around it - would make a wedged writer hang every reader forever, so that is the failure this
+ * test exists to catch.
+ */
+test("a pure read waits on a writer that holds EXCLUSIVE, and the store's budget bounds that wait", (t) => {
+  const subject = fixtureRoot();
+  const holderPath = join(subject.root, "exclusive-holder.mjs");
+  writeFileSync(
+    holderPath,
+    [
+      'import { DatabaseSync } from "node:sqlite";',
+      "const [dbPath] = process.argv.slice(2);",
+      "const db = new DatabaseSync(dbPath);",
+      'db.exec("PRAGMA busy_timeout=10000");',
+      'db.exec("BEGIN EXCLUSIVE");',
+      'db.prepare("UPDATE production_partition SET partition_revision=partition_revision WHERE singleton=1").run();',
+      'process.stdout.write("held");',
+      // Held until this test kills it: the point is a writer that does NOT release inside the budget,
+      // which is what a crash-in-progress or a committed transaction whose flush is stuck looks like.
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+  );
+  const holder = spawn(process.execPath, [holderPath, join(subject.root, DATABASE)], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return new Promise<void>((resolve, reject) => {
+    holder.stdout.once("data", () => {
+      const budget = subject.control.configuration().busyTimeoutMs;
+      const started = performance.now();
+      let failure: unknown;
+      let answered = false;
+      try {
+        subject.store.readChatCatalog();
+        answered = true;
+      } catch (caught) {
+        failure = caught;
+      }
+      const elapsedMs = performance.now() - started;
+      holder.kill();
+      subject.control.close();
+      removeRoot(subject.root);
+      try {
+        // The bound, not the outcome: a reader that answers or fails within a small multiple of the
+        // budget is a reader a caller can act on. A reader still waiting after that is one that will
+        // hang the shell, which is the defect this class is about.
+        assert.ok(
+          elapsedMs < budget * 2,
+          `a pure read against a writer holding EXCLUSIVE was still waiting after ${elapsedMs.toFixed(0)}ms against a ${String(budget)}ms budget (answered=${String(answered)}): nothing is bounding it, so a wedged writer hangs every reader for as long as it lives`,
+        );
+        if (!answered) {
+          const message = String((failure as Error | undefined)?.message ?? "");
+          assert.match(
+            message,
+            /database is locked/u,
+            `the read gave up after ${elapsedMs.toFixed(0)}ms but not with a lock failure (${message}): a read that fails for another reason cannot be told apart from a read that succeeded`,
+          );
+        }
+        // Recorded rather than asserted, because WHICH of the two happens is the journal mode's
+        // property, not this store's: under DELETE a writer in EXCLUSIVE always wins against a
+        // reader. Reporting it keeps the reading attached to the run that produced it.
+        t.diagnostic(
+          `readChatCatalog against a held EXCLUSIVE lock: ${elapsedMs.toFixed(0)}ms, answered=${String(answered)}, budget=${String(budget)}ms`,
+        );
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+});
+
 test("every pure read answers while another connection holds the writer's lock", () => {
   const subject = fixtureRoot();
   try {
