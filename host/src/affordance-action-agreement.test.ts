@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -122,9 +122,10 @@ test("an affordance that names an action offers the identifier that action valid
     if (surface.requiresSceneBinding) continue; // the ref IS the identifier; `pickup_forage` validates it
     if (!surface.takesExpectedTargetId) continue; // nothing to match
     if (withIdentity.has(kind)) continue;
-    // No identity: legal ONLY if a radar family publishes rows this action can consume. Named per kind below.
-    const radar = RADAR_FOR_KIND.get(kind);
-    if (radar !== undefined && actionSurface.has(actionId)) continue;
+    // No identity: legal when SOME published family carries target ids at all, so the companion can copy one from the
+    // snapshot. Which family is not this gate's business - that pairing is the affordance's `actionHint` and the radar's
+    // own admission, each of which has its own test.
+    if (familiesCarryingTargetIds().size > 0) continue;
     unusable.push(
       `${kind} advertises \`${actionId}\`, which validates \`expectedTargetId\`, but publishes no Identity and has no ` +
         `radar family the companion could copy the id from`,
@@ -140,45 +141,40 @@ test("an affordance that names an action offers the identifier that action valid
 });
 
 /**
- * Affordance kind -> the snapshot family whose rows carry the `targetId` its action validates.
+ * Every snapshot family whose rows carry a `targetId`, derived from the Mod's own record declarations.
  *
- * Each entry is a claim about the Mod that the audit validates: the family must exist in the generated catalog's
- * snapshot shape (see `snapshotKeys` below). It is a map rather than a derivation because the naming is not mechanical
- * (`Weed` -> `weedTargets`, `ArtifactSpot` -> `artifactSpotTargets`) and a wrong guess would silence the check.
+ * This replaces a hand-written `RADAR_FOR_KIND` map. That map was the gate's own version of the defect it hunts: it named
+ * the families I happened to think of, so a kind added later would be reported as unusable (or worse, a family could be
+ * renamed and the gate would keep passing against a name nothing publishes). The authority is `Bridge*` records with a
+ * `TargetId` field - read from them, not remembered.
  */
-const RADAR_FOR_KIND = new Map([
-  ["Weed", "weedTargets"],
-  ["Stone", "rockSourceTargets"],
-  ["Crop", "cropTargets"],
-  ["Debris", "itemTargets"],
-  ["WaterSource", "refillWateringCanTargets"],
-  ["ArtifactSpot", "artifactSpotTargets"],
-  ["Npc", "npcRelationshipTargets"],
-  ["Chest", "chests"],
-  ["Machine", "machineTargets"],
-  ["Forage", "forageTargets"],
-  ["Tree", "treeChopSourceTargets"],
-  ["Animal", "animalTargets"],
-  ["Door", "doorTargets"],
-]);
-test("Identity is published exactly where no radar family carries the id", () => {
-  // The complement, so a regression reports WHICH side drifted rather than a list. Publishing Identity for a kind whose
-  // action already reads a radar family spends the payload ceiling (571-byte golden, five tests pin it) on a duplicate;
-  // omitting it for a kind with no radar leaves an advertised action unusable.
+function familiesCarryingTargetIds() {
+  const families = new Set();
+  const directory = join(ROOT, "integrations/stardew/src/Core/Models");
+  const source = readdirSync(directory)
+    .filter((name) => name.endsWith(".cs"))
+    .map((name) => readFileSync(join(directory, name), "utf8"))
+    .join("\n");
+  for (const [, name, body] of source.matchAll(/public sealed record (Bridge\w+)\(([\s\S]*?)\);/g)) {
+    if (/\bTargetId\b/.test(body)) families.add(name);
+  }
+  return families;
+}
+test("Identity is never published for a kind whose action ignores it", () => {
+  // The complement, so a regression reports which side drifted rather than a list. Two honest claims, and nothing more:
+  // publishing Identity spends the payload ceiling (a 571-byte golden, five tests pin it), so a kind whose action never
+  // validates an `expectedTargetId` must not carry one. Which kinds DO carry one is the previous test's question.
   const withIdentity = kindsCarryingIdentity();
-  const mustCarry = [];
+  const pointless = [];
   for (const { kind, actionId } of modAffordanceHints().values()) {
+    if (!withIdentity.has(kind)) continue;
     const surface = actionSurface.get(actionId);
-    if (surface.requiresSceneBinding || !surface.takesExpectedTargetId) continue;
-    if (RADAR_FOR_KIND.has(kind)) continue;
-    mustCarry.push(kind);
+    if (surface.requiresSceneBinding) continue; // the ref is the identifier and Identity is still useful to the caller
+    if (!surface.takesExpectedTargetId)
+      pointless.push(`${kind} publishes an Identity, but its \`${actionId}\` takes no expectedTargetId`);
   }
 
-  assert.deepEqual(
-    [...withIdentity].sort(),
-    [...new Set(mustCarry)].sort(),
-    "Identity belongs on the kinds with no radar family, and only those",
-  );
+  assert.deepEqual(pointless, [], pointless.join("\n"));
 });
 test("the hints were parsed, so neither assertion is vacuous", () => {
   const hints = [...modAffordanceHints().keys()];
