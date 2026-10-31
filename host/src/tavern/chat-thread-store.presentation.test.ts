@@ -1190,3 +1190,35 @@ test("a failed turn's classified provider cause survives a store reopen, and an 
     }
   }
 });
+
+/**
+ * The end of the wire, asserted where the browser reads it: a turn carrying a classified cause is a
+ * turn the frozen contract ACCEPTS.
+ *
+ * This is the seam that would have failed silently. `BrowserTurnV1Schema` is a strict object, so a
+ * projection that published `providerFailure` before the contract declared it would have been
+ * rejected whole - the surface would have shown a protocol error instead of a sentence, and the
+ * cause would have been lost exactly where it was supposed to arrive. The reverse is checked too: a
+ * class no classifier produces must be refused, so the union is closed rather than merely wide.
+ */
+test("the browser turn contract accepts every classified cause and refuses one no classifier produces", async () => {
+  const { TavernBrowserValidatorsV1 } = await import("./browser-contract/index.js");
+  const { PROVIDER_FAILURE_CLASSES } = await import("../provider-failure-classification.js");
+  const turn = Object.freeze({
+    handle: "QWxhZGRpbjpvcGVuIHNlc2FtZQ",
+    state: "failed" as const,
+    projectionRevision: 1,
+    canCancel: false,
+    problemCode: "runtime_unavailable" as const,
+  });
+  const check = (value: unknown) => TavernBrowserValidatorsV1.BrowserTurnV1Schema.Check(value);
+  assert.equal(check(turn), true, "the failure code alone is still a legal turn");
+  for (const providerFailure of PROVIDER_FAILURE_CLASSES) {
+    assert.equal(check({ ...turn, providerFailure }), true, providerFailure);
+  }
+  // An absent cause is the absence of a fact, not a value: `undefined` reads as absent (as it does
+  // for `truncated`), so a caller that spreads an optional field need not branch.
+  assert.equal(check({ ...turn, providerFailure: undefined }), true, "undefined is absent");
+  assert.equal(check({ ...turn, providerFailure: "gate_invented_cause" }), false, "the union is closed");
+  assert.equal(check({ ...turn, providerFailure: null }), false, "absent is the absence, not null");
+});
