@@ -9,6 +9,10 @@ import { createCompanionCardExportService } from "../tavern/companion-card-expor
 import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
 import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
 import { createCompanionDeletionService } from "../tavern/companion-deletion-service.js";
+import {
+  createCompanionActivationService,
+  type CompanionActivationService,
+} from "../tavern/companion-activation-service.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
@@ -201,6 +205,8 @@ type TavernManagementDomains = Readonly<
       | "companionAvatarService"
     >
   > & {
+    /** Records the player's companion choice; the launcher performs the switch at next launch. */
+    companionActivationService: CompanionActivationService;
     managementService: ChatManagementService;
     memoryService: MemoryManagementService;
     worldInfoService: WorldInfoBindingManagementService;
@@ -255,6 +261,12 @@ function createTavernManagementDomains(
   profile: ComposedTavernProfile,
   worldInfoService: WorldInfoBindingManagementService,
   chatSelection: DesktopPresentationAdmissionInput["chatSelection"],
+  /**
+   * Whether this mount serves a Game authority at all. A chat-only or management-only mount
+   * constructs none, so no game session can be running there and the companion switch needs no
+   * game read; a mount that has one may never switch without proving the game is stopped.
+   */
+  gameAuthorityPresent: boolean,
 ): Readonly<{ domains: TavernManagementDomains; owned: readonly { close(): Promise<void> }[] }> {
   const owned: { close(): Promise<void> }[] = [];
   const managementService = createChatManagementService({ manifest, lease, profile });
@@ -501,6 +513,29 @@ function createTavernManagementDomains(
     currentCompanionId: manifest.principal.companionId,
     resolveCompanion: companionForHandle,
   });
+  /**
+   * Choosing which companion this installation plays.
+   *
+   * It records the choice and says so; it does not switch. The companion in play is the
+   * deployment identity's `companionId`, the semantic authority binds its database to that one
+   * principal, and `desktop/GameBuddy.Desktop/DeploymentIdentity.cs` is that identity's one
+   * authority - so the launcher parks the authority root that is in play, brings the chosen
+   * companion's back, and replaces the record. Writing the identity here would be a second
+   * authority over the same fact. The in-play fact is injected for the same reason the deletion
+   * uses it: a second definition of "who is in play" is how the surface and the request would
+   * come to disagree about whose conversation is mounted.
+   *
+   * `readGame` is supplied only on the composed reference-game surface, which is the only
+   * mount where a Game authority exists at all. Its absence is the honest answer there - no
+   * Game authority, so no session can be running - rather than a refusal the player cannot act
+   * on.
+   */
+  const companionActivationService = createCompanionActivationService({
+    runtimeRoot: manifest.runtimeRoot,
+    currentCompanionId: manifest.principal.companionId,
+    resolveCompanion: companionForHandle,
+    gameAuthorityPresent,
+  });
   const newCompanionProvisioner = Object.freeze({
     async create(name: string) {
       // The provisioner mints a new Host-owned identity namespace; the browser
@@ -622,9 +657,6 @@ function createTavernManagementDomains(
       review,
       libraryThreads,
       await stCardImportService.stagedAvatar(importId),
-      // The card's own prose is rendered at provisioning, so it is rendered in
-      // the run's language: `{{user}}` is the run's word for the player.
-      await resolveCompanionLocale(manifest.runtimeRoot),
     );
     await stCardImportHistoryService.record({
       importId,
@@ -649,6 +681,7 @@ function createTavernManagementDomains(
       companionCardExportService,
       companionAvatarService,
       companionDeletionService,
+      companionActivationService,
       newCompanionProvisioner,
       newChatProvisioner,
       ...(chatSelectProvisioner === undefined ? {} : { chatSelectProvisioner }),
@@ -764,6 +797,7 @@ export async function startDesktopPresentationAdmission(
         managementProfile,
         worldInfoService,
         input.chatSelection,
+        input.presentation !== undefined,
       );
       const { chatSelectProvisioner, ...domainsWithoutSelection } = domains;
       owned.push(...domainOwned);
@@ -811,6 +845,16 @@ export async function startDesktopPresentationAdmission(
       const management = Object.freeze({
         profile: managementProfile,
         ...domainsWithoutSelection,
+        // The Game state read the activation route needs to prove no session is running. It is
+        // only present on a mount that HAS a Game authority, and it is handed the request's own
+        // authenticated session by the dispatcher - a reader resolved here would read with a
+        // session captured at composition time.
+        ...(input.presentation === undefined
+          ? {}
+          : {
+              readGameState: (context: Readonly<{ csrfToken: string; browserSessionExpiresAtMs: number }>) =>
+                input.presentation!.readGame(context),
+            }),
         ...(chatSelectProvisioner === undefined
           ? {}
           : {
@@ -1027,6 +1071,23 @@ function createStableManagementOptions(current: () => ChatLane): Omit<TavernMana
   }
   if (typeof sample.confirmStCardImport === "function")
     stable.confirmStCardImport = (importId: string) => current().management.confirmStCardImport!(importId);
+  // The activation route takes a PER-REQUEST context (the Game read needs the request's own
+  // authenticated session), so it is forwarded with both arguments rather than through the
+  // argument-less method table above - a generic forward would silently drop the session and
+  // leave the service unable to prove no game is running.
+  const laneDomain = (): Record<string, any> => current().management as unknown as Record<string, any>;
+  if (typeof sample.companionActivationService === "object")
+    stable.companionActivationService = Object.freeze({
+      activate: (handle: string, context?: unknown) =>
+        (
+          laneDomain().companionActivationService as {
+            activate(handle: string, context?: unknown): Promise<unknown>;
+          }
+        ).activate(handle, context),
+    });
+  if (typeof sample.readGameState === "function")
+    stable.readGameState = (context: { csrfToken: string; browserSessionExpiresAtMs: number }) =>
+      laneDomain().readGameState(context);
   if (typeof sample.listVoiceOutputDevices === "function")
     stable.listVoiceOutputDevices = () => current().management.listVoiceOutputDevices!();
   return Object.freeze(stable) as Omit<TavernManagementDelegatedOptions, "capability">;
@@ -1119,6 +1180,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // Removing a roster companion for good follows the avatar group in that same
       // canonical order: the one irreversible operation this surface can offer.
       "companion.delete",
+      // Choosing which companion this installation plays follows the deletion in that same
+      // canonical order. It records the choice; the launcher performs the switch at the next
+      // launch, so the surface can show "chosen for next launch" and mean it.
+      "companion.activate",
       // Lorebook import follows the companion group in that same canonical order: the route
       // that serves the managed library's existing importer to the player.
       "world-info.import",
@@ -1180,6 +1245,7 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "companion.card.export",
       "companion.avatar.update",
       "companion.delete",
+      "companion.activate",
     ],
     // A mounted Memory route is paired with the Memory navigation item; the
     // item only projects `available` after the exact-bound read succeeds. The

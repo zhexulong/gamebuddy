@@ -251,6 +251,12 @@ const ProblemCode = Type.Union([
   // player is having. It is the one refusal the surface must never hide behind a
   // generic failure, and the one the control itself is absent for.
   Type.Literal("companion_delete_in_play"),
+  // Choosing the companion who is already in play is not a switch, and a running Game session
+  // owns the companion it was bound to: the Mod authorizes one companion per durable owner
+  // record and the cabin is bound to her. Both are refusals the player can act on - pick a
+  // different row, or stop the game first - so neither may collapse into a generic failure.
+  Type.Literal("companion_switch_already_in_play"),
+  Type.Literal("companion_switch_requires_no_session"),
 ]);
 
 /**
@@ -873,6 +879,12 @@ const OperationId = Type.Union([
   // roster's own handle and the revision she was read at. The companion in play is
   // refused by name - her conversations are the mounted ones.
   Type.Literal("companion.delete"),
+  // Choose which companion this installation plays. It RECORDS the choice rather than
+  // switching: the companion in play is the deployment identity's `companionId`, the semantic
+  // authority binds its database to that principal, and the launcher owns that identity. The
+  // route exists so the surface can show "chosen for next launch" instead of telling the player
+  // to restart for a choice nothing ever recorded.
+  Type.Literal("companion.activate"),
   Type.Literal("companion.create"),
   Type.Literal("character.import.stage"),
   Type.Literal("character.import.read"),
@@ -1471,6 +1483,36 @@ export const DeleteCompanionCommandV1Schema = strictObject({
 export const CompanionDeletionV1Schema = strictObject({
   apiVersion: ApiVersion,
   handle: OpaqueHandle,
+});
+/**
+ * Choosing which companion this installation plays.
+ *
+ * The body carries no identity beyond the opaque handle: a `companionId`, a continuity, a
+ * path or a title is not expressible, exactly like the deletion, the inspector and the
+ * avatar upload. Whatever the request has to record durably is derived by the Host from the
+ * roster entry that handle already names.
+ *
+ * There is deliberately no revision here. Deleting and editing CAS on the record's revision
+ * because they name a record; activating names the INSTALLATION's choice, whose compare-and-
+ * set is the companion the surface read as in play - a fact the Host already holds and the
+ * launcher re-checks, not something the browser could assert.
+ */
+export const ActivateCompanionCommandV1Schema = strictObject({
+  apiVersion: ApiVersion,
+});
+/**
+ * What a completed `companion.activate` answers: the handle whose choice was recorded.
+ *
+ * `status` is `recorded` and there is no other value, because the Host only RECORDS the
+ * choice. The switch itself belongs to the launcher: the companion in play is the deployment
+ * identity's `companionId`, the semantic authority's database is bound to that one principal,
+ * and `desktop/GameBuddy.Desktop/DeploymentIdentity.cs` is that identity's one authority. A
+ * boolean `switched` here would claim an operation this Host cannot perform.
+ */
+export const CompanionActivationV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  handle: OpaqueHandle,
+  status: Type.Literal("recorded"),
 });
 /**
  * The mounted companion's own performance directive, as the durable identity
@@ -2245,6 +2287,8 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "companion_avatar_too_large",
   "companion_avatar_malformed",
   "companion_delete_in_play",
+  "companion_switch_already_in_play",
+  "companion_switch_requires_no_session",
 ] as const);
 
 const unionProblemCodes: readonly string[] = ProblemCode.anyOf.map((literal) => literal.const);
@@ -3066,6 +3110,21 @@ const RouteDescriptors = Object.freeze([
     success: { status: 200, contentType: "application/json", schema: CompanionDeletionV1Schema },
   }),
   route({
+    routeId: "companion.activate",
+    method: "POST",
+    path: "/api/tavern/v1/companions/:companionHandle/activate",
+    operationId: "companion.activate",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: CompanionPath,
+    query: noQuery,
+    request: ActivateCompanionCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: CompanionActivationV1Schema },
+  }),
+  route({
     routeId: "companion.create",
     method: "POST",
     path: "/api/tavern/v1/companions",
@@ -3414,6 +3473,8 @@ export const TavernBrowserContractV1 = Object.freeze({
     CompanionAvatarV1Schema,
     DeleteCompanionCommandV1Schema,
     CompanionDeletionV1Schema,
+    ActivateCompanionCommandV1Schema,
+    CompanionActivationV1Schema,
     CompanionVoiceV1Schema,
     CompanionCharacterVoiceV1Schema,
     UpdateCompanionVoiceCommandV1Schema,
@@ -3557,6 +3618,8 @@ export type CompanionListEntryV1 = Static<typeof CompanionListEntryV1Schema>;
 export type CompanionListV1 = Static<typeof CompanionListV1Schema>;
 export type DeleteCompanionCommandV1 = Static<typeof DeleteCompanionCommandV1Schema>;
 export type CompanionDeletionV1 = Static<typeof CompanionDeletionV1Schema>;
+export type ActivateCompanionCommandV1 = Static<typeof ActivateCompanionCommandV1Schema>;
+export type CompanionActivationV1 = Static<typeof CompanionActivationV1Schema>;
 export type CompanionDetailV1 = Static<typeof CompanionDetailV1Schema>;
 /**
  * The world book's own wire types are HAND-WRITTEN rather than `Static` of their schemas,

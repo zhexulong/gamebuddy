@@ -27,6 +27,7 @@ import {
   type CreateCompanionCommandV1,
   type DeleteCompanionCommandV1,
   type CompanionDeletionV1,
+  type CompanionActivationV1,
   type CreateChatCommandV1,
   type SelectChatCommandV1,
   type ChatSelectResultV1,
@@ -84,6 +85,8 @@ import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
 import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
 import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
+import type { CompanionActivationService } from "./tavern/companion-activation-service.js";
+import type { GameBrowserStateV1 } from "./game-browser-contract/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { playerOfferedProviders } from "./tavern/provider-catalog.js";
 import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
@@ -301,6 +304,12 @@ const MANAGEMENT_COMPANION_AVATAR_ROUTES = ["companion.avatar.update"] as const;
  */
 const MANAGEMENT_COMPANION_DELETE_ROUTES = ["companion.delete"] as const;
 /**
+ * Choosing which companion this installation plays. It follows the avatar group in the frozen
+ * canonical order, and like every other optional group a profile that advertises it without
+ * the bound service fails closed at composition.
+ */
+const MANAGEMENT_COMPANION_ACTIVATE_ROUTES = ["companion.activate"] as const;
+/**
  * Optional lorebook-import extension: only a profile that declares this route mounts
  * `POST /api/tavern/v1/world-info/import`, the one route that serves the managed library's existing
  * SillyTavern/Chub lorebook importer to the player. It appends after the avatar group in the same
@@ -362,6 +371,7 @@ const updateCompanionWorldBookValidator = Compile(
 );
 const companionAvatarUploadValidator = Compile(TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema);
 const companionDeleteValidator = Compile(TavernBrowserContractV1.schemas.DeleteCompanionCommandV1Schema);
+const companionActivateValidator = Compile(TavernBrowserContractV1.schemas.ActivateCompanionCommandV1Schema);
 
 /**
  * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
@@ -504,6 +514,23 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    * profile declares the route; the route stays unavailable otherwise.
    */
   companionDeletionService?: CompanionDeletionService;
+  /**
+   * Choosing which companion this installation plays. Present only when the mounted profile
+   * declares the route; the route stays unavailable otherwise, exactly like the deletion.
+   */
+  companionActivationService?: CompanionActivationService;
+  /**
+   * The Game surface's own state projection, when this mount serves one.
+   *
+   * The activation route must refuse while a game session is running, and the Mod authorizes
+   * exactly one companion per durable owner record with the cabin bound to her. The reader is
+   * supplied by the composition that owns the Game projection, and the dispatcher calls it with
+   * the authenticated session of the request being served - a reader captured earlier would read
+   * with a session that did not exist yet.
+   */
+  readGameState?: (
+    context: Readonly<{ csrfToken: string; browserSessionExpiresAtMs: number }>,
+  ) => Promise<GameBrowserStateV1>;
   /**
    * Host-owned new-companion provisioner. The browser sends a display name
    * only; the Host mints every durable identity and returns the safe name.
@@ -726,6 +753,8 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionCardExportService = options.companionCardExportService;
   const companionAvatarService = options.companionAvatarService;
   const companionDeletionService = options.companionDeletionService;
+  const companionActivationService = options.companionActivationService;
+  const readGameState = options.readGameState;
   const newCompanionProvisioner = options.newCompanionProvisioner;
   const newChatProvisioner = options.newChatProvisioner;
   const chatSelectProvisioner = options.chatSelectProvisioner;
@@ -879,6 +908,12 @@ export function createTavernManagementDialogueWebRequestHandler(
   for (const routeId of MANAGEMENT_COMPANION_DELETE_ROUTES) {
     if (profile.routeIds.includes(routeId)) {
       if (companionDeletionService === undefined) throw new Error("tavern_management_composition_unavailable");
+      if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
+    }
+  }
+  for (const routeId of MANAGEMENT_COMPANION_ACTIVATE_ROUTES) {
+    if (profile.routeIds.includes(routeId)) {
+      if (companionActivationService === undefined) throw new Error("tavern_management_composition_unavailable");
       if (!profile.operationIds.includes(routeId)) throw new Error("tavern_management_composition_unavailable");
     }
   }
@@ -1804,6 +1839,59 @@ export function createTavernManagementDialogueWebRequestHandler(
         }
       }
       {
+        const activateHandle = matchCompanionActivateRoute(request.method, url.pathname);
+        if (activateHandle !== null) {
+          // companion.activate: record which companion this installation plays.
+          //
+          // The Host only RECORDS the choice. The companion in play is the deployment
+          // identity's `companionId`, the semantic authority binds its database to that one
+          // principal, and `desktop/GameBuddy.Desktop/DeploymentIdentity.cs` is that identity's
+          // one authority - so the launcher parks the authority root that is in play, brings
+          // the chosen companion's back, and replaces the record. Writing the identity here
+          // would be a second authority over the same fact.
+          //
+          // A restart is genuinely required, and it is a real step rather than a wish: the
+          // manifest is read at Host boot, so the surface can say "chosen for next launch" and
+          // mean it.
+          if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+          if (!isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+          const session = admitRequest(request, origin);
+          if (session === null) return sendProblem(response, 401, "unauthorized");
+          if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+            return sendProblem(response, 403, "csrf_failed");
+          if (
+            !profile.routeIds.includes("companion.activate") ||
+            !profile.operationIds.includes("companion.activate") ||
+            companionActivationService === undefined
+          )
+            return sendProblem(response, 404, "profile_operation_unavailable");
+          const body = await readJsonBody(request, MAX_BODY_BYTES);
+          if (!companionActivateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+          const recorded = await companionActivationService.activate(activateHandle, {
+            // The Game read needs THIS request's authenticated session, which is why it is built
+            // here rather than captured when the service was composed: the values are the ones
+            // `admitRequest` just verified.
+            ...(readGameState === undefined
+              ? {}
+              : {
+                  readGameState: () =>
+                    readGameState({ csrfToken: session.csrf, browserSessionExpiresAtMs: session.expiresAtMs }),
+                }),
+          });
+          // Null is a handle this mount's roster never projected: nothing was recorded, so the
+          // answer is not found rather than a success the player would read as a switch.
+          if (recorded === null) return sendProblem(response, 404, "companion_not_found");
+          const result: CompanionActivationV1 = Object.freeze({
+            apiVersion: TAVERN_BROWSER_API_VERSION,
+            handle: recorded.handle,
+            status: recorded.status,
+          });
+          if (!TavernBrowserValidatorsV1.CompanionActivationV1Schema.Check(result))
+            throw new Error("companion_activation_service_unavailable");
+          return sendJson(response, 200, result);
+        }
+      }
+      {
         const voiceHandle = matchCompanionVoiceRoute(request.method, url.pathname);
         if (voiceHandle !== null) {
           // The mounted companion's own performance directive. The exact opaque
@@ -2509,6 +2597,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
     MANAGEMENT_COMPANION_DELETE_ROUTES,
+    MANAGEMENT_COMPANION_ACTIVATE_ROUTES,
     MANAGEMENT_WORLD_INFO_IMPORT_ROUTES,
     MANAGEMENT_CHAT_EXPORT_ROUTES,
   ] as const;
@@ -2531,6 +2620,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_CARD_EXPORT_ROUTES,
     MANAGEMENT_COMPANION_AVATAR_ROUTES,
     MANAGEMENT_COMPANION_DELETE_ROUTES,
+    MANAGEMENT_COMPANION_ACTIVATE_ROUTES,
   ] as const;
   if (!isCanonicalGroupSelection(profile.routeIds, routeGroups, coreRoutes)) return false;
   if (!isCanonicalGroupSelection(profile.operationIds, operationGroups, coreOperations)) return false;
@@ -2662,6 +2752,13 @@ function matchCompanionAvatarRoute(method: string | undefined, pathname: string)
 function matchCompanionDeleteRoute(method: string | undefined, pathname: string): string | null {
   if (method !== "DELETE") return null;
   const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})$/.exec(pathname);
+  return match === null ? null : match[1]!;
+}
+
+/** companion.activate: record which companion this installation plays, by her recorded handle. */
+function matchCompanionActivateRoute(method: string | undefined, pathname: string): string | null {
+  if (method !== "POST") return null;
+  const match = /^\/api\/tavern\/v1\/companions\/([A-Za-z0-9_-]{22,128})\/activate$/.exec(pathname);
   return match === null ? null : match[1]!;
 }
 
@@ -2816,6 +2913,17 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // mounted Chat is hers. A record that moved on since the screen read it is the same
   // bounded compare-and-set refusal every other companion write reports.
   if (message === "companion_delete_in_play") return { status: 409, code: "companion_delete_in_play" };
+  // Choosing a companion this installation already plays is not a switch. It is refused rather
+  // than recorded, because a recorded request would park and restore her for nothing and the
+  // player was told the thing that is already true.
+  if (message === "companion_switch_already_in_play") return { status: 409, code: "companion_switch_already_in_play" };
+  // A running Game session owns the companion: the Mod authorizes exactly one companion per
+  // durable owner record, the cabin is bound to her, and re-binding a live session is a
+  // different operation this product does not have. Stopping the game first is a step the
+  // player can take, so the code names the session rather than the refusal.
+  if (message === "companion_switch_requires_no_session")
+    return { status: 409, code: "companion_switch_requires_no_session" };
+  if (message === "invalid_companion_switch_request") return { status: 400, code: "invalid_request" };
   if (message === "companion_conflict") return { status: 409, code: "companion_conflict" };
   if (message === "companion_world_book_binding_unavailable") return { status: 503, code: "storage_unavailable" };
   // The player's persona, scenario and opening are each one revisioned artifact edited through a
