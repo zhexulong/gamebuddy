@@ -678,14 +678,15 @@ const DB = "gamebuddy-continuity-v1.sqlite";
  * that budget did not bound a slow wait - it failed a normal one. A budget shorter than the
  * longest legitimate commit is a race by construction, not a tuning choice.
  *
- * Why the number is 5 s and not the journal mode. `journal_mode=DELETE` is NOT the cause and
- * changing it would not have narrowed this: the same file at the same row counts, measured with
- * WAL instead, commits in 72.4 ms (20 000 rows) and 268.8 ms (80 000) against DELETE's 56.4 ms
- * and 291.7 ms - indistinguishable, because the lock is held by the re-validation the store runs
- * inside every transaction, not by an fsync. Only the journal machinery itself differs, and it is
- * negligible beside that: a bare no-op commit is p50 0.16 ms under DELETE+FULL, 0.07 ms under
- * WAL+FULL. So `synchronous=FULL` on a rollback journal stays exactly as it is - it is the
- * authority's durability, and it costs a fraction of a millisecond - and the budget is the lever.
+ * Why the number is 5 s, and why it is not the journal mode. `journal_mode` is NOT what makes a commit
+ * slow and changing it did not narrow this: the same file at the same row counts, measured with WAL
+ * instead, commits in 72.4 ms (20 000 rows) and 268.8 ms (80 000) against DELETE's 56.4 ms and
+ * 291.7 ms - indistinguishable, because the lock is held by the re-validation the store runs inside
+ * every transaction, not by an fsync. Only the journal machinery itself differs, and it is negligible
+ * beside that: a bare no-op commit is p50 0.16 ms under DELETE+FULL, 0.07 ms under WAL+FULL. So the
+ * journal mode was moved to WAL for the READER's lock model (see the open path), `synchronous=FULL`
+ * stays exactly as it is because it is the authority's durability and costs a fraction of a
+ * millisecond, and this budget is the lever for commit latency.
  *
  * 5 s clears the largest commit measured at any size above by more than 10x, and is the budget the
  * sibling `chat-thread-store` already runs in this product. It is a contention budget, not a
@@ -864,14 +865,29 @@ export function openProductionContinuityStore(
   try {
     db.exec("PRAGMA foreign_keys=ON");
     // The budget has to be in force before ANY statement that can contend, and that includes the
-    // ones that configure the journal. `PRAGMA journal_mode=DELETE` itself takes the write lock:
-    // measured against a writer held by another process it failed at 30.9 ms with the budget still
-    // at its default, and waited 1 525 ms and succeeded once the budget was set first. Setting the
-    // budget after `admit` (where it used to be) covered none of these statements, and setting it
-    // in the same `exec` as `journal_mode` was no better - statements in one `exec` still run in
-    // order, so journal_mode went first. It is its own statement for that reason.
+    // ones that configure the journal. Configuring the journal can take the write lock: converting a
+    // file that is still in DELETE does, and measured against a writer held by another process it
+    // failed at 30.9 ms with the budget still at its default, and waited 1 525 ms and succeeded once
+    // the budget was set first. Setting the budget after `admit` (where it used to be) covered none
+    // of these statements, and setting it in the same `exec` as `journal_mode` was no better -
+    // statements in one `exec` still run in order, so journal_mode went first. It is its own statement
+    // for that reason.
     db.exec(`PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`);
-    db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");
+    // WAL, not DELETE, and `synchronous=FULL` untouched. The rollback journal's lock model is what made
+    // a reader wait: under DELETE a read takes SHARED for its own duration and SHARED is exactly what a
+    // writer's EXCLUSIVE excludes, so every read behind a writer's transaction waited out the write
+    // budget and then failed. MEASURED 2026-11-01 against another PROCESS holding `BEGIN EXCLUSIVE` plus
+    // one uncommitted page change, at this store's 5 000ms budget:
+    //
+    //   DELETE  reader  7 271.3ms  database is locked      writer  1 534.2ms  waited out the reader's hold
+    //   WAL     reader      1.4ms  answered, pre-writer     writer      3.1ms  committed
+    //
+    // That is the shape a live run produced as a 10 s `/state` wait ending in a 409. What WAL does NOT
+    // change is durability: `synchronous=FULL` below is the fsync policy and it stays, so a commit is on
+    // disk before it returns. Converting a file that is still in DELETE takes the write lock itself
+    // (measured 7 124ms behind a held writer, bounded by the budget above) - that is a one-time upgrade
+    // on the first open of an existing authority, not the steady state.
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL");
     admit(db, existed);
   } catch (error) {
     db.close();
@@ -1169,8 +1185,10 @@ function transaction<T>(db: DatabaseSync, callback: () => T): T {
  *
  * `query_only` makes that structural rather than a convention: a deferred transaction that turns
  * out to write fails here with `attempt to write a readonly database` instead of silently taking
- * the lock and stalling every concurrent writer. In this journal mode a held read does block a
- * writer's COMMIT, so misrouting a mutation into this path has to be loud, not slow.
+ * the lock and stalling every concurrent writer. Under WAL a held read does not block a writer's
+ * COMMIT at all (measured 3.1ms against a reader holding BEGIN for 1 500ms), so the reason this path
+ * exists is the first one - a read must not need the write lock - and the second is why a mutation
+ * misrouted into it is loud rather than merely slow.
  */
 function readTransaction<T>(db: DatabaseSync, callback: () => T): T {
   db.exec("PRAGMA query_only=ON");
