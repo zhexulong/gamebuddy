@@ -1,7 +1,6 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
-import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./tavern/macro-engine.js";
-import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "./settings/player-preference-store.js";
+import { hasUnrenderedMacro, renderWorldBookText } from "./tavern/macro-engine.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { isCompletePngFile } from "./tavern/companion-avatar/index.js";
 import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
@@ -133,7 +132,8 @@ export type StCardImportPreview = Readonly<{
   /** Candidate-only scenario is deliberately outside the profile candidate. */
   scenario?: string;
   /** The card's standard `system_prompt`, review-visible candidate data that
-   *  becomes the companion's `characterVoice` (rendered after the floor). */
+   *  becomes the companion's `characterVoice` (rendered after the floor, at the
+   *  reader, like every other authored field). */
   systemPrompt?: string;
   /** The card's standard `post_history_instructions`, carried verbatim and bounded. */
   postHistoryInstructions?: string;
@@ -222,57 +222,55 @@ export function previewStCard(value: unknown, fallbackProfileId = "gamebuddy.com
 
 /**
  * Maps an imported candidate's static persona, identity and the card's own
- * performance directive into a Host IdentityProfile,
- * ensuring 100% Prefix Caching in m[0]. Card macros are rendered deterministically
- * ({{char}} → name, {{user}} → the run's own word for the player) before the profile is
- * frozen, so a card writer can use the standard ST token set without leaking raw
- * placeholders into the Tier 1 prefix. The player reference is the locale's, never the
- * English constant "the player": a Chinese card rendered into a Chinese run reads
- * 与你一同从都市迁居, in the second person the card speaks in, because the shipped
- * card forbids her to refer to the player as a third party. Rendering is single-pass
- * (renderMacros), values are re-checked by
- * validateIdentityProfile at the write boundary.
+ * performance directive into a Host IdentityProfile, ensuring 100% Prefix Caching
+ * in m[0].
  *
- * `locale` is the run's companion language. It defaults to the product's own default
- * companion language, which is what a build-time compile of the reviewed preset (a
- * Chinese card) and any caller that has not read the player's stored preference get.
+ * The profile carries the AUTHOR's text, macros and all - `{{char}}`, `{{user}}`,
+ * `{{scenario}}` - exactly as the decoder read it, because the durable record is
+ * what the card export writes back and a frozen rendering is a different character
+ * in any other Tavern. Rendering happens at the READER: `renderIdentityProfile`
+ * renders the whole profile through ONE macro table when it builds a prompt, and
+ * `companion-profile-service` does the same for the surface a player reads.
+ * Those two are the only places a card's macros resolve, so the companion's name
+ * and the run's word for the player are decided by the run that reads, not the run
+ * that imported - and they cannot disagree with each other.
+ *
+ * The same rule already governs `scenario`, `post_history_instructions` and every
+ * world-book body, which is why those survive an export unchanged.
  */
 export function candidateToIdentityProfile(
   previewOrCandidate: StCardImportPreview | StCardImportCandidate,
   revision = 1,
-  locale: CompanionLocale = DEFAULT_COMPANION_LOCALE,
 ): IdentityProfile {
   const profileCandidate =
     "profileCandidate" in previewOrCandidate
       ? previewOrCandidate.profileCandidate
       : (previewOrCandidate as StCardImportPreview).profileCandidate;
-  const macros = macroTable({ char: profileCandidate.identity.name, locale });
-  const render = (value: string): string => renderMacros(value, macros);
   const persona =
     profileCandidate.persona === undefined
       ? undefined
       : Object.freeze({
-          ...(profileCandidate.persona.core === undefined ? {} : { core: render(profileCandidate.persona.core) }),
+          ...(profileCandidate.persona.core === undefined ? {} : { core: profileCandidate.persona.core }),
           ...(profileCandidate.persona.interactionStyle === undefined
             ? {}
-            : { interactionStyle: render(profileCandidate.persona.interactionStyle) }),
+            : { interactionStyle: profileCandidate.persona.interactionStyle }),
           ...(profileCandidate.persona.expressionStyle === undefined
             ? {}
-            : { expressionStyle: render(profileCandidate.persona.expressionStyle) }),
+            : { expressionStyle: profileCandidate.persona.expressionStyle }),
         });
   const examples =
     profileCandidate.examples === undefined || profileCandidate.examples.length === 0
       ? undefined
       : Object.freeze(
           profileCandidate.examples.map((example) =>
-            Object.freeze({ user: render(example.user), companion: render(example.companion) }),
+            Object.freeze({ user: example.user, companion: example.companion }),
           ),
         );
-  // The card's own performance directive. Macros are rendered the same way the
-  // persona and examples are; provenance is `card` until the player edits it.
+  // The card's own performance directive, verbatim; provenance is `card` until the
+  // player edits it.
   const characterVoice =
     typeof previewOrCandidate.systemPrompt === "string" && previewOrCandidate.systemPrompt.length > 0
-      ? Object.freeze({ text: render(previewOrCandidate.systemPrompt), source: "card" as const })
+      ? Object.freeze({ text: previewOrCandidate.systemPrompt, source: "card" as const })
       : undefined;
   return Object.freeze({
     schemaVersion: 1,

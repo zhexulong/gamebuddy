@@ -20,9 +20,7 @@ import { companionAvatarPath, writeAvatarFile } from "./companion-avatar/index.j
 import { type ChatThreadStore, createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
-import { type MacroTable, macroTable, renderMacros } from "./macro-engine.js";
 import { writeCompanionPostHistoryInstructions } from "./post-history-instructions.js";
-import { DEFAULT_COMPANION_LOCALE, type CompanionLocale } from "../settings/player-preference-store.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
@@ -156,14 +154,6 @@ export async function provisionNewCompanion(
    * which the player was told about at stage time.
    */
   avatar?: Uint8Array,
-  /**
-   * The run's companion language, the one authority every authored-text render
-   * in the Host reads (`resolveCompanionLocale`). A reviewed card's macros need
-   * it for the same reason the compiled preset path does: `{{user}}` is the
-   * player *being addressed*, and the run's own word for them is what her
-   * persona and her opening must say.
-   */
-  locale: CompanionLocale = DEFAULT_COMPANION_LOCALE,
 ): Promise<NewCompanionProvision> {
   // Validation is deliberately performed before any namespace or profile exists.
   if (
@@ -180,7 +170,7 @@ export async function provisionNewCompanion(
   const companionId = `companion-${randomUUID()}`;
   const continuityId = `continuity-${randomUUID()}`;
   const identity: CompanionIdentity = Object.freeze({ playerId, companionId, continuityId });
-  const profile = reviewedProfile(approved, companionId, continuityId, locale);
+  const profile = reviewedProfile(approved, companionId, continuityId);
   return provisionNewCompanionNamespace(
     root,
     identity,
@@ -188,7 +178,7 @@ export async function provisionNewCompanion(
     threads,
     Object.freeze({
       approved,
-      greetings: buildGreetingVariants(approved, macroTable({ char: profile.identity.name, locale })),
+      greetings: buildGreetingVariants(approved),
       ...(candidate.worldBookCandidates === undefined ? {} : { worldBookCandidates: candidate.worldBookCandidates }),
       ...(candidate.worldBookScanDepth === undefined ? {} : { worldBookScanDepth: candidate.worldBookScanDepth }),
       ...(avatar === undefined ? {} : { avatar }),
@@ -357,24 +347,23 @@ async function provisionNewCompanionNamespace(
  */
 function buildGreetingVariants(
   approved: ReadonlyMap<string, string>,
-  macros: MacroTable,
 ): readonly Readonly<{ label: string; text: string }>[] {
   // An opening is the card's own prose exactly as a persona line is, so it is
-  // rendered through the same table: a card that writes `{{user}}` in her
-  // `first_mes` must not ship the placeholder - or a partition id - as the
-  // conversation's own first line.
-  const render = (value: string): string => renderMacros(value, macros);
+  // stored the author's way too: the macro renders at the reader that draws or
+  // sends the opening, never here. This path used to render, while the compiled
+  // preset path (`compile-default-companion-preset.mjs`) carried the decoder's
+  // own text - one rule, two behaviours, and the rendering one broke the export.
   const variants: Readonly<{ label: string; text: string }>[] = [];
   const firstGreeting = approved.get("first_greeting");
   if (firstGreeting !== undefined && firstGreeting.trim() !== "")
-    variants.push(Object.freeze({ label: "Default", text: render(firstGreeting) }));
+    variants.push(Object.freeze({ label: "Default", text: firstGreeting }));
   const alternates = [...approved.entries()]
     .filter(([field]) => /^alternate_greeting_\d+$/u.test(field))
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }));
   for (const [field, text] of alternates) {
     if (text.trim() === "") continue;
     const order = Number(field.slice("alternate_greeting_".length));
-    variants.push(Object.freeze({ label: `Alternate ${order}`, text: render(text) }));
+    variants.push(Object.freeze({ label: `Alternate ${order}`, text }));
   }
   return Object.freeze(variants);
 }
@@ -409,7 +398,6 @@ function reviewedProfile(
   fields: ReadonlyMap<string, string>,
   companionId: string,
   continuityId: string,
-  locale: CompanionLocale,
 ): IdentityProfile {
   const base = DEFAULT_IDENTITY_PROFILE;
   const name = reviewedName(fields);
@@ -418,13 +406,13 @@ function reviewedProfile(
     name,
     continuity: `Host-owned continuity ${continuityId}; ${base.identity.continuity}`,
   });
-  // The one player-reference decision (`macroTable`) and the one rendering call,
-  // exactly as the compiled preset path (`candidateToIdentityProfile`) does them.
-  // This path used to build its own table with the player's opaque partition id
-  // (`player_01`), so a card that wrote `{{user}}` once froze that id into her
-  // Tier-1 persona and repeated it to the model on every turn.
-  const macros = macroTable({ char: name, locale });
-  const render = (value: string): string => renderMacros(value, macros);
+  // The AUTHOR's reviewed text, macros and all - exactly as the card wrote it and
+  // exactly as `candidateToIdentityProfile` (the compiled-preset path) keeps it.
+  // Rendering belongs to the reader: `renderIdentityProfile` builds the Tier-1
+  // prefix through one macro table, and `companion-profile-service` does the same
+  // for the surface a player reads. Pre-rendering here froze ONE run's rendering
+  // into her durable profile, so the card export wrote 琥珀 and 你 where its author
+  // wrote {{char}} and {{user}} - a different character in another Tavern.
   const core = fields.get("persona_core");
   const interactionStyle = fields.get("persona_interaction_style");
   const expressionStyle = fields.get("persona_expression_style");
@@ -438,13 +426,13 @@ function reviewedProfile(
     core === undefined && interactionStyle === undefined && expressionStyle === undefined
       ? undefined
       : Object.freeze({
-          ...(core === undefined ? {} : { core: render(core) }),
-          ...(interactionStyle === undefined ? {} : { interactionStyle: render(interactionStyle) }),
-          ...(expressionStyle === undefined ? {} : { expressionStyle: render(expressionStyle) }),
+          ...(core === undefined ? {} : { core }),
+          ...(interactionStyle === undefined ? {} : { interactionStyle }),
+          ...(expressionStyle === undefined ? {} : { expressionStyle }),
         });
   // Reviewed example dialogues: fields are "example_N" with a JSON-encoded
   // {user, companion} pair written by candidateFromReport. Only approved rows
-  // are consumed, each rendered through the same card macros as the persona.
+  // are consumed, and their text is the card's own.
   const examples = Object.freeze(
     Object.entries(Object.fromEntries([...fields.entries()].filter(([name]) => /^example_\d+$/u.test(name))))
       .sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
@@ -461,7 +449,7 @@ function reviewedProfile(
           )
             return [];
           const pair = parsed as { user: string; companion: string };
-          return [Object.freeze({ user: render(pair.user), companion: render(pair.companion) })];
+          return [Object.freeze({ user: pair.user, companion: pair.companion })];
         } catch {
           return [];
         }
@@ -474,7 +462,7 @@ function reviewedProfile(
   const characterVoice =
     reviewedVoice === undefined || reviewedVoice.trim().length === 0
       ? undefined
-      : Object.freeze({ text: render(reviewedVoice), source: "card" as const });
+      : Object.freeze({ text: reviewedVoice, source: "card" as const });
   return Object.freeze({
     ...base,
     profileId: `gamebuddy.${companionId}`,
