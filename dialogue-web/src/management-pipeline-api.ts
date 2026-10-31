@@ -1108,6 +1108,7 @@ const OPERATION_IDS = [
   "companion.card.export",
   "companion.avatar.update",
   "companion.delete",
+  "companion.activate",
   "companion.create",
   // design/28 §2 companion directive: the mounted companion's own performance
   // directive (the reviewed card's `system_prompt`), read/edit/clear.
