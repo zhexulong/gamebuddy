@@ -61,6 +61,7 @@ import type {
   ContextEditableContent,
   SessionEntry,
   SessionManager,
+  SessionProjection,
 } from "@earendil-works/pi-coding-agent";
 
 import { chatTranscriptAssistantText, chatTranscriptPlayerText } from "./native-companion-content.js";
@@ -103,16 +104,41 @@ export type PiVariantBranchResult =
  * not proof, so both refuse: guessing here would point the model at a variant the player did not choose, and a
  * silent no-op would leave the store moved and the model behind, which is the defect this resolver prevents.
  *
- * The resolved answer carries the entry's own model content, which is the last fact the move needs. Handing it
- * back here is what makes the move itself infallible: the caller can then write the store and move the leaf with
- * no step between them that could refuse, so "both layers or neither" is structural rather than promised.
+ * WHICH WORDS the entry is asked for is the question the edit half already had to answer, and the answer is the
+ * same authority: the projection (`projectedEntries`). The player edits the variant they are looking at all the
+ * time, and an edit does not change any entry - it appends the vendor's own context edit and rewrites the store
+ * row. So an entry the player rewrote contributes words its raw message does not hold, and comparing the raw
+ * message would stop recognising the variant on screen: every control on that row would then refuse for a
+ * disagreement that does not exist.
+ *
+ * An entry the projection does NOT carry is the other case, and it is not a disagreement either: a sibling
+ * variant is off the active path until the player selects it, and selecting it is precisely what puts it back.
+ * Such an entry contributes exactly the message it was appended with, because no context edit can be appended
+ * against an entry that is off the branch (`SessionManager.appendContextEdit` refuses one).
+ *
+ * The resolved answer carries the entry's model content AS THE PROJECTION DERIVES IT, which is the last fact the
+ * move needs. Handing it back here is what makes the move itself infallible: the caller can then write the store
+ * and move the leaf with no step between them that could refuse, so "both layers or neither" is structural
+ * rather than promised. And it has to be the projected content rather than the entry's own, because selecting a
+ * variant appends another edit of that content - handing back the words the player replaced would undo the
+ * correction the moment they swiped away and back.
  */
 export function resolvePiVariantEntry(
   session: PiVariantBranchSession,
   boundEntryIds: readonly string[],
   variantText: string,
 ): PiVariantEntryResolution {
+  const projected = projectedEntries(session);
   const candidates = [...new Set(boundEntryIds)].flatMap((entryId) => {
+    const carried = projected.find((entry) => entry.sourceEntry.id === entryId);
+    if (carried !== undefined) {
+      for (const message of carried.messages) {
+        if (chatTranscriptAssistantText(message) !== variantText) continue;
+        const content = editableContentOfMessage(message);
+        if (content !== null) return [{ entryId, content }];
+      }
+      return [];
+    }
     if (piEntryReplyText(session, entryId) !== variantText) return [];
     const content = editableContentOf(session.sessionManager.getEntry(entryId));
     return content === null ? [] : [{ entryId, content }];
@@ -162,10 +188,12 @@ export function selectPiVariantEntry(
  */
 
 /**
- * The reply text one session entry contributes, or `null` when it carries none.
+ * The reply text one entry that is OFF the model's active path was appended with, or `null` when it carries none.
  *
- * The same projection the transcript row was written from (`chatTranscriptAssistantText`), which is what makes
- * "the entry that carries the variant the player chose" an exact question rather than a positional guess.
+ * The fallback half of `resolvePiVariantEntry` only: an entry the projection carries is asked what it contributes
+ * now, and this asks an entry nothing carries what it would contribute when selected. Reading the raw message
+ * here is exact for the same reason it is wrong there - no context edit can be appended against an entry that is
+ * off the branch, so the raw message IS that entry's contribution.
  */
 function piEntryReplyText(session: PiVariantBranchSession, entryId: string): string | null {
   const entry = session.sessionManager.getEntry(entryId);
@@ -381,7 +409,7 @@ type PiModelCarriedRow = Readonly<{
  */
 function modelCarriedRows(session: PiVariantBranchSession): readonly PiModelCarriedRow[] {
   const rows: PiModelCarriedRow[] = [];
-  for (const { sourceEntry, messages } of session.sessionManager.buildSessionProjection().entries) {
+  for (const { sourceEntry, messages } of projectedEntries(session)) {
     if (sourceEntry.type !== "message") continue;
     for (const message of messages) {
       const content = editableContentOfMessage(message);
@@ -394,6 +422,24 @@ function modelCarriedRows(session: PiVariantBranchSession): readonly PiModelCarr
     }
   }
   return rows;
+}
+
+/**
+ * The model's own context as the session projects it: every entry the active path carries, with the messages
+ * that entry contributes NOW.
+ *
+ * ONE AUTHORITY, because two readers ask this question and they must agree. `modelCarriedRows` asks it to pair
+ * the transcript rows an edit names with the entries that carry them; `resolvePiVariantEntry` asks it which entry
+ * carries the variant the player is looking at. An edit changes neither the entry nor the path - it appends a
+ * context edit (`SessionManager.appendContextEdit`) - so the entry list answers neither question: an entry the
+ * player rewrote still holds its original words, while the projection holds the ones the model now reads. Reading
+ * the entry instead of the projection is what let an edited variant stop resolving.
+ *
+ * An entry this list does not carry is off the active path (a sibling variant waiting to be selected) or omitted
+ * from the context; its own message is then its whole contribution.
+ */
+function projectedEntries(session: PiVariantBranchSession): SessionProjection["entries"] {
+  return session.sessionManager.buildSessionProjection().entries;
 }
 
 /**

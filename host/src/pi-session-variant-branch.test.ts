@@ -13,6 +13,7 @@ import {
   editPiTranscriptEntry,
   resolvePiVariantEntry,
   rewindPiTranscriptTail,
+  selectPiVariantEntry,
   sessionEntryIds,
   type PiTranscriptMessage,
   type PiVariantPosition,
@@ -1091,9 +1092,71 @@ test("a variant the player rewrote in place is still the variant they are lookin
     // all resolve their entry through exactly this call.
     const resolved = resolvePiVariantEntry(fixture.session, bound, editedText);
     assert.equal(resolved.status, "resolved", JSON.stringify(resolved));
-    // An edit moves ONE variant, not the row: the attempt the player did not touch still resolves,
-    // and it still answers for its own words.
-    assert.equal(resolvePiVariantEntry(fixture.session, bound, SECOND_REPLY).status, "resolved");
+    // An edit moves ONE variant, not the row: the attempt the player did not touch is untouched, and
+    // still answers for its own words.
+    assert.equal(resolvePiVariantEntry(fixture.session, bound, FIRST_REPLY).status, "resolved");
+    // And the words the player replaced are nobody's variant any more. Resolving them would move the
+    // store to a text no entry carries - the same disagreement, mirrored.
+    assert.equal(resolvePiVariantEntry(fixture.session, bound, SECOND_REPLY).status, "refused");
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The other half of the resolver, which the edit case above made reachable: the variant the player is NOT
+ * showing is off the model's active path, so the projection does not carry it at all.
+ *
+ * Selecting one variant branches to its entry and appends an edit of it, which puts every sibling off the
+ * path - so "swipe away and back" is exactly this shape: the entry being swiped back TO is one nothing
+ * carries. Its contribution is then the message it was appended with, because no context edit can be
+ * appended against an entry that is off the branch, and selecting it is what puts it back.
+ */
+test("a variant off the model's path still resolves, and selecting it puts it back", async () => {
+  const fixture = await createSession("gamebuddy-variant-resolve-off-path-", [FIRST_REPLY, SECOND_REPLY]);
+  try {
+    const bound = fixture.sessionManager
+      .getEntries()
+      .filter((entry) => entry.type === "message" && entry.message.role === "assistant")
+      .map((entry) => entry.id);
+    const onPath = new Set(fixture.sessionManager.getBranch().map((entry) => entry.id));
+    assert.deepEqual(
+      bound.filter((entryId) => onPath.has(entryId)),
+      bound,
+      "both attempts start on the active path",
+    );
+
+    // Away: the player selects the first variant, which is what `selectMountedSwipeVariant` does with the
+    // answer this resolver hands it.
+    const away = resolvePiVariantEntry(fixture.session, bound, FIRST_REPLY);
+    assert.equal(away.status, "resolved");
+    if (away.status !== "resolved") return;
+    selectPiVariantEntry(fixture.session, away.entryId, away.content);
+
+    // The second variant - the one the player is not reading - is now off the active path, so the
+    // projection carries nothing for it. It must still resolve, or the swipe back is refused forever.
+    const branchAfter = new Set(fixture.sessionManager.getBranch().map((entry) => entry.id));
+    const offPath = bound.filter((entryId) => !branchAfter.has(entryId));
+    assert.equal(offPath.length, 1, "selecting one variant takes its sibling off the path");
+    assert.equal(
+      fixture.sessionManager.buildSessionProjection().entries.some((entry) => entry.sourceEntry.id === offPath[0]),
+      false,
+      "the projection carries nothing for the variant that left the path",
+    );
+    const back = resolvePiVariantEntry(fixture.session, bound, SECOND_REPLY);
+    assert.equal(back.status, "resolved", JSON.stringify(back));
+
+    // And the selection the resolver handed back really is that entry's own words: the model now reads one
+    // reply at that position, and it is the second variant's.
+    if (back.status !== "resolved") return;
+    assert.equal(back.entryId, offPath[0]);
+    selectPiVariantEntry(fixture.session, back.entryId, back.content);
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: SECOND_REPLY }]],
+    ]);
   } finally {
     await fixture.close();
   }
