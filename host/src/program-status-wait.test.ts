@@ -61,14 +61,17 @@ test("a plan that publishes nothing ends the wait early instead of spending the 
   // The measured cost this closes: 2026-10-30, 82 calls with `waitMs` set, 2,084 s of requested waiting, and only 21
   // of them ever reached a terminal state. A wait that has read the same snapshot eight times already knows the answer
   // the caller would get at the deadline.
+  //
+  // Nothing is in flight here: no action was dispatched, so no receipt can arrive until the Mod's own pump dispatches
+  // the first node - and measured over 1,205 admissions, that round trip is p90 200 ms. Two seconds of it is a stall.
   const clock = fakeTime();
   let index = 0;
   const outcome = await waitForTerminalProgramStatus(
     async () => {
       index++;
-      return active(["running"]);
+      return active(["awaiting_host_admission"]);
     },
-    active(["running"]),
+    active(["awaiting_host_admission"]),
     30_000,
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
@@ -78,6 +81,72 @@ test("a plan that publishes nothing ends the wait early instead of spending the 
   // Eight unchanged polls at the 250 ms interval, not the thirty seconds that were asked for.
   assert.ok(clock.now() < 5_000, `returned after ${clock.now()} ms of a 30,000 ms bound`);
   assert.ok(index >= 8 && index <= 12, `read ${index} times`);
+});
+
+/**
+ * THE defect: an action that is still running is not a plan with nothing to report.
+ *
+ * Measured over 83 runs and 2,674 dispatches, dispatch -> receipt is p90 3,612 ms for `move_to_tile` and 4,133 ms for
+ * `harvest_crop`, and 22% of all executions outlive the 2,000 ms the early return waits. A node's state in the snapshot
+ * the wait compares moves exactly once per transition and the only transition out of `running` is its terminal receipt,
+ * so for the whole of that interval the snapshot is not quiet - it is provably frozen. Counting those polls as "nothing
+ * changed" hands the caller a still-running plan and tells it asking again will say the same thing.
+ */
+test("an action still running in the game is not a plan with nothing to report", async () => {
+  const clock = fakeTime();
+  const settlesAtMs = 8_000;
+  const outcome = await waitForTerminalProgramStatus(
+    async () =>
+      clock.now() < settlesAtMs
+        ? active(["running"])
+        : {
+            code: "found",
+            snapshot: { programId: "p1", state: "succeeded", nodes: [{ nodeId: "n1", state: "succeeded" }] },
+          },
+    active(["running"]),
+    30_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  // The whole point: it waited for the action and reported what the action became.
+  assert.equal(outcome.waited.reachedTerminal, true, `returned after ${clock.now()} ms without reaching the settle`);
+  assert.ok(
+    clock.now() >= settlesAtMs,
+    `returned at ${clock.now()} ms, before the action settled at ${settlesAtMs} ms`,
+  );
+});
+
+test("a running action that never settles spends the caller's bound instead of calling it silence", async () => {
+  // The other half of the same rule. A running node's next publication is guaranteed to be its settle, so the wait has
+  // nothing to report only when the bound runs out - and then `snapshotChanged: false` is the truth, not a guess.
+  const clock = fakeTime();
+  const outcome = await waitForTerminalProgramStatus(
+    async () => active(["running"]),
+    active(["running"]),
+    30_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, false);
+  assert.ok(clock.now() >= 30_000, `returned after ${clock.now()} ms of a 30,000 ms bound, with an action in flight`);
+});
+
+test("the early return still fires once the last action settles and nothing is in flight again", async () => {
+  // The early return is kept for exactly the case it was right about: silence with nothing executing. After the node
+  // settles the snapshot moves once, the counter restarts, and the next eight quiet polls end the wait.
+  const clock = fakeTime();
+  const settlesAtMs = 1_000;
+  const outcome = await waitForTerminalProgramStatus(
+    async () => active(clock.now() < settlesAtMs ? ["running", "pending"] : ["succeeded", "pending"]),
+    active(["running", "pending"]),
+    30_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.snapshotChanged, true, "the settle was reported as movement");
+  assert.ok(clock.now() < 30_000, `returned after ${clock.now()} ms`);
 });
 
 test("a plan that IS moving is still waited for to the deadline", async () => {

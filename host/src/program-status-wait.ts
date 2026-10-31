@@ -15,6 +15,10 @@
  * bound, and in six of those the snapshot handed back was identical to the one the caller already had - four
  * consecutive 30 s waits on `plan_273` all returned `eventHighWater: 288` with `n03` running. Reporting that
  * re-ask-would-tell-you-nothing fact is `snapshotChanged`.
+ *
+ * An unchanged snapshot is only that fact when nothing is executing. While an action runs, the snapshot it compares
+ * cannot change by construction (see `NODE_STATES_IN_FLIGHT`), so silence there is the action working, not the plan
+ * stalling - and returning early on it hands the caller a still-running plan it can only ask about again.
  */
 
 /** The only non-terminal program state (`BodyProgramState`, `BodyProgramModels.cs:144`). */
@@ -45,6 +49,45 @@ export const MAX_PROGRAM_STATUS_WAIT_MS = 30_000;
 export interface ProgramStatusWaitOutcome<TResult> {
   readonly result: TResult;
   readonly waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }>;
+}
+
+/**
+ * The node states in which the Mod owes this plan a publication, so a still snapshot is not news.
+ *
+ * A node's state is the only part of the compared snapshot that moves during an action, and it moves exactly once per
+ * transition (`BodyProgramNodeState`, `BodyProgramModels.cs:145`): `host_admitted` -> `running` -> a terminal state. So
+ * from the moment a node is admitted until its terminal receipt the snapshot is not quiet, it is frozen.
+ *
+ * Measured 2026-10-31 over 83 runs and 2,674 dispatches (dispatch -> terminal receipt, joined by `requestId` on the
+ * Mod's 60 Hz tick): `move_to_tile` p90 3,612 ms, `harvest_crop` p90 4,133 ms, `break_rock_source` p90 2,960 ms, and
+ * 22% of all executions outlive the 2,000 ms `cb48fdac` waits. Treating that interval as silence is why 74% of waits
+ * came back while the action was still running.
+ *
+ * `awaiting_host_admission` is deliberately NOT here: that state waits on the Host, and measured over 1,205 admissions
+ * the Host answers in p90 200 ms, so two seconds of it is a stall the caller should be told about rather than a
+ * dispatch whose receipt is owed.
+ */
+const NODE_STATES_IN_FLIGHT: ReadonlySet<string> = new Set(["host_admitted", "running"]);
+
+/**
+ * Is every action this snapshot shows finished, with nothing dispatched and unsettled?
+ *
+ * `true` means no publication is owed, so an unchanged snapshot is the actionable "asking again will say the same"
+ * fact. `false` means the Mod is holding an execution whose terminal receipt is still to come.
+ */
+export function hasNothingInFlight(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return true;
+  const record = payload as Record<string, unknown>;
+  const snapshot = record.snapshot;
+  if (typeof snapshot !== "object" || snapshot === null) return true;
+  const nodes = (snapshot as Record<string, unknown>).nodes;
+  if (!Array.isArray(nodes)) return true;
+  return !nodes.some(
+    (node) =>
+      typeof node === "object" &&
+      node !== null &&
+      NODE_STATES_IN_FLIGHT.has((node as Record<string, unknown>).state as string),
+  );
 }
 
 /**
@@ -114,7 +157,10 @@ export async function waitForTerminalProgramStatus<TResult>(
     if (programSnapshot(result) !== programSnapshot(previous)) {
       snapshotChanged = true;
       unchangedPolls = 0;
-    } else {
+    } else if (hasNothingInFlight(result)) {
+      // Only silence with nothing executing is the fact the caller cannot get by asking again. While an action is in
+      // flight the next publication is guaranteed to be its terminal receipt, so this poll is not evidence of a stall
+      // and must not spend the early return's allowance.
       unchangedPolls++;
     }
     previous = result;
