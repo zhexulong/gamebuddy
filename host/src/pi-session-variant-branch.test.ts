@@ -11,6 +11,7 @@ import {
   branchPiVariantAnchor,
   deletePiTranscriptEntry,
   editPiTranscriptEntry,
+  resolvePiVariantEntry,
   rewindPiTranscriptTail,
   sessionEntryIds,
   type PiTranscriptMessage,
@@ -1041,6 +1042,58 @@ test("an entry that is not on the model's path refuses, and a revert is itself d
         .messages.map((message) => [message.role, "content" in message ? message.content : null]),
       [["assistant", [{ type: "text", text: FIRST_REPLY }]]],
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The one position the player can put on screen twice: a reply row carrying two variants, whose shown
+ * variant the player then rewrote in place.
+ *
+ * The row projection and the model's context are two readings of that one row, and an edit moves BOTH:
+ * the store rewrites the row (and the active swipe text with it) while the session carries an appended
+ * context edit of the entry. The raw entry keeps the words it was written with - that is what a context
+ * edit IS - so a resolver that reads the entry alone stops recognising the variant the player is
+ * looking at, and every write control on that row then refuses for a disagreement that does not exist.
+ */
+test("a variant the player rewrote in place is still the variant they are looking at", async () => {
+  const fixture = await createSession("gamebuddy-variant-resolve-after-edit-", [FIRST_REPLY, SECOND_REPLY]);
+  const editedText = "Second variant, corrected by the player.";
+  try {
+    // The reply row carries both attempts, each its own session entry - the shape a same-position
+    // variant turn leaves behind, and the ids `tavern_message_entries` records for that row.
+    const bound = fixture.sessionManager
+      .getEntries()
+      .filter((entry) => entry.type === "message" && entry.message.role === "assistant")
+      .map((entry) => entry.id);
+    assert.equal(bound.length, 2, "the position's two attempts are two session entries");
+    assert.equal(resolvePiVariantEntry(fixture.session, bound, FIRST_REPLY).status, "resolved");
+    assert.equal(resolvePiVariantEntry(fixture.session, bound, SECOND_REPLY).status, "resolved");
+
+    // The edit the player makes, through the module the mounted edit ingress calls: the row they are
+    // looking at is the companion row carrying the variant on screen.
+    const edited = editPiTranscriptEntry(
+      fixture.session,
+      [drop("player", PROMPT_TEXT), drop("companion", SECOND_REPLY)],
+      editedText,
+    );
+    assert.equal(edited.status, "edited");
+    assert.deepEqual(fixture.modelMessages(), [
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: FIRST_REPLY }]],
+      ["user", [{ type: "text", text: PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: editedText }]],
+    ]);
+
+    // THE ASSERTION. The words on screen are what the entry contributes now, so the variant the player
+    // is looking at is still resolvable - swiping away from it and back, discarding it and deleting it
+    // all resolve their entry through exactly this call.
+    const resolved = resolvePiVariantEntry(fixture.session, bound, editedText);
+    assert.equal(resolved.status, "resolved", JSON.stringify(resolved));
+    // An edit moves ONE variant, not the row: the attempt the player did not touch still resolves,
+    // and it still answers for its own words.
+    assert.equal(resolvePiVariantEntry(fixture.session, bound, SECOND_REPLY).status, "resolved");
   } finally {
     await fixture.close();
   }
