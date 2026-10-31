@@ -269,8 +269,30 @@ internal sealed partial class ExecutionManager
     }
     if (!string.Equals(harvestItem.QualifiedItemId, expectedQualifiedHarvestItemId, StringComparison.Ordinal))
         return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_changed", $"target={targetX},{targetY}");
-    if (!Game1.player.couldInventoryAcceptThisItem(harvestItem))
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"item={expectedQualifiedHarvestItemId}");
+    // THE PACK MUST TAKE EVERY QUALITY THE ROLL CAN LAND ON, not the one quality this placeholder item
+    // happens to carry. `harvestItem` comes from `ItemRegistry.Create(id, 1)` and is therefore always
+    // normal, while `Crop.harvest` rolls quality from farming level and fertilizer (Crop.cs:562-578) and
+    // `Item.canStackWith` refuses a different quality (Item.cs:738). Asking about quality 0 admitted a
+    // harvest whose gold roll had no stack to land in; the native add then answered false (Crop.cs:623),
+    // showed the red "Inventory Full" message (Crop.cs:673-676), and the postcondition below graded the
+    // untouched crop as `crop_harvest_postcondition_unavailable`/Uncertain. The refusal is deterministic
+    // and precedes the native call, so it is `Rejected`, and it names the qualities that have nowhere to go.
+    StardewValley.GameData.Crops.CropData? cropData = crop.GetData();
+    HarvestCapacityVerdict capacity = HarvestQualityCapacity.Evaluate(
+        expectedQualifiedHarvestItemId,
+        harvestItem.Stack,
+        Game1.player.MaxItems,
+        HarvestQualityCapacity.ReachableQualities(cropData?.HarvestMinQuality, cropData?.HarvestMaxQuality),
+        ReadHarvestPack(Game1.player));
+    if (!capacity.Admitted)
+    {
+        return this.RememberTerminal(
+            requestId,
+            executionId,
+            ExecutionState.Rejected,
+            "inventory_full",
+            $"item={expectedQualifiedHarvestItemId};refused_qualities={string.Join(",", capacity.RefusedQualities)};admitted_qualities={string.Join(",", capacity.AdmittedQualities)}");
+    }
 
     bool regrowsAfterHarvest = crop.RegrowsAfterHarvest();
     string cropId = crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown";
@@ -339,6 +361,26 @@ internal sealed partial class ExecutionManager
     this.Remember(receipt);
     this.AddTrace(receipt);
     return receipt;
+    }
+
+    /// <summary>
+    /// The live pack, in the shape the native capacity predicate reads it (<c>Farmer.cs:4763-4765</c>).
+    ///
+    /// Only slots that EXIST are returned: the native loop is guarded by <c>Items.Count > i</c>, so a slot
+    /// past the end of the list is not headroom. A null entry inside the list is an empty slot and does
+    /// accept anything, which is why it is carried as an <see cref="InventorySlot"/> with no item id
+    /// rather than dropped.
+    /// </summary>
+    private static IReadOnlyList<InventorySlot> ReadHarvestPack(Farmer player)
+    {
+        var slots = new List<InventorySlot>(player.Items.Count);
+        foreach (StardewValley.Item? item in player.Items)
+        {
+            slots.Add(item is null
+                ? new InventorySlot(null, 0, 0, 0)
+                : new InventorySlot(item.QualifiedItemId, item.Quality, item.Stack, item.maximumStackSize()));
+        }
+        return slots;
     }
 
     public LocalExecutionReceipt RequestLocalPlantSeed(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
