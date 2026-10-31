@@ -131,24 +131,35 @@ export function CharactersPanel({
   const [openingNotice, setOpeningNotice] = useState<SaveNotice>(null);
 
   /*
+   * The text the player is editing, which is NOT the record.
+   *
+   * These two are different facts and the panel needs both. `persona`/`scenario`/`opening` are the
+   * record's IDENTITY - its revision, and whether it is present - and a conflict re-read replaces
+   * them so the next save CASes on the revision the Host holds. The TEXT is what the player sees in
+   * the field, and a conflict re-read must leave it alone: adopting the other writer's words would
+   * silently republish them as the player's, which is why these baselines move only on the mount's
+   * own read and on a save the Host accepted.
+   */
+  const [personaText, setPersonaText] = useState({ name: "", description: "" });
+  const [scenarioText, setScenarioText] = useState({ name: "", description: "" });
+  const [openingText, setOpeningText] = useState<{
+    label: string;
+    variants: readonly { label: string; text: string }[];
+  }>({ label: "", variants: [{ label: "", text: "" }] });
+
+  /*
    * Every field the player types into is a DRAFT held by the shell, not by this panel.
    *
    * The shell renders this surface only while it is the selected one, so leaving it unmounts
    * everything below - and a `useState` here dies with it, which is how a typed persona, scenario,
    * opening or directive was silently emptied by a trip to Settings. Each field is handed the
-   * authority's own value as its seed on every render; the store answers with the player's text
-   * whenever there is any, so a read-back still seeds a field they have not touched and can never
-   * replace one they have.
+   * baseline above as its seed on every render; the store answers with the player's text whenever
+   * there is any, so a read-back still seeds a field they have not touched and can never replace
+   * one they have.
    */
   const createName = useDraft("characters.new-companion-name", "");
-  const personaName = useDraft(
-    "characters.persona-name",
-    persona === "loading" || persona === "unavailable" ? "" : (persona.name ?? ""),
-  );
-  const personaDescription = useDraft(
-    "characters.persona-description",
-    persona === "loading" || persona === "unavailable" ? "" : (persona.description ?? ""),
-  );
+  const personaName = useDraft("characters.persona-name", personaText.name);
+  const personaDescription = useDraft("characters.persona-description", personaText.description);
   const voiceText = useDraft(
     "characters.voice-text",
     voice.kind === "ready" && voice.value.characterVoice !== null ? voice.value.characterVoice.text : "",
@@ -157,25 +168,14 @@ export function CharactersPanel({
   // The fact that they asked belongs with the text it is for - a form that reopened collapsed put
   // the words out of reach, which costs them the same work as losing them.
   const voiceAdding = useOpenDraft("characters.voice-editor-open", false);
-  const scenarioName = useDraft(
-    "characters.scenario-name",
-    scenario === "loading" || scenario === "unavailable" ? "" : (scenario.name ?? ""),
-  );
-  const scenarioDescription = useDraft(
-    "characters.scenario-description",
-    scenario === "loading" || scenario === "unavailable" ? "" : (scenario.description ?? ""),
-  );
-  const openingLabel = useDraft(
-    "characters.opening-label",
-    opening === "loading" || opening === "unavailable" ? "" : (opening.label ?? ""),
-  );
+  const scenarioName = useDraft("characters.scenario-name", scenarioText.name);
+  const scenarioDescription = useDraft("characters.scenario-description", scenarioText.description);
+  const openingLabel = useDraft("characters.opening-label", openingText.label);
   // The variants are a LIST the player adds to and removes from, so they are held whole: a row's
   // text keyed by its position lands on a different row once the list is reordered or shortened.
   const openingVariants = useRowsDraft<{ label: string; text: string }>(
     "characters.opening-variants",
-    opening !== "loading" && opening !== "unavailable" && opening.present && opening.variants.length > 0
-      ? opening.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
-      : [{ label: "", text: "" }],
+    openingText.variants,
   );
 
   const activeRef = useRef(true);
@@ -196,6 +196,10 @@ export function CharactersPanel({
         const value = await api.readPersona();
         if (!activeRef.current) return;
         setPersona(value);
+        setPersonaText({
+          name: value.present ? (value.name ?? "") : "",
+          description: value.present ? (value.description ?? "") : "",
+        });
       } catch {
         if (!activeRef.current) return;
         setPersona("unavailable");
@@ -206,6 +210,10 @@ export function CharactersPanel({
         const value = await api.readScenario();
         if (!activeRef.current) return;
         setScenario(value);
+        setScenarioText({
+          name: value.present ? (value.name ?? "") : "",
+          description: value.present ? (value.description ?? "") : "",
+        });
       } catch {
         if (!activeRef.current) return;
         setScenario("unavailable");
@@ -216,6 +224,13 @@ export function CharactersPanel({
         const value = await api.readGreeting();
         if (!activeRef.current) return;
         setOpening(value);
+        setOpeningText({
+          label: value.present ? (value.label ?? "") : "",
+          variants:
+            value.present && value.variants.length > 0
+              ? value.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
+              : [{ label: "", text: "" }],
+        });
       } catch {
         if (!activeRef.current) return;
         setOpening("unavailable");
@@ -340,6 +355,12 @@ export function CharactersPanel({
         setPersona(saved);
         personaName.release(personaName.value);
         personaDescription.release(personaDescription.value);
+        // The accepted read-back is the new baseline too: the next render's seed is what the Host
+        // now holds, not what it held before this save.
+        setPersonaText({
+          name: saved.present ? (saved.name ?? "") : "",
+          description: saved.present ? (saved.description ?? "") : "",
+        });
         setPersonaNotice("saved");
       }
     } catch (error) {
@@ -382,6 +403,10 @@ export function CharactersPanel({
         setScenario(saved);
         scenarioName.release(scenarioName.value);
         scenarioDescription.release(scenarioDescription.value);
+        setScenarioText({
+          name: saved.present ? (saved.name ?? "") : "",
+          description: saved.present ? (saved.description ?? "") : "",
+        });
         setScenarioNotice("saved");
       }
     } catch (error) {
@@ -426,6 +451,13 @@ export function CharactersPanel({
         setOpening(saved);
         openingLabel.release(openingLabel.value);
         openingVariants.release(openingVariants.value);
+        setOpeningText({
+          label: saved.present ? (saved.label ?? "") : "",
+          variants:
+            saved.present && saved.variants.length > 0
+              ? saved.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
+              : [{ label: "", text: "" }],
+        });
         setOpeningNotice("saved");
       }
     } catch (error) {
