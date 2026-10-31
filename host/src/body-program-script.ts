@@ -522,6 +522,10 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
   return (
     "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step, and the host compiles it into a single plan the Mod runs and advances itself - you do not come back between steps. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape for one action's argument names. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
+    "// Sequential steps - one call per step, in order:\n" +
+    "builder.move_to_tile({ x: 10, y: 20 });\n" +
+    "builder.enter_exit({ x: 10, y: 20 });\n" +
+    "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
     "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
     "}"
