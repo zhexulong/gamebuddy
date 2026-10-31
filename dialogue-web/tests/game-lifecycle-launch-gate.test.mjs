@@ -430,7 +430,7 @@ test("session-forward-path.4: a dropped connection always offers a way back that
   // early with no attempt). Measured on the real shell: the click did nothing.
   const unsettled = deriveGameSessionControls(GAME_SESSION_INPUTS.attached_unsettled);
   assert.equal(unsettled.phase, "attached_unsettled");
-  assert.equal(unsettled.retryResumeAvailable, false, "there is no attempt to retry");
+  assert.equal(unsettled.retryResumeAvailable, true, "the restore is offered: its handler needs only the live attachment");
   assert.equal(unsettled.cancelResumeAvailable, false, "there is no reconnect epoch to cancel");
   assert.equal(unsettled.createAvailable, false, "there is no attempt for a new game to replace");
   assert.equal(unsettled.disconnectAvailable, true, "the session is still the player's to settle");

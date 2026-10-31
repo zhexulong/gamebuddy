@@ -131,11 +131,11 @@ export type GameSessionPhase =
   /** Attached and dropped, with no failed attempt yet: the restore control applies. */
   | "attached_resumable"
   /**
-   * Attached and dropped with the Host's own last outcome `failed`, but no
-   * restore attempt this surface can settle: the recovery rollup's three ways out
-   * act on an attempt (Retry replays its key, Cancel settles its epoch, Start new
-   * game replaces it), so with no attempt to act on they would be controls whose
-   * own handlers refuse. What is left is the routine session controls.
+   * Attached and dropped with the Host's own last outcome `failed`, but no restore
+   * attempt this surface can settle. Retry is offered (the restore command needs
+   * only the live attachment and the resumable connection). Cancel and Start new
+   * game are not: both act on an attempt - its epoch, its replacement - so their
+   * handlers refuse with none in hand.
    */
   | "attached_unsettled"
   /** Attached and dropped, after an attempt that failed or could not be confirmed. */
@@ -285,10 +285,17 @@ export function deriveGameSessionControls(
           ["retry_resume", "cancel_resume", "create", "disconnect", "endgame"],
         );
       if (view.resumeFailureSurface)
-        return build("attached_unsettled", { disconnectAvailable: true, endgameAvailable: true }, [
-          "disconnect",
-          "endgame",
-        ]);
+        // The Host's own failed outcome, with no attempt of this surface's own to
+        // settle. Retry is honest here and is offered: `handleGameResume` needs
+        // only the live attachment and the resumable connection. Cancel and Start
+        // new game are not, because both handlers refuse with no attempt in hand
+        // (`handleGameResumeCancel`, `handleGameCreate`) - offering them would be
+        // controls that do nothing.
+        return build(
+          "attached_unsettled",
+          { disconnectAvailable: true, endgameAvailable: true, retryResumeAvailable: true },
+          ["retry_resume", "disconnect", "endgame"],
+        );
       return build("attached_resumable", { disconnectAvailable: true, endgameAvailable: true, resumeAvailable: true }, [
         "resume",
         "disconnect",

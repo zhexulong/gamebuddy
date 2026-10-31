@@ -605,38 +605,45 @@ export function GameStatePanel({
                   </button>
                 )}
                 {session.controls.retryResumeAvailable && (
-                  <>
-                    <button
-                      type="button"
-                      className="game-action primary"
-                      data-testid="game-resume"
-                      disabled={resume.active}
-                      onClick={handlers.resume}
-                    >
-                      <RefreshCw size={16} aria-hidden="true" />
-                      {labels.gameRetry}
-                    </button>
-                    <button
-                      type="button"
-                      className="game-action"
-                      data-testid="game-resume-cancel"
-                      disabled={resume.cancelActive}
-                      onClick={handlers.resumeCancel}
-                    >
-                      <X size={16} aria-hidden="true" />
-                      {labels.gameResumeCancel}
-                    </button>
-                    <button
-                      type="button"
-                      className="game-action"
-                      data-testid="game-create"
-                      disabled={create.active}
-                      onClick={handlers.toggleCreateForm}
-                    >
-                      <Plus size={16} aria-hidden="true" />
-                      {labels.gameCreate}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="game-action primary"
+                    data-testid="game-resume"
+                    disabled={resume.active}
+                    onClick={handlers.resume}
+                  >
+                    <RefreshCw size={16} aria-hidden="true" />
+                    {labels.gameRetry}
+                  </button>
+                )}
+                {/* Cancel and Start new game act on an attempt - its reconnect epoch,
+                    its replacement - so they are offered exactly while there is one.
+                    On a session the Host already reports as failed with no attempt of
+                    this surface's own, both handlers refuse, so drawing them would be
+                    two controls that do nothing when pressed. */}
+                {session.controls.cancelResumeAvailable && (
+                  <button
+                    type="button"
+                    className="game-action"
+                    data-testid="game-resume-cancel"
+                    disabled={resume.cancelActive}
+                    onClick={handlers.resumeCancel}
+                  >
+                    <X size={16} aria-hidden="true" />
+                    {labels.gameResumeCancel}
+                  </button>
+                )}
+                {session.controls.createAvailable && (
+                  <button
+                    type="button"
+                    className="game-action"
+                    data-testid="game-create"
+                    disabled={create.active}
+                    onClick={handlers.toggleCreateForm}
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    {labels.gameCreate}
+                  </button>
                 )}
               </div>
               {resume.active && (
