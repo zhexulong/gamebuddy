@@ -73,6 +73,11 @@ jobs:
       # untracked debris fail CI. (knip itself already covers unreferenced
       # files; these three add the reverse directions.)
       - run: pnpm check:script-entries
+      # A runbook that hands a maintainer `--setup <path>` must name an artifact a build script
+      # publishes. Measured 2026-10-31: the sandbox runbook's commands pointed at
+      # `desktop/dist/setup/GameBuddy.Setup.exe`, which nothing produced - the directory held one
+      # manual publish and a fresh checkout could not reproduce it.
+      - run: pnpm check:build-artifact-producers
       # The complexity gate is a ratchet on the line count a core file had at its recorded baseline,
       # not on the absolute ceilings it has already breached (see the gate's own header): it fails
       # the change that grows a core file and passes the four that are already over their target.
