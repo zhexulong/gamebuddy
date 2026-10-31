@@ -46,6 +46,11 @@ internal static class Program
         catch (SetupException exception)
         {
             Console.Error.WriteLine(SetupOutcome.Code(exception.Failure));
+            if (exception.Detail is not null)
+            {
+                Console.Error.WriteLine(exception.Detail);
+            }
+
             return 1;
         }
         catch (Exception)
@@ -64,6 +69,8 @@ internal static class Program
 
     private static void Install(SetupLayout layout, SetupRequest request)
     {
+        RefuseWhenProductRunning(layout);
+
         // A completed removal left a marker outside the program root; it is stale the moment a new
         // program root is laid down, and leaving it would make a later "did the removal finish?"
         // check read this install's absence of a removal.
@@ -86,6 +93,27 @@ internal static class Program
             Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             Path.Combine(layout.ProgramRoot, SetupLayout.LauncherEntryRelativePath),
             layout.ProgramRoot);
+    }
+
+    /// <summary>
+    /// The one precondition the install has, and it runs before the first write: the install
+    /// overwrites the generation the pointer names, deletes the generations the payload does not
+    /// carry, and copies the uninstaller over the one already there. Windows refuses to replace
+    /// or delete a file a process has loaded, and that refusal used to arrive after the first
+    /// generation directory had already been deleted - a half-updated install and a code that
+    /// named the archive instead of the lock.
+    /// </summary>
+    internal static void RefuseWhenProductRunning(SetupLayout layout)
+    {
+        var running = RunningProductInstances.Detect(layout);
+        if (running.Count == 0)
+        {
+            return;
+        }
+
+        throw new SetupException(
+            SetupFailure.ProductRunning,
+            $"Close GameBuddy ({string.Join(", ", running.Distinct(StringComparer.OrdinalIgnoreCase))}) and run Setup again. Nothing was changed.");
     }
 
     /// <summary>
