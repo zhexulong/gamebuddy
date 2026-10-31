@@ -60,6 +60,28 @@ function sessionPath(runDir) {
   return found[0] ?? null;
 }
 
+/**
+ * Whether the prompt the model received is still readable.
+ *
+ * <p>
+ * Magic Context folds old fact batches, so a run's per-turn `<runtime-environment>` block survives only until it is folded -
+ * measured 2026-11-01: one `gamebuddy_fact_batch` left in a 285-turn session. A prompt-level criterion answering "no" from
+ * that absence would be answering from the fold, not from the run.
+ * </p>
+ */
+function promptEvidenceReadable(sessionText, contextSummary) {
+  if (sessionText.length === 0) return { readable: false, why: "no session found" };
+  const batches = sessionText.split("gamebuddy_fact_batch").length - 1;
+  if (batches === 0) return { readable: false, why: "no fact batch survives in the session" };
+  const dropped = contextSummary?.droppedTokens ?? 0;
+  if (dropped > 0)
+    return {
+      readable: false,
+      why: `${batches} batch(es) survive but ${dropped} tokens were folded away, so earlier turns' facts are gone`,
+    };
+  return { readable: true, why: `${batches} batch(es), nothing folded` };
+}
+
 const rows = [];
 const record = (name, verdict, detail, source) => rows.push({ name, verdict, detail, source });
 
@@ -97,15 +119,24 @@ record(
 // user message each turn. Reading the prompt from the Mod log answered "not exercised" from an absence that only meant
 // "wrong file" - which is the same class of mistake this report exists to prevent.
 const sessionText = boundSession === null ? "" : readFileSync(boundSession, "utf8");
+const promptEvidence = promptEvidenceReadable(sessionText, result.contextSummary ?? result.multiday?.contextSummary);
 
 // 2. The false zero: did the prompt ever print a non-zero unwatered count with a nearest tile?
 const unwateredLines = sessionText.split("\\n").filter((line) => /unwatered|待浇水/.test(line));
 const unwateredNonZero = unwateredLines.filter((line) => /待浇水作物: [1-9]|unwatered crops: [1-9]/.test(line));
 record(
   "2 unwatered false zero",
-  unwateredNonZero.length > 0 ? "PASS" : unwateredLines.length === 0 ? "NOT EXERCISED" : "FAIL",
+  unwateredNonZero.length > 0
+    ? "PASS"
+    : unwateredLines.length === 0
+      ? promptEvidence.readable
+        ? "NOT EXERCISED"
+        : "UNOBSERVABLE"
+      : "FAIL",
   unwateredLines.length === 0
-    ? "no unwatered fact reached the model at all"
+    ? promptEvidence.readable
+      ? "no unwatered fact reached the model at all"
+      : `cannot tell: ${promptEvidence.why}`
     : `${unwateredNonZero.length} non-zero of ${unwateredLines.length} rendered`,
   boundSession ?? "no session",
 );
@@ -163,7 +194,13 @@ const villagerLines = sessionText.split("\\n").filter((line) => /on this map:|�
 const withCoords = villagerLines.filter((line) => /\(\d+,\d+\)/.test(line));
 record(
   "5 villager coordinates",
-  withCoords.length > 0 ? "PASS" : villagerLines.length === 0 ? "NOT EXERCISED" : "FAIL",
+  withCoords.length > 0
+    ? "PASS"
+    : villagerLines.length === 0
+      ? promptEvidence.readable
+        ? "NOT EXERCISED"
+        : "UNOBSERVABLE"
+      : "FAIL",
   `${withCoords.length} with coordinates of ${villagerLines.length} rendered`,
   boundSession ?? "no session",
 );
