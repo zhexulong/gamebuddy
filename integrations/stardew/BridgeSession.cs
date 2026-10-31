@@ -217,7 +217,8 @@ string? bodyProgramUnavailableReason = null,
                 affordance.Distance,
                 affordance.Direction,
                 affordance.ActionHint,
-                affordance.Reachable)).ToArray(),
+                affordance.Reachable,
+                affordance.Identity)).ToArray(),
             projection.Summary,
             projection.IsPartial,
             projection.TruncatedReason,
@@ -997,6 +998,13 @@ string? bodyProgramUnavailableReason = null,
         this.pendingBodyProgramAdmissions.Remove(key);
         return result;
     }
+
+    /// <summary>
+    /// The generation of the authenticated attachment this session is currently speaking through, or -1 while no
+    /// attachment is authenticated. It is the same field every outbound frame is already stamped with, so a reader
+    /// cannot see one attachment while the frames go out on another.
+    /// </summary>
+    long IBodyProgramAdmissionTransport.AttachmentGeneration => this.authenticatedGeneration;
 
     private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), string> pendingBodyProgramAdmissions = new();
     private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), BodyNodeAdmissionResult> bodyProgramResults = new();

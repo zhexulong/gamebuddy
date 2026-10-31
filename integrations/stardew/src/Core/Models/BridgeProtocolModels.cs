@@ -973,10 +973,25 @@ public sealed record ObserveSceneAffordancePayload(
     //
     // OMITTED when undecided: the projection cannot measure it (no probe) or the probe exceeded its budget, and
     // writing an explicit `null` cost 17 bytes per affordance for no information -- measured, it pushed the golden
-    // payload from 571 to 622 bytes and the worst-case fill past the headroom reserve the byte ceiling keeps.
+    // payload from 571 to 622 bytes and the worst-case fill past the headroom byte ceiling keeps.
     // The readers (Core `BridgeProtocol` and the Host validator) define ABSENT as undecided, which is why `null`
     // and "absent" must never mean `false`.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Reachable = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Reachable = null,
+    /// <summary>
+    /// The opaque entity identity this ref binds to, for the affordance kinds whose action needs it.
+    ///
+    /// <para>
+    /// WITHOUT THIS, `pickup_forage` COULD NOT BE CALLED AT ALL even after the binding became visible. Its
+    /// `sceneTarget` resolves to an `SceneAffordanceBinding` whose `OpaqueEntityIdentity` must equal the target's
+    /// `QualifiedItemId` (`farmhandexecutioncontroller.gatheringactions.cs:64`), and the model has to send that same id as
+    /// `expectedQualifiedItemId` (`:65`). The affordance published `ref` and a human `Name`, so the model held a ref and
+    /// could not say which item it bound to - the id existed on both sides and never met.
+    /// </para>
+    /// <para>
+    /// Omitted when the source has none, and bounded to the same 128 characters the binding validates, so the payload
+    /// cost is one short id per affordance of a kind that has one.
+    /// </para>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Identity = null
 );
 
 public sealed record ObserveSceneResultPayload(

@@ -149,7 +149,14 @@ internal sealed class SceneObservationProjection
                 candidate.Source.ActionHint,
                 // Undecided when the caller supplied no probe: the projection stays pure (it cannot reach the live
                 // game from here), and "no claim" is a different answer from "not reachable".
-                isActionable is null ? null : isActionable(candidate.Source.TileX, candidate.Source.TileY)));
+                isActionable is null ? null : isActionable(candidate.Source.TileX, candidate.Source.TileY),
+                // Published ONLY for the kinds whose action compares it. `pickup_forage` is the one action that declares an
+                // ObservationBinding (`FarmhandActionDefinitions.cs:572`), and it resolves a binding whose
+                // `OpaqueEntityIdentity` must equal the forage object's `QualifiedItemId` - so without this a ref cannot be
+                // turned into a legal request. Every other affordance kind has no action that reads it, and the payload is
+                // measured against a byte ceiling (571 bytes golden, and five tests pin it), so publishing an id nobody
+                // compares would spend the budget the truncation logic needs.
+                candidate.Source.Kind == SceneAffordanceKind.Forage ? candidate.Source.OpaqueEntityIdentity : null));
         }
 
         // Ground is a separate axis from affordances, so it is summarised once
@@ -377,7 +384,9 @@ internal sealed class SceneObservationProjection
                     affordance.Name,
                     affordance.Distance,
                     affordance.Direction,
-                    affordance.ActionHint),
+                    affordance.ActionHint,
+                    null,
+                    affordance.Identity),
                 BridgeProtocol.JsonOptions)));
         }
         return sizes;
@@ -394,7 +403,9 @@ internal sealed class SceneObservationProjection
                 affordance.Name,
                 affordance.Distance,
                 affordance.Direction,
-                affordance.ActionHint)).ToArray(),
+                affordance.ActionHint,
+                null,
+                affordance.Identity)).ToArray(),
             result.Summary,
             result.IsPartial,
             result.TruncatedReason,

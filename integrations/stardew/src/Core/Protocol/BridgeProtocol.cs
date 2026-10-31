@@ -1438,14 +1438,17 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     {
         affordance = null;
         // `reachable` is OPTIONAL on the wire: it is written only when the observation could measure it, because an
-        // explicit `null` costs bytes without carrying information (measured: it pushed the golden payload from 571
-        // to 622 bytes and the worst-case fill past the headroom the byte ceiling reserves). ABSENT and `null` both
-        // mean undecided, and NEITHER may be read as `false`: "nobody measured this" is not "you cannot go there".
+        // `reachable` and `identity` are both optional: an undecided probe and an affordance kind with no entity identity
+        // each omit their key rather than writing `null` (measured: an explicit null pushed the golden payload past the
+        // byte ceiling's headroom). ABSENT and `null` both mean undecided, and NEITHER may be read as `false`.
         bool hasReachable = value.TryGetProperty("reachable", out JsonElement reachableElement);
-        string[] expectedNames = hasReachable
-            ? new[] { "ref", "kind", "name", "distance", "direction", "actionHint", "reachable" }
-            : new[] { "ref", "kind", "name", "distance", "direction", "actionHint" };
+        bool hasIdentity = value.TryGetProperty("identity", out JsonElement identityElement);
+        string[] expectedNames = new[] { "ref", "kind", "name", "distance", "direction", "actionHint" }
+            .Concat(hasReachable ? new[] { "reachable" } : Array.Empty<string>())
+            .Concat(hasIdentity ? new[] { "identity" } : Array.Empty<string>())
+            .ToArray();
         bool? reachable = null;
+        string? identity = null;
         if (!HasOptionalProperties(value, expectedNames)
             || !ReadSceneReference(value.GetProperty("ref"), out string? reference)
             || !ReadSceneText(value.GetProperty("name"), 128, out string? name)
@@ -1453,6 +1456,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             || distance is < 0 or > 30
             || !TryReadSceneOptionalText(value.GetProperty("actionHint"), 160, out string? actionHint)
             || (hasReachable && !TryReadSceneOptionalBoolean(reachableElement, out reachable))
+            || (hasIdentity && !ReadSceneText(identityElement, 128, out identity))
             || value.GetProperty("kind").ValueKind != JsonValueKind.String
             || value.GetProperty("kind").GetString() is not ("npc" or "chest" or "crop" or "tree" or "animal" or "forage" or "door" or "machine" or "water_source" or "weed" or "stone" or "debris" or "artifact_spot")
             || value.GetProperty("direction").ValueKind != JsonValueKind.String
@@ -1466,7 +1470,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             distance,
             value.GetProperty("direction").GetString()!,
             actionHint,
-            reachable);
+            reachable,
+            identity);
         return true;
     }
 

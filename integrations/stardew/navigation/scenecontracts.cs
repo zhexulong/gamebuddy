@@ -200,7 +200,17 @@ internal sealed record SceneAffordanceProjection(
     /// component is one flood per observation (28 tiles on the fixture farm), and four observations per session.
     /// </para>
     /// </summary>
-    bool? Reachable = null);
+    bool? Reachable = null,
+    /// <summary>
+    /// The opaque entity identity this ref binds to, when the affordance kind has one.
+    ///
+    /// <para>
+    /// `pickup_forage` cannot be called without it: its `sceneTarget` resolves to a binding whose
+    /// `OpaqueEntityIdentity` must equal the forage object's `QualifiedItemId`, and the caller has to send that same id
+    /// as `expectedQualifiedItemId`. A ref without its identity is a handle to a thing the caller cannot name.
+    /// </para>
+    /// </summary>
+    string? Identity = null);
 
 /// <summary>
 /// Internal read-only scene projection. Summary is player-facing text for this
