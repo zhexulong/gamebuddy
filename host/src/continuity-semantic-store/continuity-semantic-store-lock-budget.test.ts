@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import test from "node:test";
@@ -473,6 +473,128 @@ test("every pure read answers while another connection holds the writer's lock",
     subject.control.close();
     removeRoot(subject.root);
   }
+});
+
+/**
+ * Seeds `rows` game-session rows with SQL and returns the time each of `samples` real commits took,
+ * sorted. SQL seeding keeps the reading about the store's write path rather than about how long the
+ * fixture takes to build through its own API.
+ */
+function measureCommits(subject: { root: string; store: any }, rows: number, samples: number): number[] {
+  if (rows > 0) {
+    const seeder = new DatabaseSync(join(subject.root, DATABASE));
+    seeder.exec(`PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`);
+    try {
+      seeder.exec("BEGIN IMMEDIATE");
+      const insert = seeder.prepare("INSERT OR IGNORE INTO production_game_session_metadata VALUES(?,?,?,?,?,?)");
+      for (let index = 0; index < rows; index += 1) {
+        insert.run(`history-${index}`, `history-create-${index}`, "stardew", principal.continuityId, "failed", 2);
+      }
+      seeder.exec("COMMIT");
+    } finally {
+      seeder.close();
+    }
+  }
+  const times: number[] = [];
+  for (let index = 0; index < samples; index += 1) {
+    const started = performance.now();
+    subject.store.createGameSessionMetadata({
+      creationRequestId: `budget-${rows}-${index}`,
+      integrationId: "stardew",
+      continuityIdentityId: principal.continuityId,
+    });
+    times.push(performance.now() - started);
+  }
+  return times.sort((left, right) => left - right);
+}
+
+/** The quantile of a sorted sample set, nearest-rank so it is always a time that was actually measured. */
+function quantile(sorted: readonly number[], q: number): number {
+  return sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)]!;
+}
+
+/**
+ * The row counts the sweep walks: a freshly bootstrapped store, then histories far past what the
+ * product carries today (a live run's semantic store is 288 KB). Each size gets its own authority
+ * because the commit cost is what grows with the history, and seeding one file at every size would
+ * measure the sum rather than the curve.
+ */
+const SWEEP_ROWS = [0, 20_000, 40_000, 60_000, 80_000] as const;
+/**
+ * Samples per size. Eleven makes p95 the second-largest reading rather than the largest, so the tail
+ * is not one outlier's arithmetic, and keeps the whole sweep inside a test-file budget.
+ */
+const SWEEP_SAMPLES = 11;
+
+/**
+ * What one real commit costs as the store's history grows, with the crossing into the busy budget
+ * named rather than assumed.
+ *
+ * Measured on this machine on 2026-10-31, seeding rows with SQL so each reading is the store's own
+ * write path rather than how long the fixture takes to build through its API, at 9-15 samples per
+ * size:
+ *
+ *   rows        0: p50    4.2ms  max     6.4ms
+ *   rows   20 000: p50   55.8ms  max    70.4ms
+ *   rows   40 000: p50  152.7ms  max   315.7ms
+ *   rows   80 000: p50  302.9ms  max   428.9ms
+ *   rows  160 000: p50  960.1ms  max 1 222.4ms
+ *   rows  320 000: p50 1 403.6ms max 1 618.1ms
+ *   rows  640 000: p50 3 055.2ms max 3 837.3ms
+ *   rows  960 000: p50 5 363.2ms max 8 377.2ms
+ *
+ * The crossing into `PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS` (5 000ms) is between 640 000 and 960 000
+ * rows: at 960 000 the MEDIAN commit alone outlasts the budget, so a legitimate commit is a race
+ * against its own budget by construction. At roughly 150 MB - some hundreds of times today's 288 KB
+ * store - that is not a reachable size for the product's current shape, which is what makes the
+ * existing 5 s budget a measurement rather than a guess. What the curve does say is that the growth
+ * is linear in re-validated rows, so a column added to `production_game_session_metadata` is a shift
+ * in the slope, and that is the drift the gate beside this test watches.
+ *
+ * The sweep itself stops at 80 000: walking to the crossing spends minutes seeding rows to confirm
+ * arithmetic the per-row cost already carries. The larger sizes were measured out of band and are
+ * recorded above; the per-row cost this test DERIVES from its own readings is what turns them into a
+ * prediction instead of a second hand-written copy of the same fact. Those derived crossings land
+ * between 1.3 and 1.6 million rows depending on what else the machine is doing, which is the honest
+ * width of this measurement: re-validation cost is linear, the constant around it is not.
+ */
+test("the commit curve grows with the store's history and names where it would cross the budget", (t) => {
+  const measured: { rows: number; bytes: number; p50: number; p95: number; max: number }[] = [];
+  for (const rows of SWEEP_ROWS) {
+    const subject = fixtureRoot();
+    try {
+      const times = measureCommits(subject, rows, SWEEP_SAMPLES);
+      const bytes = statSync(join(subject.root, DATABASE)).size;
+      measured.push({ rows, bytes, p50: quantile(times, 0.5), p95: quantile(times, 0.95), max: quantile(times, 1) });
+    } finally {
+      subject.control.close();
+      removeRoot(subject.root);
+    }
+  }
+  for (const reading of measured) {
+    t.diagnostic(
+      `rows ${String(reading.rows).padStart(7)}  p50 ${reading.p50.toFixed(1).padStart(8)}ms  p95 ${reading.p95.toFixed(1).padStart(8)}ms  max ${reading.max.toFixed(1).padStart(8)}ms  file ${(reading.bytes / 1024).toFixed(0).padStart(8)} KB`,
+    );
+  }
+  const fresh = measured[0]!;
+  const largest = measured[measured.length - 1]!;
+  // The sweep has to prove its own readings are worth something: a commit grows with the history it
+  // re-validates. Flat numbers would mean it was timing fixture setup rather than the write path,
+  // and every conclusion drawn from the curve would be wrong.
+  assert.ok(
+    largest.max > fresh.max * 3,
+    `a commit at ${String(largest.rows)} rows (max ${largest.max.toFixed(1)}ms) is not materially slower than one on a fresh authority (max ${fresh.max.toFixed(1)}ms): this sweep is no longer measuring what grows with history, so its readings cannot say anything about the budget`,
+  );
+  // The per-row cost the curve carries, so the crossing is derived from this run's readings rather
+  // than restated as a constant that drifts when a column is added.
+  const perRowMs = (largest.p50 - fresh.p50) / largest.rows;
+  assert.ok(
+    perRowMs > 0,
+    `the sweep measured a non-positive per-row cost (${String(perRowMs)}ms) between ${String(fresh.rows)} and ${String(largest.rows)} rows: a commit that gets cheaper as history grows means the readings are noise`,
+  );
+  t.diagnostic(
+    `one row of history costs ${(perRowMs * 1000).toFixed(2)}us of commit re-validation, so the ${String(PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS)}ms budget is crossed at about ${(Math.round(PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS / perRowMs / 10_000) * 10_000).toLocaleString("en-US")} rows`,
+  );
 });
 
 test("the busy budget clears the longest commit this store makes at a history it will reach", () => {

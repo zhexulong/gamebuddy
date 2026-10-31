@@ -85,7 +85,8 @@ async function reject(errorMessage?: string): Promise<{
 }
 
 /** OpenAI's own 401 body, which quotes the credential it rejected. */
-const WRONG_KEY = '401: {"error":{"message":"Incorrect API key provided: sk-proj-AbC***XyZ","type":"invalid_request_error"}}';
+const WRONG_KEY =
+  '401: {"error":{"message":"Incorrect API key provided: sk-proj-AbC***XyZ","type":"invalid_request_error"}}';
 /** A rate limit body, which asks for the opposite action. */
 const RATE_LIMIT = '429: {"error":{"message":"Rate limit reached for requests per min","type":"rate_limit_error"}}';
 
@@ -98,4 +99,26 @@ test("a 401 and a 429 reach the sink as different classes, not the same 'error'"
   assert.equal(credential.args[1], "credential_rejected");
   assert.equal(limited.args[1], "rate_limited");
   assert.notEqual(credential.args[1], limited.args[1]);
+});
+
+test("no provider byte crosses the boundary, in any position of what the sink was handed", async () => {
+  for (const errorMessage of [WRONG_KEY, RATE_LIMIT]) {
+    const { args } = await reject(errorMessage);
+    const handed = JSON.stringify(args);
+    // The two things those bodies carry that must never escape: the credential's own
+    // prefix, and the provider's prose about it.
+    assert.equal(handed.includes("sk-proj"), false, handed);
+    assert.equal(handed.includes("Incorrect API key"), false, handed);
+    assert.equal(handed.includes("Rate limit reached"), false, handed);
+    assert.equal(handed.includes('error":{'), false, handed);
+    // And the whole handover is exactly the two bounded members - nothing was
+    // smuggled in as a third argument or a detail object.
+    assert.equal(args.length, 2, handed);
+  }
+});
+
+test("a refusal the provider never described hands over no class rather than a guessed one", async () => {
+  const silent = await reject(undefined);
+  assert.equal(silent.args[0], "error");
+  assert.equal(silent.args[1], undefined);
 });

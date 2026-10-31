@@ -10,6 +10,7 @@ import {
 import { removeModelScaffolding } from "./companion-scaffolding.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
+import { classifyProviderFailure, type ProviderFailureClass } from "./provider-failure-classification.js";
 
 const MAX_NATIVE_COMPANION_TEXT_UTF8_BYTES = 16_384;
 
@@ -31,6 +32,11 @@ type AssistantMessage = Readonly<{
   role: "assistant";
   content: readonly unknown[];
   stopReason?: string;
+  /**
+   * Pi's own display string for a provider refusal, `"<status>: <body>"`. It is read
+   * by `classifyProviderFailure` and never leaves the Host; see that module for why.
+   */
+  errorMessage?: string;
 }>;
 
 /** Pi event subset consumed by the native-content projection seam. */
@@ -125,6 +131,13 @@ export type NativeCompanionContentOptions = Readonly<{
  */
 export type NativeAssistantStopReason = "pending" | "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred";
 
+/**
+ * Why a provider refused the request, as the bounded class the sinks receive. It is
+ * re-exported rather than declared twice so the observer and the surface that words a
+ * sentence cannot disagree about the members.
+ */
+export type NativeProviderFailureClass = ProviderFailureClass;
+
 export type NativeCompanionContentSinks = Readonly<{
   /**
    * Ephemeral player-visible streaming hint; it is never durable authority.
@@ -152,6 +165,14 @@ export type NativeCompanionContentSinks = Readonly<{
   /** No content is supplied to this sink. */
   onRejected(
     reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch",
+    /**
+     * Present only when `reason` is `"error"` and the message carried a provider
+     * refusal this observer could classify. Absent means the provider said nothing
+     * this build can name - a turn an extension aborted, a transport that never
+     * produced a message - and the surface must then say nothing about the cause
+     * rather than guess one. It is a closed union of classes, never provider text.
+     */
+    providerFailureClass?: NativeProviderFailureClass,
   ): void | Promise<void>;
 }>;
 
@@ -491,7 +512,12 @@ export function attachNativeCompanionContent(
         return;
       }
       if (stopReason === "error") {
-        dispatch(async () => await sinks.onRejected("error"));
+        // The refusal's cause is read here and nowhere else. Pi has already folded the
+        // provider's status and body into `errorMessage`; only the class it supports
+        // may cross, because that body is arbitrary bytes from an endpoint the player
+        // chose.
+        const providerFailureClass = classifyProviderFailure(finalMessage.errorMessage);
+        dispatch(async () => await sinks.onRejected("error", providerFailureClass));
         return;
       }
       if (incrementalActive) {
