@@ -27,7 +27,7 @@ const config = require(configPath);
  */
 const ZONES = {
   chatContract: "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$",
-  platformContract: "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$",
+  platformContract: "^dialogue-web/src/(management-pipeline-api|composed-reference-game-browser-api)\\.ts$",
   composedRoot: "^dialogue-web/src/components/(ComposedReferenceGameApp\\.tsx|use-composed-bootstrap\\.ts)$",
   surface: "^dialogue-web/src/components/[^/]*Surface\\.tsx$",
   surfaceSupport:

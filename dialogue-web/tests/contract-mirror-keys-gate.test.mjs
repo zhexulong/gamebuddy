@@ -68,7 +68,6 @@ const SRC = join(REPO, "src");
 /** The hand-written mirror modules whose validators must agree with the contracts. */
 export const MIRROR_MODULES = [
   "management-pipeline-api.ts",
-  "management-pipeline-session.ts",
   "reference-pipeline-api.ts",
   "composed-reference-game-browser-api.ts",
 ];
@@ -130,8 +129,6 @@ function unwrap(node) {
 /**
  * Every validator function of one mirror module: the key sets it compares against
  * (named, spread or inline, with the keys resolved) and every key name it knows.
- * `management-pipeline-session.ts` delegates its validation and legitimately has
- * none; the module count in the diagnostic shows that rather than hiding it.
  */
 export function validatorsOf(name) {
   const path = join(SRC, name);

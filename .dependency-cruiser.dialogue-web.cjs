@@ -18,7 +18,7 @@ const path = require("node:path");
  *
  * Layer model:
  *   chat-contract        reference-pipeline-api + reference-pipeline-session
- *   platform-contract    management-pipeline-api/session + composed-reference-game-browser-api
+ *   platform-contract    management-pipeline-api + composed-reference-game-browser-api
  *   composed-root        components/ComposedReferenceGameApp   — the one assembler
  *   surface              components/*Surface                   — the peer surface bodies
  *   surface-support      panels, views, models and labels the surfaces share
@@ -30,8 +30,7 @@ const path = require("node:path");
  * proving every rule fires.
  */
 const CHAT_CONTRACT = "^dialogue-web/src/reference-pipeline-(api|session)\\.ts$";
-const PLATFORM_CONTRACT =
-  "^dialogue-web/src/(management-pipeline-(api|session)|composed-reference-game-browser-api)\\.ts$";
+const PLATFORM_CONTRACT = "^dialogue-web/src/(management-pipeline-api|composed-reference-game-browser-api)\\.ts$";
 const COMPOSED_ROOT = "^dialogue-web/src/components/(ComposedReferenceGameApp\\.tsx|use-composed-bootstrap\\.ts)$";
 const SURFACE = "^dialogue-web/src/components/[^/]*Surface\\.tsx$";
 const SURFACE_SUPPORT =

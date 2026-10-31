@@ -21,7 +21,6 @@ import {
   validateVoiceDevices,
   validateVoicePreference,
 } from "../src/management-pipeline-api.ts";
-import { createManagementPipelineSession } from "../src/management-pipeline-session.ts";
 import { problemTextWithCode } from "../src/composed-problem-view.ts";
 import { messages } from "../src/i18n.ts";
 
@@ -235,11 +234,10 @@ test("management snapshot rejects Memory mutation capability without a successfu
   );
 });
 
-test("management World Info snapshot mirror accepts the published opaque state and session", () => {
+test("management World Info snapshot mirror accepts the published opaque state", () => {
   const validated = validateSnapshot(snapshot());
   assert.equal(validated.chat.worldInfo.revision, HANDLE);
   assert.equal(validated.chat.worldInfo.items[0].selected, true);
-  assert.equal(createManagementPipelineSession(validated).snapshot, validated);
 });
 
 test("management snapshot carries the turn's length-ceiling fact additively and refuses a false one", () => {
@@ -452,13 +450,10 @@ test("the hand-written client mirror covers the Host contract's whole operation,
   assert.ok(problemCodes.length >= 30, `the contract declares a closed problem vocabulary, saw ${problemCodes.length}`);
 
   const mirror = await readFile(new URL("../src/management-pipeline-api.ts", import.meta.url), "utf8");
-  const sessionMirror = await readFile(new URL("../src/management-pipeline-session.ts", import.meta.url), "utf8");
   for (const [kind, vocabulary, source] of [
     ["operation", operationIds, mirror],
     ["label", labelKeys, mirror],
     ["problem code", problemCodes, mirror],
-    ["operation", operationIds, sessionMirror],
-    ["label", labelKeys, sessionMirror],
   ]) {
     for (const member of vocabulary) {
       assert.ok(
