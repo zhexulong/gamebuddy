@@ -659,6 +659,13 @@ export type ProductionContinuityStore = Readonly<{
 }>;
 
 const DB = "gamebuddy-continuity-v1.sqlite";
+/**
+ * How long a write may wait for another writer's lock before failing. Named because the open path
+ * and the provisioning admission check are two readings of one fact; the value itself is measured
+ * in the commit that sets it.
+ */
+export const PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS = 250;
+
 const tableNames = [
   "production_active_selection",
   "production_bootstrap",
@@ -829,7 +836,9 @@ export function openProductionContinuityStore(
   try {
     db.exec("PRAGMA foreign_keys=ON");
     admit(db, existed);
-    db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=250");
+    db.exec(
+      `PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=${PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS}`,
+    );
   } catch (error) {
     db.close();
     throw error;
@@ -865,13 +874,13 @@ export function openProductionContinuityStore(
     validateBootstrap(input) {
       requireOpen();
       validateBootstrapInput(input);
-      return transaction(db, () => validateBootstrap(db, input));
+      return readTransaction(db, () => validateBootstrap(db, input));
     },
     bindBootstrapContext(context) {
       requireOpen();
       if (bound) throw new Error("production_bootstrap_context_already_bound");
       const immutable = freezeBootstrapContext(context);
-      transaction(db, () => validateExpectedBootstrap(db, immutable));
+      readTransaction(db, () => validateExpectedBootstrap(db, immutable));
       bound = immutable;
       return Object.freeze({
         claim(input) {
@@ -953,7 +962,7 @@ export function openProductionContinuityStore(
         resume(holderBindingDigest) {
           requireOpen();
           if (!sha(holderBindingDigest)) throw new Error("invalid_saga_holder");
-          return transaction(db, () => {
+          return readTransaction(db, () => {
             validateExpectedBootstrap(db, immutable);
             rejectQuarantined(db);
             const saga = db.prepare("SELECT * FROM production_initial_chat_saga WHERE singleton=1").get() as any;
@@ -984,7 +993,7 @@ export function openProductionContinuityStore(
         },
         readQuarantine() {
           requireOpen();
-          return transaction(db, () => {
+          return readTransaction(db, () => {
             validateExpectedBootstrap(db, immutable);
             const rows = db.prepare("SELECT * FROM production_quarantine").all() as any[];
             if (!rows.length) return Object.freeze({ quarantined: false, reason: null });
@@ -1041,30 +1050,30 @@ export function openProductionContinuityStore(
           requireOpen();
           return readGameSessionMetadata(db, immutable, input);
         },
-         listResumableGameSessions() {
-           requireOpen();
-           return listResumableGameSessions(db, immutable);
-         },
-         registerGameSessionWorldBinding(input) {
-           requireOpen();
-           return registerGameSessionWorldBinding(db, immutable, input);
-         },
-         readGameSessionWorldBinding(input) {
-           requireOpen();
-           return readGameSessionWorldBinding(db, immutable, input);
-         },
-         markGameSessionWorldBindingTerminal(input) {
-           requireOpen();
-           return markGameSessionWorldBindingTerminal(db, immutable, input);
-         },
-         readGameSessionWorldBindingSlotHolder(input) {
-           requireOpen();
-           return readGameSessionWorldBindingSlotHolder(db, immutable, input);
-         },
-         releaseGameSessionWorldBindingSlot(input) {
-           requireOpen();
-           return releaseGameSessionWorldBindingSlot(db, immutable, input);
-         },
+        listResumableGameSessions() {
+          requireOpen();
+          return listResumableGameSessions(db, immutable);
+        },
+        registerGameSessionWorldBinding(input) {
+          requireOpen();
+          return registerGameSessionWorldBinding(db, immutable, input);
+        },
+        readGameSessionWorldBinding(input) {
+          requireOpen();
+          return readGameSessionWorldBinding(db, immutable, input);
+        },
+        markGameSessionWorldBindingTerminal(input) {
+          requireOpen();
+          return markGameSessionWorldBindingTerminal(db, immutable, input);
+        },
+        readGameSessionWorldBindingSlotHolder(input) {
+          requireOpen();
+          return readGameSessionWorldBindingSlotHolder(db, immutable, input);
+        },
+        releaseGameSessionWorldBindingSlot(input) {
+          requireOpen();
+          return releaseGameSessionWorldBindingSlot(db, immutable, input);
+        },
       });
     },
     configuration() {
@@ -1098,8 +1107,7 @@ function validateChatSelectionIntent(selection: any[], threads: any[]): void {
     intent.kind === "select" &&
     !threads.some(
       (thread) =>
-        thread.chat_thread_id === intent.chatThreadId &&
-        thread.chat_surface_session_id === intent.chatSurfaceSessionId,
+        thread.chat_thread_id === intent.chatThreadId && thread.chat_surface_session_id === intent.chatSurfaceSessionId,
     )
   )
     throw new Error("production_store_materialization_invalid");
@@ -1115,6 +1123,37 @@ function transaction<T>(db: DatabaseSync, callback: () => T): T {
       db.exec("ROLLBACK");
     } catch {}
     throw error;
+  }
+}
+/**
+ * A pure read runs here, never through `transaction`.
+ *
+ * `BEGIN IMMEDIATE` takes the write lock, so routing a read through it made every reader wait on
+ * whatever writer held the lock - measured against another connection holding `BEGIN IMMEDIATE`,
+ * each of this store's pure read members failed at ~350 ms with `database is locked` while a plain
+ * deferred read of the same rows answered in 0.2 ms. A read must not need the write lock at all.
+ *
+ * `query_only` makes that structural rather than a convention: a deferred transaction that turns
+ * out to write fails here with `attempt to write a readonly database` instead of silently taking
+ * the lock and stalling every concurrent writer. In this journal mode a held read does block a
+ * writer's COMMIT, so misrouting a mutation into this path has to be loud, not slow.
+ */
+function readTransaction<T>(db: DatabaseSync, callback: () => T): T {
+  db.exec("PRAGMA query_only=ON");
+  try {
+    db.exec("BEGIN");
+    try {
+      const result = callback();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {}
+      throw error;
+    }
+  } finally {
+    db.exec("PRAGMA query_only=OFF");
   }
 }
 function admit(db: DatabaseSync, existed: boolean): void {
@@ -1136,8 +1175,8 @@ function validatePhysicalSignature(db: DatabaseSync): void {
   const objects = db
     .prepare("SELECT type,name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name")
     .all() as any[];
-   const actualTables = objects.filter((o) => o.type === "table").map((o) => o.name);
-   const actualIndexes = objects.filter((o) => o.type === "index").map((o) => o.name);
+  const actualTables = objects.filter((o) => o.type === "table").map((o) => o.name);
+  const actualIndexes = objects.filter((o) => o.type === "index").map((o) => o.name);
   if (
     objects.some((o) => o.type !== "table" && o.type !== "index") ||
     actualTables.join("|") !== [...tableNames].sort().join("|") ||
@@ -1349,7 +1388,8 @@ function validateGameMaterialization(db: DatabaseSync): void {
     sessionMetadata = db.prepare("SELECT * FROM production_game_session_metadata").all() as any[],
     worldBindings = db.prepare("SELECT * FROM production_game_session_world_binding").all() as any[];
   if (
-    liveGames.length > 1 ||    games.some(
+    liveGames.length > 1 ||
+    games.some(
       (g) =>
         g.continuity_id !== p?.continuity_id ||
         !safeId(g.session_id) ||
@@ -1408,7 +1448,10 @@ function validateGameMaterialization(db: DatabaseSync): void {
       (m) =>
         (m.status === "resumable" &&
           !worldBindings.some(
-            (b) => b.game_session_id === m.game_session_id && b.integration_id === m.integration_id && b.status === "registered",
+            (b) =>
+              b.game_session_id === m.game_session_id &&
+              b.integration_id === m.integration_id &&
+              b.status === "registered",
           )) ||
         (m.status === "failed" &&
           m.revision === 2 &&
@@ -1416,7 +1459,10 @@ function validateGameMaterialization(db: DatabaseSync): void {
         (m.status === "failed" &&
           m.revision === 3 &&
           !worldBindings.some(
-            (b) => b.game_session_id === m.game_session_id && b.integration_id === m.integration_id && b.status === "terminal",
+            (b) =>
+              b.game_session_id === m.game_session_id &&
+              b.integration_id === m.integration_id &&
+              b.status === "terminal",
           )),
     )
   )
@@ -1432,12 +1478,12 @@ function validateMaterialization(db: DatabaseSync): void {
       if (
         table !== "production_store_meta" &&
         table !== "production_bootstrap" &&
-         table !== "production_game_session" &&
-         table !== "production_game_lease" &&
-         table !== "production_game_intent" &&
-         table !== "production_game_session_metadata" &&
-         table !== "production_game_session_world_binding" &&
-         count(db, table)
+        table !== "production_game_session" &&
+        table !== "production_game_lease" &&
+        table !== "production_game_intent" &&
+        table !== "production_game_session_metadata" &&
+        table !== "production_game_session_world_binding" &&
+        count(db, table)
       )
         throw new Error("production_store_materialization_invalid");
     return;
@@ -1451,28 +1497,28 @@ function validateMaterialization(db: DatabaseSync): void {
       "production_continuity_event",
       "production_chat_runtime_intent",
       "production_continuity_command",
-       "production_saga_operation",
-       "production_saga_receipt",
-      ])
+      "production_saga_operation",
+      "production_saga_receipt",
+    ])
       if (count(db, table)) throw new Error("production_store_materialization_invalid");
     const quarantines = db.prepare("SELECT * FROM production_quarantine").all() as any[];
-     if (
-       quarantines.length > 1 ||
-       (quarantines.length === 1 &&
-         (quarantines[0].continuity_id !==
-           db.prepare("SELECT continuity_id FROM production_bootstrap WHERE singleton=1").get()?.continuity_id ||
-           quarantines[0].reason !== "abandoned_windows_root_mutex" ||
-           quarantines[0].quarantine_id !== `abandoned-${metadata(db)?.storeId}`))
-     )
-       throw new Error("production_store_materialization_invalid");
-     validateGameMaterialization(db);
-     return;
+    if (
+      quarantines.length > 1 ||
+      (quarantines.length === 1 &&
+        (quarantines[0].continuity_id !==
+          db.prepare("SELECT continuity_id FROM production_bootstrap WHERE singleton=1").get()?.continuity_id ||
+          quarantines[0].reason !== "abandoned_windows_root_mutex" ||
+          quarantines[0].quarantine_id !== `abandoned-${metadata(db)?.storeId}`))
+    )
+      throw new Error("production_store_materialization_invalid");
+    validateGameMaterialization(db);
+    return;
   }
-   validateGameMaterialization(db);
-   if (
-     !sha(saga.holder_binding_digest) ||
-     !["claimed_empty", "chat_registered", "content_verified", "selected"].includes(saga.phase)
-   )
+  validateGameMaterialization(db);
+  if (
+    !sha(saga.holder_binding_digest) ||
+    !["claimed_empty", "chat_registered", "content_verified", "selected"].includes(saga.phase)
+  )
     throw new Error("production_store_materialization_invalid");
   const operations = db.prepare("SELECT * FROM production_saga_operation").all() as any[];
   const receipts = db.prepare("SELECT * FROM production_saga_receipt").all() as any[];
@@ -2349,7 +2395,7 @@ function freezeChatReadback(value: ProductionChatCommandReadback): ProductionCha
   });
 }
 function readChatCatalog(db: DatabaseSync, bootstrap: ProductionBootstrapContext): ProductionChatCatalog {
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     return readChatCatalogLocked(db, bootstrap.bootstrap.principal.continuityId);
@@ -2359,10 +2405,10 @@ function readChatCatalog(db: DatabaseSync, bootstrap: ProductionBootstrapContext
 function readChatCatalogLocked(db: DatabaseSync, continuityId: string): ProductionChatCatalog {
   {
     const rows = db
-        .prepare(
-          "SELECT t.chat_thread_id,t.chat_surface_session_id,t.lifecycle,t.content_receipt_json,t.content_receipt_digest,m.management_revision FROM production_continuity_thread t JOIN production_chat_lifecycle_metadata m ON m.chat_surface_session_id=t.chat_surface_session_id WHERE t.continuity_id=? ORDER BY t.chat_surface_session_id",
-        )
-        .all(continuityId) as any[];
+      .prepare(
+        "SELECT t.chat_thread_id,t.chat_surface_session_id,t.lifecycle,t.content_receipt_json,t.content_receipt_digest,m.management_revision FROM production_continuity_thread t JOIN production_chat_lifecycle_metadata m ON m.chat_surface_session_id=t.chat_surface_session_id WHERE t.continuity_id=? ORDER BY t.chat_surface_session_id",
+      )
+      .all(continuityId) as any[];
     const threads = rows.map((row) => {
       const receipt = row.content_receipt_json === null ? null : parse(row.content_receipt_json);
       if (
@@ -4457,7 +4503,7 @@ function readGameRecoveryTarget(
   input: Readonly<{ principal: ProductionPrincipal; operationId: string }>,
 ): ProductionGameRecoveryTarget | null {
   if (!validPrincipal(input?.principal) || !safeId(input?.operationId)) throw new Error("invalid_game_operation");
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     validateGamePrincipal(bootstrap, input.principal);
@@ -4477,7 +4523,7 @@ function readGameAdmission(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
 ): Readonly<{ vector: GameRevisionVector; activeGameSessionId: string | null }> {
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const rows = db
@@ -4496,7 +4542,7 @@ function readGameOperation(
   input: Readonly<{ principal: ProductionPrincipal; operationId: string }>,
 ): ProductionGameReadback | null {
   if (!validPrincipal(input.principal) || !safeId(input.operationId)) throw new Error("invalid_game_operation");
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     validateGamePrincipal(bootstrap, input.principal);
@@ -4583,7 +4629,10 @@ function createGameSessionMetadata(
   return transaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
-    if (input.continuityIdentityId !== null && input.continuityIdentityId !== bootstrap.bootstrap.principal.continuityId)
+    if (
+      input.continuityIdentityId !== null &&
+      input.continuityIdentityId !== bootstrap.bootstrap.principal.continuityId
+    )
       throw new Error("invalid_game_session_metadata");
     const old = db
       .prepare("SELECT * FROM production_game_session_metadata WHERE creation_request_id=?")
@@ -4620,15 +4669,15 @@ function transitionGameSessionMetadata(
     if (!row) throw new Error("game_session_metadata_missing");
     if (row.creation_request_id !== input.creationRequestId || row.revision !== input.expectedRevision)
       throw new Error("game_session_metadata_conflict");
-     const binding = db
-       .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
-       .get(input.gameSessionId) as any;
-     if (target === "resumable") {
-       if (!binding || binding.integration_id !== row.integration_id || binding.status !== "registered")
-         throw new Error("game_session_world_binding_missing");
-     } else if (binding) {
-       throw new Error("game_session_metadata_conflict");
-     }
+    const binding = db
+      .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
+      .get(input.gameSessionId) as any;
+    if (target === "resumable") {
+      if (!binding || binding.integration_id !== row.integration_id || binding.status !== "registered")
+        throw new Error("game_session_world_binding_missing");
+    } else if (binding) {
+      throw new Error("game_session_metadata_conflict");
+    }
     const updated = db
       .prepare(
         "UPDATE production_game_session_metadata SET status=?,revision=revision+1 WHERE game_session_id=? AND status='pending' AND revision=? AND creation_request_id=?",
@@ -4648,7 +4697,7 @@ function readGameSessionMetadata(
 ): ProductionGameSessionMetadata | null {
   if (!exactPlainDataObject(input, ["gameSessionId"]) || !safeId(input.gameSessionId))
     throw new Error("invalid_game_session_metadata");
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const row = db
@@ -4661,7 +4710,7 @@ function listResumableGameSessions(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
 ): readonly ProductionGameSessionMetadata[] {
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const rows = db
@@ -4735,7 +4784,9 @@ function registerGameSessionWorldBinding(
       "INSERT INTO production_game_session_world_binding(game_session_id,integration_id,binding_ref,operation_id,holder_handle,status,revision) VALUES(?,?,?,?,?, 'registered',1)",
     ).run(input.gameSessionId, input.integrationId, input.bindingRef, input.operationId, input.holderHandle);
     return gameSessionWorldBindingReadback(
-      db.prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?").get(input.gameSessionId),
+      db
+        .prepare("SELECT * FROM production_game_session_world_binding WHERE game_session_id=?")
+        .get(input.gameSessionId),
     );
   });
 }
@@ -4750,7 +4801,7 @@ function readGameSessionWorldBinding(
     !safeId(input.integrationId)
   )
     throw new Error("invalid_game_session_world_binding");
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const row = db
@@ -4792,7 +4843,7 @@ function readGameSessionWorldBindingSlotHolder(
     !validOpaqueWorldBindingRef(input.bindingRef)
   )
     throw new Error("invalid_game_session_world_binding");
-  return transaction(db, () => {
+  return readTransaction(db, () => {
     validateExpectedBootstrap(db, bootstrap);
     rejectQuarantined(db);
     const row = selectGameSessionWorldBindingSlotRow(db, input.integrationId, input.bindingRef);
@@ -4946,8 +4997,7 @@ function releaseGameSessionWorldBindingSlot(
     // never becomes an oracle for slots a caller does not hold.
     if (row.holder_handle !== input.holderHandle)
       throw new Error(productionGameSessionWorldBindingSlotRelease.handleMismatch);
-    if (row.status !== "registered")
-      throw new Error(productionGameSessionWorldBindingSlotRelease.holderTerminal);
+    if (row.status !== "registered") throw new Error(productionGameSessionWorldBindingSlotRelease.holderTerminal);
     // Only the free-lease direction releases. The other outcome is refused as
     // "not proven gone": the probe's held direction cannot be promoted into
     // "the holder is alive" (see `holderNotProvenGone`), and it cannot be read

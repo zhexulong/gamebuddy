@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import {
   type ProductionPrincipal as AuthenticatedContinuityPrincipal,
   openProductionContinuityStore,
+  PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS,
   PRODUCTION_CONTINUITY_STORE_SCHEMA_VERSION,
   type ProductionBootstrapInput,
   type ProductionContinuityStore,
@@ -126,7 +127,7 @@ export function provisionFreshProductionContinuityFromCanonicalAdmission(
     if (
       configuration.journalMode !== "delete" ||
       configuration.synchronous !== 2 ||
-      configuration.busyTimeoutMs !== 250
+      configuration.busyTimeoutMs !== PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS
     )
       throw failure("production_store_not_admitted");
     const metadata = control.bootstrapFresh(bootstrapInput(options, authorityRootIdentity));
@@ -182,7 +183,7 @@ export function openKnownProductionContinuityFromCanonicalAdmission(
     if (
       configuration.journalMode !== "delete" ||
       configuration.synchronous !== 2 ||
-      configuration.busyTimeoutMs !== 250
+      configuration.busyTimeoutMs !== PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS
     )
       throw failure("production_store_not_admitted");
     const metadata = control.validateBootstrap(bootstrapInput(options, authorityRootIdentity));
@@ -384,31 +385,31 @@ function provision(
       requireOpen();
       return rawStore.readGameSessionMetadata(input);
     },
-     listResumableGameSessions() {
-       requireOpen();
-       return rawStore.listResumableGameSessions();
-     },
-     registerGameSessionWorldBinding(input) {
-       requireOpen();
-       return rawStore.registerGameSessionWorldBinding(input);
-     },
-     readGameSessionWorldBinding(input) {
-       requireOpen();
-       return rawStore.readGameSessionWorldBinding(input);
-     },
-     markGameSessionWorldBindingTerminal(input) {
-       requireOpen();
-       return rawStore.markGameSessionWorldBindingTerminal(input);
-     },
-     readGameSessionWorldBindingSlotHolder(input) {
-       requireOpen();
-       return rawStore.readGameSessionWorldBindingSlotHolder(input);
-     },
-     releaseGameSessionWorldBindingSlot(input) {
-       requireOpen();
-       return rawStore.releaseGameSessionWorldBindingSlot(input);
-     },
-   });
+    listResumableGameSessions() {
+      requireOpen();
+      return rawStore.listResumableGameSessions();
+    },
+    registerGameSessionWorldBinding(input) {
+      requireOpen();
+      return rawStore.registerGameSessionWorldBinding(input);
+    },
+    readGameSessionWorldBinding(input) {
+      requireOpen();
+      return rawStore.readGameSessionWorldBinding(input);
+    },
+    markGameSessionWorldBindingTerminal(input) {
+      requireOpen();
+      return rawStore.markGameSessionWorldBindingTerminal(input);
+    },
+    readGameSessionWorldBindingSlotHolder(input) {
+      requireOpen();
+      return rawStore.readGameSessionWorldBindingSlotHolder(input);
+    },
+    releaseGameSessionWorldBindingSlot(input) {
+      requireOpen();
+      return rawStore.releaseGameSessionWorldBindingSlot(input);
+    },
+  });
   return Object.freeze({
     store,
     runtimeCwd,
