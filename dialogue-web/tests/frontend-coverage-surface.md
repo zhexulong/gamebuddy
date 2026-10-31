@@ -1,10 +1,12 @@
 # The frontend's uncovered surface, ranked
 
-Produced by the coverage run (`pnpm --filter @gamebuddy/dialogue-web test:coverage`) and
-regenerated from `coverage/summary.json` by
-`node dialogue-web/scripts/frontend-coverage-surface.mjs`. This file is the *reading*:
-the gate in `tests/frontend-coverage-report.mjs` protects the group floors, and this
-list says which untested behaviour a defect would hurt.
+The ranked reading is printed by the coverage run
+(`pnpm --filter @gamebuddy/dialogue-web test:coverage`);
+`node dialogue-web/scripts/frontend-coverage-surface.mjs` re-renders it from
+`coverage/summary.json` to stdout. This file is the *reading* of that output and is
+**hand-curated**, not generated - the script writes no file. The gate in
+`tests/frontend-coverage-report.mjs` protects the group floors, and this list says
+which untested behaviour a defect would hurt.
 
 Ranked by **"if this breaks, does the player get a state they cannot leave"** - not by
 percentage, and not by uncovered line count. A module at 0% that is imported by nothing
@@ -19,18 +21,25 @@ The families are `AGENTS.md`'s:
 - **stored-not-sent** - a value accepted and stored that never reaches the execution path.
 - **surface isolation** - a surface-specific instruction or tool binding leaking to another.
 
-## The two modules no journey reached
+## The two modules no mounted journey reached
+
+"No journey reached it" is a statement about the **mounted** population: the collector in
+`tests/frontend-coverage.ts` only measures pages a Playwright journey opened, so a module
+imported solely by a `node --test` spec reads 0% here while being well tested. That
+distinction is what the earlier version of this file got wrong, and it is why the two rows
+below now differ.
 
 | Module | Lines | Group | What it is | Why it matters |
 | --- | --- | --- | --- | --- |
-| `management-pipeline-session.ts` | 434 | state | The session object that owns the Management pipeline's `get`/`mutate` loop: reads a snapshot, applies a mutation, re-reads on revision conflict. | **This is the highest-risk gap in the tree.** It is the module a *lost draft* and a *zero-forward-path* both live in: a conflict path that stops re-reading leaves the player with a stale form and a save that can never land. It is reached by **no spec** - and, by a dead-import check, by **no module in `src`** either. See the finding below. |
-| `pi-settings-model.ts` | 154 | wire | The Pi settings projection: `en` defaulting, per-field localisation of model settings. | Same shape: no spec, no in-`src` importer. Its one behaviour a player would notice - a settings field shown in the wrong language - is asserted *about* its labels by `tests/player-visible-defects.spec.ts:374`, which checks the catalogue text but never calls the module. |
+| `management-pipeline-session.ts` | 434 | state | The session object that owns the Management pipeline's `get`/`mutate` loop: reads a snapshot, applies a mutation, re-reads on revision conflict. | **Deleted** in `f2159b13`. It was a second draft/revision authority over facts `SurfaceDrafts` now owns, and no module in `src` imported it - so mounting it would have created a second authority rather than fixing anything. Being unreachable, it could not have caused a runtime defect either: the draft-deadlock family and this coverage gap were separate findings. |
+| `pi-settings-model.ts` | 154 | wire | The Pi settings projection: `en` defaulting, per-field localisation of model settings. | **Kept: unmounted, but tested.** It has no mounted journey and no in-`src` importer, so it reads 0% above - but `tests/pi-settings-model.test.mjs` exercises it directly in 8 `node --test` cases, including the lossless-round-trip and partial-accept invariants for Pi's own `models.json`. A module that is unmounted but gated is library code, not residue. |
 
-**Finding, not an edit:** both modules are unreachable from `src` by static import. They
-look like the residue of a pipeline the product no longer mounts (the Management surface
-renders from `management-pipeline-api.ts` validators plus `management-panels.tsx`). A
-coverage gate cannot make that safe - only a deletion or a mount can. I did not delete
-them: that is a product decision, and `src/**` is held by other lanes this pass.
+**Finding, now resolved for one row:** neither module was reachable from `src` by static
+import. `management-pipeline-session.ts` was residue of a pipeline the product no longer
+mounts (the Management surface renders from `management-pipeline-api.ts` validators plus
+`management-panels.tsx`) and was deleted. `pi-settings-model.ts` looks the same by import
+graph but is not the same by risk: deleting it would delete a live gate on a named defect
+family, so it stays. What would still change the second answer is a mount, not a deletion.
 
 ## Ranked, highest risk first
 
