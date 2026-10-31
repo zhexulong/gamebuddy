@@ -170,9 +170,19 @@ public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Rele
 
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
 public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int NodeAttempt, string RequestId, string IdempotencyKey, string ExecutionId);
-/// <summary>Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.</summary>
+/// <summary>
+/// Action-owned terminal input. Successful results require receipt, evidence, and postcondition verification projections.
+///
+/// <para>
+/// <see cref="FailureCode"/> is the receipt's own `ReasonCode` for a terminal that did NOT succeed - `door_out_of_range`,
+/// `player_not_actionable`, `stamina_depleted`. It is deliberately NOT <see cref="Evidence"/>: ADR-006 defines evidence as
+/// the projection component that licenses `succeeded` (`:175`), so a node that claims no effect must not carry it. The
+/// reason is a third, disjoint statement ("why nothing happened") and lives in its own field, exactly as the ADR already
+/// decided for `Rejected`/`RejectionCode` (`:163`, "the code is not free-form text").
+/// </para>
+/// </summary>
 public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, IReadOnlyList<RuntimeFact>? Facts,
-    string? ReceiptId, string? Evidence, string? PostconditionVerification);
+    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims);
@@ -191,7 +201,14 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     string? Evidence = null,
     string? PostconditionVerification = null,
     string? RecoveryDiagnostic = null,
-    string? RejectionCode = null);
+    string? RejectionCode = null,
+    /// <summary>
+    /// Why a dispatched node settled without succeeding, in the action-owned receipt's own vocabulary. Legal only on
+    /// <see cref="BodyProgramNodeState.Failed"/> and <see cref="BodyProgramNodeState.Cancelled"/>; null everywhere else.
+    /// This is a reason, never proof of an effect - `ReceiptId`, `Evidence` and `PostconditionVerification` stay absent on
+    /// those states (ADR-006 `:163`, `:175`), which is what makes it safe to carry.
+    /// </summary>
+    string? FailureCode = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 /// <summary>Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.</summary>
@@ -267,6 +284,17 @@ internal static class BodyProgramValidation
     internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsValidRejectionCode(string? value) => value is "policy_denied" or "deadline_expired" or "resource_conflict" or "catalog_stale"
         or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch";
+    /// <summary>
+    /// The one spelling of the reason-code grammar on this side of the boundary: lowercase ASCII, digits, and `_`/`:`/`-`.
+    ///
+    /// <para>
+    /// A failure reason is a machine code, not prose (ADR-006 `:163` says the same of `RejectionCode`), and this is also
+    /// the grammar every wire reason code already uses - so <c>BridgeProtocol.IsReasonCode</c> delegates here rather than
+    /// restating the character class a second time.
+    /// </para>
+    /// </summary>
+    internal static bool IsReasonCode(string? value) => value is { Length: >= 1 and <= 128 } && value.All(character =>
+        (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or ':' or '-');
     internal static bool IsValidActionDescriptor(BodyProgramActionDescriptor? action) => action is not null && IsIdentifier(action.ActionId) && action.IdentityVersion > 0
         && (action.Metadata is null || IsOpaqueDescriptorMetadata(action.Metadata))
         && IsValidWatchdogMs(action.WatchdogMs)

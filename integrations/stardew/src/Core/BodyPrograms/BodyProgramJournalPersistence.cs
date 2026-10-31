@@ -5,10 +5,27 @@ using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
 
-/// <summary>Strict exact-key codec for the complete Mod-owned dynamic BodyProgramJournal/v1.</summary>
+/// <summary>
+/// Strict exact-key codec for the complete Mod-owned dynamic BodyProgramJournal.
+///
+/// <para>
+/// The class name and ADR-006 still call the authority `BodyProgramJournal/v1`; <see cref="SchemaVersion"/> is the
+/// PAYLOAD SHAPE number and moves independently of that name. It is 2 as of the `failureCode` node key.
+/// </para>
+/// </summary>
 public static class BodyProgramJournalPersistence
 {
-    public const int SchemaVersion = 1;
+    /// <summary>
+    /// The durable journal's shape version.
+    ///
+    /// <para>
+    /// RAISED 2026-10-31 from 1, which does not cover a node's `failureCode` key. ADR-006 requires a codec change to be
+    /// an explicit schema-version decision rather than a silent reinterpretation of the old shape: a v1 payload has no
+    /// `failureCode` key and must not be read as if it did, exactly as a v2 payload read by a v1 reader must not be.
+    /// There is no migration/dual-read path here by design - an unreadable journal is fail-closed (`Corrupt`).
+    /// </para>
+    /// </summary>
+    public const int SchemaVersion = 2;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -99,7 +116,7 @@ public static class BodyProgramJournalPersistence
             node.AttemptPolicyIdentity is null ? null : node.AttemptPolicyIdentity with { },
             node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership),
             node.DerivedDeadlineMs,
-            node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode)).ToArray()),
+            node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode, node.FailureCode)).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
@@ -161,7 +178,7 @@ public static class BodyProgramJournalPersistence
         {
             if (node.AdmissionAttempt != 0 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
-                || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null)
+                || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null || node.FailureCode is not null)
                 { refusal = "unattempted_shape"; return false; }
         }
         else
@@ -187,30 +204,38 @@ public static class BodyProgramJournalPersistence
         if (node.State == BodyProgramNodeState.Rejected)
         {
             if (!hasAttempt || node.RejectionCode is null || !BodyProgramValidation.IsValidRejectionCode(node.RejectionCode)
-                || node.RecoveryDiagnostic is not null || hasProof || node.GrantId is not null || node.ExecutionBinding is not null) { refusal = "rejected_shape"; return false; }
+                || node.RecoveryDiagnostic is not null || hasProof || node.GrantId is not null || node.ExecutionBinding is not null || node.FailureCode is not null) { refusal = "rejected_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.SkippedDependency)
         {
             if (hasAttempt || node.NodeAttempt != 0 || node.AdmissionAttempt != 0 || node.GrantId is not null || node.ExecutionBinding is not null
                 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
-                || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null) { refusal = "skipped_shape"; return false; }
+                || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null || node.FailureCode is not null) { refusal = "skipped_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.Succeeded)
         {
-            if (!hasAttempt || node.RejectionCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) { refusal = "succeeded_shape"; return false; }
+            if (!hasAttempt || node.RejectionCode is not null || node.FailureCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) { refusal = "succeeded_shape"; return false; }
         }
-        else if (node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running
-            or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)
+        else if (node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)
         {
-            if (node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null) { refusal = "ordinary_shape"; return false; }
+            // A dispatched node that did not succeed may name WHY - and only why. `FailureCode` is legal here because it
+            // states that no effect happened; `ReceiptId`/`Evidence`/`PostconditionVerification` stay forbidden because
+            // they are the proof an effect DID happen (ADR-006 `:175`), and `RejectionCode` because a deterministic veto
+            // is never represented by a failed native execution (ADR-006 `:163`).
+            if (node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null
+                || (node.FailureCode is not null && !BodyProgramValidation.IsReasonCode(node.FailureCode))) { refusal = "failed_shape"; return false; }
+        }
+        else if (node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running)
+        {
+            if (node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null || node.FailureCode is not null) { refusal = "ordinary_shape"; return false; }
         }
         else if (node.State == BodyProgramNodeState.Abandoned)
         {
             // An abandonment is only meaningful for a node that WAS dispatched: no attempt, nothing to abandon.
-            if (!hasAttempt || node.ExecutionBinding is null || node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null) { refusal = "abandoned_shape"; return false; }
+            if (!hasAttempt || node.ExecutionBinding is null || node.RejectionCode is not null || hasProof || node.RecoveryDiagnostic is not null || node.FailureCode is not null) { refusal = "abandoned_shape"; return false; }
         }
-        else if (node.State == BodyProgramNodeState.RecoveryRequired && (node.RejectionCode is not null || hasProof))
+        else if (node.State == BodyProgramNodeState.RecoveryRequired && (node.RejectionCode is not null || hasProof || node.FailureCode is not null))
         {
             return false;
         }
@@ -473,7 +498,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
@@ -483,8 +508,19 @@ public static class BodyProgramJournalPersistence
             || !ReadNullableDeadline(value.GetProperty("derivedDeadlineMs"), out long? derivedDeadline)
             || !ReadNullableProof(value.GetProperty("receiptId"), out string? receipt) || !ReadNullableProof(value.GetProperty("evidence"), out string? evidence)
              || !ReadNullableProof(value.GetProperty("postconditionVerification"), out string? postcondition) || !ReadNullableDiagnostic(value.GetProperty("recoveryDiagnostic"), out string? diagnostic)
-             || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode); return true;
+             || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)
+             || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)) return false;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode); return true;
+    }
+
+    /// <summary>
+    /// A null-or-reason-code field. Anything that is neither null nor a code in the reason-code grammar fails the whole
+    /// document closed: a malformed cause must never be read as "no cause", which is the defect this field exists to close.
+    /// </summary>
+    private static bool ReadNullableReasonCode(JsonElement value, out string? result)
+    {
+        result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsReasonCode(result));
     }
 
     private static bool ReadNullableDeadline(JsonElement value, out long? deadline)

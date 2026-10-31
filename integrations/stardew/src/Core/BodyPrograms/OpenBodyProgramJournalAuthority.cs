@@ -385,6 +385,7 @@ public sealed class OpenBodyProgramJournalAuthority
             PostconditionVerification = null,
             RecoveryDiagnostic = null,
             RejectionCode = code,
+            FailureCode = null,
         };
         HashSet<string> descendants = new(StringComparer.Ordinal);
         bool changed;
@@ -414,6 +415,7 @@ public sealed class OpenBodyProgramJournalAuthority
                 PostconditionVerification = null,
                 RecoveryDiagnostic = null,
                 RejectionCode = null,
+                FailureCode = null,
             }).ToArray();
         BodyProgramJournalProgram updated = ReplaceNode(program, rejected);
         foreach (BodyProgramJournalNode skippedNode in skipped) updated = ReplaceNode(updated, skippedNode);
@@ -475,9 +477,17 @@ public sealed class OpenBodyProgramJournalAuthority
         if (result.Outcome == BodyProgramNodeOutcome.Succeeded)
         {
             if (!BodyProgramValidation.IsOpaqueTerminalProof(result.ReceiptId) || !BodyProgramValidation.IsOpaqueTerminalProof(result.Evidence) || !BodyProgramValidation.IsOpaqueTerminalProof(result.PostconditionVerification)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.TerminalProofMissing);
+            // A success may not also name a failure reason: the two are different statements about the same tuple, and
+            // accepting both would let a reader pick whichever one it preferred.
+            if (result.FailureCode is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
             if (!ValidFactSet(descriptor!, grant, result.Facts)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.FactProvenanceMismatch);
         }
-        else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+        // A non-success terminal may carry WHY, and nothing that would read as proof of an effect: no facts, no receipt,
+        // no evidence, no postcondition. The reason is a reason code (ADR-006 `:163`: "the code is not free-form text"),
+        // and it is legal only on the two states that mean "dispatched, settled, no effect" - a Cancelled node and an
+        // Uncertain one (which settles as RecoveryRequired and already carries `RecoveryDiagnostic`) may not claim one.
+        else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null
+            || (result.FailureCode is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsReasonCode(result.FailureCode)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
@@ -491,6 +501,7 @@ public sealed class OpenBodyProgramJournalAuthority
             Evidence = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.Evidence : null,
             PostconditionVerification = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.PostconditionVerification : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
+            FailureCode = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.FailureCode : null,
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
@@ -522,6 +533,7 @@ public sealed class OpenBodyProgramJournalAuthority
                          PostconditionVerification = null,
                          RecoveryDiagnostic = null,
                          RejectionCode = null,
+                         FailureCode = null,
                          ClaimOwnership = null,
                      })
                      .ToArray()

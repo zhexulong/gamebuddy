@@ -616,7 +616,14 @@ public sealed record BridgeSnapshot(
     // silently did nothing. Null only while the world is not ready, like every sibling projection.
     // Defaulted and LAST for the same reason as its siblings above.
     int? CurrentToolSlot = null,
-    string? CurrentToolSlotItem = null);
+    string? CurrentToolSlotItem = null,
+    // Rows the container families' per-container window withheld from `ChestStoreTargets` / `ChestRetrieveTargets`.
+    // A row there is a (container, pack slot) or (container, chest item) PAIR, so the bound can withhold pairs a plan
+    // would otherwise never see; without the count an absent pair is indistinguishable from a container that does not
+    // hold one. Omitted (null) when nothing was withheld - a block that says "nothing was withheld" is pure cost on
+    // every clean observation. Defaulted and LAST for the same reason as their siblings above.
+    int? WithheldChestStoreTargets = null,
+    int? WithheldChestRetrieveTargets = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -1058,7 +1065,18 @@ int AdmissionAttempt,
 /// the model saw a bare state with no cause and retried the same shape four times. Omitted when null so an unrejected
 /// node keeps the wire shape it had.
 /// </para>
-string? RejectionCode = null
+string? RejectionCode = null,
+/// <summary>
+/// Why a dispatched node settled without succeeding - the action-owned receipt's own reason code (`door_out_of_range`,
+/// `player_not_actionable`, `stamina_depleted`). Present only on `failed`/`cancelled` nodes, omitted when null.
+///
+/// <para>
+/// The same defect as <see cref="RejectionCode"/>, one state over: `RouteReenteringBodyProgramExecutor` had the reason in
+/// hand and discarded it, so every native refusal reached the model as a bare `Failed` and the only thing it could do was
+/// send the same node again. This is a cause, never proof of an effect: `failed`/`cancelled` still carry no receipt,
+/// evidence, postcondition or facts (ADR-006 `:163`, `:175`).
+/// </para>
+string? FailureCode = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

@@ -2166,6 +2166,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (player is null)
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
         BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
+        // The container families publish a CROSS PRODUCT, so each one is projected once here and both halves are
+        // passed to the snapshot: the bound withholds rows, and the count it withheld travels beside them so an
+        // absent (container, slot|item) pair is legible as "not published" rather than "not there".
+        IReadOnlyList<BridgeChestStoreTarget>? chestStoreTargets = null;
+        int? withheldChestStoreTargets = null;
+        if (advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal))
+        {
+            chestStoreTargets = DiscoverChestStoreTargets(player, out int withheldStore);
+            withheldChestStoreTargets = withheldStore > 0 ? withheldStore : null;
+        }
+        IReadOnlyList<BridgeChestRetrieveTarget>? chestRetrieveTargets = null;
+        int? withheldChestRetrieveTargets = null;
+        if (advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal))
+        {
+            chestRetrieveTargets = DiscoverChestRetrieveTargets(player, out int withheldRetrieve);
+            withheldChestRetrieveTargets = withheldRetrieve > 0 ? withheldRetrieve : null;
+        }
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2241,8 +2258,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
-            advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal) ? DiscoverChestStoreTargets(player) : null,
-            advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal) ? DiscoverChestRetrieveTargets(player) : null,
+            advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal) ? chestStoreTargets : null,
+            advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal) ? chestRetrieveTargets : null,
             (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
@@ -2318,7 +2335,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
             // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
             CurrentToolSlot: player.CurrentToolIndex,
-            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex)
+            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
+            // Rows the container families' per-container window withheld, next to the rows they are missing from.
+            // Null (omitted on the wire) when nothing was withheld: a block that says "nothing was withheld" is
+            // pure cost on every clean observation.
+            WithheldChestStoreTargets: withheldChestStoreTargets,
+            WithheldChestRetrieveTargets: withheldChestRetrieveTargets
         );
     }
 
@@ -2602,6 +2624,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
 
+    /// <summary>
+    /// The villagers a plan can name on this map, each with the relationship the engine holds for them.
+    ///
+    /// <para>
+    /// A villager the player has never met has NO `friendshipData` entry, so a filter on that key published every
+    /// villager EXCEPT the ones an introduction is for - the game's own Introductions quest and any first meeting were
+    /// impossible, because the companion could not talk to anyone it did not already know. The native entry creates the
+    /// record on that first conversation (`NPC.checkAction`, `friendshipData.Add(name, new Friendship(0))`), so the
+    /// zeroed relationship below is the state the engine is about to write, not an invention. A MET villager's own
+    /// record is published untouched.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<BridgeNpcRelationshipTarget> DiscoverNpcRelationshipTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
@@ -2614,12 +2648,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // local discovery envelope used by this native-local fixture.
                 // Execution still independently enforces its one-tile native
                 // interaction radius after a separately receipted move.
-                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius)
-                && player.friendshipData.ContainsKey(npc.Name))
+                && IsTileWithinChebyshevRadius(player, (int)npc.Tile.X, (int)npc.Tile.Y, TargetDiscoveryRadius))
             .Take(64)
             .Select(npc =>
             {
-                Friendship friendship = player.friendshipData[npc.Name];
+                Friendship friendship = player.friendshipData.TryGetValue(npc.Name, out Friendship? record)
+                    ? record
+                    : new Friendship();
                 return new BridgeNpcRelationshipTarget(
                     BuildNpcRelationshipTargetId(location, npc.Name),
                     (int)npc.Tile.X,
@@ -2855,7 +2890,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
                 && !tree.hasMoss.Value
                 && !tree.tapped.Value
-                && tree.health.Value == 1f
+                // HEALTH IS DURABILITY, NOT A FLAG. A mature tree starts at `health.Value = 10f`
+                // (Tree.cs:187/203) and is felled when it reaches `<= 0f` (Tree.cs:587). This read `== 1f`, which is a
+                // tree one axe swing from falling - so every living tree in the world was invisible to the discovery
+                // radar, while `observe_scene` still advertised it as choppable and the execution precheck refused. The
+                // value came from a unit test that stubbed a one-hit tree.
+                //
+                // `> 0f` is the same predicate the engine uses to decide the tree is still standing.
+                && tree.health.Value > 0f
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
                 && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
@@ -2941,7 +2983,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int heldStacks = player.Items
             .OfType<StardewValley.Object>()
             .Count(item => StardewValley.Object.isWildTreeSeed(item.ItemId) && item.Stack >= 1);
-        int rowLimit = PlantableTargetRows.PerSlotRowLimit(heldStacks);
+        int rowLimit = TargetRowBudget.PerKeyRowLimit(heldStacks, TargetRowBudget.PlanNodes);
         List<BridgeTreeSaplingTarget> result = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {
@@ -3561,43 +3603,108 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
-    private IReadOnlyList<BridgeChestStoreTarget> DiscoverChestStoreTargets(Farmer player)
+    /// <summary>
+    /// Every (container, storable pack slot) pair the Farmhand could name, and how many the bound withheld.
+    ///
+    /// <para>
+    /// `chest_store` names BOTH halves - the container through `expectedTargetId` and the item through `slot` +
+    /// `expectedQualifiedItemId` - and the body re-reads both. Publishing one slot for every container answered a
+    /// question nobody asked: a companion carrying weeds in slot 1 and diamonds in slot 5 could only ever store the
+    /// weeds. Each container therefore publishes its own window of storable slots (`TargetRowBudget`, nearest
+    /// container first), and the pairs beyond that window are counted rather than silently dropped, so an absent
+    /// slot reads as "not published" instead of "not carried".
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<BridgeChestStoreTarget> DiscoverChestStoreTargets(Farmer player, out int withheld)
     {
+        withheld = 0;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeChestStoreTarget>();
-        // Advertise one storable inventory slot per container: the first
-        // non-tool, non-empty item the Farmhand could move into it.
-        int slot = FindFirstStorableSlot(player);
-        if (slot < 0) return Array.Empty<BridgeChestStoreTarget>();
-        StardewValley.Item item = player.Items[slot]!;
+        List<int> storableSlots = StorablePackSlots(player);
+        if (storableSlots.Count == 0) return Array.Empty<BridgeChestStoreTarget>();
+        List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> containers = OrderedStorageContainers(player, location);
+        int rowLimit = TargetRowBudget.PerKeyRowLimit(containers.Count, StardewValley.Objects.Chest.capacity);
         List<BridgeChestStoreTarget> result = new();
-        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in DiscoverStorageContainers(player, location))
+        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in containers)
         {
-            result.Add(new BridgeChestStoreTarget(
-                BuildContainerTargetId(location, x, y, chest, isFridge),
-                x, y, slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
-            if (result.Count >= 16) break;
+            string targetId = BuildContainerTargetId(location, x, y, chest, isFridge);
+            int published = 0;
+            foreach (int slot in storableSlots)
+            {
+                if (published >= rowLimit) break;
+                StardewValley.Item item = player.Items[slot]!;
+                result.Add(new BridgeChestStoreTarget(targetId, x, y, slot, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
+                published++;
+            }
+            withheld += storableSlots.Count - published;
         }
         return result;
     }
 
-    private IReadOnlyList<BridgeChestRetrieveTarget> DiscoverChestRetrieveTargets(Farmer player)
+    /// <summary>
+    /// Every (container, retrievable chest item) pair the Farmhand could name, and how many the bound withheld.
+    ///
+    /// <para>
+    /// The row is one container and one ITEM, because that is what `chest_retrieve` selects on: the body resolves
+    /// `expectedQualifiedItemId` through `GetItemsForPlayer().FirstOrDefault(...)` and never reads the `slot` argument,
+    /// so two stacks of one item id are one address and are published once. Publishing only the first item of every
+    /// chest left the rest of a full chest unnameable. Each container publishes its own window of distinct items
+    /// (`TargetRowBudget`), nearest container first, in the chest's own inventory order.
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<BridgeChestRetrieveTarget> DiscoverChestRetrieveTargets(Farmer player, out int withheld)
     {
+        withheld = 0;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeChestRetrieveTarget>();
+        List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> containers = OrderedStorageContainers(player, location);
+        int rowLimit = TargetRowBudget.PerKeyRowLimit(containers.Count, StardewValley.Objects.Chest.capacity);
         List<BridgeChestRetrieveTarget> result = new();
-        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in DiscoverStorageContainers(player, location))
+        foreach ((StardewValley.Objects.Chest chest, int x, int y, bool isFridge) in containers)
         {
-            StardewValley.Item? first = chest.GetItemsForPlayer().FirstOrDefault(item => item is not null && item.Stack > 0);
-            if (first is null) continue;
-            if (!player.couldInventoryAcceptThisItem(first)) continue;
-            result.Add(new BridgeChestRetrieveTarget(
-                BuildContainerTargetId(location, x, y, chest, isFridge),
-                x, y, first.QualifiedItemId, RequireDisplayName(first.QualifiedItemId), first.Stack));
-            if (result.Count >= 16) break;
+            string targetId = BuildContainerTargetId(location, x, y, chest, isFridge);
+            List<StardewValley.Item> items = DistinctRetrievableItems(chest, player);
+            int published = 0;
+            foreach (StardewValley.Item item in items)
+            {
+                if (published >= rowLimit) break;
+                result.Add(new BridgeChestRetrieveTarget(targetId, x, y, item.QualifiedItemId, RequireDisplayName(item.QualifiedItemId), item.Stack));
+                published++;
+            }
+            withheld += items.Count - published;
         }
         return result;
     }
+
+    /// <summary>The distinct items a `chest_retrieve` could actually move, in the chest's own inventory order.</summary>
+    private static List<StardewValley.Item> DistinctRetrievableItems(StardewValley.Objects.Chest chest, Farmer player)
+    {
+        List<StardewValley.Item> items = new();
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        foreach (StardewValley.Item? item in chest.GetItemsForPlayer())
+        {
+            if (item is null || item.Stack <= 0) continue;
+            // One address per item id: the body takes the first stack whose id matches, so a second stack of the
+            // same item is not a second target.
+            if (!seen.Add(item.QualifiedItemId)) continue;
+            if (!player.couldInventoryAcceptThisItem(item)) continue;
+            items.Add(item);
+        }
+        return items;
+    }
+
+    /// <summary>
+    /// The eligible storage containers in the order a plan would reach them. `DiscoverStorageContainers` walks the
+    /// object layer, which is a hash map with no spatial order of its own, so the nearest-first ranking is applied
+    /// before the per-container window decides which rows survive.
+    /// </summary>
+    private static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
+        Farmer player, StardewValley.GameLocation location) =>
+        DiscoverStorageContainers(player, location)
+            .OrderBy(container => ChebyshevDistance(player, container.X, container.Y))
+            .ThenBy(container => container.X)
+            .ThenBy(container => container.Y)
+            .ToList();
 
     /// <summary>
     /// Every eligible storage container in discovery range: player-owned ordinary
@@ -3677,15 +3784,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius);
 
-    private static int FindFirstStorableSlot(Farmer player)
+    /// <summary>
+    /// Every pack slot `chest_store` could move an item out of: non-empty, not a tool, in pack order.
+    ///
+    /// One slot per call was the defect: the family published the FIRST storable slot for every container, so a
+    /// companion carrying two kinds of item could only ever store the one the pack happened to hold first.
+    /// </summary>
+    private static List<int> StorablePackSlots(Farmer player)
     {
+        List<int> slots = new();
         for (int slot = 0; slot < player.Items.Count; slot++)
         {
             StardewValley.Item? item = player.Items[slot];
             if (item is not null && item.Stack > 0 && item is not Tool)
-                return slot;
+                slots.Add(slot);
         }
-        return -1;
+        return slots;
     }
 
     private static string BuildChestTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Objects.Chest chest)
@@ -3931,7 +4045,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int heldStacks = player.Items
             .OfType<StardewValley.Object>()
             .Count(item => item.Category == StardewValley.Object.SeedsCategory);
-        int rowLimit = PlantableTargetRows.PerSlotRowLimit(heldStacks);
+        int rowLimit = TargetRowBudget.PerKeyRowLimit(heldStacks, TargetRowBudget.PlanNodes);
         List<BridgeSeedTarget> result = new();
         foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
         {

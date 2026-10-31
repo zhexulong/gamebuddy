@@ -1153,6 +1153,54 @@ public sealed class BridgeBodyProgramProtocolTests
     private static string IntegerCandidatePayload(string canonicalValue) =>
         "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"arguments\":{\"tile\":{\"type\":\"integer\",\"canonicalValue\":\"" + canonicalValue + "\"}},\"dependsOn\":[],\"bindings\":{}}]}";
 
+    /// <summary>
+    /// The node-status projection must carry the cause codes, or the model reads a bare state.
+    ///
+    /// <para>
+    /// This is the SECOND time a reason was written on the node and dropped here: `RejectionCode` was added for the
+    /// admission-veto case after a run retried the same refused shape four times, and `FailureCode` is the same defect for
+    /// a dispatched refusal. Both are optional keys whose presence depends on the node's state, so neither can be a fixed
+    /// tail - and one projection (`BridgeProtocol`) silently dropped `RejectionCode` while the other (`BridgeSession`)
+    /// carried it, which is exactly how a reason reaches one caller and not the next.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void BodyProgramNodeStatusCarriesBothCauseCodesAndRoundTrips()
+    {
+        var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Failed, 7, 2, 11, new[]
+        {
+            new BodyProgramJournalNode("first", BodyProgramNodeState.Failed, 3, 4, null, null, FailureCode: "door_out_of_range"),
+            new BodyProgramJournalNode("second", BodyProgramNodeState.Rejected, 3, 4, null, null, RejectionCode: "policy_denied"),
+            new BodyProgramJournalNode("third", BodyProgramNodeState.Succeeded, 3, 4, null, null),
+        });
+
+        BridgeBodyProgramStatusResult projected = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
+        BridgeProtocol.TrySerialize(projected, out string json, out string serializeReason).Should().BeTrue(serializeReason);
+
+        using (JsonDocument document = JsonDocument.Parse(json))
+        {
+            JsonElement nodes = document.RootElement.GetProperty("snapshot").GetProperty("nodes");
+            nodes[0].GetProperty("failureCode").GetString().Should().Be("door_out_of_range");
+            nodes[1].GetProperty("rejectionCode").GetString().Should().Be("policy_denied");
+            // Null causes stay off the wire, so a node that has neither keeps the shape it always had.
+            nodes[2].TryGetProperty("failureCode", out _).Should().BeFalse();
+            nodes[2].TryGetProperty("rejectionCode", out _).Should().BeFalse();
+        }
+
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", json), out BridgeEnvelope<BridgeBodyProgramStatusResult>? envelope, out string reason).Should().BeTrue(reason);
+        envelope!.Payload.Snapshot!.Nodes[0].FailureCode.Should().Be("door_out_of_range");
+        envelope.Payload.Snapshot.Nodes[1].RejectionCode.Should().Be("policy_denied");
+        envelope.Payload.Snapshot.Nodes[2].FailureCode.Should().BeNull();
+    }
+
+    [Fact]
+    public void BodyProgramNodeStatusRejectsAReasonThatIsNotACode()
+    {
+        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"state\":\"failed\",\"nodeAttempt\":3,\"admissionAttempt\":4,\"failureCode\":\"Door Out Of Range\"}]}}";
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
     [Fact]
     public void ResultProjectionIncludesStatusHighWaterAndEventContinuationFields()
     {

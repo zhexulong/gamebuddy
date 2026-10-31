@@ -70,23 +70,26 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     {
         ArgumentNullException.ThrowIfNull(grant);
         ArgumentNullException.ThrowIfNull(execution);
+        // Every non-success arm names WHY. Empty facts, not null: the authority refuses a null fact set for a non-success
+        // outcome, so a fail-closed terminal that carried null was rejected as InvalidInput and the node ended unknown
+        // instead of Failed. The reason rides `FailureCode` - never `Evidence`, which ADR-006 defines as the component
+        // that licenses `succeeded` - because a bare `Failed` is a failure the companion can only retry blind.
         if (grant.ExecutionBinding is null || !Equals(execution, grant.ExecutionBinding))
-            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
-            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
+            return Failed(execution, "execution_binding_mismatch");
 
-        if (!TryBuildExecutionRequest(grant, execution, out BridgeExecutionRequest? request, out _))
-            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
-            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
+        if (!TryBuildExecutionRequest(grant, execution, out BridgeExecutionRequest? request, out string projectionReason))
+            return Failed(execution, projectionReason);
 
-        if (!this.router.TryRoute(request!, this.ledger, execution.ExecutionId, out LocalExecutionReceipt receipt, out _))
-            // Empty facts, not null: the authority refuses a null fact set for a non-success outcome, so a fail-closed
-            // terminal that carried null was rejected as InvalidInput and the node ended unknown instead of Failed.
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
+        if (!this.router.TryRoute(request!, this.ledger, execution.ExecutionId, out LocalExecutionReceipt receipt, out string routeReason))
+            return Failed(execution, routeReason);
 
         return ToTerminal(grant, execution, receipt);
     }
+
+    /// <summary>A refusal before any native dispatch: it has a reason and no effect, so it carries the reason only.</summary>
+    private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode) =>
+        new(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null,
+            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null);
 
     /// <summary>
     /// Projects the validated canonical arguments onto the wire argument shape
@@ -314,10 +317,11 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     receipt.Evidence,
                     $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
             case BodyProgramNodeOutcome.Cancelled:
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null);
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode);
             case BodyProgramNodeOutcome.Uncertain:
                 // A terminal the action minted: it ran, and its own postcondition could not confirm the effect. It must
-                // NOT be retried (the side effect may already exist), so it settles the node as the unknown it is.
+                // NOT be retried (the side effect may already exist), so it settles the node as the unknown it is. Its
+                // reason is `RecoveryDiagnostic`, not `FailureCode`: the outcome is unknown, not a known non-effect.
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Uncertain, Array.Empty<RuntimeFact>(), null, null, null);
             default:
                 // Failed, and the authority refuses this shape for a non-success outcome: `TryComplete` requires Facts
@@ -326,7 +330,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // every Failed/Rejected node fail that gate as InvalidInput, and the controller then replaced it with an
                 // unknown settlement - which is how a one-frame animation cooldown (`player_not_actionable`) quarantined
                 // a whole save scope (measured 2026-10-19: node h2 of east_harvest, on disk).
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null);
+                //
+                // The receipt's own reason code DOES travel, in `FailureCode`. It was dropped here, so `door_out_of_range`
+                // reached the companion as a bare `Failed` and it re-sent the same doomed node; the reason is a statement
+                // about why nothing happened, not proof that something did, so it cannot be confused with the evidence
+                // the success path requires.
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode);
         }
     }
 

@@ -469,8 +469,65 @@ public sealed class BodyProgramAuthorityTests
          // produced it from one `door_out_of_range`.
          program.Nodes.Single(node => node.NodeId == "second").State.Should().Be(BodyProgramNodeState.SkippedDependency);
     }
+    /// <summary>
+    /// A node that was dispatched and refused must hand the model the reason, not just the verdict.
+    ///
+    /// <para>
+    /// Measured 2026-10-25: `exit_house` was refused `door_out_of_range` from six tiles away. The journal recorded
+    /// `Failed`, the reason was discarded by the executor, and `stardew_action_program_status` answered a bare `failed`
+    /// node - so the companion re-sent the same doomed node. This asserts BOTH halves: the reason survives to the status
+    /// the model reads and through a reopen, AND the node still presents no proof of an effect (ADR-006 `:175`).
+    /// </para>
+    /// </summary>
     [Fact]
-    public void ReopenRejectsPersistedFactWithTamperedOutputKind()
+    public void AFailedNodeSurfacesItsReasonCodeWithoutPresentingProofOfAnEffect()
+    {
+        var store = new MemoryStore(); var authority = Open(store);
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+        grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+        authority.TryComplete(grant, TerminalReason(grant, BodyProgramNodeOutcome.Failed, "door_out_of_range")).IsSuccess.Should().BeTrue();
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        BodyProgramJournalNode failed = status.Nodes.Single(node => node.NodeId == "first");
+        failed.State.Should().Be(BodyProgramNodeState.Failed);
+        failed.FailureCode.Should().Be("door_out_of_range", "the model reads this node through `stardew_action_program_status`; a reason it cannot read is no reason");
+        failed.ReceiptId.Should().BeNull("a node claiming no effect must not present proof of one");
+        failed.Evidence.Should().BeNull();
+        failed.PostconditionVerification.Should().BeNull();
+
+        OpenBodyProgramJournalAuthority reopened = Open(store);
+        BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? reason).Should().BeTrue(reason);
+        reopened.Snapshot.Programs.Single().Nodes.Single(node => node.NodeId == "first").FailureCode
+            .Should().Be("door_out_of_range", "the reason is part of the durable node, not a transient projection");
+    }
+
+    [Fact]
+    public void AFailureReasonIsRefusedWhereItWouldBeASecondClaim()
+    {
+        var store = new MemoryStore(); var authority = Open(store);
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+        grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+        // A success may not also name a failure: accepting both would let a reader pick whichever it preferred.
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition", "door_out_of_range"))
+            .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        // Nor may a reason that is not a code: ADR-006 is explicit that "the code is not free-form text".
+        authority.TryComplete(grant, TerminalReason(grant, BodyProgramNodeOutcome.Failed, "Door Out Of Range"))
+            .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+        // Nor may an UNKNOWN outcome claim one: it settles as RecoveryRequired, whose reason is `RecoveryDiagnostic`.
+        authority.TryComplete(grant, TerminalReason(grant, BodyProgramNodeOutcome.Uncertain, "door_out_of_range"))
+            .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+
+        // Nothing was mutated by any of the three refusals.
+        authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+        BodyProgramJournalPersistence.TryValidate(authority.Snapshot, out string? refusal).Should().BeTrue(refusal);
+    }
+
+     [Fact]
+     public void ReopenRejectsPersistedFactWithTamperedOutputKind()
     {
         var store = new MemoryStore(); var authority = Open(store);
         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
@@ -1620,6 +1677,7 @@ public sealed class BodyProgramAuthorityTests
     private static NodeExecutionBinding Execution(HostAdmissionGrant grant) => grant.ExecutionBinding!;
     private static BodyProgramTerminalResult TerminalSuccess(HostAdmissionGrant grant, RuntimeFact fact) => new(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt-1", "evidence-1", "postcondition-1");
     private static BodyProgramTerminalResult TerminalOutcome(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome) => new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null);
+    private static BodyProgramTerminalResult TerminalReason(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, string failureCode) => new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null, failureCode);
     private static BodyProgramTerminalResult TerminalWithFact(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, RuntimeFact fact) => new(Execution(grant), outcome, new[] { fact }, null, null, null);
     private static BodyProgramActionCatalog MultiFactCatalog() => new(7, new[]
     {

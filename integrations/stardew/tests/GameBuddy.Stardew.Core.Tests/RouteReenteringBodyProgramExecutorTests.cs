@@ -135,6 +135,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.ReceiptId.Should().Be("exec_inspect_1", "the ReceiptId is the tuple-bound opaque note, not an invented identity");
         terminal.Evidence.Should().Contain("location=town", "evidence is the verbatim native live-state string, unparsed");
         terminal.PostconditionVerification.Should().NotBeNullOrWhiteSpace();
+        terminal.FailureCode.Should().BeNull("a success states no failure reason - the two are different claims about the same tuple");
         ledger.BoundActionId.Should().Be("machine_inspect");
         ledger.BoundExecutionId.Should().Be("exec_inspect_1", "the dispatch identity is bound to the tuple execution id");
 
@@ -203,6 +204,102 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
         terminal.Facts.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A native refusal must reach the caller WITH its own reason code.
+    ///
+    /// <para>
+    /// Measured 2026-10-25: `exit_house` was refused `door_out_of_range` from six tiles away. The receipt carried the
+    /// code and its evidence carried `actor=60,26;distance=6`, and `ToTerminal` dropped both, so the journal node read as
+    /// a bare `Failed`. A companion told only "failed" has one move: send the same node again. That is the retry-blind
+    /// loop this pins shut.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NativeRefusal_SurfacesTheReceiptsReasonCodeAndNothingThatLooksLikeProof()
+    {
+        (FarmhandActionRouter router, StubLedger ledger) = RouterWithMachineInspect(
+            new RefusingHandler(ExecutionState.Rejected, "door_out_of_range", "source=64,14;door=64,14;actor=60,26;distance=6"));
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+
+        BodyProgramTerminalResult? terminal = executor.Execute(Grant("target"), Binding());
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
+        terminal.FailureCode.Should().Be("door_out_of_range", "the refusal's own code is the fact that lets the companion change its approach");
+        // The other half of the contract: a reason is not proof of an effect.
+        terminal.Facts.Should().BeEmpty("a failure carries no facts");
+        terminal.ReceiptId.Should().BeNull("a failure carries no receipt projection");
+        terminal.Evidence.Should().BeNull("ADR-006 :175 defines evidence as the component that licenses `succeeded`");
+        terminal.PostconditionVerification.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Every receipt state that settles a node without succeeding must carry its reason through - the failure class, not
+    /// the one measured instance.
+    /// </summary>
+    [Theory]
+    [InlineData(ExecutionState.Failed, "player_not_actionable")]
+    [InlineData(ExecutionState.Rejected, "door_out_of_range")]
+    [InlineData(ExecutionState.Blocked, "world_not_ready")]
+    [InlineData(ExecutionState.Expired, "deadline_passed")]
+    [InlineData(ExecutionState.PartiallySucceeded, "partial_harvest")]
+    [InlineData(ExecutionState.Cancelled, "stop_requested")]
+    [InlineData(ExecutionState.Invalidated, "premise_invalidated")]
+    public void EverySettledNonSuccessReceiptCarriesItsReasonThrough(ExecutionState state, string reasonCode)
+    {
+        (FarmhandActionRouter router, StubLedger ledger) = RouterWithMachineInspect(new RefusingHandler(state, reasonCode, "detail=1"));
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+
+        BodyProgramTerminalResult? terminal = executor.Execute(Grant("target"), Binding());
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().NotBe(BodyProgramNodeOutcome.Succeeded);
+        terminal.FailureCode.Should().Be(reasonCode, $"{state} settles the node, so its reason must survive the projection");
+        terminal.Facts.Should().BeEmpty();
+        terminal.Evidence.Should().BeNull();
+    }
+
+    /// <summary>A refusal from the router, before any handler ran: the router's own reason must not be discarded.</summary>
+    [Fact]
+    public void RouterRefusal_SurfacesTheRouterReason()
+    {
+        (FarmhandActionRouter router, StubLedger ledger) = RouterWithMachineInspect();
+        var executor = new RouteReenteringBodyProgramExecutor(router, ledger);
+        NodeExecutionBinding binding = new("p", "node", 1, "req_x", "idem_x", "exec_x");
+        HostAdmissionGrant grant = new(
+            "p", "node", 1, 1, 0, 7, Policy, "no_such_action",
+            new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal),
+            new Dictionary<string, string>(StringComparer.Ordinal), 1000,
+            "grant-x", "attachment_01", "host-policy_01", binding);
+
+        BodyProgramTerminalResult? terminal = executor.Execute(grant, binding);
+
+        terminal.Should().NotBeNull();
+        terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
+        terminal.FailureCode.Should().Be("action_not_available", "the router already computed the cause; dropping it is what leaves the companion guessing");
+    }
+
+    private sealed class RefusingHandler : IFarmhandActionHandler
+    {
+        private readonly ExecutionState state;
+        private readonly string reasonCode;
+        private readonly string evidence;
+        public RefusingHandler(ExecutionState state, string reasonCode, string evidence)
+        {
+            this.state = state;
+            this.reasonCode = reasonCode;
+            this.evidence = evidence;
+        }
+        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
+        {
+            string executionId = ledger is IDispatchExecutionLedger dispatchLedger
+                && dispatchLedger.TryGetBoundExecutionId(request.RequestId, out string boundExecutionId)
+                ? boundExecutionId
+                : "exec_unbound";
+            return ledger.RememberTerminal(request.RequestId, executionId, this.state, this.reasonCode, this.evidence);
+        }
     }
 
     [Fact]
@@ -372,6 +469,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
         terminal.Facts.Should().BeEmpty();
+        terminal.FailureCode.Should().Be("invalid_destination_selector", "the projection named the cause and the caller must be able to read it");
         handler.SeenDestination.Should().BeNull("the invalid selector must never reach the native dispatch");
     }
 

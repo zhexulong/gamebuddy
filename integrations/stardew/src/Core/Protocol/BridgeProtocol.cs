@@ -376,8 +376,10 @@ public static class BridgeProtocol
     public static bool IsOpaqueId(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
         (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
 
-    public static bool IsReasonCode(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
-        (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or ':' or '-');
+    /// <summary>
+    /// The reason-code grammar, defined once in <see cref="BodyProgramValidation.IsReasonCode"/> (a code, never prose).
+    /// </summary>
+    public static bool IsReasonCode(string? value) => BodyProgramValidation.IsReasonCode(value);
 
     private static bool IsValidNavigationReadResult(BridgeNavigationReadResult result)
     {
@@ -897,7 +899,9 @@ public static class BridgeProtocol
         && IsOpaqueId(node.NodeId)
         && IsBodyProgramNodeState(node.State)
 && IsJavaScriptSafeInteger(node.NodeAttempt)
-         && IsJavaScriptSafeInteger(node.AdmissionAttempt);
+         && IsJavaScriptSafeInteger(node.AdmissionAttempt)
+         && (node.RejectionCode is null || IsReasonCode(node.RejectionCode))
+         && (node.FailureCode is null || IsReasonCode(node.FailureCode));
 
 private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @event is not null
          && IsJavaScriptSafeInteger(@event.Cursor)
@@ -920,9 +924,19 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactProperties(value, "nodeId", "state", "nodeAttempt", "admissionAttempt")
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
-         && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0;
+         && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
+         && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode");
+
+    /// <summary>
+    /// An optional node-status cause code: absent, JSON null (the serializer omits nulls, but an explicit null comes from
+    /// the other side's model), or a code in the reason-code grammar.
+    /// </summary>
+    private static bool IsAbsentNullOrReasonCode(JsonElement value, string name) =>
+        !value.TryGetProperty(name, out JsonElement property)
+        || property.ValueKind == JsonValueKind.Null
+        || (property.ValueKind == JsonValueKind.String && IsReasonCode(property.GetString()));
 
     private static bool IsValidBodyProgramEvent(JsonElement value) => HasExactProperties(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt")
         && value.GetProperty("cursor").TryGetInt64(out long cursor) && cursor >= 0 && cursor <= BodyProgramValidation.MaximumJavaScriptSafeInteger && ReadOpaqueString(value.GetProperty("programId"), out _)
@@ -1009,7 +1023,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static BridgeBodyProgramStatusSnapshot ProjectBodyProgramStatusSnapshot(BodyProgramStatusSnapshot snapshot) =>
         new(snapshot.ProgramId, snapshot.State.ToWireValue(), snapshot.CatalogRevision, snapshot.StopEpoch, snapshot.EventHighWater,
-            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt)).ToArray());
+            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode)).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)
     {
@@ -1454,6 +1468,29 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             actionHint,
             reachable);
         return true;
+    }
+
+    /// <summary>
+    /// The exact-required set plus a NAMED set of keys that may be present or absent, in any combination: unknown and
+    /// duplicated names still fail, and absence is not a fixed tail.
+    ///
+    /// <para>
+    /// This exists because the two node-status cause codes are mutually exclusive by state - a `rejected` node carries
+    /// `rejectionCode`, a `failed` one carries `failureCode` - so no declaration order can express both as an optional
+    /// tail. It mirrors the Host's <c>hasExactKeysOrOptional</c> so the two sides state the same rule once.
+    /// </para>
+    /// </summary>
+    private static bool HasExactPropertiesOrOptional(JsonElement value, string[] required, string[] optional)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return false;
+        HashSet<string> requiredNames = new(required, StringComparer.Ordinal);
+        HashSet<string> optionalNames = new(optional, StringComparer.Ordinal);
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in value.EnumerateObject())
+        {
+            if ((!requiredNames.Contains(property.Name) && !optionalNames.Contains(property.Name)) || !seen.Add(property.Name)) return false;
+        }
+        return requiredNames.All(seen.Contains);
     }
 
     /// <summary>
