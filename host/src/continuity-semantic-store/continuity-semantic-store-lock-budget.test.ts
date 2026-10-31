@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import test from "node:test";
@@ -689,6 +689,107 @@ test("pure reads answer while a writer holds the lock, so no read waits out the 
       }
     });
   });
+});
+
+/**
+ * A commit interrupted by a real process kill: the database reopens, the last COMMITTED transaction is
+ * present, the interrupted one is absent, and no human has to touch anything.
+ *
+ * The kill is `process.kill` on a real child mid-transaction - not a thrown error and not a closed
+ * handle - because those are the cases the runtime already handles. A power loss or a `taskkill` on
+ * the Host is what a player actually experiences as "GameBuddy will not start", and it leaves a
+ * `-journal` file (DELETE mode) or `-wal`/`-shm` (WAL) behind that recovery has to consume.
+ *
+ * Both journal modes are driven through their REAL store code paths here rather than through SQL, so
+ * what recovers is the store a player runs.
+ */
+test("the semantic store survives a killed commit and reopens with the committed history intact", async () => {
+  const subject = fixtureRoot();
+  const childPath = join(subject.root, "killed-writer.mjs");
+  // The child commits one row, says so, then starts a second transaction and dies inside it without
+  // ever reaching COMMIT. The row it already committed is the one recovery must keep.
+  writeFileSync(
+    childPath,
+    [
+      'import { DatabaseSync } from "node:sqlite";',
+      'import { writeFileSync } from "node:fs";',
+      "const [dbPath, markerPath] = process.argv.slice(2);",
+      "const db = new DatabaseSync(dbPath);",
+      'db.exec("PRAGMA busy_timeout=10000");',
+      'db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");',
+      'db.exec("BEGIN IMMEDIATE");',
+      `db.prepare("INSERT INTO production_game_session_metadata VALUES(?,?,?,?,?,?)").run("kept-row", "kept-request", "stardew", null, "failed", 2);`,
+      'db.exec("COMMIT");',
+      'db.exec("BEGIN IMMEDIATE");',
+      `db.prepare("INSERT INTO production_game_session_metadata VALUES(?,?,?,?,?,?)").run("lost-row", "lost-request", "stardew", null, "failed", 2);`,
+      // Written INSIDE the open transaction, so the parent knows the interruption landed after the
+      // insert and before any COMMIT.
+      'writeFileSync(markerPath, "uncommitted");',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+  );
+  const markerPath = join(subject.root, "marker.txt");
+  const child = spawn(process.execPath, [childPath, join(subject.root, DATABASE), markerPath], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setInterval(() => {
+      if (!existsSync(markerPath)) return;
+      clearInterval(timer);
+      resolve();
+    }, 20);
+    child.once("error", reject);
+    child.once("exit", () => {
+      clearInterval(timer);
+      reject(new Error("the writer exited before it reached its uncommitted insert"));
+    });
+  });
+  // A real kill: SIGKILL on POSIX, TerminateProcess on Windows. Nothing runs in the child's
+  // process after this, so no ROLLBACK and no checkpoint can hide the recovery being tested.
+  child.kill("SIGKILL");
+  await new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  subject.control.close();
+  // The interrupted transaction has to have left recovery work behind, or this test would be
+  // asserting that a CLEAN file reopens - true of any file, and worth nothing.
+  const journalPath = `${join(subject.root, DATABASE)}-journal`;
+  assert.ok(
+    existsSync(journalPath),
+    `no rollback journal was left at ${journalPath}: the kill did not interrupt a transaction, so this test proved nothing about recovery`,
+  );
+
+  // No manual intervention: just open the authority the way the Host does at startup.
+  const recovered = openProductionContinuityStore({ runtimeRoot: subject.root });
+  try {
+    recovered.validateBootstrap(bootstrap);
+    const reader = new DatabaseSync(join(subject.root, DATABASE));
+    try {
+      const kept = reader
+        .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='kept-row'")
+        .get();
+      const lost = reader
+        .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='lost-row'")
+        .get();
+      assert.ok(
+        kept,
+        "the committed row was lost across a killed commit: the store did not recover to its last commit",
+      );
+      assert.equal(
+        lost,
+        undefined,
+        "the interrupted row is present, so a transaction that never committed was made durable",
+      );
+      assert.equal(
+        (reader.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check,
+        "ok",
+        "the database reports damage after recovering from a killed commit",
+      );
+    } finally {
+      reader.close();
+    }
+  } finally {
+    recovered.close();
+    removeRoot(subject.root);
+  }
 });
 
 /**
