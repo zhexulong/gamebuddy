@@ -11,6 +11,8 @@ import {
   measureGameSurfaceAuthoredContextBudget,
   shippedAuthoredContextGeometry,
 } from "./authored-context-budget.test-support.js";
+import { GAME_SURFACE_PROMPT_FLOOR } from "./game-surface-prompt-floor.test-support.js";
+import { buildGameCompanionSystemPrompt } from "./identity-profile.js";
 import { buildGameSurfaceAuthoredCatalog } from "./tavern/catalog-service.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { validateWorldBook } from "./worldbook.js";
@@ -156,12 +158,7 @@ const SCOPE = Object.freeze({
   profile: Object.freeze({ profileId: "profile-authored-budget", revision: 1, canonicalHash: "a".repeat(64) }),
 });
 
-/** The shipped persona: the two fields `personaStableContent` renders (name, description). */
-const SHIPPED_PERSONA = Object.freeze({
-  name: DEFAULT_COMPANION_PRESET.profile.identity.name,
-  description: DEFAULT_COMPANION_PRESET.profile.persona?.interactionStyle,
-});
-
+/** The shipped persona is deliberately NOT a parameter: it is inside `floorTokens` (see below). */
 /** Materialize one book through the product's own catalogue builder, exactly as a mount does. */
 function materializeBook(rawBook: unknown) {
   const book = validateWorldBook(rawBook);
@@ -181,16 +178,16 @@ function materializeBook(rawBook: unknown) {
   );
 }
 
-/** The shipped reading: the shipped preset's own book, scenario and persona. */
+/** The shipped reading: the shipped preset's own book and scenario. */
 function shippedReading() {
-  return measureGameSurfaceAuthoredContextBudget(materializeBook(DEFAULT_COMPANION_PRESET.worldBook), SHIPPED_PERSONA);
+  return measureGameSurfaceAuthoredContextBudget(materializeBook(DEFAULT_COMPANION_PRESET.worldBook));
 }
 
 test("the shipped book is measured from the asset that ships, and the committed asset agrees", () => {
   // `DEFAULT_COMPANION_PRESET.worldBook` is the shipped artifact; the asset is its source. Both go
   // through the SAME product builder, so a disagreement is about the book, not about rendering.
   const shipped = shippedReading();
-  const committed = measureGameSurfaceAuthoredContextBudget(materializeBook(committedWorldBook()), SHIPPED_PERSONA);
+  const committed = measureGameSurfaceAuthoredContextBudget(materializeBook(committedWorldBook()));
   assert.deepEqual(
     shipped.stable.rows.map((row) => [row.kind, row.contentChars, row.tokens]),
     committed.stable.rows.map((row) => [row.kind, row.contentChars, row.tokens]),
@@ -201,6 +198,39 @@ test("the shipped book is measured from the asset that ships, and the committed 
     shipped.volatile.tokens,
     committed.volatile.tokens,
     "the shipped and committed books disagree on volatile size",
+  );
+});
+
+test("the companion's persona is counted ONCE, inside the floor, never as authored context", () => {
+  // The defect this asserts against: `identity-profile.ts` renders the persona INTO the system
+  // prompt, and the Game floor reading is a measurement of that assembled prompt — so the persona's
+  // cost is already inside `floorTokens`. Counting it again as an authored source would inflate the
+  // authored total by the whole persona (measured: 1,353 characters, ~339 tokens, more than the
+  // shipped book itself) and make a guard built on this reading refuse cards that fit.
+  const prompt = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, "zh-CN");
+  const persona = DEFAULT_COMPANION_PRESET.profile.persona;
+  assert.ok(persona !== undefined, "the shipped profile lost its persona, so this premise is void");
+  assert.ok(
+    prompt.includes(persona.core ?? "\u0000"),
+    "persona.core is no longer rendered into the system prompt; if that changed, the floor no longer " +
+      "carries it and the authored sum WOULD have to count it",
+  );
+  assert.ok(
+    prompt.includes(persona.interactionStyle ?? "\u0000"),
+    "persona.interactionStyle is no longer rendered into the system prompt",
+  );
+  // And the reading itself carries no persona row, because there is no authored persona source.
+  const reading = shippedReading();
+  assert.equal(
+    reading.stable.rows.some((row) => row.sourceId === "persona"),
+    false,
+    "the reading added a persona row, which double-counts what floorTokens already contains",
+  );
+  // The system prompt the floor measured is the same one this test just built.
+  assert.equal(
+    prompt.length,
+    GAME_SURFACE_PROMPT_FLOOR.floor.systemChars,
+    "the system prompt changed size, so the recorded floor no longer describes it",
   );
 });
 

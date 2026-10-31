@@ -16,11 +16,22 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
  * <p>
  * **Everything here is computed, never transcribed.** Authored sizes come from the product's own
  * catalogue materializer (`buildGameSurfaceAuthoredCatalog`), whose `budgetTokens` is
- * `Math.ceil(content.length / 4)` (`tavern/catalog-service.ts`); the persona row applies that
- * same function to the same two fields `personaStableContent` renders. The floor is the recorded
+ * `Math.ceil(content.length / 4)` (`tavern/catalog-service.ts`). The floor is the recorded
  * Game-surface prompt reading, imported rather than copied, so the two cannot drift. What this
  * module adds is the arithmetic neither of them owns: the sum, the headroom left, and the
  * authored size at which headroom reaches zero.
+ * </p>
+ *
+ * <p>
+ * **The companion's persona is NOT authored context here, and must not be counted as any.**
+ * `identity-profile.ts` renders `persona.core`, `persona.interactionStyle` and
+ * `persona.expressionStyle` INTO the system prompt (`Core disposition:` / `Interaction style:` /
+ * `Expression style:`), and the Game-surface floor reading is a measurement of exactly that
+ * assembled prompt. So the persona's cost is already inside `floorTokens`, and adding it again as
+ * an authored source would double-count it — inflating the authored total by the whole persona and
+ * making a guard built on this refuse cards that fit. It is absent from
+ * `buildGameSurfaceAuthoredCatalog` for the same reason. Only the catalogue's own stable sources and
+ * its volatile candidates are authored context on this surface.
  * </p>
  *
  * <p>
@@ -46,8 +57,8 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
  * </p>
  */
 export type AuthoredContextBudgetRow = Readonly<{
-  /** The catalogue's own source kinds, plus `persona`, which the Game catalogue does not carry. */
-  kind: TavernAuthoredContextCatalog["stableSources"][number]["kind"] | "persona";
+  /** A catalogue stable source's own kind. There is no `persona` row: see the module comment. */
+  kind: TavernAuthoredContextCatalog["stableSources"][number]["kind"];
   sourceId: string;
   contentChars: number;
   tokens: number;
@@ -156,24 +167,19 @@ export function deriveHistoryBudgetTokens(
   return Math.floor(usableSoft * (executeThresholdPercentage / 100) * historyBudgetPercentage);
 }
 
-/** The player's own side of the scene, as the shipped profile holds it. */
-export type AuthoredPersonaSource = Readonly<{ name: string; description?: string | undefined }>;
-
 /**
- * Measure one materialized catalogue and the shipped persona against the shipped geometry.
+ * Measure one materialized catalogue against the shipped geometry.
  *
  * <p>
  * The catalogue arrives already materialized by the product, so its stable sources, their order
- * and their `budgetTokens` are the product's own. The persona is measured here because
- * `buildGameSurfaceAuthoredCatalog` does not add one — the Game surface's catalogue is the book,
- * the scenario and any attached library item — while the Chat surface's is `personaStableContent`
- * over exactly these two fields. A player's persona and their world book are authored context on
- * the same window, so the reading has to count both.
+ * and their `budgetTokens` are the product's own. No persona is added: it is rendered into the
+ * system prompt by `identity-profile.ts` and is therefore already counted in `floorTokens` (see the
+ * module comment). Counting it again here would inflate the authored total by the whole persona and
+ * make a guard built on this refuse cards that fit.
  * </p>
  */
 export function measureGameSurfaceAuthoredContextBudget(
   catalog: TavernAuthoredContextCatalog,
-  persona: AuthoredPersonaSource,
 ): AuthoredContextBudgetReading {
   const geometry = shippedAuthoredContextGeometry();
   const floorPartsTokens = PROMPT_FLOOR.floor.systemTokens + PROMPT_FLOOR.floor.toolsTokens;
@@ -192,19 +198,7 @@ export function measureGameSurfaceAuthoredContextBudget(
   });
   const historyTokens = deriveHistoryBudgetTokens(geometry.usableSoft);
 
-  // `personaStableContent` renders `## <name>` then the description, joined by a blank line, and
-  // drops a part that is absent or blank. Reproduced as prose so the measured text is the string
-  // the model reads rather than the record's own shape.
-  const personaContent = [persona.name, persona.description]
-    .filter((part): part is string => part !== undefined && part.trim().length > 0)
-    .join("\n\n");
-  const personaRow: AuthoredContextBudgetRow = Object.freeze({
-    kind: "persona",
-    sourceId: "persona",
-    contentChars: personaContent.length,
-    tokens: authoredTokensFor(personaContent),
-  });
-  const catalogRows: AuthoredContextBudgetRow[] = catalog.stableSources.map((source) =>
+  const stableRows: AuthoredContextBudgetRow[] = catalog.stableSources.map((source) =>
     Object.freeze({
       kind: source.kind,
       sourceId: source.sourceId,
@@ -212,7 +206,6 @@ export function measureGameSurfaceAuthoredContextBudget(
       tokens: authoredTokensFor(source.content),
     }),
   );
-  const stableRows = [personaRow, ...catalogRows];
   const stableTokens = stableRows.reduce((total, row) => total + row.tokens, 0);
   const stableChars = stableRows.reduce((total, row) => total + row.contentChars, 0);
   const volatileTokens = catalog.volatileSources.reduce(
