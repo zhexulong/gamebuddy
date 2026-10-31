@@ -2577,12 +2577,13 @@ public sealed partial class ModEntry : Mod
                 isChest: item is StardewValley.Objects.Chest,
                 isArtifactSpot: NativeItemPredicates.IsArtifactSpot(item),
                 isWeeds: item.IsWeeds(),
-                // The scanner must advertise exactly what break_rock_source can
-                // settle, which is the one-hit stone. Using the bare native
-                // IsBreakableStone() here would publish a durability-8 stone as
-                // a `stone` affordance with hint break_rock_source, and the
-                // action would then refuse it.
-                isBreakableStone: NativeItemPredicates.IsOneHitBreakableStone(item));
+                // The scanner must advertise exactly what break_rock_source can settle,
+                // which is every rock the native category calls breakable. The
+                // "one-hit" conjunction this used to ask published only the stones a
+                // basic pickaxe finishes in one swing, so a durability-8 node was
+                // invisible to both sides - and the two sides still agree, because
+                // both now ask this one predicate.
+                isBreakableStone: NativeItemPredicates.IsBreakableStone(item));
             if (kind is null)
                 continue;
             SceneAffordanceKind resolvedKind = kind.Value;
@@ -2638,8 +2639,18 @@ public sealed partial class ModEntry : Mod
             else if (feature is StardewValley.TerrainFeatures.Tree tree && tree.health.Value > 0f)
             {
                 bool stump = tree.stump.Value;
+                // THE IDENTITY IS THE ID THE ACTION WILL CHECK, not a label.
+                //
+                // This used to be `tree:{location}:{x},{y}:{treeType}` - a readable description that matches NO action's
+                // argument. `chop_tree_source` requires `expectedTargetId` built by
+                // `BuildTreeChopSourceTargetId` (`farmhandexecutioncontroller.cs`), a hash over the location, the tile, the
+                // type and the remaining health. A model reading this affordance therefore copied `ref` (or this
+                // description) into `expectedTargetId` and every chop failed: measured 2026-10-31 (`round15`), six
+                // `chop_tree_source` failures, every one carrying `sr1_...` where the hash belonged.
+                //
+                // The scene ref still says WHICH observation bound the target; the identity says WHAT the action calls it.
                 candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Tree, stump ? "Stump" : "Tree",
-                    $"tree:{location.NameOrUniqueName}:{(int)tile.X},{(int)tile.Y}:{tree.treeType.Value}",
+                    stump ? $"tree_stump:{location.NameOrUniqueName}:{(int)tile.X},{(int)tile.Y}" : ExecutionManager.BuildTreeChopSourceTargetId(location, (int)tile.X, (int)tile.Y, tree),
                     location.NameOrUniqueName, (int)tile.X, (int)tile.Y, stump ? "chop_stump" : "chop_tree_source",
                     SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Tree)));
             }

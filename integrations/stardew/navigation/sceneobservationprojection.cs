@@ -150,13 +150,15 @@ internal sealed class SceneObservationProjection
                 // Undecided when the caller supplied no probe: the projection stays pure (it cannot reach the live
                 // game from here), and "no claim" is a different answer from "not reachable".
                 isActionable is null ? null : isActionable(candidate.Source.TileX, candidate.Source.TileY),
-                // Published ONLY for the kinds whose action compares it. `pickup_forage` is the one action that declares an
-                // ObservationBinding (`FarmhandActionDefinitions.cs:572`), and it resolves a binding whose
-                // `OpaqueEntityIdentity` must equal the forage object's `QualifiedItemId` - so without this a ref cannot be
-                // turned into a legal request. Every other affordance kind has no action that reads it, and the payload is
-                // measured against a byte ceiling (571 bytes golden, and five tests pin it), so publishing an id nobody
-                // compares would spend the budget the truncation logic needs.
-                candidate.Source.Kind == SceneAffordanceKind.Forage ? candidate.Source.OpaqueEntityIdentity : null));
+                // Published ONLY for the kinds whose action compares it. `pickup_forage` and `chop_tree_source` are the two
+                // actions that validate an `expectedTargetId` against an identity the affordance knows and the snapshot
+                // family also publishes, so a ref without it cannot be turned into a legal request. The other kinds'
+                // actions take a tile or a `sceneTarget` instead, and the payload is measured against a byte ceiling (571
+                // bytes golden, pinned by five tests), so publishing an id nobody compares would spend the budget the
+                // truncation logic needs.
+                candidate.Source.Kind is SceneAffordanceKind.Forage or SceneAffordanceKind.Tree
+                    ? candidate.Source.OpaqueEntityIdentity
+                    : null));
         }
 
         // Ground is a separate axis from affordances, so it is summarised once
