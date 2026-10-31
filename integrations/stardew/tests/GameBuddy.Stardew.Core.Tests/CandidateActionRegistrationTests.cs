@@ -76,8 +76,8 @@ public sealed class CandidateActionRegistrationTests
     {
         var expected = new Dictionary<string, (string Family, FarmhandActionHandlerGroup Group, int ArgumentCount, string[] ArgumentNames)>
         {
-            ["chest_store"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 5, new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
-            ["chest_retrieve"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 5, new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
+            ["chest_store"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 2, new[] { "chestId", "expectedQualifiedItemId" }),
+            ["chest_retrieve"] = ("inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, 2, new[] { "chestId", "expectedQualifiedItemId" }),
             ["chop_stump"] = ("resource_gathering", FarmhandActionHandlerGroup.ResourceTools, 4, new[] { "x", "y", "slot", "expectedTargetId" }),
             ["plant_sapling"] = ("farming_crops", FarmhandActionHandlerGroup.Farming, 5, new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
             ["cut_weeds"] = ("resource_gathering", FarmhandActionHandlerGroup.ResourceTools, 4, new[] { "x", "y", "slot", "expectedTargetId" }),

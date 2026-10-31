@@ -65,6 +65,9 @@ public sealed class DeclaredArgumentAcceptanceTests
                 "expectedQualifiedItemId" => descriptor.Acceptance?.ExactExpectedQualifiedItemId ?? "(O)472",
                 // Opaque ids are [A-Za-z0-9_-]{1,128}; a 16-hex suffix matches production shape.
                 "expectedTargetId" => "test_0000000000000000",
+                // A container id is one of those opaque ids too, in the same production shape
+                // (`chest_<16 hex>` for a placed chest, `fridge_<16 hex>` for the kitchen fridge).
+                "chestId" => "chest_0000000000000000",
                 "responseKey" => "yes",
                 // A Data/Buildings type id: non-blank, within the 1..128 bound.
                 "buildingType" => "Coop",
@@ -104,6 +107,8 @@ public sealed class DeclaredArgumentAcceptanceTests
             {
                 // An opaque id forbids characters outside [A-Za-z0-9_-] and forbids emptiness.
                 "expectedTargetId" => new[] { "not a valid id!" },
+                // Same rule, same perturbation: a container id and a target id are one grammar.
+                "chestId" => new[] { "not a valid id!" },
                 // The rule is `Length is > 0 && Length <= 128`, so BOTH halves are perturbed: a
                 // blank type id is refused because a building type cannot be empty, and one past
                 // the bound is refused because a longer id is too long.
@@ -140,6 +145,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         int? rightSlot = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
+        string? chestId = null;
         string? tool = null;
         string? emote = null;
         string? direction = null;
@@ -165,6 +171,7 @@ public sealed class DeclaredArgumentAcceptanceTests
                 case "quantity": quantity = int.Parse(effective); break;
                 case "expectedQualifiedItemId": expectedQualifiedItemId = effective; break;
                 case "expectedTargetId": expectedTargetId = effective; break;
+                case "chestId": chestId = effective; break;
                 case "tool": tool = effective; break;
                 case "emote": emote = effective; break;
                 case "direction": direction = effective; break;
@@ -202,6 +209,7 @@ public sealed class DeclaredArgumentAcceptanceTests
             Quantity = quantity,
             ExpectedQualifiedItemId = expectedQualifiedItemId,
             ExpectedTargetId = expectedTargetId,
+            ChestId = chestId,
             Tool = tool,
             Emote = emote,
             Direction = direction,

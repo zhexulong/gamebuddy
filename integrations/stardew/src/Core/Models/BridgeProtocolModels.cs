@@ -375,7 +375,26 @@ public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X,
 
 public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
 
-public sealed record BridgeChestStoreTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, string DisplayName, int Stack);
+/// <summary>
+/// One storage container as a SENSED ENTITY: its identity, where it is, and every item inside it.
+///
+/// <para>
+/// `ChestId` is `BuildContainerTargetId` - the same opaque identity `chest_store`/`chest_retrieve` take as their
+/// `chestId` argument - so the container an observation names and the container an execution resolves are one
+/// spelling.
+/// </para>
+/// <para>
+/// `Items` is the WHOLE mirror: every occupied slot, in the container's own slot order, with no budget and no
+/// truncation. A container's contents are a fact about that container; a companion told about 16 of 36 items
+/// cannot plan the other 20. The two row-per-pair families this replaced answered `chest_store` and
+/// `chest_retrieve` by multiplying the container set against the item set, which is why a full chest published
+/// only a window of itself.
+/// </para>
+/// </summary>
+public sealed record BridgeChestState(string ChestId, int X, int Y, string DisplayName, bool IsFridge, IReadOnlyList<BridgeChestItem> Items);
+
+/// <summary>One occupied slot of a <see cref="BridgeChestState"/>: the container's own slot index, what is in it, and how many.</summary>
+public sealed record BridgeChestItem(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
 // Lane E: one native Shipping Bin building plus the exact shippable backpack
 // slot the actor would hand to Farm.shipItem. X/Y is the bin's top-left
@@ -403,7 +422,6 @@ public sealed record BridgeSignTarget(string TargetId, string Location, int X, i
 public sealed record BridgeSiloTarget(string TargetId, string Location, int X, int Y, int Hay);
 public sealed record BridgeLanternSlot(int Slot, bool IsOn, int FuelLeft);
 public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
-public sealed record BridgeChestRetrieveTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
 public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink);
@@ -491,8 +509,14 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
-    IReadOnlyList<BridgeChestStoreTarget>? ChestStoreTargets,
-    IReadOnlyList<BridgeChestRetrieveTarget>? ChestRetrieveTargets,
+    // The container family as SENSED ENTITIES: one row per eligible storage container in range, carrying the
+    // container's own execution identity and the contents of every occupied slot inside it, in slot order and
+    // without truncation. Perception is the complete mirror; the container list itself stays distance-bounded
+    // like every other radar family. Named `Chests` because that is the wire field the Host validates (`chests`
+    // in host/src/protocol.ts, `isChestStateFact`): the family is the container list, not a list of target rows.
+    // Positional and required here, unlike its defaulted siblings, because the two row-per-pair families it
+    // replaced are gone: there is no earlier parameter to preserve an argument order against.
+    IReadOnlyList<BridgeChestState>? Chests,
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets,
     IReadOnlyList<BridgeShippingBinTarget>? ShippingBinTargets,
@@ -616,14 +640,7 @@ public sealed record BridgeSnapshot(
     // silently did nothing. Null only while the world is not ready, like every sibling projection.
     // Defaulted and LAST for the same reason as its siblings above.
     int? CurrentToolSlot = null,
-    string? CurrentToolSlotItem = null,
-    // Rows the container families' per-container window withheld from `ChestStoreTargets` / `ChestRetrieveTargets`.
-    // A row there is a (container, pack slot) or (container, chest item) PAIR, so the bound can withhold pairs a plan
-    // would otherwise never see; without the count an absent pair is indistinguishable from a container that does not
-    // hold one. Omitted (null) when nothing was withheld - a block that says "nothing was withheld" is pure cost on
-    // every clean observation. Defaulted and LAST for the same reason as their siblings above.
-    int? WithheldChestStoreTargets = null,
-    int? WithheldChestRetrieveTargets = null);
+    string? CurrentToolSlotItem = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -705,6 +722,10 @@ public sealed class BridgeExecutionArgs
     public float? X { get; init; }
     public float? Y { get; init; }
     public int? Slot { get; init; }
+    /// <summary>The published identity of the storage container a `chest_store` / `chest_retrieve`
+    /// names. It carries the location, the tile and the chest type inside the id itself, so the body
+    /// re-derives the tile from it instead of being handed a second copy that could disagree.</summary>
+    public string? ChestId { get; init; }
     /// <summary>The FIRST sewing-machine slot a tailoring request names (the recipe's first ingredient for
     /// `tailor_clothing`, the garment for `dye_clothing_with_item`). Only the tailoring pair uses it.</summary>
     public int? LeftSlot { get; init; }

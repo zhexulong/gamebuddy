@@ -13,6 +13,19 @@ public interface IBodyProgramAdmissionTransport
 {
     void Send(NodeAdmissionChallenge challenge);
     BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt);
+
+    /// <summary>
+    /// The authenticated attachment this transport currently speaks through, or -1 when there is none.
+    ///
+    /// This is the one fact that tells an `unavailable` answer apart from a refusal. ADR-006 `:33` allows the
+    /// Controller to open a NEW admission for a NEW attachment while keeping the same node attempt, and every
+    /// cause the Host can answer here (`gate_not_executable`, `not_connected`, `read_state_threw`,
+    /// `state_malformed`, `no_registrations`) is a property of THE ATTACHMENT rather than of the node. So the
+    /// value changing IS the event that makes re-asking meaningful, and the value standing still is what makes
+    /// re-asking pointless. Exposing it here rather than reading it from the journal keeps the fact with its owner:
+    /// the transport knows which attachment it is speaking through; the journal does not.
+    /// </summary>
+    long AttachmentGeneration { get; }
 }
 
 /// <summary>
@@ -150,7 +163,30 @@ public sealed class FarmhandBodyProgramController
     /// </summary>
     public int MaxCadenceDeferrals { get; init; } = 90;
 
+    /// <summary>
+    /// The wall clock this pump reads, in the same epoch as the node's derived admission deadline.
+    ///
+    /// It is needed for exactly one decision - whether that deadline has passed - and the deadline is an absolute
+    /// unix-ms value the authority derived from the same clock, so this reads unix ms rather than a tick counter.
+    /// Injectable so a harness can drive the deadline without sleeping.
+    /// </summary>
+    public Func<long> NowMs { get; init; } = static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     private readonly Dictionary<string, int> cadenceDeferrals = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The exact challenge each attempt was SENT with, so a re-ask re-sends it verbatim.
+    ///
+    /// The authority will not mint it a second time: `TryCreateAdmissionChallenge` selects `Pending` nodes only, and this
+    /// node has been `AwaitingHostAdmission` since it was first asked. Keeping the minted object is what makes a re-ask an
+    /// idempotent re-send of the same tuple rather than a new admission attempt the journal cannot represent.
+    /// </summary>
+    private readonly Dictionary<string, NodeAdmissionChallenge> admissionChallenges = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// The attachment generation each attempt was last sent on, so `unavailable` can be told apart from a refusal: see
+    /// <see cref="SettleUnavailableAdmission"/> for why the attachment is the trigger and the clock is not.
+    /// </summary>
+    private readonly Dictionary<string, long> admissionAttachmentGenerations = new(StringComparer.Ordinal);
 
     public BodyProgramJournalOpenStatus OpenStatus => this.authority.OpenStatus;
 
@@ -158,6 +194,8 @@ public sealed class FarmhandBodyProgramController
     public BodyProgramAuthorityLifecycleState Close()
     {
         this.boundRunning.Clear();
+        this.admissionChallenges.Clear();
+        this.admissionAttachmentGenerations.Clear();
         return this.authority.Close();
     }
 
@@ -235,6 +273,11 @@ public sealed class FarmhandBodyProgramController
                 return;
             }
             this.Diagnose($"sending;program={programId};node={started.Value!.NodeId}");
+            // Recorded BEFORE the send: the answer is taken on a later tick, and the question it has to be compared
+            // against is which attachment this admission was ASKED through, not which one happens to be current.
+            string attemptKey = AttemptKey(programId, started.Value!.NodeId, started.Value!.NodeAttempt);
+            this.admissionAttachmentGenerations[attemptKey] = this.admission!.AttachmentGeneration;
+            this.admissionChallenges[attemptKey] = started.Value!;
             this.admission!.Send(started.Value!);
             if (!this.authority.IsLifecycleOpen) return;
         }
@@ -257,7 +300,7 @@ public sealed class FarmhandBodyProgramController
             // world that never becomes ready delays a node instead of holding it for ever.
             if (this.CanDispatchNow is { } canDispatch && !canDispatch())
             {
-                string deferralKey = $"{programId}\u001f{node.NodeId}\u001f{node.NodeAttempt}";
+                string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
                 if (deferred < this.MaxCadenceDeferrals)
                 {
@@ -267,10 +310,19 @@ public sealed class FarmhandBodyProgramController
             }
             BodyNodeAdmissionResult? admissionResult = this.admission!.TryTakeResult(programId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt);
             if (!this.authority.IsLifecycleOpen) return;
-            if (admissionResult is null) continue;
+            if (admissionResult is null)
+            {
+                // Nothing to consume. That is normally the ordinary wait - but once the node's own admission deadline has
+                // passed, NO answer can legitimately still arrive: the Host refuses a grant past the same deadline
+                // (`TryGrant`), so a grant that showed up now would be refused anyway. A node left here with the bridge
+                // gone would wait for ever, which is the same strand the `unavailable` branch had.
+                if (this.TrySettleExpiredAdmission(programId, node)) return;
+                continue;
+            }
             if (admissionResult is BodyNodeAdmissionUnavailableResult unavailable)
             {
-                this.Diagnose($"admission_unavailable;program={programId};node={node.NodeId};reason={unavailable.Code ?? "null_from_wire"}");
+                if (this.TrySettleExpiredAdmission(programId, node)) return;
+                this.ReaskUnavailableAdmission(programId, node, unavailable);
                 continue;
             }
             if (admissionResult is BodyNodeAdmissionRejectedResult rejected)
@@ -288,6 +340,84 @@ public sealed class FarmhandBodyProgramController
             this.RunAdmittedNode(consumed.Value);
         }
     }
+
+    /// <summary>
+    /// Concludes a node attempt whose admission the Host answered `unavailable`, or whose admission never gets an answer.
+    ///
+    /// WHAT WAS BROKEN. `unavailable` was logged and skipped. `TryTakeResult` removes the answer on its way out, the
+    /// node is `AwaitingHostAdmission` so `TryCreateAdmissionChallenge` will never select it again, and no seam settles
+    /// a non-Running node - so the program stayed `Active` for ever with a node no authority would ever answer again.
+    /// The same strand exists with NO answer at all (a bridge that closed mid-handshake), which is why the expiry
+    /// check lives in the caller's `null` branch too.
+    ///
+    /// WHY IT IS NOT A REJECTION. ADR-006 `:33` is explicit: `admission_unavailable` is NOT `not_accepted`, and the
+    /// Controller keeps the same node attempt so a NEW attachment can open a new admission. Every cause the Host can
+    /// answer here (`gate_not_executable`, `not_connected`, `read_state_threw`, `state_malformed`, `no_registrations`)
+    /// is a property of the ATTACHMENT, not of the node, so none of them may become a durable veto against the node.
+    /// `IsValidRejectionCode` would have to be widened to even hold them - the ADR amendment this avoids.
+    ///
+    /// WHAT REPLACES IT, in order:
+    ///   1. RE-ASK on a NEW authenticated attachment generation, with the same node attempt and the same challenge
+    ///      re-sent verbatim. The trigger is the attachment changing, never the passage of time: a timer would re-send
+    ///      into a bridge already known to answer `unavailable`, which is a busy-wait dressed as resilience. The attempt
+    ///      is deliberately NOT bumped: the journal validator pins `node.AdmissionAttempt == node.NodeAttempt`
+    ///      (`BodyProgramJournalPersistence.cs`), so the ADR's literal "new `admissionAttempt`" is not
+    ///      durable-representable today. Re-sending the identical challenge is idempotent at the Host, which answers from
+    ///      its own journal (`HostNodeAdmissionService.admit`).
+    ///   2. FALLBACK, once the node's own admission deadline has passed: settle locally as `deadline_expired`. The
+    ///      ordinary path is the Host's own answer - it is the authority on its deadline - and this exists for when no
+    ///      answer can arrive at all. The comparison is the stricter of the two the system already uses, so a local
+    ///      verdict can never preempt an answer the authority would still have honoured.
+    ///
+    /// NOT `Failed`/`Cancelled`: `IsClaimOwnershipValidForState` requires `Released` for both, and an awaiting node holds
+    /// `NotAcquired` claims because nothing was ever acquired. Writing `Released` there would be a durable statement
+    /// that a resource was handed back after being taken, which is untrue.
+    /// </summary>
+    private void ReaskUnavailableAdmission(string programId, BodyProgramJournalNode node, BodyNodeAdmissionUnavailableResult unavailable)
+    {
+        this.Diagnose($"admission_unavailable;program={programId};node={node.NodeId};reason={unavailable.Code ?? "null_from_wire"}");
+        string key = AttemptKey(programId, node.NodeId, node.NodeAttempt);
+        long current = this.admission!.AttachmentGeneration;
+        long askedOn = this.admissionAttachmentGenerations.TryGetValue(key, out long recorded) ? recorded : -1;
+        if (current < 0 || current == askedOn || !this.admissionChallenges.TryGetValue(key, out NodeAdmissionChallenge? asked))
+        {
+            // Nothing about the asking changed, so the answer cannot either. Re-sending would spend the node's remaining
+            // budget on an answer already known; wait for the attachment to change or the deadline to pass.
+            this.Diagnose($"admission_unavailable_waiting;program={programId};node={node.NodeId};generation={current};askedOn={askedOn}");
+            return;
+        }
+        this.Diagnose($"admission_reasked;program={programId};node={node.NodeId};generation={current};askedOn={askedOn}");
+        this.admissionAttachmentGenerations[key] = current;
+        this.admission!.Send(asked);
+    }
+
+    /// <summary>
+    /// The only forward path an awaiting node has once its own admission deadline has passed: settle it as an
+    /// allowlisted `deadline_expired` rejection, which is the one durable shape the validator accepts for a node that
+    /// never dispatched (`NotAcquired` claims, no proof, `SkippedDependency` for pending descendants).
+    ///
+    /// The comparison is deliberately the STRICTER one, and it is not a second opinion about the boundary: the Mod's own
+    /// `TryGrant` accepts a grant while `DerivedDeadlineMs &lt; nowMs`, so settling at `&lt;=` would preempt a grant that the
+    /// authority itself would still have honoured. Past `&lt;` no path accepts anything - `TryGrant` refuses there and the
+    /// Host refuses to issue at `&lt;=` - so this is the first instant at which a local verdict cannot contradict a real
+    /// answer that is merely slow.
+    /// </summary>
+    private bool TrySettleExpiredAdmission(string programId, BodyProgramJournalNode node)
+    {
+        if (node.DerivedDeadlineMs is not { } deadlineMs || deadlineMs >= this.NowMs()) return false;
+        string key = AttemptKey(programId, node.NodeId, node.NodeAttempt);
+        // The challenge is the settlement's own argument: the authority accepts a rejection only for the exact tuple it
+        // minted, so nothing is settled unless the object that was SENT is still here to be presented.
+        if (!this.admissionChallenges.TryGetValue(key, out NodeAdmissionChallenge? asked)) return false;
+        this.Diagnose($"admission_deadline_settled;program={programId};node={node.NodeId};deadlineMs={deadlineMs}");
+        this.admissionChallenges.Remove(key);
+        this.admissionAttachmentGenerations.Remove(key);
+        this.authority.TryRejectAdmission(asked, "deadline_expired");
+        return true;
+    }
+
+    private static string AttemptKey(string programId, string nodeId, int nodeAttempt) =>
+        $"{programId}\u001f{nodeId}\u001f{nodeAttempt}";
 
     /// <summary>
     /// When the executor returns the null continuation sentinel, the node stays

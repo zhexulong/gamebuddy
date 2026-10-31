@@ -277,7 +277,7 @@ public sealed class BodyProgramControllerPumpTests
         long now = 10;
         OpenBodyProgramJournalAuthority authority = Open(now: () => now);
         var admission = new NoGrantAdmissionTransport();
-        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"));
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7")) { NowMs = () => now };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         controller.Update();
 
@@ -303,7 +303,7 @@ public sealed class BodyProgramControllerPumpTests
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new NoGrantAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
-        var controller = new FarmhandBodyProgramController(authority, admission, executor);
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => 10 };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         controller.Update();
@@ -323,7 +323,7 @@ public sealed class BodyProgramControllerPumpTests
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new UnavailableAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
-        var controller = new FarmhandBodyProgramController(authority, admission, executor);
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => 10 };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         controller.Update();
@@ -344,12 +344,147 @@ public sealed class BodyProgramControllerPumpTests
     }
 
     [Fact]
+    public void UnavailableOnTheSameAttachmentIsNotReaskedIntoTheSameAnswer()
+    {
+        // The already-known answer is not asked again until something about the ASKING changes. A timer-driven re-send
+        // would spend the node's whole budget on a bridge that has already said `unavailable`.
+        var clock = new TimeBox { Value = 10 };
+        OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(
+            new MemoryStore(), MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        var admission = new UnavailableAdmissionTransport();
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7")) { NowMs = () => clock.Value };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        for (int tick = 0; tick < 5; tick++)
+        {
+            clock.Value += 10;
+            controller.Update();
+        }
+
+        admission.Sent.Should().ContainSingle("the attachment never changed, so the answer cannot change");
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+    }
+
+    [Fact]
+    public void UnavailableIsReaskedVerbatimOnANewAuthenticatedAttachment()
+    {
+        // ADR-006 `:33`: the Controller keeps the same node attempt and opens a new admission for a NEW attachment. Every
+        // cause the Host can answer here is a property of the attachment, so the attachment changing is the event.
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new UnavailableAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => 10 };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+        admission.Sent.Should().ContainSingle();
+
+        // The companion reconnects: a NEW authenticated generation, nothing else.
+        admission.Generation = 2;
+        controller.Update();
+
+        admission.Sent.Should().HaveCount(2);
+        NodeAdmissionChallenge first = admission.Sent[0];
+        NodeAdmissionChallenge second = admission.Sent[1];
+        // Verbatim: same node attempt AND same admission attempt, because the journal pins
+        // `node.AdmissionAttempt == node.NodeAttempt` and a bumped attempt is not durable-representable.
+        second.NodeAttempt.Should().Be(first.NodeAttempt);
+        second.AdmissionAttempt.Should().Be(first.AdmissionAttempt);
+        second.DeadlineMs.Should().Be(first.DeadlineMs);
+        second.StopEpoch.Should().Be(first.StopEpoch);
+        second.CatalogRevision.Should().Be(first.CatalogRevision);
+        second.PolicyIdentity.Should().Be(first.PolicyIdentity);
+        second.ActionId.Should().Be(first.ActionId);
+
+        // Still ONE durable attempt and ONE admission_challenge event: a re-ask is a fresh admission of the same attempt,
+        // never a new attempt, so nothing was rewritten in the journal to make the re-ask possible.
+        BodyProgramJournalNode inspect = authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect");
+        inspect.State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
+        inspect.NodeAttempt.Should().Be(1);
+        inspect.AdmissionAttempt.Should().Be(1);
+        authority.Events("program", 0, 32).Events.Count(@event => @event.Kind == "admission_challenge").Should().Be(1);
+        executor.Runs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void UnavailablePastTheNodeDeadlineSettlesAsDeadlineExpiredWithSkippedDescendants()
+    {
+        // The fallback, and only after the node's OWN deadline: the Host is the authority on its deadline, so a local
+        // settle that could race a slow-but-valid answer would turn a slow answer into a wrong one.
+        var clock = new TimeBox { Value = 10 };
+        OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(
+            new MemoryStore(), MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        var admission = new UnavailableAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => clock.Value };
+        authority.Submit(MachineProgramWithTerminalCheck()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+        // The published watchdog is 1000 and the challenge was minted at t=10, so this attempt's deadline is 1010. AT the
+        // deadline the node must STILL be awaiting: `TryGrant` accepts while `DerivedDeadlineMs < now`, so a local settle
+        // at `<=` would preempt a grant the authority would itself still have honoured.
+        clock.Value = 1010;
+        controller.Update();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.AwaitingHostAdmission, "a grant at exactly the deadline is still acceptable");
+
+        clock.Value = 1011;
+        controller.Update();
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        BodyProgramJournalNode inspect = status.Nodes.Single(node => node.NodeId == "inspect");
+        inspect.State.Should().Be(BodyProgramNodeState.Rejected);
+        inspect.RejectionCode.Should().Be("deadline_expired");
+        // The validator's own shape for a node that never dispatched: no claim was ever acquired, no proof invented.
+        inspect.ReceiptId.Should().BeNull();
+        inspect.Evidence.Should().BeNull();
+        inspect.PostconditionVerification.Should().BeNull();
+        inspect.ExecutionBinding.Should().BeNull();
+        inspect.ClaimOwnership!.Values.Should().OnlyContain(state => state == BodyProgramClaimOwnershipState.NotAcquired);
+        // The successors that needed this node do not run, and the program converges instead of hanging Active.
+        status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.SkippedDependency);
+        status.Nodes.Single(node => node.NodeId == "verify").State.Should().Be(BodyProgramNodeState.SkippedDependency);
+        status.State.Should().Be(BodyProgramState.Failed);
+        executor.Runs.Should().BeEmpty();
+        authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "admission_rejected");
+    }
+
+    [Fact]
+    public void AnAdmissionThatNeverGetsAnyAnswerSettlesAtTheDeadlineInsteadOfWaitingForEver()
+    {
+        // The same strand with NO answer at all: the bridge closed mid-handshake, so nothing will ever be deposited. The
+        // node is `AwaitingHostAdmission`, which `TryCreateAdmissionChallenge` will not select again, so without a local
+        // settle the program stays Active for ever - and a grant arriving after the deadline would be refused by the
+        // authority anyway (`TryGrant`), which is what makes the deadline the honest bound rather than an impatience.
+        var clock = new TimeBox { Value = 10 };
+        OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(
+            new MemoryStore(), MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        var admission = new NoGrantAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => clock.Value };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+        clock.Value = 1011;
+        controller.Update();
+
+        BodyProgramStatusSnapshot status = authority.Status("program").Snapshot!;
+        BodyProgramJournalNode inspect = status.Nodes.Single(node => node.NodeId == "inspect");
+        inspect.State.Should().Be(BodyProgramNodeState.Rejected);
+        inspect.RejectionCode.Should().Be("deadline_expired");
+        status.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.SkippedDependency);
+        status.State.Should().Be(BodyProgramState.Failed);
+        executor.Runs.Should().BeEmpty();
+    }
+
+    [Fact]
     public void StopWhileAwaitingAdmissionCancelsNodeAndPumpStaysQuiet()
     {
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new NoGrantAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
-        var controller = new FarmhandBodyProgramController(authority, admission, executor);
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { NowMs = () => 10 };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         controller.Update();
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
@@ -747,6 +882,7 @@ public sealed class BodyProgramControllerPumpTests
     {
         private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), HostAdmissionGrant> grants = new();
         public List<NodeAdmissionChallenge> Sent { get; } = new();
+        public long AttachmentGeneration => 1;
         public void Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);
@@ -765,6 +901,7 @@ public sealed class BodyProgramControllerPumpTests
         public RejectedAdmissionTransport(string code) => this.code = code;
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public List<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt)> ResultsTaken { get; } = new();
+        public long AttachmentGeneration => 1;
         public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
@@ -777,19 +914,27 @@ public sealed class BodyProgramControllerPumpTests
      private sealed class NoGrantAdmissionTransport : IBodyProgramAdmissionTransport
     {
         public List<NodeAdmissionChallenge> Sent { get; } = new();
+        public long AttachmentGeneration => 1;
         public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
         public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) => null;
     }
 
+    /// <summary>
+    /// Answers `unavailable` once per (attempt, attachment generation), the way a real Host does: the same attachment
+    /// keeps answering the same thing, and only a NEW attachment has anything new to say. `Generation` is settable so a
+    /// test can represent a reconnect.
+    /// </summary>
     private sealed class UnavailableAdmissionTransport : IBodyProgramAdmissionTransport
     {
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public int ResultsTaken { get; private set; }
+        public long Generation { get; set; } = 1;
+        public long AttachmentGeneration => this.Generation;
         public void Send(NodeAdmissionChallenge challenge) => this.Sent.Add(challenge);
         public BodyNodeAdmissionResult TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt)
         {
             this.ResultsTaken++;
-            NodeAdmissionChallenge challenge = this.Sent.Single(item => item.ProgramId == programId && item.NodeId == nodeId
+            NodeAdmissionChallenge challenge = this.Sent.Last(item => item.ProgramId == programId && item.NodeId == nodeId
                 && item.NodeAttempt == nodeAttempt && item.AdmissionAttempt == admissionAttempt);
             return new BodyNodeAdmissionUnavailableResult(challenge);
         }
@@ -801,6 +946,7 @@ public sealed class BodyProgramControllerPumpTests
         public CloseOnSendAdmissionTransport(Func<BodyProgramAuthorityLifecycleState> close) => this.close = close;
         public List<NodeAdmissionChallenge> Sent { get; } = new();
         public BodyProgramAuthorityLifecycleState? CloseState { get; private set; }
+        public long AttachmentGeneration => 1;
         public void Send(NodeAdmissionChallenge challenge)
         {
             this.Sent.Add(challenge);

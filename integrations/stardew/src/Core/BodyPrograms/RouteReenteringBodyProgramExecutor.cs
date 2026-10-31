@@ -127,6 +127,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         string? choice = null;
         string? expectedQualifiedItemId = null;
         string? expectedTargetId = null;
+        string? chestId = null;
         string? emote = null;
         string? direction = null;
         BridgeNavigationDestinationSelector? destination = null;
@@ -194,6 +195,14 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 case "expectedTargetId" when value.Kind == BodyProgramArgumentKind.String:
                     expectedTargetId = value.CanonicalValue;
                     break;
+                // The container pair names its container through `chestId`, which IS the address: it binds
+                // the location, the tile and the chest type, so there is no x/y or slot beside it. Without
+                // this case a program node carrying a legal chestId reached the handler with null and was
+                // refused `chest_target_changed` by construction - the same silent-drop shape `equip_tool`
+                // had before its `tool` case existed.
+                case "chestId" when value.Kind == BodyProgramArgumentKind.String:
+                    chestId = value.CanonicalValue;
+                    break;
                 case "emote" when value.Kind == BodyProgramArgumentKind.String:
                     emote = value.CanonicalValue;
                     break;
@@ -240,6 +249,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 Choice = choice,
                 ExpectedQualifiedItemId = expectedQualifiedItemId,
                 ExpectedTargetId = expectedTargetId,
+                ChestId = chestId,
                 Emote = emote,
                 Direction = direction,
                 Destination = destination,

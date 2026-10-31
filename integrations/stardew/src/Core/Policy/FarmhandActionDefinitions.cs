@@ -25,8 +25,9 @@ public enum FarmhandResourceTemplateValue
     /// <para>
     /// The claim's own docblock justified `BasicOnly` by "the native handler refuses an upgraded pickaxe". I checked that
     /// against the game (`ref/external/.../Pickaxe.cs`, `Axe.cs`) and it is false: `Pickaxe` refuses `UpgradeLevel < 2`,
-    /// i.e. it demands MORE than basic, and only for BILLBOARD/boulder tiles that `IsOneHitBreakableStone` excludes
-    /// anyway; `Axe` has no upgrade-level refusal at all. So `(0, 0)` admitted exactly the tier the game rejects and
+    /// i.e. it demands MORE than basic, and only for `Name.Contains("Boulder")` tiles (Pickaxe.cs:180-190) that the
+    /// native breakable-stone category (`Category == -999 && Name == "Stone"`, Object.cs:6082) cannot select; `Axe` has no
+    /// upgrade-level refusal at all. So `(0, 0)` admitted exactly the tier the game rejects and
     /// refused every tier it accepts: the two actions would have permanently stopped working the moment a player
     /// upgraded an axe, which is the first week of a normal playthrough.
     /// </para>
@@ -48,8 +49,9 @@ public enum FarmhandResourceTemplateValue
     /// <para>
     /// `chop_tree_source`, `break_rock_source` and `chop_stump` used to declare it, justified by "the native handler
     /// refuses an upgraded pickaxe". Checked against the game, that is backwards: `Pickaxe` refuses
-    /// `UpgradeLevel &lt; 2` - it demands MORE than basic, and only for boulder tiles the target predicate excludes -
-    /// and `Axe` refuses no upgrade level at all. `(0, 0)` therefore admitted exactly the tier the game rejects and
+    /// `UpgradeLevel &lt; 2` - it demands MORE than basic, and only for `Name.Contains("Boulder")` tiles
+    /// (Pickaxe.cs:180-190) that the breakable-stone category cannot select - and `Axe` refuses no upgrade level at all.
+    /// `(0, 0)` therefore admitted exactly the tier the game rejects and
     /// refused every tier it accepts, so those actions would have stopped working the moment a player upgraded an axe.
     /// No live run caught it because every run starts from level-0 tools (measured 2026-10-30: `upgradeLevel: 0` for
     /// all five tool slots).
@@ -287,8 +289,8 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("talk_to_npc", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "npc_talked", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("express_emote", "expression", FarmhandActionHandlerGroup.Expression, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("emote", "string", EmoteEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "emote_started", "Farmer.doEmote"), FarmhandActionLifecycle.LiveVerified),
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
-        E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
-        E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
+        E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, ContainerItemTarget(ChestStoreItemMeaning), FarmhandActionLifecycle.LiveVerified),
+        E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, ContainerItemTarget(ChestRetrieveItemMeaning), FarmhandActionLifecycle.LiveVerified),
         E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
         // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
@@ -571,6 +573,52 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     private static FarmhandActionDescriptor SlotTarget() => new(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition");
 
     /// <summary>
+    /// What `chestId` means on the two container actions: the published identity of the container, which IS
+    /// its address.
+    ///
+    /// No `x`/`y` beside it, because that would be the same fact twice: `BuildContainerTargetId` hashes the
+    /// location, the tile and the chest type into this one id, and the body reverses that by walking the
+    /// location's containers and matching the id (`ResolveStorageContainerById`) - so the tile is *derived*
+    /// here rather than trusted from the caller, and a container that has moved no longer matches anything.
+    /// </summary>
+    private const string ChestIdMeaning = "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id.";
+
+    /// <summary>
+    /// What `expectedQualifiedItemId` means when storing: which carried item to put in.
+    ///
+    /// No `slot`, and the reason is the item itself rather than a convenience. The container half of this
+    /// action is named by ONE identity, and the pack half is the same kind of fact: the body takes the first
+    /// carried stack of this item id - the exact rule `chest_retrieve` has always used on the container side
+    /// (`GetItemsForPlayer().FirstOrDefault(...)`) - so two carried stacks of one item are one address here
+    /// too. The slot that actually moved is published in the receipt's evidence.
+    /// </summary>
+    private const string ChestStoreItemMeaning = "The item id to move, copied from `qualifiedItemId` of the chestStoreTargets row. There is no `slot`: the body takes the FIRST stack of this item id in the backpack and releases exactly that stack, and the receipt's `source_slot` names which one moved. Refused `item_not_owned_in_slot` when the backpack holds none of it by then.";
+
+    /// <summary>What `expectedQualifiedItemId` means when taking: which item inside the container to withdraw.</summary>
+    private const string ChestRetrieveItemMeaning = "The item id to move, copied from `qualifiedItemId` of the chestRetrieveTargets row. There is no `slot`: the body takes the FIRST stack in the container holding this item id, so the item id is the whole address on the container's side too. Refused `chest_empty` when nothing there still holds it.";
+
+    /// <summary>
+    /// A storage-container action: name the container, name the item.
+    ///
+    /// Two arguments and no geometry, because a container action's subject is a container and an item - the
+    /// tile and the pack slot are facts the snapshot already publishes, and asking for them again asked the
+    /// caller to keep two spellings of one address in sync (`slot` for `chest_retrieve` was worse still: the
+    /// item lives in the CHEST's slots, and the handler never read the value at all). Perception mirrors the
+    /// world completely; this descriptor is the execution slice, and the slice is the two facts the body
+    /// cannot derive - which container, which item. Everything else it re-derives on the game thread.
+    /// </summary>
+    private static FarmhandActionDescriptor ContainerItemTarget(string itemMeaning) => new(
+        new[]
+        {
+            new FarmhandActionArgument("chestId", "string", null, ChestIdMeaning),
+            new FarmhandActionArgument("expectedQualifiedItemId", "string", null, itemMeaning),
+        },
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "native_action_postcondition");
+
+    /// <summary>
     /// load_building_chest carries a required `slot` because the native Load branch reads
     /// `who.ActiveObject` (Building.cs:764) — the HELD item, which is `Items[CurrentToolIndex]`
     /// — and not "some item in the pack", unlike chest_store. The slot names the inventory
@@ -663,10 +711,30 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     };
     private static FarmhandActionDescriptor SlotItemTarget(string? exactQualifiedItemId = null) => exactQualifiedItemId is null
             ? Described(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") })
-            : Described(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }) with
+            : Described(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string", null, ExactItemPinMeaning(exactQualifiedItemId)), new FarmhandActionArgument("expectedTargetId", "string") }) with
         {
             Acceptance = new FarmhandExecutionAcceptanceFacts(ExactExpectedQualifiedItemId: exactQualifiedItemId),
         };
+
+    /// <summary>
+    /// The sentence that publishes an exact item pin on the argument the pin narrows.
+    ///
+    /// The pin itself is a real product boundary - `machine_load` accepts `(O)433` and nothing else, and that is a
+    /// FROZEN, hash-bound slice covering one of the game's 39 machine rules (see
+    /// `action-development/src/analysis/stardew-action-inventory-reconciliation.mjs`, ruling 1). It stays.
+    ///
+    /// What was wrong is that a caller could not SEE it. The action is published under a general-looking id, its
+    /// argument is a bare `string`, and the only way to learn the restriction was to be refused - measured
+    /// 2026-10-31: a furnace, a preserves jar and a cheese press are all refused by `machine_load`, correctly, with
+    /// nothing on the surface saying the action covers one machine rule rather than every machine. `plan_shape`
+    /// answers from these descriptions, so this is where a caller looks BEFORE writing a plan.
+    ///
+    /// Derived from the SAME value that builds the acceptance fact, never a second spelling: the published sentence
+    /// cannot promise something the enforcement does not do, and a new exact-pinned action inherits it by declaring
+    /// its pin once.
+    /// </summary>
+    private static string ExactItemPinMeaning(string exactQualifiedItemId) =>
+        $"Exactly {exactQualifiedItemId}, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use.";
     /// <summary>
     /// Frozen Body Program read-only source descriptor: machine_inspect is a
     /// read-only observation whose declared output fact machine_target_id:string

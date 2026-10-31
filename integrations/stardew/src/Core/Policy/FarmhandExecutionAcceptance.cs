@@ -62,8 +62,9 @@ public static class FarmhandExecutionAcceptance
     private static bool HasExactArgumentShape(FarmhandActionDescriptor descriptor, BridgeExecutionArgs args)
     {
         bool x = args.X.HasValue;
-        bool y = args.Y.HasValue;
-        bool slot = args.Slot.HasValue;
+    bool y = args.Y.HasValue;
+    bool slot = args.Slot.HasValue;
+    bool chestId = args.ChestId is not null;
         bool qualifiedItem = args.ExpectedQualifiedItemId is not null;
         bool target = args.ExpectedTargetId is not null;
         bool sceneTarget = args.SceneTarget is not null;
@@ -84,6 +85,7 @@ public static class FarmhandExecutionAcceptance
         return x == HasArgument(descriptor, "x")
             && y == HasArgument(descriptor, "y")
             && slot == HasArgument(descriptor, "slot")
+            && chestId == HasArgument(descriptor, "chestId")
             && qualifiedItem == HasArgument(descriptor, "expectedQualifiedItemId")
             && target == HasArgument(descriptor, "expectedTargetId")
             && sceneTarget == (descriptor.SceneTarget is not null)
@@ -115,6 +117,10 @@ public static class FarmhandExecutionAcceptance
         "x" => IsBoundedIntegerCoordinate(args.X, facts.MaximumTileCoordinate),
         "y" => IsBoundedIntegerCoordinate(args.Y, facts.MaximumTileCoordinate),
         "slot" => args.Slot is { } slot && slot >= 0 && slot <= facts.MaximumInventorySlot,
+        // A container id is the published opaque identity `BuildContainerTargetId` mints. It is checked
+        // with the same grammar as every other opaque id: a caller cannot address a container by naming a
+        // tile instead, and the live re-resolution is what decides whether that id still names one.
+        "chestId" => BridgeProtocol.IsOpaqueId(args.ChestId),
         "expectedQualifiedItemId" => facts.ExactExpectedQualifiedItemId is { } exact
             ? string.Equals(args.ExpectedQualifiedItemId, exact, StringComparison.Ordinal)
             : args.ExpectedQualifiedItemId is { Length: > 0 } qualifiedItem

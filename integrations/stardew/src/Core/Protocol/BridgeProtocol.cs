@@ -1995,7 +1995,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // re-resolves the person and measures reach against the live tile.
         "talk_to_npc" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
-        "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "chest_store" or "chest_retrieve" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
             "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
@@ -2007,6 +2007,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "use_warp_item" => new[] { "slot", "expectedQualifiedItemId" },
         "pan_ore" => new[] { "slot", "x", "y" },
         "claim_mail_attachment" => new[] { "x", "y", "expectedTargetId" },
+        // The storage-container pair names a container and an item, never a tile and a slot: the container id
+        // already binds the location and tile (`BuildContainerTargetId`), so x/y beside it would be one address
+        // spelled twice, and which stack moves is the body's own decision (first carried / first stored stack of
+        // that item id). See farmhandexecutioncontroller.containeractions.cs.
+        "chest_store" or "chest_retrieve" => new[] { "chestId", "expectedQualifiedItemId" },
         // The building-chest pair. A building chest is reached from a tile of the building
         // EXTERIOR (Data/Buildings ActionTiles, or DefaultAction), so x,y is that tile and
         // expectedTargetId names which building's which chest. load_building_chest also needs

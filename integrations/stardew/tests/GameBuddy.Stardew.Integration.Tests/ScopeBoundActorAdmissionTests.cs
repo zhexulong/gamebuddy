@@ -360,9 +360,9 @@ public sealed class ScopeBoundActorAdmissionTests
     /// </summary>
     private static BridgeExecutionArgs Args(string action) => action switch
     {
-        // farmhandexecutioncontroller.containeractions.cs: slot, x, y, expectedQualifiedItemId, expectedTargetId.
-        "chest_store" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "chest_target_1" },
-        "chest_retrieve" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "chest_target_1" },
+            // farmhandexecutioncontroller.containeractions.cs: chestId, expectedQualifiedItemId.
+            "chest_store" => new BridgeExecutionArgs { ChestId = "chest_0123456789abcdef", ExpectedQualifiedItemId = "(O)24" },
+            "chest_retrieve" => new BridgeExecutionArgs { ChestId = "chest_0123456789abcdef", ExpectedQualifiedItemId = "(O)24" },
         // recipe-only: expectedTargetId.
         "cook_recipe" => new BridgeExecutionArgs { ExpectedTargetId = "Fried_Egg" },
         "craft_item" => new BridgeExecutionArgs { ExpectedTargetId = "Torch" },

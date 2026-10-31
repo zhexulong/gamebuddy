@@ -72,23 +72,24 @@ internal static class NativeItemPredicates
     /// constructor at <c>Object.cs:920-943</c> only gives 8/10/12/14/25 a
     /// non-default durability, so a stone at the default durability is not
     /// necessarily <c>(O)2</c>.
+    ///
+    /// <para>
+    /// DURABILITY IS NOT A FILTER. A breakable stone carries `MinutesUntilReady` as its health - 1 through the
+    /// <c>default</c> arm of <c>Object.cs:939-941</c>, 2-16 on the mountain (<c>Farm.cs:540-606</c>), 3-25 in the
+    /// mines (<c>MineShaft.cs:1733-1798</c>, <c>:4351-4460</c>). One <c>Pickaxe.DoFunction</c> subtracts
+    /// <c>Math.Max(1, upgradeLevel + 1) + additionalPower</c> (<c>Pickaxe.cs:139-140</c>) and returns early while the
+    /// remainder is positive (<c>Pickaxe.cs:142-146</c>), so the pickaxe makes progress on every one of them and the
+    /// native category is the whole floor: the <c>UpgradeLevel &lt; 2</c> refusal lives in the sibling
+    /// <c>Name.Contains("Boulder")</c> arm (<c>Pickaxe.cs:180-190</c>), which this predicate cannot select.
+    /// </para>
+    /// <para>
+    /// This is the ONE predicate discovery, admission and <c>observe_scene</c> ask. It used to be conjoined with
+    /// <c>MinutesUntilReady == 1</c> - "the basic pickaxe removes it in one swing" - and that conjunction hid every
+    /// multi-hit rock in the game from the radar and refused it with <c>rock_target_changed</c>. It is the same defect
+    /// the tree path carried as <c>tree.health.Value == 1f</c>: a durability compared against the value that means
+    /// "one swing left" instead of against the engine's own "is there anything left to hit".
+    /// </para>
     /// </remarks>
     internal static bool IsBreakableStone(StardewValley.Object item) =>
         item is not null && item.IsBreakableStone();
-
-    /// <summary>
-    /// Whether this object is a stone the basic pickaxe removes in one hit.
-    /// </summary>
-    /// <remarks>
-    /// <c>break_rock_source</c> spends exactly one <c>Pickaxe.DoFunction</c>
-    /// call, and <c>Object.cs:1123-1133</c> subtracts
-    /// <c>upgradeLevel + 1</c> (so 1 for a basic pickaxe) from
-    /// <c>MinutesUntilReady</c>. The stone is therefore removed only when its
-    /// durability is 1, which is what the <c>default</c> arm of
-    /// <c>Object.cs:939-941</c> assigns. Discovery and admission must use this
-    /// same conjunction, otherwise the scanner would advertise a stone the
-    /// action then refuses.
-    /// </remarks>
-    internal static bool IsOneHitBreakableStone(StardewValley.Object item) =>
-        IsBreakableStone(item) && item.MinutesUntilReady == 1;
 }
