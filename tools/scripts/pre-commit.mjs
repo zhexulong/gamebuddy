@@ -6,11 +6,16 @@ import { execFileSync } from "node:child_process";
  *
  * Scope is deliberately narrow, and deliberately NOT tree-wide:
  *   - It formats the STAGED files and re-stages them. That removes the cause of the recurring red.
+ *   - It typechecks the test project when the commit touches `host/src` (see the block at the end). That is
+ *     the one build-shaped step here, and it is conditional on the commit actually being able to affect it:
+ *     a commit that touches no Host source pays nothing for it.
  *   - It does NOT run the tree-wide ratchets as blockers. Those ratchets fail on any new violation
  *     anywhere in the tree, so blocking a commit on them would block one author for a neighbour's
  *     file - the failure mode that gets hooks uninstalled. The ratchets stay CI's job; the total is
  *     printed here as information.
  *   - No tests, no builds, no network. A hook that is slow is a hook everyone bypasses.
+ *     (The one exception is the conditional test-project typecheck below, added 2026-10-31 when a commit
+ *     landed three test files that did not compile; it runs only for a commit that touches Host sources.)
  *   - It PRINTS the staged set before doing anything, because in a shared checkout that set is not always
  *     the author's own (see the comment at that block).
  *
@@ -48,10 +53,9 @@ if (owners.length > 1) {
 }
 
 const targets = staged.filter((path) => FORMATTABLE.test(path));
-if (targets.length === 0) {
-  console.log("pre-commit: nothing formattable staged");
-  process.exit(0);
-}
+// No `process.exit(0)` here: this hook has a second, blocking job at the end, and an early exit would skip it for
+// exactly the commits that stage no formattable file.
+if (targets.length === 0) console.log("pre-commit: nothing formattable staged");
 
 try {
   const output = execFileSync("node", [BIOME, "format", "--write", "--max-diagnostics=none", ...targets], {
@@ -74,9 +78,12 @@ try {
 
 // Re-stage only the files this hook was allowed to touch: a formatting change must ride along with
 // the commit it belongs to, and nothing else may be added to the index.
-const changed = git(["diff", "--name-only", "--", ...targets])
-  .split(/\r?\n/)
-  .filter((path) => path.length > 0);
+const changed =
+  targets.length === 0
+    ? []
+    : git(["diff", "--name-only", "--", ...targets])
+        .split(/\r?\n/)
+        .filter((path) => path.length > 0);
 if (changed.length > 0) {
   execFileSync("git", ["add", "--", ...changed], { stdio: "inherit" });
   console.log(`pre-commit: re-staged ${changed.length} formatted file(s)`);
@@ -93,4 +100,39 @@ for (const ratchet of ["tools/scripts/check-format-ratchet.mjs", "tools/scripts/
     const line = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split(/\r?\n/).slice(-1)[0];
     console.log(`pre-commit: ${line} (CI decides; this commit is not blocked by a tree-wide delta)`);
   }
+}
+
+// THE ONE BLOCKING STEP, and it is blocking on purpose.
+//
+// Every ratchet above is a delta against a tree-wide total, so none of them can answer "does the commit I am making
+// compile". 32a13440 added three wire-agreement gates and 26 type errors; `pnpm build:test` is `noEmitOnError`, so it
+// kept republishing the last artifact that compiled, and for as long as that lasted every `node --test dist-test/...`
+// reading described code that no longer existed. A tree-wide budget cannot catch that: the errors landed inside
+// allowance the baseline had banked from earlier decreases in the same codes.
+//
+// The check is scoped to the files IN THIS COMMIT, so a neighbour's in-flight edit cannot block it, and it prints the
+// file and the first errors rather than a count. `check-staged-test-typecheck.mjs` does the scoping; this only runs it.
+try {
+  const result = execFileSync("node", ["host/scripts/check-staged-test-typecheck.mjs"], {
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  console.log(
+    `pre-commit: ${
+      result
+        .trim()
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .slice(-1)[0]
+    }`,
+  );
+} catch (error) {
+  const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim();
+  if (typeof error.status !== "number") {
+    console.error(`pre-commit: could not check the test project\n${detail || error.message}`);
+    process.exit(1);
+  }
+  console.error(`pre-commit: this commit does not compile\n${detail}`);
+  process.exit(1);
 }

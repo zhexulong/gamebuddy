@@ -111,6 +111,15 @@ jobs:
       - run: pnpm test:host-diagnostic-output
       - run: pnpm check:test-store-teardown
       - run: pnpm test:test-store-teardown
+      # The pre-commit hook blocks a commit whose own Host sources do not compile
+      # (`tools/scripts/pre-commit.mjs` runs this), and the rule is only linked if CI
+      # runs the scoping predicate too: the hook's judgement is one function, and a
+      # predicate that returned an empty set would turn every commit green.
+      # `--rev HEAD~1` is the per-push half: CI has no staged index, so this asks the
+      # same question of the commit just made. Invoked by path rather than through a
+      # `check:` script because `package.json` is being edited by another lane here.
+      - run: node host/scripts/check-staged-test-typecheck.mjs --rev HEAD~1
+      - run: node --test host/scripts/check-staged-test-typecheck.test.mjs
       # Both read Host sources through the workspace's own TypeScript compiler
       # (host/scripts/production-artifact.mjs), so they need this job's install and belong here
       # rather than in the install-free `gates` job. Neither ran anywhere before the CI coverage gate.
