@@ -683,3 +683,61 @@ test("item 11: each failed-turn problem code renders its own player sentence, ne
   expect(body, "an unknown problem code is refused, not printed").not.toContain("a_code_from_a_newer_host");
   await expect(page.locator("[role=alert]"), "and the refusal is the surface's own problem view").toBeVisible();
 });
+
+// --- item 12: a refused turn names the CAUSE, not five causes at once -------------
+
+/**
+ * `runtime_unavailable` is what every provider refusal settles as, and the sentence for it named
+ * five causes - a wrong key, a model the endpoint does not serve, an unreachable endpoint, and then
+ * a throttle and an over-long conversation once the Host could classify them. A player holding a
+ * revoked key and a player being rate-limited read identical words.
+ *
+ * The Host now publishes the classified cause beside the code (`providerFailure`), so this pins the
+ * two readings that were the same before: a 401 and a 429 must reach the screen as different
+ * sentences, and neither may be the five-cause paragraph. It also pins the boundary the new field
+ * inherits from `problemCode`: a cause this build does not know is refused at the validator, so it
+ * reaches no surface at all rather than rendering as an enum.
+ */
+test("item 12: a refused credential and a throttle render different sentences", async ({ page }) => {
+  await stubShell(page, { turn: { state: "failed", canCancel: false } });
+  let providerFailure: string | undefined;
+  const projected = () => {
+    const root = composedRoot({ turn: { state: "failed", canCancel: false } });
+    const turn = { ...root.chat.chat.turn!, problemCode: "runtime_unavailable", providerFailure };
+    return jsonOk({
+      ...root,
+      chat: { ...root.chat, chat: { ...root.chat.chat, turn } },
+    });
+  };
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(projected()));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(projected()));
+
+  const readings: Record<string, string> = {};
+  const causes = ["credential_rejected", "rate_limited"] as const;
+  for (const [index, cause] of causes.entries()) {
+    providerFailure = cause;
+    if (index === 0) await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    else await page.reload();
+    const notice = page.locator(".reference-turn-notice");
+    await expect(notice).toContainText(/\S/u);
+    readings[cause] = (await notice.textContent())?.trim() ?? "";
+  }
+  console.log(`[item-12] ${JSON.stringify(readings)}`);
+
+  expect(
+    readings.credential_rejected,
+    `a 401 and a 429 must not read alike: ${JSON.stringify(readings)}`,
+  ).not.toBe(readings.rate_limited);
+  // Each names the action its own cause has, and neither prints the raw class.
+  expect(readings.credential_rejected).toContain("API key");
+  expect(readings.rate_limited).toContain("rate-limiting");
+  for (const cause of causes) expect(readings[cause], `${cause} never renders the raw class`).not.toContain(cause);
+
+  // The boundary half, the same rule `problemCode` already has: an unknown cause is refused by the
+  // validator, so the whole turn is refused rather than the enum being drawn.
+  providerFailure = "a_cause_from_a_newer_host";
+  await page.reload();
+  const body = (await page.locator("body").textContent()) ?? "";
+  expect(body, "an unknown provider cause is refused, not printed").not.toContain("a_cause_from_a_newer_host");
+  await expect(page.locator("[role=alert]"), "and the refusal is the surface's own problem view").toBeVisible();
+});

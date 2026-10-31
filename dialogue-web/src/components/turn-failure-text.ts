@@ -49,7 +49,18 @@ export function turnFailureText(
     | "chatFailedNoVisiblePresentation"
     | "chatFailedRuntimeUnavailable"
     | "chatFailedStorageUnavailable"
+    | "chatFailedProviderCredentialRejected"
+    | "chatFailedProviderModelNotServed"
+    | "chatFailedProviderRateLimited"
+    | "chatFailedProviderContextOverflow"
+    | "chatFailedProviderEndpointUnreachable"
   >,
+  /**
+   * The classified cause the Host published beside `problemCode`, when it read one. It is a
+   * SECOND argument rather than a replacement for the code: a turn whose cause was not classified
+   * still has a `problemCode` that needs words, and the two facts are independent.
+   */
+  providerFailure?: BrowserTurnV1["providerFailure"],
 ): string {
   const byCode: Readonly<Record<NonNullable<BrowserTurnV1["problemCode"]>, string>> = {
     interrupted: labels.chatFailedInterrupted,
@@ -57,6 +68,24 @@ export function turnFailureText(
     runtime_unavailable: labels.chatFailedRuntimeUnavailable,
     storage_unavailable: labels.chatFailedStorageUnavailable,
   };
+  /**
+   * One sentence per class, and the exhaustive map is the reason this function exists: a sixth
+   * class fails the typecheck here, in the file that owes the player words for it, rather than
+   * silently inheriting the five-cause paragraph above.
+   */
+  const byProviderFailure: Readonly<Record<NonNullable<BrowserTurnV1["providerFailure"]>, string>> = {
+    credential_rejected: labels.chatFailedProviderCredentialRejected,
+    model_not_served: labels.chatFailedProviderModelNotServed,
+    rate_limited: labels.chatFailedProviderRateLimited,
+    context_overflow: labels.chatFailedProviderContextOverflow,
+    endpoint_unreachable: labels.chatFailedProviderEndpointUnreachable,
+  };
+  // The cause is the more specific fact, so it wins - but only for the code it describes. A
+  // provider refusal can only ever be a `runtime_unavailable`; a turn that was interrupted or
+  // failed to save has a cause of its own and must keep its own sentence even if a stale
+  // `providerFailure` somehow arrived beside it.
+  if (problemCode === "runtime_unavailable" && providerFailure !== undefined)
+    return byProviderFailure[providerFailure] ?? labels.chatFailedRuntimeUnavailable;
   if (problemCode === undefined) return labels.chatFailed;
   return byCode[problemCode] ?? labels.chatFailed;
 }

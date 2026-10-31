@@ -1151,7 +1151,11 @@ export function ComposedReferenceGameApp() {
     view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
       ? labels().chatStopped
       : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed"
-        ? turnFailureText(view.session.snapshot.chat.turn.problemCode, labels())
+        ? turnFailureText(
+            view.session.snapshot.chat.turn.problemCode,
+            labels(),
+            view.session.snapshot.chat.turn.providerFailure,
+          )
         : null;
   // The app-bar indicator is the Chat surface's own connection/turn fact: a turn
   // is in flight from the moment a submission is admitted until the authoritative

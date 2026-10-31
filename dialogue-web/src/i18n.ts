@@ -219,6 +219,26 @@ const en = {
   // product's own "runtime" pointed at nothing.
   chatFailedRuntimeUnavailable:
     "The reply never reached a model: the endpoint GameBuddy sends your messages to refused it — the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Check the connection and model in Settings (Connection and model); repeating this message will fail the same way.",
+  // One sentence per classified cause. The Host reads the cause from the provider's own status line
+  // and publishes it as a closed class beside `problemCode` (`providerFailure`), because the
+  // paragraph above covers five causes and therefore prescribes nothing: a player holding a
+  // revoked key and a player being throttled were being told the same thing.
+  //
+  // Each sentence names something the player can DO. `chatFailedProviderContextOverflow` is the
+  // one that must not over-promise: a new chat only helps when the conversation is what is long,
+  // and the fixed floor (system prompt, tools, memory, authored context) is not the player's to
+  // shorten - so it says what happened and offers the one true action, without claiming a fresh
+  // chat is a cure.
+  chatFailedProviderCredentialRejected:
+    "The endpoint refused your API key: it is missing, wrong, or has been revoked. Fix the key for this connection in Settings (Connection and model), then send this message again.",
+  chatFailedProviderModelNotServed:
+    "The endpoint does not serve the model this connection is set to. Pick a model that endpoint offers in Settings (Connection and model), then send this message again.",
+  chatFailedProviderRateLimited:
+    "The endpoint is rate-limiting this connection right now, so the reply was refused. Wait a moment and send this message again, or switch to a different connection in Settings.",
+  chatFailedProviderContextOverflow:
+    "This conversation is longer than this model's context window, so the endpoint refused it. Shortening it is what frees the room: start a new chat, or remove older messages. A model with a larger context window also works, if your connection offers one.",
+  chatFailedProviderEndpointUnreachable:
+    "The endpoint could not be reached at all — the base URL is wrong, or the network is not letting GameBuddy through. Check the base URL in Settings (Connection and model) and your connection, then send this message again.",
   chatFailedStorageUnavailable: "The reply could not be saved. You can try again.",
   // The surface's own no-model state, worded from `chat-model-route.ts`'s `none`: nothing is
   // configured, so this reply has nowhere to go. It follows SillyTavern's restraint - the product
@@ -1227,6 +1247,19 @@ const zh: Messages = {
   // 拒绝分类：英文目录同名字段说明了承载它的 wire 代码（runtime_unavailable）和理由。
   chatFailedRuntimeUnavailable:
     "这条回复没有送达任何模型：GameBuddy 转发消息的端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型不是该端点提供的，或者根本连不上那个端点。请在「设置 → 连接与模型」里检查连接和模型；重复发送同一条消息只会以同样方式失败。",
+  // 每种已分类原因一句话，见英文目录同名字段的说明。每句都说明玩家可以做什么；
+  // 上下文超长那句不得过度承诺：只有「对话太长」时开新会话才真的有用，
+  // 而固定底座（系统提示词、工具、记忆、作者上下文）不是玩家能缩短的东西。
+  chatFailedProviderCredentialRejected:
+    "端点拒绝了你的 API Key：它缺失、不正确，或者已经被吊销。请在「设置 → 连接与模型」里修好这条连接的 Key，然后重新发送这条消息。",
+  chatFailedProviderModelNotServed:
+    "这条连接所选的模型，该端点并不提供。请在「设置 → 连接与模型」里换一个该端点提供的模型，然后重新发送这条消息。",
+  chatFailedProviderRateLimited:
+    "端点正在对这个连接限流，所以这条回复被拒绝了。请稍等片刻再重新发送，或者在设置里换用另一条连接。",
+  chatFailedProviderContextOverflow:
+    "这段对话比这个模型的上下文窗口更长，端点因此拒绝了它。腾出空间的办法是缩短它：开一个新会话，或者删掉较早的消息。如果你的连接提供上下文更大的模型，换一个也可以。",
+  chatFailedProviderEndpointUnreachable:
+    "完全连不上这个端点——基础地址（Base URL）不对，或者网络没有放行 GameBuddy。请在「设置 → 连接与模型」里检查基础地址和你的网络，然后重新发送这条消息。",
   chatFailedStorageUnavailable: "回复没能保存下来。你可以重试。",
   // 见英文目录同名字段：按 SillyTavern 的克制方式，一句话说明缺什么、去哪里补，并说明阅读不受影响。
   chatNoModelTitle: "还没有可用的模型，她暂时无法回复。请在设置里接入你自己的连接，在此之前仍然可以阅读。",

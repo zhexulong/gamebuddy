@@ -106,6 +106,7 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 import { composedProblemView, problemTextWithCode } from "../src/composed-problem-view.ts";
+import { turnFailureText } from "../src/components/turn-failure-text.ts";
 import { messages } from "../src/i18n.ts";
 import { problemCodeFor } from "../src/management-pipeline-api.ts";
 import { TavernProblemError } from "../src/reference-pipeline-api.ts";
@@ -878,4 +879,78 @@ test("problem-code.11: an import the Host failed on never reads as an import the
       pairings.push(`refused="${formRefused.replace("\n", " / ")}" host="${hostFailed.replace("\n", " / ")}"`);
   }
   t.diagnostic(`problem-code.11: ${pairings.join("; ")}`);
+});
+
+/**
+ * The classified provider causes: one authority, three spellings, and no fourth.
+ *
+ * The Host derives its `ProviderFailureClass` type from `PROVIDER_FAILURE_CLASSES` (one list, in
+ * `provider-failure-classification.ts`), the wire contract spells that same list into
+ * `BrowserTurnV1Schema.providerFailure`, and both browser mirrors spell it again by hand because the
+ * bundle cannot import the Host. Three copies that agree today are a disagreement scheduled for
+ * later: a class the wire carries and a mirror does not know turns a legal turn into
+ * `TavernProtocolError`, so the player is told nothing about a failure the Host named precisely.
+ *
+ * The gate derives all three from source and asserts EQUALITY, which is the direction that fails on
+ * both kinds of drift - a missing member and an invented one. It also asserts the catalogue words
+ * every member, because a class with no sentence would reach the player as an empty notice.
+ */
+test("problem-code.13: the provider-cause vocabulary is one list, spelled the same way everywhere", (t) => {
+  const authority = literalsInDeclaration(
+    join(HOST, "provider-failure-classification.ts"),
+    "PROVIDER_FAILURE_CLASSES",
+  ).map((entry) => entry.value);
+  assert.ok(authority.length > 0, "the classifier's own list must be readable");
+
+  // The wire contract DERIVES its union from that same list rather than re-spelling it, so what
+  // there is to check is that derivation: the property must read the classifier's own identifier,
+  // and the mirrors must agree with the list. A hand-spelled contract union would pass a member
+  // comparison while being free to drift on the next edit, which is the defect this rule prevents.
+  const contractSource = readFileSync(TAVERN_CONTRACT, "utf8");
+  // ... and both browser mirrors spell it by hand.
+  const mirrors = CLIENT_MIRRORS.map((file) => ({
+    where: file.replace(/\\/gu, "/").split("/dialogue-web/").pop(),
+    members: literalsInDeclaration(file, "PROVIDER_FAILURES").map((entry) => entry.value),
+  }));
+
+  const failures = [];
+  const declared = new Set(authority);
+  if (!/providerFailure:[^\n]*PROVIDER_FAILURE_CLASSES/u.test(contractSource))
+    failures.push("the wire contract spells its provider-cause union by hand instead of deriving it");
+  for (const mirror of mirrors) {
+    const set = new Set(mirror.members);
+    for (const member of declared) {
+      if (!set.has(member)) failures.push(`${mirror.where} does not recognise ${JSON.stringify(member)}`);
+    }
+    for (const member of set) {
+      if (!declared.has(member)) failures.push(`${mirror.where} recognises a class no classifier produces ${JSON.stringify(member)}`);
+    }
+  }
+
+  // Every member has a sentence in both catalogues, and no two share one.
+  let sentenced = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const sentences = new Map();
+    for (const member of authority) {
+      const sentence = turnFailureText("runtime_unavailable", labels, member);
+      sentenced += 1;
+      if (sentence.length === 0) failures.push(`${locale} ${member} has no sentence`);
+      if (sentence === labels.chatFailedRuntimeUnavailable)
+        failures.push(`${locale} ${member} still reads the five-cause paragraph`);
+      if (sentence.includes(member)) failures.push(`${locale} ${member} prints the raw class`);
+      sentences.set(member, sentence);
+    }
+    if (new Set(sentences.values()).size !== authority.length)
+      failures.push(`${locale} renders fewer distinct sentences than there are causes`);
+  }
+
+  t.diagnostic(
+    `problem-code.13: ${authority.length} classified cause(s) from the classifier, the wire contract derives its union from that list, ${mirrors.map((m) => `${m.members.length} in ${m.where}`).join(", ")}, ${sentenced} sentence(s)`,
+  );
+  assert.deepEqual(
+    failures,
+    [],
+    "a cause the wire carries and a surface cannot word is a refusal the player cannot act on",
+  );
 });
