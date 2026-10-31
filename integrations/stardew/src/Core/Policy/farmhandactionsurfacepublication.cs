@@ -26,7 +26,24 @@ public sealed record FarmhandActionDescriptorProjection(
     /// Where the body must already stand, or null when this action declares no such precondition. Omitted from the
     /// JSON when null, so an action that declares nothing keeps the exact wire shape it had before.
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionApproachRequirementProjection? Approach = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionApproachRequirementProjection? Approach = null,
+    /// <summary>
+    /// The ObservationBinding/v1 descriptor this action requires, or null when it requires none.
+    ///
+    /// <para>
+    /// THIS FIELD IS WHY `pickup_forage` WAS UNUSABLE. The Mod declared it (`FarmhandActionDefinitions.cs:572`, required:
+    /// true, `[observationId, ref]`), `BridgeSession.cs:272` projected it onto the registration wire, and this record -
+    /// the one the artifact is serialized from - did not have it. So the generated catalog said nothing about the
+    /// binding while `protocol.ts:2812` required `sceneTarget` on every envelope; the model can only copy fields the
+    /// catalog publishes, and the catalog published neither the field nor any way to obtain `observationId`. Measured:
+    /// **14 dispatches, 14 `observation_binding_malformed`, 0 successes.** It was reachable and correct on both sides and
+    /// impossible to call.
+    /// </para>
+    /// <para>
+    /// Omitted when null, like `Approach`, so the ninety-four actions that require no binding keep the exact wire shape
+    /// they had before.
+    /// </para>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionObservationBindingProjection? SceneTarget = null
 );
 
 /// <summary>
@@ -61,6 +78,18 @@ public sealed record FarmhandActionPostcondition(string Name);
 /// 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
 /// </summary>
 public sealed record FarmhandActionApproachRequirementProjection(string Relation, int? WithinTiles);
+
+/// <summary>
+/// The ObservationBinding/v1 requirement in the Mod's own words: which target properties a caller must supply, and
+/// whether the requirement is mandatory. Published because the Host validates `sceneTarget` against this declaration
+/// while the model can only satisfy what the artifact tells it exists - a binding the Mod requires and the catalog omits
+/// is a call nobody can legally make.
+/// </summary>
+public sealed record FarmhandActionObservationBindingProjection(
+    string Type,
+    int Version,
+    bool Required,
+    IReadOnlyList<string> RequiredProperties);
 /// <summary>Exact descriptor envelope exported by the Mod.</summary>
 public sealed record FarmhandActionDescriptorArtifact(
     string Schema,
@@ -119,6 +148,13 @@ public static class FarmhandActionSurfacePublication
             WatchdogMs: descriptor.WatchdogMs,
             Approach: descriptor.Approach is { } approach
                 ? new FarmhandActionApproachRequirementProjection(approach.Relation, approach.WithinTiles)
+                : null,
+            SceneTarget: descriptor.SceneTarget is { } sceneTarget
+                ? new FarmhandActionObservationBindingProjection(
+                    sceneTarget.Type,
+                    sceneTarget.Version,
+                    sceneTarget.Required,
+                    sceneTarget.RequiredProperties)
                 : null);
     }
 

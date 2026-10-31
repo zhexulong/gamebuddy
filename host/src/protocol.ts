@@ -500,7 +500,11 @@ export type Snapshot = Readonly<{
     requiredUpgradeLevel: number;
     health: number;
   }>[];
-  /** Nearby one-hit ordinary breakable stone sources for the bounded native Pickaxe path. */
+  /**
+   * Nearby ordinary breakable stone sources for the bounded native Pickaxe path. `health` is the rock's remaining
+   * durability, which one swing lowers by `Math.Max(1, upgradeLevel + 1) + additionalPower` (Pickaxe.cs:139-140) -
+   * so most of these need more than one swing, and that is what the figure is for.
+   */
   rockSourceTargets?: readonly Readonly<{
     targetId: string;
     location: string;
@@ -3170,16 +3174,23 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_direction";
   } else if (value.action === "chest_store" || value.action === "chest_retrieve") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
+    // THE CONTAINER IS THE TARGET, so these take a container id and an item id - not a slot, a tile and a target id.
+    //
+    // This branch still read the pre-`chests` shape: `slot`, `x`, `y`, `expectedTargetId`. Both the Mod's descriptors
+    // (`ContainerItemTarget`, `FarmhandActionDefinitions.cs:290-291`) and the generated catalog had moved to
+    // `[chestId, expectedQualifiedItemId]`, so **every** `chest_store`/`chest_retrieve` request was refused
+    // `invalid_args` at this line before anyone looked at it: the model read the new shape from the catalog and the Host
+    // demanded the old one.
+    //
+    // Found by `protocol-catalog-agreement.test.ts`, the gate written for `pickup_forage` - which is why that gate
+    // compares the whole surface instead of asserting the one action that prompted it.
+    if (!hasExactKeys(value.args, ["chestId", "expectedQualifiedItemId"])) return "invalid_args";
     if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
+      typeof value.args.chestId !== "string" ||
+      !isOpaqueId(value.args.chestId) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||
       value.args.expectedQualifiedItemId.length === 0 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
+      value.args.expectedQualifiedItemId.length > 128
     )
       return "invalid_chest_target";
   } else if (value.action === "clear_cask") {
