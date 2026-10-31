@@ -138,7 +138,28 @@ export type CompiledPlan =
     }>;
 
 /**
- * Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`.
+ * How many targets ONE PLAN can name, which is what the observation budget sizes its per-stack window against.
+ *
+ * <p>
+ * This is NOT `MAX_PLAN_NODES` and must never become it again. They were the same number while both were 16, so the
+ * observation budget imported the plan ceiling and nobody noticed - until the ceiling became a read-back corruption bound
+ * of 256 and three tests failed with `actual: 64, expected: 256`. The two quantities answer different questions:
+ * </p>
+ * <ul>
+ * <li>`MAX_PLAN_NODES` - the largest node array a journal this product could have written may declare. A corruption bound,
+ * beside `Programs.Count > 128`.</li>
+ * <li>`TARGETS_NAMED_PER_PLAN` - how many DISTINCT targets one plan's worth of steps can address, which is what makes a
+ * catalogue row "reachable by some plan" or "a row no plan can exhaust".</li>
+ * </ul>
+ * <p>
+ * 16 stays here because it is a statement about a plan a model writes, and 16 steps is the shape that measurement found:
+ * of 26 programs in one run, eight sat exactly on it. If a plan really can name more than 16 targets, THIS is the number
+ * to raise - on its own evidence, not by following the journal's corruption bound.
+ * </p>
+ */
+export const TARGETS_NAMED_PER_PLAN = 16;
+
+/**
  *
  * <p>
  * 256 IS A CORRUPTION BOUND, NOT A BUDGET. The same number is checked on the READ-BACK path
@@ -775,6 +796,20 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
   for (const name of Object.keys(supplied))
     if (!declared.has(name)) refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state, requirement);
+  // A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY.
+  //
+  // `pickup_forage` declares an `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a
+  // value the caller computes but the ref of a scene observation the caller just made. Reading only `action.arguments`
+  // meant a script that omitted it compiled, dispatched, and was refused `observation_binding_malformed` by the Mod
+  // (measured 2026-10-31, `round17`: five calls, five refusals). A pre-condition the authoring side cannot see is a
+  // refusal deferred by one round trip.
+  for (const property of action.sceneTarget?.requiredProperties ?? []) {
+    if (property === "ref" || property === "observationId") continue; // carried by `sceneTarget` itself, not at top level
+    if (!Object.hasOwn(supplied, property))
+      refusePlan(`plan_script_missing_binding:${action.actionId}.${property}`, state, requirement);
+  }
+  if (action.sceneTarget?.required === true && !Object.hasOwn(supplied, "sceneTarget"))
+    refusePlan(`plan_script_missing_binding:${action.actionId}.sceneTarget`, state, requirement);
   const canonical: Record<string, PlanArgument> = {};
   for (const [name, declaration] of declared) {
     if (!Object.hasOwn(supplied, name))
