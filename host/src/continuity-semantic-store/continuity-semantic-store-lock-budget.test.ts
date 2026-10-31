@@ -28,6 +28,12 @@ const BEGINS_TRANSACTION = /^\s*BEGIN\b/iu;
  * reaches, and it is the size at which a 250 ms budget stops being obviously safe.
  */
 const HISTORY_ROWS = 40_000;
+/**
+ * How much of the budget one legitimate commit may occupy: a commit is allowed a tenth of it, and the
+ * rest is the wait the budget exists to bound. Stated as a ratio because both sides are derived from
+ * the store on every run - see the gate that uses it.
+ */
+const COMMIT_BUDGET_MARGIN = 10;
 const TAKES_WRITE_LOCK = /^\s*BEGIN\s+IMMEDIATE\b/iu;
 
 /**
@@ -914,7 +920,30 @@ test("the commit curve grows with the store's history and names where it would c
   );
 });
 
-test("the busy budget clears the longest commit this store makes at a history it will reach", () => {
+/**
+ * The gate: a legitimate commit at a history a Companion's Chat history reaches must clear the
+ * configured budget by a stated margin, and the failure names both numbers and the row count.
+ *
+ * Why this exists as a gate rather than as the sweep above. The sweep records a curve, which is a
+ * snapshot: someone reads it, nods, and the next column added to a re-validated table shifts the
+ * slope without anyone re-reading anything. The defect this class is about is exactly that shape -
+ * a budget that stops bounding a legitimate operation - and it shipped once already at 250 ms. So the
+ * comparison is made every run, both sides derive from the store (the budget from its live
+ * connection's own `PRAGMA busy_timeout`, the commit from its real write path), and the failure
+ * prints what it saw.
+ *
+ * The margin is 10x, and it is stated as a ratio rather than as a number of milliseconds because
+ * the two sides are what it relates: a commit may occupy up to a TENTH of the budget, leaving the
+ * rest as the wait the budget was actually meant to bound. At the size this gate uses (40 000 rows,
+ * `HISTORY_ROWS` above - a size a Companion's Chat history reaches) a commit measures 150-350 ms, so
+ * the margin holds with room, and a change that tripled the per-commit cost would take it out.
+ *
+ * The size is fixed rather than derived from the budget so the gate's own runtime stays bounded
+ * (seeding is the expensive part, and 40 000 rows seeds in a few seconds); the SIZE is what a real
+ * store reaches, which is the property that matters, and moving it is a deliberate act that shows up
+ * in a diff.
+ */
+test("a legitimate commit at a reachable history clears the store's own budget by 10x", () => {
   const subject = fixtureRoot();
   try {
     // A fresh authority commits in single-digit milliseconds and would pass any budget at all,
@@ -935,8 +964,11 @@ test("the busy budget clears the longest commit this store makes at a history it
       seeder.close();
     }
 
+    // Both the worst case and the median, because a budget can be outrun by either: a single slow
+    // commit is a race, and a median past the margin means the whole path has drifted rather than
+    // one sample being unlucky. Ten samples so the median is a reading and not one measurement.
     const commits: number[] = [];
-    for (let index = 0; index < 9; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       const started = performance.now();
       subject.store.createGameSessionMetadata({
         creationRequestId: `budget-${index}`,
@@ -945,7 +977,9 @@ test("the busy budget clears the longest commit this store makes at a history it
       });
       commits.push(performance.now() - started);
     }
-    const longestMs = Math.max(...commits);
+    const sorted = [...commits].sort((left, right) => left - right);
+    const longestMs = sorted[sorted.length - 1]!;
+    const medianMs = quantile(sorted, 0.5);
     // Both sides of the comparison come from the store: the budget from its live connection and
     // the commit from its real write path. A literal on either side would be a second copy of a
     // fact the store already owns, and the copies would drift exactly when a commit grows.
@@ -956,8 +990,8 @@ test("the busy budget clears the longest commit this store makes at a history it
       "the live connection's budget and the store's published budget are two readings of one fact",
     );
     assert.ok(
-      budget > longestMs * 10,
-      `the store allows ${String(budget)}ms but its longest commit over ${String(HISTORY_ROWS)} rows took ${longestMs.toFixed(1)}ms; a budget shorter than a legitimate commit is a race by construction, not a tuning choice`,
+      longestMs * COMMIT_BUDGET_MARGIN < budget,
+      `a legitimate commit no longer clears the budget by ${String(COMMIT_BUDGET_MARGIN)}x: the store allows ${String(budget)}ms, and its slowest of 10 commits at ${String(HISTORY_ROWS)} rows took ${longestMs.toFixed(1)}ms (median ${medianMs.toFixed(1)}ms). That leaves ${(budget / longestMs).toFixed(1)}x headroom instead of ${String(COMMIT_BUDGET_MARGIN)}x, so a commit is now competing with the wait the budget exists to bound - either the budget is too small for this store at ${String(HISTORY_ROWS)} rows, or a re-validated table grew and the commit path got slower`,
     );
   } finally {
     subject.control.close();
