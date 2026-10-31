@@ -5,26 +5,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * EVERY PRE-CONDITION THE CATALOG DECLARES MUST BE ENFORCED BY THE PLAN COMPILER, OR THE PLAN IS REFUSED LATE.
+ * A MANDATORY SCENE BINDING MUST BE DEMANDED BY THE COMPILER AND ACCEPTED BY IT.
  *
  * <p>
- * A catalog entry carries more than `argumentSchema`: it may also declare a `sceneTarget` binding (an
- * `ObservationBinding/v1`) or an `approach` requirement. The plan compiler reads `action.arguments` and nothing else, so a
- * binding declared in the catalog is invisible to it - a script compiles, dispatches, and the Mod refuses it.
+ * The first version of this gate checked that `body-program-script.ts` MENTIONED `sceneTarget`. It passed while the file did
+ * not compile: the property did not exist on `PublishedPlanAction`, `planActionsFromRegistrations` never populated it, and
+ * both guards read `undefined`. Text matching is satisfied by writing the word.
  * </p>
  *
  * <p>
- * Measured 2026-10-31 (`round17`): `pickup_forage` declares `sceneTarget`, the model wrote it five times with only the four
- * arguments it could see, the compiler accepted all five, and every one was refused `observation_binding_malformed`. The
- * `protocol-catalog-agreement` gate could not catch this: it compares ARGUMENT key sets, and a binding is not an argument.
- * </p>
- *
- * <h2>What this asserts</h2>
- * <p>
- * For every action in the catalog that declares `sceneTarget`, the plan compiler must know the name - because it is the
- * component that turns an incomplete call into a refusal at authoring time. The compiler is read for the binding names it
- * handles, so an action that gains a binding is covered without editing this file, and a compiler that stops handling one
- * fails here rather than in a live run.
+ * So this asserts BEHAVIOUR against the real catalog, in both directions, which is what caught the second defect the mention
+ * check could not see: once the binding was demanded, a call that supplied it was refused
+ * `plan_script_unknown_argument:pickup_forage.sceneTarget` - the compiler wanted a key it also rejected.
  * </p>
  */
 function repoRoot(start) {
@@ -44,57 +36,108 @@ const CATALOG = JSON.parse(
     "utf8",
   ),
 );
-const COMPILER = readFileSync(join(ROOT, "host/src/body-program-script.ts"), "utf8");
 
-/** Every binding name the catalog declares that is NOT an argument. */
-function declaredBindings() {
-  const bindings = new Map();
-  for (const action of CATALOG.actions ?? []) {
-    if (action.sceneTarget !== undefined) bindings.set(action.actionId, "sceneTarget");
-  }
-  return bindings;
+const { compilePlanScript, planActionsFromRegistrations } = await import("./body-program-script.js");
+
+/** The Host rebuilds registrations from the catalog at runtime; this does the same, from the same artifact. */
+function actionsFromCatalog() {
+  const registrations = (CATALOG.actions ?? []).map((action) => ({
+    actionId: action.actionId,
+    familyId: "gate",
+    lifecycle: action.lifecycle,
+    kind: action.kind,
+    descriptor: Object.freeze({
+      arguments: action.arguments,
+      argumentSchema: action.argumentSchema,
+      ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
+    }),
+  }));
+  return planActionsFromRegistrations(registrations);
 }
 
-test("the plan compiler knows every binding the catalog declares", () => {
-  const bindings = declaredBindings();
-  assert.ok((CATALOG.actions ?? []).length > 50, "the catalog must have been read");
+/** A snapshot complete enough for the compiler to reach its argument checks. */
+function snapshot() {
+  return {
+    revision: 10,
+    location: "Farm",
+    tile: { x: 5, y: 5 },
+    stamina: 270,
+    maxStamina: 270,
+    exhausted: false,
+    health: 100,
+    maxHealth: 100,
+    currentTool: "(T)Axe",
+    inventorySlots: 36,
+    actionable: true,
+    actorDispositionKind: "idle",
+    catalogRevision: 1,
+    capabilities: [],
+    enabledActionIds: [],
+    forageTargets: [{ targetId: "forage_1", x: 6, y: 6, qualifiedItemId: "(O)22", displayName: "Daffodil", stack: 1 }],
+  };
+}
 
-  const unaware = [];
-  for (const [actionId, binding] of bindings) {
-    // The compiler must contain the binding's name somewhere: that is what makes it able to demand or accept it. A
-    // compiler that never mentions `sceneTarget` cannot refuse a call that omits it, which is exactly the round17 defect.
-    if (!COMPILER.includes(binding))
-      awareActionLoop: {
-        unaware.push(
-          `${actionId} declares \`${binding}\`, and host/src/body-program-script.ts never mentions \`${binding}\` - so a call ` +
-            `omitting it compiles and is refused only after dispatch`,
-        );
-      }
-  }
+/** Every action the catalog says carries a mandatory binding. Population from the artifact, not a list. */
+const WITH_BINDING = (CATALOG.actions ?? []).filter((action) => action.sceneTarget?.required === true);
 
-  assert.deepEqual(
-    unaware,
-    [],
-    `a pre-condition the compiler cannot see is a refusal deferred to the Mod, one round trip later:\n${unaware.join("\n")}`,
-  );
-});
-
-test("the binding population is derived, not listed", () => {
-  // A hand-written list here would fail open. The population is whatever the catalog marks with `sceneTarget`, so an
-  // action that gains one is covered on the next regeneration.
-  const bindings = declaredBindings();
+test("the catalog still declares at least one mandatory binding", () => {
   assert.ok(
-    bindings.size >= 1,
-    `at least one action must declare a sceneTarget today; found ${bindings.size}. If that number reached 0 because the ` +
-      `feature was deleted, delete this gate instead of leaving it green over nothing.`,
+    WITH_BINDING.length >= 1,
+    `no action declares a mandatory sceneTarget any more. If the feature was deleted, delete this gate rather than leaving ` +
+      `it green over nothing.`,
   );
-  for (const [actionId, binding] of bindings) {
-    assert.equal(binding, "sceneTarget", `${actionId} declares an unexpected binding name`);
-    const entry = (CATALOG.actions ?? []).find((action) => action.actionId === actionId);
-    assert.equal(
-      entry.sceneTarget.required,
-      true,
-      `${actionId}'s binding must be mandatory for this gate to mean anything`,
-    );
-  }
 });
+
+test("a call that omits the mandatory binding is refused, and the refusal names the action", () => {
+  const actions = actionsFromCatalog();
+  const refusals = [];
+  for (const action of WITH_BINDING) {
+    const argumentsOnly = Object.keys(action.argumentSchema ?? {})
+      .map((name) => `${name}: ${sampleFor(name)}`)
+      .join(", ");
+    const result = compilePlanScript(
+      { script: `builder.${action.actionId}({ ${argumentsOnly} });` },
+      { snapshot: snapshot(), actions },
+    );
+    if (result.ok !== false || !String(result.reasonCode).startsWith("plan_script_missing_binding:"))
+      refusals.push(
+        `${action.actionId}: omitting \`sceneTarget\` should be refused at authoring time with plan_script_missing_binding, ` +
+          `but the compiler returned ${JSON.stringify(result.ok === true ? "ok" : result.reasonCode)}`,
+      );
+  }
+  assert.deepEqual(refusals, [], refusals.join("\n"));
+});
+
+test("a call that supplies the binding is ACCEPTED - the compiler must not demand what it rejects", () => {
+  // This is the direction that a "does the file mention sceneTarget" gate cannot see, and the one that failed after the
+  // first fix: the binding was demanded and then refused as an unknown argument.
+  const actions = actionsFromCatalog();
+  const refused = [];
+  for (const action of WITH_BINDING) {
+    const supplied = {
+      ...Object.fromEntries(Object.keys(action.argumentSchema ?? {}).map((name) => [name, sampleFor(name)])),
+      sceneTarget: { observationId: "observation_1", ref: "sr1_0123456789abcdef" },
+    };
+    const call = Object.entries(supplied)
+      .map(([name, value]) => `${name}: ${typeof value === "object" ? JSON.stringify(value) : value}`)
+      .join(", ");
+    const result = compilePlanScript(
+      { script: `builder.${action.actionId}({ ${call} });` },
+      { snapshot: snapshot(), actions },
+    );
+    if (result.ok !== true)
+      refused.push(
+        `${action.actionId}: supplying the binding it demands was refused ${JSON.stringify(result.reasonCode)} - a ` +
+          `pre-condition that cannot be satisfied is worse than one that is not enforced`,
+      );
+  }
+  assert.deepEqual(refused, [], refused.join("\n"));
+});
+
+/** A literal of the right shape for one argument name, so the compiler reaches the binding check rather than failing earlier. */
+function sampleFor(name) {
+  if (name === "x" || name === "y" || name === "slot") return name === "slot" ? "0" : name === "x" ? "6" : "6";
+  if (name === "expectedTargetId") return '"forage_1"';
+  if (name === "expectedQualifiedItemId") return '"(O)22"';
+  return `"${name}_value"`;
+}

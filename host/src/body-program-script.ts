@@ -43,6 +43,16 @@ type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly 
  * precondition by being refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. A refusal that
  * teaches is worse than a shape that says so.
  */
+/**
+ * The scene binding a surface declares, or its silence.
+ *
+ * `declared` rather than `required` to match its sibling: an optional binding means the action can also be driven from a
+ * plain tile, and a declared one cannot.
+ */
+type PublishedPlanSceneBindingRequirement =
+  | Readonly<{ declared: false }>
+  | Readonly<{ declared: true; requiredProperties: readonly string[] }>;
+
 type PublishedPlanApproachRequirement =
   | Readonly<{
       declared: true;
@@ -82,6 +92,14 @@ export type PublishedPlanAction = Readonly<{
   toolRequirement: PublishedPlanToolRequirement;
   /** Where the actor must stand before this action can happen, or the surface's silence. */
   approachRequirement: PublishedPlanApproachRequirement;
+  /**
+   * The scene binding the surface requires, or its silence.
+   *
+   * A binding is not an argument: `pickup_forage` cannot name its target from a tile alone, so the Mod declares an
+   * `ObservationBinding/v1` beside the argument schema. Carried for the same reason `approachRequirement` is - a
+   * pre-condition the authoring side cannot see is refused one round trip later.
+   */
+  sceneBindingRequirement: PublishedPlanSceneBindingRequirement;
 }>;
 
 /**
@@ -309,6 +327,7 @@ export function planActionsFromRegistrations(
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
         toolRequirement: declaredToolRequirementOf(registration),
         approachRequirement: declaredApproachRequirementOf(registration),
+        sceneBindingRequirement: declaredSceneBindingRequirementOf(registration),
       }),
     );
   }
@@ -391,6 +410,13 @@ const TOOL_UPGRADE_LEVELS: Readonly<
  * present, so the companion can tell "the surface does not say" from "stand anywhere". The Host never derives a
  * precondition from an action id.
  */
+/** The scene binding a registration declares, read from the descriptor the Mod published. */
+function declaredSceneBindingRequirementOf(registration: ActionRegistration): PublishedPlanSceneBindingRequirement {
+  const declared = registration.descriptor?.sceneTarget;
+  if (declared === undefined || declared.required !== true) return Object.freeze({ declared: false });
+  return Object.freeze({ declared: true, requiredProperties: Object.freeze([...declared.requiredProperties]) });
+}
+
 function declaredApproachRequirementOf(registration: ActionRegistration): PublishedPlanApproachRequirement {
   const approach = registration.descriptor?.approach;
   if (approach === undefined)
@@ -794,8 +820,12 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
     refusePlan(`plan_script_argument_not_canonical:${action.actionId}`, state, requirement);
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
+  // `sceneTarget` is required by the binding check below but is NOT an argument, so it must be exempt from the
+  // unknown-argument scan - otherwise a correct call is refused for supplying the very thing that was demanded.
+  const bindingName = "sceneTarget";
   for (const name of Object.keys(supplied))
-    if (!declared.has(name)) refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state, requirement);
+    if (!declared.has(name) && !(name === bindingName && action.sceneBindingRequirement.declared))
+      refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state, requirement);
   // A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY.
   //
   // `pickup_forage` declares an `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a
@@ -803,12 +833,7 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
   // meant a script that omitted it compiled, dispatched, and was refused `observation_binding_malformed` by the Mod
   // (measured 2026-10-31, `round17`: five calls, five refusals). A pre-condition the authoring side cannot see is a
   // refusal deferred by one round trip.
-  for (const property of action.sceneTarget?.requiredProperties ?? []) {
-    if (property === "ref" || property === "observationId") continue; // carried by `sceneTarget` itself, not at top level
-    if (!Object.hasOwn(supplied, property))
-      refusePlan(`plan_script_missing_binding:${action.actionId}.${property}`, state, requirement);
-  }
-  if (action.sceneTarget?.required === true && !Object.hasOwn(supplied, "sceneTarget"))
+  if (action.sceneBindingRequirement.declared && !Object.hasOwn(supplied, "sceneTarget"))
     refusePlan(`plan_script_missing_binding:${action.actionId}.sceneTarget`, state, requirement);
   const canonical: Record<string, PlanArgument> = {};
   for (const [name, declaration] of declared) {
