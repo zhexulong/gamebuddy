@@ -19,16 +19,30 @@ import {
  * Durable player connection records and the write-only credential store for
  * the Tavern management surface (design/28 §5.2).
  *
- * Two files, two roles, one owner:
+ * Three files, three roles, one owner:
  *
  * - `<agentDir>/tavern-connections.json` holds the records and the single
  *   active selection. It never holds a credential: a record keeps only the
  *   opaque `connectionId`, the catalog provider id, the player's own base URL
  *   and model id, the thinking level, and the last probe outcome.
  * - `<agentDir>/auth.json` is the embedded Pi runtime's own credential store,
- *   and the only file a submitted API key is written to. GameBuddy invents no
- *   second credential store: Pi reads this file, so a parallel store would
- *   create two sources of truth for the same secret.
+ *   keyed by `piProviderId` because that is the key Pi resolves a credential
+ *   under. It is one slot per provider, not one per connection.
+ * - `<agentDir>/tavern-connection-keys.json` is the Host-owned per-connection
+ *   key store, keyed by `connectionId`. It exists because the two stores answer
+ *   two different questions: Pi asks "what key authenticates this provider",
+ *   and this surface asks "what key did the player enter for this connection".
+ *   Two escape-hatch connections to the SAME provider share one Pi provider id,
+ *   so writing both keys into `auth.json` would let the second create silently
+ *   overwrite the first and leave the first connection probing with the
+ *   second's credential. The per-connection file is what makes multi-connection
+ *   support correct; it is not a duplicate of Pi's store and cannot be merged
+ *   back into it.
+ *
+ * Both files hold a long-lived plaintext credential for a local single-user
+ * agent, so neither may ever be carried by an exportable artifact
+ * (`tools/check-credential-export-isolation.mjs` derives both from this module
+ * and fails a copy/archive module that could include either).
  *
  * Every mutation runs under the connection document's path lock, so the
  * GameBuddy-owned writers serialize; the credential file is replaced by an
