@@ -58,14 +58,19 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+// The session-record parse has ONE spelling, shared with `tools/perf/report-run-cost.mjs`: a second copy of it would
+// quote different tokens for the same run the day either learns a new usage field.
+import { cacheBreaks, peakContext, readUsages, sumOf } from "../../perf/run-cost-usage.mjs";
 import { openLiveRunCapture } from "../core/capture.mjs";
 import { buildCompanionExperience, evaluateCompanionReply } from "../core/companion-experience.mjs";
+import { isPass, judgeObserved } from "../core/evidence-verdict.mjs";
 import {
   assertRenderedTranscript,
   findBrowserExecutable,
@@ -2111,6 +2116,97 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
   // Rendering: the same authenticated session, observed through the product's own
   // browser surface, into the run's `shots/` directory.
   await captureBrowserEvidence({ session: browserHalf.session, origin, client, environment });
+
+  // What the turns cost, read from this run's OWN session record while the runtime root still exists. Published
+  // beside the trace and printed, because a reader of the log needs the number without opening the directory.
+  environment.usage = readRunUsage({ personaCwd: environment.personaCwd });
+  console.log(narrateUsage(environment.usage));
+}
+
+export const CHAT_USAGE_SCHEMA = "chat_run_audit/usage/v1";
+
+/** Every `.jsonl` session record under this run's identity context, or the reason none could be listed. */
+function runSessionRecords(personaCwd) {
+  if (typeof personaCwd !== "string" || personaCwd.length === 0)
+    return Object.freeze({ records: [], reason: "runtime_cwd_not_established" });
+  const surfacesRoot = join(personaCwd, "surface-sessions");
+  let surfaces;
+  try {
+    surfaces = readdirSync(surfacesRoot, { withFileTypes: true });
+  } catch {
+    return Object.freeze({ records: [], reason: "no_surface_sessions_directory" });
+  }
+  const records = [];
+  for (const surface of surfaces) {
+    if (!surface.isDirectory()) continue;
+    let entries;
+    try {
+      entries = readdirSync(join(surfacesRoot, surface.name, "sessions"), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries)
+      if (entry.isFile() && entry.name.endsWith(".jsonl"))
+        records.push(join(surfacesRoot, surface.name, "sessions", entry.name));
+  }
+  records.sort();
+  const reason = records.length === 0 ? "no_session_record_for_run_surface_session" : null;
+  return Object.freeze({ records: Object.freeze(records), reason });
+}
+
+/** The reading in its published shape; `state` and `reason` come from the evidence verdict, never from a zero. */
+function usageReading({ verdict, sessionRecord, usages }) {
+  const measurable = isPass(verdict);
+  const peak = measurable ? peakContext(usages) : { peak: null, at: null };
+  const cacheRead = measurable ? sumOf(usages, "cacheRead") : 0;
+  const billable = measurable ? sumOf(usages, "input") + cacheRead : 0;
+  return Object.freeze({
+    schema: CHAT_USAGE_SCHEMA,
+    state: verdict.state,
+    reason: verdict.reason,
+    // The file every number below was derived from, so a reader never has to trust a bare figure.
+    sessionRecord,
+    turns: measurable ? usages.length : null,
+    peakInputPlusCacheRead: peak.peak,
+    peakAt: peak.at,
+    cacheHitRate: measurable && billable > 0 ? cacheRead / billable : null,
+    cacheBreaks: measurable ? Object.freeze(cacheBreaks(usages)) : null,
+  });
+}
+
+/** The reading, or the named reason there is none. Never throws: a diagnostic must not fail the run it measured. */
+export function readRunUsage({ personaCwd }) {
+  const unobserved = (reason, sessionRecord = null) =>
+    usageReading({ verdict: judgeObserved({ observed: false, reason }), sessionRecord, usages: [] });
+  const found = runSessionRecords(personaCwd);
+  // Two records in one run are two possible answers, and picking either would report a neighbour's tokens as this
+  // run's. The count names what to go and look at.
+  if (found.records.length > 1) return unobserved(`session_record_ambiguous:${found.records.length}`);
+  const sessionRecord = found.records[0] ?? null;
+  if (sessionRecord === null) return unobserved(found.reason);
+  let usages;
+  try {
+    ({ usages } = readUsages(sessionRecord));
+  } catch (error) {
+    return unobserved(`session_record_unreadable:${safeReasonCode(error)}`, sessionRecord);
+  }
+  // A record holding no provider turn is unobserved too: there is no number to publish, and a zero would be a
+  // measurement nobody took.
+  if (usages.length === 0) return unobserved("no_provider_usage_in_session_record", sessionRecord);
+  return usageReading({ verdict: judgeObserved({ observed: true, ok: true }), sessionRecord, usages });
+}
+
+/** One line a human reading the log can use without opening the run directory. */
+export function narrateUsage(usage) {
+  const where = usage.sessionRecord === null ? "" : ` source=${usage.sessionRecord}`;
+  if (usage.state !== "verified")
+    return `[chat-live-audit] usage state=${usage.state} reason=${usage.reason}${where} (an unobserved reading is not zero)`;
+  const hitRate = usage.cacheHitRate === null ? "n/a" : `${(usage.cacheHitRate * 100).toFixed(1)}%`;
+  return (
+    `[chat-live-audit] usage state=verified turns=${usage.turns} ` +
+    `peakInputPlusCacheRead=${usage.peakInputPlusCacheRead} cacheHitRate=${hitRate} ` +
+    `cacheBreaks=${usage.cacheBreaks.length}${where}`
+  );
 }
 
 function finishRun({ recorder, environment }) {
@@ -2404,6 +2500,10 @@ export async function main(argv = process.argv.slice(2)) {
     });
     await capture.record("companion-experience.json", experience);
     await capture.record("chat-run-audit.json", trace);
+    // Beside the trace, so a reader comparing two runs sees what each TURN cost as well as what it did. `state` is
+    // `verified` / `failed` / `unobserved` from the evidence vocabulary: a run whose session record could not be read
+    // publishes the reason, never a zero that would look like a free run.
+    if (environment.usage !== undefined) await capture.record("usage.json", environment.usage);
     await capture.record("capture-inputs.json", {
       schema: "chat_run_audit/capture-inputs/v1",
       runId,

@@ -29,6 +29,10 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+// The session-record parse lives in one module because a second reader now needs it: the Chat live loop publishes
+// this same reading on its run, and two spellings of it would quote different numbers for one run.
+import { cacheBreaks, peakContext, readUsages, sumOf } from "./run-cost-usage.mjs";
+
 const USAGE = Object.freeze(["input", "output", "cacheRead", "cacheWrite", "reasoning", "totalTokens"]);
 
 function parseArguments(argv) {
@@ -87,59 +91,6 @@ function findByName(directory, name, depth = 6) {
     else if (entry === name) found.push(path);
   }
   return found;
-}
-
-/** Every assistant message's provider usage, in order. */
-function readUsages(sessionPath) {
-  const usages = [];
-  const toolsAdded = [];
-  for (const line of readFileSync(sessionPath, "utf8").split("\n")) {
-    if (line.trim().length === 0) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (entry.message?.usage !== undefined) usages.push({ ...entry.message.usage, at: entry.timestamp ?? null });
-    if (entry.systemMessage?.toolsAdded !== undefined) toolsAdded.push(entry.systemMessage.toolsAdded);
-  }
-  return { usages, toolsAdded };
-}
-
-const sumOf = (usages, key) => usages.reduce((total, usage) => total + (Number(usage[key]) || 0), 0);
-
-/**
- * The peak the verdict's threshold is about: `input + cacheRead`.
- *
- * <p>
- * Named explicitly because it is NOT `totalTokens` and NOT `input`. Quoting either of those as "context" is the mistake
- * this report exists to make impossible.
- * </p>
- */
-function peakContext(usages) {
-  let peak = 0;
-  let at = null;
-  for (const usage of usages) {
-    const value = (Number(usage.input) || 0) + (Number(usage.cacheRead) || 0);
-    if (value > peak) {
-      peak = value;
-      at = usage.at;
-    }
-  }
-  return { peak, at };
-}
-
-/** Turns where the cache stopped being used after it had been, i.e. where the prefix broke. */
-function cacheBreaks(usages) {
-  const breaks = [];
-  for (let index = 1; index < usages.length; index += 1) {
-    const previous = Number(usages[index - 1].cacheRead) || 0;
-    const current = Number(usages[index].cacheRead) || 0;
-    // A miss after a hit means the prefix changed: the prompt was rewritten, not extended.
-    if (previous > 0 && current === 0) breaks.push({ turn: index, at: usages[index].at, previousCacheRead: previous });
-  }
-  return breaks;
 }
 
 /** Tool round-trip time, attributed by category and against the run's own wall clock. */

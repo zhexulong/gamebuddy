@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -33,6 +33,7 @@ import {
   evaluateProviderPreSendMarker,
   evaluateProviderRuntimeMarker,
   loadProbeManifest,
+  narrateUsage,
   openBrowserHalf,
   parseArguments,
   parseSseFrame,
@@ -40,6 +41,7 @@ import {
   probeTurnCommittedGate,
   probeVerdict,
   projectStateSnapshot,
+  readRunUsage,
   validateAuditEvent,
   validateAuditTrace,
   writeAuditTrace,
@@ -983,6 +985,59 @@ test("a conversation turn contributes a boundary reason when it is unsettled or 
   assert.equal(conversationTurnBoundaryReason(undefined), "conversation_turn_not_terminal");
   const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
   assert.match(source, /conversationTurnBoundaryReason\(turn\)/);
+});
+
+test("usage is read from this run's session record, and an unreadable run is unobserved rather than zero", async () => {
+  // `input` alone is not context - `input + cacheRead` is - and the session `.jsonl` is the only place `cacheRead`
+  // exists, because the trace narrows `usage` to four keys. A run whose record cannot be read must publish a named
+  // `unobserved`, never a zero that would make the cheapest-looking run in the corpus also the least observed.
+  const identityCwd = await mkdtemp(join(tmpdir(), "gamebuddy-chat-usage-"));
+  try {
+    const session = (surface, name, lines) =>
+      mkdir(join(identityCwd, "surface-sessions", surface, "sessions"), { recursive: true }).then(() =>
+        writeFile(
+          join(identityCwd, "surface-sessions", surface, "sessions", name),
+          lines.map((line) => JSON.stringify(line)).join("\n"),
+          "utf8",
+        ),
+      );
+    const turn = (usage) => ({ type: "message", timestamp: `t${usage.input}`, message: { usage } });
+
+    // No surface session at all: unobserved, with the reason and no numbers.
+    const absent = readRunUsage({ personaCwd: join(identityCwd, "not-this-run") });
+    assert.equal(absent.state, "unobserved");
+    assert.equal(absent.reason, "no_surface_sessions_directory");
+    assert.equal(absent.peakInputPlusCacheRead, null);
+    assert.equal(absent.cacheBreaks, null);
+
+    await session("surface-01", "2026-10-23T18-24-11-385Z_a.jsonl", [
+      turn({ input: 100, cacheRead: 0, output: 5 }),
+      // The cached turn is deliberately the BIGGEST, so `input` alone and `input + cacheRead` disagree about which
+      // turn was the peak. A fixture where they agree cannot tell the two readings apart.
+      turn({ input: 300, cacheRead: 900, output: 7 }),
+      // A miss after a hit is the prefix breaking: the prompt was rewritten, not extended.
+      turn({ input: 1000, cacheRead: 0, output: 9 }),
+    ]);
+    const verified = readRunUsage({ personaCwd: identityCwd });
+    assert.equal(verified.state, "verified");
+    assert.equal(verified.turns, 3);
+    // peak of input + cacheRead (1200 on turn 1), NOT of input (1000 on turn 2) and NOT totalTokens.
+    assert.equal(verified.peakInputPlusCacheRead, 1200);
+    assert.equal(verified.cacheHitRate, 900 / 2300);
+    assert.deepEqual(
+      verified.cacheBreaks.map((item) => item.turn),
+      [2],
+    );
+    assert.match(narrateUsage(verified), /state=verified turns=3 peakInputPlusCacheRead=1200/);
+
+    // A second record in the same run is two possible answers; picking one would report a neighbour's tokens.
+    await session("surface-02", "2026-10-23T18-24-12-000Z_b.jsonl", [turn({ input: 1, cacheRead: 0 })]);
+    const ambiguous = readRunUsage({ personaCwd: identityCwd });
+    assert.equal(ambiguous.state, "unobserved");
+    assert.equal(ambiguous.reason, "session_record_ambiguous:2");
+  } finally {
+    await rm(identityCwd, { recursive: true, force: true });
+  }
 });
 
 test("a phase that cannot run records a named skip instead of passing", async () => {
