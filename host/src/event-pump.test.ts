@@ -1,6 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, MAX_PENDING_RECEIPTS, MAX_PENDING_SEMANTIC_EVENTS } from "./event-pump.js";
+import {
+  CompanionEventPump,
+  MAX_PENDING_RECEIPTS,
+  MAX_PENDING_SEMANTIC_EVENTS,
+  MAX_PENDING_WORLD_FACTS,
+  type WorldFact,
+} from "./event-pump.js";
+
+/** One distinct world observation: the kind the Mod mints per event, with nothing repeating it. */
+function worldFact(eventId: string, observedTick: number): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId,
+    sourceEventId: eventId,
+    correlationId: eventId,
+    observedTick,
+    revision: 1,
+    payload: { kind: "time_milestone", text: `第 ${String(observedTick)} 次时间里程碑` },
+  };
+}
+
+/** The world-fact event ids one flush carries, in delivery order. */
+async function deliverWorldFactIds(pump: CompanionEventPump): Promise<string[]> {
+  const delivered: string[] = [];
+  await pump.flush({
+    async deliver(text) {
+      const batch = JSON.parse(text) as { worldFacts: Array<{ eventId?: string }> };
+      for (const fact of batch.worldFacts) {
+        if (fact.eventId !== undefined) delivered.push(fact.eventId);
+      }
+    },
+  });
+  return delivered;
+}
 
 test("event pump steers player input and attaches the latest snapshot", async () => {
   const pump = new CompanionEventPump();
@@ -461,6 +495,33 @@ test("event pump classifies terminal receipt overflow separately from all nonter
   // The bound is per destination, and this pump also holds the warped semantic event from above - so the
   // total is one more than the receipts window, and saying so is what keeps this assertion about the window.
   assert.equal(mixedPump.pendingCount, MAX_PENDING_RECEIPTS + 1);
+});
+
+test("a full world-fact window sheds its OLDEST observation instead of closing the bridge", async () => {
+  // A world fact is one OBSERVATION of the world (a day started, a clock milestone, a native
+  // notice) and no later fact repeats it, so a window full of them holds nothing the drop rule
+  // can evict - and the pump used to throw, which host-service turns into a bridge close: every
+  // held fact and the whole session, spent to avoid losing one. A turn here thinks for 60+ s, so
+  // that window is reachable in ordinary play.
+  //
+  // The bridge must survive. The ARRIVAL is what has to reach the model, and the OLDEST
+  // observation is what a consumer already 60 s behind can no longer act on - the same
+  // oldest-first rule `takeBatch` applies to a batch that is too large. The shed fact is counted,
+  // so the loss is named rather than silent.
+  const pump = new CompanionEventPump();
+  for (let index = 0; index < MAX_PENDING_WORLD_FACTS; index++) {
+    pump.enqueueFact(worldFact(`world_fact_${String(index)}`, index));
+  }
+  assert.equal(pump.pendingCount, MAX_PENDING_WORLD_FACTS);
+
+  pump.enqueueFact(worldFact("world_fact_arrival", MAX_PENDING_WORLD_FACTS));
+
+  assert.equal(pump.droppedFacts, 1, "the shed observation is counted, never silent");
+  assert.equal(pump.pendingCount, MAX_PENDING_WORLD_FACTS, "the window stays bounded");
+  const delivered = await deliverWorldFactIds(pump);
+  assert.equal(delivered.length, MAX_PENDING_WORLD_FACTS);
+  assert.equal(delivered.includes("world_fact_0"), false, "the oldest observation is the one shed");
+  assert.equal(delivered.includes("world_fact_arrival"), true, "the arrival always survives");
 });
 
 test("event pump keeps a long run's PROGRESS observations from filling the pending window", () => {

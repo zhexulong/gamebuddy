@@ -316,7 +316,7 @@ test("event pump preserves stable event ID across repeated frames and reconnects
   assert.equal(pump.pendingCount, 1);
 });
 
-test("event pump enforces bounded queue limit of 32 for world facts and handles overflow", () => {
+test("event pump keeps the world-fact window bounded by shedding the oldest observation, never the bridge", () => {
   const pump = new CompanionEventPump();
 
   // Enqueue 32 distinct world facts
@@ -345,20 +345,20 @@ test("event pump enforces bounded queue limit of 32 for world facts and handles 
   });
   assert.equal(pump.pendingCount, 32);
 
-  // Enqueueing a 33rd distinct fact throws overflow
-  assert.throws(
-    () =>
-      pump.enqueueFact({
-        source: "stardew_mod",
-        kind: "world_fact",
-        eventId: "fact_32",
-        correlationId: "fact_32",
-        observedTick: 320,
-        revision: 1,
-        payload: { index: 32 },
-      }),
-    /event_pump_event_overflow/,
-  );
+  // A 33rd distinct fact does NOT close the bridge: none of the held facts is supersedable, so the
+  // OLDEST is shed instead and the loss is counted. A turn that thinks for 60+ s reaches this window
+  // in ordinary play; throwing here destroyed the pipe, every held fact and the session.
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "fact_32",
+    correlationId: "fact_32",
+    observedTick: 320,
+    revision: 1,
+    payload: { index: 32 },
+  });
+  assert.equal(pump.pendingCount, 32);
+  assert.equal(pump.droppedFacts, 1);
 });
 
 test("event pump sorts world facts deterministically by observedTick -> revision -> eventId regardless of transport wall clock", async () => {

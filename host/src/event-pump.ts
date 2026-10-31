@@ -203,11 +203,24 @@ export class CompanionEventPump {
         return;
       }
       const evictable = [...destination.entries()].find(([, entry]) => isSupersededFact(entry));
-      if (evictable === undefined)
+      // A WORLD-FACT window is the one window that can fill with facts no later fact repeats: a day
+      // started, a clock milestone, a native notice. Nothing in it is supersedable, so there is
+      // nothing to evict - and closing the bridge over that destroys a healthy pipe, every fact it
+      // held, and the session, to avoid losing one observation.
+      //
+      // The ARRIVAL always survives: it is the newest thing the world did, and dropping it would
+      // leave the window permanently full of the OLDEST facts (`takeBatch` already applies the same
+      // rule to a batch that is too large - a later fact describes a later world). What goes instead
+      // is the OLDEST observation, and it is COUNTED (`droppedFacts`), so the loss is named rather
+      // than silent. A terminal receipt and an execution OUTCOME keep failing closed: those are the
+      // authority for an execution, and losing one leaves a request that never settles.
+      const evictedKey =
+        evictable?.[0] ?? (fact.kind === "world_fact" ? oldestWorldFactKey(destination) : undefined);
+      if (evictedKey === undefined)
         throw new Error(
           fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",
         );
-      destination.delete(evictable[0]);
+      destination.delete(evictedKey);
       this.#droppedFacts += 1;
     }
     const previous = destination.get(key);
@@ -561,6 +574,26 @@ function factEventId(fact: WorldFact): string {
 /** World-fact deduplication key: the stable Mod eventId, else its correlationId. */
 function worldFactKey(fact: WorldFact): string {
   return fact.eventId ?? fact.correlationId;
+}
+
+/**
+ * The world fact a full window sheds first: the OLDEST by the pump's own ordering (`compareWorldFacts`,
+ * the same order a batch is delivered in), not by insertion or arrival luck.
+ *
+ * `undefined` only for an empty window, which `enqueueFact` cannot reach - it asks for a victim only
+ * after `destination.size >= limit`. Naming that case keeps the caller's fail-closed branch honest
+ * instead of deleting a key that does not exist.
+ */
+function oldestWorldFactKey(destination: ReadonlyMap<string, WorldFact>): string | undefined {
+  let oldestKey: string | undefined;
+  let oldest: WorldFact | undefined;
+  for (const [key, entry] of destination) {
+    if (oldest === undefined || compareWorldFacts(entry, oldest) < 0) {
+      oldest = entry;
+      oldestKey = key;
+    }
+  }
+  return oldestKey;
 }
 
 function normalizeInput(input: PlayerInput): NormalizedEvent {
