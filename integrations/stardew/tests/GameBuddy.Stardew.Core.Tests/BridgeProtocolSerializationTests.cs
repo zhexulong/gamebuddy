@@ -517,8 +517,7 @@ public sealed class BridgeProtocolSerializationTests
             PetTargets: null,
             AnimalProductTargets: null,
             FeedTroughTargets: null,
-            ChestStoreTargets: null,
-            ChestRetrieveTargets: null,
+            Chests: null,
             InventoryItemFacts: null,
             FoodTargets: null,
             ShippingBinTargets: null,
@@ -1541,10 +1540,16 @@ public sealed class BridgeBodyProgramProtocolTests
         "{\"protocolVersion\":1,\"messageId\":\"msg_1\",\"correlationId\":\"corr_1\",\"timestampMs\":1000,\"scope\":{\"integrationId\":\"stardew\",\"saveId\":\"save_1\",\"worldId\":\"world_1\",\"playerId\":\"player_1\",\"companionId\":\"companion_1\"},\"type\":\"" + type + "\",\"payload\":" + payload + "}";
 
     [Fact]
-    public void TrySerialize_StatusSnapshotNodeArray_IsFrozenAtSixteen()
+    public void TrySerialize_StatusSnapshotNodeArray_IsFrozenAtTheCorruptionBound()
     {
-        BridgeBodyProgramNodeStatus[] nodes = Enumerable.Range(0, 16)
-            .Select(index => new BridgeBodyProgramNodeStatus($"node_{index:D2}", "pending", 1, 1)).ToArray();
+        // The bound is the READ-BACK corruption bound on a journal this product could have written, not 16. It was 16,
+        // and the cost was measured on 2026-10-31: of 26 programs in one run, eight sat exactly on 16 and none was larger,
+        // and 31 of 117 historical `plan_work` calls used the `isFull` guard that bound published to the model.
+        //
+        // The old assertion pinned 17 as too many, which is an ordinary plan.
+        int bound = BodyProgramValidation.MaximumNodes;
+        BridgeBodyProgramNodeStatus[] nodes = Enumerable.Range(0, bound)
+            .Select(index => new BridgeBodyProgramNodeStatus($"node_{index:D4}", "pending", 1, 1)).ToArray();
         BridgeBodyProgramStatusSnapshot snapshot = new("program_1", "active", 7, 2, 11, nodes);
 
         BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", snapshot), out _, out string reason).Should().BeTrue();
@@ -1552,7 +1557,7 @@ public sealed class BridgeBodyProgramProtocolTests
 
         BridgeBodyProgramStatusSnapshot oversized = snapshot with
         {
-            Nodes = nodes.Append(new BridgeBodyProgramNodeStatus("node_16", "pending", 1, 1)).ToArray(),
+            Nodes = nodes.Append(new BridgeBodyProgramNodeStatus("node_past", "pending", 1, 1)).ToArray(),
         };
         BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", oversized), out string json, out reason).Should().BeFalse();
         json.Should().BeEmpty();
