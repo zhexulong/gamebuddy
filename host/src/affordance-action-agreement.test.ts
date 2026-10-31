@@ -56,8 +56,22 @@ const CATALOG: { actions?: CatalogAction[] } = JSON.parse(
   ),
 );
 
+/**
+ * One capture that participated in the match.
+ *
+ * `noUncheckedIndexedAccess` types every group as `string | undefined`, and this gate may not paper over that: a group
+ * that did not participate would arrive as `undefined`, and a non-null assertion would turn it into the literal string
+ * `"undefined"` - a name that matches no action, so the comparison below would go quietly green. The impossible case
+ * FAILS BY NAME instead of being asserted away.
+ */
+function captured(match: readonly (string | undefined)[], index: number, what: string): string {
+  const value = match[index];
+  if (value === undefined) throw new Error(`${what}: capture group ${index} did not participate in the match`);
+  return value;
+}
+
 /** actionId -> does it declare an ObservationBinding, and does it take `expectedTargetId`? */
-const actionSurface = new Map(
+const actionSurface = new Map<string, { requiresSceneBinding: boolean; takesExpectedTargetId: boolean }>(
   (CATALOG.actions ?? []).map((action: CatalogAction) => [
     action.actionId,
     {
@@ -73,28 +87,38 @@ const actionSurface = new Map(
  * The identity EXPRESSION is captured verbatim rather than evaluated: the question is whether the kind offers an identity
  * at all. `ProjectionIdentityFor` below reads which kinds the projection forwards it for.
  */
-function modAffordanceHints() {
+function modAffordanceHints(): Map<string, Readonly<{ kind: string; actionId: string }>> {
   const source = readFileSync(join(ROOT, "integrations", "stardew", "ModEntry.cs"), "utf8");
-  const hints = new Map();
+  const hints = new Map<string, Readonly<{ kind: string; actionId: string }>>();
   // `new SceneAffordanceSource(SceneAffordanceKind.X, ...)` blocks, then the actionHint they pass.
   const blocks = [...source.matchAll(/new SceneAffordanceSource\(\s*SceneAffordanceKind\.(\w+)([\s\S]{0,900}?)\)\);/g)];
-  for (const [, kind, body] of blocks) {
+  for (const block of blocks) {
+    const kind = captured(block, 1, "a SceneAffordanceSource kind");
+    const body = captured(block, 2, `the \`${kind}\` SceneAffordanceSource argument list`);
     const literal = /"([a-z0-9_]+)"\s*,\s*SceneAffordanceKindWire\.DefaultPriority/.exec(body);
     const ternary = /\?\s*"([a-z0-9_]+)"\s*:\s*"([a-z0-9_]+)"/.exec(body);
-    const names = literal === null ? (ternary === null ? [] : [ternary[1], ternary[2]]) : [literal[1]];
+    const names =
+      literal === null
+        ? ternary === null
+          ? []
+          : [captured(ternary, 1, `the \`${kind}\` hint ternary`), captured(ternary, 2, `the \`${kind}\` hint ternary`)]
+        : [captured(literal, 1, `the \`${kind}\` hint literal`)];
     for (const name of names) if (actionSurface.has(name)) hints.set(`${kind}->${name}`, { kind, actionId: name });
   }
 
   // `SceneAffordanceKind.Forage` and its siblings are published through a switch, not a constructor literal.
   const hintSwitch = [...source.matchAll(/SceneAffordanceKind\.(\w+)\s*=>\s*"([a-z0-9_]+)"/g)];
-  for (const [, kind, name] of hintSwitch)
+  for (const entry of hintSwitch) {
+    const kind = captured(entry, 1, "a hint switch arm");
+    const name = captured(entry, 2, `the actionHint of the \`${kind}\` switch arm`);
     if (actionSurface.has(name)) hints.set(`${kind}->${name}`, { kind, actionId: name });
+  }
 
   return hints;
 }
 
 /** The kinds the projection forwards `Identity` for, read from its own condition. */
-function kindsCarryingIdentity() {
+function kindsCarryingIdentity(): Set<string> {
   const source = readFileSync(
     join(ROOT, "integrations", "stardew", "navigation", "sceneobservationprojection.cs"),
     "utf8",
@@ -104,7 +128,10 @@ function kindsCarryingIdentity() {
       source,
     );
   if (condition === null) return new Set();
-  return new Set([...condition[1].matchAll(/SceneAffordanceKind\.(\w+)/g)].map((m) => m[1]));
+  const kinds = captured(condition, 1, "the projection's Identity condition");
+  return new Set(
+    [...kinds.matchAll(/SceneAffordanceKind\.(\w+)/g)].map((match) => captured(match, 1, "an identity kind")),
+  );
 }
 
 test("an affordance that names an action offers the identifier that action validates", () => {
@@ -119,6 +146,9 @@ test("an affordance that names an action offers the identifier that action valid
   const unusable = [];
   for (const { kind, actionId } of hints.values()) {
     const surface = actionSurface.get(actionId);
+    // A hint is only recorded when the catalog publishes that name, so this cannot miss; a miss would mean the two
+    // halves of this gate read different catalogs, which is a failure of the gate rather than a finding about the Mod.
+    assert.ok(surface !== undefined, `\`${actionId}\` came from the catalog, so the lookup must find it`);
     if (surface.requiresSceneBinding) continue; // the ref IS the identifier; `pickup_forage` validates it
     if (!surface.takesExpectedTargetId) continue; // nothing to match
     if (withIdentity.has(kind)) continue;
@@ -148,15 +178,16 @@ test("an affordance that names an action offers the identifier that action valid
  * renamed and the gate would keep passing against a name nothing publishes). The authority is `Bridge*` records with a
  * `TargetId` field - read from them, not remembered.
  */
-function familiesCarryingTargetIds() {
-  const families = new Set();
+function familiesCarryingTargetIds(): Set<string> {
+  const families = new Set<string>();
   const directory = join(ROOT, "integrations/stardew/src/Core/Models");
   const source = readdirSync(directory)
     .filter((name) => name.endsWith(".cs"))
     .map((name) => readFileSync(join(directory, name), "utf8"))
     .join("\n");
-  for (const [, name, body] of source.matchAll(/public sealed record (Bridge\w+)\(([\s\S]*?)\);/g)) {
-    if (/\bTargetId\b/.test(body)) families.add(name);
+  for (const record of source.matchAll(/public sealed record (Bridge\w+)\(([\s\S]*?)\);/g)) {
+    const name = captured(record, 1, "a Bridge record name");
+    if (/\bTargetId\b/.test(captured(record, 2, `the \`${name}\` record body`))) families.add(name);
   }
   return families;
 }
@@ -169,6 +200,7 @@ test("Identity is never published for a kind whose action ignores it", () => {
   for (const { kind, actionId } of modAffordanceHints().values()) {
     if (!withIdentity.has(kind)) continue;
     const surface = actionSurface.get(actionId);
+    assert.ok(surface !== undefined, `\`${actionId}\` came from the catalog, so the lookup must find it`);
     if (surface.requiresSceneBinding) continue; // the ref is the identifier and Identity is still useful to the caller
     if (!surface.takesExpectedTargetId)
       pointless.push(`${kind} publishes an Identity, but its \`${actionId}\` takes no expectedTargetId`);

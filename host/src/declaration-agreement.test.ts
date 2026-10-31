@@ -30,7 +30,21 @@ import { fileURLToPath } from "node:url";
  * </p>
  */
 
-function repoRoot(start) {
+/**
+ * One capture that participated in the match.
+ *
+ * `noUncheckedIndexedAccess` types every group as `string | undefined`, and this gate may not paper over that: a group
+ * that did not participate would arrive as `undefined`, and a non-null assertion would instead compile as the literal
+ * string `"undefined"` - a name nothing publishes, so a comparison would go quietly green over a parser that matched
+ * nothing. The impossible case FAILS BY NAME instead of being asserted away.
+ */
+function captured(match: readonly (string | undefined)[], index: number, what: string): string {
+  const value = match[index];
+  if (value === undefined) throw new Error(`${what}: capture group ${index} did not participate in the match`);
+  return value;
+}
+
+function repoRoot(start: string): string {
   let directory = start;
   for (;;) {
     if (existsSync(join(directory, "integrations", "stardew", "action-development"))) return directory;
@@ -62,19 +76,21 @@ const PROTOCOL = readFileSync(join(ROOT, "host/src/protocol.ts"), "utf8");
 const ALL_TS = `${FACTS}\n${PROTOCOL}`;
 
 /** `record` name -> its declared fields, from one-line and multi-line record declarations alike. */
-function modRecords() {
-  const records = new Map();
+function modRecords(): Map<string, readonly string[]> {
+  const records = new Map<string, readonly string[]>();
   const pattern = /public sealed record (Bridge\w+)\(([\s\S]*?)\);/g;
-  for (const [, name, body] of MODELS.matchAll(pattern)) {
+  for (const record of MODELS.matchAll(pattern)) {
+    const name = captured(record, 1, "a Bridge record name");
+    const body = captured(record, 2, `the \`${name}\` record body`);
     const fields = [...body.matchAll(/(?:[A-Za-z_][\w<>,?.\s\[\]]*?)\s+(\w+)\s*(?=,|$)/g)]
-      .map((match) => match[1])
+      .map((match) => captured(match, 1, `a \`${name}\` field`))
       .filter((field) => field !== "null" && field !== "string" && field !== "int");
     // A parameter may span a line; the capture above is per-parameter because the body splits on top-level commas.
     const parameters = splitTopLevel(body);
     const named = parameters
       .map((parameter) => /(\w+)\s*(?:=\s*[^,]*)?$/.exec(parameter.trim()))
       .filter((match) => match !== null)
-      .map((match) => match[1]);
+      .map((match) => captured(match, 1, `a \`${name}\` parameter name`));
     records.set(name, named.length > 0 ? named : fields);
   }
   return records;
@@ -88,7 +104,7 @@ function modRecords() {
  * real families with two invented disagreements. Reading C# with a regex is what produced that; stripping the bracket
  * group before splitting is the cheapest way to keep the regex honest about what it can see.
  */
-function splitTopLevel(body) {
+function splitTopLevel(body: string): readonly string[] {
   const withoutAttributes = body.replace(/\[[^\]]*\]/g, " ");
   const parts = [];
   let depth = 0;
@@ -108,24 +124,35 @@ function splitTopLevel(body) {
 }
 
 /** family field name -> the record type it publishes. From `BridgeSnapshot`'s own declaration. */
-function modFamilies() {
+function modFamilies(): Map<string, string> {
   const declaration = MODELS.indexOf("public sealed record BridgeSnapshot(");
   assert.ok(declaration >= 0, "BridgeSnapshot must be findable by its declaration");
-  const end = MODELS.indexOf("\n)", declaration);
-  const parameters = splitTopLevel(MODELS.slice(declaration + "public sealed record BridgeSnapshot(".length, end));
-  const families = new Map();
+  // The declaration's own text is what tells the parser where its parameter list ends, so an unreadable end is a
+  // parser failure named here rather than a slice that silently starts from 0.
+  const declaredAt = MODELS.indexOf("\n)", declaration);
+  if (declaredAt < 0)
+    throw new Error("BridgeSnapshot's declaration has no end: the C# source is not the shape this reads");
+  const parameters = splitTopLevel(
+    MODELS.slice(declaration + "public sealed record BridgeSnapshot(".length, declaredAt),
+  );
+  const families = new Map<string, string>();
   for (const parameter of parameters) {
     const match = /IReadOnlyList<Bridge(\w+)>\?\s+(\w+)/.exec(parameter);
-    if (match !== null) families.set(match[2], `Bridge${match[1]}`);
+    if (match !== null)
+      families.set(
+        captured(match, 2, "a BridgeSnapshot family name"),
+        `Bridge${captured(match, 1, "a BridgeSnapshot family type")}`,
+      );
   }
   return families;
 }
 
 /** predicate function name -> its key list (null when it names none). */
-function hostValidators() {
-  const validators = new Map();
+function hostValidators(): Map<string, readonly string[] | null> {
+  const validators = new Map<string, readonly string[] | null>();
   for (const match of ALL_TS.matchAll(/function (is\w+)\([^)]*\): boolean \{([\s\S]*?)\n\}/g)) {
-    const [, name, body] = match;
+    const name = captured(match, 1, "a Host snapshot validator name");
+    const body = captured(match, 2, `the \`${name}\` validator body`);
     // Two helpers, and both are honest field lists: `hasExactKeys` demands exact equality, `hasOnlyKeys` allows a key
     // to be absent (an optional field) but never an unlisted one. Either way the list IS the published field set.
     const keys = /has(?:Exact|Only)Keys\(\s*\w+\s*,\s*\[([\s\S]*?)\]/.exec(body);
@@ -135,7 +162,9 @@ function hostValidators() {
     }
     validators.set(
       name,
-      [...keys[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1]),
+      [...captured(keys, 1, `the \`${name}\` key list`).matchAll(/"([^"]+)"/g)].map((entry) =>
+        captured(entry, 1, `a \`${name}\` key`),
+      ),
     );
   }
   return validators;
@@ -158,7 +187,11 @@ function hostValidators() {
  * `isWarp` predicate that is not named `is*Fact` at all. The Host already declares the answer next to each field -
  * `accepts: isWarp` - so read that.
  */
-function validatorFor(family, rules, predicates) {
+function validatorFor(
+  family: string,
+  rules: ReadonlyMap<string, string>,
+  predicates: ReadonlyMap<string, readonly string[] | null>,
+): Readonly<{ missing: string }> | Readonly<{ name: string; keys: readonly string[] }> {
   const rule = rules.get(family);
   if (rule === undefined) return { missing: `the Host declares no rule for ${family}, so it is never validated` };
   const predicate = predicates.get(rule);
@@ -172,23 +205,28 @@ function validatorFor(family, rules, predicates) {
 }
 
 /** Every key the Host's snapshot validator admits at all, from `SNAPSHOT_KEYS`. */
-function hostSnapshotKeys() {
+function hostSnapshotKeys(): Set<string> {
   const declaration = PROTOCOL.indexOf("const SNAPSHOT_KEYS");
+  if (declaration < 0) throw new Error("SNAPSHOT_KEYS is not declared in protocol.ts: this gate reads it by name");
   const end = PROTOCOL.indexOf("]", declaration);
+  if (end < 0) throw new Error("SNAPSHOT_KEYS has no closing bracket: the declaration is not the shape this reads");
   const block = PROTOCOL.slice(declaration, end);
-  const keys = new Set();
-  for (const match of block.matchAll(/"([^"]+)"/g)) keys.add(match[1]);
+  const keys = new Set<string>();
+  for (const match of block.matchAll(/"([^"]+)"/g)) keys.add(captured(match, 1, "a SNAPSHOT_KEYS entry"));
   return keys;
 }
 /** `field` -> the `accepts:` predicate name, from the Host\'s own family table. */
-function hostFamilyRules() {
-  const rules = new Map();
+function hostFamilyRules(): Map<string, string> {
+  const rules = new Map<string, string>();
   for (const match of PROTOCOL.matchAll(/\{ field: "(\w+)", maxItems: \d+, accepts: (\w+) \}/g))
-    rules.set(match[1], match[2]);
+    rules.set(
+      captured(match, 1, "a snapshot family field"),
+      captured(match, 2, `the \`accepts\` predicate of \`${captured(match, 1, "a snapshot family field")}\``),
+    );
   return rules;
 }
 
-const lowerFirst = (value) => `${value.charAt(0).toLowerCase()}${value.slice(1)}`;
+const lowerFirst = (value: string): string => `${value.charAt(0).toLowerCase()}${value.slice(1)}`;
 
 test("every field the Mod publishes is a field the Host validates", () => {
   const records = modRecords();
@@ -211,7 +249,7 @@ test("every field the Mod publishes is a field the Host validates", () => {
     }
     const wireName = lowerFirst(family);
     const matched = validatorFor(wireName, rules, validators);
-    if (matched.missing !== undefined) {
+    if ("missing" in matched) {
       // A key in SNAPSHOT_KEYS with no array rule is a scalar or object validated on its own, not a family whose rows
       // are checked one by one. The Host still guarantees it is a key it knows; that is the guarantee available here,
       // and saying so is more honest than reporting drift this gate cannot see into.

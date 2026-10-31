@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ActionRegistration, Snapshot } from "./protocol.js";
 
 /**
  * A MANDATORY SCENE BINDING MUST BE DEMANDED BY THE COMPILER AND ACCEPTED BY IT.
@@ -19,7 +20,7 @@ import { fileURLToPath } from "node:url";
  * `plan_script_unknown_argument:pickup_forage.sceneTarget` - the compiler wanted a key it also rejected.
  * </p>
  */
-function repoRoot(start) {
+function repoRoot(start: string): string {
   let directory = start;
   for (;;) {
     if (existsSync(join(directory, "integrations", "stardew", "action-development"))) return directory;
@@ -30,7 +31,19 @@ function repoRoot(start) {
 }
 
 const ROOT = repoRoot(dirname(fileURLToPath(import.meta.url)));
-const CATALOG = JSON.parse(
+type CatalogAction = Readonly<{
+  actionId: string;
+  identityVersion: number;
+  lifecycle: ActionRegistration["lifecycle"];
+  kind: ActionRegistration["kind"];
+  argumentSchema: Readonly<Record<string, Readonly<{ type: string; enum?: readonly string[] }>>>;
+  outputFacts?: Readonly<Record<string, string>>;
+  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+  approach?: Readonly<{ relation: string; withinTiles?: number }>;
+  sceneTarget?: Readonly<{ type: string; version: number; required: boolean; requiredProperties: readonly string[] }>;
+}>;
+
+const CATALOG: Readonly<{ actions?: readonly CatalogAction[] }> = JSON.parse(
   readFileSync(
     join(ROOT, "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"),
     "utf8",
@@ -40,15 +53,18 @@ const CATALOG = JSON.parse(
 const { compilePlanScript, planActionsFromRegistrations } = await import("./body-program-script.js");
 
 /** The Host rebuilds registrations from the catalog at runtime; this does the same, from the same artifact. */
-function actionsFromCatalog() {
-  const registrations = (CATALOG.actions ?? []).map((action) => ({
+function actionsFromCatalog(): ReturnType<typeof planActionsFromRegistrations> {
+  const registrations = (CATALOG.actions ?? []).map((action: CatalogAction) => ({
     actionId: action.actionId,
     familyId: "gate",
+    identityVersion: action.identityVersion,
     lifecycle: action.lifecycle,
     kind: action.kind,
     descriptor: Object.freeze({
-      arguments: action.arguments,
       argumentSchema: action.argumentSchema,
+      ...(action.outputFacts === undefined ? {} : { outputFacts: action.outputFacts }),
+      ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+      ...(action.approach === undefined ? {} : { approach: action.approach }),
       ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
     }),
   }));
@@ -56,16 +72,14 @@ function actionsFromCatalog() {
 }
 
 /** A snapshot complete enough for the compiler to reach its argument checks. */
-function snapshot() {
+function snapshot(): Snapshot {
   return {
     revision: 10,
     location: "Farm",
     tile: { x: 5, y: 5 },
     stamina: 270,
-    maxStamina: 270,
-    exhausted: false,
     health: 100,
-    maxHealth: 100,
+    exhausted: false,
     currentTool: "(T)Axe",
     inventorySlots: 36,
     actionable: true,
@@ -73,12 +87,18 @@ function snapshot() {
     catalogRevision: 1,
     capabilities: [],
     enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
     forageTargets: [{ targetId: "forage_1", x: 6, y: 6, qualifiedItemId: "(O)22", displayName: "Daffodil", stack: 1 }],
   };
 }
 
 /** Every action the catalog says carries a mandatory binding. Population from the artifact, not a list. */
-const WITH_BINDING = (CATALOG.actions ?? []).filter((action) => action.sceneTarget?.required === true);
+const WITH_BINDING = (CATALOG.actions ?? []).filter((action: CatalogAction) => action.sceneTarget?.required === true);
 
 test("the catalog still declares at least one mandatory binding", () => {
   assert.ok(
@@ -135,7 +155,7 @@ test("a call that supplies the binding is ACCEPTED - the compiler must not deman
 });
 
 /** A literal of the right shape for one argument name, so the compiler reaches the binding check rather than failing earlier. */
-function sampleFor(name) {
+function sampleFor(name: string) {
   if (name === "x" || name === "y" || name === "slot") return name === "slot" ? "0" : name === "x" ? "6" : "6";
   if (name === "expectedTargetId") return '"forage_1"';
   if (name === "expectedQualifiedItemId") return '"(O)22"';
