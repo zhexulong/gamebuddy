@@ -33,8 +33,6 @@ import { dirname, join, resolve } from "node:path";
 // this same reading on its run, and two spellings of it would quote different numbers for one run.
 import { cacheBreaks, peakContext, readUsages, sumOf } from "./run-cost-usage.mjs";
 
-const USAGE = Object.freeze(["input", "output", "cacheRead", "cacheWrite", "reasoning", "totalTokens"]);
-
 function parseArguments(argv) {
   const options = { run: null, json: false, limit: 1 };
   for (let index = 0; index < argv.length; index += 1) {
