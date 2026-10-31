@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { atomicWriteFile, type PathLockOptions, withPathLock } from "./path-lock.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
+import { macroTable, type MacroTable, renderMacros } from "./tavern/macro-engine.js";
 
 const IDENTITY_PROFILE_SCHEMA_VERSION = 1 as const;
 
@@ -68,6 +69,24 @@ export type IdentityProfileMetadata = Readonly<{
   revision: number;
   canonicalHash: string;
 }>;
+
+/**
+ * The ONE macro table a profile's authored text renders through.
+ *
+ * `{{char}}` is her name and `{{user}}` is the run's word for the player, derived
+ * exactly the way `macroTable` derives them everywhere else. It exists as a named
+ * function because a prompt has more than one authored block (the persona and
+ * examples, then the card's own performance directive), and rendering them through
+ * two independently built tables is how `{{char}}` ends up expanded one way in her
+ * persona and another in an example.
+ *
+ * `{{time}}`/`{{date}}` stay literal by design: `renderMacros` does not resolve
+ * them, because this text is the cached Tier-1 prefix and a value that changes every
+ * turn would re-fold it. A card that needs the clock asks in the volatile layer.
+ */
+export function identityProfileMacros(profile: IdentityProfile, locale?: string): MacroTable {
+  return macroTable({ char: profile.identity.name, locale });
+}
 
 export type IdentityProfileBinding = Readonly<{
   schemaVersion: typeof IDENTITY_PROFILE_SCHEMA_VERSION;
@@ -168,6 +187,24 @@ export function identityProfileMetadata(profile: IdentityProfile): IdentityProfi
 }
 
 export function renderIdentityProfile(profile: IdentityProfile, locale?: string): string {
+  // One macro table for the whole profile, built from the same two values every other
+  // block of this prompt uses: `{{char}}` is her name and `{{user}}` is the run's word
+  // for the player. A table per field would let `{{char}}` expand differently in her
+  // persona and in an example, which is the failure a reader-side render has to avoid.
+  //
+  // This is the ONE place the profile's authored text renders on the prompt path. The
+  // durable record keeps the author's own macros (`candidateToIdentityProfile`,
+  // `new-companion-service.ts`), because that record is what the card export writes
+  // back; without this pass the model would read `{{char}}` literally.
+  //
+  // `{{time}}`/`{{date}}` stay literal on purpose: `renderMacros` does not resolve
+  // them, because this text is the cached Tier-1 prefix and a value that changes every
+  // turn would re-fold it. A card that asks for the clock asks in the volatile layer.
+  const macros = identityProfileMacros(profile, locale);
+  const render = (text: string): string => renderMacros(text, macros);
+  // Her name, role and continuity are the Host's own schema text (`{{char}}` is the name
+  // itself, so rendering it would be a self-reference); the AUTHOR's five fields below are
+  // the ones that carry the card's macros.
   const lines: string[] = [
     `[Character: ${profile.identity.name}]`,
     `Role: ${profile.identity.role}`,
@@ -175,11 +212,11 @@ export function renderIdentityProfile(profile: IdentityProfile, locale?: string)
   ];
 
   if (profile.persona !== undefined) {
-    if (profile.persona.core !== undefined) lines.push(`Core disposition: ${profile.persona.core}`);
+    if (profile.persona.core !== undefined) lines.push(`Core disposition: ${render(profile.persona.core)}`);
     if (profile.persona.interactionStyle !== undefined)
-      lines.push(`Interaction style: ${profile.persona.interactionStyle}`);
+      lines.push(`Interaction style: ${render(profile.persona.interactionStyle)}`);
     if (profile.persona.expressionStyle !== undefined)
-      lines.push(`Expression style: ${profile.persona.expressionStyle}`);
+      lines.push(`Expression style: ${render(profile.persona.expressionStyle)}`);
   }
 
   if (profile.examples !== undefined && profile.examples.length > 0) {
@@ -188,8 +225,8 @@ export function renderIdentityProfile(profile: IdentityProfile, locale?: string)
     lines.push("[Dialogue Examples]");
     for (const example of profile.examples) {
       lines.push("<START>");
-      lines.push(`${playerLabel}: ${example.user}`);
-      lines.push(`${profile.identity.name}: ${example.companion}`);
+      lines.push(`${playerLabel}: ${render(example.user)}`);
+      lines.push(`${profile.identity.name}: ${render(example.companion)}`);
     }
   }
 
@@ -243,6 +280,11 @@ const PLAYER_ADDITION_CLOSE = "PLAYER DIRECTIVES>>>";
  * Renders the card's own performance directive as a labelled section that comes
  * AFTER the Host floor.
  *
+ * The directive's text is the AUTHOR's, macros and all (see
+ * `candidateToIdentityProfile`), so it renders here through the profile's own table -
+ * the one `renderIdentityProfile` uses - and the neutralisation below runs on the
+ * RENDERED text, because that is the text that reaches the model.
+ *
  * Law of the terrain: the card holds role-play performance rights, not
  * product-protocol tampering rights. The section is therefore (a) introduced
  * after the floor, (b) opened with an explicit non-overridable clause that names
@@ -261,8 +303,9 @@ const PLAYER_ADDITION_CLOSE = "PLAYER DIRECTIVES>>>";
  * her directive bans. The same bound is carried without that register: "your
  * author", "what is stated above", no talk of cards, policies or rules.
  */
-export function renderCharacterVoice(voice: CharacterVoice): string {
-  const neutralised = voice.text
+export function renderCharacterVoice(voice: CharacterVoice, macros: MacroTable): string {
+  const rendered = renderMacros(voice.text, macros);
+  const neutralised = rendered
     .split(CARD_VOICE_OPEN)
     .join(CARD_VOICE_MARKER_NEUTRALISED)
     .split(CARD_VOICE_CLOSE)
@@ -406,6 +449,9 @@ export function buildCompanionSystemPrompt(
   ];
   const surfaceBlock = options.surface === "game" ? GAME_SURFACE_INTERACTION_CONDUCT : CHAT_SURFACE_DIVERGENCE;
   const playerAddition = options.playerAddition;
+  // One table for both authored blocks of this prompt, so the card's directive and her
+  // persona cannot expand `{{char}}` or `{{user}}` differently.
+  const macros = identityProfileMacros(profile, options.locale);
   return [
     ...shared,
     surfaceBlock.length > 0 ? "" : null,
@@ -418,7 +464,7 @@ export function buildCompanionSystemPrompt(
     // them - the floor keeps its prefix-cache hit rate, and the card performs
     // inside the physical stage the Host draws.
     profile.characterVoice === undefined ? null : "",
-    profile.characterVoice === undefined ? null : renderCharacterVoice(profile.characterVoice),
+    profile.characterVoice === undefined ? null : renderCharacterVoice(profile.characterVoice, macros),
     // The player's own addition comes LAST among the editable blocks, and after the
     // card: the player is the person she is playing with, so between the two authored
     // voices theirs is the one that speaks closest to the turn - while the Host floor
