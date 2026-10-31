@@ -240,6 +240,18 @@ internal static class Program
             await using var runtimeSupervisor = new RuntimeSupervisor();
             await using var guardianSupervisor = new GuardianSupervisor();
 
+            // A companion switch the player asked for through the Host takes effect HERE,
+            // before the identity is established - because establishing it is what materializes
+            // the manifest this launch is about. The switch is the launcher's operation, not the
+            // Host's: it parks the authority root that is in play, brings the chosen companion's
+            // back, and replaces the durable identity record. Every path derived from that
+            // identity - her conversations, her Memory, her cabin binding - already partitions per
+            // companion, so nothing else has to move.
+            //
+            // It runs even when no request exists, because finishing or undoing a switch that died
+            // between two of its steps is the same operation over the same facts.
+            CompanionSwitch.ApplyPending(layout);
+
             // The operational deployment manifest is the admitted Host child's
             // deployment identity. The manifest must exist before the child does,
             // because the supervisor requires that file and the Host reads it as

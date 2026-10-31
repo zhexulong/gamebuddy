@@ -162,6 +162,56 @@ internal static class DeploymentIdentity
         return true;
     }
 
+    /// <summary>
+    /// The identity this installation currently plays, read from the durable record.
+    ///
+    /// This is the ONE answer to "which companion is in play", and it is the record rather than
+    /// the projected manifest that answers it: the manifest is disposable and may be absent, and
+    /// a switch removes it on purpose so the next launch re-materializes it from here.
+    /// </summary>
+    internal static DeploymentIdentityValues ReadActive(CurrentUserRootLayout layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        return ReadRecord(Path.Combine(layout.DataRoot, RecordFileName))
+            ?? throw new DeploymentIdentityUnavailableException();
+    }
+
+    /// <summary>
+    /// Replaces the durable identity record with another exact identity, atomically.
+    ///
+    /// It is the one write a companion switch makes to the identity, and it is the switch's
+    /// linearization point: every step after it reads the new values, and every step before it
+    /// can be undone by writing the old ones back. Unlike <see cref="WriteRecord"/> it is not
+    /// create-only - a switch exists precisely to change which identity this installation
+    /// plays - and it is deliberately not exposed to the Host.
+    /// </summary>
+    internal static void ReplaceActive(CurrentUserRootLayout layout, DeploymentIdentityValues values)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(values);
+        CompanionSwitch.WriteAtomically(
+            Path.Combine(layout.DataRoot, RecordFileName),
+            JsonSerializer.Serialize(new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["schemaVersion"] = RecordSchema,
+                ["continuityId"] = values.ContinuityId,
+                ["companionId"] = values.CompanionId,
+                ["playerId"] = values.PlayerId,
+                ["bootstrapOperationId"] = values.BootstrapOperationId,
+                ["authorityGeneration"] = values.AuthorityGeneration,
+            }));
+    }
+
+    /// <summary>
+    /// One fresh bootstrap operation identifier for a companion who has never played here.
+    ///
+    /// A companion coming back from a parked root keeps the identifier her authority was created
+    /// with; a companion whose authority is being created for the first time needs a new one, so
+    /// the launcher mints it - the same bounded shape <see cref="Mint"/> uses, and for the same
+    /// reason: the Host's store and marker both refuse anything else.
+    /// </summary>
+    internal static string MintBootstrapOperationId() => $"bootstrap-{Guid.NewGuid():D}";
+
     /// <summary>Whether a manifest's identity and a durable record carry the same five values.</summary>
     internal static bool Agree(DeploymentIdentityValues first, DeploymentIdentityValues second) =>
         StringComparer.Ordinal.Equals(first.ContinuityId, second.ContinuityId) &&
@@ -250,11 +300,25 @@ internal static class DeploymentIdentity
     }
 
     /// <summary>
+    /// Re-materializes the operational manifest from an identity the launcher already holds.
+    ///
+    /// It exists for exactly one caller: undoing a switch that removed the projection and then
+    /// could not complete, where leaving the manifest absent would be a launch that has to
+    /// re-derive a file the undo already knew the contents of.
+    /// </summary>
+    internal static void MaterializeProjection(CurrentUserRootLayout layout, DeploymentIdentityValues values)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        ArgumentNullException.ThrowIfNull(values);
+        WriteProjection(Path.Combine(layout.OperationalRoot, OperationalDeploymentManifest.FileName), layout.DataRoot, values);
+    }
+
+    /// <summary>
     /// Writes the operational manifest as the identity's projection. The runtime root
     /// is the layout's durable data root, which is where the Host canonicalizes and
     /// opens the semantic authority.
     /// </summary>
-    private static void WriteProjection(string manifestPath, string runtimeRoot, DeploymentIdentityValues values)
+    internal static void WriteProjection(string manifestPath, string runtimeRoot, DeploymentIdentityValues values)
     {
         try
         {
