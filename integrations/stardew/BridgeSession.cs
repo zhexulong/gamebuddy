@@ -1158,7 +1158,10 @@ string? bodyProgramUnavailableReason = null,
     {
         json = string.Empty;
         if (!IsAuthenticated(generation, out _) || !BridgeProtocol.IsOpaqueId(correlationId) || !BridgeProtocol.IsReasonCode(reasonCode)) return false;
-        BridgeActiveExecution? active = this.executions.CreateBridgeSnapshot().ActiveExecution;
+        // One field, from the projection that names it - never the whole world. A semantic event is published per
+        // observation (`route_progress` per tile), so asking `CreateBridgeSnapshot()` walked every radar source and
+        // minted a SHA-256 id per target on the game thread to read `ActiveExecution` and nothing else.
+        BridgeActiveExecution? active = this.executions.DescribeActiveExecution();
         return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId, new BridgeSemanticEvent(kind, this.executions.Revision, active, reasonCode, bodyTrace)), out json, out _);
     }
 
@@ -1178,7 +1181,7 @@ string? bodyProgramUnavailableReason = null,
         if (this.pendingPlayerControls.ContainsKey(control.ControlId)
             || this.pendingPlayerControls.Count >= MaximumPendingPlayerControls)
             return false;
-        BridgeActiveExecution? active = this.executions.CreateBridgeSnapshot().ActiveExecution;
+        BridgeActiveExecution? active = this.executions.DescribeActiveExecution();
         if (!BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId,
             new BridgeSemanticEvent(control.Kind, this.executions.Revision, active, "player_control", PlayerControl: control)), out json, out _))
             return false;
@@ -1234,11 +1237,10 @@ string? bodyProgramUnavailableReason = null,
             || !BridgeProtocol.IsOpaqueId(observation.SourceEventId)
             || observation.Epoch < 1)
             return false;
-        BridgeSnapshot snapshot = this.executions.CreateBridgeSnapshot();
-        if (snapshot.ActiveExecution is not null)
+        if (this.executions.DescribeActiveExecution() is not null)
             return false;
         return BridgeProtocol.TrySerialize(Reply("semantic_event", correlationId,
-            new BridgeSemanticEvent("body_settled", snapshot.Revision, null, "stop_body_settled", StopObservation: observation)), out json, out _);
+            new BridgeSemanticEvent("body_settled", this.executions.Revision, null, "stop_body_settled", StopObservation: observation)), out json, out _);
     }
 
     internal bool TryCreateLifecycleEvent(long generation, string state, string correlationId, string reasonCode, out string json)
@@ -1680,7 +1682,7 @@ string? bodyProgramUnavailableReason = null,
             snapshot.CatalogRevision,
             snapshot.StopEpoch,
             snapshot.EventHighWater,
-            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode)).ToArray());
+            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode)).ToArray());
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt);
 

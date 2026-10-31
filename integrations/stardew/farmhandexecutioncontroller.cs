@@ -2165,106 +2165,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<string> advertisedCapabilities = capabilityPublication.CapabilitySet.AdvertisedCapabilityIds;
         if (player is null)
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
-        LocalExecutionReceipt? activeReceipt = null;
-        if (this.activeNavigate is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeNavigate.RequestId, out activeReceipt);
-        else if (this.active is not null)
-            this.receiptsByRequestId.TryGetValue(this.active.RequestId, out activeReceipt);
-        else if (this.activeTravel is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeTravel.RequestId, out activeReceipt);
-        else if (this.activePet is not null)
-            this.receiptsByRequestId.TryGetValue(this.activePet.RequestId, out activeReceipt);
-        else if (this.activeMountTransport is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeMountTransport.RequestId, out activeReceipt);
-        else if (this.activeAnimalProduct is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeAnimalProduct.RequestId, out activeReceipt);
-        else if (this.activeItemUse is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeItemUse.RequestId, out activeReceipt);
-        else if (this.activeItemPickup is not null)
-            this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
-        else if (this.activePedestalTaking is not null)
-            this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
-        // The phase and its cancel safety come from the SAME describer that names the holder, so an Agent that
-        // sees `cancelSafe=false` cannot be told by a refusal that the hold was releasable, or the reverse.
-        BodyOwner activeOwner = this.DescribeBodyOwner();
-        BridgeActiveExecution? activeExecution = this.activeNavigate is not null
-            ? new(
-                this.activeNavigate.ExecutionId,
-                this.activeNavigate.RequestId,
-                "navigate_to_destination",
-                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                activeReceipt?.ReasonCode ?? "accepted",
-                new Dictionary<string, string> { ["destination"] = this.activeNavigate.CanonicalDestinationIdentity }, activeOwner.Phase, activeOwner.CancelSafe)
-            : this.active is not null
-            ? new(
-                this.active.ExecutionId,
-                this.active.RequestId,
-                "move_to_tile",
-                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                activeReceipt?.ReasonCode ?? "accepted",
-                new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile), ["deadline_ms"] = this.active.DeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture) }, activeOwner.Phase, activeOwner.CancelSafe)
-            : this.activeTravel is not null
-                ? new(
-                    this.activeTravel.ExecutionId,
-                    this.activeTravel.RequestId,
-                    this.activeTravel.Action,
-                    (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                    activeReceipt?.ReasonCode ?? "accepted",
-                    new Dictionary<string, string> { ["source"] = $"{this.activeTravel.SourceLocation}:{this.activeTravel.SourceX},{this.activeTravel.SourceY}", ["target"] = $"{this.activeTravel.TargetLocation}:{this.activeTravel.TargetX},{this.activeTravel.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
-                : this.activeMountTransport is not null
-                    ? new(this.activeMountTransport.ExecutionId, this.activeMountTransport.RequestId, "mount_transport", (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted", new Dictionary<string, string> { ["target"] = this.activeMountTransport.TargetId, ["tile"] = $"{this.activeMountTransport.TargetX},{this.activeMountTransport.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
-                : this.activePet is not null
-                    ? new(
-                        this.activePet.ExecutionId,
-                        this.activePet.RequestId,
-                        "pet_animal",
-                        (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                        activeReceipt?.ReasonCode ?? "accepted",
-                        new Dictionary<string, string> { ["target"] = this.activePet.TargetId, ["tile"] = $"{this.activePet.TargetX},{this.activePet.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
-                    : this.activeAnimalProduct is not null
-                        ? new(
-                            this.activeAnimalProduct.ExecutionId,
-                            this.activeAnimalProduct.RequestId,
-                            "collect_animal_product",
-                            (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                            activeReceipt?.ReasonCode ?? "accepted",
-                            new Dictionary<string, string> { ["target"] = this.activeAnimalProduct.TargetId, ["slot"] = this.activeAnimalProduct.Slot.ToString(), ["animal"] = this.activeAnimalProduct.AnimalId.ToString() }, activeOwner.Phase, activeOwner.CancelSafe)
-                    : this.activeItemUse is not null
-                        ? new(
-                            this.activeItemUse.ExecutionId,
-                            this.activeItemUse.RequestId,
-                            "use_item",
-                            (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                            activeReceipt?.ReasonCode ?? "accepted",
-                            new Dictionary<string, string> { ["slot"] = this.activeItemUse.Slot.ToString(), ["item"] = this.activeItemUse.QualifiedItemId }, activeOwner.Phase, activeOwner.CancelSafe)
-                        : this.activeToolApproach is not null
-                            ? new(
-                                this.activeToolApproach.ExecutionId,
-                                this.activeToolApproach.RequestId,
-                                this.activeToolApproach.ActionId,
-                                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                                activeReceipt?.ReasonCode ?? "accepted",
-                                new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" }, activeOwner.Phase, activeOwner.CancelSafe)
-                             : this.activeItemPickup is not null
-                                 ? new(
-                                     this.activeItemPickup.ExecutionId,
-                                     this.activeItemPickup.RequestId,
-                                     "pickup_item",
-                                     (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
-                                     activeReceipt?.ReasonCode ?? "accepted",
-                                     new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
-                                 : this.activePedestalTaking is not null
-                                     ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
-                                         (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
-                                         new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
-                                  : null;
-        if (activeExecution is not null)
-        {
-            // The occupant projection is derived from the SAME owner table that names every body-exclusivity
-            // refusal, so a refusal's named code and the snapshot's owner kind cannot disagree.
-            BodyOwner owner = this.DescribeBodyOwner();
-            activeExecution = activeExecution with { OwnerKind = owner.ReasonCode, Interruptible = owner.Interruptible };
-        }
+        BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2419,6 +2320,128 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             CurrentToolSlot: player.CurrentToolIndex,
             CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex)
         );
+    }
+
+    /// <summary>
+    /// The ONE projection of the execution this body currently owns, in the wire form a snapshot and every
+    /// semantic event carry.
+    ///
+    /// <para>
+    /// It exists because the event path obtained this single field by calling CreateBridgeSnapshot(), which is
+    /// the whole world: roughly seventy Discover* radar sources, each walking map objects and minting SHA-256
+    /// target ids, plus warps, capabilities and dispositions - on the game thread, once per observation, and
+    /// route_progress is published per tile. The active execution needs none of that: one spec field, one
+    /// receipt lookup and the body-owner describer. The snapshot and the events both read THIS, so they cannot
+    /// describe the occupant differently.
+    /// </para>
+    ///
+    /// <para>Null when there is no world to describe, which is what a snapshot already reported through
+    /// CreateWorldNotReadyBridgeSnapshot.</para>
+    /// </summary>
+    public BridgeActiveExecution? DescribeActiveExecution()
+    {
+        if (Game1.player is null) return null;
+        LocalExecutionReceipt? activeReceipt = null;
+        if (this.activeNavigate is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeNavigate.RequestId, out activeReceipt);
+        else if (this.active is not null)
+            this.receiptsByRequestId.TryGetValue(this.active.RequestId, out activeReceipt);
+        else if (this.activeTravel is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeTravel.RequestId, out activeReceipt);
+        else if (this.activePet is not null)
+            this.receiptsByRequestId.TryGetValue(this.activePet.RequestId, out activeReceipt);
+        else if (this.activeMountTransport is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeMountTransport.RequestId, out activeReceipt);
+        else if (this.activeAnimalProduct is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeAnimalProduct.RequestId, out activeReceipt);
+        else if (this.activeItemUse is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeItemUse.RequestId, out activeReceipt);
+        else if (this.activeItemPickup is not null)
+            this.receiptsByRequestId.TryGetValue(this.activeItemPickup.RequestId, out activeReceipt);
+        else if (this.activePedestalTaking is not null)
+            this.receiptsByRequestId.TryGetValue(this.activePedestalTaking.RequestId, out activeReceipt);
+        // The phase and its cancel safety come from the SAME describer that names the holder, so an Agent that
+        // sees `cancelSafe=false` cannot be told by a refusal that the hold was releasable, or the reverse.
+        BodyOwner activeOwner = this.DescribeBodyOwner();
+        BridgeActiveExecution? activeExecution = this.activeNavigate is not null
+            ? new(
+                this.activeNavigate.ExecutionId,
+                this.activeNavigate.RequestId,
+                "navigate_to_destination",
+                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                activeReceipt?.ReasonCode ?? "accepted",
+                new Dictionary<string, string> { ["destination"] = this.activeNavigate.CanonicalDestinationIdentity }, activeOwner.Phase, activeOwner.CancelSafe)
+            : this.active is not null
+            ? new(
+                this.active.ExecutionId,
+                this.active.RequestId,
+                "move_to_tile",
+                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                activeReceipt?.ReasonCode ?? "accepted",
+                new Dictionary<string, string> { ["target_tile"] = FormatTile(this.active.TargetTile), ["deadline_ms"] = this.active.DeadlineMs.ToString(System.Globalization.CultureInfo.InvariantCulture) }, activeOwner.Phase, activeOwner.CancelSafe)
+            : this.activeTravel is not null
+                ? new(
+                    this.activeTravel.ExecutionId,
+                    this.activeTravel.RequestId,
+                    this.activeTravel.Action,
+                    (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                    activeReceipt?.ReasonCode ?? "accepted",
+                    new Dictionary<string, string> { ["source"] = $"{this.activeTravel.SourceLocation}:{this.activeTravel.SourceX},{this.activeTravel.SourceY}", ["target"] = $"{this.activeTravel.TargetLocation}:{this.activeTravel.TargetX},{this.activeTravel.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                : this.activeMountTransport is not null
+                    ? new(this.activeMountTransport.ExecutionId, this.activeMountTransport.RequestId, "mount_transport", (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted", new Dictionary<string, string> { ["target"] = this.activeMountTransport.TargetId, ["tile"] = $"{this.activeMountTransport.TargetX},{this.activeMountTransport.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                : this.activePet is not null
+                    ? new(
+                        this.activePet.ExecutionId,
+                        this.activePet.RequestId,
+                        "pet_animal",
+                        (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                        activeReceipt?.ReasonCode ?? "accepted",
+                        new Dictionary<string, string> { ["target"] = this.activePet.TargetId, ["tile"] = $"{this.activePet.TargetX},{this.activePet.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                    : this.activeAnimalProduct is not null
+                        ? new(
+                            this.activeAnimalProduct.ExecutionId,
+                            this.activeAnimalProduct.RequestId,
+                            "collect_animal_product",
+                            (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                            activeReceipt?.ReasonCode ?? "accepted",
+                            new Dictionary<string, string> { ["target"] = this.activeAnimalProduct.TargetId, ["slot"] = this.activeAnimalProduct.Slot.ToString(), ["animal"] = this.activeAnimalProduct.AnimalId.ToString() }, activeOwner.Phase, activeOwner.CancelSafe)
+                    : this.activeItemUse is not null
+                        ? new(
+                            this.activeItemUse.ExecutionId,
+                            this.activeItemUse.RequestId,
+                            "use_item",
+                            (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                            activeReceipt?.ReasonCode ?? "accepted",
+                            new Dictionary<string, string> { ["slot"] = this.activeItemUse.Slot.ToString(), ["item"] = this.activeItemUse.QualifiedItemId }, activeOwner.Phase, activeOwner.CancelSafe)
+                        : this.activeToolApproach is not null
+                            ? new(
+                                this.activeToolApproach.ExecutionId,
+                                this.activeToolApproach.RequestId,
+                                this.activeToolApproach.ActionId,
+                                (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                                activeReceipt?.ReasonCode ?? "accepted",
+                                new Dictionary<string, string> { ["target"] = this.activeToolApproach.ExpectedTargetId, ["tile"] = $"{this.activeToolApproach.TargetX},{this.activeToolApproach.TargetY}", ["approach"] = "adjacent" }, activeOwner.Phase, activeOwner.CancelSafe)
+                             : this.activeItemPickup is not null
+                                 ? new(
+                                     this.activeItemPickup.ExecutionId,
+                                     this.activeItemPickup.RequestId,
+                                     "pickup_item",
+                                     (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(),
+                                     activeReceipt?.ReasonCode ?? "accepted",
+                                     new Dictionary<string, string> { ["target"] = this.activeItemPickup.TargetId, ["tile"] = $"{this.activeItemPickup.TargetX},{this.activeItemPickup.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                                 : this.activePedestalTaking is not null
+                                     ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
+                                         (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
+                                         new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                                  : null;
+        if (activeExecution is not null)
+        {
+            // The occupant projection is derived from the SAME owner table that names every body-exclusivity
+            // refusal, so a refusal's named code and the snapshot's owner kind cannot disagree.
+            BodyOwner owner = this.DescribeBodyOwner();
+            activeExecution = activeExecution with { OwnerKind = owner.ReasonCode, Interruptible = owner.Interruptible };
+        }
+        return activeExecution;
     }
 
     /// <summary>

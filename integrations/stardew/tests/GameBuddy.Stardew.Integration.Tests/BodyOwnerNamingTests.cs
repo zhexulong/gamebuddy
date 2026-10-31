@@ -169,14 +169,17 @@ public sealed class BodyOwnerNamingTests
     public void Snapshot_OccupantProjection_ReadsTheSameOwnerTable()
     {
         // CreateBridgeSnapshot needs a live Game1.player, so the observation seam is pinned at the source the way the
-        // approach suite pins its own: the snapshot fills the occupant fields from the single describer, and the
-        // world-not-ready construction keeps ActiveExecution null.
+        // approach suite pins its own: the occupant fields come from the single describer - now through the shared
+        // projection the events read too - and the world-not-ready construction keeps ActiveExecution null.
         string source = Read("integrations/stardew/farmhandexecutioncontroller.cs");
-        string body = MethodBody(source, "public BridgeSnapshot CreateBridgeSnapshot(");
+        string body = MethodBody(source, "public BridgeActiveExecution? DescribeActiveExecution(");
         body.Should().Contain("this.DescribeBodyOwner()",
-            "the snapshot must not re-derive ownership; it reads the same table the refusals do");
+            "the projection must not re-derive ownership; it reads the same table the refusals do");
         body.Should().Contain("OwnerKind = owner.ReasonCode");
         body.Should().Contain("Interruptible = owner.Interruptible");
+        MethodBody(source, "public BridgeSnapshot CreateBridgeSnapshot(")
+            .Should().Contain("this.DescribeActiveExecution()",
+                "the snapshot publishes the same projection rather than a second spelling of it");
 
         MethodBody(source, "private BridgeSnapshot CreateWorldNotReadyBridgeSnapshot(")
             .Should().Contain("ActiveExecution: null", "the world-not-ready snapshot keeps no occupant");

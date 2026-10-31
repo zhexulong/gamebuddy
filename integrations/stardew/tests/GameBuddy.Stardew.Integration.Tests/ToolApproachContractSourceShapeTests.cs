@@ -298,9 +298,9 @@ public sealed class ToolApproachContractSourceShapeTests
         spec.Should().Contain("string ActionId",
             "the approach must carry the real action id so the snapshot does not expose an internal phase");
         // And the mechanism must publish that field, not a derived placeholder. The
-        // active-execution projection lives in CreateBridgeSnapshot, which builds the
-        // whole snapshot including the `activeExecution` entry.
-        MethodBody(Read("integrations/stardew/farmhandexecutioncontroller.cs"), "public BridgeSnapshot CreateBridgeSnapshot(")
+        // active-execution projection lives in DescribeActiveExecution, which the snapshot and every semantic
+        // event read, so the shared descriptor is where the real action id is published.
+        MethodBody(Read("integrations/stardew/farmhandexecutioncontroller.cs"), "public BridgeActiveExecution? DescribeActiveExecution(")
             .Should().Contain("this.activeToolApproach.ActionId",
                 "the snapshot must publish the action's own id");
 
