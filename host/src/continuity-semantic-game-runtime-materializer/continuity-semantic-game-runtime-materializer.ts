@@ -142,6 +142,36 @@ function createBodyProgramTools(
     if (code === "accepted" || code === "idempotent") revealReaders();
     return result;
   };
+  /**
+   * Whether this tool should still exist, recorded while the evidence is fresh.
+   *
+   * <p>
+   * MEASURED 2026-11-01, four independent lines:
+   * </p>
+   * <ol>
+   *   <li>`stardew_plan_work` compiles its script into the SAME program this tool submits - its own comment says the script is
+   *       "submitted as ONE program, so the Mod's journal, admission and recovery see exactly what a hand-written program
+   *       gives them".</li>
+   *   <li>Across every recorded session there are 16 calls to this tool, and <b>zero</b> of them used a node with more than one
+   *       dependency. All 16 were linear chains.</li>
+   *   <li>After the two descriptions stopped advertising the same scenario (`b01c91dd`), a live run went 34 submissions with
+   *       <b>0</b> to this tool - against 16-vs-82 before the change.</li>
+   *   <li>It costs 4,267 bytes with the old description and 2,796 with the shortened one, on every request.</li>
+   * </ol>
+   *
+   * <p>
+   * SO WHY IS IT STILL HERE: `plan_work` emits exactly one dependency edge per node - "one dependency edge per call, nothing
+   * more" - while this tool accepts an arbitrary DAG. Deleting it removes the only way to express a node that depends on two
+   * predecessors. Physics makes that equivalent for one farmer today, and no recorded call needed it, but "no call needed it"
+   * and "nothing can need it" are different claims and the second is the one a deletion rests on. The binding contract on the
+   * Mod side is what decides, not this file.
+   * </p>
+   *
+   * <p>
+   * WHEN TO DELETE: after several more runs keep this at zero AND someone confirms no action's `bindings` can legitimately
+   * require two predecessors. Until then the honest state is "kept, unused, and cheaper than it was".
+   * </p>
+   */
   const submitTool = (): ToolDefinition =>
     Object.freeze(
       defineTool({
