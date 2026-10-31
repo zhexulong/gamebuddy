@@ -11,7 +11,7 @@ import {
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
 } from "../composed-reference-game-browser-api";
-import { deriveGameLifecycleControlAvailability } from "../game-lifecycle-controls";
+import { deriveGameLifecycleControlAvailability, deriveGameSessionControls } from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { GamePlayerSettings } from "./GamePlayerSettings";
@@ -996,59 +996,31 @@ export function GameSurface({
     ready,
     game,
   });
-  const gameStopAvailable =
-    ready &&
-    game !== null &&
-    game.game.attachment.status === "attached" &&
-    game.game.attachment.generation > 0 &&
-    game.game.connectionStatus === "connected_idle";
-  const disconnectAvailable =
-    ready && game !== null && game.game.attachment.status === "attached" && game.game.attachment.generation > 0;
-  // The terminal operation shares the live-attached precondition of disconnect:
-  // a Player world is running and this browser holds its attachment. It does not
-  // follow the routine controls' grouping in the panel, but its availability is
-  // derived the same way so the offered control can never be one the coordinator
-  // refuses for a reason it could have anticipated.
-  const gameEndgameAvailable = disconnectAvailable;
+  // The one derivation of what this state offers (`game-lifecycle-controls.ts`),
+  // which is also the population the zero-forward-path gate drives in
+  // `tests/game-lifecycle-launch-gate.test.mjs`. Every session and recovery
+  // control below reads its availability from here instead of repeating the
+  // predicate, so the control the player is offered and the state the gate checks
+  // cannot drift apart.
+  //
   // A confirm step armed against one live attachment must not survive into a
   // different one: whenever the endgame target generation or its availability
   // changes, the UI confirm resets to unarmed and the ordinary click is needed
   // again. Only the confirm button ever sends the command.
+  const sessionControls = deriveGameSessionControls({
+    ready,
+    game,
+    // The client's half of the failed-restore rule: the attempt's own failure, the
+    // unavailable outcome, or the Host's last outcome. Which of those makes the
+    // failure rollup appear is the derivation's decision, not this line's.
+    resumeFailureSurface: gameResumeFailure !== null || gameResumeUnavailable || game?.game.latestOutcome === "failed",
+  });
   const endgameGeneration =
     game !== null && game.game.attachment.status === "attached" ? game.game.attachment.generation : 0;
   useEffect(() => {
     setEndgameConfirmArmed(false);
-  }, [endgameGeneration, gameEndgameAvailable]);
-  const resumeFailureSurface =
-    ready &&
-    game !== null &&
-    game.game.attachment.status === "attached" &&
-    game.game.attachment.generation > 0 &&
-    RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus) &&
-    (gameResumeFailure !== null || gameResumeUnavailable || game.game.latestOutcome === "failed");
-  // One command, one control. `game.resume` is both the connection-restore
-  // action and its own retry, so the panel offers it under exactly one honest
-  // name: the failure rollup (`Retry`) owns the attempt that already failed
-  // (design/26 §4.1 offers `Try again` only where the exact request is safe to
-  // replay - which the preserved generation-bound idempotency key makes it), and
-  // `Resume game` owns the degraded connection that no attempt has failed on.
-  // Offering both at once was the surface naming its own command twice.
-  const gameResumeAvailable =
-    ready &&
-    game !== null &&
-    game.game.attachment.status === "attached" &&
-    game.game.attachment.generation > 0 &&
-    RESUMABLE_CONNECTION_STATUSES.has(game.game.connectionStatus) &&
-    !resumeFailureSurface;
-  const gameReopenAvailable =
-    ready &&
-    game !== null &&
-    game.game.actionAuthority === "paused" &&
-    game.game.attachment.status === "attached" &&
-    game.game.attachment.generation > 0 &&
-    game.game.connectionStatus === "connected_idle";
+  }, [endgameGeneration, sessionControls.endgameAvailable]);
   const gameSyncing = ready && game !== null && game.game.connectionStatus === "syncing";
-
   if (!selected) return null;
 
   return (
@@ -1102,30 +1074,23 @@ export function GameSurface({
           },
         }}
         session={{
-          stop: { available: gameStopAvailable, active: gameStopActive, failure: gameStopFailure },
-          disconnect: {
-            available: disconnectAvailable,
-            active: disconnectActive,
-            failure: disconnectFailure,
-          },
+          controls: sessionControls,
+          stop: { active: gameStopActive, failure: gameStopFailure },
+          disconnect: { active: disconnectActive, failure: disconnectFailure },
           endgame: {
-            available: gameEndgameAvailable,
             active: gameEndgameActive,
             failure: gameEndgameFailure,
             confirmArmed: endgameConfirmArmed,
           },
         }}
         resume={{
-          available: gameResumeAvailable,
           active: gameResumeActive,
           failure: gameResumeFailure,
           unavailable: gameResumeUnavailable,
           cancelActive: gameResumeCancelActive,
           cancelFailure: gameResumeCancelFailure,
-          failureSurface: resumeFailureSurface,
         }}
         reopen={{
-          available: gameReopenAvailable,
           active: gameReopenActive,
           failure: gameReopenFailure,
           unavailable: gameReopenUnavailable,

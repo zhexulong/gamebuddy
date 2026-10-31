@@ -18,6 +18,7 @@ import type { ReactNode } from "react";
 import { gameOperationFailureSentence, type GameOperationFailure } from "../composed-problem-view";
 import type { Messages } from "../i18n";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
+import type { GameSessionControls } from "../game-lifecycle-controls";
 import {
   compatibilityLabel,
   connectionLabel,
@@ -134,31 +135,29 @@ export type GameStatePanelProps = Readonly<{
     launch: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null; notStaged: boolean }>;
   }>;
   session: Readonly<{
-    stop: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null }>;
-    disconnect: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null }>;
+    /**
+     * What this state offers, from the one derivation the zero-forward-path gate
+     * drives (`../game-lifecycle-controls`). The panel renders exactly these and
+     * nothing else, so the offer the player sees and the offer the gate checks
+     * cannot disagree.
+     */
+    controls: GameSessionControls;
+    stop: Readonly<{ active: boolean; failure: GameOperationFailure | null }>;
+    disconnect: Readonly<{ active: boolean; failure: GameOperationFailure | null }>;
     /**
      * The deliberate terminal operation (`game.endgame`). `confirmArmed` is the
      * UI-level confirm step: the first click arms, only the confirm button sends.
-     * `available` false means the control is absent, never a disabled lookalike.
      */
-    endgame: Readonly<{
-      available: boolean;
-      active: boolean;
-      failure: GameOperationFailure | null;
-      confirmArmed: boolean;
-    }>;
+    endgame: Readonly<{ active: boolean; failure: GameOperationFailure | null; confirmArmed: boolean }>;
   }>;
   resume: Readonly<{
-    available: boolean;
     active: boolean;
     failure: GameOperationFailure | null;
     unavailable: boolean;
     cancelActive: boolean;
     cancelFailure: GameOperationFailure | null;
-    failureSurface: boolean;
   }>;
   reopen: Readonly<{
-    available: boolean;
     active: boolean;
     failure: GameOperationFailure | null;
     unavailable: boolean;
@@ -307,9 +306,24 @@ export function GameStatePanel({
               in step 3. Once the companion is in the farm the same group holds
               the actions-resume affordance it held before. */}
           <PanelGroup id="game-group-next-step" title={labels.gameGroupNextStep}>
-            {companionInFarm ? (
+            {/* The two states whose step is not a control on this page, stated where the
+                guide would have been so the player is never left reading a panel of
+                withdrawn controls with nothing saying why. `launch_failed` also holds
+                the guide back: every control in it is refused for the life of this Host
+                process, so showing it would be exactly the trap design/26 §1 rules out. */}
+            {session.controls.restartRequired && (
+              <p className="game-status" data-tone="danger" role="status" data-testid="game-launch-quarantined">
+                {labels.gameLaunchQuarantined}
+              </p>
+            )}
+            {session.controls.waitingForGame && (
+              <p className="game-status" data-tone="progress" role="status" data-testid="game-waiting-for-game">
+                {labels.gameWaitingForGame}
+              </p>
+            )}
+            {session.controls.restartRequired ? null : companionInFarm ? (
               <div className="game-actions">
-                {reopen.available && (
+                {session.controls.reopenAvailable && (
                   <button
                     type="button"
                     className="game-action primary"
@@ -435,7 +449,7 @@ export function GameStatePanel({
                 </li>
               </ol>
             )}
-            {reopen.available && (
+            {session.controls.reopenAvailable && (
               <p className="game-status" data-tone="warning" role="status">
                 {labels.gameActionsPaused}
               </p>
@@ -475,7 +489,7 @@ export function GameStatePanel({
               <GameFact label={labels.gameFactOutcome}>{outcomeLabel(labels, game.game.latestOutcome)}</GameFact>
             </dl>
             <div className="game-actions">
-              {session.stop.available && (
+              {session.controls.stopAvailable && (
                 <button
                   type="button"
                   className="game-action"
@@ -487,7 +501,7 @@ export function GameStatePanel({
                   {labels.gameStop}
                 </button>
               )}
-              {session.disconnect.available && (
+              {session.controls.disconnectAvailable && (
                 <button
                   type="button"
                   className="game-action"
@@ -514,7 +528,7 @@ export function GameStatePanel({
                 session's routine stop/disconnect row: it reads as its own block
                 with a confirm step (design/28 §5.2; design 102). Unavailable
                 means absent, never a disabled lookalike. */}
-            {session.endgame.available && (
+            {session.controls.endgameAvailable && (
               <div className="game-endgame" data-testid="game-endgame">
                 {!session.endgame.confirmArmed ? (
                   <button
@@ -569,16 +583,16 @@ export function GameStatePanel({
             )}
           </PanelGroup>
 
-          {/* Recovery. `resume.available` and `resume.failureSurface` are
-              mutually exclusive (the shell applies that rule), so this group
+          {/* Recovery. `controls.resumeAvailable` and `controls.retryResumeAvailable`
+              are mutually exclusive (the derivation applies that rule), so this group
               offers the connection-restore action exactly once under exactly one
               honest name: `Resume game` before an attempt has failed, and the
               failure rollup `Retry`/`Cancel`/`Start new game` after one has
               (design/26 §4.1, design/104 §7). */}
-          {(resume.available || resume.failureSurface) && (
+          {(session.controls.resumeAvailable || session.controls.retryResumeAvailable) && (
             <PanelGroup id="game-group-recovery" title={labels.gameGroupRecovery}>
               <div className="game-actions">
-                {resume.available && (
+                {session.controls.resumeAvailable && (
                   <button
                     type="button"
                     className="game-action primary"
@@ -590,7 +604,7 @@ export function GameStatePanel({
                     {labels.gameResume}
                   </button>
                 )}
-                {resume.failureSurface && (
+                {session.controls.retryResumeAvailable && (
                   <>
                     <button
                       type="button"

@@ -73,6 +73,13 @@ const en = {
   gameSyncing: "Syncing the game connection...",
   gameLaunch: "Play with companion",
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
+  // The two states whose step is not a control on this page. Both names the step a player
+  // actually takes, because a panel with nothing to press and no sentence saying why is the
+  // dead end `AGENTS.md`'s zero-forward-path rule exists for.
+  gameLaunchQuarantined:
+    "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. Close GameBuddy completely, open it again, then play with your companion.",
+  gameWaitingForGame:
+    "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   stardewCabinSelection: "Stardew cabin selection",
   stardewCabinsLoading: "Loading available cabins…",
   // The list is read once, when the page opens, and the Host serves it only while
@@ -1146,6 +1153,9 @@ const zh: Messages = {
   gameSyncing: "正在同步游戏连接...",
   gameLaunch: "与伙伴一起玩",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
+  gameLaunchQuarantined:
+    "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
+  gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
