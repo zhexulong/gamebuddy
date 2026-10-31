@@ -289,7 +289,7 @@
     "stylelint": "17.16.0",
     "stylelint-value-no-unknown-custom-properties": "6.1.1",
     "typescript-eslint": "8.71.0",
-    "web-tree-sitter": "0.26.11"
+    "web-tree-sitter": "0.27.1"
   },
   "workspaces": [
     "packages/*",
