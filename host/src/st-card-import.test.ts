@@ -1248,7 +1248,7 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
       system_prompt: "动率先于言：每次发言开头必须包含环境描写与身体动作细节，包裹在 * * 中。",
     },
   });
-  const profile = candidateToIdentityProfile(preview, 1, "zh-CN");
+  const profile = candidateToIdentityProfile(preview, 1);
   assert.deepEqual(profile.characterVoice, {
     text: "动率先于言：每次发言开头必须包含环境描写与身体动作细节，包裹在 * * 中。",
     source: "card",

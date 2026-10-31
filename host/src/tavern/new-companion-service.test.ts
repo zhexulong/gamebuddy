@@ -180,15 +180,7 @@ test("New Companion renders macros inside reviewed examples and writes them into
     try {
       // The run's own language decides `{{user}}` (the real mount passes what
       // `resolveCompanionLocale` reads); an English run says `you`.
-      const created = await provisionNewCompanion(
-        root,
-        "player",
-        examplesCandidate,
-        review,
-        threadStore,
-        undefined,
-        "en-US",
-      );
+      const created = await provisionNewCompanion(root, "player", examplesCandidate, review, threadStore);
       // Examples survive review AS THE CARD WROTE THEM - macros and all - because the
       // durable profile is what the card export writes back; the prompt renders them.
       assert.deepEqual(created.profile.examples, [
@@ -244,15 +236,7 @@ test("New Companion maps the reviewed persona and renders card macros determinis
     // own it, so the test closes it before the root is removed.
     const threadStore = createChatThreadStore(root, "b".repeat(64));
     try {
-      const created = await provisionNewCompanion(
-        root,
-        "player",
-        personaCandidate,
-        review,
-        threadStore,
-        undefined,
-        "en-US",
-      );
+      const created = await provisionNewCompanion(root, "player", personaCandidate, review, threadStore);
       // Stored: the author's reviewed text, exactly.
       assert.deepEqual(created.profile.persona, {
         core: "{{char}} is calm when {{user}} needs help.",

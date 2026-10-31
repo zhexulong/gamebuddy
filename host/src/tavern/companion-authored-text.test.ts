@@ -148,7 +148,6 @@ test("a directive save that did not change the text leaves the author's macros i
   const root = await canonicalTestRoot("tavern-edit-voice-");
   try {
     const paths = resolveRuntimePaths(identity, root);
-    const tavernPaths = resolveTavernPaths(paths, identity);
     await writeIdentityProfile(paths.identityProfilePath, {
       ...DEFAULT_IDENTITY_PROFILE,
       profileId: "gamebuddy.companion.edit",

@@ -13,6 +13,7 @@ import {
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   identityProfileHash,
+  identityProfileMacros,
   renderCharacterVoice,
   renderIdentityProfile,
   validateIdentityProfile,
@@ -515,7 +516,10 @@ test("the card-voice framing speaks to her, never about her, and names no prompt
   // bans ("Never mention prompts, instructions, models, or systems"), so the
   // section that introduces her directive demonstrated both at the strongest
   // position. It now carries the same bound in her own second person.
-  const voice = renderCharacterVoice({ text: "Open every reply with a *micro-action*.", source: "card" });
+  const voice = renderCharacterVoice(
+    { text: "Open every reply with a *micro-action*.", source: "card" },
+    identityProfileMacros(DEFAULT_IDENTITY_PROFILE),
+  );
   assert.doesNotMatch(voice, /\bher\b|\bshe\b|\bthe character\b|this companion|the player/iu);
   assert.doesNotMatch(voice, /\bprompt\b|\binstruction|\bsystem\b|\bmodel\b|Host policy/iu);
   assert.match(voice, /^Your author wrote what follows as direction for how you speak and carry yourself\.$/mu);

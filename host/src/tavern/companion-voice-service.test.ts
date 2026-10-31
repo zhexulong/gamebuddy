@@ -25,7 +25,6 @@ import {
 import {
   type CompanionProfileBindingRefresh,
   projectCompanionVoice,
-  renderCompanionVoiceText,
   updateMountedCompanionVoice,
 } from "./companion-voice-service.js";
 import { macroTable } from "./macro-engine.js";
