@@ -61,7 +61,8 @@ public static class BodyProgramJournalPersistence
         try
         {
             if (state is null || state.SchemaVersion != SchemaVersion || state.Scope is null || !state.Scope.IsValid || state.PolicyIdentity is null || !state.PolicyIdentity.IsValid
-                || state.EventHighWater < 0 || state.Programs is null || state.Events is null || state.Programs.Count > 128 || state.Events.Count > 4096)
+                || state.EventHighWater < 0 || state.Programs is null || state.Events is null
+                || state.Programs.Count > BodyProgramJournalRetention.MaximumPrograms || state.Events.Count > BodyProgramJournalRetention.MaximumEvents)
             { reason = "invalid_state"; return false; }
 
             HashSet<string> ids = new(StringComparer.Ordinal);
@@ -584,7 +585,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadArray<T>(JsonElement element, Reader<T> reader, out T[] values)
     {
         values = Array.Empty<T>();
-        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > 4096) return false;
+        if (element.ValueKind != JsonValueKind.Array || element.GetArrayLength() > BodyProgramJournalRetention.MaximumEvents) return false;
         List<T> result = new();
         foreach (JsonElement item in element.EnumerateArray())
         {
