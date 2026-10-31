@@ -32,6 +32,7 @@ import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./mana
 import { ChatsSurface } from "./ChatsSurface";
 import { MemorySurface } from "./MemorySurface";
 import { SettingsSurface } from "./SettingsSurface";
+import { SurfaceDrafts } from "./surface-drafts";
 import {
   CHARACTERS_PANEL,
   CHATS_PANEL,
@@ -1201,244 +1202,247 @@ export function ComposedReferenceGameApp() {
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
 
   return (
-    <div className="tavern-app-shell" data-profile="composed-reference-game">
-      <SkipLink label={labels().skipToChat} />
-      {view.kind === "loading" && (
-        <main id="main-content" className="app-main-content">
-          <div className="state-placeholder">
-            <p className="loading-text">{labels().openingChat}</p>
-          </div>
-        </main>
-      )}
-      {view.kind === "problem" && <ProblemView title={view.title} detail={view.detail} />}
-      {view.kind === "ready" && view.session.snapshot.chat !== null && (
-        <>
-          <AppBar
-            brandMark={labels().appMark}
-            brandLabel={labels().appName}
-            companionName={view.session.snapshot.chat.companion.name}
-            companionHandle={view.session.snapshot.chat.companion.handle}
-            companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-            statusLabel={turnInFlight ? labels().generating : labels().online}
-            statusTone={turnInFlight ? "progress" : "idle"}
-            entries={[
-              // The surfaces are peers: each entry selects the region's content and
-              // the conversation is simply the default one (design/104 §2).
-              {
-                id: CHAT_PANEL,
-                label: labels().chatPanel,
-                icon: MessagesSquare,
-                active: shownSurface === CHAT_PANEL,
-                onClick: openChat,
-                ref: chatEntryRef,
-              },
-              {
-                id: GAME_PANEL,
-                label: labels().gamePanel,
-                icon: Gamepad2,
-                active: shownSurface === GAME_PANEL,
-                onClick: openGamePanel,
-                ref: gameEntryRef,
-              },
-              ...(managementPanelsAvailable
-                ? [
-                    {
-                      id: CHATS_PANEL,
-                      label: labels().chatsPanel,
-                      icon: MessagesSquare,
-                      active: shownSurface === CHATS_PANEL,
-                      onClick: openChats,
-                      ref: chatsEntryRef,
-                    },
-                    {
-                      id: CHARACTERS_PANEL,
-                      label: labels().charactersPanel,
-                      icon: Users,
-                      active: shownSurface === CHARACTERS_PANEL,
-                      onClick: openCharacters,
-                      ref: charactersEntryRef,
-                    },
-                    {
-                      id: SETTINGS_PANEL,
-                      label: labels().settingsPanel,
-                      icon: Settings,
-                      active: shownSurface === SETTINGS_PANEL,
-                      onClick: openSettings,
-                      ref: settingsEntryRef,
-                    },
-                    {
-                      id: MEMORY_PANEL,
-                      label: labels().memoryPanel,
-                      icon: Brain,
-                      active: shownSurface === MEMORY_PANEL,
-                      onClick: openMemory,
-                      ref: memoryEntryRef,
-                    },
-                  ]
-                : []),
-            ]}
-            fold={{ from: 2, label: labels().appBarMore }}
-          />
+    // One draft store for every surface: the shell is the only thing that outlives them.
+    <SurfaceDrafts>
+      <div className="tavern-app-shell" data-profile="composed-reference-game">
+        <SkipLink label={labels().skipToChat} />
+        {view.kind === "loading" && (
           <main id="main-content" className="app-main-content">
-            {/* Every surface is a peer: it takes this region in full, none of them
+            <div className="state-placeholder">
+              <p className="loading-text">{labels().openingChat}</p>
+            </div>
+          </main>
+        )}
+        {view.kind === "problem" && <ProblemView title={view.title} detail={view.detail} />}
+        {view.kind === "ready" && view.session.snapshot.chat !== null && (
+          <>
+            <AppBar
+              brandMark={labels().appMark}
+              brandLabel={labels().appName}
+              companionName={view.session.snapshot.chat.companion.name}
+              companionHandle={view.session.snapshot.chat.companion.handle}
+              companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
+              statusLabel={turnInFlight ? labels().generating : labels().online}
+              statusTone={turnInFlight ? "progress" : "idle"}
+              entries={[
+                // The surfaces are peers: each entry selects the region's content and
+                // the conversation is simply the default one (design/104 §2).
+                {
+                  id: CHAT_PANEL,
+                  label: labels().chatPanel,
+                  icon: MessagesSquare,
+                  active: shownSurface === CHAT_PANEL,
+                  onClick: openChat,
+                  ref: chatEntryRef,
+                },
+                {
+                  id: GAME_PANEL,
+                  label: labels().gamePanel,
+                  icon: Gamepad2,
+                  active: shownSurface === GAME_PANEL,
+                  onClick: openGamePanel,
+                  ref: gameEntryRef,
+                },
+                ...(managementPanelsAvailable
+                  ? [
+                      {
+                        id: CHATS_PANEL,
+                        label: labels().chatsPanel,
+                        icon: MessagesSquare,
+                        active: shownSurface === CHATS_PANEL,
+                        onClick: openChats,
+                        ref: chatsEntryRef,
+                      },
+                      {
+                        id: CHARACTERS_PANEL,
+                        label: labels().charactersPanel,
+                        icon: Users,
+                        active: shownSurface === CHARACTERS_PANEL,
+                        onClick: openCharacters,
+                        ref: charactersEntryRef,
+                      },
+                      {
+                        id: SETTINGS_PANEL,
+                        label: labels().settingsPanel,
+                        icon: Settings,
+                        active: shownSurface === SETTINGS_PANEL,
+                        onClick: openSettings,
+                        ref: settingsEntryRef,
+                      },
+                      {
+                        id: MEMORY_PANEL,
+                        label: labels().memoryPanel,
+                        icon: Brain,
+                        active: shownSurface === MEMORY_PANEL,
+                        onClick: openMemory,
+                        ref: memoryEntryRef,
+                      },
+                    ]
+                  : []),
+              ]}
+              fold={{ from: 2, label: labels().appBarMore }}
+            />
+            <main id="main-content" className="app-main-content">
+              {/* Every surface is a peer: it takes this region in full, none of them
                 covers another, and the conversation is simply the default one
                 (design/104 §2). The URL names the selected surface, so Back
                 returns to the previous one and a reload restores it. */}
-            {shownSurface === CHAT_PANEL && (
-              <ChatSurface
-                transcript={view.session.snapshot.chat.transcript}
-                preview={preview}
-                companionName={view.session.snapshot.chat.companion.name}
-                companionHandle={view.session.snapshot.chat.companion.handle}
-                companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-                chatTitle={view.session.snapshot.chat.title}
-                labels={labels()}
-                pending={chatMutation}
-                pendingPlayerMessage={pendingOptimisticMessage}
-                notice={
-                  pollFailure
-                    ? labels().chatFailed
-                    : (sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
-                }
-                replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
-                onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
-                onSwipeRemove={handleSwipeRemoveArm}
-                onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
-                  void handleSwipeRemoveConfirm(messageHandle, targetIndex)
-                }
-                onSwipeRemoveCancel={handleSwipeRemoveCancel}
-                swipeRemoveArmedHandle={swipeRemoveArm === null ? null : swipeRemoveArm.handle}
-                onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
-                onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
-                onRewind={handleRewindArm}
-                onRewindConfirm={(messageHandle, expectedOrder) =>
-                  void handleRewindConfirm(messageHandle, expectedOrder)
-                }
-                onRewindCancel={handleRewindCancel}
-                rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
-                onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
-                onDelete={handleDeleteArm}
-                onDeleteConfirm={(messageHandle, expectedOrder) =>
-                  void handleDeleteConfirm(messageHandle, expectedOrder)
-                }
-                onDeleteCancel={handleDeleteCancel}
-                deleteArmedHandle={deleteArm === null ? null : deleteArm.handle}
-                value={inputText}
-                onChange={writeInput}
-                onSend={() => void handleSend()}
-                onStop={() => void handleStop()}
-                isGenerating={turnInFlight}
-                canStop={stopAvailable}
-                disabled={!submitAvailable}
-                modelRoute={arrivalReads.chatModelRoute}
-                onOpenSettings={openSettings}
-                voice={view.session.snapshot.voice}
-                settingsAction={{
-                  label: labels().chatModelSettings,
-                  expanded: modelPopoutOpen,
-                  onClick: () => setModelPopoutOpen(true),
-                  ref: modelPopoutEntryRef,
-                }}
-                draftActions={{
-                  onSave: () => void handleDraftMutation("save"),
-                  onDiscard: () => void handleDraftMutation("discard"),
-                  // The row's own visibility is the composer's: it shows while a
-                  // durable draft exists, while there is fresh text to keep as
-                  // a first draft, or while a failed attempt has nothing else to
-                  // report it. `durable` is what keeps Discard (and the "saved"
-                  // wording) honest - the first draft is saved through this
-                  // same command, under the same revision CAS.
-                  durable: view.draft.text !== null,
-                  notice: draftNotice,
-                }}
-              />
-            )}
-            <GameSurface
-              selected={shownSurface === GAME_PANEL}
-              ready={view.kind === "ready"}
-              game={view.root.game}
-              csrfToken={view.session.snapshot.csrfToken}
-              labels={labels()}
-              readView={() => viewRef.current}
-              commit={commit}
-              clearPreview={() => setPreview(null)}
-              isCancelled={() => cancelledRef.current}
-              composedApi={composedApiRef.current}
-              managementApi={managementPipelineApiRef.current}
-              arrivalNotice={arrivalReads.gameArrivalNotice}
-              restoreFocusTo={gameEntryRef}
-            />
-            {shownSurface === CHATS_PANEL && (
-              <ChatsSurface
-                api={managementPipelineApiRef.current}
+              {shownSurface === CHAT_PANEL && (
+                <ChatSurface
+                  transcript={view.session.snapshot.chat.transcript}
+                  preview={preview}
+                  companionName={view.session.snapshot.chat.companion.name}
+                  companionHandle={view.session.snapshot.chat.companion.handle}
+                  companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
+                  chatTitle={view.session.snapshot.chat.title}
+                  labels={labels()}
+                  pending={chatMutation}
+                  pendingPlayerMessage={pendingOptimisticMessage}
+                  notice={
+                    pollFailure
+                      ? labels().chatFailed
+                      : (sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
+                  }
+                  replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
+                  onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
+                  onSwipeRemove={handleSwipeRemoveArm}
+                  onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
+                    void handleSwipeRemoveConfirm(messageHandle, targetIndex)
+                  }
+                  onSwipeRemoveCancel={handleSwipeRemoveCancel}
+                  swipeRemoveArmedHandle={swipeRemoveArm === null ? null : swipeRemoveArm.handle}
+                  onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
+                  onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
+                  onRewind={handleRewindArm}
+                  onRewindConfirm={(messageHandle, expectedOrder) =>
+                    void handleRewindConfirm(messageHandle, expectedOrder)
+                  }
+                  onRewindCancel={handleRewindCancel}
+                  rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
+                  onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
+                  onDelete={handleDeleteArm}
+                  onDeleteConfirm={(messageHandle, expectedOrder) =>
+                    void handleDeleteConfirm(messageHandle, expectedOrder)
+                  }
+                  onDeleteCancel={handleDeleteCancel}
+                  deleteArmedHandle={deleteArm === null ? null : deleteArm.handle}
+                  value={inputText}
+                  onChange={writeInput}
+                  onSend={() => void handleSend()}
+                  onStop={() => void handleStop()}
+                  isGenerating={turnInFlight}
+                  canStop={stopAvailable}
+                  disabled={!submitAvailable}
+                  modelRoute={arrivalReads.chatModelRoute}
+                  onOpenSettings={openSettings}
+                  voice={view.session.snapshot.voice}
+                  settingsAction={{
+                    label: labels().chatModelSettings,
+                    expanded: modelPopoutOpen,
+                    onClick: () => setModelPopoutOpen(true),
+                    ref: modelPopoutEntryRef,
+                  }}
+                  draftActions={{
+                    onSave: () => void handleDraftMutation("save"),
+                    onDiscard: () => void handleDraftMutation("discard"),
+                    // The row's own visibility is the composer's: it shows while a
+                    // durable draft exists, while there is fresh text to keep as
+                    // a first draft, or while a failed attempt has nothing else to
+                    // report it. `durable` is what keeps Discard (and the "saved"
+                    // wording) honest - the first draft is saved through this
+                    // same command, under the same revision CAS.
+                    durable: view.draft.text !== null,
+                    notice: draftNotice,
+                  }}
+                />
+              )}
+              <GameSurface
+                selected={shownSurface === GAME_PANEL}
+                ready={view.kind === "ready"}
+                game={view.root.game}
                 csrfToken={view.session.snapshot.csrfToken}
                 labels={labels()}
-                selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
-                currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
-                onRenamedTitle={handleRenamedTitle}
-                onChatSwitched={handleChatSwitched}
-                onMountedChatChosen={openChat}
-                onCurrentChatRemoved={handleCurrentChatRemoved}
-                restoreFocusTo={chatsEntryRef}
+                readView={() => viewRef.current}
+                commit={commit}
+                clearPreview={() => setPreview(null)}
+                isCancelled={() => cancelledRef.current}
+                composedApi={composedApiRef.current}
+                managementApi={managementPipelineApiRef.current}
+                arrivalNotice={arrivalReads.gameArrivalNotice}
+                restoreFocusTo={gameEntryRef}
               />
-            )}
-            {shownSurface === CHARACTERS_PANEL && (
-              <CharactersSurface
-                api={managementPipelineApiRef.current}
-                csrfToken={view.session.snapshot.csrfToken}
-                labels={labels()}
-                locale={view.locale}
-                read={readProductWorldInfo}
-                avatarDigests={avatarDigests}
-                onAvatarUpdated={handleAvatarUpdated}
-                restoreFocusTo={charactersEntryRef}
-              />
-            )}
-            {shownSurface === SETTINGS_PANEL && (
-              <SettingsSurface
-                api={managementPipelineApiRef.current}
-                csrfToken={view.session.snapshot.csrfToken}
-                labels={labels()}
-                uiLocale={view.locale}
-                onSelectUiLocale={handleUiLocale}
-                restoreFocusTo={settingsEntryRef}
-              />
-            )}
-            {shownSurface === MEMORY_PANEL && (
-              <MemorySurface
-                api={managementPipelineApiRef.current}
-                csrfToken={view.session.snapshot.csrfToken}
-                labels={labels()}
-                locale={view.locale}
-                conversationTurn={mountedTurn}
-                restoreFocusTo={memoryEntryRef}
-              />
-            )}
-          </main>
-          {/* This surface's own model settings, over the conversation rather than
+              {shownSurface === CHATS_PANEL && (
+                <ChatsSurface
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
+                  currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
+                  onRenamedTitle={handleRenamedTitle}
+                  onChatSwitched={handleChatSwitched}
+                  onMountedChatChosen={openChat}
+                  onCurrentChatRemoved={handleCurrentChatRemoved}
+                  restoreFocusTo={chatsEntryRef}
+                />
+              )}
+              {shownSurface === CHARACTERS_PANEL && (
+                <CharactersSurface
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  locale={view.locale}
+                  read={readProductWorldInfo}
+                  avatarDigests={avatarDigests}
+                  onAvatarUpdated={handleAvatarUpdated}
+                  restoreFocusTo={charactersEntryRef}
+                />
+              )}
+              {shownSurface === SETTINGS_PANEL && (
+                <SettingsSurface
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  uiLocale={view.locale}
+                  onSelectUiLocale={handleUiLocale}
+                  restoreFocusTo={settingsEntryRef}
+                />
+              )}
+              {shownSurface === MEMORY_PANEL && (
+                <MemorySurface
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                  locale={view.locale}
+                  conversationTurn={mountedTurn}
+                  restoreFocusTo={memoryEntryRef}
+                />
+              )}
+            </main>
+            {/* This surface's own model settings, over the conversation rather than
               in it (design/104 §3: Chat owns its model choice and the Host stores
               it under the chat half of settings/profiles). The popout is not a
               peer surface: it replaces no region, Escape or the backdrop closes
               it, and focus returns to the composer's own button. */}
-          {modelPopoutOpen && (
-            <ContextDrawer
-              title={labels().chatModelSettings}
-              closeLabel={labels().close}
-              onClose={() => setModelPopoutOpen(false)}
-              restoreFocusTo={modelPopoutEntryRef}
-              testId="chat-model-drawer"
-              icon={SlidersHorizontal}
-            >
-              <SurfaceModelSettings
-                surface="chat"
-                api={managementPipelineApiRef.current}
-                csrfToken={view.session.snapshot.csrfToken}
-                labels={labels()}
-              />
-            </ContextDrawer>
-          )}
-        </>
-      )}
-    </div>
+            {modelPopoutOpen && (
+              <ContextDrawer
+                title={labels().chatModelSettings}
+                closeLabel={labels().close}
+                onClose={() => setModelPopoutOpen(false)}
+                restoreFocusTo={modelPopoutEntryRef}
+                testId="chat-model-drawer"
+                icon={SlidersHorizontal}
+              >
+                <SurfaceModelSettings
+                  surface="chat"
+                  api={managementPipelineApiRef.current}
+                  csrfToken={view.session.snapshot.csrfToken}
+                  labels={labels()}
+                />
+              </ContextDrawer>
+            )}
+          </>
+        )}
+      </div>
+    </SurfaceDrafts>
   );
 }

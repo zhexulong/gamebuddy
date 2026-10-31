@@ -14,6 +14,7 @@ import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels } from "./character-domain-labels";
+import { useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
 type SaveNotice = "saved" | Readonly<{ failure: string }> | null;
@@ -103,7 +104,7 @@ export function CharactersPanel({
   // The roster row that opened the inspector; the drawer gives focus back to it on
   // close (the shell's own focus-restoration idiom).
   const inspectorOpener = useRef<HTMLElement | null>(null);
-  const [createName, setCreateName] = useState("");
+  const [createNameField, setCreateNameField] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNotice, setCreateNotice] = useState<SaveNotice>(null);
   // The roster-level announcement a completed removal leaves: her name, and nothing else on
@@ -112,32 +113,70 @@ export function CharactersPanel({
   const [removedName, setRemovedName] = useState<string | null>(null);
 
   const [persona, setPersona] = useState<PersonaV1 | "loading" | "unavailable">("loading");
-  const [personaName, setPersonaName] = useState("");
-  const [personaDescription, setPersonaDescription] = useState("");
   const [personaSaving, setPersonaSaving] = useState(false);
   const [personaNotice, setPersonaNotice] = useState<SaveNotice>(null);
 
   const [voice, setVoice] = useState<VoiceView>({ kind: "loading" });
   const [voiceHandle, setVoiceHandle] = useState<string | null>(null);
-  const [voiceText, setVoiceText] = useState("");
   const [voiceSaving, setVoiceSaving] = useState(false);
   const [voiceClearing, setVoiceClearing] = useState(false);
-  const [voiceAdding, setVoiceAdding] = useState(false);
   const [voiceNotice, setVoiceNotice] = useState<VoiceNotice>(null);
 
   const [scenario, setScenario] = useState<ScenarioV1 | "loading" | "unavailable">("loading");
-  const [scenarioName, setScenarioName] = useState("");
-  const [scenarioDescription, setScenarioDescription] = useState("");
   const [scenarioSaving, setScenarioSaving] = useState(false);
   const [scenarioNotice, setScenarioNotice] = useState<SaveNotice>(null);
 
   const [opening, setOpening] = useState<GreetingV1 | "loading" | "unavailable">("loading");
-  const [openingLabel, setOpeningLabel] = useState("");
-  const [openingVariants, setOpeningVariants] = useState<readonly { label: string; text: string }[]>([
-    { label: "", text: "" },
-  ]);
   const [openingSaving, setOpeningSaving] = useState(false);
   const [openingNotice, setOpeningNotice] = useState<SaveNotice>(null);
+
+  /*
+   * Every field the player types into is a DRAFT held by the shell, not by this panel.
+   *
+   * The shell renders this surface only while it is the selected one, so leaving it unmounts
+   * everything below - and a `useState` here dies with it, which is how a typed persona, scenario,
+   * opening or directive was silently emptied by a trip to Settings. Each field is handed the
+   * authority's own value as its seed on every render; the store answers with the player's text
+   * whenever there is any, so a read-back still seeds a field they have not touched and can never
+   * replace one they have.
+   */
+  const createName = useDraft("characters.new-companion-name", "");
+  const personaName = useDraft(
+    "characters.persona-name",
+    persona === "loading" || persona === "unavailable" ? "" : (persona.name ?? ""),
+  );
+  const personaDescription = useDraft(
+    "characters.persona-description",
+    persona === "loading" || persona === "unavailable" ? "" : (persona.description ?? ""),
+  );
+  const voiceText = useDraft(
+    "characters.voice-text",
+    voice.kind === "ready" && voice.value.characterVoice !== null ? voice.value.characterVoice.text : "",
+  );
+  // The directive's editor is a disclosure: absent reads as absent, so the player asks for one.
+  // The fact that they asked belongs with the text it is for - a form that reopened collapsed put
+  // the words out of reach, which costs them the same work as losing them.
+  const voiceAdding = useOpenDraft("characters.voice-editor-open", false);
+  const scenarioName = useDraft(
+    "characters.scenario-name",
+    scenario === "loading" || scenario === "unavailable" ? "" : (scenario.name ?? ""),
+  );
+  const scenarioDescription = useDraft(
+    "characters.scenario-description",
+    scenario === "loading" || scenario === "unavailable" ? "" : (scenario.description ?? ""),
+  );
+  const openingLabel = useDraft(
+    "characters.opening-label",
+    opening === "loading" || opening === "unavailable" ? "" : (opening.label ?? ""),
+  );
+  // The variants are a LIST the player adds to and removes from, so they are held whole: a row's
+  // text keyed by its position lands on a different row once the list is reordered or shortened.
+  const openingVariants = useRowsDraft<{ label: string; text: string }>(
+    "characters.opening-variants",
+    opening !== "loading" && opening !== "unavailable" && opening.present && opening.variants.length > 0
+      ? opening.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
+      : [{ label: "", text: "" }],
+  );
 
   const activeRef = useRef(true);
   useEffect(() => {
@@ -157,8 +196,6 @@ export function CharactersPanel({
         const value = await api.readPersona();
         if (!activeRef.current) return;
         setPersona(value);
-        setPersonaName(value.present ? (value.name ?? "") : "");
-        setPersonaDescription(value.present ? (value.description ?? "") : "");
       } catch {
         if (!activeRef.current) return;
         setPersona("unavailable");
@@ -169,8 +206,6 @@ export function CharactersPanel({
         const value = await api.readScenario();
         if (!activeRef.current) return;
         setScenario(value);
-        setScenarioName(value.present ? (value.name ?? "") : "");
-        setScenarioDescription(value.present ? (value.description ?? "") : "");
       } catch {
         if (!activeRef.current) return;
         setScenario("unavailable");
@@ -181,12 +216,6 @@ export function CharactersPanel({
         const value = await api.readGreeting();
         if (!activeRef.current) return;
         setOpening(value);
-        setOpeningLabel(value.present ? (value.label ?? "") : "");
-        setOpeningVariants(
-          value.present && value.variants.length > 0
-            ? value.variants.map((variant) => ({ label: variant.label ?? "", text: variant.text }))
-            : [{ label: "", text: "" }],
-        );
       } catch {
         if (!activeRef.current) return;
         setOpening("unavailable");
@@ -212,7 +241,6 @@ export function CharactersPanel({
         const value = await api.readCompanionVoice(current.handle);
         if (!active) return;
         setVoice({ kind: "ready", value });
-        setVoiceText(value.characterVoice === null ? "" : value.characterVoice.text);
       } catch {
         if (active) setVoice({ kind: "unavailable" });
       }
@@ -224,7 +252,7 @@ export function CharactersPanel({
 
   const handleSaveVoice = async (): Promise<void> => {
     if (voice.kind !== "ready" || voiceHandle === null || voiceSaving || voiceClearing) return;
-    const text = voiceText.trim();
+    const text = voiceText.value.trim();
     if (text.length === 0) return;
     setVoiceSaving(true);
     setVoiceNotice(null);
@@ -236,8 +264,10 @@ export function CharactersPanel({
       );
       if (activeRef.current) {
         setVoice({ kind: "ready", value: saved });
-        setVoiceText(saved.characterVoice === null ? "" : saved.characterVoice.text);
-        setVoiceAdding(false);
+        // Released only if the field still holds what this save sent: text typed during the
+        // request is the player's, and clearing it would be the same defect pointing the other way.
+        voiceText.release(voiceText.value);
+        voiceAdding.clear();
         setVoiceNotice("saved");
       }
     } catch (error) {
@@ -261,8 +291,8 @@ export function CharactersPanel({
         // The cleared directive reads as absent, so the entry point collapses
         // back to its add control; the status line acknowledges the one action.
         setVoice({ kind: "ready", value: cleared });
-        setVoiceText("");
-        setVoiceAdding(false);
+        voiceText.release(voiceText.value);
+        voiceAdding.clear();
         setVoiceNotice("cleared");
       }
     } catch (error) {
@@ -273,7 +303,7 @@ export function CharactersPanel({
   };
 
   const handleCreate = async (): Promise<void> => {
-    const name = createName.trim();
+    const name = createName.value.trim();
     if (name.length === 0 || creating) return;
     setCreating(true);
     setCreateNotice(null);
@@ -282,7 +312,7 @@ export function CharactersPanel({
       const list = await api.listCompanions();
       if (activeRef.current) {
         setCompanionList(list);
-        setCreateName("");
+        createName.release(createName.value);
         setCreateNotice("saved");
       }
     } catch (error) {
@@ -301,13 +331,15 @@ export function CharactersPanel({
       const saved = await api.updatePersona(
         {
           expectedRevision: current ?? 0,
-          name: personaName.trim(),
-          ...(personaDescription.trim().length === 0 ? {} : { description: personaDescription.trim() }),
+          name: personaName.value.trim(),
+          ...(personaDescription.value.trim().length === 0 ? {} : { description: personaDescription.value.trim() }),
         },
         csrfToken,
       );
       if (activeRef.current) {
         setPersona(saved);
+        personaName.release(personaName.value);
+        personaDescription.release(personaDescription.value);
         setPersonaNotice("saved");
       }
     } catch (error) {
@@ -341,13 +373,15 @@ export function CharactersPanel({
       const saved = await api.updateScenario(
         {
           expectedRevision: current ?? 0,
-          name: scenarioName.trim(),
-          description: scenarioDescription.trim(),
+          name: scenarioName.value.trim(),
+          description: scenarioDescription.value.trim(),
         },
         csrfToken,
       );
       if (activeRef.current) {
         setScenario(saved);
+        scenarioName.release(scenarioName.value);
+        scenarioDescription.release(scenarioDescription.value);
         setScenarioNotice("saved");
       }
     } catch (error) {
@@ -370,7 +404,7 @@ export function CharactersPanel({
 
   const handleSaveOpening = async (): Promise<void> => {
     if (openingSaving || opening === "loading" || opening === "unavailable") return;
-    const allowedVariants = openingVariants
+    const allowedVariants = openingVariants.value
       .map((variant) => ({ label: variant.label.trim(), text: variant.text.trim() }))
       .filter((variant) => variant.text.length > 0);
     if (allowedVariants.length === 0) return;
@@ -380,7 +414,7 @@ export function CharactersPanel({
       const saved = await api.updateGreeting(
         {
           expectedRevision: (opening.present ? opening.revision : 0) ?? 0,
-          ...(openingLabel.trim().length === 0 ? {} : { label: openingLabel.trim() }),
+          ...(openingLabel.value.trim().length === 0 ? {} : { label: openingLabel.value.trim() }),
           variants: allowedVariants.map((variant) => ({
             ...(variant.label.length === 0 ? {} : { label: variant.label }),
             text: variant.text,
@@ -390,6 +424,8 @@ export function CharactersPanel({
       );
       if (activeRef.current) {
         setOpening(saved);
+        openingLabel.release(openingLabel.value);
+        openingVariants.release(openingVariants.value);
         setOpeningNotice("saved");
       }
     } catch (error) {
@@ -488,9 +524,9 @@ export function CharactersPanel({
                 type="text"
                 className="form-input"
                 aria-label={labels.newCompanionTitle}
-                value={createName}
+                value={createName.value}
                 maxLength={128}
-                onChange={(event) => setCreateName(event.target.value)}
+                onChange={(event) => createName.type(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") void handleCreate();
                 }}
@@ -498,7 +534,7 @@ export function CharactersPanel({
               <button
                 type="button"
                 className="small-button"
-                disabled={creating || createName.trim().length === 0}
+                disabled={creating || createName.value.trim().length === 0}
                 onClick={() => void handleCreate()}
               >
                 {creating ? labels.saving : labels.newCompanionCreate}
@@ -539,15 +575,15 @@ export function CharactersPanel({
                     className="form-textarea"
                     rows={4}
                     maxLength={8192}
-                    value={voiceText}
-                    onChange={(event) => setVoiceText(event.target.value)}
+                    value={voiceText.value}
+                    onChange={(event) => voiceText.type(event.target.value)}
                   />
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
                       data-character-voice-save
-                      disabled={voiceSaving || voiceClearing || voiceText.trim().length === 0}
+                      disabled={voiceSaving || voiceClearing || voiceText.value.trim().length === 0}
                       onClick={() => void handleSaveVoice()}
                     >
                       {voiceSaving ? labels.saving : labels.voiceSave}
@@ -563,7 +599,7 @@ export function CharactersPanel({
                     </button>
                   </div>
                 </>
-              ) : voiceAdding ? (
+              ) : voiceAdding.value ? (
                 <>
                   <label className="management-settings-label" htmlFor="character-voice-text">
                     {labels.voiceText}
@@ -573,15 +609,15 @@ export function CharactersPanel({
                     className="form-textarea"
                     rows={4}
                     maxLength={8192}
-                    value={voiceText}
-                    onChange={(event) => setVoiceText(event.target.value)}
+                    value={voiceText.value}
+                    onChange={(event) => voiceText.type(event.target.value)}
                   />
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
                       data-character-voice-save
-                      disabled={voiceSaving || voiceText.trim().length === 0}
+                      disabled={voiceSaving || voiceText.value.trim().length === 0}
                       onClick={() => void handleSaveVoice()}
                     >
                       {voiceSaving ? labels.saving : labels.voiceSave}
@@ -592,8 +628,8 @@ export function CharactersPanel({
                       data-character-voice-cancel
                       disabled={voiceSaving}
                       onClick={() => {
-                        setVoiceAdding(false);
-                        setVoiceText("");
+                        voiceAdding.clear();
+                        voiceText.clear();
                         setVoiceNotice(null);
                       }}
                     >
@@ -608,8 +644,8 @@ export function CharactersPanel({
                     className="small-button"
                     data-character-voice-add
                     onClick={() => {
-                      setVoiceAdding(true);
-                      setVoiceText("");
+                      voiceAdding.type(true);
+                      voiceText.clear();
                       setVoiceNotice(null);
                     }}
                   >
@@ -653,9 +689,9 @@ export function CharactersPanel({
                     id="persona-name"
                     type="text"
                     className="form-input"
-                    value={personaName}
+                    value={personaName.value}
                     maxLength={128}
-                    onChange={(event) => setPersonaName(event.target.value)}
+                    onChange={(event) => personaName.type(event.target.value)}
                   />
                   <label className="management-settings-label" htmlFor="persona-description">
                     {labels.personaDescription}
@@ -664,15 +700,15 @@ export function CharactersPanel({
                     id="persona-description"
                     className="form-textarea"
                     rows={4}
-                    value={personaDescription}
+                    value={personaDescription.value}
                     maxLength={4096}
-                    onChange={(event) => setPersonaDescription(event.target.value)}
+                    onChange={(event) => personaDescription.type(event.target.value)}
                   />
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
-                      disabled={personaSaving || personaName.trim().length === 0}
+                      disabled={personaSaving || personaName.value.trim().length === 0}
                       onClick={() => void handleSavePersona()}
                     >
                       {personaSaving ? labels.saving : labels.personaSave}
@@ -706,9 +742,9 @@ export function CharactersPanel({
                     id="scenario-name"
                     type="text"
                     className="form-input"
-                    value={scenarioName}
+                    value={scenarioName.value}
                     maxLength={128}
-                    onChange={(event) => setScenarioName(event.target.value)}
+                    onChange={(event) => scenarioName.type(event.target.value)}
                   />
                   <label className="management-settings-label" htmlFor="scenario-description">
                     {labels.scenarioDescription}
@@ -717,16 +753,18 @@ export function CharactersPanel({
                     id="scenario-description"
                     className="form-textarea"
                     rows={4}
-                    value={scenarioDescription}
+                    value={scenarioDescription.value}
                     maxLength={8192}
-                    onChange={(event) => setScenarioDescription(event.target.value)}
+                    onChange={(event) => scenarioDescription.type(event.target.value)}
                   />
                   <div className="composer-actions">
                     <button
                       type="button"
                       className="small-button"
                       disabled={
-                        scenarioSaving || scenarioName.trim().length === 0 || scenarioDescription.trim().length === 0
+                        scenarioSaving ||
+                        scenarioName.value.trim().length === 0 ||
+                        scenarioDescription.value.trim().length === 0
                       }
                       onClick={() => void handleSaveScenario()}
                     >
@@ -762,11 +800,11 @@ export function CharactersPanel({
                     id="opening-label"
                     type="text"
                     className="form-input"
-                    value={openingLabel}
+                    value={openingLabel.value}
                     maxLength={128}
-                    onChange={(event) => setOpeningLabel(event.target.value)}
+                    onChange={(event) => openingLabel.type(event.target.value)}
                   />
-                  {openingVariants.map((variant, index) => (
+                  {openingVariants.value.map((variant, index) => (
                     <div key={index} className="opening-variant-row">
                       <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
                         {labels.openingVariantText} #{index + 1}
@@ -778,8 +816,8 @@ export function CharactersPanel({
                         value={variant.text}
                         maxLength={8192}
                         onChange={(event) =>
-                          setOpeningVariants((current) =>
-                            current.map((item, itemIndex) =>
+                          openingVariants.type(
+                            openingVariants.value.map((item, itemIndex) =>
                               itemIndex === index ? { label: item.label, text: event.target.value } : item,
                             ),
                           )
@@ -789,9 +827,9 @@ export function CharactersPanel({
                         <button
                           type="button"
                           className="small-button"
-                          disabled={openingVariants.length <= 1}
+                          disabled={openingVariants.value.length <= 1}
                           onClick={() =>
-                            setOpeningVariants((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                            openingVariants.type(openingVariants.value.filter((_, itemIndex) => itemIndex !== index))
                           }
                         >
                           {labels.discard}
@@ -803,7 +841,7 @@ export function CharactersPanel({
                     <button
                       type="button"
                       className="small-button"
-                      onClick={() => setOpeningVariants((current) => [...current, { label: "", text: "" }])}
+                      onClick={() => openingVariants.type([...openingVariants.value, { label: "", text: "" }])}
                     >
                       {labels.openingAdd}
                     </button>
@@ -812,7 +850,9 @@ export function CharactersPanel({
                     <button
                       type="button"
                       className="small-button"
-                      disabled={openingSaving || openingVariants.every((variant) => variant.text.trim().length === 0)}
+                      disabled={
+                        openingSaving || openingVariants.value.every((variant) => variant.text.trim().length === 0)
+                      }
                       onClick={() => void handleSaveOpening()}
                     >
                       {openingSaving ? labels.saving : labels.openingSave}
