@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { once } from "node:events";
+import { copyFileSync, existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import test from "node:test";
@@ -299,6 +300,58 @@ function removeRoot(root: string): void {
 }
 
 /**
+ * The file SQLite leaves beside the database for an interrupted transaction, derived from the mode the
+ * store reports. One spelling of the fact, so a mode change moves the assertion with it instead of
+ * leaving a test that asserts a file the new mode never writes.
+ */
+function journalArtifactSuffix(journalMode: string): string {
+  return journalMode.toLowerCase() === "wal" ? "-wal" : "-journal";
+}
+
+/** Resolves once a child has printed `token`, so the parent acts while the child really holds its lock. */
+function awaitToken(child: ReturnType<typeof spawn>, token: string): Promise<void> {
+  return new Promise((resolve) => {
+    let pending = "";
+    child.stdout!.on("data", (chunk) => {
+      pending += String(chunk);
+      if (pending.includes(token)) resolve();
+    });
+  });
+}
+
+/**
+ * Puts a standalone database file into `mode` and returns the mode SQLite reports, so a caller can
+ * assert the conversion happened instead of assuming it.
+ *
+ * The file has to be closed first: `journal_mode` is a property of the database, and the store's own
+ * open path pins one mode, so a probe that went through the store could only ever describe that mode.
+ */
+function setJournalMode(databasePath: string, mode: "DELETE" | "WAL"): string {
+  const db = new DatabaseSync(databasePath);
+  try {
+    db.exec("PRAGMA busy_timeout=10000");
+    db.exec(`PRAGMA journal_mode=${mode}`);
+    db.exec("PRAGMA synchronous=FULL");
+    return String((db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * A bootstrapped authority that has been CLOSED, leaving its database file as the whole durable state.
+ *
+ * The probe copies this file per mode: two modes over one file would make the second reading describe
+ * the first one's leftovers, and the point is a comparison between two otherwise identical files.
+ */
+function closedAuthority(): { root: string; database: string } {
+  const subject = fixtureRoot();
+  const database = join(subject.root, DATABASE);
+  subject.control.close();
+  return { root: subject.root, database };
+}
+
+/**
  * A control whose authority is created but not yet bootstrapped, so the members whose write is
  * conditional on an empty store reach their writing branch instead of their early read-only return.
  */
@@ -423,34 +476,243 @@ test("no member that issues no writing statement takes the writer's lock", () =>
 });
 
 /**
- * A pure read does not take the writer's lock, but this journal mode still excludes it from a
- * writer that holds EXCLUSIVE - and that wait is bounded by the WRITE budget, then fails.
+ * The journal mode ALONE decides whether a reader waits behind a writer that holds EXCLUSIVE, and
+ * the same is true in the other direction - a held reader blocking a writer's COMMIT.
  *
- * Two different locks, and only one of them was fixed by `4bb4cd0e`. A writer in RESERVED
- * (`BEGIN IMMEDIATE`) leaves readers free, and the sibling test above proves this store's reads use
- * that freedom. A writer in EXCLUSIVE excludes readers structurally: under `journal_mode=DELETE` a
- * read takes SHARED for its own duration, and SHARED is what EXCLUSIVE is exclusive against. That is
- * not a routing defect in the store, and no `readTransaction` change can remove it.
+ * Both directions are driven here because they fail for one cause and it is worth seeing it from
+ * both ends: under `journal_mode=DELETE` a read takes SHARED for its own duration and SHARED is
+ * exactly what EXCLUSIVE excludes, so the reader waits; and a held SHARED is what a writer's COMMIT
+ * needs to upgrade past, so the writer waits. WAL has neither lock: readers read a snapshot and a
+ * writer appends.
  *
- * MEASURED here on 2026-10-31 against another PROCESS holding `BEGIN EXCLUSIVE` plus one UPDATE on
- * this store's DELETE-mode file, with the store's 5 000ms budget in force on the reader:
+ * The subject is a COPY of a real bootstrapped store database, closed first so the file is its own
+ * complete durable state, converted to each mode and driven by RAW connections at the store's own
+ * budget. Raw connections are the point: the store's open path pins one mode, so a reading taken
+ * through it could only ever describe that mode. What this pins is the property that justifies the
+ * mode the store runs, not the mode string.
  *
- *   store.readChatCatalog()            6 930ms  database is locked
- *   raw prepare().get(), no BEGIN      7 923ms  database is locked
- *   raw BEGIN then SELECT              7 274ms  database is locked
- *   PRAGMA query_only=ON/OFF               0ms  ok (a pragma touches no page)
- *   the same reads against RESERVED        3-5ms ok
+ * MEASURED on 2026-11-01, Windows, node:sqlite, 5 000ms budget, one pre-committed row (the fixture's
+ * own `partition_revision`, read from the file so "empty" and "stale" are distinguishable from "the
+ * correct pre-writer snapshot"):
  *
- * So the wait outlasts the 5 000ms budget and the read then fails rather than proceeding - which is
- * the shape a live run produced as a 10 s `/state` wait ending in a 409. The overshoot past the budget
- * is SQLite's busy handler, which sleeps between retries and re-checks the clock only at a retry
- * boundary. What the assertion below pins is the part that must stay true whatever the journal mode:
- * the wait is BOUNDED, so a reader can never hang the shell indefinitely, and the failure names
- * itself. A budget that silently stopped bounding this - a connection opened without it, a retry loop
- * added around it - would make a wedged writer hang every reader forever, so that is the failure this
- * test exists to catch.
+ *   DELETE  reader vs held EXCLUSIVE   7 271.3ms  database is locked
+ *   WAL     reader vs held EXCLUSIVE       1.4ms  answered, the pre-writer revision
+ *   DELETE  writer vs held reader      1 534.2ms  committed (waited out the whole 1 500ms hold)
+ *   WAL     writer vs held reader          3.1ms  committed
  */
-test("a pure read waits on a writer that holds EXCLUSIVE, and the store's budget bounds that wait", (t) => {
+test("the journal mode alone decides whether a reader waits behind a held writer, in both directions", async (t) => {
+  const subject = closedAuthority();
+  const budget = PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS;
+  const smallBoundMs = budget / 10;
+  const HOLD_MS = 1500;
+  const holderPath = join(subject.root, "exclusive-holder.mjs");
+  const readerPath = join(subject.root, "held-reader.mjs");
+  writeFileSync(
+    holderPath,
+    [
+      'import { DatabaseSync } from "node:sqlite";',
+      "const [dbPath] = process.argv.slice(2);",
+      "const db = new DatabaseSync(dbPath);",
+      'db.exec("PRAGMA busy_timeout=10000");',
+      'db.exec("BEGIN EXCLUSIVE");',
+      // A REAL page change, uncommitted: the reader must not be able to see it, and the value it does
+      // see is the pre-writer snapshot rather than a missing row.
+      'db.prepare("UPDATE production_partition SET partition_revision=partition_revision+1 WHERE singleton=1").run();',
+      'process.stdout.write("held");',
+      "setInterval(() => {}, 1000);",
+    ].join("\n"),
+  );
+  writeFileSync(
+    readerPath,
+    [
+      'import { DatabaseSync } from "node:sqlite";',
+      "const [dbPath, holdMs] = process.argv.slice(2);",
+      "const db = new DatabaseSync(dbPath);",
+      'db.exec("PRAGMA busy_timeout=10000");',
+      'db.exec("BEGIN");',
+      'db.prepare("SELECT 1 FROM production_partition WHERE singleton=1").get();',
+      'process.stdout.write("reading");',
+      // A synchronous spin, not a timer: the process must SIT inside the transaction holding the
+      // read lock rather than yielding its event loop and releasing it.
+      "const spinUntil = (deadline) => { while (Date.now() < deadline) {} };",
+      "spinUntil(Date.now() + Number(holdMs));",
+      'db.exec("COMMIT");',
+      "db.close();",
+    ].join("\n"),
+  );
+
+  type Reading = Readonly<{
+    mode: string;
+    direction: string;
+    elapsedMs: number;
+    answered: boolean;
+    failure: string;
+    revision: number | undefined;
+  }>;
+  const readings: Reading[] = [];
+  // The pre-writer revision, read from the file itself rather than written down here: the fixture's
+  // own commands decide it, and a literal would be a second copy of a fact that moves when the
+  // fixture changes - the reading would then look wrong while being right.
+  const preWriterRevision = (() => {
+    const db = new DatabaseSync(subject.database);
+    try {
+      return (
+        db.prepare("SELECT partition_revision FROM production_partition WHERE singleton=1").get() as {
+          partition_revision: number;
+        }
+      ).partition_revision;
+    } finally {
+      db.close();
+    }
+  })();
+  try {
+    for (const mode of ["DELETE", "WAL"] as const) {
+      const database = join(subject.root, `probe-${mode}.sqlite`);
+      copyFileSync(subject.database, database);
+      const applied = setJournalMode(database, mode);
+      assert.equal(applied, mode.toLowerCase(), `the probe could not put ${database} into ${mode} mode`);
+
+      // Direction A: a reader at the store's budget against a writer that holds EXCLUSIVE.
+      const holder = spawn(process.execPath, [holderPath, database], { stdio: ["ignore", "pipe", "inherit"] });
+      await awaitToken(holder, "held");
+      const reader = new DatabaseSync(database);
+      reader.exec(`PRAGMA busy_timeout=${String(budget)}`);
+      const startedA = performance.now();
+      let answered = false;
+      let failure = "";
+      let revision: number | undefined;
+      try {
+        revision = (
+          reader.prepare("SELECT partition_revision FROM production_partition WHERE singleton=1").get() as
+            | { partition_revision: number }
+            | undefined
+        )?.partition_revision;
+        answered = true;
+      } catch (caught) {
+        failure = (caught as Error).message;
+      }
+      const elapsedA = performance.now() - startedA;
+      reader.close();
+      holder.kill("SIGKILL");
+      await once(holder, "exit");
+      readings.push({
+        mode,
+        direction: "reader-vs-held-EXCLUSIVE",
+        elapsedMs: elapsedA,
+        answered,
+        failure,
+        revision,
+      });
+
+      // Direction B: a writer at the store's budget against a reader that holds BEGIN/SELECT.
+      const held = spawn(process.execPath, [readerPath, database, String(HOLD_MS)], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      await awaitToken(held, "reading");
+      const writer = new DatabaseSync(database);
+      writer.exec(`PRAGMA busy_timeout=${String(budget)}`);
+      const startedB = performance.now();
+      let committed = false;
+      let writeFailure = "";
+      try {
+        writer.exec("BEGIN IMMEDIATE");
+        writer
+          .prepare("UPDATE production_partition SET partition_revision=partition_revision+1 WHERE singleton=1")
+          .run();
+        writer.exec("COMMIT");
+        committed = true;
+      } catch (caught) {
+        writeFailure = (caught as Error).message;
+      }
+      const elapsedB = performance.now() - startedB;
+      writer.close();
+      await once(held, "exit");
+      readings.push({
+        mode,
+        direction: "writer-vs-held-reader",
+        elapsedMs: elapsedB,
+        answered: committed,
+        failure: writeFailure,
+        revision: undefined,
+      });
+    }
+  } finally {
+    removeRoot(subject.root);
+  }
+
+  for (const reading of readings)
+    t.diagnostic(
+      `${reading.mode.padEnd(6)} ${reading.direction.padEnd(26)} ${reading.elapsedMs.toFixed(1).padStart(9)}ms  ${
+        reading.answered ? "answered" : "did not answer"
+      }${reading.revision === undefined ? "" : ` partition_revision=${String(reading.revision)}`}${
+        reading.failure === "" ? "" : ` (${reading.failure})`
+      }`,
+    );
+
+  const find = (mode: string, direction: string): Reading => {
+    const found = readings.find((reading) => reading.mode === mode && reading.direction === direction);
+    assert.ok(found, `the probe produced no ${mode} reading for ${direction}`);
+    return found;
+  };
+
+  // DELETE, both directions: the wait is the mode's lock model, and it is what the store used to run.
+  const deleteRead = find("DELETE", "reader-vs-held-EXCLUSIVE");
+  assert.ok(
+    !deleteRead.answered || deleteRead.elapsedMs >= budget,
+    `a DELETE-mode reader answered a held EXCLUSIVE writer in ${deleteRead.elapsedMs.toFixed(1)}ms: the probe no longer reproduces the rollback-journal lock model the store was moved off, so its WAL reading proves nothing`,
+  );
+  const deleteWrite = find("DELETE", "writer-vs-held-reader");
+  assert.ok(
+    deleteWrite.elapsedMs >= HOLD_MS / 2,
+    `a DELETE-mode writer committed in ${deleteWrite.elapsedMs.toFixed(1)}ms against a reader that held its transaction for ${String(HOLD_MS)}ms: the probe no longer reproduces the reader-blocks-writer direction`,
+  );
+
+  // WAL, both directions: the wait is gone rather than tolerated, so the bound is a small fraction of
+  // the budget and the reader must see the pre-writer snapshot, not an empty or stale one.
+  const walRead = find("WAL", "reader-vs-held-EXCLUSIVE");
+  assert.ok(
+    walRead.answered,
+    `a WAL-mode reader did not answer a held EXCLUSIVE writer at all (${walRead.elapsedMs.toFixed(1)}ms, ${walRead.failure}): WAL is supposed to remove this wait, not bound it`,
+  );
+  assert.ok(
+    walRead.elapsedMs < smallBoundMs,
+    `a WAL-mode reader took ${walRead.elapsedMs.toFixed(1)}ms against a held EXCLUSIVE writer, which is not the ${smallBoundMs.toFixed(0)}ms a read that does not wait would take out of the ${String(budget)}ms budget`,
+  );
+  assert.equal(
+    walRead.revision,
+    preWriterRevision,
+    `a WAL-mode reader beside an uncommitted writer did not see the pre-writer snapshot (partition_revision ${String(preWriterRevision)}): the reading is not distinguishable from an empty or stale one`,
+  );
+  const walWrite = find("WAL", "writer-vs-held-reader");
+  assert.ok(
+    walWrite.answered,
+    `a WAL-mode writer could not commit while a reader held its transaction (${walWrite.elapsedMs.toFixed(1)}ms, ${walWrite.failure})`,
+  );
+  assert.ok(
+    walWrite.elapsedMs < smallBoundMs,
+    `a WAL-mode writer took ${walWrite.elapsedMs.toFixed(1)}ms to commit against a held reader, so it is queuing behind the reader's lock instead of appending past it`,
+  );
+});
+
+/**
+ * The gate: a pure read completes within a small bound while another PROCESS holds `BEGIN EXCLUSIVE`.
+ *
+ * This asserts the PROPERTY the store depends on, not the mode string. `configuration().journalMode`
+ * already reports the mode, and a test that reads it back only pins that someone typed `WAL`; the
+ * thing that broke a live run was a read that had to WAIT, and the only reading that can see a
+ * regression to a waiting mode is a timed read issued against a real held writer.
+ *
+ * The hold is `BEGIN EXCLUSIVE` plus an uncommitted page change, from a separate process - a timer in
+ * this thread cannot release anything, because the thread is blocked inside SQLite. The reader is the
+ * store's own `readChatCatalog`, so what is measured is the read path the product runs.
+ *
+ * RED against `journal_mode=DELETE` (the mode the store ran until 2026-11-01): the read waited
+ * 6 930-7 923ms and then failed with `database is locked`, which is the 10 s `/state` wait that ended
+ * in a 409. GREEN against `journal_mode=WAL`: 1.4-3.6ms, answered, pre-writer snapshot. The bound is
+ * a tenth of the store's own budget, which is 5-6 orders of magnitude away from the DELETE reading and
+ * therefore not a threshold anyone can drift into by accident.
+ */
+test("a pure read completes within a small bound while another process holds BEGIN EXCLUSIVE", async (t) => {
   const subject = fixtureRoot();
   const holderPath = join(subject.root, "exclusive-holder.mjs");
   writeFileSync(
@@ -461,60 +723,48 @@ test("a pure read waits on a writer that holds EXCLUSIVE, and the store's budget
       "const db = new DatabaseSync(dbPath);",
       'db.exec("PRAGMA busy_timeout=10000");',
       'db.exec("BEGIN EXCLUSIVE");',
-      'db.prepare("UPDATE production_partition SET partition_revision=partition_revision WHERE singleton=1").run();',
+      'db.prepare("UPDATE production_partition SET partition_revision=partition_revision+1 WHERE singleton=1").run();',
       'process.stdout.write("held");',
-      // Held until this test kills it: the point is a writer that does NOT release inside the budget,
-      // which is what a crash-in-progress or a committed transaction whose flush is stuck looks like.
+      // Held until this test kills it: a writer that releases inside the budget is not the case that
+      // broke, and one that never releases is the worst case a reader can meet.
       "setInterval(() => {}, 1000);",
     ].join("\n"),
   );
   const holder = spawn(process.execPath, [holderPath, join(subject.root, DATABASE)], {
     stdio: ["ignore", "pipe", "inherit"],
   });
-  return new Promise<void>((resolve, reject) => {
-    holder.stdout.once("data", () => {
-      const budget = subject.control.configuration().busyTimeoutMs;
-      const started = performance.now();
-      let failure: unknown;
-      let answered = false;
-      try {
-        subject.store.readChatCatalog();
-        answered = true;
-      } catch (caught) {
-        failure = caught;
-      }
-      const elapsedMs = performance.now() - started;
-      holder.kill();
-      subject.control.close();
-      removeRoot(subject.root);
-      try {
-        // The bound, not the outcome: a reader that answers or fails within a small multiple of the
-        // budget is a reader a caller can act on. A reader still waiting after that is one that will
-        // hang the shell, which is the defect this class is about.
-        assert.ok(
-          elapsedMs < budget * 2,
-          `a pure read against a writer holding EXCLUSIVE was still waiting after ${elapsedMs.toFixed(0)}ms against a ${String(budget)}ms budget (answered=${String(answered)}): nothing is bounding it, so a wedged writer hangs every reader for as long as it lives`,
-        );
-        if (!answered) {
-          const message = String((failure as Error | undefined)?.message ?? "");
-          assert.match(
-            message,
-            /database is locked/u,
-            `the read gave up after ${elapsedMs.toFixed(0)}ms but not with a lock failure (${message}): a read that fails for another reason cannot be told apart from a read that succeeded`,
-          );
-        }
-        // Recorded rather than asserted, because WHICH of the two happens is the journal mode's
-        // property, not this store's: under DELETE a writer in EXCLUSIVE always wins against a
-        // reader. Reporting it keeps the reading attached to the run that produced it.
-        t.diagnostic(
-          `readChatCatalog against a held EXCLUSIVE lock: ${elapsedMs.toFixed(0)}ms, answered=${String(answered)}, budget=${String(budget)}ms`,
-        );
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    });
-  });
+  try {
+    await awaitToken(holder, "held");
+    const budget = subject.control.configuration().busyTimeoutMs;
+    const journalMode = subject.control.configuration().journalMode;
+    const smallBoundMs = budget / 10;
+    const started = performance.now();
+    let failure: unknown;
+    let answered = false;
+    try {
+      subject.store.readChatCatalog();
+      answered = true;
+    } catch (caught) {
+      failure = caught;
+    }
+    const elapsedMs = performance.now() - started;
+    t.diagnostic(
+      `readChatCatalog against a held EXCLUSIVE lock: ${elapsedMs.toFixed(1)}ms, answered=${String(answered)}, journal_mode=${journalMode}, budget=${String(budget)}ms`,
+    );
+    assert.ok(
+      answered,
+      `a pure read did not answer a writer holding EXCLUSIVE after ${elapsedMs.toFixed(1)}ms with journal_mode=${journalMode} (${String((failure as Error | undefined)?.message ?? "")}): under a waiting journal mode a reader takes SHARED for its own duration and SHARED is what EXCLUSIVE excludes, so every /state behind a writer's transaction waits out the write budget and then fails - the shape that produced a 10 s wait and a 409 in a live run`,
+    );
+    assert.ok(
+      elapsedMs < smallBoundMs,
+      `a pure read answered a held EXCLUSIVE writer only after ${elapsedMs.toFixed(1)}ms with journal_mode=${journalMode}, which is not the sub-${smallBoundMs.toFixed(0)}ms a read that does not wait would take out of the ${String(budget)}ms budget: the wait is being tolerated rather than removed`,
+    );
+  } finally {
+    holder.kill("SIGKILL");
+    await once(holder, "exit");
+    subject.control.close();
+    removeRoot(subject.root);
+  }
 });
 
 test("every pure read answers while another connection holds the writer's lock", () => {
@@ -703,14 +953,22 @@ test("pure reads answer while a writer holds the lock, so no read waits out the 
  *
  * The kill is `process.kill` on a real child mid-transaction - not a thrown error and not a closed
  * handle - because those are the cases the runtime already handles. A power loss or a `taskkill` on
- * the Host is what a player actually experiences as "GameBuddy will not start", and it leaves a
- * `-journal` file (DELETE mode) or `-wal`/`-shm` (WAL) behind that recovery has to consume.
+ * the Host is what a player actually experiences as "GameBuddy will not start", and it leaves the
+ * journal artifact of whatever mode the store runs behind that recovery has to consume.
  *
- * Both journal modes are driven through their REAL store code paths here rather than through SQL, so
- * what recovers is the store a player runs.
+ * The child drives the store's REAL open path (`openProductionContinuityStore`) rather than typing a
+ * mode into SQL, and the artifact it must leave is DERIVED from the mode that path applied - `-journal`
+ * for a rollback journal, `-wal` for WAL. Pinning one name would have made this test either silently
+ * vacuous (asserting a file the mode never writes) or wrongly red the day the mode moved.
  */
 test("the semantic store survives a killed commit and reopens with the committed history intact", async () => {
   const subject = fixtureRoot();
+  // The mode is read from the store's own live connection and then the connection is CLOSED, so the
+  // child is the only process holding the file. That matters: the last connection to a WAL database
+  // checkpoints on close and removes the `-wal`, so a parent still holding it would either destroy the
+  // artifact before the assertion or leave the reopen with nothing to replay.
+  const journalMode = subject.control.configuration().journalMode;
+  subject.control.close();
   const childPath = join(subject.root, "killed-writer.mjs");
   // The child commits one row, says so, then starts a second transaction and dies inside it without
   // ever reaching COMMIT. The row it already committed is the one recovery must keep.
@@ -719,10 +977,13 @@ test("the semantic store survives a killed commit and reopens with the committed
     [
       'import { DatabaseSync } from "node:sqlite";',
       'import { writeFileSync } from "node:fs";',
-      "const [dbPath, markerPath] = process.argv.slice(2);",
+      "const [dbPath, markerPath, mode] = process.argv.slice(2);",
       "const db = new DatabaseSync(dbPath);",
       'db.exec("PRAGMA busy_timeout=10000");',
-      'db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");',
+      // The mode the STORE reported, not a literal here: a child that typed its own mode could leave a
+      // different artifact from the one the product leaves, and the assertion below would then describe
+      // the child rather than the store.
+      "db.exec(`PRAGMA journal_mode=${mode}; PRAGMA synchronous=FULL`);",
       'db.exec("BEGIN IMMEDIATE");',
       `db.prepare("INSERT INTO production_game_session_metadata VALUES(?,?,?,?,?,?)").run("kept-row", "kept-request", "stardew", null, "failed", 2);`,
       'db.exec("COMMIT");',
@@ -735,7 +996,7 @@ test("the semantic store survives a killed commit and reopens with the committed
     ].join("\n"),
   );
   const markerPath = join(subject.root, "marker.txt");
-  const child = spawn(process.execPath, [childPath, join(subject.root, DATABASE), markerPath], {
+  const child = spawn(process.execPath, [childPath, join(subject.root, DATABASE), markerPath, journalMode], {
     stdio: ["ignore", "pipe", "inherit"],
   });
   await new Promise<void>((resolve, reject) => {
@@ -754,13 +1015,13 @@ test("the semantic store survives a killed commit and reopens with the committed
   // process after this, so no ROLLBACK and no checkpoint can hide the recovery being tested.
   child.kill("SIGKILL");
   await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  subject.control.close();
   // The interrupted transaction has to have left recovery work behind, or this test would be
-  // asserting that a CLEAN file reopens - true of any file, and worth nothing.
-  const journalPath = `${join(subject.root, DATABASE)}-journal`;
+  // asserting that a CLEAN file reopens - true of any file, and worth nothing. WHICH file that is
+  // follows from the mode the store reported: a rollback journal writes `-journal`, WAL writes `-wal`.
+  const journalPath = `${join(subject.root, DATABASE)}${journalArtifactSuffix(journalMode)}`;
   assert.ok(
     existsSync(journalPath),
-    `no rollback journal was left at ${journalPath}: the kill did not interrupt a transaction, so this test proved nothing about recovery`,
+    `no ${journalArtifactSuffix(journalMode)} was left at ${journalPath} although the store reports journal_mode=${journalMode}: the kill did not interrupt a transaction, so this test proved nothing about recovery`,
   );
 
   // No manual intervention: just open the authority the way the Host does at startup.
@@ -1003,10 +1264,11 @@ test("a legitimate commit at a reachable history clears the store's own budget b
 /**
  * The configured budget is worth nothing if it is set after the statements that need it.
  *
- * `PRAGMA journal_mode=DELETE` takes the write lock itself, and the open path used to run the
- * pragmas last - so against a held writer the open failed at 22.3 ms while a 5 s budget was
- * configured. This drives the real open path against a writer held by a SEPARATE PROCESS: a timer
- * in this thread cannot release anything, because the thread is blocked inside SQLite.
+ * Configuring the journal can take the write lock itself - converting a file that is still in DELETE
+ * does, measured at 7 124ms behind a held writer - and the open path used to run the pragmas last, so
+ * against a held writer the open failed at 22.3 ms while a 5 s budget was configured. This drives the
+ * real open path against a writer held by a SEPARATE PROCESS: a timer in this thread cannot release
+ * anything, because the thread is blocked inside SQLite.
  */
 test("the configured budget is in force before every statement of the open path", () => {
   const subject = fixtureRoot();
