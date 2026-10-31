@@ -69,7 +69,35 @@ function sessionPath(runDir) {
  * that absence would be answering from the fold, not from the run.
  * </p>
  */
+/**
+ * Whether the rendered environment block can be read back at all.
+ *
+ * <p>
+ * It cannot, and that is structural rather than incidental: `<runtime-environment>` is produced by the vendored Magic Context
+ * transform when a request is assembled (`setRuntimeEnvironmentFacts`, runtime-core.internal.ts:1445) and is never written to
+ * the session. The session holds MESSAGES. Measured 2026-11-01 on a 24-minute run: `位置:` 0, `待浇水` 0, `脚下` 0, while the
+ * formatter itself renders them correctly when called directly.
+ * </p>
+ *
+ * <p>
+ * So a prompt-level criterion here reports UNOBSERVABLE by construction. Reporting FAIL would be claiming the product did
+ * something wrong when the instrument simply cannot see the request.
+ * </p>
+ */
 function promptEvidenceReadable(sessionText, contextSummary) {
+  if (sessionText.length === 0) return { readable: false, why: "no session found" };
+  // The block is injected at request time and never persisted; a session that carries it would be the exception.
+  if (!sessionText.includes("<runtime-environment>") || !/位置:|待浇水/.test(sessionText))
+    return {
+      readable: false,
+      why: "the environment block is injected at request time and never persisted, so the session cannot show it",
+    };
+  const dropped = contextSummary?.droppedTokens ?? 0;
+  if (dropped > 0) return { readable: false, why: `${dropped} tokens were folded away` };
+  return { readable: true, why: "the block is present in the session" };
+}
+
+function unusedPromptEvidenceReadable(sessionText, contextSummary) {
   if (sessionText.length === 0) return { readable: false, why: "no session found" };
   const batches = sessionText.split("gamebuddy_fact_batch").length - 1;
   if (batches === 0) return { readable: false, why: "no fact batch survives in the session" };
@@ -122,7 +150,10 @@ const sessionText = boundSession === null ? "" : readFileSync(boundSession, "utf
 const promptEvidence = promptEvidenceReadable(sessionText, result.contextSummary ?? result.multiday?.contextSummary);
 
 // 2. The false zero: did the prompt ever print a non-zero unwatered count with a nearest tile?
-const unwateredLines = sessionText.split("\\n").filter((line) => /unwatered|待浇水/.test(line));
+// The FACT carries a colon and a count ("待浇水作物: 24", "unwatered crops: 24"). The conduct merely mentions the
+// concept ("... and unwatered crops") - matching that word alone counted the system prompt 27 times and read it as a rendered
+// fact, which is the fourth time in this loop that a counter measured a sentence about the thing instead of the thing.
+const unwateredLines = sessionText.split("\\n").filter((line) => /待浇水作物: \d|unwatered crops: \d/.test(line));
 const unwateredNonZero = unwateredLines.filter((line) => /待浇水作物: [1-9]|unwatered crops: [1-9]/.test(line));
 record(
   "2 unwatered false zero",
