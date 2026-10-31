@@ -121,13 +121,14 @@ public sealed class FarmhandActionSurfaceExportTests
 
         foreach (JsonElement action in root.GetProperty("actions").EnumerateArray())
         {
-            // `approach` is present only on the actions that declare it (WhenWritingNull), so the two key sets
-            // are asserted separately rather than by widening one list - a widened list would stop noticing when
-            // an action gained or lost a precondition.
-            string[] declaredApproach = action.TryGetProperty("approach", out _)
-                ? new[] { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition", "approach" }
-                : new[] { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition" };
-            action.EnumerateObject().Select(property => property.Name).Should().Equal(declaredApproach);
+            // `approach` and `sceneTarget` are each present only on the actions that declare them (WhenWritingNull), and
+            // they are INDEPENDENT: `pickup_forage` declares both, so the expected set is built from what is actually there
+            // rather than picking one branch. Still an EXACT set, not a superset check - an action that gained or lost a
+            // field has to change this assertion.
+            List<string> declared = new() { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition" };
+            if (action.TryGetProperty("approach", out _)) declared.Add("approach");
+            if (action.TryGetProperty("sceneTarget", out _)) declared.Add("sceneTarget");
+            action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");
             action.GetProperty("postcondition").EnumerateObject().Select(property => property.Name)
@@ -159,12 +160,18 @@ public sealed class FarmhandActionSurfaceExportTests
     public void GeneratedSurfaceArtifactCarriesTheToolClaimsTheModDeclares()
     {
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(GeneratedSurfaceArtifactPath()));
+        // The expected upgrade VALUE is read off the catalog descriptor rather than repeated here. This test's job is
+        // the FILE-versus-CATALOG separation, so the only thing it may compare is the file against the authority that
+        // emits it; a second spelling of the upgrade level is exactly what drifted - measured 2026-10-31: this table
+        // still said `BasicOnly` for break_rock_source after commit 6d5a086d moved the source to `AnyUpgrade` (its own
+        // docblock records that `BasicOnly` was backwards: `Pickaxe` demands MORE than basic and `Axe` refuses no tier),
+        // so the test pinned a value the catalog no longer declared while the artifact stayed stale with it.
         Dictionary<string, (string Category, string Upgrade)> expected = new(StringComparer.Ordinal)
         {
-            ["cut_weeds"] = ("scythe", "AnyUpgrade"),
-            ["cut_grass"] = ("scythe", "AnyUpgrade"),
-            ["break_rock_source"] = ("pickaxe", "BasicOnly"),
-            ["water_crop"] = ("watering_can", "AnyUpgrade"),
+            ["cut_weeds"] = ("scythe", DeclaredUpgrade("cut_weeds")),
+            ["cut_grass"] = ("scythe", DeclaredUpgrade("cut_grass")),
+            ["break_rock_source"] = ("pickaxe", DeclaredUpgrade("break_rock_source")),
+            ["water_crop"] = ("watering_can", DeclaredUpgrade("water_crop")),
         };
 
         foreach ((string actionId, (string category, string upgrade)) in expected)
@@ -178,6 +185,15 @@ public sealed class FarmhandActionSurfaceExportTests
                 $"{actionId} must publish the exact tool claim its handler enforces");
         }
     }
+
+    /// <summary>The upgrade-level word the catalog itself declares for one action's `tool:` claim.</summary>
+    private static string DeclaredUpgrade(string actionId) =>
+        FarmhandActionCatalog.Registrations
+            .Single(registration => registration.ActionId == actionId)
+            .Descriptor!.ResourceTemplate
+            .Single(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal))
+            .Value
+            .ToString();
 
     private static string GeneratedSurfaceArtifactPath()
     {
