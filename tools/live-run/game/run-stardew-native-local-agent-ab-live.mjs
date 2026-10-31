@@ -42,6 +42,7 @@ import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
+import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
@@ -1299,6 +1300,7 @@ function deriveSessionVerdict({
   // The whole session's last model answer, because the wall is a fact about the MODEL and not about the pipe. Only
   // `stopReason` is read here; the outcome object carries much more and none of it belongs in a verdict.
   agentTurnOutcome,
+  morningLiveness,
 }) {
   if (worldStallReason !== null) return "world_stopped_advancing";
   if (sessionTurns.length === 0) return "no_turns";
@@ -1319,6 +1321,12 @@ function deriveSessionVerdict({
   // The run's own multi-day judgement, in the verdict rather than beside it. `null` means this run never made one
   // (every scenario but `multiday_routine`), which is not a judgement either way.
   if (multidayAssessment !== null && multidayAssessment.state !== "passed") return "multiday_routine_blocked";
+  // A morning whose clock never moved is the deadlock itself, and it is checked HERE - before the multi-day judgement
+  // above would report it as a generic block - because it is not a preference about how a day went: the engine opened a
+  // day and then held it. Four commits have fixed the standing settlement sheet by path (`1b70f08e`, `541775c2`,
+  // `4357a95b`, `76c51da4`) and on 2026-10-31 it recurred with `menu=ShippingMenu` and the clock at 600 for the rest of
+  // the run. Naming the OUTCOME is what makes the fifth occurrence impossible to report as anything else.
+  if ((morningLiveness?.violations?.length ?? 0) > 0) return "morning_clock_frozen";
   if (!sessionSpoken) return "silent";
   if (accomplishedActionIds.length === 0) return "nothing_accomplished";
   return "completed";
@@ -3546,6 +3554,7 @@ try {
     contextsRoot: join(runtimeRoot, "contexts"),
     sessionId: sessionIdFromSessionRecord(sessionSearch.path),
   });
+  const morningLiveness = assessMorningLiveness({ facts: factLog, endedAtMs: Date.now() });
   // The Magic Context store's own account of this run.
   //
   // The store has always been written into the run directory, and nothing read it, so a whole layer of a live run was
@@ -3585,6 +3594,7 @@ try {
     // Present only for the multi-day scenario, where it is the run's own baseline judgement.
     multidayAssessment: multidayOutcome?.assessment ?? null,
     agentTurnOutcome,
+    morningLiveness,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"
@@ -3805,6 +3815,15 @@ try {
     // What the store recorded about this same session: active vs reclaimed tokens, the tools that held them, and where
     // the fold boundary stood. Published for every scenario, because a context wall is not a multi-day fact.
     contextSummary,
+    // Whether every morning this run opened became PLAYABLE.
+    //
+    // Four commits have fixed the standing settlement sheet - `1b70f08e`, `541775c2`, `4357a95b`, `76c51da4` - each for a
+    // different arrival path, and on 2026-10-31 it happened again: the clock read 600, `menu=ShippingMenu`, and it never
+    // moved. Every one of those fixes asserted something about a PATH. This asserts the OUTCOME, which is why it is here
+    // and not in the Mod: after the engine opens a day, the clock must move, and a clock held by a standing menu emits no
+    // `time_milestone` at all. A frozen morning therefore fails the run by name instead of being noticed by a human half
+    // an hour later.
+    morningLiveness,
     // Named when the world stopped rather than the turn finishing: the turn never settles in that case, so without
     // this the verdict could only say `turn_unsettled` and the freeze would have to be inferred from a log gap.
     worldStallReason,
