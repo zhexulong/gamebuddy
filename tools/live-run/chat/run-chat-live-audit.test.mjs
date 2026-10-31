@@ -20,6 +20,7 @@ import {
   AUDIT_PROBE_DISTANCES,
   AUDIT_VOCABULARY,
   buildAuditTrace,
+  buildWireReading,
   classifyPresentationMarkers,
   classifyProbeMaterializationMarkers,
   classifyStartupFailure,
@@ -34,6 +35,7 @@ import {
   evaluateProviderRuntimeMarker,
   loadProbeManifest,
   narrateUsage,
+  narrateWireReading,
   openBrowserHalf,
   parseArguments,
   parseSseFrame,
@@ -42,10 +44,15 @@ import {
   probeVerdict,
   projectStateSnapshot,
   readRunUsage,
+  summariseWireRequest,
   validateAuditEvent,
   validateAuditTrace,
   writeAuditTrace,
+  wireCaptureRequested,
+  WIRE_MODEL_ID,
 } from "./run-chat-live-audit.mjs";
+
+import { startLocalStubProvider } from "../core/stub-provider.mjs";
 
 const DIGEST = "a".repeat(64);
 
@@ -1064,4 +1071,120 @@ test("a phase that cannot run records a named skip instead of passing", async ()
   ]);
   assert.equal(environment.browserEvidence.state, "skipped");
   assert.equal(environment.browserEvidence.reason, "browser_phase_disabled_by_configuration");
+});
+
+// ── Wire capture: what the product SENT, off by default and a reading only ──
+
+function wireMessage(role, text) {
+  return { role, content: [{ type: "text", text }] };
+}
+
+const AUTHORED = '<gamebuddy-authored-context version="v2" thread-id="t">scenario</gamebuddy-authored-context>';
+
+function wireBody() {
+  return {
+    model: "gamebuddy-wire-capture",
+    messages: [wireMessage("system", "You are a companion."), wireMessage("user", AUTHORED)],
+    tools: [{ type: "function", function: { name: "companion_status", parameters: { type: "object" } } }],
+  };
+}
+
+test("wire capture is off unless the environment asks for it with exactly 1", () => {
+  // A typo must leave the run measuring a REAL provider: mounting a stub is the one switch that silently replaces
+  // every run's real-model evidence, so its default and its refusal of near-misses are load-bearing.
+  assert.equal(wireCaptureRequested({}), false);
+  assert.equal(wireCaptureRequested({ GAMEBUDDY_CHAT_WIRE_CAPTURE: "0" }), false);
+  assert.equal(wireCaptureRequested({ GAMEBUDDY_CHAT_WIRE_CAPTURE: "true" }), false);
+  assert.equal(wireCaptureRequested({ GAMEBUDDY_CHAT_WIRE_CAPTURE: "1" }), true);
+});
+
+test("one captured request is reported as sizes and digests, never as the bytes it measured", () => {
+  const summary = summariseWireRequest(wireBody());
+  assert.equal(summary.systemBytes, Buffer.byteLength("You are a companion.", "utf8"));
+  assert.equal(summary.systemSha256, crypto.createHash("sha256").update("You are a companion.").digest("hex"));
+  assert.equal(summary.systemMessageIndex, 0);
+  assert.equal(summary.m0Present, true);
+  assert.equal(summary.m0MessageIndex, 1);
+  assert.equal(summary.toolCount, 1);
+  assert.deepEqual(summary.toolNames, ["companion_status"]);
+  assert.equal(summary.messageCount, 2);
+  assert.deepEqual(summary.messageRoles, ["system", "user"]);
+  // Nothing in the reading is the text itself: a field named for a byte count is a number.
+  for (const [name, value] of Object.entries(summary))
+    assert.equal(
+      typeof value === "string" && /You are a companion|gamebuddy-authored-context/u.test(value),
+      false,
+      `${name} carries content`,
+    );
+  // The falsifier this reading exists for: a request with no authored baseline must say m[0] is ABSENT, not zero.
+  const withoutM0 = summariseWireRequest({ messages: [wireMessage("system", "floor")] });
+  assert.equal(withoutM0.m0Present, false);
+  assert.equal(withoutM0.m0Bytes, 0);
+  assert.equal(withoutM0.m0Sha256, null);
+  const withStringContent = summariseWireRequest({
+    messages: [
+      { role: "system", content: "plain" },
+      { role: "user", content: AUTHORED },
+    ],
+  });
+  assert.equal(withStringContent.systemBytes, 5, "a string content must be measured, not read as empty");
+});
+
+test("a stub that never received a request is unobserved, never a zero-length reading", () => {
+  // The whole class this guards: a run asked for wire capture, the turn never reached the provider, and the artifact
+  // must not read as "the request carried nothing".
+  const captured = buildWireReading({
+    requested: true,
+    provider: { baseUrl: "http://127.0.0.1:1/v1", modelId: WIRE_MODEL_ID, requests: [{ body: wireBody() }] },
+    turnsDrove: 2,
+  });
+  assert.equal(captured.state, "verified");
+  assert.equal(captured.requestsReceived, 1);
+  assert.equal(captured.turnsDrove, 2);
+  assert.equal(captured.readings.length, 1);
+  assert.match(narrateWireReading(captured), /asserts what the product SENDS, never what a real model replies/u);
+  assert.match(narrateWireReading(captured), /m\[0\]=/u);
+
+  const empty = buildWireReading({
+    requested: true,
+    provider: { baseUrl: "http://127.0.0.1:1/v1", modelId: WIRE_MODEL_ID, requests: [] },
+    turnsDrove: 1,
+  });
+  assert.equal(empty.state, "unobserved");
+  assert.equal(empty.reason, "provider_received_no_request");
+  assert.deepEqual(empty.readings, []);
+
+  const notAsked = buildWireReading({ requested: false, provider: undefined });
+  assert.equal(notAsked.state, "unobserved");
+  assert.equal(notAsked.reason, "wire_capture_not_requested");
+});
+
+test("the stub answers the product's own two routes, and records the body it was handed", async () => {
+  const stub = await startLocalStubProvider({ modelId: WIRE_MODEL_ID, reply: "STUB_REPLY" });
+  try {
+    // The route the product's own probe reads: a listing naming the model the connection record selected.
+    const listing = await fetch(`${stub.baseUrl}/models`);
+    assert.equal(listing.status, 200);
+    assert.deepEqual(
+      (await listing.json()).data.map((model) => model.id),
+      [WIRE_MODEL_ID],
+    );
+    // The route Pi's `openai-completions` adapter posts to: one streamed assistant chunk, then a stop chunk.
+    const stream = await fetch(`${stub.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(wireBody()),
+    });
+    const text = await stream.text();
+    assert.match(text, /chat\.completion\.chunk/u);
+    assert.match(text, /data: \[DONE\]/u);
+    // And the request body is retained for the reading, in arrival order.
+    assert.equal(stub.requests.length, 1);
+    assert.equal(stub.requests[0].body.messages.length, 2);
+    const next = await stub.next();
+    assert.equal(next, stub.requests[0], "a request that already arrived resolves immediately");
+  } finally {
+    await stub.close();
+    await stub.close();
+  }
 });

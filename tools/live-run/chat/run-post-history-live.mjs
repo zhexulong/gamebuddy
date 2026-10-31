@@ -50,10 +50,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { startLocalStubProvider } from "../core/stub-provider.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const HOST_TEST_ROOT = join(REPOSITORY_ROOT, "host", "dist-test");
@@ -367,62 +368,6 @@ async function loadProduct() {
   };
 }
 
-/**
- * The stub provider: records every request body, then streams one fixed assistant reply in the
- * shape Pi's own `openai-completions` adapter parses. Kept alive (never `unref`ed) so a waiting
- * turn cannot silently lose the event loop and exit green with no reading.
- */
-async function startStubProvider() {
-  const requests = [];
-  let resolveNext;
-  const nextRequest = () => new Promise((done) => (resolveNext = done));
-  let pending = nextRequest();
-  const server = createServer((request, response) => {
-    let raw = "";
-    request.on("data", (chunk) => (raw += chunk));
-    request.on("end", () => {
-      let body;
-      try {
-        body = JSON.parse(raw);
-      } catch {
-        body = undefined;
-      }
-      requests.push({ url: request.url, body });
-      const settle = resolveNext;
-      pending = nextRequest();
-      settle?.(requests.at(-1));
-      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-      const send = (payload) => response.write(`data: ${JSON.stringify(payload)}\n\n`);
-      send({
-        id: "chatcmpl-post-history-live",
-        object: "chat.completion.chunk",
-        model: MODEL_ID,
-        choices: [{ index: 0, delta: { role: "assistant", content: STUB_REPLY }, finish_reason: null }],
-      });
-      send({
-        id: "chatcmpl-post-history-live",
-        object: "chat.completion.chunk",
-        model: MODEL_ID,
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-        usage: { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 },
-      });
-      response.write("data: [DONE]\n\n");
-      response.end();
-    });
-  });
-  await new Promise((done) => server.listen(0, "127.0.0.1", done));
-  const address = server.address();
-  return {
-    baseUrl: `http://127.0.0.1:${address.port}/v1`,
-    requests,
-    next: () => pending,
-    close: async () => {
-      server.closeAllConnections();
-      await new Promise((done) => server.close(done));
-    },
-  };
-}
-
 /** A bounded wait: whatever is being awaited records that it did not settle instead of hanging. */
 async function settled(promise, timeoutMs) {
   let timer;
@@ -465,7 +410,7 @@ export async function runLiveRun({
   log = () => {},
 } = {}) {
   const product = await loadProduct();
-  const provider = await startStubProvider();
+  const provider = await startLocalStubProvider({ modelId: MODEL_ID, reply: STUB_REPLY });
   const base = process.platform === "win32" ? (process.env.LOCALAPPDATA ?? tmpdir()) : tmpdir();
   const root = await mkdtemp(join(await realpath(base), "gb-post-history-live-"));
   const identity = Object.freeze({
