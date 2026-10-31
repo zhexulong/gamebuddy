@@ -11,6 +11,7 @@ import {
   planActionsFromRegistrations,
   planProgramId,
   planShape,
+  planWorkDescription,
 } from "./body-program-script.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 
@@ -31,6 +32,7 @@ type SurfaceAction = Readonly<{
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+  postcondition?: Readonly<{ name?: string }>;
 }>;
 
 const SURFACE = (
@@ -206,28 +208,97 @@ test("a script that reaches outside its sandbox is refused by name, and nothing 
     assert.equal(refusalOf(compile(script)), `plan_script_uses_forbidden:${name}`);
 });
 
-test("a script that emits a seventeenth node is refused by name, never truncated", () => {
+test("a plan is refused by name past the corruption bound, never truncated", () => {
+  // The bound is 256, not 16. It is the READ-BACK corruption bound on a journal this product could have written, and it
+  // was 16 - which is not a corruption bound at all: a 16-node plan is ordinary, so the writer's policy was being enforced
+  // by the reader. A plan past this bound is refused by name rather than silently truncated, because a truncated plan would
+  // be a companion that believes it did everything it wrote.
   const result = compile(
     `
-for (let index = 0; index < 17; index++) builder.move_to_tile({ x: 10 + index, y: 10 });
+for (let index = 0; index < ${MAX_PLAN_NODES + 1}; index++) builder.move_to_tile({ x: 10 + (index % 50), y: 10 });
 `,
   );
   assert.equal(refusalOf(result), `plan_cap_exceeded:${MAX_PLAN_NODES + 1}`);
 });
 
-test("isFull() lets the script stop at the cap instead of being refused", () => {
+test("isFull() stops the script at the bound instead of being refused", () => {
+  // `isFull` still exists - a script may legitimately want to stop - but it now answers a bound no ordinary plan reaches,
+  // and the tool description no longer shows it, so a model writing a batch does not learn to police itself. Measured
+  // 2026-10-31: 31 of 117 historical `plan_work` calls used it, because the only worked example in the description did.
   const nodes = nodesOf(
     compile(
       `
-for (let index = 0; index < 40; index++) {
+for (let index = 0; index < ${MAX_PLAN_NODES + 40}; index++) {
   if (builder.isFull()) break;
-  builder.move_to_tile({ x: 10 + index, y: 10 });
+  builder.move_to_tile({ x: 10 + (index % 50), y: 10 });
 }
 `,
     ),
   );
   assert.equal(nodes.length, MAX_PLAN_NODES);
-  assert.equal(nodes[MAX_PLAN_NODES - 1]!.nodeId, "n16");
+});
+
+/**
+ * `advance_day` rebuilds the world, so it is the LAST node a plan can carry.
+ *
+ * It walks the actor to its own bed and then runs the save/warp/day-start lifecycle, which discards the world every
+ * later node was compiled against. A node written after it is a step aimed at a snapshot that no longer describes the
+ * farm, so the Mod could only refuse it at runtime - the builder refuses it at the call that wrote it instead, and
+ * names both actions so the author sees which line was wrong.
+ */
+test("a node compiled after advance_day is refused by name, at the call that wrote it", () => {
+  const result = compile(`
+builder.move_to_tile({ x: 12, y: 8 });
+builder.advance_day();
+builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
+`);
+  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:advance_day");
+});
+
+test("advance_day as the last node still compiles, and a menu-closing step is not terminal", () => {
+  const ending = nodesOf(
+    compile(`
+builder.move_to_tile({ x: 12, y: 8 });
+builder.advance_day();
+`),
+  );
+  assert.deepEqual(
+    ending.map((node) => node.actionId),
+    ["move_to_tile", "advance_day"],
+  );
+  // Closing a menu changes nothing about the world, so watering a crop afterwards is a legal sequence and stays one.
+  const afterMenu = nodesOf(
+    compile(`
+builder.dismiss_modal();
+builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01" });
+`),
+  );
+  assert.deepEqual(
+    afterMenu.map((node) => node.actionId),
+    ["dismiss_modal", "water_crop"],
+  );
+});
+
+/**
+ * The terminal set is hand-declared because the surface publishes no "this rebuilds the world" property, so this test
+ * keeps the rule honest against the one catalog fact that does exist: the `day_advanced` postcondition.
+ *
+ * It asks the compiler, not the list, so the assertion survives the set becoming derived: every surface action
+ * declaring `day_advanced` must be refused as the step before another one, by the same named code. A second such
+ * action fails HERE by name instead of silently escaping the rule.
+ */
+test("every action the surface declares day_advanced refuses a step written after it", () => {
+  const dayAdvanced = SURFACE.filter((action) => action.postcondition?.name === "day_advanced").map(
+    (action) => action.actionId,
+  );
+  assert.ok(dayAdvanced.length > 0, "the surface still declares the day_advanced postcondition");
+  for (const actionId of dayAdvanced) {
+    assert.equal(
+      refusalOf(compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`)),
+      `plan_script_action_after_world_reset:move_to_tile:${actionId}`,
+      `${actionId} declares day_advanced, so a plan may not write a node after it`,
+    );
+  }
 });
 
 test("a builder method generated from the published surface rejects a wrong, missing or non-canonical argument", () => {
@@ -622,6 +693,96 @@ const TOOL_PACK = [
   { slot: 3, label: "(T)Pickaxe", upgradeLevel: 0 },
 ] as const;
 
+test("a plan names a chest and one of the items inside it, out of the container's own state", () => {
+  // The round trip the ruling is about: `chests` is entity state, and the two actions still take their own safe
+  // slice out of it - the container's tile and id for both, the pack slot and pack item for a store, and one of the
+  // container's own `items` for a retrieve. Nothing here flattens: the plan reads the container, then decides.
+  const nodes = nodesOf(
+    compile(
+      `
+for (const chest of snapshot.chests ?? []) {
+  if (builder.isFull()) break;
+  for (const item of chest.items) {
+    if (item.qualifiedItemId !== "(O)388") continue;
+    builder.chest_retrieve({ slot: 0, x: chest.x, y: chest.y, expectedQualifiedItemId: item.qualifiedItemId, expectedTargetId: chest.chestId });
+  }
+}
+`,
+      {
+        enabledActionIds: ["chest_retrieve"],
+        chests: [
+          {
+            chestId: "chest_0123456789abcdef",
+            x: 9,
+            y: 10,
+            displayName: "Chest",
+            isFridge: false,
+            items: [
+              { slot: 0, qualifiedItemId: "(O)388", displayName: "Wood", stack: 40 },
+              { slot: 1, qualifiedItemId: "(O)390", displayName: "Stone", stack: 7 },
+            ],
+          },
+        ],
+      },
+    ),
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.actionId),
+    ["chest_retrieve"],
+  );
+  assert.deepEqual(nodes[0]!.arguments, {
+    slot: { type: "integer", canonicalValue: "0" },
+    x: { type: "integer", canonicalValue: "9" },
+    y: { type: "integer", canonicalValue: "10" },
+    expectedQualifiedItemId: { type: "string", canonicalValue: "(O)388" },
+    expectedTargetId: { type: "string", canonicalValue: "chest_0123456789abcdef" },
+  });
+  // The plan is one the Mod accepts, so the chest’s own id is a legal target id and not a shape only this compiler
+  // would produce.
+  assert.equal(
+    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }),
+    null,
+    "the compiled plan must be one the Mod accepts",
+  );
+  // A script may see EVERY item a container holds: the mirror is not shortened on the way in, so a loop over
+  // `chest.items` reaches the last one exactly as the Mod published it.
+  const everyItem = nodesOf(
+    compile(
+      `
+for (const chest of snapshot.chests ?? []) {
+  for (const item of chest.items) {
+    builder.move_to_tile({ x: chest.x + item.slot, y: chest.y });
+  }
+}
+`,
+      {
+        enabledActionIds: ["move_to_tile"],
+        chests: [
+          {
+            chestId: "chest_0123456789abcdef",
+            x: 9,
+            y: 10,
+            displayName: "Chest",
+            isFridge: false,
+            items: Array.from({ length: MAX_PLAN_NODES }, (_, slot) => ({
+              slot,
+              qualifiedItemId: `(O)${100 + slot}`,
+              displayName: `Item ${slot}`,
+              stack: 1,
+            })),
+          },
+        ],
+      },
+    ),
+  );
+  assert.equal(everyItem.length, MAX_PLAN_NODES, "every item of a container is visible to the script");
+  assert.equal(
+    JSON.stringify(everyItem[MAX_PLAN_NODES - 1]!.arguments.x),
+    JSON.stringify({ type: "integer", canonicalValue: String(9 + MAX_PLAN_NODES - 1) }),
+    "the last item of the container is reachable, so the mirror was not shortened",
+  );
+});
+
 test("equipFor writes the equip step the target declares, then the action, and answers the slot to name", () => {
   const nodes = nodesOf(
     compile(
@@ -807,4 +968,133 @@ test("the surface artifact carries a slot description for every action whose slo
     "every action whose `slot` has a rule states that rule in its own words; an undescribed one is a guess the model makes",
   );
   assert.ok(described.length === slotActions.length);
+});
+
+/**
+ * The plan tool's description must name exactly the actions this session publishes - and both directions of that
+ * comparison are DERIVED, never hand-maintained.
+ *
+ * The defect the gate exists for is a description that says "every action you can take is a builder method" and names
+ * none. Measured 2026-10-28 (`round6`): the companion reached 22:00 without dispatching `advance_day`, wrote goodnight
+ * dialogue instead, and its own thinking recorded that it did not know the action was called and would not guess; the
+ * engine passed it out at 02:00 onto a standing ShippingMenu. A name it can read costs nothing; a name one tool call
+ * away is a round-trip it may decline to pay, and declining it degenerates to single steps or to dialogue.
+ *
+ * The published side is the Mod catalog: the surface artifact for ids, lifecycles, kinds and arguments, and the Mod's
+ * own registration list for the family each action belongs to. The described side is read back out of the description
+ * string production hands the model. A published action the description omits, a described id the catalog does not
+ * publish, and an action listed under the wrong family each fail here, by name.
+ */
+const MOD_REGISTRATIONS = readFileSync(
+  resolve(hostRoot, "../integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
+  "utf8",
+);
+
+/** actionId -> familyId exactly as the Mod declares them, from its one registration list. */
+function modFamiliesOfActions(): ReadonlyMap<string, string> {
+  const body = MOD_REGISTRATIONS.match(/\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/u)?.[1];
+  assert.ok(body !== undefined, "the Mod's registration list must be readable from its own source");
+  const families = new Map<string, string>();
+  for (const entry of body.split(/(?=\b(?:E|R|Registration)\()/u)) {
+    const match = entry.match(/\b(?:E|R|Registration)\(\s*"([a-z][a-z0-9_]{1,127})",\s*"([a-z][a-z0-9_]{1,127})"/u);
+    if (match?.[1] !== undefined && match[2] !== undefined) families.set(match[1], match[2]);
+  }
+  return families;
+}
+
+const MOD_FAMILY_OF_ACTION = modFamiliesOfActions();
+
+/** The surface artifact's registrations, each carrying the family the Mod really declares for it. */
+const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) => {
+  const familyId = MOD_FAMILY_OF_ACTION.get(action.actionId);
+  assert.ok(
+    familyId !== undefined,
+    `${action.actionId} is on the published surface but the Mod's registration list declares no family for it`,
+  );
+  return Object.freeze({
+    actionId: action.actionId,
+    familyId,
+    identityVersion: 1,
+    lifecycle: action.lifecycle as ActionRegistration["lifecycle"],
+    kind: action.kind as ActionRegistration["kind"],
+    ...(action.argumentSchema === undefined
+      ? {}
+      : {
+          descriptor: {
+            argumentSchema: action.argumentSchema,
+            outputFacts: action.outputFacts ?? {},
+            ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+          },
+        }),
+  });
+});
+
+const CATALOG_ACTIONS = planActionsFromRegistrations(CATALOG_REGISTRATIONS);
+
+/**
+ * The vocabulary block read back out of the description: `family: action, action` per line, in the order it prints.
+ * Only a line that starts with one family id and a colon is a vocabulary line, so neither the prose nor the script
+ * example - both of which end a sentence and then a colon - can be mistaken for one.
+ */
+function describedVocabulary(description: string): ReadonlyMap<string, readonly string[]> {
+  const vocabulary = new Map<string, readonly string[]>();
+  for (const line of description.split("\n")) {
+    const match = /^([a-z][a-z0-9_]*): (.+)$/u.exec(line);
+    if (match?.[1] === undefined || match[2] === undefined) continue;
+    assert.equal(vocabulary.has(match[1]), false, `the description lists the family ${match[1]} twice`);
+    vocabulary.set(match[1], match[2].split(/,\s*/u));
+  }
+  return vocabulary;
+}
+
+test("the plan description names every action this session publishes, under the family the Mod declares, and no other", () => {
+  assert.ok(CATALOG_ACTIONS.length > 0, "the catalog publishes plannable actions");
+  const described = describedVocabulary(planWorkDescription(CATALOG_ACTIONS));
+  assert.ok(described.size > 0, "the description carries the action vocabulary at all");
+
+  const published = new Set(CATALOG_ACTIONS.map((action) => action.actionId));
+  const describedIds = new Set([...described.values()].flat());
+
+  // Direction 1: a published action the description never names. This is the `advance_day` defect - the companion held
+  // a description that claimed the whole surface and could not read a single name out of it.
+  assert.deepEqual(
+    [...published].filter((actionId) => !describedIds.has(actionId)).sort(),
+    [],
+    "every action the session publishes is named in the plan tool's description",
+  );
+  // Direction 2: a name in the description that this session does not publish. A stale id is worse than a missing one:
+  // the companion writes `builder.<thatName>` and is only refused after paying for the call.
+  assert.deepEqual(
+    [...describedIds].filter((actionId) => !published.has(actionId)).sort(),
+    [],
+    "the plan tool's description names no action this session does not publish",
+  );
+  // The grouping is the Mod's own, not a Host invention: each family lists exactly the actions declared in it, so an
+  // action filed under the wrong family fails by name instead of merely appearing somewhere.
+  assert.deepEqual(
+    [...described.keys()].sort(),
+    [...new Set(CATALOG_ACTIONS.map((action) => action.familyId))].sort(),
+    "the description's families are exactly the families the Mod declares for its plannable actions",
+  );
+  for (const [familyId, members] of described)
+    assert.deepEqual(
+      [...members].sort(),
+      CATALOG_ACTIONS.filter((action) => action.familyId === familyId)
+        .map((action) => action.actionId)
+        .sort(),
+      `${familyId} lists exactly its own actions`,
+    );
+});
+
+test("the description's example uses a published action and that action's own declared argument names", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  const call = /builder\.([a-z0-9_]+)\(\{ (.*) \}\);/u.exec(description);
+  assert.ok(call, "the description carries one builder call as an example");
+  const action = SURFACE.find((entry) => entry.actionId === call[1]);
+  assert.ok(action, `${String(call[1])} in the example is an action the surface publishes`);
+  assert.deepEqual(
+    [...(call[2] as string).matchAll(/([A-Za-z0-9_]+):/gu)].map((match) => match[1]),
+    Object.keys(action.argumentSchema ?? {}),
+    "the example's argument names are that action's declared ones, in order",
+  );
 });

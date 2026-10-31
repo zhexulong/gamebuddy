@@ -137,19 +137,71 @@ export type CompiledPlan =
       threw?: PlanScriptThrow;
     }>;
 
-/** Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`. */
-export const MAX_PLAN_NODES = 16;
+/**
+ * Frozen maximum node count per program; mirrors `protocol.ts` and the Mod's `BodyProgramValidation.MaximumNodes`.
+ *
+ * <p>
+ * 256 IS A CORRUPTION BOUND, NOT A BUDGET. The same number is checked on the READ-BACK path
+ * (`BodyProgramJournalPersistence.TryDecode` -> `TryValidate`), where it sits beside `Programs.Count > 128` and
+ * `Events.Count > 4096` and does what those do: refuse a file that cannot be a journal this product wrote. A plan of 16
+ * nodes is not a corrupt journal, so a reader-side bound of 16 was never protecting anything - it was the WRITER's policy
+ * leaking into the reader.
+ * </p>
+ * <p>
+ * It was 16, and the cost was measured on 2026-10-31: of 26 programs in one run, **eight were exactly 16 and none was
+ * larger**, and over 117 historical `plan_work` calls 31 used `builder.isFull()` - the guard this bound publishes. A
+ * companion that can see 16 weeds and can only act on 16 of them never learns the field is bigger, so the ceiling became a
+ * fact about the world rather than a limit on one turn. The real constraint on one execution is TIME: every action
+ * already publishes its own `WatchdogMs` (60 s ordinary, 600 s navigation/lifecycle), and that is what a total budget
+ * should be built from when there is measured per-action latency to build it on.
+ * </p>
+ */
+export const MAX_PLAN_NODES = 256;
 
 /** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
+
+/**
+ * The actions that rebuild the world under a plan, so a plan must END at one.
+ *
+ * `advance_day` walks the actor to its own bed and runs the save/warp/day-start lifecycle
+ * (`SleepAndAdvanceDayLifecycle.Phase.WalkingToBed` -> `WalkToBed()`), after which the farm every later node was
+ * compiled against no longer exists. It carries no arguments and its target is the actor's own bed, so it is
+ * naturally the last node of any plan - which is what makes this a compile-time rule instead of a style preference:
+ * a node written after it can only be refused by the Mod at runtime, aimed at a world that is gone.
+ *
+ * A DECLARED SET is the honest shape today, and the gap is worth naming for whoever publishes the next
+ * world-resetting action: the surface does publish `postcondition.name` (`advance_day` declares `day_advanced`), but
+ * nothing in that declaration says the action rebuilds the world, and `PublishedPlanAction` does not carry the
+ * postcondition at all. So there is no catalog property to derive membership from yet, and an action missing from
+ * this list is silently exempt - which is why the next world-resetting action must join it in the change that
+ * publishes the action. `body-program-script.test.ts` checks the members against the one catalog fact there is: every
+ * surface action declaring `day_advanced` must be refused as a mid-plan step, so a second one fails a named assertion
+ * instead of being exempt.
+ */
+const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["advance_day"]);
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
 const MAX_THROWN_MESSAGE_CHARS = 300;
 /** Wall-clock budget for one compile. A plan is a loop over a snapshot, not a computation. */
 const PLAN_SCRIPT_BUDGET_MS = 50;
-/** The script may call the builder more often than it adds nodes (a full plan still checks `isFull`). */
-const MAX_PLAN_BUILDER_CALLS = 64;
+/**
+ * How many times one script may call the builder, INCLUDING calls that a loop's own guard turns into a no-op.
+ *
+ * <p>
+ * This - not `MAX_PLAN_NODES` - was the real ceiling all along, and it is the one that produced the measured shape:
+ * 64 calls against a 16-node limit means a script that writes a `for` loop over a snapshot family is cut at 64 ITERATIONS,
+ * so the loop can never reach the node cap it was written against. Raised to 1024 so the node bound is the one a compiler
+ * enforces, and so a loop over a family the snapshot really does publish (up to `maxItems: 64`) fits with room for the
+ * `equipFor` calls beside it.
+ * </p>
+ * <p>
+ * It stays bounded because the budget is wall-clock anyway (`PLAN_SCRIPT_BUDGET_MS`): an unbounded builder-call counter
+ * would let a script spend that budget on no-ops, and the refusal has to arrive as a NAME rather than as a timeout.
+ * </p>
+ */
+const MAX_PLAN_BUILDER_CALLS = 1024;
 
 /** The argument kinds a Body Program node may carry, exactly as the Mod's catalog projection maps them. */
 const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string", "boolean", "destination_selector"]);
@@ -403,6 +455,41 @@ export function planShape(
       legalFamilies: legalPlanFamilies(actions),
     });
   return Object.freeze({ ok: true as const, actions: Object.freeze(members) });
+}
+
+/**
+ * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
+ *
+ * The names belong HERE, in the description the companion already holds, rather than one tool call away behind
+ * `stardew_plan_shape`. Measured 2026-10-28 (`round6`): a run reached 22:00 without ever dispatching `advance_day`,
+ * wrote goodnight dialogue instead, and its own thinking recorded that it did not know the action's name and would not
+ * guess - the engine then passed it out at 02:00 onto a standing ShippingMenu. A companion that will not spend one
+ * round-trip per unknown id degenerates to single steps or to dialogue, which is the whole defect this tool exists to
+ * remove.
+ *
+ * The vocabulary is the actions handed in - the same `PublishedPlanAction[]` `planShape` answers from - so there is no
+ * hand-maintained list to drift from the Mod's catalog. Every id is printed once, under the family the Mod declared it
+ * in; nothing else in the block is prose, because the block is read as a vocabulary.
+ */
+export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
+  return (
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step, and the host compiles it into a single plan the Mod runs and advances itself - you do not come back between steps. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape for one action's argument names. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    `${planActionVocabularyText(actions)}\n` +
+    "for (const crop of snapshot.cropTargets) {\n" +
+    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
+    "}"
+  );
+}
+
+/** One line per family, its members comma-separated, in the order the surface declared them. */
+function planActionVocabularyText(actions: readonly PublishedPlanAction[]): string {
+  const families = new Map<string, string[]>();
+  for (const action of actions) {
+    const members = families.get(action.familyId);
+    if (members === undefined) families.set(action.familyId, [action.actionId]);
+    else members.push(action.actionId);
+  }
+  return [...families].map(([familyId, actionIds]) => `${familyId}: ${actionIds.join(", ")}`).join("\n");
 }
 
 /**
@@ -674,6 +761,12 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${state.calls}`, state);
   if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${state.nodes.length + 1}`, state);
   const requirement = requirementOf(action);
+  // Checked before the arguments, because a step written after a world reset is illegal whatever it carries: no
+  // argument can fix it, and answering with an argument problem would send the author back to a call that still
+  // cannot run.
+  const previousNode = state.nodes.length === 0 ? undefined : state.nodes[state.nodes.length - 1]!;
+  if (previousNode !== undefined && WORLD_RESETTING_PLAN_ACTION_IDS.includes(previousNode.actionId))
+    refusePlan(`plan_script_action_after_world_reset:${action.actionId}:${previousNode.actionId}`, state, requirement);
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))
@@ -693,7 +786,7 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
   }
   // The script's statement order IS the plan's order: "till this tile, then fertilise it" is two calls,
   // and the second must not run before the first. That is one dependency edge per call, nothing more.
-  const previous = state.nodes.length === 0 ? undefined : state.nodes[state.nodes.length - 1]!.nodeId;
+  const previous = previousNode?.nodeId;
   state.nodes.push(
     Object.freeze({
       nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,

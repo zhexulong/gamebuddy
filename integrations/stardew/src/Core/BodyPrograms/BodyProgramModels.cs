@@ -244,7 +244,21 @@ public static class BodyProgramControllerResult { public static BodyProgramContr
 
 internal static class BodyProgramValidation
 {
-    internal const int MaximumNodes = 16;
+    /// <summary>
+    /// The largest node count a journal this product could have written may declare.
+    ///
+    /// <para>
+    /// A CORRUPTION BOUND, in the same class as `state.Programs.Count > 128` and `state.Events.Count > 4096` beside it in
+    /// `TryValidate`: it refuses a decoded file that cannot be a journal this build produced. It was 16, which is not a
+    /// corruption bound at all - a 16-node program is perfectly ordinary, so the reader was enforcing the writer's policy.
+    /// </para>
+    /// <para>
+    /// MEASURED 2026-10-31: of 26 programs in one run, **eight were exactly 16 and none was larger**, and over 117
+    /// historical `plan_work` calls 31 used `builder.isFull()` - the guard this number publishes to the model. A companion
+    /// that can see 16 weeds and can only act on 16 of them never learns the field is bigger.
+    /// </para>
+    /// </summary>
+    internal const int MaximumNodes = 256;
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     /// <summary>Descriptor-owned static watchdog budget for ordinary short actions (hang protection, not ETA).</summary>
     internal const long DefaultWatchdogMs = 60_000;

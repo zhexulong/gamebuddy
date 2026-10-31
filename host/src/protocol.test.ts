@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MAX_BODY_PROGRAM_NODES,
   diagnoseBridgeMessage,
   MAX_MESSAGE_BYTES,
   newEnvelope,
@@ -2889,7 +2890,11 @@ test("body-program destination selector labels enforce NFC canonicalization like
   );
 });
 
-test("body-program status snapshot node arrays freeze at the C# MaximumNodes bound of 16", () => {
+test("body-program status snapshot node arrays freeze at the C# MaximumNodes bound", () => {
+  // The bound is the READ-BACK corruption bound on a journal this product could have written (256), not 16. It was 16,
+  // which refused a perfectly ordinary 17-node plan. See the C# `MaximumNodes` declaration for the measurement: 8 of 26
+  // programs in one run sat exactly on 16 and none was larger, and 31 of 117 historical `plan_work` calls used the
+  // `isFull` guard that bound published to the model.
   const snapshot = (count: number) => ({
     programId: "program_01",
     state: "active",
@@ -2903,21 +2908,26 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
       admissionAttempt: 1,
     })),
   });
+  const atBound = snapshot(MAX_BODY_PROGRAM_NODES);
+  const pastBound = snapshot(MAX_BODY_PROGRAM_NODES + 1);
+
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(16) }, "status_16", now),
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: atBound }, "status_at", now),
       scope,
       now,
     ),
     null,
+    "a plan AT the bound is an ordinary plan",
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(17) }, "status_17", now),
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: pastBound }, "status_past", now),
       scope,
       now,
     ),
     "invalid_body_program_result",
+    "past the bound is a peer that could not have written this journal",
   );
   assert.equal(
     validateBridgeMessage(
@@ -2927,9 +2937,9 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
         {
           code: "accepted",
           verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
-          snapshot: snapshot(17),
+          snapshot: pastBound,
         },
-        "submit_17",
+        "submit_past",
         now,
       ),
       scope,
@@ -2937,6 +2947,30 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
     ),
     "invalid_body_program_result",
   );
+});
+
+test("body-program node status carries a failure code, and only as a code", () => {
+  const snapshot = (node: Record<string, unknown>) => ({
+    programId: "program_01",
+    state: "failed",
+    catalogRevision: 1,
+    stopEpoch: 0,
+    eventHighWater: 0,
+    nodes: [{ nodeId: "node_01", state: "failed", nodeAttempt: 1, admissionAttempt: 1, ...node }],
+  });
+  const verdict = (node: Record<string, unknown>) =>
+    validateBridgeMessage(
+      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(node) }, "status_cause", now),
+      scope,
+      now,
+    );
+  // The reason a dispatched node did not succeed must reach the Host, or the model reads a bare `failed`.
+  assert.equal(verdict({ failureCode: "door_out_of_range" }), null);
+  assert.equal(verdict({ rejectionCode: "policy_denied" }), null);
+  assert.equal(verdict({}), null, "a node with no recorded cause keeps the shape it always had");
+  // Prose is not a code (ADR-006 :163), and an unexplained extra key is still refused.
+  assert.equal(verdict({ failureCode: "Door Out Of Range" }), "invalid_body_program_result");
+  assert.equal(verdict({ failureExplanation: "far from the door" }), "invalid_body_program_result");
 });
 
 test("body-program node attempt counters align to the C# Int32 wire fields", () => {
@@ -3017,7 +3051,20 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
   );
 });
 
-test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malformed rows", () => {
+test("snapshot admits chest entity state and rejects malformed containers", () => {
+  const chest = {
+    chestId: "chest_0123456789abcdef",
+    x: 4,
+    y: 5,
+    displayName: "Chest",
+    isFridge: false,
+    // Three items, which is the point: a container reports its contents whole, and nothing here may shorten them.
+    items: [
+      { slot: 0, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 5 },
+      { slot: 3, qualifiedItemId: "(O)388", displayName: "Wood", stack: 40 },
+      { slot: 11, qualifiedItemId: "(O)390", displayName: "Stone", stack: 7 },
+    ],
+  };
   const basePayload: Snapshot = {
     revision: 5,
     location: "Farm",
@@ -3036,71 +3083,60 @@ test("snapshot admits chestStoreTargets/chestRetrieveTargets and rejects malform
     year: 1,
     weather: "sunny",
     activeExecution: null,
-    chestStoreTargets: [
-      {
-        targetId: "chest_0123456789abcdef",
-        x: 4,
-        y: 5,
-        slot: 2,
-        qualifiedItemId: "(O)24",
-        displayName: "Parsnip",
-        stack: 5,
-      },
-    ],
-    chestRetrieveTargets: [
-      { targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "(O)24", displayName: "Parsnip", stack: 3 },
-    ],
+    chests: [chest],
   };
   const base = newEnvelope("snapshot", scope, basePayload, "chest_snapshot_01", now);
   assert.equal(diagnoseBridgeMessage(base, scope, now), "accepted");
+  assert.equal(validateBridgeMessage(base, scope, now), null);
+
+  const refused = (payload: Record<string, unknown>) =>
+    diagnoseBridgeMessage({ ...base, payload: { ...basePayload, ...payload } }, scope, now);
+  // EVERY item is checked, not a prefix of them: the last item is as much the container's state as the first, so a
+  // malformed entry at any index is a named refusal. Checking only the head is how a bounded family silently becomes
+  // a family that describes part of a container.
+  for (const index of [0, 1, 2])
+    for (const broken of [{ qualifiedItemId: "" }, { stack: 0 }, { slot: -1 }, { unexpected: true }]) {
+      const items = chest.items.map((item, at) => (at === index ? { ...item, ...broken } : item));
+      assert.equal(
+        refused({ chests: [{ ...chest, items }] }),
+        "invalid_snapshot:chests",
+        `item ${index} with ${JSON.stringify(broken)} was admitted`,
+      );
+    }
+  // The number of ITEMS is not bounded by anything the Host declares, not even by the family's own container cap:
+  // the cap bounds how many containers arrive, and a container that holds more than that still arrives whole. This
+  // is the invariant the ruling names, so it is asserted rather than left to the cap's comment.
+  const crowded = Array.from({ length: 80 }, (_, slot) => ({
+    slot,
+    qualifiedItemId: `(O)${100 + slot}`,
+    displayName: `Item ${slot}`,
+    stack: 1,
+  }));
+  assert.equal(refused({ chests: [{ ...chest, items: crowded }] }), "accepted");
+  // A container is an entity, so each half of it is checked and named: the tile, the identity, the contents' own
+  // shape, and an unexpected member on either level.
+  assert.equal(refused({ chests: [{ ...chest, x: 4000 }] }), "invalid_snapshot:chests");
+  assert.equal(refused({ chests: [{ ...chest, chestId: "" }] }), "invalid_snapshot:chests");
+  assert.equal(refused({ chests: [{ ...chest, items: undefined }] }), "invalid_snapshot:chests");
+  assert.equal(refused({ chests: [{ ...chest, unexpected: true }] }), "invalid_snapshot:chests");
+  // An empty container is a container that holds nothing - a fact, not an absence.
+  assert.equal(refused({ chests: [{ ...chest, items: [] }] }), "accepted");
+  // The retired flattened families are gone from the wire, so one arriving is an unexpected key, by name.
   assert.equal(
-    diagnoseBridgeMessage(
-      {
-        ...base,
-        payload: {
-          ...basePayload,
-          chestStoreTargets: [
-            {
-              targetId: "chest_0123456789abcdef",
-              x: 4,
-              y: 5,
-              slot: 99,
-              qualifiedItemId: "(O)24",
-              displayName: "Parsnip",
-              stack: 5,
-            },
-          ],
-        },
-      },
-      scope,
-      now,
-    ),
-    "invalid_snapshot:chestStoreTargets",
+    refused({ chestStoreTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5 }] }),
+    "invalid_snapshot:unexpected_keys:chestStoreTargets",
   );
   assert.equal(
-    diagnoseBridgeMessage(
-      {
-        ...base,
-        payload: {
-          ...basePayload,
-          chestRetrieveTargets: [
-            { targetId: "chest_0123456789abcdef", x: 4, y: 5, qualifiedItemId: "", displayName: "Item", stack: 3 },
-          ],
-        },
-      },
-      scope,
-      now,
-    ),
-    "invalid_snapshot:chestRetrieveTargets",
+    refused({ chestRetrieveTargets: [{ targetId: "chest_0123456789abcdef", x: 4, y: 5 }] }),
+    "invalid_snapshot:unexpected_keys:chestRetrieveTargets",
   );
+  // The withheld counts existed only to admit the cross product's truncation; they are gone with it.
+  assert.equal(refused({ withheldChestStoreTargets: 3 }), "invalid_snapshot:unexpected_keys:withheldChestStoreTargets");
   assert.equal(
-    diagnoseBridgeMessage(
-      { ...base, payload: { ...basePayload, chestStoreTargets: undefined, chestRetrieveTargets: undefined } },
-      scope,
-      now,
-    ),
-    "accepted",
+    refused({ withheldChestRetrieveTargets: 3 }),
+    "invalid_snapshot:unexpected_keys:withheldChestRetrieveTargets",
   );
+  assert.equal(refused({ chests: undefined }), "accepted");
 });
 
 test("snapshot admits treeStumpTargets and rejects malformed rows", () => {

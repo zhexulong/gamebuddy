@@ -13,8 +13,7 @@ import {
   isBuildingChestTargetFact,
   isBushTargetFact,
   isCaskTargetFact,
-  isChestRetrieveTargetFact,
-  isChestStoreTargetFact,
+  isChestStateFact,
   isClearHoeDirtTargetFact,
   isColorTargetFact,
   isCookingStationTargetFact,
@@ -723,24 +722,24 @@ export type Snapshot = Readonly<{
   }>[];
   /** Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot. Placement does not prove an animal has eaten. */
   feedTroughTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; hayStack: number }>[];
-  /** Nearby player-owned ordinary Chests with a storable item in the Farmhand inventory (chest_store). */
-  chestStoreTargets?: readonly Readonly<{
-    targetId: string;
+  /**
+   * Every storage container the actor can reach, each carrying its own contents.
+   *
+   * A container is one ENTITY: the chest and the items inside it. The two families this replaced
+   * (`chestStoreTargets`, `chestRetrieveTargets`) flattened that entity into a cross product of
+   * (container x pack slot) and (container x chest item), which had to truncate to fit a window and
+   * therefore could not publish a container's contents whole. Perception mirrors the world here;
+   * execution takes its own safe slice by naming `chestId`/`itemId` out of this mirror.
+   *
+   * `items` is never truncated. The number of CONTAINERS is capped by `SNAPSHOT_FAMILY_RULES`.
+   */
+  chests?: readonly Readonly<{
+    chestId: string;
     x: number;
     y: number;
-    slot: number;
-    qualifiedItemId: string;
     displayName: string;
-    stack: number;
-  }>[];
-  /** Nearby player-owned ordinary Chests holding an item retrievable into the Farmhand inventory (chest_retrieve). */
-  chestRetrieveTargets?: readonly Readonly<{
-    targetId: string;
-    x: number;
-    y: number;
-    qualifiedItemId: string;
-    displayName: string;
-    stack: number;
+    isFridge: boolean;
+    items: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number }>[];
   }>[];
   /** Bounded live inventory facts, currently published only for animal-product output rereads. */
   inventoryItemFacts?: readonly Readonly<{
@@ -1452,8 +1451,14 @@ type BodyProgramNode = Readonly<{
   dependsOn: readonly string[];
   bindings: Readonly<Record<string, BodyProgramFactReference>>;
 }>;
-/** Frozen maximum Body Program node count, shared with C# BodyProgramValidation.MaximumNodes. */
-const MAX_BODY_PROGRAM_NODES = 16;
+/**
+ * Frozen maximum Body Program node count on the WIRE, shared with C# `BodyProgramValidation.MaximumNodes`.
+ *
+ * A corruption bound like `MAX_NATIVE_NOTICES` below it, not a budget: a 16-node program is ordinary, so this refuses a
+ * peer that could not have written this journal rather than limiting what one plan may do. It was 16, which meant the
+ * reader enforced the writer's policy - see the C# declaration for the measurement (8 of 26 programs sat exactly on it).
+ */
+export const MAX_BODY_PROGRAM_NODES = 256;
 /** Frozen native-notice bounds, shared with the C# NativeNoticeObserver. */
 const MAX_NATIVE_NOTICES = 8;
 const MAX_NATIVE_NOTICE_CHARS = 512;
@@ -1481,6 +1486,13 @@ type BodyProgramNodeStatus = Readonly<{
   admissionAttempt: number;
   /** Why the node holds this state, when the Mod recorded a reason. Absent when there is none. */
   rejectionCode?: string | null;
+  /**
+   * Why a dispatched node settled without succeeding, in the action-owned receipt's own words
+   * (`door_out_of_range`, `player_not_actionable`). Only on `failed`/`cancelled`, absent otherwise.
+   *
+   * A cause, never proof of an effect: those states still carry no receipt, evidence, postcondition or facts.
+   */
+  failureCode?: string | null;
 }>;
 type BodyProgramStatusSnapshot = Readonly<{
   programId: string;
@@ -1678,8 +1690,7 @@ const SNAPSHOT_KEYS = [
   "petTargets",
   "animalProductTargets",
   "feedTroughTargets",
-  "chestStoreTargets",
-  "chestRetrieveTargets",
+  "chests",
   "inventoryItemFacts",
   "foodTargets",
   "shippingBinTargets",
@@ -3404,8 +3415,10 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "petTargets", maxItems: 16, accepts: isPetTargetFact },
   { field: "animalProductTargets", maxItems: 32, accepts: isAnimalProductTargetFact },
   { field: "feedTroughTargets", maxItems: 32, accepts: isFeedTroughTargetFact },
-  { field: "chestStoreTargets", maxItems: 16, accepts: isChestStoreTargetFact },
-  { field: "chestRetrieveTargets", maxItems: 16, accepts: isChestRetrieveTargetFact },
+  // One container row carries its own contents, so this cap bounds CONTAINERS, not items: `items` is the complete
+  // mirror and is never shortened. 64 is the per-family ceiling the snapshot schema already declares for the container
+  // families this replaces, and the same ceiling the Mod's `TargetRowBudget.FamilyRowLimit` names.
+  { field: "chests", maxItems: 64, accepts: isChestStateFact },
   { field: "inventoryItemFacts", maxItems: 36, accepts: isInventoryItemFact },
   { field: "foodTargets", maxItems: 36, accepts: isFoodTargetFact },
   { field: "shippingBinTargets", maxItems: 1, accepts: isShippingBinTargetFact },
@@ -4086,11 +4099,16 @@ function isBodyProgramStatusSnapshot(value: unknown): boolean {
 function isBodyProgramNodeStatus(value: unknown): boolean {
   return (
     isRecord(value) &&
-    // The exact set is asserted as before, plus the ONE optional key the Mod may add. A node without it must still
-    // validate, so the allowance is "these keys, and possibly this one of them" rather than a loosened shape.
-    hasExactKeysOrOptional(value, ["nodeId", "state", "nodeAttempt", "admissionAttempt"], ["rejectionCode"]) &&
+    // The exact set is asserted as before, plus the TWO optional keys the Mod may add. A node without either must still
+    // validate, so the allowance is "these keys, and possibly these of them" rather than a loosened shape.
+    hasExactKeysOrOptional(
+      value,
+      ["nodeId", "state", "nodeAttempt", "admissionAttempt"],
+      ["rejectionCode", "failureCode"],
+    ) &&
     isOpaqueId(value.nodeId) &&
     (value.rejectionCode === undefined || value.rejectionCode === null || isReasonCode(value.rejectionCode)) &&
+    (value.failureCode === undefined || value.failureCode === null || isReasonCode(value.failureCode)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
