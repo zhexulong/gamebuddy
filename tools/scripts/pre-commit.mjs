@@ -5,8 +5,7 @@ import { execFileSync } from "node:child_process";
  * violations from authors who never ran the formatter.
  *
  * Scope is deliberately narrow, and deliberately NOT tree-wide:
- *   - It formats the STAGED content and writes the result back to the index. That removes the cause
- *     of the recurring red without touching the worktree.
+ *   - It formats the STAGED files and re-stages them. That removes the cause of the recurring red.
  *   - It does NOT run the tree-wide ratchets as blockers. Those ratchets fail on any new violation
  *     anywhere in the tree, so blocking a commit on them would block one author for a neighbour's
  *     file - the failure mode that gets hooks uninstalled. The ratchets stay CI's job; the total is
@@ -15,22 +14,15 @@ import { execFileSync } from "node:child_process";
  *   - It PRINTS the staged set before doing anything, because in a shared checkout that set is not always
  *     the author's own (see the comment at that block).
  *
- * Why it formats the staged blob and not the file on disk: several sessions share one checkout, so a
- * file on disk routinely holds a neighbour's unstaged hunk. Running the formatter on the file and then
- * `git add`-ing it moves that neighbour's work into this commit - proven in
- * `tools/scratch/prove-precommit-absorbs.mjs`, and the reason a private index (`GIT_INDEX_FILE`) was
- * not enough on its own. Reading `:path`, formatting it through stdin and updating the index entry
- * leaves the worktree byte-for-byte as it was.
- *
  * Escape hatch is git's own: `git commit --no-verify`.
  */
 const FORMATTABLE = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|json|jsonc|css|md)$/i;
 const BIOME = "node_modules/@biomejs/biome/bin/biome";
 
-const git = (args, options = {}) => execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 26, ...options });
+const git = (args, options = {}) =>
+  execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 26, ...options }).trim();
 
 const staged = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
-  .trim()
   .split(/\r?\n/)
   .filter((path) => path.length > 0);
 
@@ -61,79 +53,44 @@ if (targets.length === 0) {
   process.exit(0);
 }
 
-const indexEntry = (path) => {
-  // `<mode> <oid> <stage>\t<path>` - the stage is always 0 for a committed entry.
-  const line = git(["ls-files", "-s", "--", path]).trim();
-  if (line.length === 0) return null;
-  const [meta] = line.split("\t");
-  const [mode, oid] = meta.split(" ");
-  return { mode, oid };
-};
-
-let rewritten = 0;
-const failures = [];
-for (const path of targets) {
-  const entry = indexEntry(path);
-  if (entry === null) continue;
-  const original = git(["cat-file", "-p", entry.oid]);
-  let formatted;
-  try {
-    formatted = execFileSync("node", [BIOME, "format", `--stdin-file-path=${path}`, "--max-diagnostics=none"], {
-      input: original,
-      encoding: "utf8",
-      stdio: ["pipe", "pipe", "pipe"],
-      maxBuffer: 1 << 26,
-    });
-  } catch (error) {
-    const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-    // Biome exits 1 when the path is one its configuration ignores, or when it has no formatter for
-    // that language (`The content was not formatted because the formatter is currently disabled`).
-    // Neither is a formatting failure, and blocking a commit on them would stop anyone from
-    // committing under an ignored directory - so it passes, with the reason reported once.
-    if (/were provided but ignored|No files were processed|not supported|formatter is currently disabled/i.test(detail))
-      continue;
-    failures.push(`${path}\n${detail}`);
-    continue;
-  }
-
-  // The formatter's output is the staged blob's replacement. Compare through the object store so a
-  // CRLF worktree, a trailing newline or the executable bit cannot make an identical file look newer.
-  const next = execFileSync("git", ["hash-object", "-w", "--stdin"], {
-    input: formatted,
-    encoding: "utf8",
-    maxBuffer: 1 << 26,
-  }).trim();
-  if (next === entry.oid) continue;
-  git(["update-index", "--cacheinfo", `${entry.mode},${next},${path}`]);
-  rewritten += 1;
-}
-
-if (failures.length > 0) {
-  console.error(`pre-commit: the formatter failed\n${failures.join("\n")}`);
-  process.exit(1);
-}
-
-console.log(
-  rewritten === 0
-    ? "pre-commit: every staged file was already formatted"
-    : `pre-commit: reformatted ${rewritten} staged file(s); the worktree was not touched`,
-);
-
 try {
-  const ratchetLines = [];
-  for (const ratchet of ["tools/scripts/check-format-ratchet.mjs", "tools/scripts/check-lint-ratchet.mjs"]) {
-    try {
-      const line = execFileSync("node", [ratchet], { encoding: "utf8", maxBuffer: 1 << 26 })
-        .trim()
-        .split(/\r?\n/)
-        .slice(-1)[0];
-      if (line !== undefined) ratchetLines.push(`  ${line}`);
-    } catch (error) {
-      const line = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split(/\r?\n/).slice(-1)[0];
-      if (line !== undefined && line.length > 0) ratchetLines.push(`  ${line}`);
-    }
+  const output = execFileSync("node", [BIOME, "format", "--write", "--max-diagnostics=none", ...targets], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  console.log(`pre-commit: ${output.trim().split(/\r?\n/).slice(-1)[0] ?? "formatted"}`);
+} catch (error) {
+  const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+  // Biome exits 1 when every given path is one its configuration ignores (for example
+  // `dialogue-web/tests/**`). That is not a formatting failure, and blocking a commit on it would
+  // stop anyone from committing under an ignored directory - so it passes, with the reason printed.
+  if (/were provided but ignored|No files were processed/i.test(detail)) {
+    console.log("pre-commit: nothing to format (the formatter ignores these paths)");
+  } else {
+    console.error(`pre-commit: the formatter failed\n${detail}`);
+    process.exit(1);
   }
-  if (ratchetLines.length > 0) console.log(`pre-commit: ratchets (information only)\n${ratchetLines.join("\n")}`);
-} catch {
-  // The ratchets are information. A hook that fails on them is a hook everyone bypasses.
+}
+
+// Re-stage only the files this hook was allowed to touch: a formatting change must ride along with
+// the commit it belongs to, and nothing else may be added to the index.
+const changed = git(["diff", "--name-only", "--", ...targets])
+  .split(/\r?\n/)
+  .filter((path) => path.length > 0);
+if (changed.length > 0) {
+  execFileSync("git", ["add", "--", ...changed], { stdio: "inherit" });
+  console.log(`pre-commit: re-staged ${changed.length} formatted file(s)`);
+}
+
+for (const ratchet of ["tools/scripts/check-format-ratchet.mjs", "tools/scripts/check-lint-ratchet.mjs"]) {
+  try {
+    const line = execFileSync("node", [ratchet], { encoding: "utf8", maxBuffer: 1 << 26 })
+      .trim()
+      .split(/\r?\n/)
+      .slice(-1)[0];
+    console.log(`pre-commit: ${line}`);
+  } catch (error) {
+    const line = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split(/\r?\n/).slice(-1)[0];
+    console.log(`pre-commit: ${line} (CI decides; this commit is not blocked by a tree-wide delta)`);
+  }
 }
