@@ -138,7 +138,6 @@ test("a running game refuses the switch by name, so the player is told to stop i
 });
 
 test("an attached game with an idle turn is still a running game", async () => {
-  const root = await runtimeRoot();
   for (const connectionStatus of [...classifiedConnectionStatuses()]) {
     const occupying = gameSessionOccupiesTheInstallation(
       gameState({ connectionStatus, attachment: { status: "attached", generation: 1 } }),

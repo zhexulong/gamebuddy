@@ -18,7 +18,6 @@
  */
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
 
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
@@ -27,10 +26,7 @@ import { createCompanionActivationService } from "./tavern/companion-activation-
 import { companionSwitchRequestPath } from "./tavern/companion-switch-request.js";
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { provisionDirectNewCompanion } from "./tavern/new-companion-service.js";
-import {
-  createTavernManagementDialogueWebRequestHandler,
-  startTavernManagementDialogueWebServer,
-} from "./tavern-management-dialogue-web.js";
+import { startTavernManagementDialogueWebServer } from "./tavern-management-dialogue-web.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 
 test.before(async () => {
