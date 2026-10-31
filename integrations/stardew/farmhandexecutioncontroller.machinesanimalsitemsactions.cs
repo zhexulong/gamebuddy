@@ -731,8 +731,13 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
         if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_out_of_reach_after_approach", $"target={expectedTargetId};npc={(int)npc.Tile.X},{(int)npc.Tile.Y}");
-        if (!Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? friendship))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "friendship_fact_unavailable", $"npc={npc.Name}");
+        // A villager the player has never met has no record yet, and the discovery projection publishes that villager
+        // with the zeroed relationship the engine's own first conversation creates (`NPC.checkAction`,
+        // `friendshipData.Add(name, new Friendship(0))`). Refusing here would advertise a target the family's own
+        // inspection cannot read, so the absent record is read as the zero it is rather than as missing data.
+        Friendship friendship = Game1.player.friendshipData.TryGetValue(npc.Name, out Friendship? record)
+            ? record
+            : new Friendship();
 
         int npcTileX = (int)npc.Tile.X;
         int npcTileY = (int)npc.Tile.Y;

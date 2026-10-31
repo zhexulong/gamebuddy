@@ -93,20 +93,14 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
 
             "chest_store" => this.executions.RequestLocalChestStore(
                 request.RequestId,
-                request.Args.Slot ?? 0,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
+                request.Args.ChestId ?? string.Empty,
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,
-                request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
             "chest_retrieve" => this.executions.RequestLocalChestRetrieve(
                 request.RequestId,
-                request.Args.Slot ?? 0,
-                (int)(request.Args.X ?? 0),
-                (int)(request.Args.Y ?? 0),
+                request.Args.ChestId ?? string.Empty,
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,
-                request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
             "take_pedestal_item" => this.executions.RequestLocalTakePedestalItem(
