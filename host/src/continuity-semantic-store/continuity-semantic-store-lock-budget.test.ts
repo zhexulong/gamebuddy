@@ -878,8 +878,10 @@ const SWEEP_SAMPLES = 11;
  * arithmetic the per-row cost already carries. The larger sizes were measured out of band and are
  * recorded above; the per-row cost this test DERIVES from its own readings is what turns them into a
  * prediction instead of a second hand-written copy of the same fact. Those derived crossings land
- * between 1.3 and 1.6 million rows depending on what else the machine is doing, which is the honest
- * width of this measurement: re-validation cost is linear, the constant around it is not.
+ * between 0.87 and 1.53 million rows across runs, which is the honest width of this measurement:
+ * re-validation cost is linear, the constant around it is not. The out-of-band sweep above puts the
+ * same crossing between 640 000 and 960 000 rows, so the two agree on the order of magnitude and on
+ * the fact that it is far past any history this product carries.
  */
 test("the commit curve grows with the store's history and names where it would cross the budget", (t) => {
   const measured: { rows: number; bytes: number; p50: number; p95: number; max: number }[] = [];
