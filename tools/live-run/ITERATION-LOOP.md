@@ -74,3 +74,45 @@ Cheapest form that works, and it needs no game:
 
 And every gate added to keep a defect out gets a falsifier before it is trusted: reintroduce the defect, watch it go red,
 revert. An unobserved failure is decoration, not a check.
+
+## The accounting discipline
+
+Most of the mistakes in this loop have not been wrong logic. They have been **numbers about the wrong thing**, stated
+confidently. Four in one day: a count of log lines reported as a count of nights; `input` reported as context; a token estimate
+compared across two different trees; a `Where-Object -match` over strings reported as a measurement.
+
+So before quoting a number, answer three questions in the same sentence:
+
+1. **Which file did it come from?** A counter must read one file. Mixing a harness field with a session field is how two
+true numbers become one false claim.
+2. **What exactly does it count?** `day_advanced` appearing twice in a log is one night recorded by two components, not two
+nights. State the unit, not the event name.
+3. **Is it a peak, a sum, or a sample?** `inputMax` is the `Math.max` of `input + cacheRead` across turns; `totalTokens` in
+`result.json` is the second-to-last assistant message. They differ by two orders of magnitude and both are honest.
+
+`node tools/perf/report-run-cost.mjs` exists because of this: it prints the source file beside every number, so a reader can
+disagree with a claim without re-deriving it.
+
+## PASS, FAIL, and NOT EXERCISED are three answers
+
+"Not falsified" is not "confirmed". A run that never triggered a path cannot support a verdict about it, and a gate that
+reports green because the thing it watched was absent is a gate that has stopped working.
+
+Write the verdict down **before** the run, with the condition for each outcome. Include the row that says what would make
+this run unable to answer at all - a provider failure, a bridge that closed before the interesting part, a fixture that never
+produced the target. `round14` and `round15` both died in the first minutes; reading either as evidence about the product
+would have been reading a broken instrument.
+
+When a run cannot answer, say so in those words. A `NOT EXERCISED` that is honestly labelled is worth more than a `PASS`
+that was never at risk of failing.
+
+## Replay a real defect, not an imagined one
+
+Injecting the defect you had in mind proves you can turn your own gate red. The stronger test, and the one to prefer: check
+out the commit **before** a defect that actually shipped and confirm the gate fires there. `round17`'s
+`observation_binding_malformed` is a worked example - replay `eb617d05^` and the compiler gate goes red on the real tree that
+produced it.
+
+When no real defect exists to replay, say so rather than substituting a synthetic one. A gate whose only falsifier is a
+synthetic edit has demonstrated nothing about the defect class it claims to cover.
+
