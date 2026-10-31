@@ -15,6 +15,7 @@ using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewModdingAPI.Utilities;
 using StardewValley;
+using StardewValley.BellsAndWhistles;
 using StardewValley.Menus;
 using StardewValley.Tools;
 
@@ -2350,9 +2351,125 @@ public sealed partial class ModEntry : Mod
         // before the native chat write. This is best-effort and never blocks
         // the text write (the presentation itself is the authority).
         if (this.IsConfiguredAiScreen(out Farmer? farmhand, out _) && farmhand is not null)
+        {
             this.TryPerformPresentationEmbodiment(farmhand);
+            this.TryShowCompanionBubble(farmhand, request.Text, request.Locale);
+        }
+        // The chat line is the authority for the receipt. The bubble rides beside
+        // it: the world surface is what a player watching the farmer reads, and
+        // the log is what survives scroll-back and reaches the rest of the lobby.
         return this.TrySendNativeChat(request.Text, request.Locale);
     }
+
+    /// <summary>
+    /// The in-world half of one companion line: text over her head, in the world,
+    /// where a player already looking at her reads it without looking away.
+    ///
+    /// <para>
+    /// The seam is the engine's own text sprite, not <c>showTextAboveHead</c>: on the
+    /// target version that method is declared by <c>NPC</c> alone and the companion is a
+    /// <c>Farmer</c>, which has no <c>*AboveHead*</c> member at all. A
+    /// <c>TemporaryAnimatedSprite</c> carrying <c>text</c> with
+    /// <c>extraInfoForEndBehavior = -777</c> is the engine's primitive for text over an
+    /// arbitrary character (<c>TemporaryAnimatedSprite.draw</c> routes it to
+    /// <c>SpriteText.drawString</c>), and <c>Multiplayer.broadcastSprites</c> is the
+    /// engine's own sync path for it - <c>temporarySprites</c> is a plain list, so the
+    /// broadcast IS the sync and there is no world state to mirror.
+    /// </para>
+    /// <para>
+    /// Two costs this seam has and <c>showTextAboveHead</c> does not, named here so
+    /// nobody "fixes" the appearance by reaching for a frame it cannot draw: the text
+    /// is bare <c>SpriteText.drawString</c> glyphs, not the framed scroll bubble NPCs get
+    /// from <c>drawStringWithScrollCenteredAt</c>; and the text branch of
+    /// <c>TemporaryAnimatedSprite.draw</c> ignores <c>attachedCharacter</c>, so the
+    /// position is fixed at spawn and the line stays where she stood rather than
+    /// following her as she walks. Only the second is visible in play; both are
+    /// accepted for an engine-native primitive that needs no new transport. A third,
+    /// smaller one: the sprite goes out on its loop count rather than fading, so the
+    /// line ends on a cut where an NPC's bubble fades over its last 400ms.
+    /// </para>
+    /// <para>
+    /// Topology: only the AI screen reaches this method (the host role has no bridge),
+    /// so the emission is the Farmhand's and <c>broadcastSprites</c> carries it - to the
+    /// master's own world through <c>processIncomingMessage</c> case 7, and from there
+    /// to every other client, because type 7 is in <c>isClientBroadcastType</c> and
+    /// <c>GameServer</c> rebroadcasts it to all players but the sender. No new transport.
+    /// </para>
+    /// </summary>
+    private void TryShowCompanionBubble(Farmer farmhand, string text, string locale)
+    {
+        // Every path through this method reports WHY it did or did not draw, because the alternative shipped first:
+        // five early returns and a bare `catch`, so the log could not distinguish "the bubble was drawn" from "a gate
+        // refused it" from "the engine threw". A presentation surface with no observable outcome cannot be verified in a
+        // live run, and the only evidence left is a screenshot nobody takes.
+        if (!NativeChatPresentationPolicy.IsBoundHumanRecipient(farmhand))
+        {
+            this.Monitor.Log("[companion-bubble] skipped;reason=not_bound_human_recipient", LogLevel.Trace);
+            return;
+        }
+        if (!NativeChatPresentationPolicy.IsCurrentLocale(locale))
+        {
+            this.Monitor.Log($"[companion-bubble] skipped;reason=locale_mismatch;locale={locale}", LogLevel.Trace);
+            return;
+        }
+        if (Game1.currentLocation is not GameLocation location)
+        {
+            this.Monitor.Log("[companion-bubble] skipped;reason=no_current_location", LogLevel.Trace);
+            return;
+        }
+
+        // Same egress identity as the chat write: the exact static field with the
+        // exact native type. The field is not public on every target build, so the
+        // identity check is the only legal way to reach the engine's own broadcast.
+        FieldInfo? field = typeof(Game1).GetField("multiplayer", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+        if (!NativeChatPresentationPolicy.IsExactMultiplayerField(field)
+            || field!.GetValue(null) is not Multiplayer multiplayer)
+        {
+            this.Monitor.Log("[companion-bubble] skipped;reason=multiplayer_seam_not_exact", LogLevel.Trace);
+            return;
+        }
+
+        try
+        {
+            Point standing = farmhand.StandingPixel;
+            int width = SpriteText.getWidthOfString(text);
+            // Vanilla's own overhead-text placement (NPC.drawAboveAlwaysFrontLayer):
+            // centred on the standing pixel, one sprite height plus 64px above it.
+            TemporaryAnimatedSprite bubble = new(
+                0,
+                CompanionBubbleDurationMs / (float)CompanionBubbleTicks,
+                1,
+                CompanionBubbleTicks,
+                new Vector2(standing.X - width / 2f, standing.Y - farmhand.Sprite.SpriteHeight * 4 - 64),
+                flicker: false,
+                flipped: false)
+            {
+                text = text,
+                // The engine's marker for "render this sprite as text".
+                extraInfoForEndBehavior = -777,
+                drawAboveAlwaysFront = true,
+                layerDepth = 1f,
+            };
+            multiplayer.broadcastSprites(location, bubble);
+            // The engine's receipt is the broadcast returning; what it does with the sprite afterwards is not reported by
+            // the engine, so this line is the last fact this Mod owns about the bubble. It names the tile and the text
+            // length rather than the text - the line is already in the chat log, and repeating it here would log the
+            // companion's speech twice.
+            this.Monitor.Log(
+                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};ticks={CompanionBubbleTicks}",
+                LogLevel.Trace);
+        }
+        catch (Exception exception)
+        {
+            // Presentation is best-effort - the chat line must still land - but "best-effort" is not "unreported".
+            this.Monitor.Log($"[companion-bubble] failed;reason={exception.GetType().Name}", LogLevel.Trace);
+        }
+    }
+
+    // NPC.showTextAboveHead's own duration default, and the tick count the sprite
+    // counts down at; one duration, two spellings would drift.
+    private const int CompanionBubbleDurationMs = 3000;
+    private const int CompanionBubbleTicks = 30;
 
     /// <summary>
     /// Best-effort embodied companion presentation. Turns the companion to
