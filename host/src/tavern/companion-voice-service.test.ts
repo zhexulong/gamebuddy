@@ -25,10 +25,19 @@ import {
 import {
   type CompanionProfileBindingRefresh,
   projectCompanionVoice,
+  renderCompanionVoiceText,
   updateMountedCompanionVoice,
 } from "./companion-voice-service.js";
+import { macroTable } from "./macro-engine.js";
 import { provisionNewCompanion, type NewCompanionReview } from "./new-companion-service.js";
 import type { CharacterCandidate } from "./types.js";
+
+/**
+ * The table these tests treat as the surface's own: `{{char}}` is Nova and `{{user}}` is
+ * the Chinese second person the run speaks in. A save is told which table rendered the text
+ * it is handed, so that a value still equal to the authored rendering is stored authored.
+ */
+const IDENTITY_MACROS = macroTable({ char: "Nova", locale: "zh-CN" });
 
 const identity: CompanionIdentity = Object.freeze({
   continuityId: "continuity_voice",
@@ -120,6 +129,7 @@ test("clearing the directive removes the field and the mount prompt stays byte-i
       containmentRoot: paths.root,
       identityKey: identityKey(identity),
       expectedProfileRevision: withVoice.revision,
+      macros: IDENTITY_MACROS,
       voice: null,
       refreshThreadBindings: threadBindingRefresh(root),
     });
@@ -155,6 +165,7 @@ test("editing the directive re-authors it as the player's and refreshes the prof
       containmentRoot: paths.root,
       identityKey: identityKey(identity),
       expectedProfileRevision: original.revision,
+      macros: IDENTITY_MACROS,
       voice: { text: "Speak in short, warm sentences." },
       refreshThreadBindings: threadBindingRefresh(root),
     });
@@ -176,6 +187,7 @@ test("editing the directive re-authors it as the player's and refreshes the prof
         containmentRoot: paths.root,
         identityKey: identityKey(identity),
         expectedProfileRevision: original.revision,
+        macros: IDENTITY_MACROS,
         voice: { text: "stale write" },
         refreshThreadBindings: threadBindingRefresh(root),
       }),
@@ -198,6 +210,7 @@ test("a re-import of the same card provisions a new companion and never repopula
       containmentRoot: paths.root,
       identityKey: identityKey(identity),
       expectedProfileRevision: original.revision,
+      macros: IDENTITY_MACROS,
       voice: null,
       refreshThreadBindings: threadBindingRefresh(root),
     });
@@ -288,6 +301,7 @@ test("a save is refused while one of her Chats is answering, and nothing is writ
         containmentRoot: paths.root,
         identityKey: identityKey(identity),
         expectedProfileRevision: original.revision,
+        macros: IDENTITY_MACROS,
         voice: { text: "Speak in short, warm sentences." },
         refreshThreadBindings: threadBindingRefresh(root),
       }),
@@ -366,6 +380,7 @@ test("a settled Chat saves normally, and another companion's live turn does not 
       containmentRoot: paths.root,
       identityKey: identityKey(identity),
       expectedProfileRevision: original.revision,
+      macros: IDENTITY_MACROS,
       voice: { text: "Speak in short, warm sentences." },
       refreshThreadBindings: threadBindingRefresh(root),
     });

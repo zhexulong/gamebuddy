@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import type { TavernArtifactStore } from "../artifact-store.js";
+import { keepAuthoredText } from "../companion-authored-text.js";
+import { type MacroTable, renderMacros } from "../macro-engine.js";
 import { type GreetingSet, validateTavernArtifact } from "../types.js";
 
 type GreetingVariantProjection = Readonly<{ label?: string; text: string }>;
@@ -26,15 +28,12 @@ export type GreetingManagementService = Readonly<{
    * it was drawn from. It is a read of the same record `read()` projects - never a second store,
    * and never player-authored text beyond the verbatim greeting itself.
    */
-  readExact(): Promise<
-    | Readonly<{
-        greetingSetId: string;
-        revision: number;
-        canonicalHash: string;
-        variants: readonly Readonly<{ variantId: string; label?: string; text: string }>[];
-      }>
-    | null
-  >;
+  readExact(): Promise<Readonly<{
+    greetingSetId: string;
+    revision: number;
+    canonicalHash: string;
+    variants: readonly Readonly<{ variantId: string; label?: string; text: string }>[];
+  }> | null>;
 }>;
 
 /** Player-scoped durable greeting data. Authored text is stored and projected verbatim. */
@@ -107,6 +106,59 @@ function greeting(greetingSetId: string, revision: number, request: CreateGreeti
     ),
   });
 }
+/**
+ * The browser-facing projection over one greeting set: every text the surface can read and
+ * write is rendered through the run's macro table, exactly as the scenario projection is.
+ *
+ * The durable record keeps the AUTHOR's text (`{{char}}`/`{{user}}`), because the card
+ * export writes it back; a player reading her openings must not meet a placeholder, and an
+ * editor must not freeze one either. So an edit is first turned back into the authored text
+ * - a row that still renders to exactly the opening on disk IS that opening and is kept as
+ * it was - and only then written. A row the player rewrote says her own words, verbatim.
+ */
+export function withGreetingSurfaceMacros(
+  service: GreetingManagementService,
+  resolveMacros: () => Promise<MacroTable>,
+): GreetingManagementService {
+  const render = (projection: GreetingSetProjection, macros: MacroTable): GreetingSetProjection =>
+    Object.freeze({
+      ...projection,
+      variants: Object.freeze(
+        projection.variants.map((variant) => Object.freeze({ ...variant, text: renderMacros(variant.text, macros) })),
+      ),
+    });
+  return Object.freeze({
+    async create(request) {
+      const macros = await resolveMacros();
+      return render(await service.create(request), macros);
+    },
+    async read() {
+      const projection = await service.read();
+      return projection === null ? null : render(projection, await resolveMacros());
+    },
+    async update(request) {
+      // ONE table for both halves of the save: the one the edited text is measured against and
+      // the one the answer is rendered with. Two tables is how a macro expands one way in the
+      // value that was kept and another in the value that was written.
+      const macros = await resolveMacros();
+      const current = await service.read();
+      // The whole list is replaced, so a row's identity is its position: the surface renders
+      // the set in order and sends it back in order.
+      const authored = request.variants.map((variant, index) => {
+        const before = current?.variants[index];
+        return Object.freeze({
+          ...variant,
+          text: before === undefined ? variant.text : keepAuthoredText(variant.text, before.text, macros),
+        });
+      });
+      return render(await service.update({ ...request, variants: authored }), macros);
+    },
+    async readExact() {
+      return await service.readExact();
+    },
+  });
+}
+
 function project(artifact: unknown): GreetingSetProjection {
   if (!isGreetingSet(artifact)) throw new Error("invalid_greeting_artifact");
   return Object.freeze({
@@ -162,10 +214,17 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function singleLine(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function text(value: unknown, max: number): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= max &&
+    !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(value)
+  );
 }
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32);

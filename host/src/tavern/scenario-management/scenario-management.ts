@@ -4,6 +4,7 @@ import type { MacroTable } from "../macro-engine.js";
 import { renderMacros } from "../macro-engine.js";
 import type { TavernArtifactStore } from "../artifact-store.js";
 import { type Scenario, validateTavernArtifact } from "../types.js";
+import { keepAuthoredText } from "../companion-authored-text.js";
 
 type PlayerScenarioProjection = Readonly<{
   revision: number;
@@ -43,6 +44,10 @@ export function companionScenarioId(companionRoot: string): string {
  * Player-scoped Scenario metadata persistence. Only safe display metadata is
  * projected; artifact provenance, paths, identifiers, and materialized text
  * remain internal.
+ *
+ * The durable record is the AUTHOR's text. `withScenarioSurfaceMacros` renders it
+ * for the surface that reads, and every edit keeps the authored text when the value
+ * it is handed still renders to exactly that (see `keepAuthoredText`).
  */
 export function createScenarioManagementService(
   store: TavernArtifactStore,
@@ -183,7 +188,16 @@ export function withScenarioSurfaceMacros(
       return projection === null ? null : render(projection);
     },
     async update(request) {
-      return render(await service.update(request));
+      // The browser sends back what it READ, which is the rendering. A save that stored
+      // it would bake this run's rendering of the card's macros into the durable record -
+      // the defect the write side was just cured of, arriving through the editor instead.
+      // The authored text is recovered from the record being replaced, so an edit that
+      // did not change a field leaves that field exactly as the author wrote it.
+      const macros = await resolveMacros();
+      const current = await service.read();
+      const description =
+        current === null ? request.description : keepAuthoredText(request.description, current.description, macros);
+      return render(await service.update({ ...request, description }));
     },
   });
 }

@@ -2,7 +2,11 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { identityProfileMetadata, readIdentityProfile } from "../identity-profile.js";
-import { projectCompanionVoice, updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
+import {
+  projectCompanionVoice,
+  renderCompanionVoiceText,
+  updateMountedCompanionVoice,
+} from "../tavern/companion-voice-service.js";
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
 import { createCompanionCardExportService } from "../tavern/companion-card-export-service.js";
@@ -50,7 +54,10 @@ import type { ChatEventStream } from "../tavern/chat-event-stream.js";
 import { createChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import type { ChatManagementService } from "../tavern/chat-management/chat-management-service.js";
 import { createChatThreadStore } from "../tavern/chat-thread-store.js";
-import { createGreetingManagementService } from "../tavern/greeting-management/greeting-management.js";
+import {
+  createGreetingManagementService,
+  withGreetingSurfaceMacros,
+} from "../tavern/greeting-management/greeting-management.js";
 import { createTavernLibraryService, isTavernArtifactUnreadable } from "../tavern/library-service.js";
 import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/new-companion-service.js";
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
@@ -308,7 +315,10 @@ function createTavernManagementDomains(
     createScenarioManagementService(artifactStore, tavernPaths.companionRoot),
     mountedMacros,
   );
-  const greetingService = createGreetingManagementService(artifactStore, tavernPaths.companionRoot);
+  const greetingService = withGreetingSurfaceMacros(
+    createGreetingManagementService(artifactStore, tavernPaths.companionRoot),
+    mountedMacros,
+  );
   // The library service owns one lazily opened thread connection; it is opened
   // only if a Chat-creating route ever runs and is closed with this owner's drain.
   const libraryThreads = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
@@ -383,19 +393,22 @@ function createTavernManagementDomains(
     async read(handle: string) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
       const profile = await readIdentityProfile(runtimePaths.identityProfilePath);
+      const voice = projectCompanionVoice(profile);
       return Object.freeze({
         profileRevision: profile.revision,
-        characterVoice: projectCompanionVoice(profile),
+        characterVoice: voice === null ? null : renderCompanionVoiceText(voice, await mountedMacros()),
       });
     },
     async update(handle: string, command: Readonly<{ expectedProfileRevision: number; text?: string; clear?: true }>) {
       if (handle !== companionHandleFor(currentCompanionId)) return null;
+      const macros = await mountedMacros();
       return await updateMountedCompanionVoice({
         identityProfilePath: runtimePaths.identityProfilePath,
         runtimeCwd: runtimePaths.runtimeCwd,
         containmentRoot: runtimePaths.root,
         identityKey: identityKey(manifest.principal),
         expectedProfileRevision: command.expectedProfileRevision,
+        macros,
         voice: command.clear === true || command.text === undefined ? null : { text: command.text },
         refreshThreadBindings: async (previous, next) =>
           await refreshCompanionProfileBinding({

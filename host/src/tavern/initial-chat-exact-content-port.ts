@@ -148,6 +148,7 @@ export function createManifestDerivedInitialChatExactContentPort(
             tavernPaths.companionRoot,
             profile.revision,
             scenario?.artifact,
+            tavernPaths,
           ));
         return inner.createExplicit({
           ...request,

@@ -10,6 +10,15 @@ export type TavernPaths = Readonly<{
    * and a Chat binds it, so the Tavern boundary needs the exact path it lives at.
    */
   runtimeCwd: string;
+  /**
+   * The runtime root this identity hangs under.
+   *
+   * Here because a companion's text is stored as her AUTHOR wrote it, so every reader
+   * renders it - and the two values a render needs live beside this root: her name in
+   * `runtimeCwd/identity-profile.json` and the player's word for themselves in the stored
+   * companion language. A reader that holds only its Tavern paths can still find both.
+   */
+  runtimeRoot: string;
   playerRoot: string;
   companionRoot: string;
   continuityRoot: string;
@@ -26,6 +35,7 @@ export function resolveTavernPaths(paths: RuntimePaths, identity: CompanionIdent
   return Object.freeze({
     root,
     runtimeCwd: paths.runtimeCwd,
+    runtimeRoot: resolve(paths.root),
     playerRoot: join(root, "players", digest(identity.playerId)),
     companionRoot: join(root, "companions", digest(`${identity.playerId}\u001f${identity.companionId}`)),
     continuityRoot: join(root, "continuities", identityKey(identity)),

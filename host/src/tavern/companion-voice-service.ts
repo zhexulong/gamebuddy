@@ -12,6 +12,8 @@ import {
   writeIdentityProfileBinding,
 } from "../identity-profile.js";
 import { atomicWriteFile, withPathLock } from "../path-lock.js";
+import { keepAuthoredText } from "./companion-authored-text.js";
+import { type MacroTable, renderMacros } from "./macro-engine.js";
 
 /** Carries one profile revision to the Chat threads of this companion pinned to the one it replaced. */
 export type CompanionProfileBindingRefresh = (
@@ -22,9 +24,24 @@ export type CompanionProfileBindingRefresh = (
 /** The effective directive the durable profile holds, or null when it holds none. */
 export type CompanionVoiceProjection = Readonly<{ text: string; source: "card" | "player" }>;
 
+/**
+ * The directive the durable profile holds, or null when it holds none.
+ *
+ * The text is the AUTHOR's (`{{char}}`/`{{user}}`), because the card export writes this
+ * record back. The surface that paints it renders through the run's macro table at its own
+ * seam - `renderCompanionVoiceText` - exactly as it renders her persona and her openings.
+ */
 export function projectCompanionVoice(profile: IdentityProfile): CompanionVoiceProjection | null {
   const voice = profile.characterVoice;
   return voice === undefined ? null : Object.freeze({ text: voice.text, source: voice.source });
+}
+
+/** One stored directive as the surface that reads it must show it: macros resolved. */
+export function renderCompanionVoiceText(
+  voice: CompanionVoiceProjection,
+  macros: MacroTable,
+): CompanionVoiceProjection {
+  return Object.freeze({ text: renderMacros(voice.text, macros), source: voice.source });
 }
 
 /**
@@ -68,6 +85,8 @@ export async function updateMountedCompanionVoice(
     containmentRoot: string;
     identityKey: string;
     expectedProfileRevision: number;
+    /** The table the surface RENDERED the text through; the save turns it back into the author's. */
+    macros: MacroTable;
     voice: Readonly<{ text: string }> | null;
     refreshThreadBindings: CompanionProfileBindingRefresh;
   }>,
@@ -83,10 +102,17 @@ export async function updateMountedCompanionVoice(
       // existing value is stripped before the next profile is validated.
       const withoutVoice: Record<string, unknown> = { ...current };
       delete withoutVoice.characterVoice;
+      // The browser sends back what it READ, and what it read was the rendering. A value
+      // that still renders to exactly the directive on disk IS that directive, and storing
+      // the rendering instead would bake this run's macros into the durable record.
+      const authoredText =
+        input.voice === null || current.characterVoice === undefined
+          ? input.voice?.text
+          : keepAuthoredText(input.voice.text, current.characterVoice.text, input.macros);
       const next = validateIdentityProfile({
         ...withoutVoice,
         revision: current.revision + 1,
-        ...(input.voice === null ? {} : { characterVoice: { text: input.voice.text, source: "player" } }),
+        ...(authoredText === undefined ? {} : { characterVoice: { text: authoredText, source: "player" } }),
       });
       const nextBytes = JSON.stringify({ ...next, canonicalHash: identityProfileHash(next) }, null, 2);
       await atomicWriteFile(input.identityProfilePath, nextBytes, input.containmentRoot);
@@ -101,7 +127,10 @@ export async function updateMountedCompanionVoice(
         throw new Error("character_voice_binding_unavailable");
       }
       await refreshProfileBindings(input.runtimeCwd, input.identityKey, next, input.containmentRoot);
-      return Object.freeze({ profileRevision: next.revision, characterVoice: projectCompanionVoice(next) });
+      return Object.freeze({
+        profileRevision: next.revision,
+        characterVoice: projectCompanionVoice(next),
+      });
     },
     { containmentRoot: input.containmentRoot },
   );

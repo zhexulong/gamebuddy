@@ -4,6 +4,7 @@ import type { IdentityProfileMetadata } from "../identity-profile.js";
 import { join } from "node:path";
 import { readWorldBook, worldBookMetadata } from "../worldbook.js";
 import { type TavernArtifactStore, TavernRevisionConflict } from "./artifact-store.js";
+import { companionMacroTable, renderAuthoredText } from "./companion-authored-text.js";
 import { createProfileAwareChatThreadCreationCapability } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import type {
@@ -222,7 +223,8 @@ export function createTavernLibraryService(
         input.companionWorldBookBinding ?? (await resolveCompanionOwnWorldBookBinding(paths.runtimeCwd));
       const opening =
         input.opening === undefined
-          ? ((await resolveCompanionOwnOpening(store, paths.companionRoot, profile.revision, scenario)) ?? "blank")
+          ? ((await resolveCompanionOwnOpening(store, paths.companionRoot, profile.revision, scenario, paths)) ??
+            "blank")
           : input.opening.kind === "blank"
             ? "blank"
             : await greetingOpening(
@@ -231,6 +233,7 @@ export function createTavernLibraryService(
                 profile.revision,
                 scenario,
                 input.opening,
+                paths,
               );
       const request: CreateChatThreadRequest = {
         chatThreadId: input.chatThreadId,
@@ -416,6 +419,7 @@ export async function resolveCompanionOwnOpening(
   companionRoot: string,
   profileRevision: number,
   scenario: Scenario | undefined,
+  paths: Readonly<{ runtimeCwd: string; runtimeRoot: string }>,
 ): Promise<CreateChatThreadRequest["opening"] | undefined> {
   const record = await createGreetingManagementService(store, companionRoot).readExact();
   if (record === null || record.variants.length === 0) return undefined;
@@ -428,7 +432,14 @@ export async function resolveCompanionOwnOpening(
     profileRevision,
     scenarioRevision: scenario?.revision ?? null,
   });
-  return Object.freeze({ messageId: randomUUID(), text: variant.text, source });
+  // The record holds the AUTHOR's opening, so the line Message 0 actually shows is its
+  // rendering - through the same table every other reader uses, never a placeholder and never
+  // the identity partition's opaque id.
+  return Object.freeze({
+    messageId: randomUUID(),
+    text: renderAuthoredText(variant.text, await companionMacroTable(paths)),
+    source,
+  });
 }
 
 /**
@@ -552,6 +563,7 @@ async function greetingOpening(
   profileRevision: number,
   scenario: Scenario | undefined,
   input: Extract<NewChatRequest["opening"], { kind: "greeting" }>,
+  paths: Readonly<{ runtimeCwd: string; runtimeRoot: string }>,
 ): Promise<CreateChatThreadRequest["opening"]> {
   const greetingEnvelope = await latestGreeting(store, input.greetingSetId, directory);
   const greeting = greetingEnvelope.artifact;
@@ -565,7 +577,11 @@ async function greetingOpening(
     profileRevision,
     scenarioRevision: scenario?.revision ?? null,
   });
-  return Object.freeze({ messageId: input.messageId ?? randomUUID(), text: variant.text, source });
+  return Object.freeze({
+    messageId: input.messageId ?? randomUUID(),
+    text: renderAuthoredText(variant.text, await companionMacroTable(paths)),
+    source,
+  });
 }
 async function latestGreeting(
   store: TavernArtifactStore,
