@@ -224,7 +224,7 @@ function parseArguments(argv) {
  * text stays available for a one-off decision and is used only when no manifest is
  * given.
  */
-async function resolveScenario({ manifestPath, seed, question }) {
+export async function resolveScenario({ manifestPath, seed, question }) {
   if (manifestPath === undefined) {
     const inlineSeed = seed ?? "Remember this for later: I retired after many years delivering the post.";
     return Object.freeze({
@@ -1120,7 +1120,7 @@ function renderedIdsForRun(markers) {
  * loops disagree about the same reply, which is exactly the drift the frozen
  * vocabulary exists to prevent.
  */
-function scoreReply({ committedText, scenario, chat }) {
+export function scoreReply({ committedText, scenario, chat }) {
   // A keyword verdict may ONLY be scored against a turn that durably committed a
   // companion reply for THIS turn (the same gate the Chat harness uses). A turn that
   // failed, was cancelled, or committed no new companion text is an observability
