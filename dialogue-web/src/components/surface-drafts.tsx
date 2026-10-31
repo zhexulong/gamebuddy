@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 /**
  * The shell's own draft store: the words a player has typed but not yet saved.
@@ -93,14 +93,22 @@ function field<T>(store: DraftStore, key: string, seed: T): DraftField<T> {
   };
 }
 
-/** One text field's draft over the value the authority supplies. */
+/**
+ * One text field's draft over the value the authority supplies.
+ *
+ * Memoised on the store, the key and the seed, so a caller can hand `release` to an effect without
+ * the effect firing on every render. The store's own identity moves only when a draft moves, so the
+ * one re-run a release causes converges: the second call finds nothing to release.
+ */
 export function useDraft(key: string, seed: string): DraftField<string> {
-  return field(storeFor(key), key, seed);
+  const store = storeFor(key);
+  return useMemo(() => field(store, key, seed), [store, key, seed]);
 }
 
 /** A field whose value the player picked from a bounded set: the same rule, one erased type. */
 export function useChoiceDraft<T extends string>(key: string, seed: T): DraftField<T> {
-  return field(storeFor(key), key, seed);
+  const store = storeFor(key);
+  return useMemo(() => field(store, key, seed), [store, key, seed]);
 }
 
 /**
@@ -111,7 +119,28 @@ export function useChoiceDraft<T extends string>(key: string, seed: T): DraftFie
  * the words were not lost so much as made unreachable, which costs them the same work.
  */
 export function useOpenDraft(key: string, seed: boolean): DraftField<boolean> {
-  return field(storeFor(key), key, seed);
+  const store = storeFor(key);
+  return useMemo(() => field(store, key, seed), [store, key, seed]);
+}
+
+/**
+ * A field whose authority re-seeds it: the player's text wins, and a draft the authority already
+ * agrees with is dropped.
+ *
+ * The second half matters for the fields that save on their own (the companion language commits on
+ * blur, the thinking levels and the prompt addition save through their own buttons). Once the Host
+ * states the value the player asked for, the draft has done its job: keeping it would freeze the
+ * field on a copy that merely happens to match, and a later authoritative change would be invisible
+ * behind it. A REFUSED save leaves the old value on the authority, so nothing is released and the
+ * player's text stays where they can retry it.
+ */
+export function useDraftOverAuthority(key: string, authoritative: string): DraftField<string> {
+  const draft = useDraft(key, authoritative);
+  useEffect(() => {
+    // Only the draft that still equals the authority is released, so text typed since is kept.
+    draft.release(authoritative);
+  }, [draft, authoritative]);
+  return draft;
 }
 
 /**
@@ -121,5 +150,9 @@ export function useOpenDraft(key: string, seed: boolean): DraftField<boolean> {
  * the list is reordered or shortened, and the store must not invent that mapping.
  */
 export function useRowsDraft<T>(key: string, seed: readonly T[]): DraftField<readonly T[]> {
-  return field(storeFor(key), key, seed);
+  const store = storeFor(key);
+  // The seed is a fresh array on most renders; keying the memo on its contents would be a second
+  // spelling of "did it change". A new field object per render is harmless here because nothing
+  // hands this one to an effect.
+  return field(store, key, seed);
 }

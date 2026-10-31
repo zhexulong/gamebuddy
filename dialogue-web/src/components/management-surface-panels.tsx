@@ -41,6 +41,7 @@ import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantName } from "./opening-variant-labels";
+import { useDraft, useDraftOverAuthority } from "./surface-drafts";
 import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import {
   type ChatTitleV1,
@@ -1226,7 +1227,7 @@ type GamePromptAdditionView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "error" }>
-  | Readonly<{ kind: "ready"; record: TavernGamePromptAdditionV1; draft: string; pending: boolean }>;
+  | Readonly<{ kind: "ready"; record: TavernGamePromptAdditionV1; pending: boolean }>;
 
 /**
  * The player's own addition to the Game companion's instructions: one field, one bound, and
@@ -1244,11 +1245,13 @@ type GamePromptAdditionView =
  */
 function GamePromptAdditionPanel({
   view,
+  draft,
   labels,
   onChange,
   onSave,
 }: Readonly<{
   view: GamePromptAdditionView;
+  draft: string;
   labels: Messages;
   onChange: (next: string) => void;
   onSave: () => void;
@@ -1275,12 +1278,12 @@ function GamePromptAdditionPanel({
             rows={6}
             maxLength={MAX_GAME_PROMPT_ADDITION_CHARS}
             disabled={view.pending}
-            value={view.draft}
+            value={draft}
             onChange={(event) => onChange(event.target.value.slice(0, MAX_GAME_PROMPT_ADDITION_CHARS))}
           />
           <p className="management-settings-hint" data-game-prompt-addition-count>
             {labels.gamePromptAdditionCount
-              .replace("{{count}}", String(view.draft.length))
+              .replace("{{count}}", String(draft.length))
               .replace("{{max}}", String(MAX_GAME_PROMPT_ADDITION_CHARS))}
           </p>
           {/* WHEN it takes effect, always rendered beside the field: this is the one fact a
@@ -1356,6 +1359,26 @@ export function SettingsSurfacePanel({
   const [modelRoute, setModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const [modelProfilesView, setModelProfilesView] = useState<ModelProfilesView>({ kind: "loading" });
   const [promptAdditionView, setPromptAdditionView] = useState<GamePromptAdditionView>({ kind: "loading" });
+  /*
+   * The two fields the player types into, held by the shell rather than by this panel.
+   *
+   * Both were `useState` here, and this surface unmounts whenever the player looks at another one,
+   * so a trip to the conversation emptied them: the prompt addition lost its text and the two
+   * thinking levels fell back to the stored value. The store answers with the player's text
+   * whenever there is any, so a read-back still seeds a field they have not touched.
+   */
+  const chatThinkingLevel = useDraftOverAuthority(
+    "settings.model-profile-chat",
+    modelProfilesView.kind === "ready" ? modelProfilesView.profiles.chat.thinkingLevel : "",
+  );
+  const gameThinkingLevel = useDraftOverAuthority(
+    "settings.model-profile-game",
+    modelProfilesView.kind === "ready" ? modelProfilesView.profiles.game.thinkingLevel : "",
+  );
+  const promptAddition = useDraft(
+    "settings.game-prompt-addition",
+    promptAdditionView.kind === "ready" ? promptAdditionView.record.addition : "",
+  );
   // The one Host-owned preference record's revision, shared by both settings
   // field groups (see the header).
   const settingsRevisionRef = useRef(0);
@@ -1471,7 +1494,7 @@ export function SettingsSurfacePanel({
       // the group saying so rather than showing a field whose save would always fail.
       try {
         const record = await api.readGamePromptAddition();
-        if (active) setPromptAdditionView({ kind: "ready", record, draft: record.addition, pending: false });
+        if (active) setPromptAdditionView({ kind: "ready", record, pending: false });
       } catch {
         if (active) setPromptAdditionView({ kind: "unavailable" });
       }
@@ -1584,19 +1607,25 @@ export function SettingsSurfacePanel({
   const savePromptAddition = (): void => {
     if (promptAdditionView.kind !== "ready" || promptAdditionView.pending) return;
     const view = promptAdditionView;
+    const sent = promptAddition.value;
     setPromptAdditionView({ ...view, pending: true });
     void (async () => {
       try {
         const written = await api.updateGamePromptAddition(
-          { expectedRevision: view.record.revision, addition: view.draft },
+          { expectedRevision: view.record.revision, addition: sent },
           csrfToken,
         );
-        setPromptAdditionView({ kind: "ready", record: written, draft: written.addition, pending: false });
+        setPromptAdditionView({ kind: "ready", record: written, pending: false });
+        // Released only if the field still holds what this save sent: text typed during the request
+        // is the player's and stays.
+        promptAddition.release(sent);
         report({ kind: "success", text: labels.success });
       } catch (error) {
         try {
           const restated = await api.readGamePromptAddition();
-          setPromptAdditionView({ kind: "ready", record: restated, draft: view.draft, pending: false });
+          // The record's identity is re-read so the retry CASes on the revision the Host holds; the
+          // field keeps the player's own text, because it is not the record that failed.
+          setPromptAdditionView({ kind: "ready", record: restated, pending: false });
         } catch {
           // The refusal stands on its own: the field keeps her text and the next save CASes on
           // the revision this panel still holds.
@@ -1776,6 +1805,7 @@ export function SettingsSurfacePanel({
         <ModelProfilesPanel
           view={modelProfilesView}
           labels={labels}
+          drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
           onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
         />
       )}
@@ -1785,10 +1815,9 @@ export function SettingsSurfacePanel({
         // read landed would pop into a list the player was already reading.
         <GamePromptAdditionPanel
           view={promptAdditionView}
+          draft={promptAddition.value}
           labels={labels}
-          onChange={(next) =>
-            setPromptAdditionView((previous) => (previous.kind === "ready" ? { ...previous, draft: next } : previous))
-          }
+          onChange={(next) => promptAddition.type(next)}
           onSave={savePromptAddition}
         />
       }

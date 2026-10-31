@@ -17,6 +17,7 @@ import {
   type TavernVoicePreferenceV1,
 } from "../management-pipeline-api";
 import type { ChatModelRoute } from "../chat-model-route";
+import { useChoiceDraft, useDraft, useDraftOverAuthority, useOpenDraft, type DraftField } from "./surface-drafts";
 
 /**
  * The management panels (design/26 §4.2, design/28 §2), moved out of
@@ -229,6 +230,7 @@ export function ModelProfileEditor({
   profile,
   labels,
   pending,
+  draft,
   onSave,
 }: Readonly<{
   surface: "chat" | "game";
@@ -236,14 +238,27 @@ export function ModelProfileEditor({
   profile: TavernModelProfileV1;
   labels: ReturnType<typeof messages>;
   pending: "chat" | "game" | null;
+  /**
+   * The field's text, when the mount above owns it.
+   *
+   * It does on the Settings surface, which unmounts whenever the player looks at another one - so
+   * a thinking level typed but not saved would be gone on the way back. The surface that shares
+   * this editor between two records already has to hold the text itself; a caller that passes no
+   * draft (the Game surface, the composer's drawer, both of which stay mounted) keeps the editor's
+   * own state, which is exactly its own behaviour.
+   */
+  draft?: DraftField<string>;
   onSave: (thinkingLevel: string) => void;
 }>): ReactElement {
-  const [thinkingLevel, setThinkingLevel] = useState(profile.thinkingLevel);
+  const [ownThinkingLevel, setOwnThinkingLevel] = useState(profile.thinkingLevel);
   // Adopt the durable profile whenever it changes: a save's read-back is the
-  // only thing the editor ever shows.
+  // only thing the editor ever shows. An owning draft decides that for itself, which is why this
+  // effect is the local field's alone.
   useEffect(() => {
-    setThinkingLevel(profile.thinkingLevel);
+    setOwnThinkingLevel(profile.thinkingLevel);
   }, [profile.thinkingLevel]);
+  const thinkingLevel = draft === undefined ? ownThinkingLevel : draft.value;
+  const setThinkingLevel = draft === undefined ? setOwnThinkingLevel : draft.type;
   const busy = pending !== null;
   const dirty = thinkingLevel !== profile.thinkingLevel;
   const canSave = !busy && dirty && thinkingLevel.trim().length > 0;
@@ -254,7 +269,9 @@ export function ModelProfileEditor({
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSave) return;
-        onSave(thinkingLevel.trim());
+        const sent = thinkingLevel.trim();
+        draft?.release(sent);
+        onSave(sent);
       }}
     >
       <h3>{surfaceLabel}</h3>
@@ -294,10 +311,13 @@ export function ModelProfileEditor({
 export function ModelProfilesPanel({
   view,
   labels,
+  drafts,
   onSave,
 }: Readonly<{
   view: Extract<ModelProfilesView, { kind: "ready" }>;
   labels: ReturnType<typeof messages>;
+  /** The two editors' text, owned by the surface that outlives them (see `ModelProfileEditor.draft`). */
+  drafts: Readonly<{ chat: DraftField<string>; game: DraftField<string> }>;
   onSave: (surface: "chat" | "game", thinkingLevel: string) => void;
 }>): ReactElement {
   return (
@@ -317,6 +337,7 @@ export function ModelProfilesPanel({
         profile={view.profiles.chat}
         labels={labels}
         pending={view.pending}
+        draft={drafts.chat}
         onSave={(thinkingLevel) => onSave("chat", thinkingLevel)}
       />
       <ModelProfileEditor
@@ -325,6 +346,7 @@ export function ModelProfilesPanel({
         profile={view.profiles.game}
         labels={labels}
         pending={view.pending}
+        draft={drafts.game}
         onSave={(thinkingLevel) => onSave("game", thinkingLevel)}
       />
     </section>
@@ -407,17 +429,17 @@ export function ConnectionSettingsPanel({
   onSelectModel: (connectionId: string, modelId: string, thinkingLevel: TavernConnectionThinkingLevelV1) => void;
   onRemove: (connectionId: string) => void;
 }>): ReactElement {
-  const [providerId, setProviderId] = useState("");
+  const providerId = useChoiceDraft<string>("settings.connection-provider", "");
   const [apiKey, setApiKey] = useState("");
   // A self-hosted endpoint's own credential requirement, stated by the player. It starts at "needs
   // one" so a compatible gateway keeps working, and a local server is one click away from keyless.
-  const [apiKeyRequired, setApiKeyRequired] = useState(true);
-  const [baseUrl, setBaseUrl] = useState("");
+  const apiKeyRequired = useOpenDraft("settings.connection-key-required", true);
+  const baseUrl = useDraft("settings.connection-base-url", "");
   // The escape hatch is the one entry whose API shape the player chooses. The
   // OpenAI-compatible default is preselected because that is the entry's own
   // name; the value is always sent, never inferred by the Host.
-  const [apiShape, setApiShape] = useState<TavernConnectionApiShapeV1>("openai-completions");
-  const [modelId, setModelId] = useState("");
+  const apiShape = useChoiceDraft("settings.connection-api-shape", "openai-completions" as TavernConnectionApiShapeV1);
+  const modelId = useDraft("settings.connection-model-id", "");
 
   const providers = connectionView.state.providers;
   // Nothing is preselected. This product ships no model endpoint, so a player who has configured
@@ -425,7 +447,7 @@ export function ConnectionSettingsPanel({
   // opens on the empty choice, renders no field, and its save control stays disabled until a
   // provider is named. A default here is a claim that the product already has a channel, and it
   // does not.
-  const selected = providers.find((entry) => entry.providerId === providerId);
+  const selected = providers.find((entry) => entry.providerId === providerId.value);
   // What one provider's endpoints told us they serve, at their last probe: the only authority on
   // which models exist there.
   const servedModelsFor = (providerId: string | undefined): readonly string[] => [
@@ -529,19 +551,28 @@ export function ConnectionSettingsPanel({
             void onCreate({
               providerId: selected.providerId,
               apiKey,
-              baseUrl,
-              apiShape,
-              modelId,
+              baseUrl: baseUrl.value,
+              apiShape: apiShape.value,
+              modelId: modelId.value,
               // Only an entry that declares the answer may carry a `false`; every other provider
               // needs a credential, and a stale local answer must never relax that.
-              apiKeyRequired: selected.setupFields.includes("apiKeyRequired") ? apiKeyRequired : true,
+              apiKeyRequired: selected.setupFields.includes("apiKeyRequired") ? apiKeyRequired.value : true,
             }).then((saved) => {
               // The credential is write-only: a saved connection is never
               // readable back, so once it is stored the field must not keep
               // the secret in the document (the test's outerHTML scan finds
               // it there). Only a durable save clears it; a rejected save
               // keeps the typed value so the player can retry.
-              if (saved) setApiKey("");
+              if (saved) {
+                setApiKey("");
+                // The form's own draft fields are the connection's, so an accepted save hands them
+                // back to the authority: the saved row is what the player reads from now on.
+                providerId.release(providerId.value);
+                apiKeyRequired.release(apiKeyRequired.value);
+                baseUrl.release(baseUrl.value);
+                apiShape.release(apiShape.value);
+                modelId.release(modelId.value);
+              }
             });
           }}
         >
@@ -550,14 +581,14 @@ export function ConnectionSettingsPanel({
             id="connection-provider"
             className="form-select"
             disabled={connectionView.pending}
-            value={selected?.providerId ?? ""}
+            value={providerId.value}
             onChange={(event) => {
               const nextProviderId = event.target.value;
-              setProviderId(nextProviderId);
-              setApiKeyRequired(true);
+              providerId.type(nextProviderId);
+              apiKeyRequired.type(true);
               // The only default worth pre-filling is one the endpoint itself served. Our curated
               // ids are suggestions: naming one silently would be claiming it exists.
-              setModelId(servedModelsFor(nextProviderId)[0] ?? "");
+              modelId.type(servedModelsFor(nextProviderId)[0] ?? "");
             }}
           >
             {/*
@@ -601,8 +632,8 @@ export function ConnectionSettingsPanel({
                 spellCheck={false}
                 disabled={connectionView.pending}
                 placeholder={labels.connectionBaseUrlHint}
-                value={baseUrl}
-                onChange={(event) => setBaseUrl(event.target.value)}
+                value={baseUrl.value}
+                onChange={(event) => baseUrl.type(event.target.value)}
               />
             </>
           )}
@@ -614,8 +645,8 @@ export function ConnectionSettingsPanel({
                 id="connection-api-shape"
                 className="form-select"
                 disabled={connectionView.pending}
-                value={apiShape}
-                onChange={(event) => setApiShape(event.target.value as TavernConnectionApiShapeV1)}
+                value={apiShape.value}
+                onChange={(event) => apiShape.type(event.target.value as TavernConnectionApiShapeV1)}
               >
                 {CONNECTION_API_SHAPES.map((shape) => (
                   <option key={shape} value={shape}>
@@ -638,8 +669,8 @@ export function ConnectionSettingsPanel({
                 id="connection-api-key-required"
                 className="form-select"
                 disabled={connectionView.pending}
-                value={apiKeyRequired ? "required" : "none"}
-                onChange={(event) => setApiKeyRequired(event.target.value === "required")}
+                value={apiKeyRequired.value ? "required" : "none"}
+                onChange={(event) => apiKeyRequired.type(event.target.value === "required")}
               >
                 <option value="required">{labels.connectionApiKeyRequirementYes}</option>
                 <option value="none">{labels.connectionApiKeyRequirementNone}</option>
@@ -648,7 +679,7 @@ export function ConnectionSettingsPanel({
             </>
           )}
 
-          {selected?.setupFields.includes("apiKey") === true && apiKeyRequired && (
+          {selected?.setupFields.includes("apiKey") === true && apiKeyRequired.value && (
             <>
               <label htmlFor="connection-api-key">{labels.connectionApiKey}</label>
               <input
@@ -665,7 +696,7 @@ export function ConnectionSettingsPanel({
             </>
           )}
 
-          {selected?.setupFields.includes("apiKey") === true && !apiKeyRequired && (
+          {selected?.setupFields.includes("apiKey") === true && !apiKeyRequired.value && (
             <p className="field-hint" data-connection-keyless>
               {labels.connectionApiKeyNotRequired}
             </p>
@@ -689,8 +720,8 @@ export function ConnectionSettingsPanel({
                 required
                 disabled={connectionView.pending}
                 placeholder={labels.connectionModelIdHint}
-                value={modelId}
-                onChange={(event) => setModelId(event.target.value)}
+                value={modelId.value}
+                onChange={(event) => modelId.type(event.target.value)}
               />
               <datalist id="connection-model-options">
                 {/*
@@ -975,11 +1006,19 @@ export function LanguageSettingsPanel({
   onSelectUiLanguage: (locale: Locale) => void;
 }>): ReactElement {
   const companionTag = languageView.kind === "ready" ? languageView.locale : null;
-  const [draft, setDraft] = useState<string | null>(null);
+  /*
+   * The field's text is a draft held by the shell, on top of the value the Host holds.
+   *
+   * Two things have to be true at once, and before this they fought: the projection still re-seeds
+   * the field (it is what the Host holds, and a saved tag must show up), and it must never replace
+   * what the player has typed but not saved. So the authority's tag is the seed on every render and
+   * the store answers with the player's text whenever there is any - a typed `ja-JP` is not
+   * overwritten by the stored `zh-CN`, which used to look like the save had been accepted.
+   */
+  const companionLanguage = useDraftOverAuthority("settings.companion-language", companionTag ?? "");
   const submit = (): void => {
-    const next = draft?.trim();
-    setDraft(null);
-    if (next !== undefined && next.length > 0 && next !== companionTag) onSelectLanguage(next);
+    const next = companionLanguage.value.trim();
+    if (next.length > 0 && next !== companionTag) onSelectLanguage(next);
   };
   return (
     <section className="management-settings-section" aria-label={labels.languageSettings} data-language-settings>
@@ -1001,10 +1040,10 @@ export function LanguageSettingsPanel({
             className="form-input"
             list="companion-language-suggestions"
             disabled={languageView.pending}
-            value={draft ?? companionTag ?? ""}
+            value={companionLanguage.value}
             placeholder={labels.languageCompanionPlaceholder}
             data-companion-language-value={companionTag ?? ""}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => companionLanguage.type(event.target.value)}
             onBlur={submit}
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
