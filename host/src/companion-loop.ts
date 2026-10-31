@@ -604,7 +604,15 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
  */
 function isSalientSensoryKind(kind: string | undefined): boolean {
   return (
-    kind === "day_started" || kind === "time_milestone" || kind === "companion_arrival" || kind === "native_notice"
+    kind === "day_started" ||
+    kind === "time_milestone" ||
+    kind === "companion_arrival" ||
+    kind === "native_notice" ||
+    // The Mod's own verdict on how the night ended. It rides this lease for the same reason the others do: the companion
+    // should be able to say "I passed out at two" out loud, and a fact that reaches the model but not the chat is a
+    // decision the player never sees. It is also the fact that lets the harness stop guessing - see
+    // `multiday-baseline.mjs`'s `night_mechanism_unobserved`.
+    kind === "night_ended_pass_out"
   );
 }
 

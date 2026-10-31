@@ -1142,6 +1142,19 @@ public sealed partial class ModEntry : Mod
         // so a companion session must present those two facts before that check
         // runs. Idempotent and bounded; a session that never hosted writes nothing.
         this.companionSessionHosting?.Observe();
+        // The engine's pass-out decision, published while it is still knowable. `NewDay` resets `player.passedOut` before
+        // `DayStarted` runs (Game1.cs:7880), so reading it there always sees false - which is how round17's second night was
+        // certified as a pass when it was a 02:00 pass-out. `timeOfDay >= 2600` is the engine's own condition
+        // (Farmer.cs:3408) and nothing else in the day reaches it.
+        if (Game1.player is not null && Game1.Date is not null)
+        {
+            int passOutTimeOfDay = Game1.timeOfDay >= 0 ? Game1.timeOfDay : 600;
+            this.salientEventHooks?.OnUpdateTicked(
+                (int)Game1.Date.TotalDays,
+                passOutTimeOfDay,
+                Game1.ticks,
+                passOutTimeOfDay.ToString("D4"));
+        }
         ScreenEmbodimentState pendingTeardownState = this.GetEmbodimentState();
         if (pendingTeardownState.BodyProgramTeardownPending)
         {
