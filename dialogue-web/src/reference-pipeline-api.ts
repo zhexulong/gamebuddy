@@ -434,6 +434,11 @@ export const PROBLEM_CODES = [
   // `companion.delete` refuses the companion in play by name: her Chats are the mounted
   // conversation, so removing her would take the conversation the player is having.
   "companion_delete_in_play",
+  // `companion.activate` records the player's choice rather than switching; the two ways it
+  // refuses name the state that makes a switch impossible right now - she is already the one
+  // in play, or a Game session owns the companion it was bound to.
+  "companion_switch_already_in_play",
+  "companion_switch_requires_no_session",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;

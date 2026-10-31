@@ -418,6 +418,15 @@ export type CompanionAvatarV1 = Readonly<{ apiVersion: 1; handle: string; digest
  */
 export type CompanionDeletionV1 = Readonly<{ apiVersion: 1; handle: string }>;
 /**
+ * What a completed `companion.activate` answers: the handle whose choice was recorded.
+ *
+ * `status` is `"recorded"` and there is no other value, because the Host only RECORDS the choice -
+ * the companion in play is the deployment identity's, and the launcher is what applies a recorded
+ * choice at the next start. A `switched` boolean here would claim an operation this Host cannot
+ * perform, so the surface says "chosen for the next start" rather than "switched".
+ */
+export type CompanionActivationV1 = Readonly<{ apiVersion: 1; handle: string; status: "recorded" }>;
+/**
  * One companion's own records exported as a standard Tavern V3 card, in the form
  * the caller asked for.
  *
@@ -1292,6 +1301,12 @@ const PROBLEM_CODES = [
   // mounted conversation, so removing her would take the conversation the player is
   // having. It is the one refusal the control itself is absent for.
   "companion_delete_in_play",
+  // `companion.activate` records the player's choice for the launcher, and each way it can
+  // refuse is a fact the player can act on: the companion she pressed is already the one in
+  // play, or a Game session is running and owns the companion it was bound to. Neither is a
+  // system fault, so neither may reach the player as one.
+  "companion_switch_already_in_play",
+  "companion_switch_requires_no_session",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;
@@ -3108,6 +3123,27 @@ export function validateCompanionDeletion(value: unknown): CompanionDeletionV1 {
   return value;
 }
 
+const COMPANION_ACTIVATION_KEYS = ["apiVersion", "handle", "status"] as const;
+/**
+ * The recorded choice: the handle it was recorded for, and the one status that exists.
+ * The literal is checked rather than assumed - a response the Host could only send by claiming
+ * something it cannot do is a protocol error, not a success.
+ */
+function isCompanionActivation(value: unknown): value is CompanionActivationV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, COMPANION_ACTIVATION_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    isOpaqueHandle(value.handle) &&
+    value.status === "recorded"
+  );
+}
+
+export function validateCompanionActivation(value: unknown): CompanionActivationV1 {
+  if (!isCompanionActivation(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validatePersona(value: unknown): PersonaV1 {
   if (!isPersona(value)) throw new TavernProtocolError();
   return value;
@@ -3430,6 +3466,13 @@ export type ManagementPipelineApi = Readonly<{
    * on the revision `readCompanionProfile` projected. Her conversations are not part of it.
    */
   deleteCompanion(handle: string, expectedRevision: number, csrfToken: string): Promise<CompanionDeletionV1>;
+  /**
+   * POST /api/tavern/v1/companions/:handle/activate: records which companion this installation
+   * plays, for the launcher to apply at its next start. The body carries no identity beyond the
+   * route's own handle and no revision: choosing names the installation's choice, whose
+   * compare-and-set is the companion the Host already holds as in play.
+   */
+  activateCompanion(handle: string, csrfToken: string): Promise<CompanionActivationV1>;
   /**
    * GET /api/tavern/v1/companions/:handle/card: one roster companion's own records as
    * a standard Tavern V3 card, which the browser saves to disk. Read-only.
@@ -4003,6 +4046,24 @@ export function createManagementPipelineApi(
         { apiVersion: TAVERN_BROWSER_API_VERSION, expectedRevision },
       );
       observe("companion.delete", "passed", result.handle.slice(0, 8));
+      return result;
+    },
+    async activateCompanion(handle: string, csrfToken: string): Promise<CompanionActivationV1> {
+      if (!isOpaqueHandle(handle) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "POST",
+        `/api/tavern/v1/companions/${handle}/activate`,
+        200,
+        validateCompanionActivation,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        { apiVersion: TAVERN_BROWSER_API_VERSION },
+      );
+      // The reply must name the companion this request named: a recorded choice for somebody else
+      // is a different fact, and rendering it as this row's success would put the player's name on
+      // the wrong companion. The status literal is already the only one the validator accepts.
+      if (result.handle !== handle) throw new TavernProtocolError();
+      observe("companion.activate", "passed", result.handle.slice(0, 8));
       return result;
     },
     async exportCompanionCard(handle: string, format: "json" | "png"): Promise<CompanionCardExportV1> {

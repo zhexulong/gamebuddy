@@ -2362,6 +2362,7 @@
   .characters-row,
   [data-companion-entry] {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
@@ -2370,6 +2371,15 @@
     background-color: var(--surface-raised);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
+  }
+
+  /* The row's marks and its one control, kept as one wrap unit so a narrow column puts the
+   choose button on its own line rather than squeezing the companion's name off the row. */
+  [data-companion-entry] > .companion-entry-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
   }
 
   /* The current-companion badge. Measured off the computed styles at 11px/600:
@@ -2393,6 +2403,40 @@
     border: 1px solid var(--palette-burgundy-border);
     border-radius: var(--radius-xs);
     white-space: nowrap;
+  }
+
+  /* The chosen-but-not-yet-playing badge and the blocked-row reason. Both are the same chip
+     the current mark is, in the two other meanings the row can carry: a choice recorded for the
+     next start, and why this row cannot record one right now. They are distinguished by their
+     words and their own tokens rather than by hue alone. */
+  .companion-chosen-badge,
+  .companion-stop-game {
+    font-style: normal;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-xs);
+    white-space: nowrap;
+  }
+
+  .companion-chosen-badge {
+    color: var(--text-primary);
+    background-color: var(--surface-canvas);
+    border: 1px solid var(--border-strong);
+  }
+
+  /* The blocked reason only appears after a refusal, and it names a step the player can take, so
+     it is deliberately NOT painted in the fault palette. */
+  .companion-stop-game {
+    color: var(--text-secondary);
+    background-color: transparent;
+    border: 1px solid var(--border-subtle);
+  }
+
+  /* The row's choice control: the one button in this list, so it keeps the touch floor the
+     project's primary controls keep and the row grows to hold it rather than clipping it. */
+  [data-companion-entry] > .companion-entry-actions > .companion-choose {
+    min-height: 32px;
   }
 
   /* One opening variant: its own small stack, so the textarea and its Discard

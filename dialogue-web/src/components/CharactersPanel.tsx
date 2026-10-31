@@ -1,19 +1,21 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages, messages } from "../i18n";
-import type {
-  CompanionListV1,
-  CompanionVoiceV1,
-  GreetingV1,
-  ManagementPipelineApi,
-  PersonaV1,
-  ScenarioV1,
+import {
+  type CompanionActivationV1,
+  type CompanionListV1,
+  type CompanionVoiceV1,
+  type GreetingV1,
+  type ManagementPipelineApi,
+  type PersonaV1,
+  type ScenarioV1,
 } from "../management-pipeline-api";
 import { problemTextWithCode } from "../composed-problem-view";
 import { TavernProblemError } from "../management-pipeline-api";
+import { deriveCompanionActivationControls } from "../companion-activation-controls";
 import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
-import { characterLabels } from "./character-domain-labels";
+import { characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
@@ -35,6 +37,55 @@ type VoiceView =
 
 function saveFailure(error: unknown, saveFailed: string, labels: Messages): Readonly<{ failure: string }> {
   return { failure: problemTextWithCode(saveFailed, error, labels) };
+}
+
+/** What a refused choice meant, so the roster can also react to WHICH refusal it was. */
+const ACTIVATION_REFUSALS = {
+  alreadyInPlay: "companion_switch_already_in_play",
+  requiresNoSession: "companion_switch_requires_no_session",
+  requestStale: "companion_switch_request_stale",
+  recordUnreadable: "companion_switch_record_unreadable",
+  unavailable: "companion_switch_unavailable",
+  routeAbsent: "profile_operation_unavailable",
+} as const;
+
+/**
+ * The player's sentence for one refused choice, and what the roster must do about it.
+ *
+ * Every way `companion.activate` refuses is a different fact with a different next step: she is
+ * already the one in play, a Game session owns the companion it started with, the recorded choice
+ * went stale before a later start, the record could not be read, or her authority root could not
+ * be set aside. One "the choice could not be recorded" would send the player looking for a fault
+ * that is not there. `routeAbsent` is the one refusal that is not about this press at all: the
+ * build serves no such route, so the roster withdraws the control instead of offering it again.
+ * A code this table does not know keeps the base sentence, so an unexpected refusal is still named.
+ */
+function companionActivationRefusal(
+  labels: CharacterLabels,
+  error: unknown,
+  problemLabels: Messages,
+): Readonly<{ text: string; routeAbsent: boolean; sessionBlocked: boolean }> {
+  const code = error instanceof TavernProblemError ? error.code : null;
+  switch (code) {
+    case ACTIVATION_REFUSALS.alreadyInPlay:
+      return { text: labels.companionSwitchAlreadyInPlay, routeAbsent: false, sessionBlocked: false };
+    case ACTIVATION_REFUSALS.requiresNoSession:
+      return { text: labels.companionSwitchRequiresNoSession, routeAbsent: false, sessionBlocked: true };
+    case ACTIVATION_REFUSALS.requestStale:
+      return { text: labels.companionSwitchRequestStale, routeAbsent: false, sessionBlocked: false };
+    case ACTIVATION_REFUSALS.recordUnreadable:
+      return { text: labels.companionSwitchRecordUnreadable, routeAbsent: false, sessionBlocked: false };
+    case ACTIVATION_REFUSALS.unavailable:
+      return { text: labels.companionSwitchUnavailable, routeAbsent: false, sessionBlocked: false };
+    case ACTIVATION_REFUSALS.routeAbsent:
+      return { text: labels.companionActivateUnsupported, routeAbsent: true, sessionBlocked: false };
+    default:
+      return {
+        text: problemTextWithCode(labels.companionActivateFailed, error, problemLabels),
+        routeAbsent: false,
+        sessionBlocked: false,
+      };
+  }
 }
 
 /**
@@ -179,6 +230,25 @@ export function CharactersPanel({
   );
 
   const activeRef = useRef(true);
+  /*
+   * The companion whose choice this surface recorded, and the two facts a refused press leaves.
+   *
+   * `chosenHandle` is the surface's own fact about THIS session: `companion.activate` answers
+   * `status: "recorded"` and nothing else, and no read anywhere projects a pending choice back
+   * (`CompanionActivationV1Schema` carries no revision and `companion.list` carries no
+   * pending flag), so a reload honestly forgets it rather than asking the player to trust a mark
+   * the Host does not hold. `choosingHandle` is the row in flight, so a second press anywhere on
+   * the roster is refused by this panel rather than by the Host.
+   */
+  const [chosenHandle, setChosenHandle] = useState<string | null>(null);
+  const [choosingHandle, setChoosingHandle] = useState<string | null>(null);
+  // A refusal about the whole installation rather than one row: the route is not served, so the
+  // control is withdrawn everywhere, or a game session owns the companion so every unmarked row
+  // says to stop it first.
+  const [activationUnsupported, setActivationUnsupported] = useState(false);
+  const [activationSessionBlocked, setActivationSessionBlocked] = useState(false);
+  // The one refusal line the roster reports: the sentence for whichever press was last refused.
+  const [activationNotice, setActivationNotice] = useState<string | null>(null);
   useEffect(() => {
     activeRef.current = true;
     void (async () => {
@@ -314,6 +384,50 @@ export function CharactersPanel({
       if (activeRef.current) setVoiceNotice(saveFailure(error, labels.voiceSaveFailed, problemLabels));
     } finally {
       if (activeRef.current) setVoiceClearing(false);
+    }
+  };
+
+  /*
+   * Records the player's choice of which companion this installation plays.
+   *
+   * The request is the contract's own shape and nothing more: the opaque handle as the route
+   * parameter, `{ apiVersion }` as the body. No companionId, no continuity, no revision - a switch
+   * names the INSTALLATION's choice, whose compare-and-set is the companion the Host already holds
+   * as in play, and a `switched` claim is not an operation this Host can perform. The answer is
+   * checked for its one status literal (`recorded`) by the wire validator, so a response that
+   * claimed a switch would be a protocol error rather than a success this panel rendered.
+   *
+   * What the player is told afterwards is therefore exactly what happened: her choice is recorded
+   * and a restart applies it. The restart is the product's own tray (`TrayShell`), which serves no
+   * browser route, so the affordance is the sentence that names it rather than a button that
+   * could only fail.
+   */
+  const handleChooseCompanion = async (handle: string): Promise<void> => {
+    if (choosingHandle !== null) return;
+    setChoosingHandle(handle);
+    setActivationNotice(null);
+    try {
+      const recorded: CompanionActivationV1 = await api.activateCompanion(handle, csrfToken);
+      // The validator already refused anything but `recorded`; re-stating it here is what keeps
+      // this panel's success branch tied to the contract rather than to the absence of an error.
+      if (recorded.status !== "recorded") throw new Error("companion_activation_not_recorded");
+      if (activeRef.current) {
+        setChosenHandle(recorded.handle);
+        setActivationSessionBlocked(false);
+      }
+    } catch (error) {
+      const refusal = companionActivationRefusal(labels, error, problemLabels);
+      if (activeRef.current) {
+        // The route is served by no part of this build, so every row withdraws the control: a
+        // control that could only fail on press is the trap the composition rule exists to stop.
+        if (refusal.routeAbsent) setActivationUnsupported(true);
+        // A game session owns the companion it started with. Every unmarked row keeps its control
+        // and says to stop the game first, which is the step the refusal names.
+        if (refusal.sessionBlocked) setActivationSessionBlocked(true);
+        setActivationNotice(refusal.text);
+      }
+    } finally {
+      if (activeRef.current) setChoosingHandle(null);
     }
   };
 
@@ -479,28 +593,25 @@ export function CharactersPanel({
     }
   };
 
+  // The chosen companion's own name, for the recorded-choice sentence. Derived once so the
+  // sentence names her from the roster rather than from a second copy of the fact.
+  const chosenName =
+    chosenHandle === null || companionList === "loading" || companionList === "unavailable"
+      ? ""
+      : (companionList.companions.find((entry) => entry.handle === chosenHandle)?.name ?? "");
+
   return (
     <section className="management-settings-section" aria-label={labels.personaTitle} data-characters-panel>
       {companionList === "unavailable" ? (
         <p>{labels.unavailable}</p>
       ) : (
         <>
-          <CharacterCardImport
-            api={api}
-            csrfToken={csrfToken}
-            locale={locale}
-            onCreated={() => {
-              void (async () => {
-                try {
-                  const list = await api.listCompanions();
-                  if (activeRef.current) setCompanionList(list);
-                } catch {
-                  // keep the already-rendered library
-                }
-              })();
-            }}
-          />
-
+          {/* The companion library comes FIRST, above the card import, and that order is a
+              decision rather than an accident: choosing who plays is one of this surface's
+              primary actions and the project gates primary actions inside the first viewport,
+              while importing a card is how you ADD to the library rather than what the
+              surface is about. Measured at 400x800 and 1440x900 in
+              `companion-activation.spec.ts`. */}
           <section aria-label={labels.companionsTitle} data-companion-list-section>
             <h3>{labels.companionsTitle}</h3>
             {companionList === "loading" ? (
@@ -509,47 +620,109 @@ export function CharactersPanel({
               <p>{labels.companionsEmpty}</p>
             ) : (
               <ul data-companion-list>
-                {companionList.companions.map((entry) => (
-                  <li key={entry.handle} data-companion-entry>
-                    {/* The row is how the player READS a companion: it opens the
-                        read-only inspector for the companion it names. It is a
-                        control for the keyboard, and its accessible name says
-                        what it does, so it can never read as an activation
-                        control this Host has no operation for. */}
-                    <button
-                      type="button"
-                      className="companion-entry-open"
-                      data-companion-inspect
-                      aria-label={labels.companionInspect.replace("{{name}}", entry.name)}
-                      onClick={(event) => {
-                        inspectorOpener.current = event.currentTarget;
-                        onInspect({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
-                        setInspectorOpen(true);
-                      }}
-                    >
-                      <CompanionAvatar
-                        handle={entry.handle}
-                        name={entry.name}
-                        className="avatar-small"
-                        digest={avatarDigests[entry.handle]}
-                      />
-                      {/* The row's own name, in its own element: the monogram beside it is
-                          decoration, so the control's text is not the companion's name and a
-                          reader that wants the name must not have to subtract a glyph. */}
-                      <span data-companion-entry-name>{entry.name}</span>
-                    </button>
-                    {entry.isCurrent && <em className="companion-current-badge">{labels.companionCurrent}</em>}
-                  </li>
-                ))}
+                {companionList.companions.map((entry) => {
+                  // What this row offers is one derivation, shared with the gate that proves every
+                  // phase has a forward action: the row never decides for itself whether a
+                  // companion can be chosen, and the mark it draws cannot drift from the control.
+                  const controls = deriveCompanionActivationControls({
+                    isCurrent: entry.isCurrent,
+                    chosenHandle,
+                    handle: entry.handle,
+                    activationServed: !activationUnsupported,
+                    blockedBySession: activationSessionBlocked,
+                  });
+                  return (
+                    <li key={entry.handle} data-companion-entry data-companion-phase={controls.phase}>
+                      {/* The row is how the player READS a companion: it opens the
+                          read-only inspector for the companion it names. It is a
+                          control for the keyboard, and its accessible name says
+                          what it does, so it can never read as an activation
+                          control this Host has no operation for. */}
+                      <button
+                        type="button"
+                        className="companion-entry-open"
+                        data-companion-inspect
+                        aria-label={labels.companionInspect.replace("{{name}}", entry.name)}
+                        onClick={(event) => {
+                          inspectorOpener.current = event.currentTarget;
+                          onInspect({ handle: entry.handle, name: entry.name, isCurrent: entry.isCurrent });
+                          setInspectorOpen(true);
+                        }}
+                      >
+                        <CompanionAvatar
+                          handle={entry.handle}
+                          name={entry.name}
+                          className="avatar-small"
+                          digest={avatarDigests[entry.handle]}
+                        />
+                        {/* The row's own name, in its own element: the monogram beside it is
+                            decoration, so the control's text is not the companion's name and a
+                            reader that wants the name must not have to subtract a glyph. */}
+                        <span data-companion-entry-name>{entry.name}</span>
+                      </button>
+                      <span className="companion-entry-actions">
+                        {controls.markedInPlay && (
+                          <em className="companion-current-badge">{labels.companionCurrent}</em>
+                        )}
+                        {controls.markedChosen && (
+                          <em className="companion-chosen-badge" data-companion-chosen>
+                            {labels.companionChosen}
+                          </em>
+                        )}
+                        {/* The choice control belongs to the ROW, beside the read control and
+                            never instead of it: reading her and choosing her are two different
+                            acts, and merging them would make opening the inspector record a
+                            choice nobody asked for. */}
+                        {controls.chooseOffered && (
+                          <button
+                            type="button"
+                            className="small-button companion-choose"
+                            data-companion-choose
+                            aria-label={labels.companionActivateFor.replace("{{name}}", entry.name)}
+                            disabled={choosingHandle !== null}
+                            onClick={() => void handleChooseCompanion(entry.handle)}
+                          >
+                            {choosingHandle === entry.handle ? labels.companionActivateBusy : labels.companionActivate}
+                          </button>
+                        )}
+                        {controls.stopGameFirst && (
+                          <em className="companion-stop-game" data-companion-stop-game>
+                            {labels.companionStopGameBadge}
+                          </em>
+                        )}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
-            {/* The companion in play is a deployment fact of the run GameBuddy
-                started with, and the Host serves no activation operation, so the
-                surface states the condition rather than offering a control it
-                cannot honour. */}
+            {/* What the player reads BEFORE choosing anything: what a choice does to her data, so
+                a correct switch never reads as data loss, and what actually applies it. Both sit
+                with the roster the control lives on rather than behind a disclosure - a hint the
+                player must open before pressing is a hint they will read afterwards. */}
             <p className="management-settings-hint" data-companion-in-play>
               {labels.companionInPlay}
             </p>
+            <p className="management-settings-hint" data-companion-activation-hint>
+              {labels.companionActivationHint}
+            </p>
+            {/* The recorded choice's own two lines: which companion it is for, and the step that
+                applies it. The restart is the product's tray, which serves no browser route, so
+                the control here is the sentence that names it - a button that could only fail
+                would be the same lie in a different shape. */}
+            {chosenHandle !== null && (
+              <div role="status" className="success-banner" data-companion-activation-recorded>
+                <p>{labels.companionActivationRecorded.replace("{{name}}", chosenName)}</p>
+                <p className="management-settings-hint" data-companion-activation-restart>
+                  {labels.companionActivationRestart}
+                </p>
+              </div>
+            )}
+            {activationNotice !== null && (
+              <p role="status" className="error-banner" data-companion-activation-notice>
+                {activationNotice}
+              </p>
+            )}
             <p className="management-settings-hint">{labels.newCompanionHint}</p>
             <div className="composer-actions">
               <input
@@ -583,6 +756,23 @@ export function CharactersPanel({
               </p>
             )}
           </section>
+          {/* Importing a card ADDS to the library above; it is not what this surface is about,
+              so it follows the roster rather than pushing it down the page. */}
+          <CharacterCardImport
+            api={api}
+            csrfToken={csrfToken}
+            locale={locale}
+            onCreated={() => {
+              void (async () => {
+                try {
+                  const list = await api.listCompanions();
+                  if (activeRef.current) setCompanionList(list);
+                } catch {
+                  // keep the already-rendered library
+                }
+              })();
+            }}
+          />
           {/* A cleared (or never-authored) directive reads as ABSENT. The section
               stays mounted so the player still has an entry point for one, but it
               never leaves an empty editor behind: absent renders an explicit add

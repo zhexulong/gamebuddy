@@ -86,23 +86,69 @@ export type CharacterLabels = Readonly<{
   companionsEmpty: string;
   companionCurrent: string;
   /**
-   * When a companion ADDED to the library becomes the one in play. The companion
-   * in play comes from the deployment the Host starts with, and there is no
-   * activation operation, so this surface offers no control and says so.
+   * What choosing a companion does, and when. The Host RECORDS the choice
+   * (`companion.activate` answers `recorded`, never `switched`): the companion in play
+   * is the deployment identity's, and the launcher is what applies a recorded choice at
+   * the next start. The words therefore promise the restart, not a switch.
    */
   companionInPlay: string;
   /**
    * The roster row's own control, whose accessible name says what it does: it
-   * VIEWS the companion's authored facts. It is not an activation control - the
-   * companion in play is chosen by the start-up configuration - so the words never
-   * promise a switch.
+   * VIEWS the companion's authored facts. It is not the activation control - that
+   * is its own button beside the row - so the words never promise a switch.
    */
   companionInspect: string;
+  /**
+   * The roster row's activation control, in the two forms a labelled button needs. The visible
+   * text names the choice, never a switch - the Host records it and the launcher applies it at
+   * the next launch, so "设为在玩" is what actually happens and "切换" is not.
+   */
+  companionActivate: string;
+  /** The control's accessible name: the visible text plus which companion it is for. */
+  companionActivateFor: string;
+  /** In flight. A second press while the first is unanswered would be a second request. */
+  companionActivateBusy: string;
+  /**
+   * What the choice does to her data, read BEFORE the press. Her conversations and Memory
+   * are parked with her rather than deleted or merged, and come back when she is chosen
+   * again - and the companion arriving brings her own partition, so her chat starts empty.
+   * Unsaid, a correct switch reads as data loss.
+   */
+  companionActivationHint: string;
+  /** The answer to a recorded choice: chosen for the next start, and what makes her play. */
+  companionActivationRecorded: string;
+  /** How a recorded choice takes effect: the product's own tray, which has no browser route. */
+  companionActivationRestart: string;
+  /** The roster mark on the companion whose choice is recorded and waiting for a restart. */
+  companionChosen: string;
+  /**
+   * The short mark on an unmarked row whose choice a running game session blocks. The full
+   * refusal sentence is the notice under the roster; this is the row's own two-word reason, so the
+   * row never grows a paragraph that pushes the control off the row.
+   */
+  companionStopGameBadge: string;
+  /** A refusal this table cannot name keeps the base sentence rather than swallowing it. */
+  companionActivateFailed: string;
+  /** This build serves no way to choose at all, so the control is withdrawn rather than failing. */
+  companionActivateUnsupported: string;
+  /**
+   * The five ways the recorded choice can fail, one sentence each. Two reach this surface
+   * directly (`companion_switch_already_in_play`, `companion_switch_requires_no_session`);
+   * the other three are the launcher's verdicts on the same record at the next start
+   * (`CompanionSwitch.cs`), which no browser route carries today. They are worded in the
+   * same table because they are one fact - what happened to my choice - and because the
+   * player who meets them at a restart needs the same next step the others name.
+   */
+  companionSwitchAlreadyInPlay: string;
+  companionSwitchRequiresNoSession: string;
+  companionSwitchRequestStale: string;
+  companionSwitchRecordUnreadable: string;
+  companionSwitchUnavailable: string;
   /** The inspector drawer's own vocabulary; every field is labelled, and an
    * absent one says she was made without it rather than showing an empty box. */
   companionInspectorClose: string;
-  /** The in-play statement the inspector carries in its own words: a state, never
-   * a control, because no activation operation exists. */
+  /** The in-play statement the inspector carries in its own words: a state, never a
+   * control, because choosing is the roster's own control now. */
   companionInspectorInPlay: string;
   companionInspectorNotInPlay: string;
   companionInspectorUnavailable: string;
@@ -407,6 +453,26 @@ const en: CharacterLabels = Object.freeze({
   companionInPlay:
     "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.",
   companionInspect: "View {{name}}'s character",
+  companionActivate: "Play as her",
+  companionActivateFor: "Choose {{name}} as the companion in play",
+  companionActivateBusy: "Recording…",
+  companionActivationHint:
+    "Choosing her records it now, and GameBuddy plays her from its next start. Her conversations and memory stay with her, parked, and come back if you choose her again; the companion arriving brings her own, so her chat starts empty.",
+  companionActivationRecorded: "Chosen for the next start: {{name}}.",
+  companionActivationRestart:
+    "Restart GameBuddy from its tray icon for her to take over - a restart is what applies the choice.",
+  companionChosen: "chosen",
+  companionStopGameBadge: "stop the game first",
+  companionActivateFailed: "The choice could not be recorded.",
+  companionActivateUnsupported: "This build does not serve choosing a companion. Update GameBuddy or reload the page.",
+  companionSwitchAlreadyInPlay: "She is already the companion in play, so there is nothing to choose.",
+  companionSwitchRequiresNoSession: "Stop the game first. A running session is bound to the companion it started with.",
+  companionSwitchRequestStale:
+    "This installation started a different companion since you chose her, so the choice was dropped. Choose again here.",
+  companionSwitchRecordUnreadable:
+    "The recorded choice could not be read at the last start, so it was dropped and nothing changed. Choose her again.",
+  companionSwitchUnavailable:
+    "Her records could not be set aside, so the companion in play was left as she was. Nothing was lost - try choosing her again.",
   companionInspectorClose: "Close",
   companionInspectorInPlay: "This is the companion in play.",
   companionInspectorNotInPlay:
@@ -672,6 +738,22 @@ const zh: CharacterLabels = Object.freeze({
   companionInPlay:
     "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
   companionInspect: "查看 {{name}} 的角色",
+  companionActivate: "设为在玩",
+  companionActivateFor: "选 {{name}} 成为在玩的伙伴",
+  companionActivateBusy: "正在记录…",
+  companionActivationHint:
+    "选她只会被记下来，GameBuddy 下次启动才由她上场。她的对话和记忆是随她一起停放着的，下次再选她就会回来；换过来的人带的是她自己那一份，所以她的聊天是空的。",
+  companionActivationRecorded: "已为下次启动选好：{{name}}。",
+  companionActivationRestart: "想让她上场，请从托盘图标重新启动 GameBuddy——重新启动才会兑现这个选择。",
+  companionChosen: "已选好",
+  companionStopGameBadge: "请先停掉游戏",
+  companionActivateFailed: "没能记下这个选择。",
+  companionActivateUnsupported: "当前版本不支持选择伙伴。请更新 GameBuddy 或重新加载页面。",
+  companionSwitchAlreadyInPlay: "她已经就是在玩的伙伴，不用再选。",
+  companionSwitchRequiresNoSession: "先停掉游戏再换。正在跑的会话已经绑在它启动时的那位伙伴身上了。",
+  companionSwitchRequestStale: "这次启动换了一位伙伴，所以那个选择被作废了。请在这里重新选一次。",
+  companionSwitchRecordUnreadable: "上次启动读不出记下的选择，已经作废，什么都没有变。请重新选她。",
+  companionSwitchUnavailable: "没能把她的资料收好，所以在玩的伙伴保持原样。什么都没丢——再选一次就好。",
   companionInspectorClose: "关闭",
   companionInspectorInPlay: "这就是在玩的伙伴。",
   companionInspectorNotInPlay:

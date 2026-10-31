@@ -431,8 +431,12 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // (stardew_settings_revision_conflict, a record that moved under the writer) moved the game
   // count 23 to 24, and discarding one variant of a reply refuses the last one by name
   // (chat_swipe_last_variant, so a reply can never end with no text) moved the tavern count
-  // 62 to 63. It still fails the moment the reader stops seeing a member.
-  assert.equal(tavern.size, 63, `the tavern problem union should have 63 members, read ${tavern.size}`);
+  // 62 to 63, and recording the player's companion choice for the launcher - the two ways
+  // `companion.activate` refuses by name, `companion_switch_already_in_play` (she is already the
+  // one in play, so there is nothing to record) and `companion_switch_requires_no_session` (a Game
+  // session is bound to the companion it started with) - moved it 63 to 65. It still fails the
+  // moment the reader stops seeing a member.
+  assert.equal(tavern.size, 65, `the tavern problem union should have 65 members, read ${tavern.size}`);
   assert.equal(game.size, 24, `the game problem union should have 24 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");

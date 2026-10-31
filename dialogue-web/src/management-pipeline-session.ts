@@ -68,6 +68,7 @@ type TavernBrowserOperationV1 = Readonly<{
     | "companion.card.export"
     | "companion.avatar.update"
     | "companion.delete"
+    | "companion.activate"
     | "companion.create"
     | "character.voice.read"
     | "character.voice.update"

@@ -219,12 +219,15 @@ async function importCard(page: import("@playwright/test").Page): Promise<void> 
 const IN_PLAY_EN =
   "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.";
 /**
- * The words a control that claims to SWITCH the in-play companion would have to
- * use. The rule this file holds is about activation, so it is asserted against the
- * words the player can act on rather than against the tag a control happens to be:
- * a read affordance is not an activation affordance.
+ * The words a control that claims to SWITCH the in-play companion would have to use.
+ *
+ * The rule this file holds is about activation, so it is asserted against the words the player can
+ * act on rather than against the tag a control happens to be: a read affordance is not an
+ * activation affordance. `choose` is deliberately NOT in this set now that the roster really does
+ * offer a choice (`companion.activate`, which only RECORDS it for the next start) - what the
+ * inspector must still never do is offer one, and neither surface may say "switch".
  */
-const ACTIVATION_WORDS = /switch|activat|select|set as|choose|enable/i;
+const ACTIVATION_WORDS = /switch|activat|set as|enable/i;
 /** The words a control that edits an authored field would have to use. */
 const EDIT_WORDS = /edit|save|delete|clear|remove|create/i;
 const IN_PLAY_ZH =
@@ -262,9 +265,14 @@ test("a companion an import created is not the one in play, and the surface stat
   // but the rule is about ACTIVATION, and a read is not an activation: a roster row
   // is now the way the player READS a companion (it opens the read-only
   // inspector), so the mechanism had to change while the rule stayed exactly as
-  // strict. What is asserted here is what the player can DO: no control in the
-  // roster, and no control in the inspector, claims to switch, select or activate
-  // the companion in play, and opening the inspector issues reads and nothing else.
+  // strict.
+  //
+  // The rule changed once more when the Host gained `companion.activate`, and the
+  // strictness is the same in a different place: the roster now carries a choice
+  // control, so what must hold is that no control claims to SWITCH (the operation only
+  // records the choice for the next start - `companion-activation.spec.ts` drives it),
+  // that the companion in play offers none at all (the Host refuses her by name), and
+  // that opening the inspector still reads and never writes.
   const requestedMethods: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("/api/tavern/v1/")) requestedMethods.push(request.method());
@@ -274,6 +282,8 @@ test("a companion an import created is not the one in play, and the surface stat
       (control) => ({
         label: (control.getAttribute("aria-label") ?? control.textContent ?? "").trim(),
         isInspect: control.hasAttribute("data-companion-inspect"),
+        isChoose: control.hasAttribute("data-companion-choose"),
+        inPlayRow: control.closest("[data-companion-phase='in_play']") !== null,
       }),
     ),
   );
@@ -283,11 +293,17 @@ test("a companion an import created is not the one in play, and the surface stat
     "every roster control carries a name the player can read",
   ).toEqual(rosterControls.map(() => expect.stringMatching(/\S/u)));
   expect(
-    rosterControls.filter((control) => !control.isInspect),
-    "the only control a roster row carries is the one that opens the inspector",
+    rosterControls.filter((control) => !control.isInspect && !control.isChoose),
+    "the only controls a roster row carries are the two the Host serves: read her, and choose her",
   ).toEqual([]);
   expect(
-    rosterControls.filter((control) => ACTIVATION_WORDS.test(control.label)),
+    rosterControls.filter((control) => control.inPlayRow && control.isChoose),
+    "the companion in play offers no choice: the Host refuses her by name",
+  ).toEqual([]);
+  expect(
+    // `switch` is the one word the operation cannot do: it records the choice and the launcher
+    // applies it at the next start.
+    rosterControls.filter((control) => /switch/iu.test(control.label)),
     "no roster control claims to switch the companion in play",
   ).toEqual([]);
 

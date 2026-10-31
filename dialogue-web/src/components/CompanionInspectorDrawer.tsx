@@ -29,10 +29,10 @@ import { canonicalBase64Of, pngBytesOfPickedPicture } from "./png-character-card
  *  - a group the companion was provisioned without says so ("she was made without
  *    one"), which is a different fact from a group that exists and is empty, and
  *    the projection carries that difference as its own `present` flag;
- *  - the in-play statement is stated, never offered: the companion in play is
- *    chosen by the start-up configuration and the Host serves no activation
- *    operation, so this drawer contains no control that claims to switch, select
- *    or enable anything.
+ *  - the in-play statement is stated, never offered: choosing which companion plays is the
+ *    roster's own control (`companion.activate`, which only RECORDS the choice for the next
+ *    start), so this drawer contains no control that claims to switch, select or enable
+ *    anything.
  *
  * Its writes are two, not the records it reads: her picture
  * (`CompanionAvatarSection`) and her removal (`CompanionRemovalSection`). The drawer is the

@@ -208,6 +208,23 @@ const recordUnreadable: ProblemSentence = (labels) =>
 const companionInPlay: ProblemSentence = (labels) =>
   sentence(labels.problemCompanionInPlayTitle, labels.problemCompanionInPlayDetail);
 
+/**
+ * Choosing the companion who is already in play is not a switch: there is nothing to record, and
+ * the player pressed a row that already states the answer. Its own sentence because the next step
+ * is nothing at all - not "try again", not "reload".
+ */
+const companionAlreadyInPlay: ProblemSentence = (labels) =>
+  sentence(labels.problemCompanionAlreadyInPlayTitle, labels.problemCompanionAlreadyInPlayDetail);
+
+/**
+ * A running Game session owns the companion it started with: the Mod authorizes exactly one
+ * companion per durable owner record and the cabin is bound to her, so re-binding a live session
+ * is a different operation this product does not have. Stopping the game first is a step the
+ * player can take, which is what the sentence names.
+ */
+const companionSwitchBlockedBySession: ProblemSentence = (labels) =>
+  sentence(labels.problemCompanionSwitchSessionTitle, labels.problemCompanionSwitchSessionDetail);
+
 // --- The opening a Chat started on --------------------------------------------------------------
 
 /** The opening is sealed: the conversation has messages, so its greeting can no longer change. */
@@ -313,6 +330,8 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   companion_avatar_too_large: avatarRejected,
   companion_avatar_malformed: avatarRejected,
   companion_delete_in_play: companionInPlay,
+  companion_switch_already_in_play: companionAlreadyInPlay,
+  companion_switch_requires_no_session: companionSwitchBlockedBySession,
   companion_record_unreadable: recordUnreadable,
 
   chat_opening_locked: openingLocked,
