@@ -81,8 +81,15 @@ const en = {
   // player nothing about what happened or why a reload is the way forward.
   stardewCabinsUnavailable:
     "Cabins are read while the game you launched is starting up. Load your farm, then read them again.",
+  // A cabin is not something the player has to buy. The Mod places one on the
+  // loaded farm itself, with no cost and no construction time, before anything
+  // reads the farm (`ModEntry.OnSaveLoaded` -> `CompanionCabinProvisioning`), so
+  // this state reports that the automatic placement did not happen - not that
+  // the world lacks one. Robin is the fallback, named without a price: whether a
+  // cabin can be placed at all depends on a free cabin pad, so quoting a cost
+  // would promise a route the player may not have.
   stardewCabinsMissing:
-    "This world has no cabin she can live in yet. Have Robin build one on your farm, then read the cabins again.",
+    "Her cabin is normally placed on your farm for you at no cost when you load it. Seeing this means that did not happen. You can also have Robin build one on your farm as a fallback, then read the cabins again.",
   stardewCabinsReread: "Just read again: this is still the answer.",
   stardewCabinsRefresh: "Read cabins again",
   stardewCabinsAwaitingSession:
@@ -1116,7 +1123,8 @@ const zh: Messages = {
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
-  stardewCabinsMissing: "这个世界还没有她能住的小屋。先请罗宾在农场盖一间，然后再读一次小屋。",
+  stardewCabinsMissing:
+    "她的小屋通常会在你载入农场时免费放好。看到这句话，说明那一步没能完成。也可以请罗宾在农场盖一间作为退路，然后再读一次小屋。",
   stardewCabinsReread: "刚刚又读了一次：现在的结果仍然是这样。",
   stardewCabinsRefresh: "再读一次小屋",
   stardewCabinsAwaitingSession:

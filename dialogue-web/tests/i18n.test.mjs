@@ -214,6 +214,77 @@ test("the connection section asks for what the form can do, in both catalogues",
   }
 });
 
+/**
+ * The one cabin sentence a player reads, held to what the product actually does.
+ *
+ * Measured before this change: `stardewCabinsMissing` said only "This world has no cabin
+ * she can live in yet. Have Robin build one on your farm" - so the player was told the
+ * world lacks a cabin, and was given a build order, when neither is what happened. A cabin
+ * is placed for them: `ModEntry.OnSaveLoaded` runs `EnsureCompanionCabin()` as its first
+ * post-load act (`integrations/stardew/ModEntry.cs:665`), and
+ * `CompanionCabinProvisioning.EnsureCompanionCabin` builds one through the engine's own
+ * path with `building.magical.Value = true` and `building.daysOfConstructionLeft.Value = 0`
+ * (`integrations/stardew/CompanionCabinProvisioning.cs:250-258`) - instant, and free.
+ *
+ * That read never reaches `missing` with a session but no farm: the Host throws
+ * `stardew_cabin_handoff_unavailable` unless the Player Host is awaiting attestation
+ * (`host/src/stardew-production-lifecycle-coordinator.internal.ts:1816-1817`), and the panel
+ * renders THAT as `stardewCabinsAwaitingSession`. So this state is always "the automatic
+ * placement ran and did not succeed" - which is why the sentence reports a failed
+ * placement rather than an empty world.
+ *
+ * The failure this catches: an interface that states only the costly path, at a moment when
+ * the free one has already been attempted. What it may never do is send the player looking
+ * for a world-creation option of their own: production staging writes
+ * `WorldCreation { Enable: true, CreateOnce: true }` itself and the Mod drives
+ * `TitleMenu.createdNewCharacter` directly (`integrations/stardew/WorldCreationBootstrap.cs:267`),
+ * bypassing the new-game form and its Advanced menu entirely - and
+ * `WorldCreationBootstrap.EstablishCompanionCabinLayout()` already sets
+ * `Game1.startingCabins = 1` in code. A sentence pointing at that menu would be a false
+ * instruction to a player who never sees it.
+ */
+test("the no-cabin sentence states the free placement, its failure, and the fallback", () => {
+  const readings = {
+    en: messages("en").stardewCabinsMissing,
+    "zh-CN": messages("zh-CN").stardewCabinsMissing,
+  };
+
+  // 1. The free path the player currently has no way to know about.
+  assert.match(readings.en, /normally placed on your farm for you at no cost/u);
+  assert.match(readings["zh-CN"], /通常会在你载入农场时免费放好/u);
+
+  // 2. What this state is really reporting: that placement did not happen.
+  assert.match(readings.en, /did not happen/u);
+  assert.match(readings["zh-CN"], /没能完成/u);
+
+  // 3. The fallback, named as one.
+  assert.match(readings.en, /Robin .* as a fallback/u);
+  assert.match(readings["zh-CN"], /罗宾.*退路/u);
+
+  for (const [locale, sentence] of Object.entries(readings)) {
+    // No price. Whether a cabin can be placed at all depends on a free cabin pad
+    // (`CompanionCabinProvisioning.SelectFreeCabinPad`, `:169-182`), and a quoted cost would
+    // promise a route the player may not have.
+    assert.doesNotMatch(sentence, /100 wood|two days|wood/u, `${locale} quotes a build cost`);
+    assert.doesNotMatch(sentence, /木材|两天/u, `${locale} quotes a build cost`);
+    // No world-creation option: the player never creates this world, and the Mod sets the
+    // starting-cabin fact in code. This is the false instruction the sentence may not carry.
+    assert.doesNotMatch(
+      sentence,
+      /advanced options|starting cabin|co-op|coop farm|new game|create a save/iu,
+      `${locale} sends the player to a world-creation option they never see`,
+    );
+    assert.doesNotMatch(
+      sentence,
+      /高级选项|起步木屋|初始小屋|合作农场|新建存档/u,
+      `${locale} sends the player to a world-creation option they never see`,
+    );
+    // And it is a sentence a player reads, not a second copy of the read-failure text.
+    assert.notEqual(sentence, messages(locale).stardewCabinsUnavailable, `${locale} merged two states`);
+    assert.notEqual(sentence, messages(locale).stardewCabinsAwaitingSession, `${locale} merged two states`);
+  }
+});
+
 test("the failed-turn refusal names the credential, the model and Settings, in both catalogues", () => {
   const readings = {
     en: turnFailureText("runtime_unavailable", messages("en")),

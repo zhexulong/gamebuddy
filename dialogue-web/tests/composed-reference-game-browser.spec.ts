@@ -7072,7 +7072,18 @@ test("a farm with no cabin offers the refresh in place and never asks for a relo
   await openGameDrawer(page);
   const handoff = page.locator(".stardew-cabin-handoff");
 
-  await expect(handoff, "the player is told who builds it and where").toContainText("Have Robin build one on your farm");
+  // The sentence states the free automatic path first, and only then the
+  // fallback: the cabin is placed on the loaded farm at no cost, and this state
+  // is the report that the placement did not happen.
+  await expect(handoff, "the player is told the cabin is normally placed for free").toContainText(
+    "Her cabin is normally placed on your farm for you at no cost when you load it",
+  );
+  await expect(handoff, "and that this state is that placement having failed").toContainText(
+    "Seeing this means that did not happen",
+  );
+  await expect(handoff, "the fallback keeps Robin and where").toContainText(
+    "You can also have Robin build one on your farm as a fallback",
+  );
   await expect(handoff).not.toContainText("No cabins are currently available.");
 
   // (a) the control is present, in the state with no cabin.
@@ -7129,7 +7140,7 @@ test("the live no-cabin refusal offers the same refresh instead of a reload", as
   await page.goto(`/?no-cabin-refusal=1#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const handoff = page.locator(".stardew-cabin-handoff");
-  await expect(handoff).toContainText("Have Robin build one on your farm");
+  await expect(handoff).toContainText("You can also have Robin build one on your farm as a fallback");
   const refresh = handoff.getByRole("button", { name: "Read cabins again" });
   await expect(refresh, "the refusal a player can fix still offers the ask-again control").toBeVisible();
   expect(await handoff.innerText(), "the live refusal asks for no reload either").not.toMatch(RELOAD_INSTRUCTION);
