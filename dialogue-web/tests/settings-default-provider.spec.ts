@@ -29,7 +29,7 @@
  * The failure this catches: the first screen of the settings surface preselects a
  * channel, which is a claim that the product already has one.
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

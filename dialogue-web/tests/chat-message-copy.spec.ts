@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 import { messages } from "../src/i18n";
 

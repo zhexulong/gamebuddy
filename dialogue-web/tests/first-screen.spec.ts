@@ -17,7 +17,7 @@
  *  - D: the operator's own gateway says the operator provides it; a third-party
  *    provider keeps "bring your own key".
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

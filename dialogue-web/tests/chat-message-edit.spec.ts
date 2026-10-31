@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * Editing the player's own message, mounted, with its own measurements.

@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./frontend-coverage";
 
 /**
  * The conversation-rendering defects, each asserted through a value the browser

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * Streaming must not yank the viewport out from under a reader who scrolled up.

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 
 /**
  * U-06: the card-import file input has no box for an overflow tool to report,

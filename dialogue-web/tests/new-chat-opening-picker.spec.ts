@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * Choosing the opening when a Chat is created, mounted.

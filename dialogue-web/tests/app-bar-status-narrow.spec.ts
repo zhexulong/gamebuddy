@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 
 /**
  * U-02: the app-bar status stays a named badge on the companion, not a dot

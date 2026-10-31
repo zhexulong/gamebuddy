@@ -37,7 +37,7 @@
  * lose its only save control), or one that leaves it for the environment entry (a record written for
  * a channel whose endpoint this player does not have).
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

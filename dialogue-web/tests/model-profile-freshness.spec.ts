@@ -23,7 +23,7 @@
  * behavior here: the save notice (`modelProfilesApplied`) already says it, and
  * this file asserts only that the notice is the one the player sees.
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

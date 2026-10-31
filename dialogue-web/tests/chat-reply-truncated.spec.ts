@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * The reply cut off by the model's length ceiling, mounted, with its own measurements.

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
 
 /**

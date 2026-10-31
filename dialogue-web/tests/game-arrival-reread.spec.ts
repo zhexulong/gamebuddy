@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * Arriving at the Game surface shows the Host's Game projection as it is *now*, not as it was when

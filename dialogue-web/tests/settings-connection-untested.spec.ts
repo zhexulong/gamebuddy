@@ -24,7 +24,7 @@
  *
  * Both catalogues are read, from their own sentences rather than from one translated string.
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

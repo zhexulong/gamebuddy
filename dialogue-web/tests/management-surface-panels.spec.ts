@@ -13,7 +13,7 @@
  * folded into Characters (cf4d37c0). `dialogue-web/src/main.tsx` is the authority
  * for the profile ids that exist: only `composed-reference-game` is mounted.
  */
-import { type Locator, type Page, expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

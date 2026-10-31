@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 /**
  * Giving a companion a picture, on the surface where the player decides.

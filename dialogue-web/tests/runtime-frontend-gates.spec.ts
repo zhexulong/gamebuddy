@@ -32,7 +32,7 @@
  * returns focus to the conversation's composer, and a 250-character companion
  * name wraps in the transcript's author line. Both gates run as normal tests.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";

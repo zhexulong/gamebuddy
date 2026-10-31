@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = "C".repeat(42) + "A";

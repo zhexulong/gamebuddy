@@ -1,4 +1,4 @@
-import { type Locator, type Page, expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
 
 /**

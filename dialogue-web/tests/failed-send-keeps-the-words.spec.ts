@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 
 /**
  * A send the Host REFUSES costs the attempt, never the paragraph.

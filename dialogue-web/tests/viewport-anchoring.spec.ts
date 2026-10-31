@@ -31,7 +31,7 @@
  * scrollers, and why a surface box that reaches past the window fails here even
  * though the page itself cannot be scrolled.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";

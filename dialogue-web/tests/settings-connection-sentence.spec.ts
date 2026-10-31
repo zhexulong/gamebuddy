@@ -31,7 +31,7 @@
  * reads as `none`: the Chat and Settings now say the same sentence from the same answer. The three
  * readings below are unchanged; (ii) additionally asserts that the Chat speaks.
  */
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;

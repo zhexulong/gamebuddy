@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./frontend-coverage";
 
 /**
  * The companion's OWN world book on the Characters surface.

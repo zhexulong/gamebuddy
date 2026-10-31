@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./frontend-coverage";
 
 /**
  * The read-only companion inspector: what a roster companion carries, and what she

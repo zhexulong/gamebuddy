@@ -10,7 +10,7 @@
  * rule that lost a layer-order fight looks exactly like a rule that was never
  * written.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";

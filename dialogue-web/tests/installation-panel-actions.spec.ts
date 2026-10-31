@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 import { messages } from "../src/i18n";
 
 /** The labels the mounted shell reads, in the locale `playwright.config.ts` pins. */

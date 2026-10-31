@@ -37,7 +37,7 @@
  * product's own mechanism, which is why the assertions below are about the order the two
  * sentences state rather than about matching upstream copy.
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const csrfToken = "C".repeat(42) + "A";

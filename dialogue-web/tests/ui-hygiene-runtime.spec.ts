@@ -16,7 +16,7 @@
  * control) and the characters surface (whose card import holds the file
  * trigger).
  */
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
