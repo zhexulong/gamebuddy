@@ -277,7 +277,9 @@
     "test:sandbox-configs": "python tools/sandbox/validate-sandbox-configs.py",
     "test:sandbox-verdict": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/sandbox/prove-verdict-rule.ps1",
     "test:sandbox-wiring": "python tools/sandbox/prove-recorder-isolates-runs.py && python tools/sandbox/prove-driver-gate-paths.py",
-    "run:sandbox-level3": "python tools/sandbox/run-blackbox.py"
+    "run:sandbox-level3": "python tools/sandbox/run-blackbox.py",
+    "test:stardew-wire-agreement": "node --test --experimental-strip-types host/src/protocol-catalog-agreement.test.ts host/src/declaration-agreement.test.ts host/src/affordance-action-agreement.test.ts",
+    "test:stardew-snapshot-loopback": "node --test --experimental-strip-types host/src/snapshot-loopback.test.ts"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
