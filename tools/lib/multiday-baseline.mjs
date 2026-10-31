@@ -262,6 +262,10 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
   // Nights the engine ended with a pass-out: reported next to the verdict, because it is how the day was
   // crossed rather than whether it was, and a run whose nights were all pass-outs must be readable as such.
   let passOutNights = 0;
+  // Nights whose MECHANISM nobody recorded. Distinct from `passOutNights`, which is a description of a night that was
+  // observed. This one is a verdict: a calendar witness says the day changed and cannot say how, and "nobody knows how"
+  // must not read as a pass.
+  let unobservedNights = 0;
   for (const [index, record] of dayRecords.entries()) {
     const where = `dayRecords[${String(index)}]`;
     if (!isPlainObject(record)) {
@@ -287,6 +291,20 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     // runner's own observation of the hold is a witness, and the engine taking the night needs none, as recorded.
     if (cause === "sleep" && night.witness === "calendar") {
       violations.push(violation("night_cause_claims_a_sleep_without_a_receipt", `${where}.cause`));
+    }
+    // A CALENDAR WITNESS SAYS THE DAY CHANGED. IT CANNOT SAY HOW, AND "nobody recorded how" IS NOT A PASS.
+    //
+    // Measured 2026-10-31 (round17): two nights crossed, both with `night` null because neither went through a lifecycle.
+    // The first was a real `advance_day`; the second was the engine passing the actor out at 02:00 (`game_time=2600`, forced
+    // warp to FarmHouse, forced NewDay). `nightCause` returned "engine" for both, no rule applied to "engine", and the
+    // assessment read `passed` with `passOutNights: 0`. The run was honest about what it knew and the verdict turned that
+    // honesty into a pass.
+    //
+    // The fix is not to infer "engine therefore pass-out" - that is the guess `b27f75ca` removed. It is to say that a night
+    // whose mechanism nobody observed did not pass verification.
+    if (cause === "engine" && night.witness === "calendar") {
+      unobservedNights += 1;
+      violations.push(violation("night_mechanism_unobserved", `${where}.cause`));
     }
 
     // Scope, enforced rather than assumed: this corpus proves consecutive days inside one season, with no
@@ -408,6 +426,7 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     daysCrossed,
     shoppingMenuDismissals,
     passOutNights,
+    unobservedNights,
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });

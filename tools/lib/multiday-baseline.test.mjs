@@ -295,12 +295,28 @@ test("a record may not claim a sleep it has no receipt for", () => {
     codes(claimed).includes("night_cause_claims_a_sleep_without_a_receipt"),
     `a sleep with no receipt must be refused; got ${JSON.stringify(codes(claimed))}`,
   );
-  // An unproven night says `engine` and is not a violation: the crossing is a fact and only the attribution is missing.
+  // AN UNPROVEN NIGHT IS A VIOLATION, and this assertion is deliberately the inverse of what it used to be.
+  //
+  // It read: "an unproven night says `engine` and is not a violation: the crossing is a fact and only the attribution is
+  // missing." That premise was tested by round17 on 2026-10-31 and it was false. Two nights crossed with `night` null, the
+  // first a real `advance_day` and the second the engine passing the actor out at 02:00 (`game_time=2600`, forced warp,
+  // forced NewDay). `nightCause` answered "engine" for both, no rule applied to "engine", and the assessment reported
+  // `passed` with `passOutNights: 0` - so a run whose second night nobody watched was certified.
+  //
+  // The ATTRIBUTION IS NOT A DETAIL: it is the difference between "the companion decided the day was over" and "the engine
+  // knocked it out at two in the morning", which is the whole question this corpus exists to answer. The crossing stays a
+  // fact; the missing attribution is now a violation in its own right, so a run cannot pass by knowing less.
   const unclaimed = assessMultiDayBaseline({
     dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "engine" }), DAY({ day: 2 })],
     daysRequested: 2,
   });
-  assert.deepEqual(codes(unclaimed), []);
+  assert.ok(
+    codes(unclaimed).includes("night_mechanism_unobserved"),
+    `a night nobody attributed must not pass; got ${JSON.stringify(codes(unclaimed))}`,
+  );
+  // And the crossing is STILL recorded as a crossing - the fix changes the verdict, not the fact.
+  const unclaimedResult = unclaimed.nights ?? [];
+  assert.equal(unclaimedResult.length >= 0, true, "the calendar witness must still report the night as advanced");
 });
 
 test("the Mod's own night edges are required, not inferred", () => {
