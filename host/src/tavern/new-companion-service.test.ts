@@ -178,8 +178,9 @@ test("New Companion renders macros inside reviewed examples and writes them into
     });
     const threadStore = createChatThreadStore(root, "d".repeat(64));
     try {
-      // The run's own language decides `{{user}}` (the real mount passes what
-      // `resolveCompanionLocale` reads); an English run says `you`.
+      // The examples are stored as the card wrote them; the run's own language decides
+      // `{{user}}` at the READER (the prompt), so the same record reads correctly in an
+      // English run and in a Chinese one.
       const created = await provisionNewCompanion(root, "player", examplesCandidate, review, threadStore);
       // Examples survive review AS THE CARD WROTE THEM - macros and all - because the
       // durable profile is what the card export writes back; the prompt renders them.
