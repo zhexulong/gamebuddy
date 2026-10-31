@@ -2461,9 +2461,8 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.ship_item,
         label: "Ship Item",
         description:
-          "Move one shippable carried stack into the Farmhand's own live shipping bin. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
+          "Move the Farmhand's carried stack of one item into their own live shipping bin. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the shippingBinTargets entries of the MOST RECENT observe result (never invent or guess coordinates). There is no slot argument: walking to a bin takes many ticks and the pack shifts on the way, so the Mod resolves the FIRST carried stack of that item id when it arrives and the receipt names which slot actually shipped. Non-shippable items such as tools are rejected before any native settlement. In a shared world the destination bin depends on the world's separate-wallets setting. Returns item_shipped.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.String({
@@ -2476,7 +2475,6 @@ export function createStardewActionTools(
         }),
         action: "ship_item",
         toArgs: (params) => ({
-          slot: params.slot,
           x: params.x,
           y: params.y,
           expectedQualifiedItemId: params.expectedQualifiedItemId,

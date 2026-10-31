@@ -402,7 +402,7 @@ public sealed class ScopeBoundActorAdmissionTests
         "interact_npc_with_item" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)128", ExpectedTargetId = "npc_relationship_1" },
         "pickup_forage" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)18", ExpectedTargetId = "forage_target_1" },
         "pickup_item" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "item_target_1" },
-        "ship_item" => new BridgeExecutionArgs { X = 71, Y = 14, Slot = 2, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "shipping_bin_0123456789abcdef" },
+        "ship_item" => new BridgeExecutionArgs { X = 71, Y = 14, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "shipping_bin_0123456789abcdef" },
         // Movement: source tile + destination tile.
         "move_to_tile" => new BridgeExecutionArgs { X = 5, Y = 5 },
         "enter_exit" => new BridgeExecutionArgs { X = 5, Y = 5 },

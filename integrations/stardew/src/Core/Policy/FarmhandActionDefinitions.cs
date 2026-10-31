@@ -342,8 +342,11 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // exactly like the other action-level game-thread re-validations, rather
         // than trusting a client-supplied station coordinate.
         // collect_crab_pot_output reuses the machine-collect target shape;
-        // ship_item reuses the slot+target shape so its canBeShipped admission
-        // guard can still resolve the exact slot item.
+        // ship_item names a shipping bin and an item, with no slot: a walk to a bin
+        // takes tens of ticks and a magnet pickup or a stack merge shifts every slot
+        // behind the one that changed, so the slot a request closed over is a stale
+        // perception by the time it arrives. The body resolves the FIRST carried stack
+        // of the item id on arrival instead, the same rule chest_store uses.
         E("craft_item", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("cook_recipe", "crafting_cooking", FarmhandActionHandlerGroup.MachinesAndAnimals, A(null, null, "native_action_postcondition", ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified),
         E("collect_crab_pot_output", "buildings_farm_management", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified),
@@ -352,7 +355,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // target is an opaque shop identity, the item is the wire identity of the good,
         // and quantity is clamped against live stock and the purse on the game thread.
         E("shop_purchase", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, ShopPurchase(), FarmhandActionLifecycle.LiveVerified),
-        E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified),
+        E("ship_item", "shops_economy", FarmhandActionHandlerGroup.MachinesAndAnimals, ShipItem(), FarmhandActionLifecycle.LiveVerified),
 
         // The actor's OWN attachment state. All three change what the farmer is wearing or
         // riding rather than a world tile, so every postcondition is an ACTOR fact and the opaque
@@ -696,6 +699,39 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         null,
         "mine_elevator_floor_selected",
         ("expectedTargetId", "string"));
+
+    /// <summary>
+    /// ship_item's subject is a shipping bin and an item, so it declares the bin's footprint tile (a hint the body
+    /// never executes against - the live bin is re-resolved by its opaque id) and the item id the body resolves the
+    /// FIRST carried stack of. The item id's meaning is published here because `plan_shape` answers from it.
+    /// </summary>
+    private static string ShipItemMeaning =>
+        "The item id to ship, copied from `qualifiedItemId` of the shippingBinTargets row. There is no `slot`: the body takes the FIRST carried stack of this item id on arrival and ships exactly that stack, because the walk to a bin takes many ticks and a magnet pickup or a stack merge shifts slots on the way. The receipt's `slot` names which stack actually moved.";
+
+    /// <summary>
+    /// The item id the ship body resolves on arrival. A separate helper from <see cref="TargetItem"/> because this
+    /// action's item is what it hands to the native bin, not what it harvests from a tile.
+    /// </summary>
+    private static FarmhandActionDescriptor ShipItem() => new(
+        new[]
+        {
+            new FarmhandActionArgument("x", "integer"),
+            new FarmhandActionArgument("y", "integer"),
+            new FarmhandActionArgument("expectedQualifiedItemId", "string", null, ShipItemMeaning),
+            new FarmhandActionArgument("expectedTargetId", "string", null, ShippingBinIdMeaning),
+        },
+        new Dictionary<string, string>(),
+        EmbodiedActorResource,
+        "write",
+        "native_action_postcondition");
+
+    /// <summary>
+    /// The opaque shipping-bin identity, stated where the action that takes it can publish it: it already binds the
+    /// location and the bin's footprint, so the body re-resolves the live bin from it and a bin that moved or was
+    /// replaced is refused as `shipping_bin_target_changed` rather than retargeted.
+    /// </summary>
+    private const string ShippingBinIdMeaning =
+        "The bin's published id, copied from `targetId` of the shippingBinTargets row. It already names the location and the bin's footprint, so the body re-resolves the live bin from it; a bin that has moved or been replaced is refused `shipping_bin_target_changed` instead of being retargeted onto whatever now stands there.";
 
     /// <summary>advance_day carries no arguments: its target is the actor's own bed and its
     /// readiness is native state, so no client coordinate, slot, or target identity is trusted.</summary>

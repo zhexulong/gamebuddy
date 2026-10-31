@@ -35,7 +35,6 @@ export async function runShipItemSmoke(
       idempotencyKey: `${requestId}_idem`,
       action: ACTION,
       args: {
-        slot: target.slot,
         x: target.x,
         y: target.y,
         expectedQualifiedItemId: target.qualifiedItemId,
@@ -53,11 +52,12 @@ export async function runShipItemSmoke(
       throw new Error(`ship_item_failed:${terminal.reasonCode}`);
     const evidence = parseStrictEvidence(terminal.evidence);
     // The shipped stack must have left the backpack and entered the native bin
-    // in one native call, and lastItemShipped must reference that same item.
+    // in one native call, and lastItemShipped must reference that same item. The
+    // receipt names the slot that actually shipped, which no longer has to be the
+    // slot the snapshot published: the body re-resolves the item id on arrival.
     const shipped = Number.parseInt(evidence.stack, 10);
     const after = await observeTopologySnapshot(client, topology, { actionable: true });
     assertRequiredCapabilities(after, EXPECTED_CAPABILITIES);
-    const reread = (after.shippingBinTargets ?? []).find((entry) => entry?.targetId === target.targetId);
     const passed =
       after.revision >= terminal.revision &&
       evidence.target === target.targetId &&
@@ -66,9 +66,9 @@ export async function runShipItemSmoke(
       evidence.native_menu_opened === "false" &&
       Number.isSafeInteger(shipped) &&
       shipped > 0 &&
+      Number.isSafeInteger(Number.parseInt(evidence.slot, 10)) &&
       evidence.inventory_before === String(Number(evidence.inventory_after) + shipped) &&
-      evidence.bin_after === String(Number(evidence.bin_before) + shipped) &&
-      (reread === undefined || reread.slot !== target.slot || reread.qualifiedItemId !== target.qualifiedItemId);
+      evidence.bin_after === String(Number(evidence.bin_before) + shipped);
     return {
       state: passed ? "passed" : "blocked",
       topology,
@@ -118,7 +118,6 @@ export function chooseOnlyShippingBinTarget(snapshot) {
     !target?.targetId ||
     !Number.isInteger(target.x) ||
     !Number.isInteger(target.y) ||
-    !Number.isInteger(target.slot) ||
     typeof target.qualifiedItemId !== "string" ||
     target.qualifiedItemId.length === 0 ||
     !Number.isInteger(target.stack) ||

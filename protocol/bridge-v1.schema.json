@@ -6099,7 +6099,7 @@
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+                "$ref": "#/$defs/xyQualifiedTargetArgs"
               }
             }
           }
@@ -6118,7 +6118,7 @@
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/slotXYQualifiedTargetArgs"
+                "$ref": "#/$defs/xyQualifiedTargetArgs"
               }
             }
           }

@@ -2062,7 +2062,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // capability that can never be invoked.
         "craft_item" or "cook_recipe" => new[] { "expectedTargetId" },
         "collect_crab_pot_output" => new[] { "x", "y", "expectedTargetId" },
-        "ship_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
+        // ship_item names a bin and an item, never a slot: a walk to the bin takes tens of ticks and the pack
+        // moves meanwhile, so which stack ships is the body's own decision (the first carried stack of that id).
+        "ship_item" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
         // advance_day targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
             "advance_day" => Array.Empty<string>(),

@@ -32,7 +32,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ShipItemActionTests
 {
     [Fact]
-    public void Catalog_ShipItem_RegisteredAsLiveVerifiedShopsEconomyWithSlotItemTarget()
+    public void Catalog_ShipItem_RegisteredAsLiveVerifiedShopsEconomyWithItemTarget()
     {
         FarmhandActionRegistration? reg = FarmhandActionCatalog.Registrations
             .FirstOrDefault(r => r.ActionId == "ship_item");
@@ -44,14 +44,18 @@ public sealed class ShipItemActionTests
         reg.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.MachinesAndAnimals);
         reg.Descriptor.Should().NotBeNull();
         reg.Descriptor!.Arguments.Select(a => a.Name)
-            .Should().BeEquivalentTo(new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" });
+            .Should().BeEquivalentTo(new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" });
         reg.Descriptor.Effect.Should().Be("write");
         reg.Descriptor.Postcondition.Should().Be("native_action_postcondition");
     }
 
     /// <summary>
-    /// W0a froze this cross-lane signature; Lane E only replaces the body. A
-    /// silent signature change would break the shared handler dispatch.
+    /// W0a froze this cross-lane signature; Lane E only replaces the body. A silent
+    /// signature change would break the shared handler dispatch.
+    ///
+    /// The signature itself changed once, deliberately: the `slot` argument is gone because
+    /// a walk to a bin takes tens of ticks and the pack shifts meanwhile, so the body resolves
+    /// the first carried stack of the item id on arrival instead (`chest_store`'s rule).
     /// </summary>
     [Fact]
     public void RequestLocalShipItem_KeepsFrozenCrossLaneSignature()
@@ -60,7 +64,7 @@ public sealed class ShipItemActionTests
             "RequestLocalShipItem",
             BindingFlags.Public | BindingFlags.Instance,
             binder: null,
-            types: new[] { typeof(string), typeof(int), typeof(int), typeof(int), typeof(string), typeof(string), typeof(long) },
+            types: new[] { typeof(string), typeof(int), typeof(int), typeof(string), typeof(string), typeof(long) },
             modifiers: null);
 
         method.Should().NotBeNull();
@@ -97,9 +101,9 @@ public sealed class ShipItemActionTests
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
 
         LocalExecutionReceipt first = executions.RequestLocalShipItem(
-            "req_ship_item_repeat", 2, 71, 14, "(O)24", "shipping_bin_0123456789abcdef", 5000);
+            "req_ship_item_repeat", 71, 14, "(O)24", "shipping_bin_0123456789abcdef", 5000);
         LocalExecutionReceipt second = executions.RequestLocalShipItem(
-            "req_ship_item_repeat", 2, 71, 14, "(O)24", "shipping_bin_0123456789abcdef", 5000);
+            "req_ship_item_repeat", 71, 14, "(O)24", "shipping_bin_0123456789abcdef", 5000);
 
         first.ExecutionId.Should().Be(second.ExecutionId);
         first.State.Should().Be(second.State);

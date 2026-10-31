@@ -160,7 +160,6 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
 
             "ship_item" => this.executions.RequestLocalShipItem(
                 request.RequestId,
-                request.Args.Slot ?? 0,
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),
                 request.Args.ExpectedQualifiedItemId ?? string.Empty,

@@ -56,7 +56,7 @@ public sealed class ShipItemApproachWiringTests
         ExecutionManager manager = harness.CreateManager();
 
         LocalExecutionReceipt receipt = manager.RequestLocalShipItem(
-            "req_ship_far", 0, 20, 20, ShippableItemId, harness.TargetId, harness.DeadlineMs);
+            "req_ship_far", 20, 20, ShippableItemId, harness.TargetId, harness.DeadlineMs);
 
         // THE assertion: the actor is sent walking. `target_out_of_range` was the defect - a bin the actor
         // can simply walk to is not out of range.
@@ -91,7 +91,7 @@ public sealed class ShipItemApproachWiringTests
         string armedTarget = harness.TargetId;
 
         LocalExecutionReceipt request = manager.RequestLocalShipItem(
-            "req_ship_moved", 0, 20, 20, ShippableItemId, armedTarget, harness.DeadlineMs);
+            "req_ship_moved", 20, 20, ShippableItemId, armedTarget, harness.DeadlineMs);
         request.State.Should().Be(ExecutionState.Accepted);
 
         // The bin MOVES while the actor walks. Its opaque id hashes the farm, the origin tile and the extent,
@@ -118,7 +118,7 @@ public sealed class ShipItemApproachWiringTests
         ExecutionManager manager = harness.CreateManager();
 
         LocalExecutionReceipt request = manager.RequestLocalShipItem(
-            "req_ship_short", 0, 20, 20, ShippableItemId, harness.TargetId, harness.DeadlineMs);
+            "req_ship_short", 20, 20, ShippableItemId, harness.TargetId, harness.DeadlineMs);
         request.State.Should().Be(ExecutionState.Accepted);
 
         // The bin is unchanged and its identity still matches; the WALK fell short. Same request, same body,

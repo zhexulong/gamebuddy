@@ -48,7 +48,7 @@ namespace GameBuddy.Stardew;
 //   `Game1.didPlayerJustRightClick` and mounts ItemGrabMenu, ShippingBin.cs:248-261).
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalShipItem(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalShipItem(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
@@ -75,15 +75,13 @@ internal sealed partial class ExecutionManager
         // Everything that does not depend on where the actor stands is decided BEFORE
         // the geometry, so a walk is only committed for a bin and a stack that could
         // actually ship on arrival.
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Item slotItem || slotItem.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(slotItem.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+        if (FindCarriedShippableSlot(expectedQualifiedItemId, out StardewValley.Object? carried) < 0 || carried is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
         // Closed admission guard against permanent item destruction: the native
         // seam accepts any Item, but only shipped Objects are priced at the next
         // new day; a Tool would settle for 0g and be cleared with the bin.
-        if (slotItem is not StardewValley.Object shippable || !shippable.canBeShipped())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId};slot={slot}");
+        if (!carried.canBeShipped())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId}");
         // W-rule: the actor must stand next to the bin's actual footprint; the
         // client-supplied tile is only a stale-planning hint and never the
         // authority for the native call. Farm's building and IslandWest's island
@@ -105,12 +103,12 @@ internal sealed partial class ExecutionManager
                 (bin.TileX, bin.TileY),
                 ShippingBinFootprintTiles(bin),
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteShipItem(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteShipItem(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
                 nowMs,
                 requestedDeadlineMs);
         }
 
-        return this.ExecuteShipItem(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+        return this.ExecuteShipItem(executionId, requestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
     /// <summary>
@@ -122,7 +120,7 @@ internal sealed partial class ExecutionManager
     /// <c>shipping_bin_target_changed</c>, and a footprint the actor still cannot reach after walking is
     /// <c>target_out_of_range</c>.
     /// </summary>
-    private LocalExecutionReceipt ExecuteShipItem(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    private LocalExecutionReceipt ExecuteShipItem(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         if (Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
@@ -130,12 +128,14 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_target_changed", $"target={targetX},{targetY};expected={expectedTargetId};actual={bin.TargetId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object shippable || shippable.Stack <= 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
-        if (!string.Equals(shippable.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
-        if (!shippable.canBeShipped())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId};slot={slot}");
+        // The stack is re-resolved HERE, after the walk, not read back from the request: the pack shifted on the way
+        // and a request's slot would name whatever now occupies it. Same rule chest_store uses.
+        int slot = FindCarriedShippableSlot(expectedQualifiedItemId, out StardewValley.Object? carried);
+        if (slot < 0 || carried is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
+        if (!carried.canBeShipped())
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_shippable", $"item={expectedQualifiedItemId}");
+        StardewValley.Object shippable = carried;
         if (ShippingBinChebyshevDistance(Game1.player, bin) > 1)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_range", $"bin={bin.TileX},{bin.TileY};footprint_tiles={ShippingBinFootprintTiles(bin).Length};player={FormatTile(Game1.player.Tile)};approach=arrived");
 
@@ -266,6 +266,37 @@ internal sealed partial class ExecutionManager
 
     private static int ShippingBinItemCount(StardewValley.Inventories.IInventory binInventory, string qualifiedItemId) =>
         binInventory.Where(item => item is not null && string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)).Sum(item => item.Stack);
+
+    /// <summary>
+    /// The first carried stack of one item id that could actually ship, and its slot - the same rule
+    /// <c>chest_store</c> uses on the pack side, asked once for both the pre-walk admission and the arrival re-read.
+    ///
+    /// <para>
+    /// A slot is PERCEPTION, not intent. Walking to a shipping bin takes tens of ticks, and a magnet pickup or a
+    /// stack merge on the way shifts every slot behind the one that changed - so a request that closed over a slot
+    /// would hand the native <c>Farm.shipItem</c> whatever now sits there. The item id is the intent; the slot is
+    /// re-derived from the live pack at the moment of the native call, and the receipt names which one moved.
+    /// </para>
+    /// <para>
+    /// Only a <c>StardewValley.Object</c> can ship: the native seam accepts any <c>Item</c>, but only shipped Objects
+    /// are priced at the next new day (<c>Game1._newDayAfterFade</c> prices `Object`s), so a Tool would settle for 0g
+    /// and be cleared with the bin. That is why the predicate is narrower here than <c>chest_store</c>'s.
+    /// </para>
+    /// </summary>
+    private static int FindCarriedShippableSlot(string qualifiedItemId, out StardewValley.Object? item)
+    {
+        for (int index = 0; index < Game1.player.Items.Count; index++)
+        {
+            if (Game1.player.Items[index] is not StardewValley.Object candidate || candidate.Stack <= 0)
+                continue;
+            if (!string.Equals(candidate.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
+                continue;
+            item = candidate;
+            return index;
+        }
+        item = null;
+        return -1;
+    }
 
     /// <summary>
     /// Advertise one shippable backpack slot per shipping bin. The slot identifies

@@ -3277,10 +3277,11 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_crab_pot_target";
   } else if (value.action === "ship_item") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
+    // No `slot`: a walk to a bin takes tens of ticks, and a magnet pickup or a stack merge on the way shifts
+    // every slot behind the one that changed. The item id is the intent; the Mod resolves the first carried stack
+    // of it on arrival and names the slot it actually shipped in the receipt.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
     if (
-      !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
       typeof value.args.expectedQualifiedItemId !== "string" ||

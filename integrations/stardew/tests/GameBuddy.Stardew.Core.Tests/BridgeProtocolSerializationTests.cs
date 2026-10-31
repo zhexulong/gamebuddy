@@ -212,7 +212,7 @@ public sealed class BridgeProtocolSerializationTests
     [InlineData("craft_item", "expectedTargetId")]
     [InlineData("cook_recipe", "expectedTargetId")]
     [InlineData("collect_crab_pot_output", "x", "y", "expectedTargetId")]
-    [InlineData("ship_item", "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId")]
+    [InlineData("ship_item", "x", "y", "expectedQualifiedItemId", "expectedTargetId")]
     public void LoopClosureExecutionRequest_RoundTripsThroughTheWire(string action, params string[] argumentNames)
     {
         var request = new BridgeExecutionRequest("req_loop", "idemp_loop", action, new BridgeExecutionArgs
