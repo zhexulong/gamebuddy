@@ -2341,17 +2341,24 @@ function validateObserveSceneResult(value: Record<string, unknown>): string | nu
     return "invalid_observe_scene_result";
   const refs = new Set<string>();
   return value.affordances.every((affordance) => {
-    // `reachable` is OPTIONAL and tri-state: `false` is a measured no, ABSENT or null is undecided (nobody checked),
-    // and a `null` may never read as `false`. Presence changes the exact-key set, so it is decided before that check.
+    // `reachable` and `identity` are OPTIONAL and independent.
+    //
+    // `reachable` is tri-state: `false` is a measured no, ABSENT or null is undecided (nobody checked), and a `null` may
+    // never read as `false`. `identity` is the id the advertised action validates - published only for the kinds whose
+    // action has one, because the payload is measured against a byte ceiling.
+    //
+    // Both are decided BEFORE the exact-key check: a key set that does not name every field the Mod may send refuses
+    // every observation that uses one, and that closed the bridge at `round16` (`invalid_observe_scene_result`) exactly as
+    // it did when `sceneTarget` was added to the catalog and `chest_retrieve`'s host branch still expected the old shape.
     const allowReachable = affordance.reachable !== undefined;
+    const allowIdentity = affordance.identity !== undefined;
+    const expectedKeys = ["ref", "kind", "name", "distance", "direction", "actionHint"];
+    if (allowReachable) expectedKeys.push("reachable");
+    if (allowIdentity) expectedKeys.push("identity");
     if (
       !isRecord(affordance) ||
-      !hasExactKeys(
-        affordance,
-        allowReachable
-          ? ["ref", "kind", "name", "distance", "direction", "actionHint", "reachable"]
-          : ["ref", "kind", "name", "distance", "direction", "actionHint"],
-      ) ||
+      !hasExactKeys(affordance, expectedKeys) ||
+      (allowIdentity && !boundedSceneText(affordance.identity, 128)) ||
       !isSceneReference(affordance.ref) ||
       typeof affordance.kind !== "string" ||
       !OBSERVE_SCENE_KINDS.has(affordance.kind) ||
