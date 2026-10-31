@@ -102,6 +102,12 @@ export type BrowserTurnV1 = Readonly<{
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
   /**
+   * Why the endpoint refused the request, when the Host could classify it. `problemCode` says the
+   * turn failed; this says which fixable cause it failed for. Absent means the Host settled the
+   * failure without a provider refusal it could name, so the surface words `problemCode` alone.
+   */
+  providerFailure?: ProviderFailureV1;
+  /**
    * The generation that wrote the reply the player can see stopped at the model's length
    * ceiling, so that reply is a prefix of what she was writing. The Host publishes it only
    * while that generation's text is the one on screen; absence is every other stop reason,
@@ -307,6 +313,22 @@ const TURN_PROBLEM_CODES = [
   "runtime_unavailable",
   "storage_unavailable",
 ] as const;
+/**
+ * The five classified provider causes a failed turn may carry.
+ *
+ * A mirror of the Host's `PROVIDER_FAILURE_CLASSES` (the list the classifier's own type is derived
+ * from). The bundle cannot import it, so `problem-code-gate.test.mjs` reads the Host's declaration
+ * and holds this copy to EQUALITY: a class this list does not know turns a legal turn into
+ * `TavernProtocolError`, and the surface then says nothing about a failure it was told about.
+ */
+const PROVIDER_FAILURES = [
+  "credential_rejected",
+  "model_not_served",
+  "rate_limited",
+  "context_overflow",
+  "endpoint_unreachable",
+] as const;
+export type ProviderFailureV1 = (typeof PROVIDER_FAILURES)[number];
 const SUBMIT_DISPOSITIONS = ["accepted", "duplicate"] as const;
 const CANCEL_DISPOSITIONS = ["cancelled", "completion_won", "already_terminal"] as const;
 const STATUS_DISPOSITIONS = ["unknown", "pending", "accepted", "terminal", "expired"] as const;
@@ -457,7 +479,7 @@ const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as cons
  * classification, and the generation's own stop fact. A mirror that knew only one of them
  * would refuse a legal turn the moment the Host sent the other.
  */
-const TURN_OPTIONAL_KEYS = ["problemCode", "truncated"] as const;
+const TURN_OPTIONAL_KEYS = ["problemCode", "providerFailure", "truncated"] as const;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
@@ -657,6 +679,7 @@ function isBrowserTurn(value: unknown): value is BrowserTurnV1 {
   if (!isOpaqueHandle(value.handle) || !isOneOf(value.state, TURN_STATES)) return false;
   if (!isNonNegativeSafeInteger(value.projectionRevision) || typeof value.canCancel !== "boolean") return false;
   if ("problemCode" in value && !isOneOf(value.problemCode, TURN_PROBLEM_CODES)) return false;
+  if ("providerFailure" in value && !isOneOf(value.providerFailure, PROVIDER_FAILURES)) return false;
   // `true` is the only member the Host publishes: the field is present exactly when the model
   // stopped at its length ceiling, so an explicit `false` is not a fact this contract has and a
   // mirror that accepted one would be inventing a claim the Host never made.

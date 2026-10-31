@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { isProviderFailureClass, type ProviderFailureClass } from "../provider-failure-classification.js";
 import {
   assertMountedTurnTransitionAuthority,
   assertMountedTurnTransitionOperationAuthority,
@@ -14,7 +15,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 7 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 8 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -523,7 +524,15 @@ export type CancelledTurn = Readonly<{
   cancelClaimedAtMs: number;
   cancelledAtMs: number;
 }>;
-/** A provider rejection may fail directly from the durable armed state; P5 failures follow running. */
+/**
+ * A provider rejection may fail directly from the durable armed state; P5 failures follow running.
+ *
+ * `providerFailure` is the classified CAUSE, present only when the Host read one from a provider
+ * refusal it could classify. `reasonCode` says the turn failed; this says why the endpoint refused
+ * it, which is what a surface needs to word a sentence the player can act on. Absent means the
+ * failure had no provider refusal behind it (a Stop's abort, an extension refusal, a store fault),
+ * so a reader words `reasonCode` alone instead of guessing a cause.
+ */
 export type FailedTurn = Readonly<{
   turnId: string;
   status: "failed";
@@ -535,6 +544,7 @@ export type FailedTurn = Readonly<{
   observation: AttemptObservationV1;
   presentation: PresentationCommitV1 | null;
   reasonCode: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  providerFailure?: ProviderFailureClass;
   failedAtMs: number;
 }>;
 
@@ -1019,7 +1029,13 @@ export type PresentationTransition =
   | Readonly<{ operation: "complete"; completedAtMs: number }>
   | Readonly<{ operation: "claim_cancel"; claimedAtMs: number }>
   | Readonly<{ operation: "cancel"; cancelledAtMs: number }>
-  | Readonly<{ operation: "fail"; reasonCode: P5TerminalFailureReason; failedAtMs: number }>;
+  | Readonly<{
+      operation: "fail";
+      reasonCode: P5TerminalFailureReason;
+      /** The classified provider cause, only when one was read from a real refusal. */
+      providerFailure?: ProviderFailureClass;
+      failedAtMs: number;
+    }>;
 
 type MountedPresentationInput = Readonly<{
   authority: MountedTurnTransitionAuthority;
@@ -1462,6 +1478,20 @@ const TURN_PRESENTATION_TRUNCATION_V7 = `
       ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0 CHECK(truncated IN (0, 1));
 `;
 
+/**
+ * v7 recorded only THAT a turn failed, never why the endpoint refused it, so a wrong key and a
+ * throttle reached the player as one `runtime_unavailable` sentence naming five causes and
+ * prescribing none. v8 adds that one classified fact to the turn's terminalization record - the
+ * record that already owns `reason_code` - and nothing else changes.
+ *
+ * NULL for a v7 root's existing rows on purpose: their refusal was never classified, and a turn
+ * whose cause was not observed says nothing about it rather than claiming the generic one.
+ */
+const TURN_TERMINALIZATION_PROVIDER_FAILURE_V8 = `
+    ALTER TABLE tavern_turn_terminalizations
+      ADD COLUMN provider_failure TEXT;
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1476,12 +1506,20 @@ function initSchema(db: DatabaseSync): void {
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
+    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
   if (version === 6) {
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
+    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 7) {
+    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1493,6 +1531,7 @@ function initSchema(db: DatabaseSync): void {
     migrateWorldInfoBindingsToSlots(db);
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
+    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     assertNormalizedSchema(db);
     return;
   }
@@ -1667,7 +1706,8 @@ ${WORLD_INFO_BINDINGS_TABLE_V5}
       cancel_claimed_at_ms INTEGER,
       cancelled_at_ms INTEGER,
       failed_at_ms INTEGER,
-      reason_code TEXT
+      reason_code TEXT,
+      provider_failure TEXT
     );
 
     CREATE TABLE tavern_chat_submit_idempotency (
@@ -1830,6 +1870,13 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     ["turn_id", "expression_id", "message_id", "cancel_epoch", "committed_at_ms", "truncated"].some(
       (column) => !presentationColumns.has(column),
     )
+  )
+    throw new Error("chat_thread_schema_mismatch");
+  const terminalizationColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_turn_terminalizations)").all() as any[]).map((column) => column.name),
+  );
+  if (
+    ["turn_id", "failed_at_ms", "reason_code", "provider_failure"].some((column) => !terminalizationColumns.has(column))
   )
     throw new Error("chat_thread_schema_mismatch");
   const bindingColumns = new Set(
@@ -3327,6 +3374,7 @@ export function createChatThreadStore(
             observation: ledger.observation,
             presentation: presentedCommit(ledger),
             reasonCode: command.reasonCode,
+            ...(command.providerFailure === undefined ? {} : { providerFailure: command.providerFailure }),
             failedAtMs: command.failedAtMs,
           });
           break;
@@ -3609,7 +3657,7 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
       presentation.committedAtMs,
       presentation.truncated === true ? 1 : 0,
     );
-  db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     ledger.turnId,
     ledger.status === "completion_claimed" || ledger.status === "completed" ? ledger.completionClaimedAtMs : null,
     ledger.status === "completed" ? ledger.completedAtMs : null,
@@ -3617,6 +3665,7 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
     ledger.status === "cancelled" ? ledger.cancelledAtMs : null,
     ledger.status === "failed" ? ledger.failedAtMs : null,
     ledger.status === "failed" ? ledger.reasonCode : null,
+    ledger.status === "failed" ? (ledger.providerFailure ?? null) : null,
   );
 }
 
@@ -3703,7 +3752,12 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
         }
       : {}),
     ...(row.status === "failed"
-      ? { presentation: presentationValue, reasonCode: terminal.reason_code, failedAtMs: terminal.failed_at_ms }
+      ? {
+          presentation: presentationValue,
+          reasonCode: terminal.reason_code,
+          ...(terminal.provider_failure ? { providerFailure: terminal.provider_failure } : {}),
+          failedAtMs: terminal.failed_at_ms,
+        }
       : {}),
   });
 }
@@ -4445,6 +4499,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         observation: common.observation,
         presentation: common.presentation ?? null,
         reasonCode: common.reasonCode!,
+        ...(common.providerFailure === undefined ? {} : { providerFailure: common.providerFailure }),
         failedAtMs: common.failedAtMs!,
       });
     if (value.status === "cancelled")
@@ -4514,6 +4569,7 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
   cancelledAtMs?: number;
   failedAtMs?: number;
   reasonCode?: P5TerminalFailureReason;
+  providerFailure?: ProviderFailureClass;
 }> {
   const status = value.status;
   const commonKeys = [
@@ -4538,7 +4594,12 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
             ? [...commonKeys, "cancelClaimedAtMs"]
             : status === "cancelled"
               ? [...commonKeys, "cancelClaimedAtMs", "cancelledAtMs"]
-              : [...commonKeys, "reasonCode", "failedAtMs"];
+              : [
+                  ...commonKeys,
+                  "reasonCode",
+                  ...(value.providerFailure === undefined ? [] : ["providerFailure"]),
+                  "failedAtMs",
+                ];
   if (!onlyKeys(value, keys)) throw new Error("invalid_chat_thread_turn_ledger");
   const observation = validateAttemptObservation(value.observation);
   if (status !== "failed" && status !== "cancelled" && observation.phase !== "running")
@@ -4577,6 +4638,8 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
       reasonCode !== "storage_unavailable"
     )
       throw new Error("invalid_chat_thread_turn_ledger");
+    if (value.providerFailure !== undefined && !isProviderFailureClass(value.providerFailure))
+      throw new Error("invalid_chat_thread_turn_ledger");
   }
   return Object.freeze({
     observation,
@@ -4590,7 +4653,13 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
       : {}),
     ...(status === "cancelled" ? { cancelledAtMs: value.cancelledAtMs as number } : {}),
     ...(status === "failed"
-      ? { failedAtMs: value.failedAtMs as number, reasonCode: value.reasonCode as P5TerminalFailureReason }
+      ? {
+          failedAtMs: value.failedAtMs as number,
+          reasonCode: value.reasonCode as P5TerminalFailureReason,
+          ...(value.providerFailure === undefined
+            ? {}
+            : { providerFailure: value.providerFailure as ProviderFailureClass }),
+        }
       : {}),
   });
 }
@@ -4749,6 +4818,8 @@ function freezeFailedTurn(value: FailedTurn): FailedTurn {
     reasonCode !== "storage_unavailable"
   )
     throw new Error("invalid_chat_thread_turn_ledger");
+  if (value.providerFailure !== undefined && !isProviderFailureClass(value.providerFailure))
+    throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({
     ...accepted,
     status: "failed",
@@ -4756,6 +4827,7 @@ function freezeFailedTurn(value: FailedTurn): FailedTurn {
     observation,
     presentation: value.presentation === null ? null : validatePresentationCommit(value.presentation),
     reasonCode,
+    ...(value.providerFailure === undefined ? {} : { providerFailure: value.providerFailure }),
     failedAtMs: value.failedAtMs,
   });
 }
@@ -5067,21 +5139,27 @@ function validatePresentationTransition(value: PresentationTransition): Presenta
       if (onlyKeys(value, ["operation", "cancelledAtMs"]) && isTimestamp(value.cancelledAtMs))
         return Object.freeze({ operation: "cancel", cancelledAtMs: value.cancelledAtMs });
       break;
-    case "fail":
+    case "fail": {
+      // `providerFailure` is optional, so its key may be absent OR present; the frozen command
+      // keeps exactly what it was given, because an absent cause is not a cause of "unknown".
+      const cause = value.providerFailure;
       if (
-        onlyKeys(value, ["operation", "reasonCode", "failedAtMs"]) &&
+        onlyKeys(value, ["operation", "reasonCode", "providerFailure", "failedAtMs"]) &&
         isTimestamp(value.failedAtMs) &&
         (value.reasonCode === "interrupted" ||
           value.reasonCode === "no_visible_presentation" ||
           value.reasonCode === "runtime_unavailable" ||
-          value.reasonCode === "storage_unavailable")
+          value.reasonCode === "storage_unavailable") &&
+        (cause === undefined || isProviderFailureClass(cause))
       )
         return Object.freeze({
           operation: "fail",
           reasonCode: value.reasonCode as P5TerminalFailureReason,
+          ...(cause === undefined ? {} : { providerFailure: cause }),
           failedAtMs: value.failedAtMs,
         });
       break;
+    }
     default:
       break;
   }
@@ -5122,8 +5200,12 @@ function assertP5ReadBack(
     // surface can no longer say anything about.
     if ((ledger.presentation.truncated ?? false) !== committedTruncated) throw new Error("chat_p5_readback_mismatch");
   }
-  if (operation === "fail" && ledger.status === "failed" && ledger.reasonCode !== command.reasonCode)
-    throw new Error("chat_p5_readback_mismatch");
+  if (operation === "fail" && ledger.status === "failed") {
+    if (ledger.reasonCode !== command.reasonCode) throw new Error("chat_p5_readback_mismatch");
+    // The cause must round-trip through storage: a read-back that dropped it would leave
+    // the surface wording a settled failure it can no longer say anything specific about.
+    if (ledger.providerFailure !== command.providerFailure) throw new Error("chat_p5_readback_mismatch");
+  }
 }
 
 function freezePresentationCommit(value: PresentationCommitV1): PresentationCommitV1 {

@@ -990,6 +990,9 @@ function projectTurn(
     projectionRevision: 1,
     canCancel: isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
+    ...(ledger.status === "failed" && ledger.providerFailure !== undefined
+      ? { providerFailure: ledger.providerFailure }
+      : {}),
     ...(visibleReplyTruncation(messages, ledger) === true ? { truncated: true as const } : {}),
   });
 }

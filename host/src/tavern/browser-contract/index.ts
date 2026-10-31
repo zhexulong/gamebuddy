@@ -3,6 +3,7 @@ import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
 import { ST_CARD_DECODER_LIMITS_V1 } from "../compatibility-manifest.v1.js";
+import { PROVIDER_FAILURE_CLASSES, type ProviderFailureClass } from "../../provider-failure-classification.js";
 
 export const TAVERN_BROWSER_API_V1 = "tavern_browser_api/v1" as const;
 export const TAVERN_BROWSER_API_VERSION = 1 as const;
@@ -317,6 +318,24 @@ export const BrowserTurnV1Schema = strictObject({
       Type.Literal("runtime_unavailable"),
       Type.Literal("storage_unavailable"),
     ]),
+  ),
+  /**
+   * Why the endpoint refused the request, when the Host could classify it.
+   *
+   * `problemCode` says a turn failed; this says which of the five fixable causes it
+   * failed for, because `runtime_unavailable` covers a wrong key, a model the endpoint
+   * does not serve, a throttle, an over-long prompt and an unreachable host alike - and
+   * one sentence naming all five tells the player nothing to do about any of them.
+   *
+   * It is a class DERIVED by the Host from the provider's own status line, never the
+   * provider's text: the union is `PROVIDER_FAILURE_CLASSES`, the one list the classifier
+   * is defined by, so a sixth class fails to compile here rather than reaching a surface
+   * that has no words for it. Absent means the Host settled the failure without a
+   * provider refusal it could classify, and the surface then words `problemCode` alone
+   * rather than guessing a cause.
+   */
+  providerFailure: Type.Optional(
+    Type.Unsafe<ProviderFailureClass>({ type: "string", enum: [...PROVIDER_FAILURE_CLASSES] }),
   ),
   /**
    * Additive v1 fact about the generation that produced the reply the player can

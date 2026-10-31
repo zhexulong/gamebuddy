@@ -354,6 +354,7 @@ function createScope(overrides: ScopeOverrides = {}) {
         status: "failed" as const,
         presentation: "presentation" in durablePresentation ? durablePresentation.presentation : null,
         reasonCode: command.reasonCode,
+        ...(command.providerFailure === undefined ? {} : { providerFailure: command.providerFailure }),
         failedAtMs: command.failedAtMs,
       });
       return durablePresentation;
@@ -1335,4 +1336,76 @@ test("a variant turn whose prompt is rejected puts the branch back", async () =>
 
   assert.equal(result.outcome, "failed");
   assert.equal(reverts, 1);
+});
+
+/**
+ * A provider refusal that arrives as a terminal assistant message rather than as a rejected
+ * `session.prompt()`: Pi folds the endpoint's status and body into the message's own
+ * `errorMessage` and resolves the prompt. That string is the one fact in this tree that says
+ * WHY the endpoint refused, and it is deliberately never published - so what is asserted
+ * below is what the DURABLE turn records, which is the fact a later surface reads.
+ */
+function refusalRuntimeSession(errorMessage: string): object {
+  let observer: Observer | undefined;
+  return Object.freeze({
+    installTavernProviderStartObserver(onStart: Observer) {
+      observer = onStart;
+      return () => undefined;
+    },
+    session: (() => {
+      const listeners = new Set<(event: unknown) => void>();
+      const emit = (event: unknown): void => {
+        for (const listener of [...listeners]) listener(event);
+      };
+      return Object.freeze({
+        subscribe(listener: (event: unknown) => void) {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+        async prompt() {
+          emit({ type: "message_start", message: nativeAssistant([nativeText("")]) });
+          emit({
+            type: "message_end",
+            message: { ...nativeAssistant([nativeText("")], "assistant_01", "error"), errorMessage },
+          });
+          observer?.(Object.freeze({ statusClass: "error" as const }));
+        },
+      });
+    })(),
+  });
+}
+
+/** The durable failure command a refusal settled as, read without assuming its members. */
+function recordedFailure(presentationTransitions: readonly PresentationTransition[]): Record<string, unknown> {
+  const failure = presentationTransitions.find(({ operation }) => operation === "fail");
+  assert.ok(failure !== undefined, "a refused turn writes one durable failure");
+  return failure as unknown as Record<string, unknown>;
+}
+
+/**
+ * The assertion this whole change exists for: a refused credential and a throttle are two
+ * different facts with two different fixes, and the durable turn must be able to tell them
+ * apart. Both arrive with a real provider status line, so this also fails if the classifier
+ * ever stops distinguishing them.
+ *
+ * Before this, a 401 and a 429 both settled as `runtime_unavailable` with nothing beside it -
+ * the player's one sentence named five causes and therefore prescribed nothing.
+ */
+test("a refused credential and a throttle do not settle as the same durable failure", async () => {
+  const readings: unknown[] = [];
+  for (const [errorMessage, expected] of [
+    ['401: {"error":{"message":"Incorrect API key provided: sk-proj-AbC***XyZ"}}', "credential_rejected"],
+    ['429: {"error":{"message":"Rate limit reached for requests per min"}}', "rate_limited"],
+  ] as const) {
+    const { scope, presentationTransitions } = createScope({ runtimeSession: refusalRuntimeSession(errorMessage) });
+    const result = await runMountedProviderStart(scope);
+    assert.equal(result.outcome, "failed", errorMessage);
+    assert.equal(recordedFailure(presentationTransitions).providerFailure, expected, errorMessage);
+    readings.push(recordedFailure(presentationTransitions).providerFailure);
+  }
+  assert.notEqual(
+    readings[0],
+    readings[1],
+    `a 401 and a 429 must not settle identically; both read ${String(readings[0])}`,
+  );
 });

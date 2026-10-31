@@ -2,6 +2,7 @@ import {
   attachNativeCompanionContent,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
+  type NativeProviderFailureClass,
 } from "../native-companion-content.js";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { PiVariantBranch } from "../pi-session-variant-branch.internal.js";
@@ -243,6 +244,15 @@ export async function runMountedProviderStart(
     resolveRunningBarrier = resolve;
   });
   let finalPresentationFailure: unknown | undefined;
+  /**
+   * The classified provider cause of THIS turn's refusal, when the observer read one.
+   *
+   * It lives beside `finalPresentationFailure` because it is the same fact with the part the
+   * surface needs kept: that variable is an Error whose message is a fixed enum token, which is
+   * all the durable settle below used to look at. `undefined` means the failure had no provider
+   * refusal behind it, and the store records no cause rather than inventing one.
+   */
+  let providerFailure: NativeProviderFailureClass | undefined;
   let variantBranch: PiVariantBranch | undefined;
   let variantBranchRetained = false;
   let responseMessageId: string | undefined;
@@ -428,7 +438,7 @@ export async function runMountedProviderStart(
             reservation.release();
           }
         },
-        onRejected: async (reason) => {
+        onRejected: async (reason, providerFailureClass) => {
           // A rejected/error turn must not leave a speech job half-open.
           if (speechSink !== undefined) {
             try {
@@ -437,6 +447,13 @@ export async function runMountedProviderStart(
               // Voice degradation is always graceful.
             }
           }
+          // The classified cause is kept HERE, at the one place the observer's reason stops
+          // being an enum and becomes an outcome. It was thrown away on this line before: the
+          // failure below carried a bare `native_content_provider_error`, so every provider
+          // refusal - a wrong key, a model the endpoint does not serve, a throttle, an
+          // over-long prompt, an unreachable host - settled as the same `runtime_unavailable`
+          // and the player read one sentence naming all five.
+          providerFailure = providerFailureClass;
           if (reason === "error") finalPresentationFailure = new Error("native_content_provider_error");
           if (reason !== "error") finalPresentationFailure = new Error(`native_content_${reason}`);
         },
@@ -679,6 +696,7 @@ export async function runMountedProviderStart(
           await scope.transitionPresentation({
             operation: "fail",
             reasonCode: "runtime_unavailable",
+            ...(providerFailure === undefined ? {} : { providerFailure }),
             failedAtMs: Date.now(),
           }),
           "runtime_unavailable",

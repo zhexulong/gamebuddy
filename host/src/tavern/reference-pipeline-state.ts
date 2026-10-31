@@ -378,6 +378,9 @@ function projectTurn(
     // A Stop is available once the exact prompt reaches durable arm.
     canCancel: profile.operationIds.includes("chat.cancel") && isCancellableLedger(ledger),
     ...(ledger.status === "failed" ? { problemCode: ledger.reasonCode } : {}),
+    ...(ledger.status === "failed" && ledger.providerFailure !== undefined
+      ? { providerFailure: ledger.providerFailure }
+      : {}),
     ...(visibleReplyTruncation(messages, ledger) === true ? { truncated: true as const } : {}),
   });
 }

@@ -12,12 +12,32 @@
  * union below - or nothing at all when the message carries no evidence. The raw text
  * stays on stderr for the operator.
  */
-export type ProviderFailureClass =
-  | "credential_rejected"
-  | "model_not_served"
-  | "rate_limited"
-  | "context_overflow"
-  | "endpoint_unreachable";
+export const PROVIDER_FAILURE_CLASSES = [
+  "credential_rejected",
+  "model_not_served",
+  "rate_limited",
+  "context_overflow",
+  "endpoint_unreachable",
+] as const;
+
+/**
+ * One member of the list above. The type is DERIVED from the runtime list rather than
+ * declared beside it: this set now crosses three boundaries (the observer's sink, the
+ * durable turn record, the browser contract), and a type that could disagree with the
+ * list is the drift this derivation removes.
+ */
+export type ProviderFailureClass = (typeof PROVIDER_FAILURE_CLASSES)[number];
+
+/**
+ * Whether an untyped value (a decoded store row, a frozen command) is one of the classes.
+ *
+ * The union is a compile-time fact and the values above are the runtime one, so this predicate
+ * exists so that no validator has to cast: a row read back from SQLite is `unknown` until it is
+ * checked against the same list the type is derived from.
+ */
+export function isProviderFailureClass(value: unknown): value is ProviderFailureClass {
+  return typeof value === "string" && (PROVIDER_FAILURE_CLASSES as readonly string[]).includes(value);
+}
 
 /**
  * Pi's two display shapes: `"<status>: <body>"` when the SDK folded no body into the

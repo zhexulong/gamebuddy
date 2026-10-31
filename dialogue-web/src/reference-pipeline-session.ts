@@ -57,6 +57,13 @@ export type BrowserTurnV1 = Readonly<{
   projectionRevision: number;
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  /** Why the endpoint refused the request, when the Host could classify it. */
+  providerFailure?:
+    | "credential_rejected"
+    | "model_not_served"
+    | "rate_limited"
+    | "context_overflow"
+    | "endpoint_unreachable";
   /** The generation that wrote the visible reply stopped at the model's length ceiling. */
   truncated?: true;
 }>;

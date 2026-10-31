@@ -1147,3 +1147,46 @@ test("commit_variant appends a swipe to the existing reply position and replays 
     await removeTestRoot(root);
   }
 });
+
+/**
+ * The cause half of a failed turn, asserted where it has to survive: the durable store.
+ *
+ * `truncated` records what the generation did; this records why the endpoint refused it, and the
+ * failure this catches is the one the whole change exists for - a wrong key and a throttle both
+ * settling as `runtime_unavailable` with nothing beside it, so the player read one sentence naming
+ * five causes and prescribed none. The reader is a freshly reopened store, because a cause the Host
+ * held only in memory would be gone at the reload the client performs.
+ */
+test("a failed turn's classified provider cause survives a store reopen, and an unclassified failure records none", async () => {
+  for (const [providerFailure, expected] of [
+    ["credential_rejected", "credential_rejected"],
+    ["rate_limited", "rate_limited"],
+    [undefined, undefined],
+  ] as const) {
+    const root = await canonicalTestRoot("gamebuddy-chat-turn-provider-failure-");
+    try {
+      const { attemptId, base } = await prepareRunning(root);
+      const failed = await transitionMountedPresentation(
+        { ...bindingFor(root), attemptId },
+        {
+          operation: "fail",
+          reasonCode: "runtime_unavailable",
+          ...(providerFailure === undefined ? {} : { providerFailure }),
+          failedAtMs: base + 10,
+        },
+      );
+      if (failed.status !== "failed") assert.fail("expected a durable failure");
+      assert.equal(failed.providerFailure, expected, String(providerFailure));
+
+      const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+      if (reopened.turnLedger === null || reopened.turnLedger.status !== "failed")
+        assert.fail("expected the failure to survive a reopen");
+      // Absent rather than a sentinel: a failure with no provider refusal behind it says nothing
+      // about a cause, which is a different fact from "the cause was unknown".
+      assert.equal(reopened.turnLedger.providerFailure, expected, String(providerFailure));
+      assert.equal("providerFailure" in reopened.turnLedger, expected !== undefined, String(providerFailure));
+    } finally {
+      await removeTestRoot(root);
+    }
+  }
+});

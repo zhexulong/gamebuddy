@@ -487,12 +487,15 @@ test("cancel authority: the widened not_started exit still rejects the fabricate
         at + 3,
         0,
       );
-      db.prepare("INSERT OR REPLACE INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+      // Eight columns since schema v8 added `provider_failure`; a positional INSERT has to match
+      // the table it is planting into.
+      db.prepare("INSERT OR REPLACE INTO tavern_turn_terminalizations VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
         turnId,
         null,
         null,
         at + 1,
         at + 2,
+        null,
         null,
         null,
       );

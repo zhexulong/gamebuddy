@@ -65,6 +65,8 @@ type BrowserTurnV1 = Readonly<{
   projectionRevision: number;
   canCancel: boolean;
   problemCode?: "interrupted" | "no_visible_presentation" | "runtime_unavailable" | "storage_unavailable";
+  /** Why the endpoint refused the request, when the Host could classify it. */
+  providerFailure?: (typeof PROVIDER_FAILURES)[number];
   /** The generation that wrote the visible reply stopped at the model's length ceiling. */
   truncated?: true;
 }>;
@@ -1070,6 +1072,14 @@ const TURN_PROBLEM_CODES = [
   "runtime_unavailable",
   "storage_unavailable",
 ] as const;
+/** The five classified provider causes; see `reference-pipeline-api.ts` (`PROVIDER_FAILURES`). */
+const PROVIDER_FAILURES = [
+  "credential_rejected",
+  "model_not_served",
+  "rate_limited",
+  "context_overflow",
+  "endpoint_unreachable",
+] as const;
 const OPERATION_IDS = [
   "chat.submit",
   "chat.cancel",
@@ -1317,8 +1327,8 @@ const PROBLEM_CODES = [
 
 const MESSAGE_KEYS = ["handle", "role", "text", "locale", "order", "revision"] as const;
 const TURN_KEYS = ["handle", "state", "projectionRevision", "canCancel"] as const;
-/** The two additive optional turn facts, in any combination; see `reference-pipeline-api.ts`. */
-const TURN_OPTIONAL_KEYS = ["problemCode", "truncated"] as const;
+/** The three additive optional turn facts, in any combination; see `reference-pipeline-api.ts`. */
+const TURN_OPTIONAL_KEYS = ["problemCode", "providerFailure", "truncated"] as const;
 const OPERATION_KEYS = ["operationId", "labelKey", "availability", "routeId"] as const;
 const NAVIGATION_ITEM_KEYS = ["itemId", "labelKey", "availability"] as const;
 const WORLD_INFO_KEYS = ["state", "revision", "items"] as const;
@@ -1648,6 +1658,7 @@ function isBrowserTurn(value: unknown): value is BrowserTurnV1 {
   if (!isOpaqueHandle(value.handle) || !isOneOf(value.state, TURN_STATES)) return false;
   if (!isNonNegativeSafeInteger(value.projectionRevision) || typeof value.canCancel !== "boolean") return false;
   if ("problemCode" in value && !isOneOf(value.problemCode, TURN_PROBLEM_CODES)) return false;
+  if ("providerFailure" in value && !isOneOf(value.providerFailure, PROVIDER_FAILURES)) return false;
   if ("truncated" in value && value.truncated !== true) return false;
   return true;
 }

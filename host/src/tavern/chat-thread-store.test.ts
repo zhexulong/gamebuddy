@@ -793,6 +793,10 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- A genuine v4 root also predates the generation's own stop fact (schema v7), so the fixture drops
       -- that column too: the migration under test has to add it back, not find it already there.
       ALTER TABLE tavern_turn_presentations DROP COLUMN truncated;
+      -- ...and it predates the classified provider cause on a failed turn (schema v8), so that column
+      -- goes back to being absent as well. The fixture is a v4 file, not a current one with a lower
+      -- version stamp.
+      ALTER TABLE tavern_turn_terminalizations DROP COLUMN provider_failure;
       PRAGMA user_version = 4;
     `);
     } finally {
