@@ -741,14 +741,23 @@ test("item 3: the Game surface uses the width it is given, and stays one column 
   console.log(`[item-3 game @400] ${JSON.stringify(narrow)}`);
 
   // Sensitivity proof for the overlap assertion below, taken through the same
-  // probe: rows sized by `auto` are what let a self-scrolling card overrun its
-  // own row, so putting that back must reproduce the overlap. The injected rule
-  // is unlayered, so it wins over the layered stylesheet.
+  // probe: a *self-scrolling* card overruns an `auto` row, because a scroll
+  // container contributes no block-axis content to it, so putting that shape back
+  // must reproduce the overlap. Measured at 400x800 in this shell: with
+  // `grid-auto-rows: auto` and the card's pre-fix `max-height` + `overflow-y: auto`,
+  // the card paints 368x169 px over the model settings below it (and 368x192 plus
+  // 368x15 with five candidates in it). `auto` rows alone reproduce nothing now:
+  // the card stopped being the scroll container when its actions were moved out of
+  // it, and the list inside it is what scrolls. So the proof injects both halves of
+  // the old shape.
   const autoRows = await page.addStyleTag({
-    content: ".surface-game > .surface-content { grid-auto-rows: auto; }",
+    content:
+      ".surface-game > .surface-content { grid-auto-rows: auto; }\n" +
+      ".game-installation-panel { max-height: min(32dvh, 300px); overflow-y: auto; }\n" +
+      ".installation-candidates { max-height: none; overflow-y: visible; }",
   });
   const overrun = await measureGameSurface(page);
-  console.log(`[item-3 game @400, rows sized auto] ${JSON.stringify(overrun)}`);
+  console.log(`[item-3 game @400, pre-fix self-scrolling card + rows sized auto] ${JSON.stringify(overrun)}`);
   await autoRows.evaluate((node) => node.remove());
 
   expect(wide, "the Game surface renders").not.toBeNull();
@@ -784,12 +793,13 @@ test("item 3: the Game surface uses the width it is given, and stays one column 
   expect(narrow!.surface.width, "400 leaves a single readable column").toBeLessThan(420);
 
   // No two blocks of the region are painted on top of each other, at either
-  // width. The failure this catches: the installation card is a scroll container
-  // (`max-height` + `overflow-y: auto`), which contributes no block-axis content
-  // to an `auto` row - at 400x800 the card was 256 px tall in a 26 px row, so the
-  // model settings started at y=1492 inside a card that ran to y=1710.
-  expect(overrun, "the Game surface renders with rows sized auto").not.toBeNull();
-  expect(overrun!.contentOverlaps, "rows sized auto put the card over the block below it").not.toEqual([]);
+  // width. The failure this catches: a self-scrolling card contributes no
+  // block-axis content to an `auto` row, so it overruns it - at 400x800 the card
+  // was 256 px tall in a 26 px row, and the model settings started at y=1492
+  // inside a card that ran to y=1710. The card no longer scrolls itself, and the
+  // proof above shows the shape still reproduces the overrun when put back.
+  expect(overrun, "the Game surface renders with the pre-fix card and rows sized auto").not.toBeNull();
+  expect(overrun!.contentOverlaps, "a self-scrolling card in an auto row puts the block below it under the card").not.toEqual([]);
   for (const [name, measured] of [
     ["1440x900", wide],
     ["400x800", narrow],
