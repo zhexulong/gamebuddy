@@ -422,7 +422,22 @@ test("session-forward-path.4: a dropped connection always offers a way back that
   assert.equal(resumable.retryResumeAvailable, false);
   assert.equal(resumable.cancelResumeAvailable, false, "there is no failed attempt to cancel yet");
   assert.equal(resumable.createAvailable, false, "a new game is not offered before an attempt has failed");
-  t.diagnostic("session-forward-path.4: the failed-resume rollup offers all three ways out, and only after a failure");
+
+  // The state the Host's own failed outcome reaches without an attempt of this
+  // surface's own. Retry/Cancel/Start new game act on an attempt - its key, its
+  // epoch, its replacement - so offering them here would be three controls whose
+  // handlers refuse (`handleGameResumeCancel` and `handleGameCreate` both return
+  // early with no attempt). Measured on the real shell: the click did nothing.
+  const unsettled = deriveGameSessionControls(GAME_SESSION_INPUTS.attached_unsettled);
+  assert.equal(unsettled.phase, "attached_unsettled");
+  assert.equal(unsettled.retryResumeAvailable, false, "there is no attempt to retry");
+  assert.equal(unsettled.cancelResumeAvailable, false, "there is no reconnect epoch to cancel");
+  assert.equal(unsettled.createAvailable, false, "there is no attempt for a new game to replace");
+  assert.equal(unsettled.disconnectAvailable, true, "the session is still the player's to settle");
+
+  t.diagnostic(
+    "session-forward-path.4: the rollup offers all three ways out exactly while there is an attempt to act on",
+  );
 });
 
 test("session-forward-path.5 (mutation): a phase whose flags offer nothing is reported by name", (t) => {

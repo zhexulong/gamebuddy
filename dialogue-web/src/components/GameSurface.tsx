@@ -1014,6 +1014,9 @@ export function GameSurface({
     // unavailable outcome, or the Host's last outcome. Which of those makes the
     // failure rollup appear is the derivation's decision, not this line's.
     resumeFailureSurface: gameResumeFailure !== null || gameResumeUnavailable || game?.game.latestOutcome === "failed",
+    // The narrower fact: there is an attempt of this surface's own to settle, so
+    // Retry/Cancel/Start new game are controls that will actually act.
+    resumeAttemptFailed: gameResumeFailure !== null || gameResumeUnavailable,
   });
   const endgameGeneration =
     game !== null && game.game.attachment.status === "attached" ? game.game.attachment.generation : 0;

@@ -130,6 +130,14 @@ export type GameSessionPhase =
   | "attached_unconnected"
   /** Attached and dropped, with no failed attempt yet: the restore control applies. */
   | "attached_resumable"
+  /**
+   * Attached and dropped with the Host's own last outcome `failed`, but no
+   * restore attempt this surface can settle: the recovery rollup's three ways out
+   * act on an attempt (Retry replays its key, Cancel settles its epoch, Start new
+   * game replaces it), so with no attempt to act on they would be controls whose
+   * own handlers refuse. What is left is the routine session controls.
+   */
+  | "attached_unsettled"
   /** Attached and dropped, after an attempt that failed or could not be confirmed. */
   | "attached_resume_failed";
 
@@ -216,6 +224,16 @@ export function deriveGameSessionControls(
     game: GameBrowserStateV1 | null;
     /** The shell's failed-restore rule: see `resumeFailureSurface` in `GameSurface.tsx`. */
     resumeFailureSurface: boolean;
+    /**
+     * Whether this surface's own restore attempt actually failed or could not be
+     * confirmed. The three ways out of the rollup act on that attempt - Retry
+     * replays its key, Cancel settles its epoch, Start new game replaces it - so
+     * they are offered exactly while there is an attempt to act on. The rollup
+     * itself is drawn from `resumeFailureSurface`, which also covers the Host's
+     * own failed outcome; in that wider shape the honest offer is the session
+     * controls alone, which is why the two facts are separate here.
+     */
+    resumeAttemptFailed: boolean;
   }>,
 ): GameSessionControls {
   const build = (
@@ -254,7 +272,7 @@ export function deriveGameSessionControls(
       );
     }
     if (RESUMABLE_CONNECTION_STATUSES.has(connectionStatus)) {
-      if (view.resumeFailureSurface)
+      if (view.resumeAttemptFailed)
         return build(
           "attached_resume_failed",
           {
@@ -266,6 +284,11 @@ export function deriveGameSessionControls(
           },
           ["retry_resume", "cancel_resume", "create", "disconnect", "endgame"],
         );
+      if (view.resumeFailureSurface)
+        return build("attached_unsettled", { disconnectAvailable: true, endgameAvailable: true }, [
+          "disconnect",
+          "endgame",
+        ]);
       return build("attached_resumable", { disconnectAvailable: true, endgameAvailable: true, resumeAvailable: true }, [
         "resume",
         "disconnect",
@@ -311,6 +334,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
   "attached_reconnecting",
   "attached_unconnected",
   "attached_resumable",
+  "attached_unsettled",
   "attached_resume_failed",
 ]);
 
@@ -356,8 +380,16 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       connectionStatus: GameBrowserStateV1["game"]["connectionStatus"],
       overrides: Partial<GameBrowserStateV1["game"]> = {},
     ) => game({ attachment: { status: "attached", generation: 1 }, connectionStatus, ...overrides });
-    const input = (projection: GameBrowserStateV1 | null, resumeFailureSurface = false) =>
-      Object.freeze({ ready: true, game: projection, resumeFailureSurface });
+    const input = (
+      projection: GameBrowserStateV1 | null,
+      facts: Readonly<{ resumeFailureSurface?: boolean; resumeAttemptFailed?: boolean }> = {},
+    ) =>
+      Object.freeze({
+        ready: true,
+        game: projection,
+        resumeFailureSurface: facts.resumeFailureSurface ?? false,
+        resumeAttemptFailed: facts.resumeAttemptFailed ?? false,
+      });
     return Object.freeze({
       no_projection: input(null),
       pre_activation: input(unstarted()),
@@ -382,6 +414,7 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       attached_reconnecting: input(attached("reconnecting")),
       attached_unconnected: input(attached("none")),
       attached_resumable: input(attached("failed")),
-      attached_resume_failed: input(attached("failed"), true),
+      attached_unsettled: input(attached("failed"), { resumeFailureSurface: true }),
+      attached_resume_failed: input(attached("failed"), { resumeFailureSurface: true, resumeAttemptFailed: true }),
     });
   })();
