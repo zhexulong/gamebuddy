@@ -2763,19 +2763,12 @@
           },
           "maxItems": 16
         },
-        "chestStoreTargets": {
+        "chests": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/chestStoreTarget"
+            "$ref": "#/$defs/chest"
           },
-          "maxItems": 16
-        },
-        "chestRetrieveTargets": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/chestRetrieveTarget"
-          },
-          "maxItems": 16
+          "maxItems": 64
         },
         "shippingBinTargets": {
           "type": "array",
@@ -3002,6 +2995,13 @@
             "$ref": "#/$defs/colorTarget"
           },
           "maxItems": 32
+        },
+        "wateringWhereabouts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harvestWhereabouts"
+          },
+          "maxItems": 64
         }
       }
     },
@@ -3068,7 +3068,13 @@
     "colorTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["targetId", "location", "x", "y", "color"],
+      "required": [
+        "targetId",
+        "location",
+        "x",
+        "y",
+        "color"
+      ],
       "properties": {
         "targetId": {
           "type": "string",
@@ -3319,7 +3325,9 @@
           "maxLength": 128
         },
         "health": {
-          "const": 1
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
         }
       }
     },
@@ -4300,20 +4308,19 @@
         }
       }
     },
-    "chestStoreTarget": {
+    "chest": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "targetId",
+        "chestId",
         "x",
         "y",
-        "slot",
-        "qualifiedItemId",
-        "stack",
-        "displayName"
+        "displayName",
+        "isFridge",
+        "items"
       ],
       "properties": {
-        "targetId": {
+        "chestId": {
           "$ref": "#/$defs/opaqueId"
         },
         "x": {
@@ -4322,49 +4329,42 @@
         "y": {
           "$ref": "#/$defs/tile"
         },
-        "slot": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 36
-        },
-        "qualifiedItemId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128
-        },
-        "stack": {
-          "type": "integer",
-          "minimum": 1
-        },
         "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "isFridge": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chestItem"
+          }
         }
       }
     },
-    "chestRetrieveTarget": {
+    "chestItem": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "targetId",
-        "x",
-        "y",
+        "slot",
         "qualifiedItemId",
-        "stack",
-        "displayName"
+        "displayName",
+        "stack"
       ],
       "properties": {
-        "targetId": {
-          "$ref": "#/$defs/opaqueId"
-        },
-        "x": {
-          "$ref": "#/$defs/tile"
-        },
-        "y": {
-          "$ref": "#/$defs/tile"
+        "slot": {
+          "type": "integer",
+          "minimum": 0
         },
         "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128
@@ -4372,11 +4372,6 @@
         "stack": {
           "type": "integer",
           "minimum": 1
-        },
-        "displayName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128
         }
       }
     },
@@ -6437,8 +6432,8 @@
             "dismiss_modal",
             "ride_bus",
             "answer_dialogue",
-        "respond_level_up",
-        "advance_day",
+            "respond_level_up",
+            "advance_day",
             "harvest_bush",
             "harvest_fruit_tree",
             "shake_tree",

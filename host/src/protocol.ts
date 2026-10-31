@@ -34,6 +34,7 @@ import {
   isGrassTargetFact,
   isHarvestTargetFact,
   isHarvestWhereaboutsFact,
+  isWateringWhereaboutsFact,
   isHorseTargetFact,
   isInventoryItemFact,
   isItemTargetFact,
@@ -696,6 +697,12 @@ export type Snapshot = Readonly<{
   harvestWhereabouts?: readonly Readonly<{
     location: string;
     readyForHarvestCount: number;
+    nearestX: number;
+    nearestY: number;
+  }>[];
+  wateringWhereabouts?: readonly Readonly<{
+    location: string;
+    needsWaterCount: number;
     nearestX: number;
     nearestY: number;
   }>[];
@@ -1701,6 +1708,7 @@ const SNAPSHOT_KEYS = [
   "npcRelationshipTargets",
   "villagerWhereabouts",
   "harvestWhereabouts",
+  "wateringWhereabouts",
   "petTargets",
   "animalProductTargets",
   "feedTroughTargets",
@@ -3441,6 +3449,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "npcRelationshipTargets", maxItems: 64, accepts: isNpcRelationshipTargetFact },
   { field: "villagerWhereabouts", maxItems: 64, accepts: isVillagerWhereaboutsFact },
   { field: "harvestWhereabouts", maxItems: 64, accepts: isHarvestWhereaboutsFact },
+  { field: "wateringWhereabouts", maxItems: 64, accepts: isWateringWhereaboutsFact },
   { field: "petTargets", maxItems: 16, accepts: isPetTargetFact },
   { field: "animalProductTargets", maxItems: 32, accepts: isAnimalProductTargetFact },
   { field: "feedTroughTargets", maxItems: 32, accepts: isFeedTroughTargetFact },

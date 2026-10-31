@@ -314,6 +314,19 @@ public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayNam
 public sealed record BridgeHarvestWhereabouts(string Location, int ReadyForHarvestCount, int NearestX, int NearestY);
 
 /// <summary>
+/// How many crops on this map need water, and where the nearest one is.
+///
+/// <para>
+/// The counterpart of <see cref="BridgeHarvestWhereabouts"/>, and it exists because its absence produced a FALSE ZERO in
+/// the prompt: the unwatered count was rendered from `cropTargets`, which is radius-6 discovery, so a farm with 24 dry
+/// tiles beyond that radius read as "unwatered crops: 0". Measured 2026-10-31: the companion was told nothing needed water
+/// while standing in a field that did. A radius-bounded list cannot answer a whole-map question, so the whole-map answer is
+/// published beside it.
+/// </para>
+/// </summary>
+public sealed record BridgeWateringWhereabouts(string Location, int NeedsWaterCount, int NearestX, int NearestY);
+
+/// <summary>
 /// One available minecart ride from a station on the current map (travel's
 /// minecart objective family).
 ///
@@ -506,6 +519,7 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeNpcRelationshipTarget>? NpcRelationshipTargets,
     IReadOnlyList<BridgeVillagerWhereabouts>? VillagerWhereabouts,
     IReadOnlyList<BridgeHarvestWhereabouts>? HarvestWhereabouts,
+    IReadOnlyList<BridgeWateringWhereabouts>? WateringWhereabouts,
     IReadOnlyList<BridgePetTarget>? PetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,

@@ -929,6 +929,20 @@ export function isHarvestWhereaboutsFact(value: unknown): boolean {
   );
 }
 
+export function isWateringWhereaboutsFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["location", "needsWaterCount", "nearestX", "nearestY"]) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isNonNegativeSafeInteger(value.needsWaterCount) &&
+    value.needsWaterCount <= 1_000_000 &&
+    isTileCoordinate(value.nearestX) &&
+    isTileCoordinate(value.nearestY)
+  );
+}
+
 /**
  * The Mod's projected weather token. "unknown" is the world-not-ready
  * placeholder; the live tokens are the four native flags plus the sunny

@@ -193,6 +193,68 @@ export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
 
 const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;
 const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
+
+/**
+ * The map names a player would say out loud, against the engine's internal asset names.
+ *
+ * <p>
+ * MEASURED 2026-10-31: the fact line published `位置: Town` and the same prompt told her to speak in the player's
+ * language, never the game's internal one - so a companion who read `位置: Town` said "我们带着 (T)Hoe 去 Town". The
+ * conduct had already been taught to name tools in words; the location was the one fact still arriving as an asset id.
+ * </p>
+ * <p>
+ * Only the maps a companion can reach and would name are listed. An unlisted map keeps its engine name rather than being
+ * dropped: an unnamed place is worse than an untranslated one, and `Town` in a sentence is at least true while a missing
+ * `位置` would hide where she is standing.
+ * </p>
+ */
+const LOCATION_NAMES_ZH: Record<string, string> = {
+  Farm: "农场",
+  FarmHouse: "农舍",
+  Town: "镇上",
+  Beach: "海滩",
+  Forest: "森林",
+  Mountain: "山区",
+  Backwoods: "山间小路",
+  BusStop: "巴士站",
+  Mine: "矿井",
+  UndergroundMine: "矿井",
+  SeedShop: "杂货铺",
+  JoshHouse: "木匠铺",
+  Hospital: "诊所",
+  Saloon: "酒馆",
+  ArchaeologyHouse: "博物馆",
+  Blacksmith: "铁匠铺",
+  AnimalShop: "牧场",
+  FishShop: "渔具店",
+  ManorHouse: "庄园",
+  CommunityCenter: "社区中心",
+  JojaMart: "乔家超市",
+  Railroad: "铁路",
+  Desert: "沙漠",
+  Greenhouse: "温室",
+  Cellar: "地窖",
+  Barn: "畜棚",
+  BigBarn: "大畜棚",
+  DeluxeBarn: "高级畜棚",
+  Coop: "鸡舍",
+  BigCoop: "大鸡舍",
+  DeluxeCoop: "高级鸡舍",
+  Shed: "小屋",
+  Cabins: "木屋",
+  IslandWest: "西岛",
+  IslandEast: "东岛",
+  IslandSouth: "南岛",
+  IslandNorth: "北岛",
+  IslandFarmHouse: "海岛小屋",
+};
+
+/** The spoken name of a map, falling back to the engine's own for a place this table has not met yet. */
+export function formatGameLocation(location: string | undefined, zh: boolean): string {
+  if (location === undefined || location.length === 0) return "";
+  const name = zh ? (LOCATION_NAMES_ZH[location] ?? location) : location;
+  return zh ? `位置: ${name}` : `location: ${name}`;
+}
 const WEATHER_NAMES_ZH: Record<string, string> = {
   sunny: "晴天",
   rain: "雨天",
@@ -344,6 +406,7 @@ export type GameEnvironmentFactsSource = Pick<
   | "currentToolSlot"
   | "toolSlots"
   | "villagerWhereabouts"
+  | "wateringWhereabouts"
   | "cropTargets"
 > &
   Readonly<{ stamina?: number; exhausted?: boolean }>;
@@ -433,10 +496,37 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
  * was not measured and is silent, while a measured zero answers "is anything
  * here thirsty".
  */
+/**
+ * How many crops need water, and where the nearest one is.
+ *
+ * THE WHOLE-MAP ANSWER, not the radius-bounded one. This used to count `cropTargets`, which `DiscoverCropTargets` bounds
+ * to `TargetDiscoveryRadius` (6) so an out-of-reach target is not offered as an action - correct for a target list and
+ * wrong for a count. A farm with 24 dry tiles beyond that radius rendered `待浇水作物: 0`: the prompt stated a total it had
+ * never measured. Measured 2026-10-31.
+ *
+ * `wateringWhereabouts` is published for exactly this reason, beside `harvestWhereabouts` which solved the same problem
+ * for harvest. The nearest tile is named so the answer is actionable rather than only true.
+ */
 function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const whereabouts = source.wateringWhereabouts;
+  if (whereabouts !== undefined) {
+    const here = whereabouts.find((entry) => entry.location === source.location);
+    if (here !== undefined && here.needsWaterCount > 0)
+      return zh
+        ? `待浇水作物: ${here.needsWaterCount}（最近: ${here.nearestX},${here.nearestY}）`
+        : `unwatered crops: ${here.needsWaterCount} (nearest: ${here.nearestX},${here.nearestY})`;
+    if (whereabouts.length > 0) {
+      const elsewhere = whereabouts.map((entry) => `${entry.location}:${entry.needsWaterCount}`).join(", ");
+      return zh ? `本图待浇水作物: 0（其他地图: ${elsewhere}）` : `unwatered crops here: 0 (elsewhere: ${elsewhere})`;
+    }
+    return zh ? "待浇水作物: 0" : "unwatered crops: 0";
+  }
+  // No whole-map answer: say what was actually observed rather than presenting a bounded count as a total.
   const crops = source.cropTargets;
   if (crops === undefined) return "";
-  return zh ? `待浇水作物: ${crops.length}` : `unwatered crops: ${crops.length}`;
+  return zh
+    ? `附近待浇水作物: ${crops.length}（仅 6 格内）`
+    : `nearby unwatered crops: ${crops.length} (within 6 tiles only)`;
 }
 
 /**
@@ -455,7 +545,7 @@ export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, z
     formatGameClock(source.timeOfDay, zh),
     formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
     formatGameWeather(source.weather, zh),
-    `${zh ? "位置" : "location"}: ${source.location}`,
+    `${formatGameLocation(source.location, zh)}`,
     formatGameTile(source.tile, zh),
     formatHeldTool(source, zh),
     formatNearbyVillagers(source, zh),

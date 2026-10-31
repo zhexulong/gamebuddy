@@ -2245,6 +2245,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("talk_to_npc", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
             DiscoverVillagerWhereabouts(),
             DiscoverHarvestWhereabouts(),
+            DiscoverWateringWhereabouts(),
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
@@ -2539,7 +2540,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
@@ -2741,6 +2742,58 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// lists (Host accepts up to 64).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// How many crops need water on each map, and the nearest one.
+    ///
+    /// <para>
+    /// Whole-map, unlike `DiscoverCropTargets`, which is bounded by `TargetDiscoveryRadius` because a target outside reach
+    /// is not actionable. A COUNT is a different question from a list of targets: the prompt asks "is anything thirsty", and
+    /// answering it from the radius-limited list produced a false zero (measured 2026-10-31).
+    /// </para>
+    /// <para>
+    /// "Needs water" is the engine's own predicate, `HoeDirt.needsWatering()` (`HoeDirt.cs:419-433`), not a re-derivation:
+    /// the same call `DiscoverCropTargets` makes, so the two families cannot disagree about what dry means.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts()
+    {
+        List<BridgeWateringWhereabouts> result = new();
+        Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
+        foreach (GameLocation location in Game1.locations)
+        {
+            if (result.Count >= 64) break;
+            int needsWaterCount = 0;
+            Vector2? nearest = null;
+            float nearestDistance = float.MaxValue;
+            foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
+            {
+                if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
+                    || dirt.crop is null
+                    || dirt.crop.dead.Value
+                    || !dirt.needsWatering())
+                    continue;
+                needsWaterCount++;
+                float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearest = pair.Key;
+                }
+            }
+            if (needsWaterCount > 0 && nearest is not null)
+            {
+                result.Add(new BridgeWateringWhereabouts(
+                    location.NameOrUniqueName,
+                    needsWaterCount,
+                    (int)nearest.Value.X,
+                    (int)nearest.Value.Y));
+            }
+        }
+        return result
+            .OrderBy(entry => entry.Location, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts()
     {
         List<BridgeHarvestWhereabouts> result = new();
