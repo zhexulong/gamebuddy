@@ -1280,8 +1280,10 @@ export function MemoryPanel({
   const [search, setSearch] = useState("");
   // Manual authoring is real (`memory.mutate`) but secondary: it is the one
   // control a player has to open, so the surface reads as the companion's own
-  // notebook rather than as a form the player fills.
-  const [authoringOpen, setAuthoringOpen] = useState(false);
+  // notebook rather than as a form the player fills. The open state belongs to the shell: this
+  // panel unmounts whenever the player looks at another surface, and a form that re-opens collapsed
+  // puts the words the player typed out of reach even when they still exist.
+  const authoringOpen = useOpenDraft("memory.authoring-open", false);
   // Which chapter is being corrected, and the player's draft for it. The draft is
   // per-open, so switching chapters never carries one draft into another.
   const [correctingHandle, setCorrectingHandle] = useState<string | null>(null);
@@ -1543,15 +1545,17 @@ export function MemoryPanel({
           <button
             type="button"
             className={
-              authoringOpen ? "small-button memory-authoring-toggle" : "small-button primary memory-authoring-toggle"
+              authoringOpen.value
+                ? "small-button memory-authoring-toggle"
+                : "small-button primary memory-authoring-toggle"
             }
             data-memory-authoring-toggle
-            aria-expanded={authoringOpen}
-            onClick={() => setAuthoringOpen((open) => !open)}
+            aria-expanded={authoringOpen.value}
+            onClick={() => authoringOpen.type(!authoringOpen.value)}
           >
-            {authoringOpen ? notebook.authoringClose : notebook.authoringOpen}
+            {authoringOpen.value ? notebook.authoringClose : notebook.authoringOpen}
           </button>
-          {authoringOpen && (
+          {authoringOpen.value && (
             <MemoryCreateForm
               label={labels.create}
               contentLabel={labels.memoryContent}
@@ -1567,9 +1571,12 @@ export function MemoryPanel({
 /**
  * The player's own new memory: one field and the verb that writes it.
  *
- * The field is released only when the write succeeded. `onCreate` answers with what happened, so a
- * refusal leaves the text exactly where it was written and says beside it what the Host answered -
- * clearing first, as this form did, spent the player's words on an attempt that never landed.
+ * Two things about the field. It is released only when the write succeeded: `onCreate` answers with
+ * what happened, so a refusal leaves the text exactly where it was written and says beside it what
+ * the Host answered - clearing first, as this form did, spent the player's words on an attempt that
+ * never landed. And it is a draft held by the shell for the same reason the surface's other fields
+ * are: this form unmounts whenever the player looks at another surface, so its own state took the
+ * typed memory with it (the panel's open/closed state above is held the same way).
  */
 export function MemoryCreateForm({
   label,
@@ -1580,7 +1587,7 @@ export function MemoryCreateForm({
   contentLabel: string;
   onCreate: (content: string) => Promise<MemoryMutationOutcome>;
 }>): ReactElement {
-  const [content, setContent] = useState("");
+  const content = useDraft("memory.new-content", "");
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   return (
@@ -1588,8 +1595,8 @@ export function MemoryCreateForm({
       <textarea
         aria-label={contentLabel}
         className="form-textarea"
-        value={content}
-        onChange={(event) => setContent(event.target.value)}
+        value={content.value}
+        onChange={(event) => content.type(event.target.value)}
         rows={2}
       />
       {refusal !== null && (
@@ -1600,15 +1607,18 @@ export function MemoryCreateForm({
       <button
         type="button"
         className="small-button primary"
-        disabled={saving || content.trim().length === 0}
+        disabled={saving || content.value.trim().length === 0}
         onClick={() => {
+          const sent = content.value.trim();
           setSaving(true);
           void (async () => {
-            const outcome = await onCreate(content.trim());
+            const outcome = await onCreate(sent);
             setSaving(false);
             if (outcome.kind === "saved") {
               setRefusal(null);
-              setContent("");
+              // Released only if the field still holds what this save sent: text typed during the
+              // request is the player's and stays.
+              content.release(sent);
             } else setRefusal(outcome.text);
           })();
         }}
