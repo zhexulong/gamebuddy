@@ -571,6 +571,127 @@ test("every pure read answers while another connection holds the writer's lock",
 });
 
 /**
+ * Two readers beside writers that hold RESERVED for as long as this store's own commits hold it,
+ * which is the shape the live run broke in: a pure read must not FAIL because a writer holds the
+ * lock.
+ *
+ * The writer is a separate PROCESS that announces every cycle it spends inside `BEGIN IMMEDIATE`, and
+ * the readers run only on those announcements - so every read is issued while the write lock is
+ * demonstrably held, rather than hoping the timing lines up. The hold is `HOLD_MS`, the time a real
+ * commit spends inside the lock at a history this store reaches (measured above: 150-300ms at 40 000
+ * rows, where every command transaction re-validates whole materialization). That is what makes the
+ * test discriminate: verified red against the pre-`4bb4cd0e` shape, where `readTransaction` opened
+ * `BEGIN IMMEDIATE` and every read here waited out the hold, and green against the current shape.
+ *
+ * What bounds a read here is worth stating because nothing else does: this store has ONE connection
+ * and one `PRAGMA busy_timeout`, so the only clock a reader waits against is
+ * `PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS` - the same number that bounds a legitimate commit. A read
+ * and a commit therefore share one budget, and a store whose commits grow toward that budget (see the
+ * sweep above) leaves a reader no headroom its own work justifies. That is a property of where the
+ * budget sits, not of any one read, and it is reported here rather than changed.
+ */
+test("pure reads answer while a writer holds the lock, so no read waits out the write budget", (t) => {
+  const subject = fixtureRoot();
+  const writerPath = join(subject.root, "writer.mjs");
+  const HOLD_MS = 150;
+  const CYCLES = 8;
+  writeFileSync(
+    writerPath,
+    [
+      'import { DatabaseSync } from "node:sqlite";',
+      "const [dbPath, cycles, holdMs] = process.argv.slice(2);",
+      "const db = new DatabaseSync(dbPath);",
+      'db.exec("PRAGMA busy_timeout=30000");',
+      'const bump = db.prepare("UPDATE production_partition SET partition_revision=partition_revision WHERE singleton=1");',
+      // A synchronous spin, not a timer: the process must SIT inside the transaction holding the
+      // lock rather than yielding its event loop and releasing it.
+      "const spinUntil = (deadline) => { while (Date.now() < deadline) {} };",
+      "for (let index = 0; index < Number(cycles); index += 1) {",
+      '  db.exec("BEGIN IMMEDIATE");',
+      "  bump.run();",
+      // Announce the hold, then spend it locked. Every read below is issued on this announcement, so
+      // the reader is inside the window rather than racing the commit.
+      '  process.stdout.write("held\\n");',
+      "  spinUntil(Date.now() + Number(holdMs));",
+      '  db.exec("COMMIT");',
+      "}",
+      "db.close();",
+    ].join("\n"),
+  );
+  const writer = spawn(process.execPath, [writerPath, join(subject.root, DATABASE), String(CYCLES), String(HOLD_MS)], {
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  return new Promise<void>((resolve, reject) => {
+    const reads: number[] = [];
+    const failures: string[] = [];
+    // Two read PATHS over the same authority, which is what two surfaces of the product share.
+    const readerPaths: ReadonlyArray<readonly [string, () => unknown]> = [
+      ["readChatCatalog", () => subject.store.readChatCatalog()],
+      ["readGameAdmission", () => subject.store.readGameAdmission()],
+    ];
+    const finish = (error?: unknown) => {
+      writer.kill();
+      subject.control.close();
+      removeRoot(subject.root);
+      if (error !== undefined) return reject(error);
+      resolve();
+    };
+    let pending = "";
+    writer.stdout.on("data", (chunk) => {
+      pending += String(chunk);
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line !== "held") continue;
+        for (const [name, read] of readerPaths) {
+          const started = performance.now();
+          try {
+            read();
+          } catch (error) {
+            failures.push(`${name}: ${(error as Error).message}`);
+          }
+          reads.push(performance.now() - started);
+        }
+      }
+    });
+    writer.once("exit", () => {
+      try {
+        const budget = subject.control.configuration().busyTimeoutMs;
+        assert.deepEqual(
+          failures,
+          [],
+          `reads failed while a writer held the lock (${String(failures.length)} of ${String(reads.length)}): ${failures.slice(0, 3).join(", ")} - a pure read must not lose to a writer that only holds RESERVED`,
+        );
+        assert.ok(
+          reads.length > 0,
+          `no read landed inside a held writer out of ${String(CYCLES)} announced holds: the reading does not describe a read beside a held lock`,
+        );
+        const sorted = [...reads].sort((left, right) => left - right);
+        const longest = quantile(sorted, 1);
+        t.diagnostic(
+          `${String(reads.length)} reads inside ${String(CYCLES)} writer holds of ${String(HOLD_MS)}ms: p50 ${quantile(sorted, 0.5).toFixed(1)}ms, p95 ${quantile(sorted, 0.95).toFixed(1)}ms, max ${longest.toFixed(1)}ms, budget ${String(budget)}ms`,
+        );
+        // A read that has to wait out even one hold is a read queued behind a writer's lock, and what
+        // bounds it then is the write budget rather than anything its own work justifies. Asserted
+        // before coverage so a blocked read reports the wait rather than a short sample.
+        assert.ok(
+          longest < HOLD_MS,
+          `the slowest of ${String(reads.length)} reads inside writer holds of ${String(HOLD_MS)}ms took ${longest.toFixed(1)}ms: a read is queuing behind the writer's lock instead of reading past it, so the only clock bounding it is the ${String(budget)}ms write budget`,
+        );
+        assert.equal(
+          reads.length,
+          CYCLES * readerPaths.length,
+          `only ${String(reads.length)} reads landed inside a held writer out of ${String(CYCLES * readerPaths.length)} announced holds: a read that spends the hold waiting cannot be issued in the next window, so the sample stops describing reads beside a held lock`,
+        );
+        finish();
+      } catch (error) {
+        finish(error);
+      }
+    });
+  });
+});
+
+/**
  * Seeds `rows` game-session rows with SQL and returns the time each of `samples` real commits took,
  * sorted. SQL seeding keeps the reading about the store's write path rather than about how long the
  * fixture takes to build through its own API.
