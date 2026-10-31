@@ -359,6 +359,11 @@ jobs:
       # rather than a cascade of build errors from tests that inherit it.
       - name: Compile every tracked C# project
         id: csharp_compile
+        # 29 sequential builds: 55s warm, ~50s on a machine with the game. The bound is on the
+        # hazard, not the work - a build that wedges should fail HERE by name rather than hold a
+        # runner, which is the same reasoning the `host` job's step timeouts carry. This job has no
+        # `timeout-minutes`, so the step is the tighter limit.
+        timeout-minutes: 20
         run: pnpm check:csharp-compile
       # THE SUITE STEPS BELOW CARRY `!cancelled()`, and that is not decoration. Every step in this
       # job can fail ahead of them - the install, the restore, the compile gate just above - and a
