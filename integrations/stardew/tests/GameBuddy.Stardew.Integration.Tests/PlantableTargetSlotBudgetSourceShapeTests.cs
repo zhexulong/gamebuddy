@@ -39,8 +39,8 @@ public sealed class PlantableTargetSlotBudgetSourceShapeTests
 
         body.Should().NotContain("result.Count < 64",
             "one family-wide counter is spent by the first held stack, so every later held stack publishes nothing");
-        body.Should().Contain("PlantableTargetRows.PerSlotRowLimit(",
-            "each held stack gets a window from the family's row limit, allocated per stack");
+        body.Should().Contain("TargetRowBudget.PerKeyRowLimit(",
+            "each key gets a window from the family's row limit, allocated per key");
         body.Should().Contain("NearestFirstByChebyshev(",
             "a stack's window must hold its NEAREST tiles, so the stack is ordered before its own window trims it");
         body.Should().Contain(".Take(rowLimit)", "the window is applied per stack, after that stack is ordered");

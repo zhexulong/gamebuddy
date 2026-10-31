@@ -3,51 +3,65 @@ using System;
 namespace GameBuddy.Stardew.Core;
 
 /// <summary>
-/// How many plantable rows one held inventory stack may publish.
+/// How many rows one key of a cross-product target family may publish.
 ///
 /// <para>
-/// The seed and sapling families budgeted rows per FAMILY, not per stack: `DiscoverSeedTargets` and
-/// `DiscoverTreeSaplingTargets` walk inventory slots on the outside and tiles on the inside under one
-/// `result.Count &lt; 64` guard. `TargetDiscoveryRadius` is 6, so the inner scan offers 169 tiles and the FIRST held
-/// stack consumes every row: measured 2026-10-29 (`round7`), all 64 published rows came from one stack (slot 14
-/// `(O)770` on 14 of 33 observations, slot 13 `(O)309` on 22 of 33). A companion carrying parsnips in slot 0 and
-/// cauliflowers in slot 1 had no published cauliflower tile at all, so `plant_seed` had nothing to name - a
-/// capability hole rather than a payload problem.
+/// A family whose rows pair two independently-sized sets - a held stack against the tiles it could be planted on, a
+/// container against the pack slots or chest items it could move - must publish some of each key or the family
+/// answers a question it was not asked. The seed and sapling families budgeted rows per FAMILY, not per stack:
+/// `DiscoverSeedTargets` and `DiscoverTreeSaplingTargets` walked inventory slots on the outside and tiles on the
+/// inside under one `result.Count &lt; 64` guard, so the FIRST held stack consumed every row. Measured 2026-10-29
+/// (`round7`): all 64 published rows came from one stack (slot 14 `(O)770` on 14 of 33 observations, slot 13
+/// `(O)309` on 22 of 33). A companion carrying parsnips in slot 0 and cauliflowers in slot 1 had no published
+/// cauliflower tile at all, so `plant_seed` had nothing to name - a capability hole rather than a payload problem.
+/// The chest families had the same shape one level down: one pack slot for every container, one chest item for
+/// every container.
 /// </para>
 /// <para>
-/// The window is one PLAN's worth, because that is the only thing a stack's rows are for: `MAX_PLAN_NODES` is 16
-/// (`BodyProgramValidation.MaximumNodes`), so a plan names at most sixteen targets and a stack's seventeenth-nearest
-/// tile cannot be reached by a plan that also names its nearer ones. Sixteen per stack is also what the Host already
-/// publishes - `stardew-observation-budget.ts` keeps the nearest `MAX_PLAN_NODES` of each stack - so this does not
-/// narrow what the model sees, it stops the Mod from spending its budget on rows the Host would discard.
+/// The window is the family's row limit SHARED across its keys, so a longer array can never be published: a family
+/// over the Host's declared `maxItems` is not trimmed there, the whole snapshot is refused. The floor of one is what
+/// makes the guarantee unconditional - every qualifying key publishes at least its first row, however many there
+/// are.
 /// </para>
 /// <para>
-/// The family total cannot grow, because <see cref="FamilyRowLimit"/> is the Host's own `maxItems` for
-/// `seedTargets` and `treeSaplingTargets` (`SNAPSHOT_FAMILY_RULES`): a longer array is not trimmed, it fails
-/// validation and the WHOLE snapshot is refused. So N is small enough that the stacks fit, and never more than one
-/// plan can consume. Measured 6.8 KB per 64 seed rows on `round7`, so the family stays at roughly its present
-/// worst case - that payload is redistributed across the held stacks instead of being spent on one.
+/// The per-key ceiling is the caller's, because it belongs to the key, not to the budget: a plantable stack is
+/// bounded by what one plan can name, while a container is bounded by how many rows it can hold at all.
 /// </para>
 /// </summary>
-public static class PlantableTargetRows
+public static class TargetRowBudget
 {
-    /// <summary>The Host's declared `maxItems` for both plantable families; exceeding it refuses the whole snapshot.</summary>
+    /// <summary>
+    /// The Host's declared `maxItems` for the plantable and chest families (`SNAPSHOT_FAMILY_RULES`); exceeding it
+    /// refuses the whole snapshot.
+    /// </summary>
     public const int FamilyRowLimit = 64;
 
-    /// <summary>`MAX_PLAN_NODES`: the most targets one plan can name, and so the most one stack can be asked for.</summary>
-    public const int PerStackPlanNodes = 16;
+    /// <summary>
+    /// `MAX_PLAN_NODES`: the most targets one plan can name, and so the most rows one plan can consume from one key.
+    /// </summary>
+    public const int PlanNodes = 16;
 
     /// <summary>
-    /// Rows one held stack may publish when <paramref name="heldStacks"/> stacks qualify.
+    /// Rows one key may publish when <paramref name="keys"/> keys qualify, never more than
+    /// <paramref name="perKeyCeiling"/> and never more than a plan can name.
     ///
-    /// Shrinks only past four qualifying stacks (`64 / 4 == 16`), which keeps the ordinary farm on a full sixteen-tile
-    /// window per crop while guaranteeing that a backpack full of different seeds still PARSES instead of publishing a
-    /// family the Host refuses. The floor of one is what makes the guarantee unconditional: every qualifying stack
-    /// publishes at least its nearest tile, however many stacks are held.
+    /// Shrinks only past four keys (`64 / 4 == 16`), so the ordinary case keeps a full window per key while a family
+    /// full of keys still PARSES instead of being refused. A key whose own ceiling is already smaller than its share
+    /// (`perKeyCeiling`) keeps that ceiling.
+    ///
+    /// <para>
+    /// THE PLAN CEILING IS NOT NEGOTIABLE BY THE CALLER. This method was generalised from
+    /// `PerSlotRowLimit(int heldStacks) return Math.Clamp(FamilyRowLimit / heldStacks, 1, PerStackPlanNodes)`, and the
+    /// generalisation replaced the fixed `PerStackPlanNodes` cap with the caller's `perKeyCeiling` - so the chest family,
+    /// which passes 36 for a 36-slot backpack, would publish up to 36 pairs for ONE container. A plan can name at most
+    /// `PlanNodes`, so rows past that are targets no caller can echo, and they cost the window every other container
+    /// needed. Measured 2026-10-31: `PerKeyRowLimit(1, 36)` returned 36 where the pre-generalisation code returned 16.
+    /// </para>
     /// </summary>
-    public static int PerSlotRowLimit(int heldStacks)
+    public static int PerKeyRowLimit(int keys, int perKeyCeiling)
     {
-        if (heldStacks <= 0) return PerStackPlanNodes;
-        return Math.Clamp(FamilyRowLimit / heldStacks, 1, PerStackPlanNodes);
+        int ceiling = Math.Clamp(perKeyCeiling, 1, PlanNodes);
+        if (keys <= 0) return ceiling;
+        return Math.Clamp(FamilyRowLimit / keys, 1, ceiling);
     }
 }
