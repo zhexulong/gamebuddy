@@ -19,6 +19,13 @@
 - **Change Discipline** (executable version: `design/operations/change-discipline.md`):
   - *One unit, one commit, the moment it is green*; explicit pathspec every time, and read the hook's printed staged set. Never `restore`/`checkout --`/`stash`/`clean` another lane's uncommitted work; foreign hunks go to their owner or through the private index.
   - *Confirm the revision before comparing anything*; a clean worktree is not evidence.
+  - *Ask how CI runs it before you call it red*: an unofficial invocation answers a question nobody asked, and it does
+    not announce itself as such. `node --test x.mjs` where the file imports `.ts`, `biome check .` where the script says
+    `biome check src`, or a linter run on the CRLF worktree instead of the `git archive` - each one produced a confident
+    "failure" that the authoritative command reports as green. Read the `package.json` script or the workflow step first.
+  - *A lane's task must fit in one transmission*: an agent that is cut off mid-recon leaves nothing, and the work is lost
+    with the context. Land the red gate first, then one unit per commit - five lanes died with an empty disk under a single
+    large instruction, and the three that were given "commit the red gate, then each unit separately" all finished.
   - *Every new assertion must be seen red once* on a real injected violation.
   - *Diagnose by executing, not by reading*: a probe that calls the real function with real inputs settles in
     seconds what reading the predicate cannot settle at all. A diagnostic that re-implements the logic can disagree
@@ -33,12 +40,12 @@
   - *A destructive action carries no effect the player cannot foresee*; if it leaves data unreachable, fix reachability rather than delete to tidy up.
   - *Pair every "unchanged" claim with both readings from the same run*; say what you did not verify.
   - *Start from the existing gauntlets* (`tools/audit-totality.mjs`, the problem-code gate, `tools/live-run/**`, `tools/shots/**`) instead of writing a fifth.
-- **Tests are specs, and recurring defects get a gate**: a test that only pins today's tree is ceremony; a test that states an invariant is the specification. So when the same kind of defect appears twice, stop fixing instances and encode the class - then the third one cannot land. The families that keep coming back here, each with the gate that ends it:
-  - *Zero forward path*: a state where no main action is available. Exhaust the state space (status x prerequisites x generation) and assert **every** reachable state offers at least one forward action, except running and explicit failure.
-  - *First-viewport lies*: a primary action the player cannot reach without scrolling a container. Assert the CTA's box is inside the viewport at 400x800, and forbid `max-height`+`overflow-y` on a container that wraps the action bar (scrolling belongs to the inner list).
-  - *Stored but never sent*: a field that is imported, validated, stored and exported, with nothing reading it on the way to the model. Build a sentinel fixture (`SENTINEL_POST_HISTORY`, `SENTINEL_PROMPT_ADD`), compile the real prompt, assert the sentinel is **in** it.
-  - *Draft obliteration*: any failure clearing what the player wrote. Assert the field still holds the text after every failure shape - offline, non-retryable refusal, revision conflict - not only the retryable one.
-  - *Lossy round trip*: an export that drops a field the import accepted. Import a canonical card, export it, `deepStrictEqual` the book/extension subtree, and omit a field only where the product genuinely has no such fact (never invent `position: 0`).
-  - *Surface contract leak*: one surface's protocol reaching another (the game's "leave action to `stardew_express_emote`" rule silencing Web Chat action prose). Assert the negative: the Web prompt does **not** contain the game's tool instruction.
+- **Defect Families & Invariant Gates**: When a defect recurs, stop fixing individual instances; encode an automated gate for the entire failure class. Tests must assert durable invariants rather than pinning transient implementations:
+  - *Zero forward path*: Every reachable non-terminal state in a lifecycle or state machine must offer at least one valid forward action.
+  - *First-viewport reachability*: Primary action controls must remain fully visible within the baseline viewport (including mobile 400x800) without requiring container scroll.
+  - *End-to-end data consumption*: Any configuration or card field accepted and stored for runtime use must be asserted to reach the assembled prompt or execution pipeline.
+  - *Draft preservation*: User input must never be discarded on API, validation, or network failures; verify text retention across all failure shapes.
+  - *Lossless round-trip*: Exporting imported structures must preserve all accepted fields and metadata without silent loss or mutation.
+  - *Surface protocol isolation*: Surface-specific instructions and tool bindings must remain strictly isolated to their target runtime, verified by negative assertions on other surfaces.
 - **Gates and tests are built for the future, not for today's tree**: a gate must keep meaning something after the code it was written against changes. Derive its population from the authority (a union, a descriptor, a constant, a directory scan) instead of a hand-maintained list; make the failure message name the drifting member so the next agent knows what to fix; let it fail loudly on drift rather than silently narrowing; and when a premise genuinely changes, update the premise and keep the assertion's force. A check that only passes because the thing it watched disappeared is a check that has stopped working.
 - For product architecture, domain behavior, ADRs, active implementation tasks, research, or historical design, read the private `zhexulong/gamebuddy-docs` repository mounted locally at `design/`; start at `design/README.md` and follow its current-owner links. Numbered root files under `design/` are migration sources, not current authority unless a current document explicitly names one.
