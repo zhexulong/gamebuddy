@@ -93,7 +93,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChestStore(string executionId, string requestId, string chestId, string expectedQualifiedItemId)
     {
-        if (!TryFindCarriedStack(expectedQualifiedItemId, out int slot, out StardewValley.Object? storedItem) || storedItem is null)
+        if (!TryFindCarriedStack(expectedQualifiedItemId, out int slot, out Item? storedItem) || storedItem is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
 
         GameLocation location = Game1.player.currentLocation;
@@ -122,7 +122,7 @@ internal sealed partial class ExecutionManager
             Game1.player.removeItemFromInventory(storedItem);
         bool menuAfter = Game1.activeClickableMenu is not null;
 
-        int playerStackAfter = Game1.player.Items[slot] is StardewValley.Object remainingItem && ReferenceEquals(remainingItem, storedItem) ? storedItem.Stack : 0;
+        int playerStackAfter = Game1.player.Items[slot] is Item remainingItem && ReferenceEquals(remainingItem, storedItem) ? storedItem.Stack : 0;
         int chestStackAfter = ChestItemCount(chest, expectedQualifiedItemId);
         bool sourceConsumed = Game1.player.Items[slot] is null || !ReferenceEquals(Game1.player.Items[slot], storedItem);
         bool postconditionHeld = stored && sourceConsumed && chestStackAfter == chestStackBefore + playerStackBefore;
@@ -229,12 +229,20 @@ internal sealed partial class ExecutionManager
     /// (<c>GetItemsForPlayer().FirstOrDefault(...)</c>). Two carried stacks of one id are one
     /// address, which is why the descriptor has no `slot` argument to disagree with them; the
     /// chosen slot still travels in the evidence, so a reader can see which stack moved.
+    ///
+    /// The stack is an <see cref="Item"/>, not a <c>StardewValley.Object</c>, because the pair this
+    /// predicate gates is <c>Chest.addItem(Item)</c> + <c>Farmer.removeItemFromInventory(Item)</c> and
+    /// the container side of the same trade has always taken an <c>Item</c> out. Pinned to the
+    /// narrower class, every <c>Tool</c>, <c>MeleeWeapon</c>, <c>Slingshot</c>, <c>Ring</c>, <c>Hat</c>,
+    /// <c>Boots</c>, <c>Clothing</c> and <c>Furniture</c> was invisible here while <c>chest_retrieve</c>
+    /// could still put one into the pack - a one-way door, refused by name as an item the actor could
+    /// see in their own hands.
     /// </summary>
-    private static bool TryFindCarriedStack(string expectedQualifiedItemId, out int slot, out StardewValley.Object? item)
+    private static bool TryFindCarriedStack(string expectedQualifiedItemId, out int slot, out Item? item)
     {
         for (int index = 0; index < Game1.player.Items.Count; index++)
         {
-            if (Game1.player.Items[index] is not StardewValley.Object candidate || candidate.Stack <= 0)
+            if (Game1.player.Items[index] is not Item candidate || candidate.Stack <= 0)
                 continue;
             if (!string.Equals(candidate.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
                 continue;
