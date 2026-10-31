@@ -315,15 +315,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
     }
   };
   return (
-    <section
-      className="game-installation-panel"
-      aria-label={labels.gameInstallationAria}
-      data-state={state}
-      // The panel scrolls when a machine reports many candidates; a scrollable
-      // region that cannot take focus is unreachable for a keyboard player
-      // (axe: scrollable-region-focusable).
-      tabIndex={0}
-    >
+    <section className="game-installation-panel" aria-label={labels.gameInstallationAria} data-state={state}>
       <h4 className="section-subtitle">{labels.gameInstallationTitle}</h4>
       {/* `data-state` above stays the typed state the tests assert; the sentence
           a player reads is always the localized outcome (design/104 §10). */}
@@ -331,7 +323,12 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
         {installationStateLabel(labels, state)}
       </p>
       {discovery !== null && discovery.candidates.length > 0 && (
-        <ul className="installation-candidates">
+        // The list is the only region that scrolls itself (see
+        // `.installation-candidates`), so it is the region that takes focus: a
+        // scroll container a keyboard cannot reach is unscrollable for that player
+        // (axe: scrollable-region-focusable), and the panel's own box no longer
+        // scrolls at all.
+        <ul className="installation-candidates" tabIndex={0}>
           {discovery.candidates.map(({ candidateId, label, source, hint, location, status }) => (
             <li className="installation-candidate" key={candidateId} data-label={label} data-location={location}>
               {/* The row's words are the product's: the game's own name from the

@@ -2966,12 +2966,19 @@
   }
 
   /* Installation setup is a second Game panel at lower emphasis: same surface
-   and rhythm, a smaller title, its own bounded scroll for a machine that
-   reports many candidates. */
+   and rhythm, a smaller title, and its own bounded scroll for a machine that
+   reports many candidates.
+
+   The bound is on the *list*, not on this box. With the cap here, the box was
+   `max-height` + `overflow-y: auto` and its three navigation controls - its last
+   child - were the first thing the cap cut: measured at 400x800, `candidates` left
+   取消 22 px below the panel's own bottom edge and `mod-loader-missing` left
+   帮我安装 SMAPI 6 px and 取消 161 px below it, so the player had to scroll inside
+   a 256 px box to reach the controls that close it. Scrolling belongs to the list
+   of installations, which is the part whose length the machine decides; the
+   panel's actions are always painted in full. */
   .game-installation-panel {
     flex: 0 0 auto;
-    max-height: min(32dvh, 300px);
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -2979,8 +2986,6 @@
     background-color: var(--surface-panel);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-md);
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-subtle) transparent;
   }
 
   .installation-candidates {
@@ -2990,6 +2995,12 @@
     margin: 0;
     padding: 0;
     list-style: none;
+    /* The one region that scrolls itself, so a machine reporting many
+     installations cannot push the panel's actions down the page. */
+    max-height: min(32dvh, 300px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
   }
 
   .installation-candidate {
