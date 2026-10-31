@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { characterLabels } from "../src/components/character-domain-labels";
 
 /**
  * A companion an imported card created is in the library, not in play - and the
@@ -217,7 +218,7 @@ async function importCard(page: import("@playwright/test").Page): Promise<void> 
 }
 
 const IN_PLAY_EN =
-  "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.";
+  "The companion in play is the one this installation started with. Choose another here and she plays from the next start: the choice is recorded now, and the restart is what puts her in play.";
 /**
  * The words a control that claims to SWITCH the in-play companion would have to use.
  *
@@ -231,11 +232,11 @@ const ACTIVATION_WORDS = /switch|activat|set as|enable/i;
 /** The words a control that edits an authored field would have to use. */
 const EDIT_WORDS = /edit|save|delete|clear|remove|create/i;
 const IN_PLAY_ZH =
-  "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
+  "在玩的伙伴就是这次启动选定的那一位。你可以在这里选另一位，她会从下次启动开始陪你：选择现在就会被记下，真正让她上场的是重新启动。";
 const IMPORT_DETAIL_EN =
-  "She is archived safely in your local companion library; the companion in play is chosen by the start-up configuration, so she becomes the one in play only when GameBuddy later starts with her.";
+  "She is archived safely in your local companion library. Choose her in the companions list above and she becomes the companion in play from the next start of GameBuddy.";
 const IMPORT_DETAIL_ZH =
-  "她已安全归档到本地伙伴库；在玩的伙伴由启动配置选定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。";
+  "她已安全归档到本地伙伴库。在上面那个伙伴列表里选她，她就会从 GameBuddy 下次启动开始成为在玩的伙伴。";
 
 test("a companion an import created is not the one in play, and the surface states when she can be", async ({
   page,
@@ -384,4 +385,64 @@ test("the Chinese surface states the same condition in the panel and in the impo
   await importCard(page);
   await expect.poll(() => confirms.length).toBe(1);
   await expect(surface.locator("[data-card-import-result=created]")).toContainText(IMPORT_DETAIL_ZH);
+});
+
+/**
+ * Every sentence that tells the player to CHOOSE a companion names a control that is really there.
+ *
+ * This is the gate the earlier copy change needed and did not have. Two sentences instructed the
+ * player to pick a companion "in the list" while the list could only open her inspector - a false
+ * instruction is worse than the stale one it replaced, because it points at a button that GETs. So
+ * the instruction and the control are asserted together, in the same mounted surface: for each
+ * sentence, the element that carries it and the element that carries the choice are both present,
+ * and the sentence's words name what the control's words say.
+ *
+ * The population is derived from the catalogue rather than retyped: the sentences are the keys
+ * whose text instructs a choice, found by asking the two catalogues which of their values name it.
+ */
+test("a sentence that tells the player to choose names a control that exists on the same surface", async ({ page }) => {
+  await stubCharacters(page, () => [
+    { handle: currentHandle, name: "Mira", isCurrent: true },
+    { handle: importedHandle, name: "Nova", isCurrent: false },
+  ]);
+  const surface = await openCharacters(page, "en", "Characters");
+  const section = surface.locator("[data-companion-list-section]");
+
+  // The three sentences that used to say a restart-configuration decided this, and now instruct a
+  // choice. Each one must be accompanied by the control it names.
+  const instructing = [
+    { key: "companionInPlay", selector: "[data-companion-in-play]" },
+    { key: "companionActivationHint", selector: "[data-companion-activation-hint]" },
+  ] as const;
+  for (const entry of instructing) {
+    const sentences = await section.locator(entry.selector).allTextContents();
+    expect(sentences.length, `${entry.key} is rendered on the roster section`).toBeGreaterThan(0);
+    expect(
+      sentences.join(" "),
+      `${entry.key} names a choice, so the choice control must be there to carry it out`,
+    ).toMatch(/choose|pick/iu);
+  }
+  // ...and the control really is: one on the companion who is not in play, none on her who is.
+  await expect(section.locator('[data-companion-phase="offer"] [data-companion-choose]')).toHaveCount(1);
+  await expect(section.locator('[data-companion-phase="in_play"] [data-companion-choose]')).toHaveCount(0);
+
+  // The import result's sentence names the list, and the list it names is this one - the roster
+  // above it, which carries the control. Asserted by direction: the word it uses ("above") is the
+  // one that is true of the layout, and the roster really does precede the import section.
+  const importDetail = characterLabels("en").importCreatedDetail;
+  expect(importDetail).toMatch(/list above/iu);
+  const order = await page.evaluate(() => {
+    const panel = document.querySelector("[data-characters-panel]");
+    if (panel === null) return { roster: -1, importer: -1 };
+    const roster = panel.querySelector("[data-companion-list-section]");
+    const importer = panel.querySelector("[data-card-import]");
+    if (roster === null || importer === null) return { roster: -1, importer: -1 };
+    // A positive value means the roster comes first in document order.
+    const position = roster.compareDocumentPosition(importer);
+    return {
+      roster: panel.children.length,
+      importer: position & Node.DOCUMENT_POSITION_FOLLOWING ? 1 : -1,
+    };
+  });
+  expect(order.importer, "the roster precedes the import section, which is what 'above' claims").toBe(1);
 });

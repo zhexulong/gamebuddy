@@ -407,7 +407,7 @@ const en: CharacterLabels = Object.freeze({
   importBusy: "Importing…",
   importCreated: "Imported {{name}}.",
   importCreatedDetail:
-    "She is archived safely in your local companion library; the companion in play is chosen by the start-up configuration, so she becomes the one in play only when GameBuddy later starts with her.",
+    "She is archived safely in your local companion library. Choose her in the companions list above and she becomes the companion in play from the next start of GameBuddy.",
   importKept: "Kept {{count}} card field entries.",
   importLorebookCount: "Carries {{count}} lorebook entries.",
   importPreserved: "Kept {{count}} fields unchanged.",
@@ -451,7 +451,7 @@ const en: CharacterLabels = Object.freeze({
   companionsEmpty: "No companions yet.",
   companionCurrent: "current",
   companionInPlay:
-    "The companion in play is chosen by the start-up configuration — a companion imported or created here is archived safely in your local companion library, and becomes the one in play only when GameBuddy later starts with her.",
+    "The companion in play is the one this installation started with. Choose another here and she plays from the next start: the choice is recorded now, and the restart is what puts her in play.",
   companionInspect: "View {{name}}'s character",
   companionActivate: "Play as her",
   companionActivateFor: "Choose {{name}} as the companion in play",
@@ -476,7 +476,7 @@ const en: CharacterLabels = Object.freeze({
   companionInspectorClose: "Close",
   companionInspectorInPlay: "This is the companion in play.",
   companionInspectorNotInPlay:
-    "{{name}} is saved in your companion library. She is not the companion in play — the companion in play was chosen by the start-up configuration, and viewing her character here does not change that.",
+    "{{name}} is saved in your companion library. She is not the companion in play — this installation started with someone else. Close this and choose her in the roster if you want her to play from the next start.",
   companionInspectorUnavailable: "Her character could not be read.",
   companionInspectorPersonaTitle: "Description and personality",
   companionInspectorPersonaCore: "Who she is",
@@ -692,7 +692,7 @@ const zh: CharacterLabels = Object.freeze({
   importBusy: "正在导入…",
   importCreated: "已导入 {{name}}。",
   importCreatedDetail:
-    "她已安全归档到本地伙伴库；在玩的伙伴由启动配置选定，所以只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
+    "她已安全归档到本地伙伴库。在上面那个伙伴列表里选她，她就会从 GameBuddy 下次启动开始成为在玩的伙伴。",
   importKept: "已保留 {{count}} 个卡片字段条目。",
   importLorebookCount: "包含 {{count}} 条世界书词条。",
   importPreserved: "有 {{count}} 个字段原样保留。",
@@ -736,7 +736,7 @@ const zh: CharacterLabels = Object.freeze({
   companionsEmpty: "还没有伙伴。",
   companionCurrent: "当前",
   companionInPlay:
-    "在玩的伙伴由启动配置选定——你在这里导入或创建的伙伴会安全归档到本地伙伴库，只有在 GameBuddy 以她重新启动后，她才会成为在玩的伙伴。",
+    "在玩的伙伴就是这次启动选定的那一位。你可以在这里选另一位，她会从下次启动开始陪你：选择现在就会被记下，真正让她上场的是重新启动。",
   companionInspect: "查看 {{name}} 的角色",
   companionActivate: "设为在玩",
   companionActivateFor: "选 {{name}} 成为在玩的伙伴",
@@ -757,7 +757,7 @@ const zh: CharacterLabels = Object.freeze({
   companionInspectorClose: "关闭",
   companionInspectorInPlay: "这就是在玩的伙伴。",
   companionInspectorNotInPlay:
-    "{{name}} 已保存在你的伙伴库中。她不是在玩的伙伴——在玩的伙伴由启动配置选定，在这里查看她的角色并不会改变这一点。",
+    "{{name}} 已保存在你的伙伴库中。她不是在玩的伙伴——这次启动的是另一位。关掉这里，到伙伴列表里选她，她就会从下次启动开始陪你。",
   companionInspectorUnavailable: "无法读取她的角色资料。",
   companionInspectorPersonaTitle: "描述与性格",
   companionInspectorPersonaCore: "她是谁",
