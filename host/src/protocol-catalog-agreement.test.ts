@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * EVERY ARGUMENT THE HOST REQUIRES MUST BE PUBLISHED IN THE CATALOG THE MOD EMITS.
@@ -34,12 +36,27 @@ import { readFileSync } from "node:fs";
  * so an action added to either side is covered without touching this file.
  * </p>
  */
+/**
+ * The repository root, found by walking up to the directory that holds `integrations`.
+ *
+ * Not `new URL("./protocol.ts", import.meta.url)`: this file is compiled into `dist-test/`, so a relative URL resolves to
+ * `dist-test/protocol.ts` - a file that does not exist. The gate reads SOURCE, so it has to find the source tree rather
+ * than its own build output. Measured 2026-10-31: `ENOENT ... dist-test/protocol.ts`.
+ */
+function repoRoot(start: string): string {
+  let directory = start;
+  for (;;) {
+    if (existsSync(join(directory, "integrations", "stardew", "action-development"))) return directory;
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error(`repository root not found from ${start}`);
+    directory = parent;
+  }
+}
+
+const ROOT = repoRoot(dirname(fileURLToPath(import.meta.url)));
 const CATALOG = JSON.parse(
   readFileSync(
-    new URL(
-      "../../integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
-      import.meta.url,
-    ),
+    join(ROOT, "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"),
     "utf8",
   ),
 ) as {
@@ -49,7 +66,7 @@ const CATALOG = JSON.parse(
     sceneTarget?: { type: string; version: number; required: boolean; requiredProperties: readonly string[] };
   }[];
 };
-const PROTOCOL = readFileSync(new URL("./protocol.ts", import.meta.url), "utf8");
+const PROTOCOL = readFileSync(join(ROOT, "host", "src", "protocol.ts"), "utf8");
 
 export {};
 

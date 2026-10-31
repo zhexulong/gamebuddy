@@ -1481,6 +1481,56 @@ test("the native litter-category targets accept any bounded item id, not one pin
   }
 });
 
+test("rockSourceTargets carries real durability, and refuses only a value outside the schema's bound", () => {
+  // `health` is the rock's remaining durability. It used to be `const 1`, i.e. "the basic pickaxe removes it in one
+  // swing", which refused every multi-hit rock the Mod had correctly discovered - and because the schema refuses the
+  // WHOLE snapshot, one mine node on screen blocked every action. `Pickaxe.DoFunction` subtracts
+  // `Math.Max(1, upgradeLevel + 1) + additionalPower` per swing (Pickaxe.cs:139-140), so a rock's durability is a
+  // population (1-25: Farm.cs:540-606, MineShaft.cs:1733-1798, :4351-4460), not one value.
+  const rock = {
+    targetId: "rock_deadbeef",
+    location: "Farm",
+    x: 10,
+    y: 12,
+    qualifiedItemId: "(O)751",
+    displayName: "Copper Node",
+  };
+  for (const health of [1, 2, 3, 4, 6, 8, 12, 16, 25]) {
+    assert.equal(
+      validateBridgeMessage(
+        newEnvelope(
+          "snapshot",
+          scope,
+          { ...snapshot, rockSourceTargets: [{ ...rock, health }] },
+          `snapshot_rock_${health}`,
+          now,
+        ),
+        scope,
+        now,
+      ),
+      null,
+      `a durability-${health} rock is a real rock`,
+    );
+  }
+  for (const health of [0, -1, 101, 1.5, "1", null]) {
+    assert.equal(
+      validateBridgeMessage(
+        newEnvelope(
+          "snapshot",
+          scope,
+          { ...snapshot, rockSourceTargets: [{ ...rock, health }] },
+          "snapshot_rock_bad",
+          now,
+        ),
+        scope,
+        now,
+      ),
+      "invalid_snapshot",
+      `health=${JSON.stringify(health)} is not a durability`,
+    );
+  }
+});
+
 test("clear_cask requires exact target coordinates and the selected tool slot", () => {
   const request = {
     requestId: "request_clear_cask_01",
@@ -2328,6 +2378,9 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     scope,
     {
       ...snapshot,
+      // A MATURE TREE AT ITS REAL STARTING DURABILITY. This read `health: 1`, the one-swing-from-falling stub, so the
+      // accepted case and the refused case together only ever said "1 is legal, anything else is not" - the shape a
+      // unit test invents, not the shape a farm has.
       treeChopSourceTargets: [
         {
           targetId: "tree_chop_01",
@@ -2336,7 +2389,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
           y: 12,
           treeType: "Oak",
           growthStage: 5,
-          health: 1,
+          health: 10,
           stump: false,
           moss: false,
           tapped: false,
@@ -2361,7 +2414,14 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
               y: 12,
               treeType: "Oak",
               growthStage: 5,
-              health: 2,
+              // A FELLED TREE IS THE ILLEGAL CASE, NOT A LIVING ONE.
+              //
+              // This read `health: 2` and asserted the snapshot was refused, which encoded the defect: a mature tree
+              // starts at 10 (`Tree.cs:187/203`) and one axe swing removes 1 (`Tree.cs:1177-1200`), so 2 is an ordinary
+              // standing tree. Refusing it is what closed the bridge on every real farm (measured 2026-10-31: six
+              // submissions, then `invalid_snapshot:treeChopSourceTargets`). 0 is the engine's felled state
+              // (`Tree.cs:587`) and the one value no `chop_tree_source` node can act on.
+              health: 0,
               stump: false,
               moss: false,
               tapped: false,

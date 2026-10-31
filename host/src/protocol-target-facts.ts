@@ -484,9 +484,18 @@ export function isRockSourceTargetFact(value: unknown): boolean {
     // correct discovery on any other one-hit stone id. The id stays an opaque
     // bounded token; the native predicate is the authority.
     isBoundedNonEmptyString(value.qualifiedItemId, 128) &&
+    // `health` is the rock's DURABILITY, which the native category does not bound and
+    // `Pickaxe.DoFunction` lowers by `Math.Max(1, upgradeLevel + 1) + additionalPower`
+    // per swing (Pickaxe.cs:139-140). It used to be `const 1` - "the basic pickaxe
+    // removes it in one swing" - which refused every multi-hit rock the Mod had
+    // correctly discovered, so the whole snapshot failed and no action could run.
+    // The population is 1-25 (Farm.cs:540-606, MineShaft.cs:1733-1798, :4351-4460);
+    // the bound is the schema's, and a value outside it is a malformed frame, not a
+    // gameplay judgement this layer is entitled to make.
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
-    value.health === 1 &&
+    value.health >= 1 &&
+    value.health <= 100 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128
@@ -574,7 +583,18 @@ export function isTreeChopSourceTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.growthStage) &&
     value.growthStage >= 5 &&
     value.growthStage <= 20 &&
-    value.health === 1 &&
+    // HEALTH IS THE DURABILITY LEFT, NOT A FLAG, and this read `=== 1`.
+    //
+    // A mature tree starts at 10 (`Tree.cs:187/203`) and one axe swing removes 1 (`Tree.cs:1177-1200`), so `1` is a tree
+    // one swing from falling - only that one was admitted. The Mod's discovery predicate was the same mistake (`== 1f`)
+    // and was fixed to `> 0f`; this half was not, so the moment the Mod started publishing a real tree the first snapshot
+    // was refused `invalid_snapshot:treeChopSourceTargets` and the bridge closed. Measured 2026-10-31: six submissions,
+    // then a dead pipe.
+    //
+    // The bound is the engine's: a tree is felled at `<= 0`, and 10 is a mature tree's starting value.
+    typeof value.health === "number" &&
+    value.health > 0 &&
+    value.health <= 10 &&
     value.stump === false &&
     value.moss === false &&
     value.tapped === false
@@ -983,42 +1003,40 @@ export function isFeedTroughTargetFact(value: unknown): boolean {
   );
 }
 
-export function isChestStoreTargetFact(value: unknown): boolean {
+/**
+ * One storage container as ENTITY STATE: the container, and every item inside it.
+ *
+ * `items` is deliberately not bounded here, not even at the native chest capacity. A container's contents are a
+ * fact about the world, so a chest reports what it holds, whole: the two flattened families this replaced paired a
+ * container against the pack and against its own items, and bounding that cross product had to hide pairs (the
+ * retired `withheldChestStoreTargets`/`withheldChestRetrieveTargets` counts existed only to admit that). What is bounded
+ * is how many CONTAINERS arrive - `SNAPSHOT_FAMILY_RULES` - and the frame itself, which `MAX_MESSAGE_BYTES` refuses.
+ */
+export function isChestStateFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "slot", "qualifiedItemId", "stack", "displayName"]) &&
-    isOpaqueId(value.targetId) &&
+    hasExactKeys(value, ["chestId", "x", "y", "displayName", "isFridge", "items"]) &&
+    isOpaqueId(value.chestId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    isToolSlot(value.slot) &&
-    typeof value.qualifiedItemId === "string" &&
-    value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128 &&
-    typeof value.stack === "number" &&
-    Number.isSafeInteger(value.stack) &&
-    value.stack > 0 &&
-    typeof value.displayName === "string" &&
-    value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    isBoundedNonEmptyString(value.displayName, 128) &&
+    typeof value.isFridge === "boolean" &&
+    Array.isArray(value.items) &&
+    value.items.every(isChestItemFact)
   );
 }
 
-export function isChestRetrieveTargetFact(value: unknown): boolean {
+/** One item inside a container: its slot IN THE CONTAINER, and the stack the slot holds. */
+function isChestItemFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName"]) &&
-    isOpaqueId(value.targetId) &&
-    isTileCoordinate(value.x) &&
-    isTileCoordinate(value.y) &&
-    typeof value.qualifiedItemId === "string" &&
-    value.qualifiedItemId.length > 0 &&
-    value.qualifiedItemId.length <= 128 &&
+    hasExactKeys(value, ["slot", "qualifiedItemId", "displayName", "stack"]) &&
+    isNonNegativeSafeInteger(value.slot) &&
+    isBoundedNonEmptyString(value.qualifiedItemId, 128) &&
+    isBoundedNonEmptyString(value.displayName, 128) &&
     typeof value.stack === "number" &&
     Number.isSafeInteger(value.stack) &&
-    value.stack > 0 &&
-    typeof value.displayName === "string" &&
-    value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    value.stack > 0
   );
 }
 

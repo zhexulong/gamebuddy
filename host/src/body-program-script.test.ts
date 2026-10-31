@@ -694,9 +694,13 @@ const TOOL_PACK = [
 ] as const;
 
 test("a plan names a chest and one of the items inside it, out of the container's own state", () => {
-  // The round trip the ruling is about: `chests` is entity state, and the two actions still take their own safe
-  // slice out of it - the container's tile and id for both, the pack slot and pack item for a store, and one of the
-  // container's own `items` for a retrieve. Nothing here flattens: the plan reads the container, then decides.
+  // The round trip the ruling is about: `chests` is entity state, and the two actions take their own safe slice out
+  // of it - the container's published id and the item id. Nothing here flattens: the plan reads the container, then
+  // decides.
+  //
+  // These arguments were `slot`, `x`, `y` and `expectedTargetId` until the container became an entity. The compiler
+  // refused the old shape with `plan_script_unknown_argument:chest_retrieve.slot`, which is the correct answer and the
+  // reason this assertion is worth keeping: it reads the catalog instead of restating a shape by hand.
   const nodes = nodesOf(
     compile(
       `
@@ -704,7 +708,7 @@ for (const chest of snapshot.chests ?? []) {
   if (builder.isFull()) break;
   for (const item of chest.items) {
     if (item.qualifiedItemId !== "(O)388") continue;
-    builder.chest_retrieve({ slot: 0, x: chest.x, y: chest.y, expectedQualifiedItemId: item.qualifiedItemId, expectedTargetId: chest.chestId });
+    builder.chest_retrieve({ chestId: chest.chestId, expectedQualifiedItemId: item.qualifiedItemId });
   }
 }
 `,
@@ -730,12 +734,11 @@ for (const chest of snapshot.chests ?? []) {
     nodes.map((node) => node.actionId),
     ["chest_retrieve"],
   );
+  // The node carries the container id and the item id, and nothing else: a tile and a pack slot were the flattened
+  // shape's arguments, and the container is now the entity those two facts belong to.
   assert.deepEqual(nodes[0]!.arguments, {
-    slot: { type: "integer", canonicalValue: "0" },
-    x: { type: "integer", canonicalValue: "9" },
-    y: { type: "integer", canonicalValue: "10" },
+    chestId: { type: "string", canonicalValue: "chest_0123456789abcdef" },
     expectedQualifiedItemId: { type: "string", canonicalValue: "(O)388" },
-    expectedTargetId: { type: "string", canonicalValue: "chest_0123456789abcdef" },
   });
   // The plan is one the Mod accepts, so the chest’s own id is a legal target id and not a shape only this compiler
   // would produce.

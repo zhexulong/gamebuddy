@@ -549,7 +549,7 @@ export type Snapshot = Readonly<{
   }>[];
   /** Global Farm source count, published only while dig_artifact_spot is capable. */
   artifactSpotFarmSourceCount?: number | null;
-  /** Ordinary mature untapped non-moss trees at native terminal-fell starting health 1. */
+  /** Ordinary mature untapped non-moss trees that are still standing (`health > 0`), with the durability that is left. */
   treeChopSourceTargets?: readonly Readonly<{
     targetId: string;
     location: string;
@@ -557,6 +557,7 @@ export type Snapshot = Readonly<{
     y: number;
     treeType: string;
     growthStage: number;
+    /** Durability remaining out of a mature tree's 10. An axe swing removes 1, so this is 10 on a fresh tree. */
     health: number;
     stump: false;
     moss: false;
