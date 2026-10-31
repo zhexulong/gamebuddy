@@ -61,10 +61,24 @@ public sealed class SettlementWithoutLifecycleTests
         // The dispatcher must be behind a "nobody owns this" guard. Without it, a normal night - lifecycle live, its
         // own `Phase.AwaitingModal` about to commit the same menu - would get a SECOND `okClicked`, and a second
         // dispatch while the first outro runs freezes the settlement rather than finishing it.
+        //
+        // Two files, because the guard and the reasoning behind it live in `SleepAndAdvanceDayLifecycle` beside the
+        // settle they decide about: the day start names the decision, the lifecycle owns it.
         string body = MethodBody(ReadModEntrySource(), "private void OnDayStarted(");
 
-        body.Should().Contain("SettleStandingSettlementMenuWithoutLifecycle", "the day start is where an unowned summary is met");
-        body.Should().Contain("IsFinished", "and it must not act while a lifecycle still owns the rollover menus");
+        int observed = body.IndexOf("ObserveDayStarted()", StringComparison.Ordinal);
+        int settle = body.IndexOf("SettleStandingSettlementMenuNoLifecycleCanCommit", StringComparison.Ordinal);
+        int acts = body.IndexOf("TryGetAiState(", StringComparison.Ordinal);
+
+        settle.Should().BeGreaterThanOrEqualTo(0, "the day start is where an unowned summary is met");
+        observed.Should().BeLessThan(settle, "the lifecycle must see the new day before it is told it is finished");
+        settle.Should().BeLessThan(acts, "and the menu is settled before the day start goes on to act");
+
+        string guard = MethodBody(
+            ReadLifecycleSource(),
+            "internal static void SettleStandingSettlementMenuNoLifecycleCanCommit(");
+        guard.Should().Contain("IsFinished", "it must not act while a lifecycle still owns the rollover menus");
+        guard.Should().Contain("SettleStandingSettlementMenuWithoutLifecycle", "and it settles through the engine seam");
     }
 
     private static object Settle(IClickableMenu? standing) =>
@@ -80,6 +94,8 @@ public sealed class SettlementWithoutLifecycleTests
     }
 
     private static string ReadModEntrySource() => ReadRepoFile("integrations/stardew/ModEntry.cs");
+
+    private static string ReadLifecycleSource() => ReadRepoFile("integrations/stardew/SleepAndAdvanceDayLifecycle.cs");
 
     private static string MethodBody(string source, string signature)
     {

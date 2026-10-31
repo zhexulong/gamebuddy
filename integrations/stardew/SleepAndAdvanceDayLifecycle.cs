@@ -803,23 +803,47 @@ internal sealed class SleepAndAdvanceDayLifecycle
     internal static bool IsRolloverSettlementMenu(IClickableMenu? activeMenu) => activeMenu is ShippingMenu;
 
     /// <summary>
-    /// Settle a standing morning-after summary when NO lifecycle owns it.
+    /// Commit a standing morning-after summary through the engine seam, or refuse a menu whose close would take a
+    /// decision.
     ///
-    /// A lifecycle exists only because `advance_day` started one (`RequestLocalAdvanceDay`). A night the engine took
-    /// by its own 2:00 AM pass-out has no lifecycle, so the ownership this file describes has nobody to discharge it -
-    /// and `shouldTimePass` returns false while any `activeClickableMenu` is non-null (Game1.cs:9300-9303), so the
-    /// clock does not advance either. Measured 2026-10-28 (`round6`): day 6 began with the summary standing, the
-    /// world stayed at 06:00 for 31 real minutes, and the run died.
+    /// The mechanism only. Whether any lifecycle could commit this menu, and the measurement that put the question
+    /// there, belong to <see cref="SettleStandingSettlementMenuNoLifecycleCanCommit"/>.
     ///
-    /// The same seam, for the same reason. `okClicked` only starts the outro (ShippingMenu.cs:690-696) and settles
-    /// nothing - the settlement happened before the menu existed - so this takes no decision and may be done on the
-    /// companion's behalf. A `LevelUpMenu` grants a perk when it closes, which is why this refuses anything else.
+    /// `okClicked` only starts the outro (ShippingMenu.cs:690-696) and settles nothing - the settlement happened
+    /// before the menu existed - so this takes no decision and may be done on the companion's behalf. A `LevelUpMenu`
+    /// grants a perk when it closes, which is why this refuses anything else.
     /// </summary>
     internal static SettlementMenuOutcome SettleStandingSettlementMenuWithoutLifecycle(IClickableMenu? standing)
     {
         if (!IsRolloverSettlementMenu(standing))
             return SettlementMenuOutcome.NotPresent;
         return EngineShippingCommit((ShippingMenu)standing!) ? SettlementMenuOutcome.Committed : SettlementMenuOutcome.CommitUnavailable;
+    }
+
+    /// <summary>
+    /// A day that begins with the summary still standing, and no lifecycle to commit it, is the pass-out night.
+    ///
+    /// The lifecycle is the ordinary owner of this menu (`Phase.AwaitingModal`), but it exists only because
+    /// `advance_day` started one - so a night the engine took by its own 2:00 AM pass-out has nobody to discharge
+    /// the obligation. `shouldTimePass` then returns false while the menu is up (Game1.cs:9300-9303), which means
+    /// the companion can neither act nor wait the blockage out. Measured 2026-10-28 (`round6`): the clock sat at
+    /// 06:00 for 31 real minutes and the run died.
+    ///
+    /// Committed here rather than by the harness, because a harness that clicks it proves the harness: in a real
+    /// session nobody is standing at the screen. This is the same engine seam the lifecycle and `dismiss_modal`
+    /// reach for, on the one menu whose close takes no decision.
+    ///
+    /// Both facts arrive from the caller: `owner` is its handle, null on a night no `advance_day` started, and a
+    /// finished lifecycle keeps reporting its last phase so the handle alone does not settle the question;
+    /// `standing` is the menu it read. Neither is read here, so this decides ownership and nothing else.
+    /// </summary>
+    internal static void SettleStandingSettlementMenuNoLifecycleCanCommit(
+        SleepAndAdvanceDayLifecycle? owner,
+        IClickableMenu? standing)
+    {
+        if (owner is not null && !owner.IsFinished)
+            return;
+        SettleStandingSettlementMenuWithoutLifecycle(standing);
     }
 
     /// <summary>
