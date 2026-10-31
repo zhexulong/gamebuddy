@@ -412,11 +412,14 @@ test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, a
 });
 
 /**
- * Nearby villagers: the nearest few by name, the remainder as a count, and a
- * radius so "nearby" never means "somewhere on this map". Eight villagers here
- * is the shape a town square reaches, and it must still cost one bounded fact.
+ * Nearby villagers: the nearest few by name, and the rest of the map as destinations.
+ *
+ * Two families answer this question and only one of them is addressable. `npcRelationshipTargets` carries
+ * `targetId` and is bounded to the Mod's 6-tile discovery envelope; `villagerWhereabouts` carries every
+ * villager on the map with a tile but no id. A villager at (90,50) is therefore invisible to `talk_to_npc`
+ * until the actor walks over - so the line must say where to walk, not merely that someone exists.
  */
-test("formatGameEnvironmentFacts names at most three villagers near her and counts the rest of the map", () => {
+test("formatGameEnvironmentFacts names the villagers near her and the coordinates of the ones beyond", () => {
   const villager = (npcName: string, displayName: string, x: number, y: number) => ({
     npcName,
     displayName,
@@ -432,7 +435,7 @@ test("formatGameEnvironmentFacts names at most three villagers near her and coun
     villager("Sebastian", "塞巴斯蒂安", 54, 50),
     villager("Marlon", "马龙", 55, 50),
     villager("Jas", "贾斯", 56, 50),
-    // In this location, but not near her: they must be counted, not named.
+    // In this location but past the envelope: a destination, with the tile she would walk to.
     villager("Haley", "海莉", 90, 50),
     villager("Elliott", "艾利欧特", 50, 90),
   ];
@@ -450,22 +453,25 @@ test("formatGameEnvironmentFacts names at most three villagers near her and coun
   const en = formatGameEnvironmentFacts(source, false);
   for (const named of ["Abigail", "Sam", "Penny"]) assert.ok(en.includes(named), `names the nearest: ${en}`);
   assert.ok(!en.includes("Sebastian"), `the fourth nearest is a count, not a name: ${en}`);
-  assert.ok(!en.includes("Haley"), `a villager on another part of the map is a count, not a name: ${en}`);
-  assert.ok(en.includes("5 more in this location"), `the rest of the map is counted: ${en}`);
+  assert.ok(en.includes("Haley(90,50)"), `a villager past the envelope is somewhere she can walk: ${en}`);
+  assert.ok(en.includes("Elliott(50,90)"), `and so is the second one: ${en}`);
+  assert.ok(en.includes("3 more"), `what the caps hid is still counted: ${en}`);
 
   const zh = formatGameEnvironmentFacts(source, true);
   assert.ok(zh.includes("附近: "), `the Chinese line names the neighbours: ${zh}`);
   assert.ok(zh.includes("阿比盖尔"), zh);
   assert.ok(!zh.includes("塞巴斯蒂安"), zh);
-  assert.ok(zh.includes("本图另有 5 人"), `the Chinese line counts the rest of the map: ${zh}`);
+  assert.ok(zh.includes("海莉(90,50)"), `the Chinese line carries the walkable tile too: ${zh}`);
+  assert.ok(zh.includes("另有 3 人"), `the Chinese line counts the rest: ${zh}`);
 });
 
 /**
- * The radius is the point of "nearby": with nobody inside the discovery
- * envelope, only the count may appear - a name would say someone is with her when
- * nobody is.
+ * The radius still means something: nobody inside the envelope is described as NEAR.
+ *
+ * What changed is only what a beyond-envelope villager becomes. He is not "with her", so he is not in the
+ * `nearby` half; he is on her map and reachable, so his tile is published as the place to go.
  */
-test("formatGameEnvironmentFacts counts a villager across the map without claiming she is nearby", () => {
+test("formatGameEnvironmentFacts keeps a villager across the map out of `nearby` and publishes where he is", () => {
   const facts = formatGameEnvironmentFacts(
     {
       timeOfDay: 900,
@@ -482,9 +488,9 @@ test("formatGameEnvironmentFacts counts a villager across the map without claimi
     },
     false,
   );
-  assert.equal(facts.endsWith("nearby: 1 more in this location"), true, `only the count, and only this map: ${facts}`);
-  assert.ok(!facts.includes("Haley"), facts);
-  assert.ok(!facts.includes("Marlon"), `another location is not nearby whatever its tile: ${facts}`);
+  assert.ok(!facts.includes("nearby:"), `nobody is within the envelope, so nobody is nearby: ${facts}`);
+  assert.equal(facts.endsWith("on this map: Haley(60,40)"), true, `the destination is named with its tile: ${facts}`);
+  assert.ok(!facts.includes("Marlon"), `another location is not on this map whatever its tile: ${facts}`);
 });
 
 /**
@@ -580,7 +586,7 @@ test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue"
     },
     true,
   );
-  assert.equal(facts, "06:00（清晨）；1年第1天 春季；天气：雨天；位置: Farm；脚下: (64, 15)；体力: 12（已疲惫）");
+  assert.equal(facts, "06:00（清晨）；1年第1天 春季；天气：雨天；位置: 农场；脚下: (64, 15)；体力: 12（已疲惫）");
 });
 
 test("formatGameEnvironmentFacts omits stamina when the snapshot does not carry it", () => {

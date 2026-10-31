@@ -423,6 +423,16 @@ const MAX_NEARBY_VILLAGER_NAMES = 3;
  * across the farm is not next to her, however few others are in the map.
  */
 const MAX_NEARBY_VILLAGER_TILES = 6;
+/**
+ * The villager fact's own share of the line, so it can never crowd another fact out of it.
+ *
+ * `joinBoundedFacts` drops whole facts from the END when the line is over its cap, and stamina is last:
+ * an unbounded list of walkable villagers would trade a fact about the world for a fact about her own
+ * body. Half the line is the share, and it is enough - measured, the other facts at their heaviest (deep
+ * night, green rain, a farmhouse, an upgraded watering can, persistent fatigue, and the whole-map watering
+ * answer) cost 155-176 B, so this much still fits under `MAX_GAME_ENVIRONMENT_FACTS_BYTES`.
+ */
+const MAX_VILLAGER_FACT_BYTES = MAX_GAME_ENVIRONMENT_FACTS_BYTES / 2;
 /** One published name's share of the line; the wire allows 128 characters. */
 const MAX_ENVIRONMENT_NAME_CHARS = 16;
 
@@ -466,10 +476,23 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
 }
 
 /**
- * The villagers standing with her. `villagerWhereabouts` describes every loaded
- * location, so this reads only the map she is on, orders by tile distance, names
- * the ones inside the discovery envelope up to the cap, and counts the rest of
- * the map - "is anyone here" must stay answerable in both directions.
+ * The villagers standing with her, and the ones she could walk to.
+ *
+ * `villagerWhereabouts` describes every loaded location, so this reads only the map she is on and splits it at
+ * the Mod's own discovery envelope. Inside it, `npcRelationshipTargets` already publishes an address for every
+ * villager, so a name is the whole fact. Beyond it that family is empty BY CONSTRUCTION (`TargetDiscoveryRadius`,
+ * 6), and a name alone would be a rumour about someone she cannot see.
+ *
+ * A villager standing on her map past the envelope is a DESTINATION, not a statistic: she can walk there, and
+ * the radius-6 family lights up when she arrives. So the far ones are published as `name(x,y)`, nearest first,
+ * and the count that remains is what the cap hid rather than what the map holds. Measured 2026-10-31
+ * (`round17`): a Town observation carried `npcRelationshipTargets: []` while `villagerWhereabouts` listed
+ * Shane in Town, this line said "本图另有 12 人" and named nobody, and the companion spent two trips to Town
+ * and called `talk_to_npc` zero times.
+ *
+ * Both halves are bounded, because this is rendered on every turn: the near names are capped at three, the
+ * destinations by the fact's own byte share, and the remainder is always a count - "is anyone here" must stay
+ * answerable in both directions.
  */
 function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean): string {
   const tile = source.tile;
@@ -478,16 +501,38 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
   if (here.length === 0) return "";
   const distance = (villager: { readonly x: number; readonly y: number }): number =>
     Math.max(Math.abs(villager.x - tile.x), Math.abs(villager.y - tile.y));
-  const named = here
+  const ordered = here.sort((left, right) => distance(left) - distance(right));
+  const name = (villager: { readonly npcName: string; readonly displayName: string }): string =>
+    boundedName(zh ? villager.displayName : villager.npcName);
+  const named = ordered
     .filter((villager) => distance(villager) <= MAX_NEARBY_VILLAGER_TILES)
-    .sort((left, right) => distance(left) - distance(right))
-    .slice(0, MAX_NEARBY_VILLAGER_NAMES);
-  const names = named.map((villager) => boundedName(zh ? villager.displayName : villager.npcName));
-  const others = here.length - named.length;
-  const rest = others <= 0 ? "" : zh ? `本图另有 ${others} 人` : `${others} more in this location`;
-  const listed = names.length === 0 ? "" : zh ? names.join("、") : names.join(", ");
-  const body = listed !== "" && rest !== "" ? `${listed}${zh ? "；" : "; "}${rest}` : listed !== "" ? listed : rest;
-  return `${zh ? "附近" : "nearby"}: ${body}`;
+    .slice(0, MAX_NEARBY_VILLAGER_NAMES)
+    .map(name);
+  // An unreadable tile cannot be a destination: `NaN` in a coordinate is not an address, so such a row stays
+  // inside the count rather than being published as somewhere to walk.
+  const reachable = ordered.filter(
+    (villager) =>
+      distance(villager) > MAX_NEARBY_VILLAGER_TILES && Number.isFinite(villager.x) && Number.isFinite(villager.y),
+  );
+  const destinations: string[] = [];
+  const compose = (): string => {
+    const segments: string[] = [];
+    if (named.length > 0) segments.push(`${zh ? "附近" : "nearby"}: ${named.join(zh ? "、" : ", ")}`);
+    if (destinations.length > 0)
+      segments.push(`${zh ? "本图可去" : "on this map"}: ${destinations.join(zh ? "、" : ", ")}`);
+    const hidden = here.length - named.length - destinations.length;
+    if (hidden > 0) segments.push(zh ? `另有 ${hidden} 人` : `${hidden} more`);
+    return segments.join(zh ? "；" : "; ");
+  };
+  for (const villager of reachable) {
+    destinations.push(`${name(villager)}(${villager.x},${villager.y})`);
+    // The remainder is part of the same fact, so the share has to hold the fact WITH its count.
+    if (Buffer.byteLength(compose(), "utf8") > MAX_VILLAGER_FACT_BYTES) {
+      destinations.pop();
+      break;
+    }
+  }
+  return compose();
 }
 
 /**
