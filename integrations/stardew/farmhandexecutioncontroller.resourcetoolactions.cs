@@ -29,7 +29,7 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != 1f
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
             || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
         // 5.2: outside the native interaction radius (Chebyshev-1), the action
@@ -71,7 +71,7 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value != 1f
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
             || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
         float before = tree.health.Value;
@@ -84,7 +84,20 @@ internal sealed partial class ExecutionManager
         bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
         float after = sameTree ? tree.health.Value : float.NaN;
         bool stumpAfter = sameTree && tree.stump.Value;
-        bool succeeded = sameTree && after == 5f && !stumpBefore && stumpAfter;
+        // ONE SWING, TWO LEGAL OUTCOMES, and neither of them is a particular health value.
+        //
+        // `Axe.DoFunction` swings once (Axe.cs:63-97) and `Tree.performToolAction` removes `upgradeLevel switch { 0 => 1f,
+        // ... }` (Tree.cs:1177-1200) - so a basic axe takes a mature tree from 10 to 9. On the swing that reaches <= 0 the
+        // engine sets `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497), which is why the
+        // stump stays for `chop_stump` to target next.
+        //
+        // The old predicate was `after == 5f && stumpAfter`, which encoded the second outcome only - and encoded it with the
+        // engine's own felled-stump constant, so it read as if one swing had taken five points and felled the tree. A live
+        // tree therefore never satisfied it: every chop reported `tree_source_chop_postcondition_unavailable` and settled
+        // `Uncertain`. It came from a fixture that stubbed `health = 1f` so a single swing would fell it.
+        bool felled = !stumpBefore && stumpAfter;
+        bool damaged = !stumpBefore && !stumpAfter && after < before;
+        bool succeeded = sameTree && (felled || damaged);
         string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable", evidence);
     }
