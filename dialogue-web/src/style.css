@@ -5365,30 +5365,28 @@
    it is 757 px against 398 px for 用户设定 and 341 px for 场景, so the second
    row's track was 757 px and those two cards ended their content 359 px and
    416 px above its bottom - dead canvas between them and the export card the
-   row pushed below the 900 px fold. `align-items: start` (the previous rule)
-   had moved that emptiness out of the cards' own borders and into the row, which
-   is why every card reported 0 px of slack inside itself, but it cannot remove
-   it: the track is still there and still as tall as its tallest card.
+   row pushed below the 900 px fold. `align-items: start` had moved that
+   emptiness out of the cards' own borders and into the row, which is why every
+   card reported 0 px of slack inside itself, but it cannot remove it: the track
+   is still there and still as tall as its tallest card.
 
    In columns there is no row track. Each card takes its own height and the next
    card in that column follows it directly: measured at 1440x900, three columns
-   of 931, 751 and 757 px with the 12 px between cards and no hole punched
-   between any two of them, the panel 951 px instead of 1127. At 400x800 it is
-   one column and the same 12 px the grid gave, because one column is one card
-   per row.
+   with the 12 px between cards and no hole punched between any two of them, the
+   panel 963 px instead of the grid's 1127. At 400x800 it is one column and the
+   same 12 px the grid gave, because one column is one card per row.
 
    A column break never splits a card (`break-inside: avoid`). The shared
    `.management-settings-section` gap is a flex gap, which a block container does
    not have, so the space between cards is carried by the cards' own margin.
 
-   The cost, measured rather than assumed: columns balance by content, so a
-   change large enough to cross a boundary re-flows cards between columns. The
-   one control on this surface that can do it is adding opening variants -
-   adding a fourth moved 用户设定 from the second column to the first. Typing
-   does not re-flow anything (the authoring fields are fixed-row textareas), nor
-   does the companion's own world-book disclosure, which is a card outside this
-   panel. The card being edited - 开场白, the last one - never moves: the cards
-   before it are what re-pack. */
+   A column boundary is pinned to a card, not left to the balancer. Balancing
+   re-picks the boundary whenever content height changes, so a card that grows
+   moves an unrelated one: measured at 1440x900, the fourth press of 添加开场白
+   (the opening card at 1421 px) moved 用户设定 from column 2 to column 1 and
+   its neighbour 场景 up into the gap. A forced break makes the assignment
+   independent of any card's height: measured, growing any single card by up to
+   700 px moves no card into another column. */
   [data-characters-panel] {
     display: block;
     columns: 420px;
@@ -5404,6 +5402,31 @@
      the next card, and a panel already ends with its own padding. */
   [data-characters-panel] > section:last-child {
     margin-bottom: 0;
+  }
+
+  /* One card starts each column after the first, and which one it is depends on
+     how many 420 px columns the room holds: at 1284 px of panel (3*420 + 2*12)
+     the third column begins at 开场白, and at 852 px (2*420 + 12) the second
+     begins at 场景. The media queries carry those panel widths plus the 32 px
+     the surface gives the panel either side, so 1316 and 884.
+
+     They are scoped because a forced break always begins a new column: unscoped,
+     the two breaks below manufacture three columns at 400 px and overflow the
+     surface by 760 px. The anchor cards are named rather than counted, because a
+     section that is not mounted (a failed read) must not be the one carried a
+     break - 演出指导 simply joins the column above it instead of leaving an
+     empty one. */
+  @media (min-width: 1316px) {
+    [data-characters-panel] > [data-persona-editor],
+    [data-characters-panel] > [data-opening-editor] {
+      break-before: column;
+    }
+  }
+
+  @media (min-width: 884px) and (max-width: 1315px) {
+    [data-characters-panel] > [data-scenario-editor] {
+      break-before: column;
+    }
   }
 
   .card-import-report {

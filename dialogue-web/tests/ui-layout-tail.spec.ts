@@ -221,6 +221,9 @@ async function measureCharactersGrid(page: Page) {
         bottom: round(box.bottom),
         contentBottom: round(contentBottom),
         slack: round(cardInnerBottom - contentBottom),
+        // The used value of the column boundary the card carries. `column` is a
+        // card that begins a column by rule; `auto` is one the balancer placed.
+        breakBefore: own.breakBefore,
       };
     });
     const columnLefts = [...new Set(cards.map((card) => card.left))].sort((left, right) => left - right);
@@ -236,8 +239,8 @@ async function measureCharactersGrid(page: Page) {
         cards: inColumn.map((card) => card.label),
         gapsBetween: between,
         // Canvas between this column's last card and the panel's own bottom edge.
-        // A balanced column ends where its content ends; this is the page's foot,
-        // not a hole punched between two cards.
+        // A fixed assignment ends where its content ends, so this is the page's
+        // foot, not a hole punched between two cards.
         tailBelowColumn: round(innerBottom - lastBottom),
       };
     });
@@ -372,6 +375,151 @@ test("item 1: a card is as tall as its own content, and the trigger list is fold
     narrow!.columns[0]!.gapsBetween,
     `the narrow column keeps the 12 px between cards: ${JSON.stringify(narrow!.columns)}`,
   ).toEqual(narrow!.columns[0]!.gapsBetween.map(() => narrow!.columnGap));
+});
+
+/**
+ * Which card begins each column, and whether a rule put it there.
+ *
+ * `breakBefore` is the used value: `column` means the stylesheet begins a column
+ * at this card, `auto` means the balancer decided. A layout whose column starts
+ * are all `auto` re-picks them whenever content height changes, which is how a
+ * card that grows moves an unrelated one.
+ */
+async function measureColumnStarts(page: Page) {
+  return await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>("[data-characters-panel]");
+    if (panel === null) return null;
+    const round = (value: number) => Math.round(value);
+    const panelBox = panel.getBoundingClientRect();
+    const cards = [...panel.querySelectorAll<HTMLElement>(":scope > section")].map((card) => {
+      const box = card.getBoundingClientRect();
+      return {
+        label: card.getAttribute("aria-label") ?? card.tagName.toLowerCase(),
+        left: round(box.left - panelBox.left),
+        top: round(box.top - panelBox.top),
+        height: round(box.height),
+        breakBefore: getComputedStyle(card).breakBefore,
+      };
+    });
+    const lefts = [...new Set(cards.map((card) => card.left))].sort((first, second) => first - second);
+    return {
+      columnCount: lefts.length,
+      cards,
+      starts: lefts.map((left) => {
+        const column = cards.filter((card) => card.left === left).sort((a, b) => a.top - b.top);
+        const first = column[0]!;
+        return { left, label: first.label, cardCount: column.length, breakBefore: first.breakBefore };
+      }),
+      panelHorizontalOverflow: panel.scrollWidth - panel.clientWidth,
+      pageHorizontalOverflow: round(document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    };
+  });
+}
+
+/**
+ * Grows one card by `delta` px, then reports which OTHER cards left their column.
+ * The card that grew may push the cards below it down - that is its own column
+ * making room - but no card may change column because of another card's height.
+ */
+async function grewAndMoved(page: Page, label: string, delta: number) {
+  const before = await measureColumnStarts(page);
+  await page.evaluate(
+    ({ label, height }) => {
+      const card = document.querySelector<HTMLElement>(`[data-characters-panel] > section[aria-label="${label}"]`);
+      if (card !== null) card.style.minHeight = `${height}px`;
+    },
+    { label, height: (before?.cards.find((card) => card.label === label)?.height ?? 0) + delta },
+  );
+  const after = await measureColumnStarts(page);
+  await page.evaluate((label: string) => {
+    const card = document.querySelector<HTMLElement>(`[data-characters-panel] > section[aria-label="${label}"]`);
+    if (card !== null) card.style.minHeight = "";
+  }, label);
+  const moved = (after?.cards ?? [])
+    .filter((card) => card.label !== label)
+    .filter((card) => {
+      const was = before?.cards.find((previous) => previous.label === card.label);
+      return was !== undefined && was.left !== card.left;
+    })
+    .map((card) => `${card.label} to x=${card.left}`);
+  return { moved, columnsBefore: before?.columnCount, columnsAfter: after?.columnCount };
+}
+
+test("item 1b: a card that grows does not move another card to a different column", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await stubShell(page);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+  await expect(page.locator("[data-opening-editor]")).toBeVisible();
+  await expect(page.locator("[data-characters-panel] > section")).toHaveCount(6);
+
+  const wide = await measureColumnStarts(page);
+  console.log(`[item-1b column starts @1440] ${JSON.stringify(wide)}`);
+  expect(wide, "the Characters surface renders").not.toBeNull();
+  expect(wide!.columnCount, "1440 leaves room for three columns").toBe(3);
+
+  // The invariant itself: every column after the first begins at a card a rule
+  // places there. Sensitivity is the next block - with the breaks reverted the
+  // same reading is all `auto`, which is the layout that re-balanced.
+  for (const start of wide!.starts.slice(1)) {
+    expect(
+      start.breakBefore,
+      `the column at x=${start.left} begins at ${start.label} by rule, not by the balancer (${JSON.stringify(wide!.starts)})`,
+    ).toBe("column");
+  }
+  expect(
+    wide!.starts[0]!.breakBefore,
+    "the first column begins at the first card, which carries no break",
+  ).toBe("auto");
+
+  // …so no single card's height can re-assign another: measured, every card grown
+  // by 700 px in turn (more than four added opening variants) leaves every other
+  // card in the column it was in.
+  const growth: Record<string, readonly string[]> = {};
+  for (const card of wide!.cards) {
+    const result = await grewAndMoved(page, card.label, 700);
+    growth[card.label] = result.moved;
+    expect(result.columnsAfter, `growing ${card.label} does not change how many columns there are`).toBe(3);
+  }
+  console.log(`[item-1b growth @1440] ${JSON.stringify(growth)}`);
+  for (const [label, moved] of Object.entries(growth)) {
+    expect(moved, `growing ${label} by 700 px leaves every other card in its own column`).toEqual([]);
+  }
+
+  // Sensitivity proof, measured through the same probe: the rule the balancer
+  // used to make. An unlayered rule wins over the layered stylesheet, so the
+  // column starts go back to `auto` and the same growth re-flows a card.
+  const reverted = await page.addStyleTag({
+    content:
+      "@media (min-width:1316px){[data-characters-panel]>[data-persona-editor],[data-characters-panel]>[data-opening-editor]{break-before:auto;}}" +
+      "@media (min-width:884px) and (max-width:1315px){[data-characters-panel]>[data-scenario-editor]{break-before:auto;}}",
+  });
+  const balanced = await measureColumnStarts(page);
+  console.log(`[item-1b column starts @1440, breaks reverted] ${JSON.stringify(balanced)}`);
+  expect(
+    balanced!.starts.slice(1).map((start) => start.breakBefore),
+    `without the breaks every column start is the balancer's (${JSON.stringify(balanced!.starts)})`,
+  ).toEqual(balanced!.starts.slice(1).map(() => "auto"));
+  const reflow = await grewAndMoved(page, "开场白", 700);
+  console.log(`[item-1b growth @1440, breaks reverted] ${JSON.stringify(reflow)}`);
+  expect(
+    reflow.moved,
+    `with the boundary left to the balancer, growing 开场白 by 700 px moves another card to another column (${JSON.stringify(reflow.moved)})`,
+  ).not.toEqual([]);
+  await reverted.evaluate((node) => node.remove());
+
+  // 400 keeps one column and gains no horizontal overflow: the breaks are scoped
+  // to the widths where the column they begin actually exists.
+  await page.setViewportSize({ width: 400, height: 800 });
+  const narrow = await measureColumnStarts(page);
+  console.log(`[item-1b column starts @400] ${JSON.stringify(narrow)}`);
+  expect(narrow!.columnCount, "400 is one column").toBe(1);
+  expect(narrow!.panelHorizontalOverflow, "no column break manufactures a column that is off-screen").toBe(0);
+  expect(narrow!.pageHorizontalOverflow, "the page does not scroll sideways").toBe(0);
+  expect(
+    narrow!.starts.map((start) => start.breakBefore),
+    "at one column no card begins a column, so no break applies",
+  ).toEqual(["auto"]);
 });
 
 /**
