@@ -411,7 +411,18 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
   const filled = new Map<string, Filled>();
   for (;;) {
     const fresh = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
-    if (fresh.length === 0) return [...filled.values()];
+    if (fresh.length === 0) {
+      /*
+       * Nothing new - but "nothing new YET" is not the same fact. A surface renders its authored
+       * sections once its own read lands, so an enumeration that ran a frame early sees fewer
+       * controls and the walk would end believing it had covered the surface. One settled re-read
+       * is what tells the two apart, and it is the surface's own timing, not a list of fields.
+       */
+      await region.page().waitForTimeout(250);
+      const settled = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
+      if (settled.length === 0) return [...filled.values()];
+      continue;
+    }
     for (const control of fresh) {
       // An excluded control is recorded (so the exclusion list can be checked against what really
       // exists) but never typed into: `#ui-language` would change the interface's language out from
