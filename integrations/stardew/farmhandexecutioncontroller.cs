@@ -2765,6 +2765,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             int needsWaterCount = 0;
             Vector2? nearest = null;
             float nearestDistance = float.MaxValue;
+            bool sameMap = string.Equals(
+                location.NameOrUniqueName,
+                Game1.player?.currentLocation?.NameOrUniqueName,
+                StringComparison.Ordinal);
             foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
             {
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
@@ -2773,6 +2777,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || !dirt.needsWatering())
                     continue;
                 needsWaterCount++;
+                        // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to
+                // subtract an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as
+                // distance 0 and an off-map row could claim the nearest tile. The coordinate of a crop on another map
+                // is not an address the companion can walk to, so only the player's own map computes one; every other
+                // row publishes its count with the sentinel below.
+                if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
                 {
@@ -2804,6 +2814,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             Vector2? nearest = null;
             float nearestDistance = float.MaxValue;
             Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
+            bool sameMap = string.Equals(
+                location.NameOrUniqueName,
+                Game1.player?.currentLocation?.NameOrUniqueName,
+                StringComparison.Ordinal);
             foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
             {
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
@@ -2813,6 +2827,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
                     continue;
                 readyCount++;
+                        // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to
+                // subtract an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as
+                // distance 0 and an off-map row could claim the nearest tile. The coordinate of a crop on another map
+                // is not an address the companion can walk to, so only the player's own map computes one; every other
+                // row publishes its count with the sentinel below.
+                if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
                 {
