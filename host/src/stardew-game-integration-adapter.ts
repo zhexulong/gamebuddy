@@ -1075,6 +1075,11 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
     case "dig_artifact_spot":
       return receipt.reasonCode === "artifact_spot_dug" && hasDigArtifactSpotCompletionEvidence(detail);
     case "break_rock_source":
+      // `rock_source_broken` is the source TRANSFORMED, and that is this action's completion boundary - the same
+      // line the tree path draws: one swing that only damages is a completed swing (the Mod reports
+      // `rock_source_damaged` with `state: succeeded`), but it has not yet removed the source, so it is not the
+      // transition a completed task is recorded from. A multi-hit rock therefore needs as many dispatches as its
+      // durability, and the last one is the one that counts.
       return receipt.reasonCode === "rock_source_broken" && hasBreakRockSourceCompletionEvidence(detail);
     case "clear_hoedirt":
       return receipt.reasonCode === "hoedirt_cleared" && hasClearHoeDirtCompletionEvidence(detail);
@@ -2090,17 +2095,23 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
         })
       );
     case "scythe_crop":
-      // farmhandexecutioncontroller.farmingconstructionactions.cs:939-954: the crop left the
-      // HoeDirt AND the matching produce debris appeared — the native scythe branch never
-      // puts anything in the backpack, so inventory growth is not a postcondition here.
+      // farmhandexecutioncontroller.farmingconstructionactions.cs: the crop left the HoeDirt AND the matching
+      // produce debris appeared — the native scythe HARVEST branch never puts anything in the backpack, so
+      // inventory growth is not a postcondition here.
+      //
+      // `dead_crop_cleared` is the engine's OTHER scythe branch (HoeDirt.cs:732-735), which fires for a dead crop
+      // alone: `Crop.harvest` refuses a dead crop outright (Crop.cs:484-491), so that branch destroys the crop and
+      // drops nothing. Its one guarantee is `crop_removed`, and `crop_dead=true` says which branch ran - without
+      // this rule the only action that can free a season-killed tile would record zero typed transitions.
       return (
-        receipt.reasonCode === "scythe_crops_harvested" &&
+        (receipt.reasonCode === "scythe_crops_harvested" || receipt.reasonCode === "dead_crop_cleared") &&
         exactEvidence(
           detail,
           [
             "target",
             "crop",
             "harvested_item",
+            "crop_dead",
             "debris_before",
             "debris_after",
             "crop_removed",
@@ -2113,15 +2124,21 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
           (e) => {
             const before = integerEvidenceValue(e.debris_before);
             const after = integerEvidenceValue(e.debris_after);
+            const cleared = receipt.reasonCode === "dead_crop_cleared";
             return (
               hasOpaqueIdEvidenceValue(e.target) &&
               hasBoundedNonemptyEvidenceValue(e.crop) &&
-              hasOpaqueEvidenceValue(e.harvested_item) &&
+              // A harvest must name the produce it dropped; a clear must name that there is none, because a dead
+              // crop yields nothing and "none" is the receipt's own word for that absence.
+              (cleared ? e.harvested_item === "none" : hasOpaqueEvidenceValue(e.harvested_item)) &&
               before !== null &&
               after !== null &&
-              after > before &&
+              // The two branches have different debris terminals: the harvest branch must have produced its drop,
+              // the dead branch produces none at all.
+              (cleared ? after === before : after > before) &&
               e.crop_removed === "true" &&
-              e.native_scythe === "true" &&
+              e.crop_dead === (cleared ? "true" : "false") &&
+              e.native_scythe === (cleared ? "false" : "true") &&
               hasStaminaConservationEvidence(e)
             );
           },
@@ -3040,12 +3057,23 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
+  const durabilityBefore = integerEvidenceValue(evidence.durability_before);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "pickaxe" &&
     hasToolSelectionEvidence(evidence, "pickaxe") &&
-    evidence.qualified_item_id === "(O)2" &&
-    evidence.durability_before === "1" &&
+    // The rock the swing landed on is the NATIVE breakable-stone category
+    // (`Category == -999 && Name == "Stone"`, Object.cs:6082), not `(O)2`: the mine's ore
+    // nodes are 751/290/764/765/95 and the mountain's are 668/670/75/76/77, and all of
+    // them are that category. Pinning one id refused every real rock that was not the
+    // plain farm stone.
+    hasBoundedNonemptyEvidenceValue(evidence.qualified_item_id) &&
+    durabilityBefore !== null &&
+    durabilityBefore >= 1 &&
+    // SOURCE TRANSFORMATION, not "the swing landed": the rock must have LEFT the layer. A swing that only lowers
+    // durability is a real, succeeded dispatch - the Mod reports it as `rock_source_damaged` - but this rule is the
+    // completion boundary, so it asks the same question the tree rule asks (`stump_after === "true"`). What
+    // durability_before may be is the rock's whole population (1-25), no longer just the one-swing value 1.
     evidence.durability_after === "removed" &&
     evidence.removed === "true" &&
     hasStaminaConservationEvidence(evidence)

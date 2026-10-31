@@ -3140,19 +3140,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
         {
             if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is null
-                || dirt.crop.forageCrop.Value || !dirt.readyForHarvest()
-                || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe
                 || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
                 || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
                 continue;
+            // ONE decision, shared with the execution admission below, so a published row can never be a row the
+            // action refuses - and a dead crop, which no readiness or water radar can see, is published here or it
+            // is lost. See ExecutionManager.ScytheCropTarget.
+            if (!ExecutionManager.ScytheCropTarget(
+                    hasCrop: true,
+                    forageCrop: dirt.crop.forageCrop.Value,
+                    readyForHarvest: dirt.readyForHarvest(),
+                    harvestMethod: dirt.crop.GetHarvestMethod(),
+                    dead: dirt.crop.dead.Value,
+                    out bool deadCrop))
+                continue;
             string? harvestId = dirt.crop.indexOfHarvest.Value;
-            if (string.IsNullOrWhiteSpace(harvestId)) continue;
+            string cropSeedId = dirt.crop.netSeedIndex.Value ?? harvestId ?? "unknown";
+            // A dead crop's produce can never be harvested (Crop.harvest refuses it), so promising a
+            // `qualifiedHarvestItemId` for one would be a fact the action cannot deliver. The wire requires a
+            // non-empty string there, and "none" is the same word the receipt uses for the same absence.
+            string qualifiedHarvestItemId = deadCrop || harvestId is null
+                ? DeadCropHarvestItemId
+                : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
             result.Add(new BridgeScytheCropTarget(
                 BuildScytheCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop),
                 location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
-                dirt.crop.netSeedIndex.Value ?? harvestId,
-                StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId,
-                RequireDisplayName(harvestId)));
+                cropSeedId,
+                qualifiedHarvestItemId,
+                RequireDisplayName(cropSeedId)));
             if (result.Count >= 16) break;
         }
         return result;
@@ -3165,6 +3180,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}:{weed.MinutesUntilReady}";
         return $"weed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
+
+    /// <summary>
+    /// The wire's `qualifiedHarvestItemId` for a tile whose crop can only be CLEARED: a dead crop never yields its
+    /// produce (<c>Crop.harvest</c> refuses a dead crop outright, Crop.cs:484-491), so publishing the produce id
+    /// would promise a harvest that cannot happen. The field cannot be empty (the wire requires a non-empty string),
+    /// and this is the same word the receipt's `harvested_item` uses for the same absence.
+    /// </summary>
+    internal const string DeadCropHarvestItemId = "none";
 
     private static string BuildScytheCropTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Crop crop)
     {

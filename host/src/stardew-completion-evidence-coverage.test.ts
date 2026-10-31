@@ -597,6 +597,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["target", "scythe_crop_0123456789abcdef"],
       ["crop", "472"],
       ["harvested_item", "(O)472"],
+      ["crop_dead", "false"],
       ["debris_before", "0"],
       ["debris_after", "1"],
       ["crop_removed", "true"],
@@ -999,5 +1000,56 @@ test("respond_level_up: the profession branch settles, and a contradicting recei
     completionEvidence("respond_level_up", "level_up_resolved", detail(withField("profession_settled", "false"))),
     false,
     "nor has a profession the actor does not carry",
+  );
+});
+
+test("scythe_crop: the dead-crop clear branch completes, and a harvest shape claiming it does not", () => {
+  // The action has TWO engine branches with different terminals, and the generated cases above only exercise the
+  // harvest one. `HoeDirt.performToolAction` (HoeDirt.cs:732-735) destroys a dead crop and drops nothing, because
+  // `Crop.harvest` refuses a dead crop outright (Crop.cs:484-491) - so the debris-increase clause the harvest shape
+  // requires would refuse the ONLY terminal that can free a season-killed tile.
+  const cleared: readonly (readonly [string, string])[] = [
+    ["target", "scythe_crop_0123456789abcdef"],
+    ["crop", "472"],
+    ["harvested_item", "none"],
+    ["crop_dead", "true"],
+    ["debris_before", "0"],
+    ["debris_after", "0"],
+    ["crop_removed", "true"],
+    ["stamina_before", "100"],
+    ["stamina_after", "100"],
+    ["stamina_delta", "0"],
+    ["expected_stamina_cost", "0"],
+    ["native_scythe", "false"],
+  ];
+  const withField = (key: string, value: string): readonly (readonly [string, string])[] =>
+    cleared.map(([fieldKey, fieldValue]) => [fieldKey, fieldKey === key ? value : fieldValue] as const);
+
+  assert.equal(
+    completionEvidence("scythe_crop", "dead_crop_cleared", detail(cleared)),
+    true,
+    "a dead crop leaving the tile is this action's other real terminal",
+  );
+  // The two branches must not be able to claim each other's evidence: a clear that reports debris means the harvest
+  // branch ran, and a harvest that reports a dead crop means the clear branch did.
+  assert.equal(
+    completionEvidence("scythe_crop", "dead_crop_cleared", detail(withField("crop_dead", "false"))),
+    false,
+    "a clear names the dead crop it cleared",
+  );
+  assert.equal(
+    completionEvidence("scythe_crop", "dead_crop_cleared", detail(withField("debris_after", "1"))),
+    false,
+    "the dead branch produces no debris; a drop means the harvest branch is what ran",
+  );
+  assert.equal(
+    completionEvidence("scythe_crop", "scythe_crops_harvested", detail(withField("crop_dead", "true"))),
+    false,
+    "a harvest of a dead crop is the impossible one: Crop.harvest refuses a dead crop",
+  );
+  assert.equal(
+    completionEvidence("scythe_crop", "scythe_crops_harvested", detail(cleared)),
+    false,
+    "the harvest terminal cannot be minted from the clear branch's shape",
   );
 });

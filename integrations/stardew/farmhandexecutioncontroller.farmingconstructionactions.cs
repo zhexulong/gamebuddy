@@ -1269,6 +1269,39 @@ internal sealed partial class ExecutionManager
         return this.ExecuteScytheCrop(executionId, requestId, slot, targetX, targetY, expectedTargetId, requestedDeadlineMs);
     }
 
+    /// <summary>
+    /// Which crop tiles the scythe owns, as ONE decision read by both the discovery radar and the
+    /// execution admission.
+    ///
+    /// <para>
+    /// The engine gives a scythe exactly two ways to finish a crop tile, and they are different
+    /// terminals: the harvest branch (<c>HoeDirt.performToolAction</c>, HoeDirt.cs:713-731) fires only for
+    /// <c>GetHarvestMethod() == Scythe</c> and only when <c>readyForHarvest()</c>, and the dead branch
+    /// (HoeDirt.cs:732-735) fires for <c>crop.dead.Value</c> alone — any crop, any harvest method, no
+    /// readiness test. A crop goes dead when the season turns over (<c>Crop.newDay</c> calls <c>Kill()</c>
+    /// for an outdoor crop that is out of season, Crop.cs:835-839).
+    /// </para>
+    /// <para>
+    /// <paramref name="deadCrop"/> is the discriminator for the caller: true means this tile can only be
+    /// CLEARED, and nothing will drop.
+    /// </para>
+    /// </summary>
+    internal static bool ScytheCropTarget(
+        bool hasCrop,
+        bool forageCrop,
+        bool readyForHarvest,
+        StardewValley.GameData.Crops.HarvestMethod harvestMethod,
+        bool dead,
+        out bool deadCrop)
+    {
+        deadCrop = hasCrop && dead;
+        if (deadCrop) return true;
+        return hasCrop
+            && !forageCrop
+            && readyForHarvest
+            && harvestMethod == StardewValley.GameData.Crops.HarvestMethod.Scythe;
+    }
+
     private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
@@ -1277,26 +1310,36 @@ internal sealed partial class ExecutionManager
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
             || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is null || dirt.crop.forageCrop.Value || !dirt.readyForHarvest()
-            || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Scythe
+            || dirt.crop is null
             || weapon.ItemId == "66"
+            || !ScytheCropTarget(
+                hasCrop: true,
+                forageCrop: dirt.crop.forageCrop.Value,
+                readyForHarvest: dirt.readyForHarvest(),
+                harvestMethod: dirt.crop.GetHarvestMethod(),
+                dead: dirt.crop.dead.Value,
+                out bool deadCrop)
             || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
 
         StardewValley.Crop crop = dirt.crop;
         string? harvestId = crop.indexOfHarvest.Value;
         string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
-        string harvestQualifiedItemId = StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
+        string? harvestQualifiedItemId = harvestId is null ? null : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
         // Native scythe harvest drops the crop as ground debris
         // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
         // into the player inventory, and HoeDirt.performToolAction always
         // returns false for this path. The real postcondition is therefore
         // crop-gone + a matching ground drop, not inventory growth.
-        int debrisBefore = location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+        //
+        // A DEAD crop takes the engine's other branch (HoeDirt.cs:732-735): destroyCrop and no drop at all,
+        // because Crop.harvest refuses a dead crop outright (Crop.cs:484-491). Its postcondition is the one
+        // thing that branch guarantees - the crop is gone - and it promises nothing to the pack.
+        int debrisBefore = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
         float staminaBefore = Game1.player.Stamina;
         dirt.performToolAction(weapon, 0, tile);
 
-        int debrisAfter = location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+        int debrisAfter = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
         bool debrisGained = debrisAfter > debrisBefore;
         // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
         // terrainFeature, so the postcondition is crop-gone (crop is null or
@@ -1310,9 +1353,12 @@ internal sealed partial class ExecutionManager
         // no native path deducts stamina for a melee swing, so the expected
         // embodied cost is exactly zero.
         float expectedStaminaCost = 0f;
-        bool succeeded = cropGone && debrisGained;
-        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "scythe_crops_harvested" : "scythe_crop_harvest_postcondition_unavailable", evidence);
+        // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
+        bool succeeded = cropGone && (deadCrop || debrisGained);
+        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
+        if (!succeeded)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "scythe_crop_harvest_postcondition_unavailable", evidence);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, deadCrop ? "dead_crop_cleared" : "scythe_crops_harvested", evidence);
     }
 
     /// <summary>
