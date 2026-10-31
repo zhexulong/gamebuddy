@@ -18,7 +18,10 @@ export function observeMaterializedProductionRuntimeForTest(runtime: Materialize
   return observed;
 }
 
-export function recordMaterializedProductionRuntimeForTest(runtime: MaterializedGameRuntime, session: RuntimeSession): void {
+export function recordMaterializedProductionRuntimeForTest(
+  runtime: MaterializedGameRuntime,
+  session: RuntimeSession,
+): void {
   observedProductionRuntimes.set(runtime, session);
 }
 

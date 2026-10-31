@@ -8,6 +8,7 @@ import {
   planActionsFromRegistrations,
   planProgramId,
   planShape,
+  planWorkDescription,
   type PlanScriptRequest,
   type PublishedPlanAction,
 } from "../body-program-script.js";
@@ -178,12 +179,7 @@ function createBodyProgramTools(
         // it names actions the Mod's Body Program catalog accepts and real snapshot targets, so "water the three by
         // the door, leave the far ones" stays expressible, and nothing executes against physics until the Mod runs the
         // admitted nodes.
-        description:
-          "Write a short script over the current snapshot and the builder, one builder.<actionId> call per step, and the host compiles it into the one plan the Mod executes. The Mod advances that plan itself, so you do not come back between steps. Every action you can take is a builder method, published and live-verified alike, so this tool carries the whole action surface and no per-action tool is mounted beside it. Work that does not fit in one plan is yours to split: stop when builder.isFull() is true, and plan the rest in the next call, in this shape:\n" +
-          "for (const crop of snapshot.cropTargets) {\n" +
-          "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
-          "  if (builder.isFull()) break;\n" +
-          "}",
+        description: planWorkDescription(readPlanActions(connection)),
         parameters: planToolParameters(),
         execute: async (_toolCallId, params) => {
           const actions = readPlanActions(connection);
@@ -372,7 +368,7 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
  * when the two drift, so this list cannot quietly become a half-truth.
  */
 const PLAN_TARGET_FAMILIES: readonly string[] = Object.freeze(
-  `doorTargets forageTargets itemTargets refillWateringCanTargets cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chestStoreTargets chestRetrieveTargets foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets`.split(
+  `doorTargets forageTargets itemTargets refillWateringCanTargets cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chests foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets`.split(
     " ",
   ),
 );
@@ -395,7 +391,7 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId) and warpItemTargets (slot, qualifiedItemId, destination). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId), warpItemTargets (slot, qualifiedItemId, destination) and chests (chestId, displayName, isFridge, and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
     },
     { additionalProperties: false },

@@ -1023,30 +1023,45 @@ test("the Game channel's per-turn world-state corpus is the line Magic Context i
 });
 
 /**
- * Every `*Targets` field the `Snapshot` type declares, read from the type itself: the plan parameter that names them
- * must not become a list of arrays the Mod does not send.
+ * Every array family the Host validates, read from `SNAPSHOT_FAMILY_RULES` itself.
+ *
+ * The table, not a name suffix. The version of this helper that filtered `Snapshot` fields ending in `Targets` was
+ * blind to `chests` - a family whose entries each carry their own `items` array, so it cannot be named `*Targets` - and
+ * the plan tool could have named a retired family while omitting the live one with this gate staying green. A family
+ * added to the Host's validation is now a family the parameter must name.
  */
-async function snapshotTargetFamilies(root: string): Promise<readonly string[]> {
+async function snapshotFamilies(root: string): Promise<readonly string[]> {
   const protocol = await readFile(join(root, "protocol.ts"), "utf8");
-  const start = protocol.indexOf("export type Snapshot = Readonly<{");
-  assert.notEqual(start, -1, "the Snapshot type is declared in protocol.ts");
-  const body = protocol.slice(start + "export type Snapshot = Readonly<{".length);
-  let depth = 1;
-  let end = body.length;
-  for (let index = 0; index < body.length; index += 1) {
-    if (body[index] === "{") depth += 1;
-    else if (body[index] === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        end = index;
-        break;
-      }
-    }
-  }
-  return [...body.slice(0, end).matchAll(/^ {2}([A-Za-z0-9_]+)\??:/gmu)]
-    .map((match) => match[1] as string)
-    .filter((name) => name.endsWith("Targets"));
+  const start = protocol.indexOf("export const SNAPSHOT_FAMILY_RULES");
+  assert.notEqual(start, -1, "the family table is declared in protocol.ts");
+  const table = protocol.slice(start, protocol.indexOf("]);", start));
+  const fields = [...table.matchAll(/\{\s*field:\s*"([A-Za-z0-9_]+)"/gu)].map((match) => match[1] as string);
+  assert.ok(fields.length > 0, "the family table declares at least one family");
+  return fields;
 }
+
+/**
+ * The validated families the plan tool's parameters deliberately do not list, each with the reason.
+ *
+ * A named exclusion, not a name pattern: the pattern version silently exempted every family that was not spelled
+ * `*Targets`, which is how a family could be retired from the snapshot and left in the parameter text - or added to the
+ * snapshot and never reach a script - without a single assertion moving. Each entry here is a decision someone made.
+ */
+const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object.freeze({
+  pendingLevelUps: "`skill@level` strings, not targets: no action takes one as an argument",
+  pendingLevelUpChoices: "answered through respond_level_up's own two branch arguments",
+  professions: "profession ids, not targets",
+  activeSpecialOrderKeys: "quest keys, not targets",
+  warps: "traversal facts a script reads but no action addresses by index",
+  soilTiles: "the tilled-tile roster; till_soil names a tile, not a row",
+  toolSlots: "named separately in the parameters beside `currentTool`, because a slot argument reads it",
+  wateringCanFacts: "named beside `toolSlots` as the held can's own water facts",
+  lanternSlots: "the pack's lantern slots; light_lantern names a tile",
+  villagerWhereabouts: "a roster of where villagers are, addressed through npcRelationshipTargets",
+  harvestWhereabouts: "a per-location summary, addressed through harvestTargets",
+  inventoryItemFacts: "reread evidence for one action, not a family a script loops",
+  panSites: "pan_for_ore's sites; published per-family and addressed through the action's own target",
+});
 
 test("the plan tool hands its compiled program to the one submission path a model-authored program takes", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
@@ -1082,36 +1097,37 @@ test("the plan tool hands its compiled program to the one submission path a mode
     source.indexOf("function isBodyProgramCandidateRequest("),
   );
   assert.ok(parameters.includes("script: Type.String("), "the plan tool takes one script");
-  const description = source
-    .slice(source.indexOf('name: "stardew_plan_work"'), source.indexOf("parameters: planToolParameters()"))
-    // The measured history above the string is not what the model reads.
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("//"))
-    .join("\n");
-  assert.match(description, /The Mod advances that plan itself/u);
-  assert.match(description, /you do not come back between steps/u);
-  assert.match(description, /builder\.isFull\(\)/u);
-  // Two or three sentences and no step list: the description says what the tool is for, and the mechanics of the
-  // script live in the parameter that carries it.
-  assert.ok(
-    (description.match(/\.\s|\.$/gu) ?? []).length <= 3,
-    "the plan tool describes itself in at most three sentences",
+  // The description is BUILT from the actions the tool itself compiles against, not written inline: the vocabulary the
+  // companion reads and the vocabulary the builder accepts are then the same list by construction. What it says is
+  // asserted in `body-program-script.test.ts`, where the description and its gate live beside the surface artifact.
+  assert.match(source, /description: planWorkDescription\(readPlanActions\(connection\)\),/u);
+  // The population is the Host's own family table, and the LIST is read out of the parameter block itself rather than
+  // searched as a substring: several excluded families are named in the prose beside the array (`toolSlots`, the held
+  // can's facts), so a substring test would call a correct exclusion stale.
+  const families = await snapshotFamilies(root);
+  const listed = new Set(
+    (parameters.match(/`([a-z][A-Za-z0-9 ]*)`\.split\(/u)?.[1] ?? "").split(" ").filter((name) => name.length > 0),
   );
-  // The example is four lines of real names a model can copy: the family from the snapshot type, the action from the
-  // published surface, and that action's own argument names. A wrong example is worse than none, so every identifier
-  // in it is checked against the sources it came from (see the production-surface test for the same check on the
-  // mounted tool).
-  for (const line of [
-    "for (const crop of snapshot.cropTargets) {",
-    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });",
-    "  if (builder.isFull()) break;",
-    "}",
-  ])
-    assert.ok(description.includes(line), `the example carries this line verbatim: ${line}`);
-  // The parameter names the snapshot's SHAPE, and the families it names are the type's own: a list that drifted from
-  // protocol.ts would tell the companion to iterate an array the Mod does not send.
-  const namedFamilies = [...new Set([...parameters.matchAll(/([a-z][A-Za-z0-9]*Targets)/gu)].map((match) => match[1]))];
-  assert.deepEqual(namedFamilies.sort(), [...(await snapshotTargetFamilies(root))].sort());
+  assert.ok(
+    listed.has("chests"),
+    "the family list names `chests`, the container family that replaced the flattened pair",
+  );
+  assert.deepEqual(
+    families.filter((family) => !FAMILIES_NOT_IN_PLAN_PARAMETERS[family] && !listed.has(family)),
+    [],
+    "every family the Host validates is either listed for scripts or excluded here with a reason",
+  );
+  assert.deepEqual(
+    [...listed].filter((family) => !families.includes(family)),
+    [],
+    "the family list names an array the Host does not validate",
+  );
+  // A reason cannot outlive its family, and an entry for a family that IS listed would exempt nothing.
+  for (const [family, reason] of Object.entries(FAMILIES_NOT_IN_PLAN_PARAMETERS)) {
+    assert.ok(reason.trim().length > 0, `${family} is excluded from the plan parameters with an empty reason`);
+    assert.ok(families.includes(family), `${family} is excluded but the Host no longer validates it`);
+    assert.equal(listed.has(family), false, `${family} is listed for scripts, so drop its exclusion`);
+  }
   const parameterText = parameters.replaceAll("\\`", "`");
   assert.match(parameterText, /`snapshot\.tile` is your own `\{ x, y \}`/u);
   assert.match(parameterText, /every entry carries `targetId`, `x` and `y`/u);
