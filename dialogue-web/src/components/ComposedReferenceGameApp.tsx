@@ -10,6 +10,7 @@ import {
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
+import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import { composedProblemView as problemView, declaredProblemSentence } from "../composed-problem-view";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import {
@@ -229,8 +230,9 @@ export function ComposedReferenceGameApp() {
       try {
         const doReset = pendingResetCursor;
         pendingResetCursor = false;
-        const root = await composedApiRef.current.readState();
-        const draft = await tavernApiRef.current.readDraft();
+        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+        const root = pair.root;
+        const draft = pair.draft;
         if (disposed) return;
         const current = viewRef.current;
         if (current.kind !== "ready" || root.chat.chat === null) return;
@@ -248,8 +250,6 @@ export function ComposedReferenceGameApp() {
           session = createReferencePipelineSession(root.chat);
           rebuilt = true;
         }
-        if (draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present)
-          throw new ReferencePipelineSessionError("state_reconciliation_required");
         if (doReset || epochChanged || rebuilt) {
           if (root.chat.eventStream === null) throw new ReferencePipelineSessionError("stream_resync_required");
           cursor = root.chat.eventStream.cursor;
@@ -304,17 +304,11 @@ export function ComposedReferenceGameApp() {
           const current = viewRef.current;
           if (current.kind !== "ready") return;
           try {
-            const root = await composedApiRef.current.readState();
-            const draft = await tavernApiRef.current.readDraft();
+            const { root, draft } = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
             const latest = viewRef.current;
             // A recovery that started under these reads is reading the same
             // authority with a cursor of its own; its answer supersedes this one.
             if (disposed || recovering || latest.kind !== "ready" || root.chat.chat === null) return;
-            if (
-              draft.revision !== root.chat.chat.draft.revision ||
-              (draft.text !== null) !== root.chat.chat.draft.present
-            )
-              throw new ReferencePipelineSessionError("state_reconciliation_required");
             const session = checkpoint.applySnapshot(root.chat);
             setPreview(null);
             // The authoritative turn is settled, so a pending record for it is spent
@@ -515,15 +509,7 @@ export function ComposedReferenceGameApp() {
   const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
-    const root = await composedApiRef.current.readState();
-    const draft = await tavernApiRef.current.readDraft();
-    if (
-      root.chat.chat === null ||
-      draft.revision !== root.chat.chat.draft.revision ||
-      (draft.text !== null) !== root.chat.chat.draft.present
-    ) {
-      throw new ReferencePipelineSessionError("state_reconciliation_required");
-    }
+    const { root, draft } = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
     const runningTurn =
       root.chat.chat.turn === null || terminalTurn(root.chat.chat.turn) ? null : root.chat.chat.turn.handle;
     setPreview((existing) =>
@@ -947,8 +933,6 @@ export function ComposedReferenceGameApp() {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
     if (cancelledRef.current || root.chat.chat === null) return;
-    if (draft.revision !== root.chat.chat.draft.revision || (draft.text !== null) !== root.chat.chat.draft.present)
-      throw new ReferencePipelineSessionError("state_reconciliation_required");
     setPreview(null);
     // The refusal's sentence described an attempt in the conversation this mount is leaving, so it
     // is not a fact about the one it adopts.
@@ -998,8 +982,8 @@ export function ComposedReferenceGameApp() {
         setOpeningNotice(null);
         let root = await composedApiRef.current.readState();
         if (openingTargetIndex !== undefined) root = await commitChosenOpening(root, openingTargetIndex);
-        const draft = await tavernApiRef.current.readDraft();
-        adoptMountedChat(root, draft);
+        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, null, root);
+        adoptMountedChat(pair.root, pair.draft);
         openPanelOf(CHAT_PANEL, chatEntryRef)();
       } catch (error) {
         commit(problemView(error, messages(current.locale)));
@@ -1068,15 +1052,14 @@ export function ComposedReferenceGameApp() {
           { apiVersion: 1, selectionGeneration: selection.generation, chatHandle: next.handle },
           csrfToken,
         );
-        const root = await composedApiRef.current.readState();
-        const draft = await tavernApiRef.current.readDraft();
-        if (root.chat.selection?.chatHandle === removedHandle) {
+        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+        if (pair.root.chat.selection?.chatHandle === removedHandle) {
           // The runtime could not leave the archived Chat, so nothing may keep
           // reading its stream.
           closeLiveStream();
           return;
         }
-        adoptMountedChat(root, draft);
+        adoptMountedChat(pair.root, pair.draft);
       } catch (error) {
         commit(problemView(error, messages(locale)));
       }

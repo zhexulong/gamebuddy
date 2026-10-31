@@ -20,6 +20,7 @@ import {
   createComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
 import { composedProblemView as problemView } from "../composed-problem-view";
+import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import { PANEL_PARAM } from "../composed-surface-route";
 import type { ViewState } from "./composed-reference-game-view";
 
@@ -117,9 +118,7 @@ export function useComposedBootstrap(
         const bootToken = params.get("boot");
         const restoredPanel = params.get(PANEL_PARAM);
         const root =
-          bootToken === null
-            ? await composedApiRef.current.readState()
-            : await composedApiRef.current.bootstrap(bootToken);
+          bootToken === null ? await composedApiRef.current.readState() : await composedApiRef.current.bootstrap(bootToken);
         if (bootToken !== null) {
           const url = new URL(window.location.href);
           // The one-time boot token is stripped from the fragment; a panel the
@@ -130,18 +129,11 @@ export function useComposedBootstrap(
               : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
-        const draft = await tavernApiRef.current.readDraft();
-        if (
-          root.chat.chat === null ||
-          draft.revision !== root.chat.chat.draft.revision ||
-          (draft.text !== null) !== root.chat.chat.draft.present
-        ) {
-          throw new ReferencePipelineSessionError("state_reconciliation_required");
-        }
+        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, null, root);
         if (!active) return;
-        const session = createReferencePipelineSession(root.chat);
+        const session = createReferencePipelineSession(pair.root.chat);
         setPreview(null);
-        commit({ kind: "ready", root, session, draft, locale: localeRef.current });
+        commit({ kind: "ready", root: pair.root, session, draft: pair.draft, locale: localeRef.current });
       } catch (error) {
         if (active) commit(problemView(error, messages(localeRef.current)));
       }
@@ -153,23 +145,13 @@ export function useComposedBootstrap(
   }, [commit]);
 
   /**
-   * The draft a poll hop must project, taken from the composed snapshot the hop
-   * has already read. `/state` carries the durable draft's revision and presence,
-   * so a snapshot that agrees with the draft this surface already holds needs no
-   * `/draft` read at all; the route is read on the one hop where the text itself
-   * has moved. The compare-and-swap below is the same one the per-hop read used to
-   * perform after the fact, so nothing is trusted that was not reconciled.
+   * The pair a poll hop projects: the loop's own read of both routes, reconciled. `/state` carries
+   * the durable draft's revision and presence, so a hop that agrees with the draft this surface
+   * already holds costs no `/draft` read at all; `readChatSnapshotPair` owns that rule, so a hop and
+   * a mount cannot disagree about what a pair means.
    */
-  const resolvePollDraft = async (
-    held: BrowserDraftV1,
-    chat: Readonly<{ draft: Readonly<{ revision: number; present: boolean }> }>,
-  ): Promise<BrowserDraftV1> => {
-    if (held.revision === chat.draft.revision && (held.text !== null) === chat.draft.present) return held;
-    const draft = await tavernApiRef.current.readDraft();
-    if (draft.revision !== chat.draft.revision || (draft.text !== null) !== chat.draft.present)
-      throw new ReferencePipelineSessionError("state_reconciliation_required");
-    return draft;
-  };
+  const resolvePollDraft = (held: BrowserDraftV1) =>
+    readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, held);
 
   const startPolling = (): void => {
     if (pollActiveRef.current) return;
@@ -218,9 +200,7 @@ export function useComposedBootstrap(
       }
       const pending = current.session.pending;
       try {
-        const root = await composedApiRef.current.readState();
-        if (root.chat.chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
-        const draft = await resolvePollDraft(current.draft, root.chat.chat);
+        const { root, draft } = await resolvePollDraft(current.draft);
         let session = current.session.applySnapshot(root.chat);
         if (session.pending !== null) {
           const status = await tavernApiRef.current.readSubmissionStatus({
