@@ -257,6 +257,15 @@ export type Snapshot = Readonly<{
    * this index and hold the exact tool, so the slot cannot be judged statically: it is published here instead.
    */
   currentToolSlot?: number | null;
+  /**
+   * The qualified item id occupying `currentToolSlot`, whatever its kind, or null when that slot is empty.
+   *
+   * The held-slot actions (`dress_mannequin`, `set_sign_display`, `deposit_silo_hay`, `clear_cask`) refuse unless the
+   * named slot holds the exact item AND is the held one (`CurrentToolIndex == slot`), so `currentToolSlot` alone says
+   * where the hand is without saying what is in it. Read together, a present occupant beside an absent `currentTool`
+   * reads as "holding something that is not a tool" rather than as an equip that silently did nothing.
+   */
+  currentToolSlotItem?: string | null;
   inventorySlots?: number;
   /**
    * The persistent native exhaustion flag. While set, Farmer's day-update
@@ -3549,6 +3558,12 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.currentToolSlot)
   )
     return "invalid_snapshot:currentToolSlot";
+  if (
+    value.currentToolSlotItem !== undefined &&
+    value.currentToolSlotItem !== null &&
+    typeof value.currentToolSlotItem !== "string"
+  )
+    return "invalid_snapshot:currentToolSlotItem";
   if (value.inventorySlots !== undefined && !Number.isSafeInteger(value.inventorySlots))
     return "invalid_snapshot:inventorySlots";
   if (

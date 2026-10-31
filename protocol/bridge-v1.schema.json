@@ -2329,6 +2329,13 @@
           "minimum": 0,
           "maximum": 11
         },
+        "currentToolSlotItem": {
+          "description": "The qualified item id occupying `currentToolSlot`, whatever its kind, or null when the slot is empty. Published because the held-slot actions (dress_mannequin, set_sign_display, deposit_silo_hay, ...) demand that the named slot hold the exact item AND be the held one, so the slot index alone does not say what the companion is holding.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "inventorySlots": {
           "type": "integer",
           "minimum": 0,
