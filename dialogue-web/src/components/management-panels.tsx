@@ -564,14 +564,11 @@ export function ConnectionSettingsPanel({
               // it there). Only a durable save clears it; a rejected save
               // keeps the typed value so the player can retry.
               if (saved) {
+                // The credential is the one thing a save consumes: it is write-only, and leaving it in
+                // the document is what the outerHTML scan finds. Every other field stays exactly as the
+                // player left it - an entry they chose is still theirs to test, activate or correct, and
+                // emptying the form would throw away the choice a save was answering.
                 setApiKey("");
-                // The form's own draft fields are the connection's, so an accepted save hands them
-                // back to the authority: the saved row is what the player reads from now on.
-                providerId.release(providerId.value);
-                apiKeyRequired.release(apiKeyRequired.value);
-                baseUrl.release(baseUrl.value);
-                apiShape.release(apiShape.value);
-                modelId.release(modelId.value);
               }
             });
           }}
