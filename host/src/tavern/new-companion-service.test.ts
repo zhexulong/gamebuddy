@@ -3,7 +3,12 @@ import { createHash } from "node:crypto";
 import { access, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import { DEFAULT_IDENTITY_PROFILE, identityProfileHash, identityProfileMetadata } from "../identity-profile.js";
+import {
+  buildChatCompanionSystemPrompt,
+  DEFAULT_IDENTITY_PROFILE,
+  identityProfileHash,
+  identityProfileMetadata,
+} from "../identity-profile.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { pngCardFile } from "../test-support/png-card.test-support.js";
@@ -184,13 +189,17 @@ test("New Companion renders macros inside reviewed examples and writes them into
         undefined,
         "en-US",
       );
-      // Examples survive review, are macro-rendered ({{char}}→name, {{user}}→the
-      // run's word for the player) and land in the IdentityProfile so
-      // renderIdentityProfile can teach from them.
+      // Examples survive review AS THE CARD WROTE THEM - macros and all - because the
+      // durable profile is what the card export writes back; the prompt renders them.
       assert.deepEqual(created.profile.examples, [
-        { user: "Want to play?", companion: "GameBuddy Companion is always up for it." },
-        { user: "you tired?", companion: "A little, but stay with me." },
+        { user: "Want to play?", companion: "<BOT> is always up for it." },
+        { user: "{{user}} tired?", companion: "A little, but stay with me." },
       ]);
+      // ...and the model reads her name and the run's word for the player, never a macro.
+      const prompt = buildChatCompanionSystemPrompt(created.profile, "en-US");
+      assert.match(prompt, /GameBuddy Companion is always up for it\./u);
+      assert.match(prompt, /You: User tired\?/u);
+      assert.doesNotMatch(prompt, /\{\{|<BOT>/u);
       assert.equal(identityProfileHash(created.profile), identityProfileHash(created.profile));
     } finally {
       threadStore.close?.();
@@ -244,11 +253,17 @@ test("New Companion maps the reviewed persona and renders card macros determinis
         undefined,
         "en-US",
       );
+      // Stored: the author's reviewed text, exactly.
       assert.deepEqual(created.profile.persona, {
-        core: "GameBuddy Companion is calm when you needs help.",
-        interactionStyle: "Listen to you before answering.",
-        expressionStyle: "GameBuddy Companion speaks clearly to you.",
+        core: "{{char}} is calm when {{user}} needs help.",
+        interactionStyle: "Listen to <USER> before answering.",
+        expressionStyle: "<BOT> speaks clearly to {{USER}}.",
       });
+      // Rendered for the model by the ONE reader: her name, and the run's own word.
+      const prompt = buildChatCompanionSystemPrompt(created.profile, "en-US");
+      assert.match(prompt, /Core disposition: GameBuddy Companion is calm when User needs help\./u);
+      assert.match(prompt, /Interaction style: Listen to User before answering\./u);
+      assert.match(prompt, /Expression style: GameBuddy Companion speaks clearly to User\./u);
       assert.equal(
         identityProfileHash(created.profile),
         identityProfileHash({ ...created.profile, persona: { ...created.profile.persona! } }),

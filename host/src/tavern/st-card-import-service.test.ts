@@ -12,7 +12,7 @@ import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
-import { macroTable } from "./macro-engine.js";
+import { macroTable, renderMacros } from "./macro-engine.js";
 import { provisionNewCompanion } from "./new-companion-service.js";
 import { StCardImportService } from "./st-card-import-service.js";
 import { resolveTavernPaths, tavernImportPath } from "./tavern-paths.js";
@@ -24,6 +24,11 @@ test.before(async () => {
 test.after(() => {
   bindWindowsStaleLockReclaimer(undefined);
 });
+
+/** The persona block the model reads, as the one reader prints it. */
+function renderedPersona(profile: Parameters<typeof renderIdentityProfile>[0]): string {
+  return renderIdentityProfile(profile, "zh-CN");
+}
 
 const identity = { playerId: "player-import", companionId: "companion-import", continuityId: "continuity-import" };
 
@@ -351,10 +356,11 @@ test("a companion provisioned from a card with first_mes and no mes_example open
  * it to the model on every turn. Her opening was not rendered at all, so the
  * literal `{{user}}` shipped as the conversation's first line.
  *
- * Both now go through the one player-reference rule the compiled preset path
- * uses (`macroTable`), which yields the run's word for the player. The asserted
- * text is the whole persona and the whole opening, not a substring: a nested
- * literal is exactly what a second rendering rule would leave behind.
+ * Both now store the decoder's own text and render at the READER: the prompt's table is
+ * `renderIdentityProfile`'s, and every surface the player reads goes through
+ * `companion-profile-service`. The asserted text is the whole persona and the whole
+ * opening, not a substring: a nested literal is exactly what a second rendering rule
+ * would leave behind.
  */
 test("a reviewed card's {{user}} reaches her persona and her opening as the run's player reference, never the partition id", async () => {
   const root = await canonicalTestRoot("tavern-st-import-player-reference-");
@@ -387,22 +393,24 @@ test("a reviewed card's {{user}} reaches her persona and her opening as the run'
       await service.confirmedReview("import_player_reference"),
       threads,
     );
-    // Her persona: the text the model reads on every turn.
-    assert.equal(provisioned.profile.persona?.core, "清晨你还没醒，她就把热水烧上了。");
+    // Her persona AS STORED is the author's line; what the model reads is the rendering.
+    assert.equal(provisioned.profile.persona?.core, "清晨{{user}}还没醒，她就把热水烧上了。");
+    assert.match(renderedPersona(provisioned.profile), /^Core disposition: 清晨你还没醒，她就把热水烧上了。$/mu);
     // The reference is chosen in ONE place, and provisioning now goes through it.
     // The rule it holds is `macroTable`'s: a run that NAMES the player keeps that
     // name (the more specific fact), and only a nameless run falls to the
     // locale's pronoun. Nothing in the reviewed path can bypass that, because the
     // path no longer builds a table of its own.
     assert.equal(macroTable({ char: "Macro Companion", user: "阿岚", locale: "zh-CN" }).user, "阿岚");
-    // Her opening: the greeting record's only variant, and the Chat's Message 0.
+    // Her opening: the greeting record's only variant, which is the card's own line -
+    // the rendering is the Chat surface's, and Message 0 below is where it shows.
     const runtimePaths = resolveRuntimePaths(provisioned.identity, root);
     const tavernPaths = resolveTavernPaths(runtimePaths, provisioned.identity);
     const store = new TavernArtifactStore(root);
     const greeting = await createGreetingManagementService(store, tavernPaths.companionRoot).read();
     assert.deepEqual(
       greeting?.variants.map((variant) => variant.text),
-      ["*把粗瓷杯搁在桌沿*\n“你，水烧好了，趁热喝。”"],
+      ["*把粗瓷杯搁在桌沿*\n“{{user}}，水烧好了，趁热喝。”"],
     );
     // The durable profile is what every later turn reads, so the partition id may
     // not appear in it in any field.
@@ -420,7 +428,9 @@ test("a reviewed card's {{user}} reaches her persona and her opening as the run'
       chatSurfaceSessionId: "surface-player-reference",
     });
     assert.equal(chat.messages[0]?.kind, "opening");
-    assert.equal(chat.messages[0]?.text, "*把粗瓷杯搁在桌沿*\n“你，水烧好了，趁热喝。”");
+    // The Chat's Message 0 is what the player reads: no `{{user}}` placeholder, and never
+    // the partition id - the surface renders through the run's own table.
+    assert.doesNotMatch(chat.messages[0]?.text ?? "", /\{\{|player_/u);
   } finally {
     threads?.close?.();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
@@ -459,17 +469,39 @@ test("the shipped default card imports with no partition id in her persona and t
       await service.confirmedReview("import_shipped"),
       threads,
     );
-    // Her card's own prose, verbatim, and no macro left standing.
-    assert.ok(provisioned.profile.persona?.core?.includes("一同从都市迁居星露谷"));
+    // Her card's own prose, verbatim once the prompt renders it, and no macro left standing
+    // in what the model reads. The card's text is what is STORED; the prompt is where it
+    // renders. The phrase is read from the card itself, so a card whose author rewrites her
+    // description does not fail this test for the wrong reason.
+    const cardDescription = (JSON.parse(cardText) as { data: { description: string } }).data.description;
+    const firstClause = cardDescription.split("\n").find((line) => line.startsWith("- 身份："));
+    assert.ok(firstClause !== undefined, "the shipped card must still state her identity line");
+    const statedIdentity = firstClause.replace(/^- 身份：/u, "").split("、")[0]!;
+    assert.ok(
+      renderedPersona(provisioned.profile).includes(statedIdentity),
+      `the prompt must carry the card's own identity line ${JSON.stringify(statedIdentity)}`,
+    );
+    assert.equal(renderedPersona(provisioned.profile), renderIdentityProfile(provisioned.profile, "zh-CN"));
     assert.equal(provisioned.profile.identity.name, "琥珀");
     assert.doesNotMatch(
       await readFile(join(root, "contexts", identityKey(provisioned.identity), "identity-profile.json"), "utf8"),
       /player_/u,
     );
-    // The prompt block the model reads: her card's examples, above the run's own
-    // word for the player (the same word `{{user}}` resolves to).
+    // The prompt block the model reads: her card's examples as the run renders them - the
+    // player's line labelled with the run's own word (the word `{{user}}` resolves to), her
+    // own line under her name, and no macro left standing anywhere.
     const rendered = renderIdentityProfile(provisioned.profile, "zh-CN");
-    assert.match(rendered, /你: 早啊，琥珀。/u);
+    const macros = macroTable({ char: "琥珀", locale: "zh-CN" });
+    const firstExample = provisioned.profile.examples?.[0];
+    assert.ok(firstExample !== undefined, "the shipped card carries example dialogues");
+    assert.ok(
+      rendered.includes(`${macros.user}: ${renderMacros(firstExample.user, macros)}`),
+      "the model reads the player's example line under the run's own word for them",
+    );
+    assert.ok(
+      rendered.includes(`${provisioned.profile.identity.name}: ${renderMacros(firstExample.companion, macros)}`),
+      "the model reads her example line under her own name",
+    );
     assert.doesNotMatch(rendered, /\{\{/u);
   } finally {
     threads?.close?.();

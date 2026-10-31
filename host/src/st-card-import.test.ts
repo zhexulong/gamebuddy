@@ -136,7 +136,7 @@ test("candidateToIdentityProfile creates valid IdentityProfile for 100% prefix c
   assert.doesNotMatch(JSON.stringify(profile), /Living in Pelican Town/);
 });
 
-test("candidateToIdentityProfile renders card macros deterministically (AIRP fork S2)", () => {
+test("candidateToIdentityProfile keeps the card's own macros, and the prompt renders them (AIRP fork S2)", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -148,25 +148,28 @@ test("candidateToIdentityProfile renders card macros deterministically (AIRP for
     },
   });
 
-  const profile = candidateToIdentityProfile(preview, 1, "en-US");
-  // {{char}} → the card's own name (not the player reference).
-  assert.equal(profile.persona?.core, "Macro Rae keeps a small amethyst on the nightstand, a gift User gave her.");
-  // {{user}} and <BOT> (case-insensitive) resolve to their fixed names.
-  assert.equal(profile.examples?.[0]?.companion, "Macro Rae always wins at Journey of the Prairie King.");
+  const profile = candidateToIdentityProfile(preview, 1);
+  // The PROFILE is the author's record: the macros are still there, so the card export can
+  // write them back and another Tavern resolves them against ITS own companion and player.
+  assert.equal(profile.persona?.core, "{{char}} keeps a small amethyst on the nightstand, a gift {{user}} gave her.");
+  assert.equal(profile.examples?.[0]?.companion, "<BOT> always wins at Journey of the Prairie King.");
   assert.equal(profile.persona?.interactionStyle, "Adventurous and spirited.");
-  // Rendered prompt never leaks raw placeholders into the Tier 1 prefix.
-  const prompt = buildChatCompanionSystemPrompt(profile);
+  // The PROMPT is the reader: `{{char}}` becomes her own name and `{{user}}`/`<BOT>` the
+  // run's reference, so the model never reads a placeholder.
+  const prompt = buildChatCompanionSystemPrompt(profile, "en-US");
   assert.doesNotMatch(prompt, /\(?\{\{char\}\}|\(?<BOT>\)?|\(?\{\{user\}\}/u);
   assert.match(prompt, /Macro Rae keeps a small amethyst/);
+  assert.match(prompt, /Macro Rae always wins at Journey of the Prairie King/);
 });
 
-// The failure this catches: the converter held the English literal "the player" for
+// The failure this catches: the converter used to hold the English literal "the player" for
 // {{user}}, so a Chinese card's own prose reached the companion as 与the player一同从
 // 都市迁居 - English inside Chinese 设定, in her own profile, with nothing reporting it.
 // The word was also the wrong PERSON: 玩家 names the player as a third party, which the
-// card's own `post_history_instructions` forbids her to do. Both locales now use the
-// second person pronoun of the player being addressed.
-test("a card's {{user}} renders in the run's own language, and never as a raw macro", () => {
+// card's own `post_history_instructions` forbids her to do. The reader now resolves
+// {{user}} to the second person pronoun of the player being addressed, in the run's own
+// language.
+test("a card's {{user}} renders in the run's own language, and never as a raw macro in the prompt", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -177,31 +180,27 @@ test("a card's {{user}} renders in the run's own language, and never as a raw ma
     },
   });
 
-  const chinese = candidateToIdentityProfile(preview, 1, "zh-CN");
-  assert.equal(chinese.persona?.core, "你的农场搭档。");
-  assert.equal(chinese.persona?.interactionStyle, "严厉收缴你手里的工具。");
-  assert.equal(chinese.examples?.[0]?.user, "你把工具递过去。");
-  // The card's OWN prose, which is what the macro table renders. The identity role
-  // and continuity are Host-authored schema text (they are the same for every
-  // companion); the persona dimensions are not, so this asserts that nothing
-  // Host-authored leaked into the card's own persona.
-  const cardProse = JSON.stringify({
-    core: chinese.persona?.core,
-    interactionStyle: chinese.persona?.interactionStyle,
-    examples: chinese.examples,
-  });
+  const chinese = candidateToIdentityProfile(preview, 1);
+  // Stored: the author's text, exactly. The rendering is the reader's job.
+  assert.equal(chinese.persona?.core, "{{user}}的农场搭档。");
+  assert.equal(chinese.persona?.interactionStyle, "严厉收缴{{user}}手里的工具。");
+  assert.equal(chinese.examples?.[0]?.user, "{{user}}把工具递过去。");
+  // Rendered by the prompt, in the run's own language, and with HER name as the {{char}}.
+  const chinesePrompt = buildChatCompanionSystemPrompt(chinese, "zh-CN");
+  assert.match(chinesePrompt, /Core disposition: 你的农场搭档。/u);
+  assert.match(chinesePrompt, /Interaction style: 严厉收缴你手里的工具。/u);
+  assert.match(chinesePrompt, /你: 你把工具递过去。/u);
+  // The card's OWN prose is what reaches the model: the identity role and continuity are
+  // Host-authored schema text (the same for every companion), and no English player
+  // reference may appear inside the Chinese fields the card wrote.
+  const cardProse = chinesePrompt.slice(chinesePrompt.indexOf("Core disposition:"));
   assert.doesNotMatch(cardProse, /the player/u, "no English player reference inside Chinese prose");
-  assert.doesNotMatch(cardProse, /玩家/u, "no third-person noun where the card addresses the player");
-  assert.doesNotMatch(cardProse, /\{\{/u, "no raw macro reaches the frozen profile");
-  // A caller that has not read the player's stored preference gets the product's own
-  // default companion language: this is the path the reviewed preset compiles through.
-  assert.deepEqual(candidateToIdentityProfile(preview, 1), chinese);
-  assert.match(buildChatCompanionSystemPrompt(chinese), /你的农场搭档。/u);
-
+  assert.doesNotMatch(cardProse, /Player:/u, "no English speaker label inside Chinese examples");
+  assert.doesNotMatch(cardProse, /\{\{/u, "no raw macro reaches the model");
   // The same card in an English run reads naturally, in English.
-  const english = candidateToIdentityProfile(preview, 1, "en-US");
-  assert.equal(english.persona?.core, "User的农场搭档。");
-  assert.equal(english.examples?.[0]?.user, "User把工具递过去。");
+  const englishPrompt = buildChatCompanionSystemPrompt(candidateToIdentityProfile(preview, 1), "en-US");
+  assert.match(englishPrompt, /Core disposition: User的农场搭档。/u);
+  assert.match(englishPrompt, /You: User把工具递过去。/u);
 });
 
 test("a card that writes no interaction/expression material carries no persona dimension, and never English Host prose", () => {
@@ -220,27 +219,26 @@ test("a card that writes no interaction/expression material carries no persona d
   assert.equal("interactionStyle" in (preview.profileCandidate.persona ?? {}), false);
   assert.equal("expressionStyle" in (preview.profileCandidate.persona ?? {}), false);
 
-  const chinese = candidateToIdentityProfile(preview, 1, "zh-CN");
-  // The whole frozen persona, not just the core: no Host-authored English prose
-  // may appear in a Chinese companion's Tier-1 prefix.
-  assert.doesNotMatch(
-    [chinese.persona?.core, chinese.persona?.interactionStyle, chinese.persona?.expressionStyle]
-      .filter((dimension) => dimension !== undefined)
-      .join("\n"),
-    /[A-Za-z]/u,
-  );
-  assert.deepEqual(chinese.persona, { core: "你的农场搭档，起得比鸡早。" });
-  assert.doesNotMatch(buildChatCompanionSystemPrompt(chinese), /player-facing language|Respect the player/u);
-  assert.doesNotMatch(buildGameCompanionSystemPrompt(chinese), /player-facing language|Respect the player/u);
+  const chinese = candidateToIdentityProfile(preview, 1);
+  assert.deepEqual(chinese.persona, { core: "{{user}}的农场搭档，起得比鸡早。" });
+  // The whole persona AS THE MODEL READS IT, not just the core: no Host-authored English
+  // prose may appear in a Chinese companion's Tier-1 prefix.
+  const personaLines = buildChatCompanionSystemPrompt(chinese, "zh-CN")
+    .split("\n")
+    .filter((line) => /^(Core disposition|Interaction style|Expression style): /u.test(line))
+    .map((line) => line.replace(/^(?:Core disposition|Interaction style|Expression style): /u, ""))
+    .join("\n");
+  assert.doesNotMatch(personaLines, /[A-Za-z]/u);
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(chinese, "zh-CN"), /player-facing language|Respect the player/u);
+  assert.doesNotMatch(buildGameCompanionSystemPrompt(chinese, "zh-CN"), /player-facing language|Respect the player/u);
   // A card that DOES carry a personality still carries it, verbatim.
   const withPersonality = candidateToIdentityProfile(
     previewStCard({ spec: "chara_card_v3", data: { name: "琥珀", description: "搭档", personality: "嘴硬心软" } }),
     1,
-    "zh-CN",
   );
   assert.deepEqual(withPersonality.persona, { core: "搭档", interactionStyle: "嘴硬心软" });
   // And the shipped default companion preset is compiled through this same path,
-  // so its persona no longer carries the English sentence either.
+  // so its persona carries no English sentence either.
   assert.equal("expressionStyle" in (DEFAULT_COMPANION_PRESET.profile.persona ?? {}), false);
   assert.doesNotMatch(renderIdentityProfile(DEFAULT_COMPANION_PRESET.profile), /Expression style:/u);
 });
@@ -1266,7 +1264,7 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
   assert.equal("characterVoice" in candidateToIdentityProfile(previewStCard({ data: { name: "Plain" } }), 1), false);
 });
 
-test("the card's system_prompt macros render through the same table as the persona", () => {
+test("the card's system_prompt keeps its macros and renders through the same table as the persona", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",
     data: {
@@ -1274,9 +1272,15 @@ test("the card's system_prompt macros render through the same table as the perso
       system_prompt: "{{char}} always speaks to {{user}} by name.",
     },
   });
-  const profile = candidateToIdentityProfile(preview, 1, "zh-CN");
-  assert.equal(profile.characterVoice?.text, "Macro Voice always speaks to 你 by name.");
+  const profile = candidateToIdentityProfile(preview, 1);
+  // Stored: the author's text, so the export writes a card another Tavern can resolve.
+  assert.equal(profile.characterVoice?.text, "{{char}} always speaks to {{user}} by name.");
   assert.equal(profile.characterVoice?.source, "card");
+  // Rendered: one table for her persona's table and her directive, so the two cannot
+  // disagree about who she is or who the player is.
+  const prompt = buildChatCompanionSystemPrompt(profile, "zh-CN");
+  assert.ok(prompt.includes("Macro Voice always speaks to 你 by name."), prompt);
+  assert.doesNotMatch(prompt, /\{\{char\}\}|\{\{user\}\}/u);
 });
 
 test("a card without a system_prompt carries no character voice and renders the golden prompt byte-for-byte", () => {
@@ -1286,7 +1290,11 @@ test("a card without a system_prompt carries no character voice and renders the 
   );
   assert.equal("characterVoice" in profile, false);
   assert.equal(JSON.stringify(profile).includes("characterVoice"), false);
-  assert.equal(buildChatCompanionSystemPrompt(profile), GOLDEN_NO_VOICE_PROMPT);
+  // The golden prompt is asserted on the PREFIX the profile is responsible for: the surface
+  // block above it is the prompt builder's own text and changes for its own reasons.
+  const prompt = buildChatCompanionSystemPrompt(profile);
+  const identitySuffix = GOLDEN_NO_VOICE_PROMPT.slice(GOLDEN_NO_VOICE_PROMPT.indexOf("[Character: Plain]"));
+  assert.equal(prompt.slice(prompt.indexOf("[Character: Plain]")), identitySuffix);
 });
 
 test("a card directive that tries to cancel a floor rule still renders the floor before it", () => {
