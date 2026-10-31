@@ -356,6 +356,12 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   town_errand: "去一趟镇上，找个人说说话。",
+  go_mining: "下一趟矿，敲点矿石回来。",
+  store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
+  till_and_sow: "把空地翻一翻，种上种子，浇上水。",
+  tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
+  tend_the_animals: "去看看牲口，该摸的摸，该喂的喂，有东西就收。",
+  dress_and_display: "给自己换身衣裳，把屋里摆出点样子来。",
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
@@ -363,6 +369,12 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
   craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
   town_errand: "go into town and talk to somebody there. ",
+  go_mining: "go down the mine and come back with some ore. ",
+  store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
+  till_and_sow: "turn the bare ground, put seeds in it, and water them. ",
+  tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
+  tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",
+  dress_and_display: "put on something else, and make the house look like somebody lives in it. ",
 });
 
 const SCENARIO_PROMPTS = Object.freeze({

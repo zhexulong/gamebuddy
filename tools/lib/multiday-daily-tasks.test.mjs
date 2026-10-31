@@ -43,8 +43,13 @@ test("a run that spans the whole rotation covers every task exactly once", () =>
 test("more days than tasks wraps rather than failing", () => {
   // A run may be configured longer than the rotation. Wrapping is more useful than a crash, and the same day
   // number must always produce the same task or the artifact stops being reproducible.
+  //
+  // Read the length: this asserted "day 6 is day 1" with the rotation hard-coded at five, so it went red the moment a
+  // sixth task was added - a test pinning the SIZE of a list rather than the property that the list wraps.
   const sixth = dailyTaskFor(0, 6);
-  assert.equal(sixth, dailyTaskFor(0, 1), "day 6 of a 5-task rotation is day 1 again");
+  assert.equal(sixth, DAILY_TASK_ROTATION[5 % DAILY_TASK_ROTATION.length]);
+  const wrapped = dailyTaskFor(0, DAILY_TASK_ROTATION.length + 1);
+  assert.equal(wrapped, dailyTaskFor(0, 1), "one more than the rotation length is day 1 again");
 });
 
 test("the offset is derived from completed runs, not stored", () => {

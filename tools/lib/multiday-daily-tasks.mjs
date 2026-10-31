@@ -30,11 +30,25 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree_source"]),
   craft_and_place_machine: Object.freeze(["craft_item", "place_owned_object", "machine_inspect"]),
   town_errand: Object.freeze(["travel", "talk_to_npc"]),
+  // The rows below exist for COVERAGE, and that is a measured need rather than a preference: of the 95 published
+  // actions, 78 were reachable by no task for ever, so a capability could be finished, gated, and still never exercised.
+  // `enter_mine` is the proof - published, correct, and used in zero runs because nothing ever asked for a mine.
+  go_mining: Object.freeze(["navigate_to_destination", "enter_mine", "break_rock_source"]),
+  till_and_sow: Object.freeze(["till_soil", "plant_seed", "water_crop", "fertilize_tile"]),
+  store_and_sort: Object.freeze(["chest_store", "chest_retrieve", "pickup_item"]),
+  tend_the_animals: Object.freeze(["pet_animal", "feed_animal", "collect_animal_product", "water_pet_bowl"]),
+  tidy_and_repair: Object.freeze(["clear_debris", "clear_hoedirt", "remove_placed_item", "break_container_source"]),
+  dress_and_display: Object.freeze(["equip_wearable", "unequip_wearable", "dress_mannequin", "set_sign_display"]),
 });
 
 /**
  * The rotation, in the order a run walks it. Stable ids; the prompts live in the runner because they are
  * player-facing text and the framing has to change with the day.
+ *
+ * ORDER IS THE COVERAGE PLAN. Consecutive days get consecutive entries, and `runOffsetFor` shifts the first day by one
+ * per completed run, so a series of runs walks the whole list. The first five are what the world can already satisfy with
+ * certainty on a bare farm; the second group asks for things the play-session fixture may not contain, and those are
+ * allowed to end in "there is nothing here to do" - which is a true observation, not a failed task.
  */
 export const DAILY_TASK_ROTATION = Object.freeze([
   "clear_east_patch",
@@ -42,6 +56,12 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "forage_and_trees",
   "craft_and_place_machine",
   "town_errand",
+  "go_mining",
+  "store_and_sort",
+  "till_and_sow",
+  "tidy_and_repair",
+  "tend_the_animals",
+  "dress_and_display",
 ]);
 
 /**
