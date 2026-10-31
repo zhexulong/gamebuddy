@@ -125,14 +125,18 @@ export function provisionFreshProductionContinuityFromCanonicalAdmission(
     control = openProductionStore(authorityRoot);
     const configuration = control.configuration();
     if (
-      configuration.journalMode !== "delete" ||
+      configuration.journalMode !== "wal" ||
       configuration.synchronous !== 2 ||
       configuration.busyTimeoutMs !== PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS
     )
       throw failure("production_store_not_admitted");
     const metadata = control.bootstrapFresh(bootstrapInput(options, authorityRootIdentity));
     const databaseFingerprint = fingerprintDatabase(authorityRoot);
-    assertAuthorityRootContainsOnly(authorityRoot, [DATABASE_NAME]);
+    // The database's own sidecars are part of what the fresh path creates: WAL writes `-wal`/`-shm`
+    // beside it, and they exist on a LIVE connection from the first write. The allowed set is
+    // therefore derived from `DATABASE_NAME` rather than listed, so a mode that names its artifacts
+    // differently does not have to be taught to this check.
+    assertAuthorityRootContainsOnly(authorityRoot, databaseFamilyEntry);
     inspectRuntimeAdmission(runtimeCwd);
     writeFreshAuthorityMarker(authorityRoot, options, authorityRootIdentity, metadata.storeId);
     if (fingerprintDatabase(authorityRoot) !== databaseFingerprint)
@@ -181,7 +185,7 @@ export function openKnownProductionContinuityFromCanonicalAdmission(
     control = openProductionStore(authorityRoot);
     const configuration = control.configuration();
     if (
-      configuration.journalMode !== "delete" ||
+      configuration.journalMode !== "wal" ||
       configuration.synchronous !== 2 ||
       configuration.busyTimeoutMs !== PRODUCTION_CONTINUITY_BUSY_TIMEOUT_MS
     )
@@ -447,11 +451,33 @@ function authorityRoot(root: string): string {
 function databasePath(root: string): string {
   return join(root, DATABASE_NAME);
 }
-function fingerprintDatabase(root: string): string {
+/**
+ * A digest of the authority's durable database state, which under WAL is the main file PLUS its
+ * `-wal`. The main file alone is not enough and the difference is silent: MEASURED 2026-11-01, a
+ * COMMITTED write under `journal_mode=WAL` leaves the main file byte-identical (12 392 bytes sitting
+ * in `-wal`) while the same write under DELETE changes it. A fingerprint over the main file alone
+ * would therefore report "unchanged" for exactly the case this check exists to catch.
+ *
+ * `-shm` is excluded on purpose: it is shared memory holding the reader/lock marks, not durable
+ * state, and it changes on ordinary reads - hashing it would make an untouched store look modified.
+ * The entry set is derived from the same predicate the authority-root checks use, so an artifact
+ * SQLite adds for a future journal mode is covered without teaching this function its name.
+ *
+ * @internal Exported so a gate can drive this function against a real committed WAL write instead of
+ * re-implementing the predicate it is asserting about.
+ */
+export function fingerprintDatabase(root: string): string {
   try {
-    return createHash("sha256")
-      .update(readFileSync(databasePath(root)))
-      .digest("hex");
+    const hash = createHash("sha256");
+    const durable = readdirSync(root)
+      .filter((entry) => databaseFamilyEntry(entry) && !entry.endsWith("-shm"))
+      .sort();
+    for (const entry of durable) {
+      const bytes = readFileSync(join(root, entry));
+      hash.update(`${entry}:${String(bytes.length)}\n`);
+      hash.update(bytes);
+    }
+    return hash.digest("hex");
   } catch {
     throw failure("production_store_not_admitted");
   }
@@ -486,6 +512,19 @@ function createFreshAuthorityRoot(runtimeCwd: string): string {
  * database and SQLite's own sidecars of it. An empty directory is the crash between
  * the directory's creation and the database's; the database alone is the crash before
  * the marker.
+ *
+ * Deleting the sidecars is lossless, and under WAL that is a different statement than it
+ * was under the rollback journal, so it is spelled out. A `-journal` can never hold a
+ * COMMITTED transaction - a commit removes it - so a leftover one is always an uncommitted
+ * rollback. A `-wal` CAN hold committed transactions: MEASURED 2026-11-01, a fresh authority
+ * mid-provision is a 4 KB main file beside a 239 KB `-wal` that holds the committed bootstrap
+ * row, and closing the last connection is what moves it into the main file. So on a directory
+ * with a `-wal`, what makes the discard lossless is the ABSENT MARKER and not the sidecar: the
+ * marker is what publishes the authority, the fresh path writes it last, and a directory that
+ * never reached it was never an authority anyone could open. This function does not checkpoint
+ * to check that: the store is not open here (this runs before `openProductionContinuityStore`),
+ * and a connection opened just to look would itself create `-wal`/`-shm` in the directory whose
+ * contents it is deciding about.
  *
  * The proof is one-sided and cannot be made stronger, which is worth stating plainly:
  * an absent marker is exactly what "never finished" leaves, and an absent marker is
@@ -556,7 +595,7 @@ function assertKnownAuthorityRoot(
   authorityRootIdentity: string,
 ): void {
   if (!isDirectory(root)) throw failure("production_authority_root_changed");
-  assertAuthorityRootContainsOnly(root, [DATABASE_NAME, AUTHORITY_MARKER_NAME]);
+  assertAuthorityRootContainsOnly(root, (entry) => databaseFamilyEntry(entry) || entry === AUTHORITY_MARKER_NAME);
   if (!isRegularFile(databasePath(root))) throw failure("production_store_not_admitted");
   validateAuthorityMarker(root, options, authorityRootIdentity);
 }
@@ -634,14 +673,14 @@ function validateAuthorityMarker(
   )
     throw failure("production_authority_artifact_present");
 }
-function assertAuthorityRootContainsOnly(root: string, allowed: readonly string[]): void {
+function assertAuthorityRootContainsOnly(root: string, allowed: (entry: string) => boolean): void {
   let entries: string[];
   try {
     entries = readdirSync(root);
   } catch {
     throw failure("production_authority_root_unreadable");
   }
-  if (entries.some((entry) => !allowed.includes(entry))) throw failure("production_authority_artifact_present");
+  if (entries.some((entry) => !allowed(entry))) throw failure("production_authority_artifact_present");
 }
 function isDirectory(path: string): boolean {
   try {
