@@ -50,7 +50,7 @@
  *   node tools/check-credential-export-isolation.mjs              # the verdict
  *   node tools/check-credential-export-isolation.mjs --root <dir> # the gate's own fixture
  */
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -207,6 +207,124 @@ export function exportRouteIds(root) {
   return [...text.matchAll(/routeId: "([^"]+)"/gu)]
     .map((match) => match[1])
     .filter((routeId) => /\.export$/u.test(routeId));
+}
+
+/**
+ * POPULATION 2: files whose PATH is ordinary but whose PAYLOAD carries a live secret.
+ *
+ * Population 1 finds its members by name because the name IS the fact (`auth.json`,
+ * `tavern-connection-keys.json`). This one is different in kind: the Stardew composer writes an
+ * ordinary `config.json` into a purpose-built attempt directory, and the credential is a field in
+ * the document (`BridgeToken`, `SessionToken`). A filename rule cannot see it, and adding
+ * `config.json` to population 1 would be a hand-maintained list that reds the nine shipped modules
+ * naming it for unrelated reasons.
+ *
+ * So this population's authority is the write itself. A member is a shipped production `host/src`
+ * module that writes a file whose JSON payload names a secret-shaped field whose value is NOT an
+ * `$ENV` reference, and the fact this gate keeps is the DESTINATION, resolved through the module's
+ * own `join(...)` chain and string constants. Deriving the destination rather than the filename is
+ * what keeps the rule narrow: `GameBuddy/config.json` is the member, `config.json` alone is not.
+ *
+ * `apiKey: "$CPA_OAI_API_KEY"` is a reference, not a secret: Pi resolves the variable at runtime
+ * and the file never holds a key. A rule that red on the correct pattern would be deleted by the
+ * next person who touched it, and then neither population is covered.
+ */
+const SECRET_FIELD =
+  /\b(api_key|apiKey|BridgeToken|SessionToken|clientSecret|apiSecret|accessToken|refreshToken|passphrase|password)\s*:\s*([^,\n}]+)/gu;
+/** A payload value that names an environment variable: the file holds the reference, not the key. */
+const ENV_REFERENCE = /^"\$[A-Z0-9_]+"$/u;
+/** A module's `const X = "literal";` and `const Y = join(...)` declarations, for destination resolution. */
+const STRING_CONSTANT = /(?:const|let)\s+([A-Za-z0-9_]+)\s*(?::[^=]+)?=\s*"([^"]+)";/gu;
+const JOIN_CHAIN = /(?:const|let)\s+([A-Za-z0-9_]+)\s*(?::[^=]+)?=\s*join\(([^;]+?)\);/gu;
+const PAYLOAD_CONSTANT = /(?:const|let)\s+(\w+)\s*(?::[^=]+)?=\s*JSON\.stringify\(/gu;
+const PAYLOAD_WRITE =
+  /(?:atomicWriteFile|writeManagedFile|writeFileSync|writeFile)\(\s*join\((.+?)\),\s*([A-Za-z0-9_]+)/gu;
+
+/** The secret-shaped fields in `text` whose value is a live secret rather than an env reference. */
+export function liveSecretFields(text) {
+  const fields = [];
+  SECRET_FIELD.lastIndex = 0;
+  for (let match = SECRET_FIELD.exec(text); match !== null; match = SECRET_FIELD.exec(text)) {
+    if (ENV_REFERENCE.test(match[2].trim())) continue;
+    fields.push({ field: match[1], value: match[2].trim().slice(0, 64) });
+  }
+  return fields;
+}
+
+/**
+ * The destinations one module writes a live-secret payload to, resolved through its own declarations.
+ *
+ * An unresolved segment is kept as `<name>` so the destination still says WHERE the file lives even
+ * when its head is a transaction directory this gate cannot know. Only a module that both writes a
+ * file and holds a live secret field has anything derived here at all.
+ */
+export function credentialWrites(text) {
+  if (liveSecretFields(text).length === 0) return [];
+  if (!WRITE_PRIMITIVE.test(text)) return [];
+  const constants = new Map();
+  STRING_CONSTANT.lastIndex = 0;
+  for (let match = STRING_CONSTANT.exec(text); match !== null; match = STRING_CONSTANT.exec(text))
+    constants.set(match[1], match[2]);
+  const chains = new Map();
+  JOIN_CHAIN.lastIndex = 0;
+  for (let match = JOIN_CHAIN.exec(text); match !== null; match = JOIN_CHAIN.exec(text))
+    chains.set(
+      match[1],
+      match[2].split(",").map((part) => part.trim()),
+    );
+  const resolve = (name) => {
+    if (constants.has(name)) return [constants.get(name)];
+    const parts = chains.get(name);
+    return parts === undefined ? [`<${name}>`] : parts.flatMap((part) => resolve(part));
+  };
+
+  const payloads = new Set();
+  PAYLOAD_CONSTANT.lastIndex = 0;
+  for (let match = PAYLOAD_CONSTANT.exec(text); match !== null; match = PAYLOAD_CONSTANT.exec(text))
+    payloads.add(match[1]);
+
+  const writes = [];
+  PAYLOAD_WRITE.lastIndex = 0;
+  for (let match = PAYLOAD_WRITE.exec(text); match !== null; match = PAYLOAD_WRITE.exec(text)) {
+    if (!payloads.has(match[2])) continue;
+    const destination = match[1]
+      .split(",")
+      .map((part) => part.trim())
+      .flatMap((part) => resolve(part))
+      .join("/");
+    writes.push({ destination, payload: match[2] });
+  }
+  return writes;
+}
+
+/**
+ * The literal suffixes a destination names, at TWO segments or more.
+ *
+ * One segment is never enough: `config.json` is also the name of four unrelated documents in this
+ * repository, and a gate that fired on it would be red on arrival for nine shipped modules that
+ * have nothing to do with credentials. `GameBuddy/config.json` is specific enough that nothing in
+ * the tree names it without meaning this file - measured over the whole shipped set.
+ */
+export function destinationSuffixes(writes) {
+  const suffixes = new Set();
+  for (const write of writes) {
+    const parts = write.destination.split("/");
+    for (let depth = 2; depth <= parts.length; depth += 1) {
+      const suffix = parts.slice(-depth).join("/");
+      if (!suffix.includes("<")) suffixes.add(suffix);
+    }
+  }
+  return [...suffixes].sort();
+}
+
+/** The population-2 verdict: every shipped host/src write of a live secret, and its destination. */
+export function credentialPayloadPopulation(root) {
+  const writes = [];
+  for (const source of shippedSources(root)) {
+    if (!(source.path.startsWith("host/src/") && isProductionTs(source.path))) continue;
+    for (const write of credentialWrites(source.text)) writes.push({ file: source.path, ...write });
+  }
+  return writes;
 }
 
 /**
@@ -398,6 +516,62 @@ function assemblerReason(source, routeIds) {
 }
 
 /**
+ * The module that declares the credential files (population 1) and the module that writes a
+ * live-secret payload (population 2).
+ *
+ * These two paths are how the anti-vacuity checks below distinguish "the derivation found nothing"
+ * from "this root does not have that subject". An evaluated fixture root is deliberately scoped to
+ * one arm, so only a root that HAS the declaring module and still derives nothing is suspicious -
+ * that is a derivation that silently stopped working, and it must fail rather than pass quietly.
+ */
+const CREDENTIAL_STORE_MODULE = "host/src/tavern/connection-store.ts";
+const CREDENTIAL_PAYLOAD_MODULE = "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts";
+
+/** True when `path` exists as a file under `root`. */
+function present(root, path) {
+  try {
+    return statSync(join(root, path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every population-1 violation one assembler commits: it names a credential leaf, calls a credential
+ * path builder, or declares an include filter that admits a credential path.
+ */
+function pathViolations(where, code, { credentials, container, leaves }) {
+  const violations = [];
+  for (const leaf of leaves) {
+    QUOTED.lastIndex = 0;
+    for (let match = QUOTED.exec(code); match !== null; match = QUOTED.exec(code)) {
+      const literal = match[1];
+      if (literal === leaf || literal.endsWith(`/${leaf}`) || literal.endsWith(`\\${leaf}`))
+        violations.push({ code: "assembler_names_credential_file", ...where, leaf, literal });
+    }
+  }
+  for (const credential of credentials)
+    if (new RegExp(`\\b${credential.builder}\\s*\\(`, "u").test(code))
+      violations.push({ code: "assembler_calls_credential_builder", ...where, builder: credential.builder });
+  for (const array of patternArrays(code)) {
+    for (const entry of array.patterns) {
+      const admitted = leaves
+        .map((leaf) => ({ leaf, path: credentialPaths(leaf, container).find((path) => entry.pattern.test(path)) }))
+        .filter((candidate) => candidate.path !== undefined);
+      if (admitted.length === 0) continue;
+      violations.push({
+        code: "assembler_filter_matches_credential_path",
+        ...where,
+        filter: `${array.name}: ${entry.literal}`,
+        leaves: admitted.map((candidate) => candidate.leaf),
+        path: admitted[0].path,
+      });
+    }
+  }
+  return violations;
+}
+
+/**
  * The verdict over one repository root.
  *
  * `violations` are the violations; `checked` records what the gate actually read, so a green run says
@@ -407,13 +581,19 @@ export function evaluate({ root = REPOSITORY_ROOT } = {}) {
   const population = credentialPopulation(root);
   const container = credentialContainer(root);
   const routeIds = exportRouteIds(root);
+  const payloadWrites = credentialPayloadPopulation(root);
+  const payloadSuffixes = destinationSuffixes(payloadWrites);
   const leaves = population.credentials.map((entry) => entry.leaf);
   const violations = [...population.drift];
-  if (population.credentials.length === 0)
+  if (population.credentials.length === 0 && present(root, CREDENTIAL_STORE_MODULE))
     violations.push({
       code: "credential_population_empty",
-      detail:
-        "no exported credential path builder was found in host/src; the two stores are declared by connectionAuthPath/connectionKeysPath in tavern/connection-store.ts. If they moved, fix this gate's PATH_BUILDER derivation - do not delete the gate",
+      detail: `${CREDENTIAL_STORE_MODULE} exists but declares no credential path builder; the two stores are declared by connectionAuthPath/connectionKeysPath. If they moved, fix this gate's PATH_BUILDER derivation - do not delete the gate`,
+    });
+  if (payloadWrites.length === 0 && present(root, CREDENTIAL_PAYLOAD_MODULE))
+    violations.push({
+      code: "credential_payload_population_empty",
+      detail: `${CREDENTIAL_PAYLOAD_MODULE} exists but no write of a live-secret payload was found; it writes the Stardew Mod config with BridgeToken/SessionToken. If the payload moved, fix SECRET_FIELD/PAYLOAD_WRITE - do not delete the rule`,
     });
   if (container === null)
     violations.push({
@@ -429,52 +609,33 @@ export function evaluate({ root = REPOSITORY_ROOT } = {}) {
     if (reasons.length === 0) continue;
     const where = { file: source.path, reasons };
     assemblers.push(where);
-    // Comments are blanked before either arm reads the module. A comment that names a credential
-    // file is documentation - very often documentation of exactly this rule - and a gate that fired
-    // on it would be a gate someone deletes. The blanking keeps offsets, so `filters` are located
-    // by position rather than by re-scanning a shifted string.
+    // Comments are blanked before any arm reads the module. A comment that names a credential file is
+    // documentation - very often documentation of exactly this rule - and a gate that fired on it
+    // would be a gate someone deletes.
     const code = blankComments(source.text);
-
-    for (const leaf of leaves) {
-      QUOTED.lastIndex = 0;
-      for (let match = QUOTED.exec(code); match !== null; match = QUOTED.exec(code)) {
-        const literal = match[1];
-        if (literal === leaf || literal.endsWith(`/${leaf}`) || literal.endsWith(`\\${leaf}`))
-          violations.push({ code: "assembler_names_credential_file", ...where, leaf, literal });
-      }
-    }
-
-    for (const credential of population.credentials) {
-      if (new RegExp(`\\b${credential.builder}\\s*\\(`, "u").test(code))
-        violations.push({ code: "assembler_calls_credential_builder", ...where, builder: credential.builder });
-    }
-
-    for (const array of patternArrays(code)) {
-      filtersInspected += 1;
-      for (const entry of array.patterns) {
-        const admitted = leaves
-          .map((leaf) => ({
-            leaf,
-            path: credentialPaths(leaf, container).find((path) => entry.pattern.test(path)),
-          }))
-          .filter((candidate) => candidate.path !== undefined);
-        if (admitted.length === 0) continue;
-        violations.push({
-          code: "assembler_filter_matches_credential_path",
-          ...where,
-          filter: `${array.name}: ${entry.literal}`,
-          leaves: admitted.map((candidate) => candidate.leaf),
-          path: admitted[0].path,
-        });
-      }
-    }
+    filtersInspected += patternArrays(code).length;
+    violations.push(...pathViolations(where, code, { credentials: population.credentials, container, leaves }));
+    // POPULATION 2, arm D. Its own assertion, not an extension of the one above: population 1 is a set
+    // of leaves a filter could admit, population 2 a set of DESTINATIONS a module could name.
+    // Measured over the shipped tree, a two-or-more-segment suffix of a population-2 destination is
+    // named by no assembled module, so this arm is red only on a real regression.
+    for (const suffix of payloadSuffixes)
+      if (code.includes(`"${suffix}"`) || code.includes(`'${suffix}'`))
+        violations.push({ code: "assembler_names_credential_payload_file", ...where, suffix });
   }
 
   return {
     credentials: population.credentials,
+    payloadWrites,
+    payloadSuffixes,
     assemblers,
     violations,
-    checked: { credentials: population.credentials.length, assemblers: assemblers.length, filters: filtersInspected },
+    checked: {
+      credentials: population.credentials.length,
+      payloadWrites: payloadWrites.length,
+      assemblers: assemblers.length,
+      filters: filtersInspected,
+    },
   };
 }
 
@@ -482,6 +643,8 @@ function describe(violation) {
   switch (violation.code) {
     case "credential_population_empty":
       return `credential_population_empty: ${violation.detail}`;
+    case "credential_payload_population_empty":
+      return `credential_payload_population_empty: ${violation.detail}`;
     case "credential_container_unresolved":
       return `credential_container_unresolved: ${violation.detail}`;
     case "credential_leaf_unresolved":
@@ -496,6 +659,8 @@ function describe(violation) {
       return `${violation.file}: assembles an artifact (${violation.reasons.join(",")}) and calls ${violation.builder}()`;
     case "assembler_filter_matches_credential_path":
       return `${violation.file}: include filter ${violation.filter} admits "${violation.path}", which is ${violation.leaves.join("/")}`;
+    case "assembler_names_credential_payload_file":
+      return `${violation.file}: assembles an artifact (${violation.reasons.join(",")}) and names the credential-bearing file "${violation.suffix}"`;
     default:
       return `${violation.file ?? ""}: ${violation.code}`;
   }
@@ -508,8 +673,9 @@ function main(argv) {
   if (result.violations.length === 0) {
     process.stdout.write(
       `credential_export_isolation_ok credentials=${result.checked.credentials} ` +
-        `assemblers=${result.checked.assemblers} filters=${result.checked.filters} ` +
-        `files=${result.credentials.map((entry) => entry.leaf).join(",")}\n`,
+        `payload_writes=${result.checked.payloadWrites} assemblers=${result.checked.assemblers} ` +
+        `filters=${result.checked.filters} files=${result.credentials.map((entry) => entry.leaf).join(",")} ` +
+        `payload_files=${result.payloadSuffixes.join(",")}\n`,
     );
     return 0;
   }
@@ -519,7 +685,7 @@ function main(argv) {
   );
   for (const violation of result.violations) process.stdout.write(`  ${describe(violation)}\n`);
   process.stdout.write(
-    "a credential file is a player's long-lived API key in plaintext; an export may not carry it. " +
+    "a credential is a player's API key or bridge secret in plaintext; an export may not carry it. " +
       "Wire the export's file set through a declared include decision instead of copying a directory, " +
       "or leave the credential out of the set (see tools/live-run/core/capture.mjs RUNTIME_ROOT_EVIDENCE).\n",
   );

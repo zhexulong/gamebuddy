@@ -7,11 +7,15 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   credentialContainer,
+  credentialPayloadPopulation,
   credentialPopulation,
+  credentialWrites,
+  destinationSuffixes,
   evaluate,
   exportRouteIds,
   isProductionTs,
   isShipped,
+  liveSecretFields,
   patternArrays,
 } from "./check-credential-export-isolation.mjs";
 
@@ -254,7 +258,7 @@ export async function captureTree(root) {
 `,
   });
   assert.deepEqual(violations, []);
-  assert.deepEqual(checked, { credentials: 2, assemblers: 1, filters: 1 });
+  assert.deepEqual(checked, { credentials: 2, payloadWrites: 0, assemblers: 1, filters: 1 });
 });
 
 test("an export route id makes the module serving it an assembler", () => {
@@ -331,6 +335,141 @@ test("the repository's own tree derives two credential files and no violation", 
   assert.deepEqual(result.violations, []);
   assert.equal(result.checked.assemblers > 0, true);
   assert.equal(result.checked.filters > 0, true);
+  assert.equal(result.checked.payloadWrites > 0, true);
+});
+
+/*
+ * POPULATION 2: a written file whose PAYLOAD carries a live secret. Its authority is the write, not
+ * a filename, so these cases drive the payload rule directly.
+ */
+
+/** A writer shaped like the Stardew composer: a Mod config carrying a bridge and a session token. */
+const COMPOSER = `import { join } from "node:path";
+const MOD_CONFIG_FILE = "config.json";
+const HOST_PROFILE_ROOT = "player-host";
+const MODS_DIRECTORY = "Mods";
+const MOD_DIRECTORY = "GameBuddy";
+export async function stage(facts: { transactionDirectory: string }) {
+  const transactionDirectory = facts.transactionDirectory;
+  const hostModDirectory = join(transactionDirectory, HOST_PROFILE_ROOT, MODS_DIRECTORY, MOD_DIRECTORY);
+  const hostConfig = JSON.stringify({
+    EnableLocalBridge: true,
+    SessionToken: "live-session-secret",
+  });
+  await writeManagedFile(join(hostModDirectory, MOD_CONFIG_FILE), hostConfig);
+}
+`;
+
+test("population 2 is derived from a written payload, and its destination resolves through the module's own joins", () => {
+  const writes = credentialWrites(COMPOSER);
+  assert.deepEqual(writes, [
+    { destination: "<transactionDirectory>/player-host/Mods/GameBuddy/config.json", payload: "hostConfig" },
+  ]);
+  assert.deepEqual(destinationSuffixes(writes), [
+    "GameBuddy/config.json",
+    "Mods/GameBuddy/config.json",
+    "player-host/Mods/GameBuddy/config.json",
+  ]);
+});
+
+test("an $ENV reference is not a secret: the file holds the variable name, not the key", () => {
+  const reference = `const entry = JSON.stringify({ apiKey: "$CPA_OAI_API_KEY" });\nawait writeFile(path, entry);\n`;
+  assert.deepEqual(liveSecretFields(reference), []);
+  assert.deepEqual(credentialWrites(reference), []);
+});
+
+test("the env-reference direction is the point: the same field with a live value IS a secret", () => {
+  assert.deepEqual(
+    liveSecretFields('const entry = JSON.stringify({ apiKey: "sk-live-key" });\n').map((field) => field.field),
+    ["apiKey"],
+  );
+});
+
+test("a module that holds a secret field but writes no file contributes no destination", () => {
+  const fieldsOnly = `export type Command = Readonly<{ apiKey: string }>;\nexport const redact = (value: string): string => value;\n`;
+  assert.deepEqual(credentialWrites(fieldsOnly), []);
+});
+
+test("a payload that is not a JSON.stringify constant is not read as a secret write", () => {
+  const banner = `const note = "SessionToken: live-session-secret";\nawait writeFile(path, note);\n`;
+  assert.deepEqual(credentialWrites(banner), []);
+});
+
+test("population 2 is derived from the real composer, and covers both staged profiles", () => {
+  const writes = credentialPayloadPopulation(REPOSITORY_ROOT);
+  assert.deepEqual(
+    writes.map((write) => `${write.file}: ${write.destination}`),
+    [
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts: <transactionDirectory>/ai-client/Mods/GameBuddy/config.json",
+      "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts: <transactionDirectory>/player-host/Mods/GameBuddy/config.json",
+    ],
+  );
+});
+
+test("an assembler that names a population-2 destination is the violation, with its own code", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-credential-payload-"));
+  try {
+    const write = (relativePath, contents) => {
+      const path = join(root, relativePath);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
+    write("host/src/tavern/connection-store.ts", STORE);
+    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", COMPOSER);
+    write(
+      "tools/diagnostic-bundle.mjs",
+      `import { copyFile } from "node:fs/promises";\nimport { join } from "node:path";\nconst PROFILE_FILES = Object.freeze(["Mods/GameBuddy/config.json"]);\nexport async function bundle(attempt, out) {\n  for (const relative of PROFILE_FILES) await copyFile(join(attempt, relative), out);\n}\n`,
+    );
+    const { violations } = evaluate({ root });
+    assert.deepEqual(
+      violations.map((violation) => [violation.code, violation.file, violation.suffix]),
+      [["assembler_names_credential_payload_file", "tools/diagnostic-bundle.mjs", "Mods/GameBuddy/config.json"]],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a bare config.json is NOT a population-2 violation, because four unrelated documents share the name", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-credential-payload-bare-"));
+  try {
+    const write = (relativePath, contents) => {
+      const path = join(root, relativePath);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
+    write("host/src/tavern/connection-store.ts", STORE);
+    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", COMPOSER);
+    write(
+      "tools/unrelated-copy.mjs",
+      `import { copyFile } from "node:fs/promises";\nimport { join } from "node:path";\nexport async function copy(root, out) {\n  await copyFile(join(root, "config.json"), out);\n}\n`,
+    );
+    assert.deepEqual(evaluate({ root }).violations, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a root that has the composer but derives no payload write fails instead of passing vacuously", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-credential-payload-vacuous-"));
+  try {
+    const write = (relativePath, contents) => {
+      const path = join(root, relativePath);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, contents);
+    };
+    write("host/src/runtime-identity.ts", RUNTIME_IDENTITY);
+    write("host/src/tavern/connection-store.ts", STORE);
+    write("host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts", "export const moved = 1;\n");
+    assert.deepEqual(
+      evaluate({ root }).violations.map((violation) => violation.code),
+      ["credential_payload_population_empty"],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("the CLI names the file and the credential path, and exits non-zero", () => {
@@ -374,8 +513,10 @@ test("the CLI prints the population it derived, so a green run says what it read
     }
     const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8", windowsHide: true });
     assert.equal(result.status, 0);
-    assert.match(result.stdout, /credential_export_isolation_ok credentials=2 assemblers=0 filters=0/u);
-    assert.match(result.stdout, /files=auth\.json,tavern-connection-keys\.json/u);
+    assert.match(
+      result.stdout,
+      /credential_export_isolation_ok credentials=2 payload_writes=0 assemblers=0 filters=0 .*files=auth\.json,tavern-connection-keys\.json/u,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
