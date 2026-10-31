@@ -1,0 +1,399 @@
+{
+  "absent": [
+    {
+      "field": "warps",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "doorTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "soilTiles",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "toolSlots",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "wateringCanFacts",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "refillWateringCanTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "forageTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "itemTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "cropTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "petBowlTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "slimeHutchTroughTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "harvestTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "seedTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "fertilizerTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "woodFenceTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "woodFenceResultTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "crabPotTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "crabPotResultTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "crabPotCollectTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "baitCrabPotTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "baitCrabPotResultTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "debrisTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "clearHoeDirtTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "artifactSpotTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "artifactSpotResultTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "machineTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "treeChopResultTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "treeSaplingTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "caskTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "mannequinTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "signTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "siloTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "lanternSlots",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "scytheCropTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "villagerWhereabouts",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "harvestWhereabouts",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "petTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "animalProductTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "feedTroughTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "inventoryItemFacts",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "foodTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "shippingBinTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "craftingRecipeTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "cookingRecipeTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "cookingStationTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "minecartTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "mineElevatorFloorTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "shopTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "bushTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "fruitTreeTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "shakeTreeTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "pedestalTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "fenceGateTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "raftTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "horseTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "mineEntranceTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "obeliskTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "animalDoorTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "fishPondTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "buildingChestTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "worldObjectTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "warpItemTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "panSites",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "mailboxTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "wearableTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "colorTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "farmBuildingTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "dailyQuestTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "specialOrderTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "activeSpecialOrderKeys",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "museumRewardTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "tailoringTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "pendingLevelUps",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "pendingLevelUpChoices",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "professions",
+      "reason": "the headless sample world does not construct this family"
+    }
+  ],
+  "consumedBy": "host/src/snapshot-loopback.test.ts",
+  "producedBy": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SnapshotLoopbackExportTests.cs - the headless TargetFamilyWorld driven through the real Discover* projections",
+  "real": {
+    "chests": [
+      {
+        "chestId": "chest_4f1567e1adaddbcf",
+        "x": 2,
+        "y": 4,
+        "displayName": "(O)130",
+        "isFridge": false,
+        "items": [
+          {
+            "slot": 0,
+            "qualifiedItemId": "(O)72",
+            "displayName": "(O)72",
+            "stack": 3
+          },
+          {
+            "slot": 1,
+            "qualifiedItemId": "(O)388",
+            "displayName": "(O)388",
+            "stack": 99
+          }
+        ]
+      }
+    ],
+    "grassTargets": [
+      {
+        "targetId": "grass_dda24dda77eaf64e",
+        "location": "ProbeFarm",
+        "x": 4,
+        "y": 3,
+        "grassType": 1,
+        "numberOfWeeds": 4
+      }
+    ],
+    "npcRelationshipTargets": [
+      {
+        "targetId": "npc_relationship_b5586b3bf4942bb8",
+        "x": 0,
+        "y": 0,
+        "npcName": "Abigail",
+        "friendshipPoints": 0,
+        "friendshipStatus": "Friendly",
+        "talkedToToday": false,
+        "giftsToday": 0,
+        "giftsThisWeek": 0
+      }
+    ],
+    "rockSourceTargets": [
+      {
+        "targetId": "rock_source_80d6aa75b8267729",
+        "location": "ProbeFarm",
+        "x": 3,
+        "y": 3,
+        "qualifiedItemId": "(O)2",
+        "displayName": "(O)2",
+        "health": 3
+      }
+    ],
+    "treeChopSourceTargets": [
+      {
+        "targetId": "tree_chop_source_eaa1f6798ebc9daa",
+        "location": "ProbeFarm",
+        "x": 3,
+        "y": 2,
+        "treeType": "1",
+        "growthStage": 5,
+        "health": 10,
+        "stump": false,
+        "moss": false,
+        "tapped": false
+      }
+    ],
+    "treeStumpTargets": [
+      {
+        "targetId": "tree_stump_b02e3b2b2aeb3fd1",
+        "location": "ProbeFarm",
+        "x": 4,
+        "y": 2,
+        "treeType": "1",
+        "health": 5
+      }
+    ],
+    "weedTargets": [
+      {
+        "targetId": "weed_73c94f7afaf996a4",
+        "location": "ProbeFarm",
+        "x": 2,
+        "y": 3,
+        "health": 1
+      }
+    ]
+  },
+  "schema": "gamebuddy-stardew-snapshot-sample/v1"
+}

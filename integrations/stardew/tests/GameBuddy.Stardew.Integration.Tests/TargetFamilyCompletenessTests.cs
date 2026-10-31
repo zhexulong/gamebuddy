@@ -193,8 +193,14 @@ public sealed class TargetFamilyCompletenessTests
     /// `SaplingApproachWiringTests.SaplingHarness`): an uninitialized `Game1`, a real `GameLocation` with the map
     /// layers the engine reads, and a `Farmer` whose NetFields are supplied because a process without a save never
     /// ran their initializers. The assembly disables xUnit parallelization, so mutating the statics is safe.
+    ///
+    /// <para>
+    /// `internal` rather than `private` because `SnapshotLoopbackExportTests` drives this SAME world to publish the
+    /// snapshot sample the Host validates: a second copy of the harness would be a second authority over what
+    /// "a headless farm" means, and the sample would then prove nothing about the world these tests build.
+    /// </para>
     /// </summary>
-    private sealed class TargetFamilyWorld : IDisposable
+    internal sealed class TargetFamilyWorld : IDisposable
     {
         private const long ActorId = 1001;
         private const int PackCapacity = 36;
@@ -294,11 +300,65 @@ public sealed class TargetFamilyCompletenessTests
             this.Farm.characters.Add(npc);
         }
 
+        /// <summary>
+        /// A living tree at the durability the ENGINE gives one, not a fixture's convenience value.
+        ///
+        /// <c>new Tree(id, growthStage)</c> assigns <c>health.Value = 10f</c> itself (Tree.cs:181), and <c>10</c> is what a
+        /// real farm carries. The chop-tree fixture in `ModEntry.Fixtures.cs` writes <c>1f</c> so one axe swing fells it,
+        /// which is exactly how a Host bound of <c>=== 1</c> stayed green against a fixture nobody farms.
+        /// </summary>
+        internal void PlaceTree(int x, int y)
+        {
+            var tree = new StardewValley.TerrainFeatures.Tree("1", StardewValley.TerrainFeatures.Tree.treeStage);
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
+
+        /// <summary>A felled tree's stump at the health the engine assigns when it falls (<c>stump = true; health = 5f</c>).</summary>
+        internal void PlaceStump(int x, int y)
+        {
+            var tree = new StardewValley.TerrainFeatures.Tree("1", StardewValley.TerrainFeatures.Tree.treeStage)
+            {
+                health = { Value = 5f },
+            };
+            tree.stump.Value = true;
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
+
+        /// <summary>
+        /// A weed in the object layer. `Object.IsWeeds()` is `Category == -999 && Name.ContainsIgnoreCase("weeds")`
+        /// (Object.cs:6117), so the object is built from exactly those two facts and the projection's own predicate
+        /// decides whether it is published - the fixture never asserts the answer.
+        /// </summary>
+        internal void PlaceWeed(int x, int y)
+        {
+            StardewValley.Object weed = PlacedObject("(O)313", name: "Weeds", category: -999);
+            weed.MinutesUntilReady = 1;
+            this.Farm.objects[new Vector2(x, y)] = weed;
+        }
+
+        /// <summary>A breakable stone at a real multi-hit durability, so the family is published at something other than 1.</summary>
+        internal void PlaceRock(int x, int y, int durability)
+        {
+            StardewValley.Object rock = PlacedObject("(O)2", name: "Stone", category: -999);
+            rock.MinutesUntilReady = durability;
+            this.Farm.objects[new Vector2(x, y)] = rock;
+        }
+
+        /// <summary>A grass tuft, which is a TerrainFeature rather than an object-layer weed.</summary>
+        internal void PlaceGrass(int x, int y) =>
+            this.Farm.terrainFeatures[new Vector2(x, y)] = new StardewValley.TerrainFeatures.Grass(1, 4);
+
         internal IReadOnlyList<BridgeChestState> ChestStates() =>
             (IReadOnlyList<BridgeChestState>)Discover("DiscoverChestStates");
 
         internal IReadOnlyList<BridgeNpcRelationshipTarget> NpcRelationshipTargets() =>
             (IReadOnlyList<BridgeNpcRelationshipTarget>)Discover("DiscoverNpcRelationshipTargets");
+
+        /// <summary>
+        /// One real `Discover*` family by name, so a caller outside this file drives the SAME production projection this
+        /// file's cases drive rather than a second copy of it.
+        /// </summary>
+        internal object DiscoverFamily(string name) => Discover(name);
 
         private object Discover(string name)
         {
@@ -312,10 +372,23 @@ public sealed class TargetFamilyCompletenessTests
         /// <summary>One item carrying exactly the identity the projections read, built without a content manager.</summary>
         private static StardewValley.Object Item(string qualifiedItemId, int stack)
         {
-            var item = new StardewValley.Object();
+            StardewValley.Object item = PlacedObject(qualifiedItemId, name: null, category: 0);
             item.Stack = stack;
+            return item;
+        }
+
+        /// <summary>
+        /// One object with the identity fields the projections read written explicitly.
+        ///
+        /// `ItemId` clears the qualified cache, so the qualified value is written AFTER it; a process without a content
+        /// manager has no `Data/Objects` row to resolve one from, and the projections compare the qualified id.
+        /// </summary>
+        private static StardewValley.Object PlacedObject(string qualifiedItemId, string? name, int category)
+        {
+            var item = new StardewValley.Object();
+            if (name is not null) item.Name = name;
+            item.Category = category;
             item.ItemId = qualifiedItemId[3..];
-            // ItemId clears the qualified cache, so the qualified value the projection compares is written after it.
             typeof(Item).GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
                 .SetValue(item, qualifiedItemId);
             return item;
