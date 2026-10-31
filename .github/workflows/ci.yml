@@ -341,7 +341,36 @@ jobs:
           dotnet-version: 6.0.x
       - run: pnpm install --frozen-lockfile
       - run: dotnet restore GameBuddy.sln --locked-mode
+      # THE ONLY STEP THAT COMPILES THE MOD'S OWN SOURCE, and the reason this job needs a C#
+      # compiler at all rather than two `dotnet test` calls. Measured 2026-10-31: `def2fb07`
+      # committed one side of a rename, HEAD carried 20 CS errors in `farmhandexecutioncontroller.*.cs`,
+      # and every job in this file reported success - because the two steps below build
+      # `GameBuddy.Stardew.Core.Tests` and the no-game subset, and neither references
+      # `GameBuddy.Stardew.csproj`. The commit also added an assertion that the deleted member was
+      # gone, inside a project the defect made uncompilable, so the gate could not run either.
+      #
+      # The gate derives its population from `git ls-files '*.csproj'` and asks the compiler about
+      # each one. It needs no licensed game folder: `Pathoschild.Stardew.ModBuildConfig` 4.4.0 emits
+      # its own `<Error>` before the compiler runs when `GamePath` holds no game, and this repository
+      # tracks no game assembly, so the six game-dependent projects register that refusal by name
+      # (with what the exclusion costs) and the other twenty-three must compile. A CS diagnostic is
+      # a failure even for a registered project: the register excuses a missing prerequisite, never
+      # broken source. Run BEFORE the two suites so a broken commit is one named compile failure
+      # rather than a cascade of build errors from tests that inherit it.
+      - name: Compile every tracked C# project
+        id: csharp_compile
+        run: pnpm check:csharp-compile
+      # THE SUITE STEPS BELOW CARRY `!cancelled()`, and that is not decoration. Every step in this
+      # job can fail ahead of them - the install, the restore, the compile gate just above - and a
+      # skipped step is indistinguishable from a passing one in the job's own verdict: the run says
+      # "stardew-scaffold: failure" either way. Measured on `def2fb07`, in this very job's shape:
+      # the commit's own regression test asserted the deleted member was gone, the project holding
+      # it would not compile, and every job reported success while not one assertion ran. A suite
+      # that did not run is not a pass, so the suite steps run regardless of what failed before them
+      # and the job summary says which one did not run.
       - run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests --no-restore
+        id: stardew_core_tests
+        if: ${{ !cancelled() }}
       # The part of the Stardew suite that needs no game at all. GameBuddy.Stardew.Integration.Tests
       # references the Mod project, so its build package demands a licensed game folder and a hosted
       # runner can never build it - which is why the two steps below are gated. That gate is honest
@@ -365,8 +394,12 @@ jobs:
       # and a game-dependent file put in it (the lane would go red for a reason unrelated to the
       # change that broke it).
       - name: Stardew no-game subset matches the compiler
+        id: stardew_nogame_subset_audit
+        if: ${{ !cancelled() }}
         run: node tools/audit-stardew-nogame-subset.mjs
       - name: Stardew no-game test subset (not the integration suite)
+        id: stardew_nogame_tests
+        if: ${{ !cancelled() }}
         run: node integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/run-nogame-tests.mjs
       # The integration suite's own source says no game, Host receiver or schema is involved, but its
       # project references the mod project, so the Stardew mod build package runs and requires a licensed
@@ -374,13 +407,15 @@ jobs:
       # than stubbed: a fake game assembly would be evidence of nothing, and this suite belongs to the
       # game-attached lane when one is configured.
       - name: Stardew integration tests (game path configured)
-        if: env.GAMEBUDDY_STARDEW_GAME_PATH != ''
+        id: stardew_integration_tests
+        if: ${{ !cancelled() && env.GAMEBUDDY_STARDEW_GAME_PATH != '' }}
         run: dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests --no-restore
       # Its runner builds GameBuddy.Stardew.csproj, so the mod build package runs and needs a licensed
       # game folder; measured locally as `stardew_action_test_launcher_failed` after a dotnet build of the
       # mod project. Same gate as the integration suite above.
       - name: Stardew action-development tests (game path configured)
-        if: env.GAMEBUDDY_STARDEW_GAME_PATH != ''
+        id: stardew_action_development_tests
+        if: ${{ !cancelled() && env.GAMEBUDDY_STARDEW_GAME_PATH != '' }}
         run: pnpm --dir integrations/stardew/action-development test
       # Runner contract gates. A native-local runner is one action's live gate
       # entry point, and it can be structurally incapable of passing while its
@@ -391,6 +426,45 @@ jobs:
       - run: pnpm audit:stardew-native-local-runner-contract
       - run: pnpm test:stardew-native-local-runner-contract
       - run: pnpm test:stardew-native-local-runner-fixture-contract
+      # The two suites above are immune to a failing step ahead of them; this keeps the THIRD reading
+      # readable from the run itself, because "the job said failure" is exactly what let a never-run
+      # compile gate pass for a whole commit. `steps.<id>.outcome` is empty for a step that never
+      # started, so an absent step prints "did not run" rather than a blank cell.
+      - name: Record C# suite outcomes
+        if: always()
+        # `windows-latest` defaults to PowerShell; the vendor CI this pattern comes from runs on
+        # ubuntu, where `run:` is bash. The block below is bash, so the shell is named rather than
+        # inherited from the runner's default.
+        shell: bash
+        env:
+          COMPILE_OUTCOME: ${{ steps.csharp_compile.outcome }}
+          CORE_TESTS_OUTCOME: ${{ steps.stardew_core_tests.outcome }}
+          NOGAME_AUDIT_OUTCOME: ${{ steps.stardew_nogame_subset_audit.outcome }}
+          NOGAME_TESTS_OUTCOME: ${{ steps.stardew_nogame_tests.outcome }}
+          INTEGRATION_OUTCOME: ${{ steps.stardew_integration_tests.outcome }}
+          ACTION_DEV_OUTCOME: ${{ steps.stardew_action_development_tests.outcome }}
+        run: |
+          {
+            echo "### Stardew - C# outcomes"
+            echo
+            echo "| step | outcome |"
+            echo "| --- | --- |"
+            echo "| Compile every tracked C# project | ${COMPILE_OUTCOME:-did not run} |"
+            echo "| Core tests | ${CORE_TESTS_OUTCOME:-did not run} |"
+            echo "| No-game subset matches the compiler | ${NOGAME_AUDIT_OUTCOME:-did not run} |"
+            echo "| No-game test subset | ${NOGAME_TESTS_OUTCOME:-did not run} |"
+            echo "| Integration tests (needs a game path) | ${INTEGRATION_OUTCOME:-did not run} |"
+            echo "| Action-development tests (needs a game path) | ${ACTION_DEV_OUTCOME:-did not run} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Enforces the property the suites rely on. Unreachable while they carry `!cancelled()`; if a
+      # later edit re-gates one behind an earlier step, this fails with a named cause instead of
+      # leaving the job to say "failure" with no suite result at all.
+      - name: A suite that did not run is not a pass
+        if: ${{ !cancelled() && (steps.stardew_core_tests.outcome == '' || steps.stardew_core_tests.outcome == 'skipped' || steps.stardew_nogame_tests.outcome == '' || steps.stardew_nogame_tests.outcome == 'skipped') }}
+        shell: bash
+        run: |
+          echo "::error::a Stardew suite step did not run in this job; 'failure' with no suite result must never read as 'the suite passed'"
+          exit 1
 
   # The Windows shell and the installer build here, and nowhere else: the host job covers
   # the compiled Host suite and the Stardew jobs cover the mod, core and integration
