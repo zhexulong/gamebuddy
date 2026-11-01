@@ -598,12 +598,15 @@ test("defect 4: the narrow window draws the surface's name and the wide window s
     wide.contentTop,
     `the surface's content starts at the surface at 1440x900 too (${wide.contentTop} vs ${wide.surfaceTop})`,
   ).toBe(wide.surfaceTop);
-  expect(wide.contentClientHeight, "the room the band and the gap were spending comes back").toBe(844);
-  expect(wideContentWhileDrawn, "and with the band put back in the column it reads 782").toBe(782);
+  // The transcript's own client height moves with the app bar and header, so the absolute numbers
+  // that used to sit here (844 and 782) measured the 900 px viewport rather than the layout. What
+  // the band costs is the invariant: its own box plus the column's gap. The tolerance is rounding,
+  // not slack - `clientHeight` truncates to an integer while the header's rect is fractional, so
+  // the same 54.5 px box reads as 55 in one term and 54 in the other.
   expect(
-    wide.contentClientHeight - wideContentWhileDrawn,
-    "the band's 54 px box plus the column's 8 px gap",
-  ).toBe(62);
+    Math.abs(wide.contentClientHeight - wideContentWhileDrawn - (wide.height + wide.gap)),
+    `the band costs its own ${wide.height} px box plus the ${wide.gap} px gap (rounding to ${wide.contentClientHeight - wideContentWhileDrawn} px)`,
+  ).toBeLessThanOrEqual(1);
 });
 
 // --- defect 5 ----------------------------------------------------------------
