@@ -748,6 +748,10 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
   R.push("");
   R.push("缺陷清单 (defect list), by surface + width, ordered by how much I would mind shipping it:");
   R.push("");
+  R.push("READINGS (turn timings, runtime facts, paint) are in README.txt, beside the geometry they belong");
+  R.push("with. This file is the defect list; that one is the numbers. Searching here for TIMINGS will find");
+  R.push("nothing, and that is by design rather than a missing section.");
+  R.push("");
 
   const g = driver(paths, "g-defects") ?? "";
   const sweepBlocks = [];
