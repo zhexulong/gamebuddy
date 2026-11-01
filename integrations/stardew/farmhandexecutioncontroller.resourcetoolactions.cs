@@ -169,6 +169,7 @@ internal sealed partial class ExecutionManager
             // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
             float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? afterRock);
+            int? after = removed ? null : afterRock!.MinutesUntilReady;
             evidence["target"] = expectedTargetId;
             evidence["tool"] = "pickaxe";
             evidence["qualified_item_id"] = rock.QualifiedItemId;
@@ -179,8 +180,21 @@ internal sealed partial class ExecutionManager
             evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
             evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
-            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = removed ? "rock_source_broken" : "rock_source_postcondition_unavailable";
+            // ONE SWING, TWO LEGAL OUTCOMES, and neither of them is "the rock is gone".
+            //
+            // `break_rock_source` spends exactly one `Pickaxe.DoFunction`, which subtracts
+            // `Math.Max(1, upgradeLevel + 1) + additionalPower` from `MinutesUntilReady` (Pickaxe.cs:139-140) and
+            // RETURNS EARLY while the remainder is positive (Pickaxe.cs:142-146) - so a damaged rock is the ordinary
+            // outcome of every swing but the last, at every upgrade level, on every mine node. Only the stone whose
+            // durability reaches zero leaves the object layer (Pickaxe.cs:169-178).
+            //
+            // Requiring removal encoded the one-swing rock: `Uncertain` for every mine node, because the predicate that
+            // admitted the target in the first place had already required durability 1. That is the same defect the
+            // tree path carried (1786682c), and it is repaired the same way - one dispatch is one swing, and the plan
+            // decides whether to swing again.
+            bool succeeded = RockSourceSwing.MadeProgress(before, after);
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? (removed ? "rock_source_broken" : "rock_source_damaged") : "rock_source_postcondition_unavailable";
         }
         finally
         {
@@ -1417,6 +1431,27 @@ internal readonly record struct DeclaredToolResolution(string Category, int Slot
 /// replaced, and the tool that index held - which is what every exit restores and what the receipt reports.
 /// </summary>
 internal readonly record struct DeclaredToolSelection(Tool Tool, string Category, int Slot, int PreviousSlot, Tool? PreviousTool);
+
+/// <summary>
+/// What one `<c>Pickaxe.DoFunction</c> call on a breakable stone achieved.
+///
+/// <para>
+/// The swing subtracts `Math.Max(1, upgradeLevel + 1) + additionalPower` from the rock's `MinutesUntilReady`
+/// (`Pickaxe.cs:139-140`) and returns early while the remainder is positive (`Pickaxe.cs:142-146`); only a durability
+/// that reaches zero takes the object out of the layer (`Pickaxe.cs:169-178`). So the engine gives exactly two ways to
+/// have made progress — the rock got weaker, or the rock is gone — and either is a completed dispatch. Anything else
+/// means the swing did not land on the source this action was pointed at.
+/// </para>
+/// </summary>
+internal static class RockSourceSwing
+{
+    /// <summary>
+    /// Whether one swing advanced this rock. <paramref name="durabilityAfter"/> is null when the rock left the object
+    /// layer, which is the terminal case of the same progress.
+    /// </summary>
+    internal static bool MadeProgress(int durabilityBefore, int? durabilityAfter) =>
+        durabilityAfter is null || durabilityAfter.Value < durabilityBefore;
+}
 
 /// <summary>
 /// The receipt-detail key set of each tool action, stated ONCE per action.
