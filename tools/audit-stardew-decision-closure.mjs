@@ -42,7 +42,10 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { validateDescriptorProjection } from "../packages/game-action-program/src/descriptors.mjs";
+import {
+  DESCRIPTOR_PROJECTION_VOCABULARY,
+  validateDescriptorProjection,
+} from "../packages/game-action-program/src/descriptors.mjs";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -300,7 +303,7 @@ function assertFactSurface({ artifact, surfaceFacts, conflicts, declaredFacts, o
     push(
       ACTION_SURFACE_PATH,
       "action_surface_not_parseable_by_host_protocol",
-      "the published action surface is not parseable by the Host descriptor whitelist",
+      `the published action surface is not parseable by the Host descriptor whitelist${describeRefusedMembers(artifact)}`,
     );
   }
   for (const conflict of conflicts) {
@@ -354,6 +357,51 @@ function assertFactSurface({ artifact, surfaceFacts, conflicts, declaredFacts, o
 
 function sortedEntries(map) {
   return [...map].sort(([left], [right]) => left.localeCompare(right));
+}
+
+/**
+ * The members the published surface uses that the descriptor whitelist refuses, named with the actions carrying them.
+ *
+ * A finding that says only "not parseable" makes the next reader diff two schemas by hand, and the two schemas are the
+ * whole problem: the member that broke this gate (`sceneTarget`) is named here in one line, with its actions, so the
+ * reader knows whether the surface or the whitelist is wrong without opening either.
+ *
+ * It reports only the MEMBER VOCABULARY, which is one of several reasons `validateDescriptorProjection` can return false.
+ * When it names nothing, the surface's members are all admitted and the refusal came from a VALUE rule instead, so the
+ * detail says that rather than staying silent.
+ */
+function describeRefusedMembers(artifact) {
+  const descriptorAdmitted = new Set([
+    ...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.required,
+    ...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.optional,
+  ]);
+  const argumentAdmitted = new Set([
+    ...DESCRIPTOR_PROJECTION_VOCABULARY.argumentSchemaEntry.required,
+    ...DESCRIPTOR_PROJECTION_VOCABULARY.argumentSchemaEntry.optional,
+  ]);
+  const refused = new Map();
+  const record = (member, actionId) => {
+    if (!refused.has(member)) refused.set(member, []);
+    refused.get(member).push(actionId);
+  };
+  for (const action of Array.isArray(artifact?.actions) ? artifact.actions : []) {
+    if (typeof action !== "object" || action === null) continue;
+    const actionId = typeof action.actionId === "string" ? action.actionId : "(unnamed action)";
+    for (const member of Object.keys(action)) if (!descriptorAdmitted.has(member)) record(member, actionId);
+    for (const entry of Object.values(action.argumentSchema ?? {})) {
+      if (typeof entry !== "object" || entry === null) continue;
+      for (const member of Object.keys(entry)) {
+        if (!argumentAdmitted.has(member)) record(`argumentSchema.*.${member}`, actionId);
+      }
+    }
+  }
+  if (refused.size === 0) {
+    return "; every member is admitted, so a VALUE rule refused it (see the projection validator's bounds)";
+  }
+  const named = sortedEntries(refused)
+    .map(([member, actionIds]) => `${member} on ${actionIds.join(", ")}`)
+    .join("; ");
+  return `: the projection whitelist refuses ${named}`;
 }
 
 /**

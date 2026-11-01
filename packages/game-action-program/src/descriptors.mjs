@@ -15,12 +15,18 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
   "effect",
   "postcondition",
 ]);
-// The members a producer may ADD to the required set. `approach` is optional because the Mod's serializer omits it
-// when an action declares no standing precondition (`JsonIgnoreCondition.WhenWritingNull`), and it is a member the
-// Host's own registration descriptor already accepts. Refusing it here only made the published surface unreadable to
-// the one consumer of this module, which then reported it as "not parseable by the Host descriptor whitelist" while
-// the Host parsed it happily.
-const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach"]);
+// The members a producer may ADD to the required set. Both are optional because the Mod's serializer omits them when an
+// action declares neither (`JsonIgnoreCondition.WhenWritingNull`), and both are members the Host's own registration
+// descriptor already accepts. Refusing either here only makes the published surface unreadable to the one consumer of
+// this module, which then reports it as "not parseable by the Host descriptor whitelist" while the Host parses it
+// happily - the drift `eff7646f` fixed for `approach` and `450c8f90` re-opened for `sceneTarget`.
+//
+// This list stays EXPLICIT rather than derived from the artifact it judges: deriving it would make the gateway admit
+// whatever the Mod emits, including a member the Host refuses, which is the one thing it exists to prevent. The
+// derivation lives one layer up, in `tools/audit-stardew-decision-closure.test.mjs`, where both directions are asserted
+// against the published surface and `protocol.ts`'s `KNOWN_ACTION_DESCRIPTOR_KEYS` - so a member added to either side is
+// judged and named instead of silently missed.
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget"]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
@@ -58,6 +64,10 @@ const RESOURCE_TEMPLATE_VALUES = new Set(["ScopePlayer", "AnyUpgrade", "BasicOnl
 const APPROACH_KEYS = new Set(["relation"]);
 const APPROACH_OPTIONAL_KEYS = new Set(["withinTiles"]);
 const MAX_APPROACH_RELATION_LENGTH = 64;
+// An ObservationBinding/v1 requirement: the four members the Host validates, and nothing beside them.
+const SCENE_TARGET_KEYS = new Set(["type", "version", "required", "requiredProperties"]);
+const MAX_SCENE_TARGET_TYPE_LENGTH = 64;
+const MAX_SCENE_TARGET_PROPERTIES = 16;
 const MAX_ACTIONS = 128;
 const MAX_ARGUMENTS = 32;
 const MAX_FACTS = 32;
@@ -75,6 +85,9 @@ const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 const TOOL_CLAIM_KEY = /^tool:[a-z][a-z0-9_]{1,127}$/;
 // Argument names are producer-owned and may use the published camelCase spelling.
 const ARGUMENT_IDENTIFIER = /^[a-z][A-Za-z0-9_]{0,127}$/;
+// A `requiredProperties` entry is bounded at 64 by the Host's own scene-target rule, so it is bounded at 64 here: a value
+// this gateway admits and the Host refuses is the drift this module exists to prevent.
+const SCENE_TARGET_PROPERTY = /^[a-z][A-Za-z0-9_]{0,63}$/;
 const INVALID = Symbol("invalid_descriptor_value");
 
 export function validateDescriptorProjection(projection) {
@@ -156,6 +169,7 @@ function isValidDescriptor(descriptor) {
   // `sameKeysOrOptional` proved every present member is a data property, so INVALID here means ABSENT rather than
   // unreadable: the Mod omits the declaration entirely instead of sending a null one.
   const approach = ownValue(descriptor, "approach");
+  const sceneTarget = ownValue(descriptor, "sceneTarget");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -166,7 +180,8 @@ function isValidDescriptor(descriptor) {
     && validResourceTemplate(resourceTemplate)
     && EFFECTS.has(effect)
     && validPostcondition(postcondition)
-    && (approach === INVALID || validApproach(approach));
+    && (approach === INVALID || validApproach(approach))
+    && (sceneTarget === INVALID || validSceneTarget(sceneTarget));
 }
 
 /**
@@ -204,6 +219,28 @@ function validArgumentSchema(value) {
  * closed set (`FarmhandActionArgumentSchema.Enum`). The vocabulary is part of the descriptor, so a consumer
  * that rejects it cannot read the domain it is supposed to project.
  */
+/**
+ * The ObservationBinding/v1 requirement the Mod publishes when an action needs a scene reference first.
+ *
+ * The rules are the Host's own (`protocol.ts` `isValidActionDescriptor`): exactly `type`, `version`, `required` and
+ * `requiredProperties`; a non-empty type of at most 64 characters; a version of at least 1; a boolean `required`; and up to
+ * 16 property names of the published property shape. No fifth member, because a field beside them would be a requirement
+ * nobody enforces - and a descriptor this gateway admits while the Host refuses is the identical drift seen from the other
+ * side.
+ */
+function validSceneTarget(value) {
+  if (!isPlainDataObject(value) || !sameKeys(value, SCENE_TARGET_KEYS)) return false;
+  const type = ownValue(value, "type");
+  const version = ownValue(value, "version");
+  const required = ownValue(value, "required");
+  const requiredProperties = ownValue(value, "requiredProperties");
+  return typeof type === "string" && type.length > 0 && type.length <= MAX_SCENE_TARGET_TYPE_LENGTH
+    && Number.isSafeInteger(version) && version >= 1
+    && typeof required === "boolean"
+    && isDenseArray(requiredProperties, MAX_SCENE_TARGET_PROPERTIES)
+    && requiredProperties.every((property) => typeof property === "string" && SCENE_TARGET_PROPERTY.test(property));
+}
+
 function validArgumentSchemaEntry(entry) {
   if (entry === INVALID || !sameKeysOrOptional(entry, ARGUMENT_SCHEMA_REQUIRED_KEY_SET, ARGUMENT_SCHEMA_OPTIONAL_KEY_SET)) {
     return false;

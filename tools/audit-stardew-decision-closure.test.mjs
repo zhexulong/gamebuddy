@@ -237,15 +237,47 @@ test("the surface-parseability precondition is reported under the fact-surface a
   );
 });
 
+/** The detail of the one finding the parseability check produces. */
+const parseabilityDetail = (report) =>
+  report.assertions
+    .find((entry) => entry.name === ASSERTION_FACT_SURFACE)
+    .findings.find((entry) => entry.code === "action_surface_not_parseable_by_host_protocol")?.detail;
+
+test("the surface-parseability finding names the refused member and the action carrying it", () => {
+  // The gate said only "not parseable" when `sceneTarget` broke it on 2026-10-31, which forced the next reader to diff
+  // two schemas by hand. The member is now named with the action carrying it, so which side is wrong is readable from
+  // the finding alone.
+  const report = auditStardewDecisionClosure({
+    overrides: artifactWith((artifact) => {
+      artifact.actions.find((action) => action.actionId === "till_soil").familyId = "farming";
+    }),
+  });
+
+  assert.ok(parseabilityDetail(report).includes("familyId on till_soil"), parseabilityDetail(report));
+});
+
+test("the surface-parseability finding says so when every member is admitted", () => {
+  // The other branch: the member vocabulary is fine and a VALUE rule refused the surface (here an empty postcondition
+  // name). Saying nothing there would leave the reader looking for a member that is not the problem.
+  const report = auditStardewDecisionClosure({
+    overrides: artifactWith((artifact) => {
+      artifact.actions.find((action) => action.actionId === "till_soil").postcondition = { name: "" };
+    }),
+  });
+
+  assert.ok(parseabilityDetail(report).includes("every member is admitted"), parseabilityDetail(report));
+});
+
 /**
  * The two whitelists that describe one fact - which members a published action descriptor may carry - and the drift
  * between them that this gate found in the field.
  *
- * `approach` reached the Mod's generated surface on 2026-10-27 (`eea94e3f`) and `description` on 2026-10-29
- * (`693c19a8`). The Host's registration whitelist gained both (`protocol.ts` `KNOWN_ACTION_DESCRIPTOR_KEYS`,
- * `isValidActionDescriptor`), while `packages/game-action-program/src/descriptors.mjs` kept its own copy of the set and
- * refused them - so the surface stopped parsing into the descriptor map `verifier.mjs` builds its catalog from, even
- * though the Host consumed it happily. Nothing caught it because the two sets are spelled in two files nobody compares.
+ * `approach` reached the Mod's generated surface on 2026-10-27 (`eea94e3f`), `description` on 2026-10-29
+ * (`693c19a8`) and `sceneTarget` on 2026-10-31 (`450c8f90`). The Host's registration whitelist gained all three
+ * (`protocol.ts` `KNOWN_ACTION_DESCRIPTOR_KEYS`, `isValidActionDescriptor`), while
+ * `packages/game-action-program/src/descriptors.mjs` kept its own copy of the set and refused them - so the surface stopped
+ * parsing into the descriptor map `verifier.mjs` builds its catalog from, even though the Host consumed it happily.
+ * Nothing caught it because the two sets are spelled in two files nobody compares.
  *
  * Both sides are DERIVED: the projection side from the exported vocabulary the validator itself is built out of, the
  * Host side from `KNOWN_ACTION_DESCRIPTOR_KEYS` parsed out of `protocol.ts` with the same quote-aware array reader the
@@ -313,7 +345,7 @@ test("the projection admits no descriptor member the Host's registration whiteli
   // is a descriptor that parses here and is rejected at registration. Every admitted member must be one the Host
   // judges - either on the registration envelope or inside the descriptor. The projection stays a SUBSET: the Host's
   // descriptor whitelist also carries fields the static surface artifact never publishes (`nativeBinding`,
-  // `watchdogMs`, `sceneTarget`, `evidenceSchema`, `canonicalCodec`), so equality would be the wrong assertion.
+  // `watchdogMs`, `evidenceSchema`, `canonicalCodec`), so equality would be the wrong assertion.
   const judgedByTheHost = new Set([...hostEnvelopeKeys(), ...hostDescriptorKeys()]);
   const projection = [
     ...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.required,
@@ -373,6 +405,43 @@ test("an approach declaration is admitted at exactly the shape the Host enforces
     [{ relation: "adjacent", note: "x" }, "a third field would be a precondition nobody enforces"],
   ]) {
     assert.equal(validateDescriptorProjection(descriptorWith({ approach })), false, why);
+  }
+});
+
+test("a scene target is admitted at exactly the shape the Host enforces", () => {
+  // The member `450c8f90` added to the surface and the Host already validated: admitting the MEMBER is not enough, the
+  // VALUE must be admissible too or the gateway would pass a descriptor the Host refuses. Both readings are `protocol.ts`
+  // `isValidActionDescriptor`.
+  const binding = {
+    type: "ObservationBinding",
+    version: 1,
+    required: true,
+    requiredProperties: ["observationId", "ref"],
+  };
+  assert.equal(validateDescriptorProjection(descriptorWith({ sceneTarget: binding })), true);
+  // An EMPTY property list is admitted, because the Host admits it: its only cardinality bound is `length > 16`. Refusing
+  // it here would make the gateway stricter than the Host, which is the same drift pointing the other way.
+  assert.equal(
+    validateDescriptorProjection(descriptorWith({ sceneTarget: { ...binding, requiredProperties: [] } })),
+    true,
+  );
+
+  for (const [sceneTarget, why] of [
+    [{ ...binding, type: "" }, "a type that says nothing names no binding"],
+    [{ ...binding, type: "x".repeat(65) }, "the Host bounds the type at 64 characters"],
+    [{ ...binding, version: 0 }, "the Host requires a version of at least 1"],
+    [{ ...binding, version: 1.5 }, "a version is an integer"],
+    [{ ...binding, required: "yes" }, "`required` is a boolean, not a truthy string"],
+    [
+      { ...binding, requiredProperties: Array.from({ length: 17 }, (_, index) => `property${index}`) },
+      "the Host bounds the property list at 16",
+    ],
+    [{ ...binding, requiredProperties: ["ObservationId"] }, "a property name is the published lower-camel shape"],
+    [{ ...binding, requiredProperties: [7] }, "a property name is a name"],
+    [{ ...binding, extra: true }, "a fifth field would be a requirement nobody enforces"],
+    [{ type: "ObservationBinding", version: 1, required: true }, "`requiredProperties` is part of the declaration"],
+  ]) {
+    assert.equal(validateDescriptorProjection(descriptorWith({ sceneTarget })), false, why);
   }
 });
 
