@@ -43,6 +43,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly Dictionary<string, string> executionIdsByRequestId = new(StringComparer.Ordinal);
     private readonly Queue<string> receiptOrder = new();
     private readonly List<ExecutionTrace> trace = new();
+    // What the Mod published about each ground chunk, with the actor's own count of that item as of the last
+    // publication that still saw the chunk on the ground. The magnet can deliver a drop before the request for it
+    // arrives, and this is the only baseline that can prove the delivery was the actor's own (GroundItemPickups.cs).
+    private readonly GroundItemPickupLedger groundItemTargets = new();
     // An execution may have several native completion observations, but only
     // the manager can publish its single post-release idle transition.
     private readonly HashSet<string> idlePublishedExecutionIds = new(StringComparer.Ordinal);
@@ -3992,12 +3996,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"forage_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(Farmer player)
+    private IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(Farmer player)
     {
         const int discoveryRadius = TargetDiscoveryRadius;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeItemTarget>();
         List<BridgeItemTarget> result = new();
+        // The actor's count of an item is measured ONCE per publication, at the moment the chunks below are still
+        // on the ground - that is the only moment at which the number can be evidence of anything. Reading it after
+        // the drop was delivered would make the check it feeds a tautology.
+        Dictionary<string, int> inventoryAtPublicationByItemId = new(StringComparer.Ordinal);
         for (int debrisIndex = 0; debrisIndex < location.debris.Count && result.Count < 64; debrisIndex++)
         {
             Debris debris = location.debris[debrisIndex];
@@ -4011,7 +4019,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (IsTileWithinChebyshevRadius(player, tile.X, tile.Y, discoveryRadius))
                 {
                     string targetId = BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
-                    result.Add(new BridgeItemTarget(targetId, tile.X, tile.Y, qualifiedItemId, RequireDisplayName(qualifiedItemId), Math.Max(1, debris.item?.Stack ?? 1)));
+                    int stack = Math.Max(1, debris.item?.Stack ?? 1);
+                    if (!inventoryAtPublicationByItemId.TryGetValue(qualifiedItemId, out int inventoryAtPublication))
+                        inventoryAtPublicationByItemId[qualifiedItemId] = inventoryAtPublication = CountQualifiedItem(player, qualifiedItemId);
+                    this.groundItemTargets.Record(new GroundItemPublication(
+                        targetId,
+                        location.NameOrUniqueName,
+                        tile.X,
+                        tile.Y,
+                        qualifiedItemId,
+                        stack,
+                        inventoryAtPublication,
+                        this.tick));
+                    result.Add(new BridgeItemTarget(targetId, tile.X, tile.Y, qualifiedItemId, RequireDisplayName(qualifiedItemId), stack));
                     if (result.Count >= 64) break;
                 }
                 chunkIndex++;

@@ -15,6 +15,18 @@ internal sealed partial class ExecutionManager
 {
     private SceneTargetResolver? sceneTargetResolver;
 
+    /// <summary>
+    /// How long after the last publication that still saw a ground chunk the actor's own inventory count may be read
+    /// as proof that the chunk was delivered to them.
+    /// </summary>
+    /// <remarks>
+    /// A sanity bound, not the evidence. Between the observation that published the target and the dispatch that acts
+    /// on it there is a walk plus at least one model round-trip, so the window has to cover a whole plan node; what it
+    /// stops is a target id replayed long after the drop, when "the backpack holds more of this item" could have been
+    /// earned by some later collection entirely.
+    /// </remarks>
+    private const int ItemPickupMagnetClaimTicks = 60 * 60 * 5;
+
     internal void SetSceneTargetResolver(SceneTargetResolver resolver)
     {
         this.sceneTargetResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
@@ -117,7 +129,27 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation location = Game1.player.currentLocation;
         (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target = FindItemTarget(location, Game1.player, expectedTargetId, expectedQualifiedItemId, radius: 8);
         if (target is null)
+        {
+            // The chunk is not in the reaching radius. Two very different facts hide behind that one answer, and they
+            // must not be collapsed into one refusal:
+            //
+            //   MOVED - the chunk is still lying on the ground somewhere in this location, just not where the action
+            //           can reach it. Nothing has been collected, so this must never settle as a pickup.
+            //   GONE  - the chunk has left the ground. The engine's own magnet is the common cause: it delivers a
+            //           chunk to a nearby Farmer straight into their backpack, which is this action's SUCCESS, not its
+            //           failure. Round 18 spent six turns of re-observation on drops the companion was already carrying
+            //           because the magnet got there first and this preflight called it `item_target_changed`.
+            (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? stillOnGround =
+                FindItemTarget(location, Game1.player, expectedTargetId, expectedQualifiedItemId, radius: int.MaxValue);
+            if (stillOnGround is not null)
+            {
+                Point liveTile = GetChunkTile(stillOnGround.Value.Chunk);
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTile.X},{liveTile.Y}");
+            }
+            if (this.TrySettleMagnetCollectedItem(requestId, executionId, boundActor, location, expectedTargetId, expectedQualifiedItemId, targetX, targetY) is LocalExecutionReceipt collected)
+                return collected;
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"target={targetX},{targetY}");
+        }
         Point liveTargetTile = GetChunkTile(target.Value.Chunk);
         if (liveTargetTile.X != targetX || liveTargetTile.Y != targetY)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTargetTile.X},{liveTargetTile.Y}");
@@ -144,6 +176,58 @@ internal sealed partial class ExecutionManager
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
+    }
+
+    /// <summary>
+    /// Settles a <c>pickup_item</c> whose chunk has already left the ground, when the actor's OWN backpack shows the
+    /// delivery - i.e. the engine's magnet collected the drop before this request arrived.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Returns <see langword="null"/> whenever the evidence does not hold, so the caller keeps answering with the
+    /// refusal it always has. The three checks are the three ways a vanished chunk is NOT this farmer's pickup:
+    /// no publication ever described this target (nothing to measure from); the row describes a different location,
+    /// tile or item than the request (a stale or forged id); or the actor's count of the item is still where it was
+    /// when the chunk was last seen on the ground - which is exactly what another magnet-bearing Farmer, a chest or a
+    /// shipping bin leaves behind, since none of them puts anything in THIS farmer's backpack.
+    /// </para>
+    /// <para>
+    /// The evidence is the SAME nine keys <c>pickup_item</c>'s completion already uses, because the Host decides this
+    /// action's completion by parsing exactly those keys
+    /// (<c>host/src/stardew-game-integration-adapter.ts</c> - <c>hasPickupItemCompletionEvidence</c>: location, target,
+    /// tile, item, stack, native_auto_collect, chunk_removed, inventory_before, inventory_after, with
+    /// <c>stack &gt;= 1</c>, both flags true, and <c>after &gt;= before + stack</c>). <c>native_auto_collect</c> is this
+    /// action's own mechanism, and <c>chunk_removed</c> is the fact the caller just proved by finding no chunk of this
+    /// identity anywhere in the location.
+    /// </para>
+    /// </remarks>
+    private LocalExecutionReceipt? TrySettleMagnetCollectedItem(
+        string requestId,
+        string executionId,
+        Farmer boundActor,
+        StardewValley.GameLocation location,
+        string expectedTargetId,
+        string expectedQualifiedItemId,
+        int targetX,
+        int targetY)
+    {
+        GroundItemPublication? publication = this.groundItemTargets.Recall(expectedTargetId);
+        if (publication is null
+            || publication.TileX != targetX
+            || publication.TileY != targetY
+            || !string.Equals(publication.Location, location.NameOrUniqueName, StringComparison.Ordinal)
+            || !string.Equals(publication.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return null;
+        int ageTicks = this.tick - publication.PublishedTick;
+        if (ageTicks < 0 || ageTicks > ItemPickupMagnetClaimTicks)
+            return null;
+
+        int inventoryNow = CountQualifiedItem(boundActor, expectedQualifiedItemId);
+        if (!publication.MagnetDeliveredIt(inventoryNow))
+            return null;
+
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "item_picked_up",
+            $"location={publication.Location};target={expectedTargetId};tile={publication.TileX},{publication.TileY};item={expectedQualifiedItemId};stack={publication.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={publication.InventoryAtPublication};inventory_after={inventoryNow}");
     }
 
 }
