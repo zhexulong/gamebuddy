@@ -1014,7 +1014,9 @@ test("the Game channel's per-turn world-state corpus is the line Magic Context i
   } as never);
   assert.match(text, /天气：雨天/);
   assert.match(text, /体力: 20（已疲惫）/);
-  assert.match(text, /位置: Farm/);
+  // The Chinese locale names the map in words: a fact line that said `位置: Farm` would be handing the model a
+  // technical id to read aloud, which the conduct explicitly forbids. `LOCATION_NAMES_ZH` is what makes the two agree.
+  assert.match(text, /位置: 农场/);
   assert.match(text, /春季/);
   // An absent snapshot and a non-Stardew connection state render nothing rather than inventing it.
   assert.equal(gameTurnWorldStateText({ state: { snapshot: null } } as never), "");
@@ -1058,6 +1060,8 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
   wateringCanFacts: "named beside `toolSlots` as the held can's own water facts",
   lanternSlots: "the pack's lantern slots; light_lantern names a tile",
   villagerWhereabouts: "a roster of where villagers are, addressed through npcRelationshipTargets",
+  wateringWhereabouts:
+    "a per-location summary of how thirsty each map is, read by the fact line and addressed through cropTargets",
   harvestWhereabouts: "a per-location summary, addressed through harvestTargets",
   inventoryItemFacts: "reread evidence for one action, not a family a script loops",
   panSites: "pan_for_ore's sites; published per-family and addressed through the action's own target",
