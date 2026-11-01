@@ -273,7 +273,14 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
     if (viewport.width === 1440) {
       // The wide window is where the narrow rule does not apply: one row, all five controls.
       expect(new Set(measured.controls.map((control) => control.centre)).size, where).toBe(1);
-      expect(measured.strip.height, where).toBe(46);
+      // `46` was pinned here (min-height plus the pager's border). One row of controls IS the strip's
+      // whole height, so the relation is stated against the row's own tallest control: a strip with
+      // padding, a margin box or an invisible extra line of its own still fails, and a control that
+      // grows takes the strip with it instead of going quietly red.
+      expect(
+        measured.strip.height,
+        `${where} the strip is one row tall: its tallest control and nothing more`,
+      ).toBe(Math.max(...measured.controls.map((control) => control.height)));
     } else {
       // The narrow window puts the pager on its own line, beneath the four actions.
       const actions = measured.controls.filter((control) => !control.name.includes("swipe-controls"));
@@ -281,8 +288,13 @@ test("the fifth control keeps every target at the touch minimum, at both widths,
       expect(new Set(actions.map((control) => control.centre)).size, "the four actions share one line").toBe(1);
       expect(measured.pager, where).not.toBeNull();
       expect(actions[0]!.centre, where).toBeLessThan(measured.pager!.centre);
-      // The pager keeps its own box rather than being stretched across the line it now owns.
-      expect(measured.pager!.width, where).toBe(184);
+      // The pager keeps its own box rather than being stretched across the line it now owns, and its
+      // own box is whatever its contents give it (three 44 px controls and two 4 px gaps today, 184) -
+      // so the relation is the one the CSS comment states: narrower than the line, not a number that
+      // moves every time a control or a gap token joins it.
+      expect(measured.pager!.width, `${where} the pager is its own box, not the line's width`).toBeLessThan(
+        measured.strip.width,
+      );
     }
   }
 });
