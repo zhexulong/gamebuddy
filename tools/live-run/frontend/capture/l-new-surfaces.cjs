@@ -10,7 +10,7 @@
 // matters - the byte identity is proven separately by `scratch/probe-avatar-e2e.mjs`.
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, REPO_ROOT } = require("./common.cjs");
 
 /**
  * A real PNG character card: signature + IHDR + tEXt(`chara`) + IEND, CRC32s correct.
@@ -23,12 +23,18 @@ const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = requir
  */
 /**
  * The same PNG card the HOST's own tests hand to the decoder, so a refusal here cannot be a
- * difference between two hand-rolled PNG writers. The kit's driver falls back to its own
- * builder (and says so) when the compiled fixture is not reachable.
+ * difference between two hand-rolled PNG writers.
+ *
+ * The path comes from `common.cjs`'s `REPO_ROOT` rather than from `../../../` here. It used to be
+ * `../../../host/dist-test/...`, which reached `tools/host/dist-test` after the kit moved to
+ * `tools/live-run/frontend/capture`, so the require always threw, the fallback silently built the PNG,
+ * and the comment above this function claimed a shared fixture the driver was not using. Measured on a
+ * full run: `HOST FIXTURE UNAVAILABLE (Cannot find module '...\tools\host\dist-test\...')` while
+ * `host/dist-test/test-support/png-card.test-support.js` was present.
  */
 function hostPngCardFile(cardJson) {
   try {
-    const fixture = require(path.resolve(__dirname, "../../../host/dist-test/test-support/png-card.test-support.js"));
+    const fixture = require(path.join(REPO_ROOT, "host", "dist-test", "test-support", "png-card.test-support.js"));
     return Buffer.from(fixture.pngCardFile(cardJson));
   } catch (error) {
     console.log(`HOST FIXTURE UNAVAILABLE (${String(error).slice(0, 120)}) - using the driver's own PNG builder`);

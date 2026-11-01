@@ -8,6 +8,26 @@ const { existsSync, mkdirSync, writeFileSync } = require("node:fs");
 const REPO = process.env.GB_SHOTS_REPO ?? __dirname;
 const SHOTS = process.env.GB_SHOTS_OUT ?? path.join(__dirname, ".shots-out");
 
+/*
+ * The repository root, found by walking up to the directory that owns `.git`.
+ *
+ * Exported so a driver can name a path inside the repo without counting `../` from its own location.
+ * `l-new-surfaces.cjs` counted three levels from `capture/` and reached `tools/host/dist-test`, which
+ * does not exist; the require failed and its fallback quietly built the PNG itself, so the run stayed
+ * green while the "same PNG the host's own tests use" claim was false. A path derived by counting
+ * directories from a file that can move is wrong after the move, and the failure it produces names the
+ * missing module rather than the arithmetic.
+ */
+const REPO_ROOT = (() => {
+  let directory = __dirname;
+  for (;;) {
+    if (existsSync(path.join(directory, ".git"))) return directory;
+    const parent = path.resolve(directory, "..");
+    if (parent === directory) throw new Error(`no .git above ${__dirname}: the kit must live inside the repository`);
+    directory = parent;
+  }
+})();
+
 function loadChromium() {
   for (const candidate of [
     path.join(REPO, "dialogue-web", "node_modules", "@playwright", "test"),
@@ -298,6 +318,7 @@ module.exports = {
   connect,
   reporter,
   observe,
+  REPO_ROOT,
   SHOTS,
   PAGE_HELPERS,
   activateSurface,
