@@ -8,7 +8,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
-import { classifyNight } from "../../lib/multiday-baseline.mjs";
+import {
+  assessMultiDayBaseline,
+  classifyNight,
+  nightCause,
+  parseReceiptEvidence,
+} from "../../lib/multiday-baseline.mjs";
+import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot } from "../../lib/failure-dump.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
@@ -330,15 +336,25 @@ test("the program tool's description says it carries the moves and that the Mod 
   // asserted where it is authored - and its load-bearing rules are pinned beside the new sentences so buying the
   // unit cannot cost the advertised-surface rule or the bounded-refusal contract.
   const description = extractProgramToolDescription(HOST_MATERIALIZER_SOURCE);
-  assert.match(description, /the plan and the moves that carry it out travel together/);
-  assert.match(description, /advances the successors itself/);
-  assert.match(description, /does not come back between steps/);
-  // The cost of the alternative, in one clause: without this the unit is stated but the trade is not.
-  assert.match(description, /waiting for a decision between every step/);
-  assert.match(description, /must be actions currently advertised to you/);
-  assert.match(description, /bounded and side-effect free/);
+  // WHICH TOOL CARRIES THE UNIT, measured 2026-11-01 (`round18`): `plan_work` took 75 submissions and this tool took
+  // ZERO. The three sentences that state the unit used to be here, and the two descriptions competed on the same scenario
+  // until the example was removed - so the unit is now asserted on the tool the companion actually uses, and this one is
+  // asserted to be what it is: a pre-compiled AST for a caller who already has one.
+  assert.match(description, /pre-compiled action program/);
+  assert.match(description, /stardew_plan_work/);
+  assert.doesNotMatch(description, /the plan and the moves that carry it out travel together/);
+  // The rules the OLD description carried, re-anchored to what the new one says instead of dropped. Each is a
+  // constraint a caller can be refused by, so none of them may leave the presented surface:
+  //   - the action set is the advertised one (a program naming anything else is refused);
+  //   - a refused candidate has no side effects;
+  //   - nodes carry no deadline, because the Mod derives each action's budget from its own watchdog.
+  assert.match(description, /must be currently advertised/);
+  assert.match(description, /refused candidate has no side effects/);
   assert.match(description, /Nodes carry no deadline/);
-  assert.match(description, /"programId":"farm_morning"/);
+  assert.match(description, /watchdog/);
+  // No embedded JSON tree: that example is what made this tool look like the answer to "walk somewhere then act",
+  // and `round18` measured zero uses after it was removed. Pinned as an ABSENCE so it cannot be re-added casually.
+  assert.doesNotMatch(description, /"programId":/);
 });
 
 test("the fact log keeps receipt evidence so observed events can be derived", () => {
@@ -1641,6 +1657,235 @@ test("a night's terminal is read from the receipt the fact log actually holds", 
   };
   assert.equal(terminalReceiptFor([accepted], accepted.requestId), undefined);
   assert.equal(terminalReceiptFor([{ ...recorded, worldFactPayload: null }], recorded.requestId), undefined);
+});
+
+/**
+ * Round 18's night, as its own artifacts describe it, driven through the REAL watcher.
+ *
+ * The run (`2026-10-31T19-26-54-087Z-multiday_routine`) crossed two nights and published `terminal: null, cause:
+ * "engine"` for both, so the baseline could only report `night_mechanism_unobserved` twice. What it actually held:
+ *
+ *   - `actionTrace.jsonl`: 1 byte - ZERO flat dispatches. Every action in that run went through a Body Program.
+ *   - `timeline.jsonl` idx 2992: `execution_receipt` `accepted`, `actionId=advance_day`, request `3982f1bc...`.
+ *   - `timeline.jsonl` idx 3002: `execution_receipt` `succeeded`/`day_advanced`, same request,
+ *     `revision=1559`, evidence `entered_via=native_sleep_prompt`.
+ *   - `mod-log.txt`: `sleep lifecycle finished: state=passed; reason=day_advanced` at 03:38:25, the receipt the line
+ *     before it.
+ *
+ * `watchNightRollover` looked for `advance_day` in the flat trace only, so `dispatched` was `undefined`, `terminal`
+ * was `null`, and the crossing branch - which fires whenever the calendar moved - published the night with no
+ * mechanism at all.
+ */
+test("a night the Mod crossed through Body Program reaches the record with its own receipt (round18)", async () => {
+  // The evidence string and the receipt identity are round18's, verbatim (trimmed to the keys that matter here).
+  const ADVANCE_EVIDENCE =
+    "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+    "saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=true;" +
+    "shipping_summary_settled=committed;day_before=4;days_before=1;day_after=5;days_after=2;" +
+    "enteredVia=native_sleep_prompt;dayBefore=4;dayAfter=5;daysPlayedBefore=1;daysPlayedAfter=2";
+  const advanceReceipt = Object.freeze({
+    executionId: "bdf26bff83f743788ce0985e4472d94c",
+    requestId: "3982f1bcc6304c63b860a9a9a97c7834",
+    actionId: "advance_day",
+    state: "succeeded",
+    reasonCode: "day_advanced",
+    revision: 1559,
+    evidence: Object.freeze({ detail: ADVANCE_EVIDENCE }),
+  });
+  // The RECORDED shape, exactly as `timeline.jsonl` holds it: the identity flattened onto the entry, the receipt
+  // itself (and with it the terminal `state`) kept whole under `worldFactPayload`.
+  const asRecorded = (receipt) =>
+    Object.freeze({
+      type: "execution_receipt",
+      reasonCode: receipt.reasonCode,
+      requestId: receipt.requestId,
+      executionId: receipt.executionId,
+      evidence: receipt.evidence,
+      worldFactPayload: receipt,
+    });
+  const acceptedFact = asRecorded({ ...advanceReceipt, state: "accepted", reasonCode: "accepted" });
+  const terminalFact = asRecorded(advanceReceipt);
+  // The refusal `advance_day` mints when the actor is not indoors/standing/free - the ordinary way a companion's
+  // attempt comes back named and the DAY goes on.
+  const refusedFact = asRecorded({
+    ...advanceReceipt,
+    executionId: "9a1c0b7f5d2e4a63b0f7c1d2e3f40516",
+    requestId: "6d0f4c9a7e2b18d3c5a4f6e8b0d12345",
+    state: "rejected",
+    reasonCode: "advance_day_requires_indoors",
+  });
+
+  /**
+   * One night through the real `watchNightRollover`.
+   *
+   * `dispatch` says what the bridge puts in the fact log while the day turn is still running:
+   *   - "crossed": the `advance_day` acceptance (03:36:26) and then its terminal with the new day (03:38:25) - round18;
+   *   - "refused": a REFUSAL on its own, with no crossing at all;
+   *   - "none": nothing - the engine's 02:00 pass-out, crossing the night with no dispatch behind it.
+   */
+  const runNight = async ({ dispatch, nightTimeoutMs = 5_000 }) => {
+    const actionTrace = [];
+    const factLog = [];
+    const bridgeDisconnections = [];
+    const beforeCrossing = Object.freeze({
+      revision: 1200,
+      dayOfMonth: 5,
+      timeOfDay: 2200,
+      actionable: true,
+      actorDispositionKind: "free",
+      actorDispositionDetail: null,
+      activeExecution: null,
+    });
+    const afterCrossing = Object.freeze({ ...beforeCrossing, revision: 1559, dayOfMonth: 6, timeOfDay: 600 });
+    let worldNow = beforeCrossing;
+    let polls = 0;
+    const client = {
+      get state() {
+        return { snapshot: worldNow };
+      },
+      observe: async () => ({ ...worldNow }),
+    };
+    // The bridge and the engine run on their OWN clock, as they do live: the lifecycle's acceptance lands while the
+    // day turn is still playing (03:36:26), and the rollover's terminal arrives together with the new day
+    // (03:38:25, revision 1559 on both). Driving that from timers is what makes this a test of whether the watcher
+    // LOOKS at the receipt log - not of the order a stub happens to call things in.
+    const timers = [];
+    // Only a night that a lifecycle actually carries gets its acceptance: the refusal case is a unit of the
+    // predicate, and giving it an in-flight acceptance would test the race instead.
+    if (dispatch === "crossed") timers.push(setTimeout(() => factLog.push(acceptedFact), 30));
+    timers.push(
+      setTimeout(() => {
+        if (dispatch === "crossed") factLog.push(terminalFact);
+        if (dispatch === "refused") factLog.push(refusedFact);
+        // Only a night that CROSSED moves the calendar. The engine's pass-out crosses it too; a refusal does not.
+        if (dispatch !== "refused") worldNow = afterCrossing;
+      }, 60),
+    );
+    const sampleModHeartbeat = () => {
+      polls += 1;
+      return { count: polls, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: 0 };
+    };
+    const [, , , watchNightRollover] = extractRunnerFunction(
+      RUNNER_SOURCE,
+      ["recordedReceipt", "terminalReceiptFor", "watchNightThroughPassOut", "watchNightRollover"],
+      {
+        actionTrace,
+        factLog,
+        bridgeDisconnections,
+        client,
+        sampleModHeartbeat,
+        // Not spent, not unknown: the day itself is not what ended, the night is.
+        readWorldClock: () => ({ spent: false, minutes: 1320, unknown: false, timeOfDay: 2200, source: "snapshot" }),
+        watchRollover,
+        nightCause,
+        parseReceiptEvidence,
+        TERMINAL_STATES,
+        MOD_HEARTBEAT_STALL_MS: 90_000,
+        MULTIDAY_NIGHT_TIMEOUT_MS: nightTimeoutMs,
+        MULTIDAY_POLL_INTERVAL_MS: 5,
+        MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
+        MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
+      },
+    );
+    try {
+      return await watchNightRollover(1);
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+    }
+  };
+
+  const night = await runNight({ dispatch: "crossed" });
+  assert.notEqual(
+    night.terminal,
+    null,
+    `the night's own receipt IS its terminal; the watcher answered ${String(night.reasonCode ?? night.release)}`,
+  );
+  assert.equal(night.terminal.actionId, "advance_day");
+  assert.equal(night.terminal.state, "succeeded");
+  assert.equal(night.terminal.reasonCode, "day_advanced");
+  assert.equal(night.terminal.requestId, advanceReceipt.requestId, "the receipt the Mod minted for THIS dispatch");
+  assert.equal(
+    night.cause,
+    "sleep",
+    "entered_via=native_sleep_prompt on that receipt is the one witness a sleep can be claimed from",
+  );
+  assert.equal(
+    night.release,
+    undefined,
+    "the calendar is a fallback witness: a night whose receipt is in hand is not calendar_advanced",
+  );
+  // The record the loop builds from it (`multiday-loop.mjs:313-320`) is judged as a crossed night with an OBSERVED
+  // mechanism - the two violations round18 published for these nights are gone.
+  const record = {
+    day: 1,
+    terminal: night.terminal ?? null,
+    after: night.after ?? null,
+    menus: night.menus ?? [],
+    nextDayAccomplishedActionIds: ["harvest_crop"],
+    cause: night.cause ?? null,
+  };
+  const classified = classifyNight({ terminal: record.terminal, after: record.after });
+  assert.equal(classified.advanced, true, `expected a crossed night, got ${String(classified.reasonCode)}`);
+  const assessment = assessMultiDayBaseline({ dayRecords: [record, { ...record, day: 2 }], daysRequested: 2 });
+  // The two violations round18 published for these nights are gone, and the night is no longer counted as one whose
+  // mechanism nobody recorded. (The assessment may still be RED for round18's OWN other facts - that receipt says
+  // `saved_observed=true` with `save_boundary_not_observed=true`, which this test deliberately keeps, because the
+  // fix is to surface what the receipt says, not to make the night pass. What is asserted here is exactly the
+  // attribution the watcher owns.)
+  const codes = assessment.violations.map((entry) => entry.code);
+  assert.deepEqual(
+    codes.filter((code) =>
+      ["night_mechanism_unobserved", "night_terminal_missing", "night_cause_claims_a_sleep_without_a_receipt"].includes(
+        code,
+      ),
+    ),
+    [],
+    `a receipted night is attributed, not unobserved: ${JSON.stringify(assessment.violations)}`,
+  );
+  assert.equal(assessment.daysCrossed, 2, "the calendar witness still counts both nights");
+  assert.equal(assessment.unobservedNights, 0, "no night is left without a mechanism");
+  assert.equal(assessment.passOutNights, 0, "and none of them is called a pass-out either");
+
+  // THE GUARD: the same window with NO receipt must still say `engine`.
+  //
+  // `b27f75ca` removed the inference that a moved calendar means a sleep, and the fix above must not put it back:
+  // the point is to READ the receipt the watcher already had, not to guess a mechanism from the crossing. A night
+  // with nothing to read keeps `terminal: null`, `cause: "engine"` and its own `release` - and the baseline keeps
+  // calling that a violation.
+  const engineNight = await runNight({ dispatch: "none" });
+  assert.equal(engineNight.terminal, null, "a night with no receipt has no terminal to report");
+  assert.equal(engineNight.cause, "engine");
+  assert.equal(engineNight.release, "calendar_advanced");
+  const engineRecords = [
+    {
+      day: 1,
+      terminal: engineNight.terminal ?? null,
+      after: engineNight.after ?? null,
+      menus: engineNight.menus ?? [],
+      cause: engineNight.cause ?? null,
+    },
+  ];
+  assert.ok(
+    assessMultiDayBaseline({ dayRecords: engineRecords, daysRequested: 1 }).violations.some(
+      (entry) => entry.code === "night_mechanism_unobserved",
+    ),
+    "an unattributed crossing is still a blocked night, not a pass",
+  );
+
+  // THE OTHER GUARD, for the opposite mistake: a REFUSED `advance_day` is not a night.
+  //
+  // Reading the receipt channel means a refusal, which also mints a receipt naming `advance_day`, is now VISIBLE to
+  // the wait. Entering the night watch on it would spend the whole night budget on a night nothing started - and the
+  // day loop keeps offering turns until the day is crossed, so the next turn may sleep for real. The refusal must
+  // leave the wait waiting, so the day's own verdict (`companion_did_not_sleep`) is still what answers.
+  const refusedNight = await runNight({ dispatch: "refused", nightTimeoutMs: 600 });
+  assert.equal(refusedNight.terminal, null, "a refused dispatch is not the night's terminal");
+  assert.match(
+    String(refusedNight.reasonCode),
+    /^companion_did_not_sleep/u,
+    `a refusal leaves the wait waiting, got ${String(refusedNight.reasonCode)}`,
+  );
+  assert.equal(refusedNight.release, undefined, "and it certainly did not cross a night");
 });
 
 test("the run bundle publishes the crossing record, and one it cannot judge is reported instead of refusing the manifest", () => {
