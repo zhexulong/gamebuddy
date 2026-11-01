@@ -7,6 +7,10 @@ import test from "node:test";
 
 import { DECLARED, GATE_PATHS, findDuplicatedAuthorities, formatFinding } from "./duplicated-authority.mjs";
 
+// red-proof: inject - a literal spelled in two modules outside its declared owner; the gate reports
+// both paths with line and text (`a literal in two modules is caught, with path, line and text`).
+// Its own control case above it is the green half: the same literal owned and imported is [] .
+
 const roots = [];
 
 /** The repository the declaration was read from, so an exemption can be checked against a real file. */

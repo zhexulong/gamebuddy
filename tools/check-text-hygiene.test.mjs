@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+
+// red-proof: fixture - a buffer carrying trailing whitespace, mixed line endings, a BOM and no final
+// newline; `inspectText` reports each one, and the CRLF-only buffer beside it stays []. The second
+// test injects a tracked file with a violation and reads `verdict: "blocked"` off the real runner.
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
