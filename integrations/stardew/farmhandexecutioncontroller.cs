@@ -2555,6 +2555,31 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         PresentationLocale: string.Empty, HorseTargets: null, MineEntranceTargets: null, WorldObjectTargets: null, ActorDispositionKind: "idle", DailyQuestTargets: null, AcceptedDailyQuest: null, PendingLevelUps: null, PendingLevelUpChoices: null, Professions: null);
     }
 
+    /// <summary>
+    /// The location's own warp list, for a source tile that is NOT a door.
+    ///
+    /// <para>
+    /// Edge exits live here and nowhere else: `Town` declares six of its nine exits as `X = -1` or `Y = -1`, and `Farm`
+    /// publishes `40..42,65 -> Forest`. The snapshot surfaces both tables through `warps` and `doorTargets`, but until
+    /// 2026-11-01 only `travel` consulted this one, so `enter_exit` refused a tile the snapshot had just published. That is
+    /// a consumer dictating which table a producer may use.
+    /// </para>
+    /// </summary>
+    /// <param name="location">The location the actor is standing in.</param>
+    /// <param name="sourceX">The source tile's column, as the caller named it.</param>
+    /// <param name="sourceY">The source tile's row, as the caller named it.</param>
+    private static StardewValley.Warp? ResolveLocationWarp(StardewValley.GameLocation location, int sourceX, int sourceY)
+    {
+        foreach (StardewValley.Warp candidate in location.warps)
+        {
+            if (candidate.npcOnly.Value) continue;
+            if (candidate.X != sourceX || candidate.Y != sourceY) continue;
+            return candidate;
+        }
+
+        return null;
+    }
+
     private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)
     {
         StardewValley.Warp? warp = location.getWarpFromDoor(point, Game1.player);

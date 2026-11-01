@@ -455,11 +455,26 @@ internal sealed partial class ExecutionManager
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Microsoft.Xna.Framework.Point sourcePoint = new(sourceX, sourceY);
-        StardewValley.Warp? warp = isDoor
-            ? ResolveDoorWarp(location, sourcePoint)
-            : location.warps.FirstOrDefault(candidate => candidate.X == sourceX && candidate.Y == sourceY && !candidate.npcOnly.Value);
+        // `enter_exit` and `travel` both mean "leave this location from the tile I named". WHICH internal table holds that
+        // tile - the door table `updateDoors` builds, or the location's own `warps` list - is an artefact of how the map was
+        // authored, and the snapshot publishes both in one shape. Refusing a tile the snapshot published because it lives in
+        // the other table is the provider dictating what a consumer may ask for.
+        //
+        // Measured 2026-11-01 (`round19`): the companion named Farm(41,65), which the snapshot published as
+        // `41,65->Forest`, and `enter_exit` refused it as `door_not_available` seven times over three minutes while it stood
+        // on the adjacent tile. It was doing the right thing with the right coordinate.
+        StardewValley.Warp? doorWarp = isDoor ? ResolveDoorWarp(location, sourcePoint) : null;
+        StardewValley.Warp? warp = doorWarp ?? ResolveLocationWarp(location, sourceX, sourceY);
+        // The native door entry may only run for a tile the DOOR TABLE owns: an edge warp has no click entry, and asking the
+        // Buildings layer about a tile it never described would run whatever Action happened to sit there.
+        bool doorOwned = doorWarp is not null;
         if (warp is null || warp.TargetName is null or "")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, isDoor ? "door_not_available" : "warp_not_available", $"source={sourceX},{sourceY}");
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                isDoor ? "door_not_available" : "warp_not_available",
+                $"source={sourceX},{sourceY};warps={location.warps.Count}");
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
             // The refusal used to name only the two tiles it compared, and they were both the caller's OWN values - so a
@@ -475,7 +490,7 @@ internal sealed partial class ExecutionManager
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
-                isDoor ? "door_out_of_range" : "warp_out_of_range",
+                doorOwned ? "door_out_of_range" : "warp_out_of_range",
                 $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY}");
         }
 
@@ -510,7 +525,7 @@ internal sealed partial class ExecutionManager
         // entry is echoed into the receipt so an observer can tell a gated door
         // apart from the resolver fallback.
         string entry = "none";
-        if (isDoor)
+        if (doorOwned)
         {
             NativeDoorOutcome outcome = DispatchNativeDoor(location, sourcePoint, out string refusal, out entry);
             switch (outcome)
@@ -566,8 +581,8 @@ internal sealed partial class ExecutionManager
         this.Remember(accepted);
         this.AddTrace(accepted);
         // A native door entry already ran Game1.warpFarmer; only a plain record
-        // (travel, or a door the click path does not own) warps here.
-        if (!isDoor)
+        // (travel, an edge warp, or a door the click path does not own) warps here.
+        if (!doorOwned)
             Game1.player.warpFarmer(warp);
         return accepted;
     }
