@@ -4,7 +4,7 @@
  *
  * The problem this solves is not "there is no documentation". It is that a person who changes one
  * surface cannot tell which instrument elsewhere now describes the old behaviour, because the
- * instruments are spread across `tools/live-run/{chat,game,memory}`, `tools/perf`, `tools/shots` and
+ * instruments are spread across `tools/live-run/{chat,game,memory,frontend}`, `tools/perf` and
  * a dozen `run:` scripts, and nothing lists them together. A README does not fix that: it is not read
  * at the moment of use, and it goes stale silently.
  *
@@ -44,11 +44,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * Order matters: the first match wins, so the narrower `run:shots-` must precede the plain `run:`.
  */
 const KINDS = Object.freeze([
-  {
-    kind: "geometry",
-    prefix: "run:shots",
-    why: "what the player sees moved - pixels, rectangles, visibility",
-  },
   { kind: "scale", prefix: "test:perf-", why: "a quantity crossed a budget as the data grew" },
   {
     kind: "effect",

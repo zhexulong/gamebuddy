@@ -80,6 +80,12 @@ const SOURCE_FAILURE_DIAGNOSTICS = [
   "vdf-malformed",
   "invalid-app-manifest",
   "candidate-invalid",
+  // GOG's own three (`host/src/stardew-game-install/gog-source.ts`). They reach the panel now
+  // that the provider mounts both sources, and a reconciliation that did not know them would
+  // read a Host that could not run the GOG search as a machine holding no game.
+  "gog-unavailable",
+  "gog-metadata-unreadable",
+  "gog-metadata-malformed",
 ];
 
 /** The panel's DOM facts. Self-contained: a serialized page function cannot see module scope. */

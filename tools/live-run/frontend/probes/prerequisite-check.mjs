@@ -1,5 +1,5 @@
 // Probe: fast prerequisite check that names exactly what is missing before the long build starts.
-// `node tools/shots/run.mjs --check` runs this and exits non-zero when a REQUIRED item is missing.
+// `node tools/live-run/frontend/run.mjs --check` runs this and exits non-zero when a REQUIRED item is missing.
 // The credential row is presence+length only and is a SKIP, not a failure (the conversation lane
 // records a named skip when it is absent).
 import { access, mkdir } from "node:fs/promises";

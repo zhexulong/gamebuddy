@@ -1,12 +1,28 @@
-# shots — the capture kit
+# frontend — the frontend live run
 
-A tracked, parameterized harness so a full screenshot set stops being a fresh hand-written lane each
-time. One entry, one pinned commit, default runtime discovery, honest skips, resumable phases.
+A tracked, parameterized harness that drives the product's own UI at a pinned commit and reports what
+the player saw, what a turn cost, what the runtime held, and when the first screen painted.
+
+It is a **live run**, not a screenshot kit: the drivers click the real send button, swipe real
+variants and open real surfaces, so the geometry it captures is the geometry a player gets. The
+screenshots are one of its four observations, not its definition.
+
+Four observations, all written into each driver's own facts file:
+
+| prefix | answers |
+|---|---|
+| (unprefixed) | what is on screen and where — rectangles, visibility, counts |
+| `TIMINGS` | how long each phase of a turn took, from the product's own marks |
+| `RUNTIME` | DOM nodes, heap, mark count at the end of the driver |
+| `PAINT` | first paint, first contentful paint, largest contentful paint |
+
+Absence is reported as `null` or `unobserved:<reason>`, never as `0`: a heap that the browser does not
+expose and a page that never painted are not measurements of zero.
 
 ## One command
 
 ```text
-node tools/shots/run.mjs --commit <sha|HEAD> --out D:\gb-modcheck\shots-final14
+node tools/live-run/frontend/run.mjs --commit <sha|HEAD> --out D:\gb-modcheck\shots-final14
 ```
 
 This runs the full pipeline (check → pin → build → launch → capture → cleanup → report) and delivers
@@ -16,19 +32,19 @@ worktree are **kept** under `<out>.stage` so the report remains verifiable.
 Fast prerequisites, named per item, before the long build starts:
 
 ```text
-node tools/shots/run.mjs --check --commit HEAD --out D:\gb-modcheck\shots-final14
+node tools/live-run/frontend/run.mjs --check --commit HEAD --out D:\gb-modcheck\shots-final14
 ```
 
 Resumable stepwise mode (each phase is separately runnable; capture skips drivers that already wrote
 their per-driver fact file unless `--force`):
 
 ```text
-node tools/shots/run.mjs pin   --out D:\gb-modcheck\shots-final14 --commit HEAD
-node tools/shots/run.mjs build --out D:\gb-modcheck\shots-final14 --runtime D:\gb-art\diag1\generations\<id>\runtime
-node tools/shots/run.mjs launch …
-node tools/shots/run.mjs capture …            (or --driver=a,b to re-run a subset, --force to redo done ones)
-node tools/shots/run.mjs cleanup …
-node tools/shots/run.mjs report …
+node tools/live-run/frontend/run.mjs pin   --out D:\gb-modcheck\shots-final14 --commit HEAD
+node tools/live-run/frontend/run.mjs build --out D:\gb-modcheck\shots-final14 --runtime D:\gb-art\diag1\generations\<id>\runtime
+node tools/live-run/frontend/run.mjs launch …
+node tools/live-run/frontend/run.mjs capture …            (or --driver=a,b to re-run a subset, --force to redo done ones)
+node tools/live-run/frontend/run.mjs cleanup …
+node tools/live-run/frontend/run.mjs report …
 ```
 
 `--check` reads only presence facts and prints **present|absent + length only** for the credential —

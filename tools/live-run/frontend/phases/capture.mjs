@@ -1,4 +1,4 @@
-// Phase capture: run the capture drivers (tools/shots/capture/*.cjs) over CDP against the product tab.
+// Phase capture: run the capture drivers (tools/live-run/frontend/capture/*.cjs) over CDP against the product tab.
 // Each driver is its own process; its per-item facts file <out>/<shortName>.txt is written by the
 // driver itself (a driver is the only observer of the screenshots and reports computed layout facts).
 // A driver whose per-run marker file exists is skipped unless --force, so a crashed driver can be

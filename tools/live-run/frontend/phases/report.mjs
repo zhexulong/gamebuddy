@@ -302,7 +302,7 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
     L.push(`  run root KEPT at ${paths.runRoot}`);
   }
   L.push("");
-  L.push(`  progress log: .pi/tools/shots-kit-progress.md`);
+  L.push(`  progress log: .pi/tools/frontend-kit-progress.md`);
   L.push("");
 
   return L.join("\n");

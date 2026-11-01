@@ -3,7 +3,7 @@
 // every trace of dishonesty it finds.
 //
 // It owns no launcher: it delegates launching to the shots kit's own phases
-// (`tools/shots/run.mjs launch` → `phases/launch.mjs` → the pinned worktree's
+// (`tools/live-run/frontend/run.mjs launch` → `phases/launch.mjs` → the pinned worktree's
 // `tools/desktop-composition-launch.mjs`), which already pin a commit, claim the CDP port with its
 // lock, isolate a run root and tear down only the pids they started. This file adds the walk:
 //

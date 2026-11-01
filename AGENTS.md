@@ -39,7 +39,7 @@
   - *Fix the owning layer, not the call site* (one mapper, not twenty-four; the producer, not a downstream stripper).
   - *A destructive action carries no effect the player cannot foresee*; if it leaves data unreachable, fix reachability rather than delete to tidy up.
   - *Pair every "unchanged" claim with both readings from the same run*; say what you did not verify.
-  - *Start from the existing gauntlets* (`tools/audit-totality.mjs`, the problem-code gate, `tools/live-run/**`, `tools/shots/**`) instead of writing a fifth.
+  - *Start from the existing gauntlets* (`tools/audit-totality.mjs`, the problem-code gate, `tools/live-run/**`) instead of writing a fifth.
 - **Defect Families & Invariant Gates**: When a defect recurs, stop fixing individual instances; encode an automated gate for the entire failure class. Tests must assert durable invariants rather than pinning transient implementations:
 
   On meeting **any** defect, before fixing the instance, ask: **what class does this belong to, and what gate would have caught every member of it?** A fix without that question buys one instance and leaves the class alive. The gate is the deliverable; the fix is the side effect. Write the gate first, red, against the real defect - then fix.

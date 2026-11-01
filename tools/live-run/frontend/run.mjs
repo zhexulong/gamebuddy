@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// shots capture kit — single entry.
+// frontend live run — single entry.
 //
-//   node tools/shots/run.mjs --commit <sha|HEAD> --out <root>          full run (check→pin→build→launch→capture→cleanup→report)
-//   node tools/shots/run.mjs --check [--commit sha] [--out root]      fast prerequisites only
-//   node tools/shots/run.mjs <phase> [same keys]                      resumable stepwise run
+// Drives the product's own UI at a pinned commit and reports what the player saw (geometry), what a
+// turn cost (TIMINGS, from the product's marks), what the runtime held (RUNTIME) and when the first
+// screen painted (PAINT). The screenshots are one observation among four.
+//
+//   node tools/live-run/frontend/run.mjs --commit <sha|HEAD> --out <root>          full run (check→pin→build→launch→capture→cleanup→report)
+//   node tools/live-run/frontend/run.mjs --check [--commit sha] [--out root]      fast prerequisites only
+//   node tools/live-run/frontend/run.mjs <phase> [same keys]                      resumable stepwise run
 //
 // Phases (in run order): check pin build launch capture cleanup report
 //   pin     create a detached worktree at the pinned commit + materialize prerequisites

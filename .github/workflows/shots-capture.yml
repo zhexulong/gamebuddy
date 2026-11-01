@@ -67,11 +67,11 @@ jobs:
 
       - name: Kit prerequisite check (names exactly what is missing)
         shell: pwsh
-        run: node tools/shots/run.mjs --check --commit ${{ inputs.commit }} --out shots-final
+        run: node tools/live-run/frontend/run.mjs --check --commit ${{ inputs.commit }} --out shots-final
 
       - name: Capture (full run; fails named if the runner cannot launch the product)
         shell: pwsh
-        run: node tools/shots/run.mjs --commit ${{ inputs.commit }} --out shots-final
+        run: node tools/live-run/frontend/run.mjs --commit ${{ inputs.commit }} --out shots-final
 
       - name: Upload the set
         if: always()

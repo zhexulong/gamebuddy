@@ -585,7 +585,7 @@ const DECLARED = Object.freeze([
   // tries to start one, which then fails with its own error.
   Object.freeze({
     kind: "silent-catch",
-    path: "tools/shots/run.mjs",
+    path: "tools/live-run/frontend/run.mjs",
     symbol: "probesUp",
     reason: "a false negative only causes a start attempt, whose failure is reported",
     witness: "return false;",
