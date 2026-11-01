@@ -407,6 +407,7 @@ export type GameEnvironmentFactsSource = Pick<
   | "toolSlots"
   | "villagerWhereabouts"
   | "wateringWhereabouts"
+  | "chestsSummary"
   | "cropTargets"
 > &
   Readonly<{ stamina?: number; exhausted?: boolean }>;
@@ -536,6 +537,36 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
 }
 
 /**
+ * The chests in the location she is standing in: how many, what they hold, how many are full.
+ *
+ * THE LOCATION'S ANSWER, not the radius-bounded one. `chests` is the entity family and `DiscoverChestStates` bounds it to
+ * the Mod's six-tile discovery radius, so counting that list would print `箱子: 0` while standing next to a chest and
+ * `chestsSummary` counts a container across the farm - the same false-zero shape `待浇水作物: 0` was (measured
+ * 2026-10-31), and the reason this summary exists at all.
+ *
+ * The line says WHICH LOCATION it counted. A location-wide number is still not a world total, and the `本图`/`this
+ * location` qualifier is what keeps a reader from hearing "the farm has 3 chests" from a count taken in the farmhouse.
+ *
+ * An ABSENT summary means the Mod did not measure it (the container actions were not advertised) and stays silent; a
+ * measured zero is the answer to "do I have any chests here" and is printed, so "none here" and "the field never
+ * arrived" stay distinguishable.
+ */
+function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const summary = source.chestsSummary;
+  if (summary === undefined) return "";
+  // The full count is only worth the bytes when it is non-zero: "0 full" spends the line saying nothing the item count
+  // did not already say.
+  const full = summary.fullCount > 0 ? summary.fullCount : undefined;
+  if (zh)
+    return full === undefined
+      ? `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}）`
+      : `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`;
+  return full === undefined
+    ? `chests here: ${summary.chestCount} (items ${summary.itemCount})`
+    : `chests here: ${summary.chestCount} (items ${summary.itemCount}; full ${full})`;
+}
+
+/**
  * The unwatered crops in reach: `cropTargets` is already the Mod's own bounded
  * list of them, so the count is a plain read. An ABSENT list means the family
  * was not measured and is silent, while a measured zero answers "is anything
@@ -609,6 +640,7 @@ function composeGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boo
     formatHeldTool(source, zh),
     formatNearbyVillagers(source, zh),
     formatUnwateredCrops(source, zh),
+    formatChestsSummary(source, zh),
     formatGameStamina(source.stamina, source.exhausted, zh),
   ].filter((fact) => fact !== "");
 }

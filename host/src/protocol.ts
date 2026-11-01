@@ -14,6 +14,7 @@ import {
   isBushTargetFact,
   isCaskTargetFact,
   isChestStateFact,
+  isChestsSummaryFact,
   isClearHoeDirtTargetFact,
   isColorTargetFact,
   isCookingStationTargetFact,
@@ -762,6 +763,22 @@ export type Snapshot = Readonly<{
     isFridge: boolean;
     items: readonly Readonly<{ slot: number; qualifiedItemId: string; displayName: string; stack: number }>[];
   }>[];
+  /**
+   * The current location's chests as ONE line: how many there are, how many items they hold between them, and how
+   * many have no free slot left.
+   *
+   * `chests` above is the entity family and cannot answer "what is in my chests" without the reader counting rows and
+   * adding stacks - and its list is bounded to the Mod's six-tile discovery radius, so a chest across the farm is not
+   * in it at all. This is the summary beside it, the split `wateringWhereabouts` already makes beside `cropTargets`.
+   *
+   * It carries no `location` member because it describes `snapshot.location`: the count is that location's, never a
+   * world total, and the fact line that renders it says so. A radius-bounded count presented as a total is the defect
+   * `待浇水作物: 0` was - measured 2026-10-31 - so the count is location-wide and the wording is qualified.
+   *
+   * `itemCount` is the sum of every occupied slot's stack, not the number of slots. `fullCount` counts containers at
+   * the engine's own `Chest.GetActualCapacity()`, which is where `Chest.addItem` stops taking a new stack.
+   */
+  chestsSummary?: Readonly<{ chestCount: number; itemCount: number; fullCount: number }>;
   /** Bounded live inventory facts, currently published only for animal-product output rereads. */
   inventoryItemFacts?: readonly Readonly<{
     slot: number;
@@ -1720,6 +1737,7 @@ const SNAPSHOT_KEYS = [
   "animalProductTargets",
   "feedTroughTargets",
   "chests",
+  "chestsSummary",
   "inventoryItemFacts",
   "foodTargets",
   "shippingBinTargets",
@@ -3590,6 +3608,10 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       value.artifactSpotFarmSourceCount < 0)
   )
     return "invalid_snapshot:artifactSpotFarmSourceCount";
+  // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
+  // not measure it (the container actions were not advertised); a present one must be the whole shape.
+  if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
+    return "invalid_snapshot:chestsSummary";
   if (!isStringArray(value.capabilities)) return "invalid_snapshot:capabilities";
   if (!isNonNegativeSafeInteger(value.catalogRevision)) return "invalid_snapshot:catalogRevision";
   if (!isUniqueOpaqueIdArray(value.enabledActionIds)) return "invalid_snapshot:enabledActionIds";
@@ -3650,6 +3672,7 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
       (typeof value.artifactSpotFarmSourceCount === "number" &&
         Number.isSafeInteger(value.artifactSpotFarmSourceCount) &&
         value.artifactSpotFarmSourceCount >= 0)) &&
+    (value.chestsSummary === undefined || isChestsSummaryFact(value.chestsSummary)) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     isUniqueOpaqueIdArray(value.enabledActionIds) &&

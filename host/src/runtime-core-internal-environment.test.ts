@@ -579,6 +579,61 @@ test("formatGameEnvironmentFacts counts unwatered crops nearby, and tells an unm
   assert.ok(!unmeasured.includes("unwatered crops"), `an absent list says nothing: ${unmeasured}`);
 });
 
+/**
+ * Chests: the location's own count, and the two states that must stay distinguishable.
+ *
+ * `chestsSummary` is location-wide on purpose - `chests` is the radius-6 entity family, so a count taken from THAT list
+ * would print `chests here: 0` while a chest stood across the farm. The line therefore says which place it counted: a
+ * location-wide number is still not a world total, and the `本图`/`here` qualifier is what keeps a reader from hearing
+ * "the farm has 3 chests" from a count taken in the farmhouse.
+ *
+ * A measured zero is printed, and an ABSENT summary stays silent: "no chests here" and "the field never arrived" are
+ * different facts, and a formatter that printed nothing for both would make them the same one.
+ */
+test("formatGameEnvironmentFacts counts the location's chests, says which location, and keeps a measured zero", () => {
+  const base = {
+    timeOfDay: 900,
+    dayOfMonth: 19,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "Farm",
+    tile: { x: 50, y: 50 },
+  };
+
+  // Three chests holding 2, 1 and 0 items: the counts the summary carries, rendered.
+  const held = formatGameEnvironmentFacts(
+    { ...base, chestsSummary: { chestCount: 3, itemCount: 3, fullCount: 0 } },
+    true,
+  );
+  assert.ok(held.includes("本图箱子: 3（物品 3）"), `the counts reach the line, qualified by location: ${held}`);
+  assert.ok(!held.includes("已满"), `a zero full count costs no bytes: ${held}`);
+
+  // A full chest is named: it is the half of the answer a count alone cannot give.
+  const full = formatGameEnvironmentFacts(
+    { ...base, chestsSummary: { chestCount: 3, itemCount: 41, fullCount: 2 } },
+    true,
+  );
+  assert.ok(full.includes("本图箱子: 3（物品 41；已满 2）"), `fullness reaches the line: ${full}`);
+
+  const english = formatGameEnvironmentFacts(
+    { ...base, chestsSummary: { chestCount: 3, itemCount: 41, fullCount: 2 } },
+    false,
+  );
+  assert.ok(english.includes("chests here: 3 (items 41; full 2)"), `the qualifier is in both languages: ${english}`);
+
+  // A measured zero is the answer to "do I have any chests here".
+  const measuredNone = formatGameEnvironmentFacts(
+    { ...base, chestsSummary: { chestCount: 0, itemCount: 0, fullCount: 0 } },
+    false,
+  );
+  assert.ok(measuredNone.includes("chests here: 0"), `a measured zero is an answer: ${measuredNone}`);
+
+  // An absent summary means the container actions were not advertised, and says nothing.
+  const unmeasured = formatGameEnvironmentFacts(base, false);
+  assert.ok(!unmeasured.includes("chests here"), `an absent summary says nothing: ${unmeasured}`);
+});
+
 test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue", () => {
   const facts = formatGameEnvironmentFacts(
     {
