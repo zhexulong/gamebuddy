@@ -2,7 +2,7 @@
 // journey-walker — one run that drives every interactive control in the mounted product and prints
 // every trace of dishonesty it finds.
 //
-// It owns no launcher: it delegates launching to the shots kit's own phases
+// It owns no launcher: it delegates launching to the frontend live run's own phases
 // (`tools/live-run/frontend/run.mjs launch` → `phases/launch.mjs` → the pinned worktree's
 // `tools/desktop-composition-launch.mjs`), which already pin a commit, claim the CDP port with its
 // lock, isolate a run root and tear down only the pids they started. This file adds the walk:
@@ -35,7 +35,7 @@ import {
   runPaths,
   saveRunConfig,
   sanitizeTag,
-} from "./shots/lib/config.mjs";
+} from "./live-run/frontend/lib/config.mjs";
 
 export const WALKER_ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -296,7 +296,7 @@ export function reportExitCode(findings) {
   return findings.items.length > 0 ? 1 : 0;
 }
 
-/** Parse the walker's own arguments; the shots kit's flags are passed through by `--set`. */
+/** Parse the walker's own arguments; the frontend live run's flags are passed through by `--set`. */
 export function parseWalkerArgs(argv) {
   const values = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -441,7 +441,7 @@ function requireFrom(repoRoot, candidates) {
 
 function loadChromium() {
   // The product's own dev dependency is the first choice, the pnpm store second: the same order the
-  // shots kit's `capture/common.cjs` uses, kept here because the walker runs in the main checkout.
+  // frontend live run's `capture/common.cjs` uses, kept here because the walker runs in the main checkout.
   const module = requireFrom(REPO_ROOT, [
     join(REPO_ROOT, "dialogue-web", "node_modules", "@playwright", "test"),
     join(REPO_ROOT, "dialogue-web", "node_modules", "playwright"),
@@ -978,29 +978,29 @@ async function attach({ run, paths, log }) {
 }
 
 /**
- * The launch reuse the task requires: this walker never grows a second launcher. It runs the shots
- * kit's own `launch` phase, which pins, claims the CDP port with its lock, isolates the run root and
+ * The launch reuse the task requires: this walker never grows a second launcher. It runs the frontend
+ * live run's own `launch` phase, which pins, claims the CDP port with its lock, isolates the run root and
  * tears down only the pids it started. Returns the mounted launch state.
  */
-function launchViaShotsKit({ paths, values, log }) {
+function launchViaFrontendRun({ paths, values, log }) {
   const args = [join(KIT_ROOT, "run.mjs"), "launch", `--out=${paths.outRoot}`, `--stage=${paths.stageRoot}`];
   if (values.commit !== undefined) args.push(`--commit=${values.commit}`);
   if (values.runtime !== undefined) args.push(`--runtime=${values.runtime}`);
   if (values["cdp-port"] !== undefined) args.push(`--cdp-port=${values["cdp-port"]}`);
   if (values["game-dir"] !== undefined) args.push(`--game-dir=${values["game-dir"]}`);
   if (values.edge !== undefined) args.push(`--edge=${values.edge}`);
-  log(`launching through the shots kit: node ${args.slice(1).join(" ")}`);
+  log(`launching through the frontend live run: node ${args.slice(1).join(" ")}`);
   const result = spawnSync(process.execPath, args, { cwd: REPO_ROOT, encoding: "utf8", windowsHide: true });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
-  if (result.status !== 0) throw new Error(`shots_launch_failed exit=${result.status}`);
+  if (result.status !== 0) throw new Error(`frontend_launch_failed exit=${result.status}`);
   return JSON.parse(readFileSync(paths.launchStateFile, "utf8"));
 }
 
 /** Stop the mounted run and tear down only the pids it started, through the kit's own cleanup phase. */
-function stopViaShotsKit({ paths, log }) {
+function stopViaFrontendRun({ paths, log }) {
   const args = [join(KIT_ROOT, "run.mjs"), "cleanup", `--out=${paths.outRoot}`, `--stage=${paths.stageRoot}`];
-  log("stopping through the shots kit's cleanup phase (writes the stop flag, then verifies the ports)");
+  log("stopping through the frontend live run's cleanup phase (writes the stop flag, then verifies the ports)");
   const result = spawnSync(process.execPath, args, { cwd: REPO_ROOT, encoding: "utf8", windowsHide: true });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -1010,7 +1010,7 @@ function stopViaShotsKit({ paths, log }) {
 function ensureRun({ values, log }) {
   const outRoot = values.out;
   if (typeof outRoot !== "string" || outRoot.length === 0)
-    throw new Error("--out <root> is required (it is the mount root the shots kit owns)");
+    throw new Error("--out <root> is required (it is the mount root the frontend live run owns)");
   const stageRoot = values.stage ?? defaultStageFor(outRoot);
   const paths = runPaths({ outRoot, stageRoot });
   const prior = loadRunConfig(paths);
@@ -1027,7 +1027,7 @@ function ensureRun({ values, log }) {
     cdpPort: Number(values["cdp-port"] ?? process.env.GB_SHOTS_CDP_PORT ?? 9341),
   };
   saveRunConfig(paths, run);
-  log(`wrote a run config beside the shots kit's own (${paths.runConfigFile})`);
+  log(`wrote a run config beside the frontend live run's own (${paths.runConfigFile})`);
   return { paths, prior: null };
 }
 
@@ -1050,10 +1050,10 @@ async function main() {
   let browser = null;
   let code = 0;
   try {
-    if (values.launch === true) launchState = launchViaShotsKit({ paths, values, log });
+    if (values.launch === true) launchState = launchViaFrontendRun({ paths, values, log });
     else if (existsSync(paths.launchStateFile)) launchState = JSON.parse(readFileSync(paths.launchStateFile, "utf8"));
     if (launchState === null || launchState.mounted !== true)
-      throw new Error("no mounted run: pass --launch, or run the shots kit's launch phase first");
+      throw new Error("no mounted run: pass --launch, or run the frontend live run's launch phase first");
 
     const attached = await attach({ run: null, paths, log });
     browser = attached.browser;
@@ -1101,7 +1101,7 @@ async function main() {
     // an attached walk leaves the run exactly where it found it.
     if (browser !== null) await browser.close().catch(() => undefined);
   }
-  if (values.stop === true) stopViaShotsKit({ paths, log });
+  if (values.stop === true) stopViaFrontendRun({ paths, log });
   process.exit(code);
 }
 

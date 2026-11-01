@@ -55,6 +55,7 @@
   <ItemGroup>
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AcceptDailyQuestActionTests.cs" Link="AcceptDailyQuestActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActionDeadlineAuthoritySourceShapeTests.cs" Link="ActionDeadlineAuthoritySourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ActiveExecutionProjectionSourceShapeTests.cs" Link="ActiveExecutionProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" Link="AnswerDialogueNpcQuestionDispatchSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AssemblyInfo.cs" Link="AssemblyInfo.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodySettledOwnershipSourceShapeTests.cs" Link="BodySettledOwnershipSourceShapeTests.cs" />
@@ -62,6 +63,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildingContactWiringTests.cs" Link="BuildingContactWiringTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestRetrieveRollbackActionSourceShapeTests.cs" Link="ChestRetrieveRollbackActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestSeamProbe.cs" Link="ChestSeamProbe.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChopTreeSwingOutcomeSourceShapeTests.cs" Link="ChopTreeSwingOutcomeSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ClaimMailAttachmentOverflowCleanupSourceShapeTests.cs" Link="ClaimMailAttachmentOverflowCleanupSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ClearanceLeaseWiringTests.cs" Link="ClearanceLeaseWiringTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ClearFishPondActionSourceShapeTests.cs" Link="ClearFishPondActionSourceShapeTests.cs" />
@@ -71,6 +73,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterMineLadderSourceShapeTests.cs" Link="EnterMineLadderSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ExecutionArgumentWireCoverageTests.cs" Link="ExecutionArgumentWireCoverageTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixtureTickGateLivenessTests.cs" Link="FixtureTickGateLivenessTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityAdmissionSourceShapeTests.cs" Link="HarvestQualityAdmissionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityProjectionSourceShapeTests.cs" Link="HarvestQualityProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\LevelUpSettledEvidenceTests.cs" Link="LevelUpSettledEvidenceTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ModEntryFixtureBoundaryTests.cs" Link="ModEntryFixtureBoundaryTests.cs" />
@@ -82,6 +85,8 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ReceiptRevisionMonotonicitySourceShapeTests.cs" Link="ReceiptRevisionMonotonicitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SettlementMenuCapabilitySourceShapeTests.cs" Link="SettlementMenuCapabilitySourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TransportApproachWiringTests.cs" Link="TransportApproachWiringTests.cs" />

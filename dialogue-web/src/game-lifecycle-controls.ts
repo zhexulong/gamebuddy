@@ -154,7 +154,7 @@ export type GameSessionPhase =
  * - `restart_gamebuddy` is the only way out of a quarantined launch, and it is
  *   off this page entirely.
  */
-export type GameSessionForwardAction =
+type GameSessionForwardAction =
   /**
    * No step of this state's own: the shell's surface switch is the way out. Reserved
    * for `no_projection`, where the Host published no Game projection at all, and kept

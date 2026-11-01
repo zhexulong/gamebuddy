@@ -72,7 +72,7 @@ export type CompanionActivationControls = Readonly<{
  * the step a build that does not serve the route leaves. `terminal` is the single state with
  * nothing to do - and the gate's job is to keep it the single one.
  */
-export type CompanionForwardAction = "choose" | "terminal" | "restart" | "stop_game_then_choose" | "update_or_reload";
+type CompanionForwardAction = "choose" | "terminal" | "restart" | "stop_game_then_choose" | "update_or_reload";
 
 export function deriveCompanionActivationControls(
   input: Readonly<{

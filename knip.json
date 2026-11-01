@@ -17,7 +17,14 @@
         "tools/live-run/frontend/phases/launch.mjs!",
         "tools/live-run/frontend/phases/report.mjs!",
         "tools/live-run/frontend/probes/prerequisite-check.mjs!",
-        "tools/live-run/frontend/probes/runtime-discover.mjs!"
+        "tools/live-run/frontend/probes/runtime-discover.mjs!",
+        // Named because knip cannot see the caller: both are spawned as a subprocess by a sibling,
+        // not imported. `report-run-cost.mjs` is run by `run-chat-live-audit.mjs` and imports
+        // `run-cost-usage.mjs`; `check-lockfile-freeze.mjs` is spawned twice by `scripts/pre-commit.mjs`.
+        // A file whose only consumer is a spawn is unreachable to an import-graph tool, and deleting it
+        // because knip called it unused would remove a working gate.
+        "tools/perf/report-run-cost.mjs!",
+        "tools/scripts/check-lockfile-freeze.mjs!"
       ],
       "project": [
         "tools/**/*.mjs"
