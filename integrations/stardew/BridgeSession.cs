@@ -283,7 +283,9 @@ string? bodyProgramUnavailableReason = null,
                          // The declared spatial precondition, or null when this action declares none.
                          descriptor.Approach is { } approach
                              ? new FarmhandActionApproachRequirementWire(approach.Relation, approach.WithinTiles)
-                             : null)
+                             : null,
+                         // The snapshot family this action's targets come from, or null when it addresses none.
+                         descriptor.TargetFamily)
                      : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
             this.runtimeAttestation.LaunchGeneration,
