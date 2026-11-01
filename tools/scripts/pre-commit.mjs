@@ -136,3 +136,32 @@ try {
   console.error(`pre-commit: this commit does not compile\n${detail}`);
   process.exit(1);
 }
+
+// THE SECOND BLOCKING STEP. Same scoping rule as the typecheck above: it fires only when a lockfile is
+// in THIS commit, so a neighbour's lockfile edit cannot block someone else's work, and a commit that
+// touches no lockfile pays nothing. See the header of check-lockfile-freeze.mjs for why a commit that
+// changes a lockfile and not the readings about it is the failure being prevented.
+try {
+  const output = execFileSync("node", ["tools/scripts/check-lockfile-freeze.mjs"], {
+    encoding: "utf8",
+    maxBuffer: 1 << 26,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  console.log(
+    `pre-commit: ${
+      output
+        .trim()
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0)
+        .slice(-1)[0]
+    }`,
+  );
+} catch (error) {
+  const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim();
+  if (typeof error.status !== "number") {
+    console.error(`pre-commit: could not check the lockfile freeze\n${detail || error.message}`);
+    process.exit(1);
+  }
+  console.error(`pre-commit: the lockfile freeze does not describe this tree\n${detail}`);
+  process.exit(1);
+}
