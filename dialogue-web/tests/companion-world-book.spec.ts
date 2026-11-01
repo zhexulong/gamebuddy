@@ -711,7 +711,11 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   ] as const) {
     expect(measured.width, `${label}: the editor has a width`).toBeGreaterThan(0);
     expect(measured.right, `${label}: the editor stays inside its viewport`).toBeLessThanOrEqual(viewport);
-    expect(measured.fields, `${label}: four fields per row`).toBe(12);
+    // The editor gives each entry four fields - a title, the trigger words, the always-with-her switch
+    // and the text - so its field count is the fixture's entry count times four. `12` pinned that
+    // product at today's three entries, so a fixture of a different size would have measured a
+    // different editor and read as a layout defect.
+    expect(measured.fields, `${label}: four fields per entry`).toBe(entries.length * 4);
     expect(measured.widest, `${label}: no field is collapsed to nothing`).toBeGreaterThan(40);
   }
 
