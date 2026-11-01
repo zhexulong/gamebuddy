@@ -413,6 +413,32 @@ public sealed record BridgeChestState(string ChestId, int X, int Y, string Displ
 /// <summary>One occupied slot of a <see cref="BridgeChestState"/>: the container's own slot index, what is in it, and how many.</summary>
 public sealed record BridgeChestItem(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
+/// <summary>
+/// The chests of the LOCATION the actor is standing in, counted as one bounded line: how many there are, how many items
+/// they hold between them, and how many have no free slot left.
+///
+/// <para>
+/// `Chests` is the entity family: one row per container the actor could reach right now, carrying that container's whole
+/// contents. It cannot answer "what is in my chests" without the reader counting rows and adding stacks, and its list is
+/// bounded to `TargetDiscoveryRadius` (6) so a container across the farm is not in it at all. This is the summary beside
+/// it, the same split `wateringWhereabouts` makes beside `cropTargets`.
+/// </para>
+/// <para>
+/// The count is LOCATION-WIDE, not radius-bounded: every eligible container the location holds is counted, including the
+/// ones `Chests` leaves out. That is why the field carries no location of its own - it describes `BridgeSnapshot.Location`,
+/// the one place the actor is, so there is no second spelling of that fact to disagree with it - and why the rendered fact
+/// line says "this location" rather than presenting the number as a world total. A count that silently means "within six
+/// tiles" is the defect this exists to avoid: `待浇水作物: 0` printed from a 6-tile scan, measured 2026-10-31.
+/// </para>
+/// <para>
+/// `ItemCount` is the number of ITEMS (the sum of every occupied slot's stack), not the number of occupied slots.
+/// `FullCount` counts containers whose occupied slots have reached the engine's own `Chest.GetActualCapacity()`: such a
+/// container has no slot left for a new stack, which is what a player means by a full chest. Merging into an existing
+/// stack is still possible, so this is a fact about room, not a promise that `chest_store` would refuse.
+/// </para>
+/// </summary>
+public sealed record BridgeChestsSummary(int ChestCount, int ItemCount, int FullCount);
+
 // Lane E: one native Shipping Bin building plus the exact shippable backpack
 // slot the actor would hand to Farm.shipItem. X/Y is the bin's top-left
 // footprint tile (the actor must stand adjacent to the building), never a tile
@@ -535,6 +561,10 @@ public sealed record BridgeSnapshot(
     // Positional and required here, unlike its defaulted siblings, because the two row-per-pair families it
     // replaced are gone: there is no earlier parameter to preserve an argument order against.
     IReadOnlyList<BridgeChestState>? Chests,
+    // The container SUMMARY beside the container family: the location's chests, their items and how many are full, in one
+    // row instead of a list the reader has to add up. Location-wide, so it answers a question `Chests` cannot (that family
+    // is radius-bounded), and published under the same capability gate because both describe the same containers.
+    BridgeChestsSummary? ChestsSummary,
     IReadOnlyList<BridgeInventoryItemFact>? InventoryItemFacts,
     IReadOnlyList<BridgeFoodTarget>? FoodTargets,
     IReadOnlyList<BridgeShippingBinTarget>? ShippingBinTargets,
