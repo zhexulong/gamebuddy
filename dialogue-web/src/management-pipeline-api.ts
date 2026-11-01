@@ -831,13 +831,20 @@ export type MemoryItemV1 = Readonly<{
  * One narrative chapter of the companion's long-term memory: the stretch of time it covers, the body, and
  * whether the player has touched it. Same kind of thing as a Memory row, same rule: the player may correct
  * it or remove it.
+ *
+ * The two facts are separate fields because a chapter carries both at once and they answer different
+ * questions: `status` is the LIFECYCLE (`sealed` while it stands in her long story, `deleted` for the
+ * tombstone the panel still lists) and `editedByPlayer` is PROVENANCE (the player's own text or removal is
+ * what stands). A corrected chapter is `sealed` AND `editedByPlayer: true` - she wrote the chapter, the
+ * player corrected its words - which is why a single `sealed | edited | deleted` status could not carry
+ * both: it made a correction into a lifecycle and lost the fact that the chapter is still there.
  */
 export type MemoryChapterV1 = Readonly<{
   handle: string;
   title: string;
   span: string;
   content: string;
-  status: "sealed" | "edited" | "deleted";
+  status: "sealed" | "deleted";
   editedByPlayer: boolean;
 }>;
 
@@ -1406,7 +1413,7 @@ const MEMORY_CATEGORIES = ["semantic", "interaction"] as const;
 const MEMORY_STATUSES = ["active", "permanent", "archived"] as const;
 const MEMORY_ORIGINS = ["player", "companion"] as const;
 const MAX_MEMORY_ITEMS = 200;
-const MEMORY_CHAPTER_STATUSES = ["sealed", "edited", "deleted"] as const;
+const MEMORY_CHAPTER_STATUSES = ["sealed", "deleted"] as const;
 const MEMORY_CHAPTER_KEYS = ["handle", "title", "span", "content", "status", "editedByPlayer"] as const;
 const DRAFT_KEYS = ["apiVersion", "revision", "text"] as const;
 const SAVE_DRAFT_KEYS = ["apiVersion", "selectionGeneration", "expectedRevision", "text"] as const;

@@ -73,14 +73,16 @@ function memoryRead(overrides = {}) {
   return {
     apiVersion: 1,
     projectionRevision: HANDLE,
-    // Chapters are the continuity's narrative history, on the same panel and under the same revision.
+    // Chapters are the continuity's narrative history, on the same panel and under the same revision. This one
+    // carries BOTH facts the contract separates: the fold sealed it, and the player has since corrected it. The
+    // lifecycle says the chapter exists; the provenance says whose words stand in it.
     chapters: [
       {
         handle: HANDLE,
         title: "First days",
         span: "2026-10-01\u21922026-10-03",
         content: "We put up the shutters; you hated the colour.",
-        status: "edited",
+        status: "sealed",
         editedByPlayer: true,
       },
     ],
@@ -176,6 +178,15 @@ test("management Memory mutations accept every operation the contract declares, 
 test("management Memory validators and client use exact read and CSRF-bound mutation routes", async () => {
   const read = memoryRead();
   assert.deepEqual(validateMemoryRead(read), read);
+  // The chapter's two facts are two fields: a correction is provenance, never a lifecycle, so `edited` is not a
+  // status the mirror accepts - accepting it is what let a corrected chapter stop reporting that it exists.
+  const [chapter] = read.chapters;
+  assert.throws(() => validateMemoryRead({ ...read, chapters: [{ ...chapter, status: "edited" }] }), TavernProtocolError);
+  // ... and the provenance is its own required field, not something a client infers from the status.
+  assert.throws(
+    () => validateMemoryRead({ ...read, chapters: [{ ...chapter, editedByPlayer: "player" }] }),
+    TavernProtocolError,
+  );
   const command = { apiVersion: 1, operation: "update", expectedProjectionRevision: HANDLE, handle: `${"C".repeat(42)}A`, content: "Updated memory." };
   assert.deepEqual(validateMemoryMutationCommand(command), command);
   assert.throws(() => validateMemoryMutationCommand({ ...command, extra: true }), TavernProtocolError);

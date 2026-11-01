@@ -284,6 +284,72 @@ test("mounted memory service projects only safe DTOs for the exact continuity", 
   assert.equal(results.continuityId, "continuity_01");
 });
 
+test("mounted memory service projects a chapter's lifecycle and its provenance as two separate facts", async () => {
+  const results = await mounted(`
+    const { TavernBrowserValidatorsV1 } = await import(contractUrl);
+    const chapter = (chapterId, status, editedAt, content) => ({
+      chapterId,
+      title: "Week " + chapterId,
+      spanStartSequence: chapterId,
+      spanEndSequence: chapterId + 10,
+      startDate: "2026-10-0" + chapterId,
+      endDate: "2026-10-0" + chapterId,
+      content,
+      status,
+      editedAt,
+    });
+    const stub = Object.freeze({
+      listMemories: async () => [],
+      // Three rows the store distinguishes by ONE column: the fold's own text, the player's correction of it,
+      // and the player's removal of it. The correction replaces the body, not the chapter.
+      listChapters: async () => [
+        chapter(1, "sealed", null, "She wrote this one."),
+        chapter(2, "edited", 1760000000000, "She wrote this one; you corrected it."),
+        chapter(3, "deleted", 1760000000001, "She wrote this one; you removed it."),
+      ],
+    });
+    const service = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const read = await service.read();
+    process.stdout.write(JSON.stringify({
+      chapters: read.chapters.map((entry) => ({
+        status: entry.status,
+        editedByPlayer: entry.editedByPlayer,
+        content: entry.content,
+      })),
+      keys: Object.keys(read.chapters[0]).sort(),
+      handleCount: new Set(read.chapters.map((entry) => entry.handle)).size,
+      schemaOk: TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(read),
+    }));
+    await service.close();
+    await lease.close();
+    await authority.close();
+  `);
+  const chapters = results.chapters as ReadonlyArray<{
+    status: string;
+    editedByPlayer: boolean;
+    content: string;
+  }>;
+  assert.equal(results.schemaOk, true);
+  assert.equal(chapters.length, 3);
+  // The lifecycle answers "is this chapter still in her long story": a correction does not take it out, only a
+  // removal does. Reading the store's status verbatim made a corrected chapter report itself as `edited`, which
+  // is not a lifecycle at all - nothing could then tell a corrected chapter from a missing one.
+  assert.deepEqual(
+    chapters.map((entry) => entry.status),
+    ["sealed", "sealed", "deleted"],
+  );
+  // The provenance answers "whose words are these": the fold's on the untouched chapter, the player's on the
+  // correction, and the player's removal on the tombstone.
+  assert.deepEqual(
+    chapters.map((entry) => entry.editedByPlayer),
+    [false, true, true],
+  );
+  assert.equal(chapters[1]?.content, "She wrote this one; you corrected it.");
+  // Exposure stays the bounded browser DTO: no chapter id, no timestamp, nothing durable.
+  assert.deepEqual(results.keys, ["content", "editedByPlayer", "handle", "span", "status", "title"]);
+  assert.equal(results.handleCount, 3);
+});
+
 test("mounted memory service projects every injected Memory row and fingerprints changes beyond row 500", async () => {
   const results = await mounted(`
     const { TavernBrowserValidatorsV1 } = await import(contractUrl);

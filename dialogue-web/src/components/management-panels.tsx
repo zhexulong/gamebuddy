@@ -1359,20 +1359,31 @@ export function MemoryPanel({
           <p className="memory-chapters-hint">{labels.memoryChaptersHint}</p>
           <ul className="memory-chapter-list">
             {chapters.map((chapter) => {
-              const badge =
-                chapter.status === "deleted"
-                  ? labels.memoryChapterDeleted
-                  : chapter.status === "edited"
-                    ? labels.memoryChapterEdited
-                    : labels.memoryChapterSealed;
+              // Two facts, two badges. The lifecycle says what the row IS in her long story - a chapter the
+              // fold sealed while it stands, a kept tombstone once removed - and the provenance says whose
+              // words the body holds once the player has corrected it. They used to share one label over one
+              // union, so a corrected chapter could only render as "corrected" and no longer showed that it
+              // was a chapter she had written at all: the correction had overwritten the lifecycle.
+              const lifecycle = chapter.status === "deleted" ? labels.memoryChapterDeleted : labels.memoryChapterSealed;
               return (
                 <li key={chapter.handle} className="memory-chapter" data-memory-chapter={chapter.status}>
                   <div className="memory-chapter-head">
                     <h4 className="memory-chapter-name">{chapter.title}</h4>
                     <span className="memory-chapter-span">{chapter.span}</span>
                     <span className="memory-chapter-badge" data-memory-chapter-badge={chapter.status}>
-                      {badge}
+                      {lifecycle}
                     </span>
+                    {/*
+                      The correction sits BESIDE the lifecycle rather than in its place, because both are
+                      true of the same row. A removed chapter does not carry it: the removal already says
+                      whose act took the chapter out, and stacking "you corrected this" on a tombstone would
+                      claim an edit where the player made a removal.
+                    */}
+                    {chapter.editedByPlayer && chapter.status !== "deleted" && (
+                      <span className="memory-chapter-badge" data-memory-chapter-provenance="player">
+                        {labels.memoryChapterEdited}
+                      </span>
+                    )}
                   </div>
                   {correctingHandle === chapter.handle ? (
                     <div className="memory-chapter-correct">

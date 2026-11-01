@@ -382,10 +382,20 @@ export const MemoryItemV1Schema = strictObject({
  * and whether the player has touched it.
  *
  * A chapter is the same kind of thing as a Memory row - Magic Context produced it, the player reads it
- * here - so it follows the same rule: the player may correct it or remove it. `status` names which text is
- * shown (`sealed` is the fold's own, `edited` is the player's), and `deleted` is a tombstone the panel
- * still lists, so a removal stays visible instead of quietly vanishing from a history the player is
- * auditing.
+ * here - so it follows the same rule: the player may correct it or remove it.
+ *
+ * The two facts about a chapter are carried SEPARATELY, because they answer different questions and a
+ * chapter can carry both at once:
+ *  - `status` is the chapter's LIFECYCLE: `sealed` while it stands in her long story (the fold wrote it,
+ *    and a player's correction keeps the chapter and the span exactly where the fold put them), and
+ *    `deleted` for a tombstone the panel still lists, so a removal stays visible instead of quietly
+ *    vanishing from a history the player is auditing.
+ *  - `editedByPlayer` is PROVENANCE: whether the player's own text stands where the fold's did.
+ *
+ * These briefly shared one field (`status: sealed | edited | deleted`), and that was a defect a client
+ * could not see past: a correction became a lifecycle state, so an edited chapter could no longer report
+ * that it had been sealed, and every reader of `status === "sealed"` got a wrong answer about a chapter
+ * that plainly exists. A row can be sealed AND corrected, so the panel can show both.
  */
 export const MemoryChapterV1Schema = strictObject({
   handle: OpaqueHandle,
@@ -393,7 +403,7 @@ export const MemoryChapterV1Schema = strictObject({
   /** The covered span, already rendered ("2026-10-01→2026-10-03") so no client formats dates. */
   span: Type.String({ minLength: 1, maxLength: 128 }),
   content: MemoryText,
-  status: Type.Union([Type.Literal("sealed"), Type.Literal("edited"), Type.Literal("deleted")]),
+  status: Type.Union([Type.Literal("sealed"), Type.Literal("deleted")]),
   /** True when the player's own text or removal is what stands, so the panel can say whose words these are. */
   editedByPlayer: Type.Boolean(),
 });

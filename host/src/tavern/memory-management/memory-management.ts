@@ -121,6 +121,18 @@ export function createMemoryManagementService(
   const projectChapterHandle = (chapterId: number): string =>
     createHmac("sha256", handleSecret).update(`chapter\0${continuityId}\0${chapterId}`, "utf8").digest("base64url");
 
+  /**
+   * One chapter, projected as TWO facts that the store keeps in one status column.
+   *
+   * The store's `status` answers "whose text is this row's body" (`sealed` is the fold's, `edited` is the
+   * player's, `deleted` is the player's removal) and it replaces `sealed` rather than sitting beside it - so
+   * carrying it verbatim made a correction into a lifecycle state and dropped the sealed fact on the floor.
+   * The wire carries the two questions apart:
+   *  - lifecycle: the chapter still stands in her long story (`sealed`) or is a tombstone (`deleted`);
+   *  - provenance: the player's own text or removal is what stands (`editedByPlayer`).
+   * A corrected chapter is therefore `sealed` AND `editedByPlayer: true` - the span the fold sealed is still
+   * there, and the words in it are now hers to correct, which is exactly what the panel shows.
+   */
   const projectChapters = (rows: readonly MemoryChapterRowView[]): MemoryChapterV1[] =>
     rows.map((row) => {
       if (
@@ -135,9 +147,12 @@ export function createMemoryManagementService(
         title: typeof row.title === "string" && row.title.length > 0 ? row.title : "Chapter",
         span: span.length > 0 ? span : "unrecorded",
         content: row.content,
-        status: row.status,
-        // The panel says whose words these are, so a player can tell what they changed from what the
-        // companion wrote.
+        // The lifecycle: only a removal takes the chapter out of her long story. A correction does not -
+        // it replaces the body, not the chapter.
+        status: row.status === "deleted" ? ("deleted" as const) : ("sealed" as const),
+        // The provenance: the panel says whose words these are, so a player can tell what they changed from
+        // what the companion wrote. It is read from the store's content-authority answer (`status`), because
+        // that is the column that says which text the body holds.
         editedByPlayer: row.status !== "sealed",
       });
     });

@@ -776,12 +776,19 @@ test("a non-current Chats row is archived with its own handle and revision", asy
  * correct or remove what it wrote. This drives the correction through the shell and asserts the read-back the
  * panel renders - the UI half of the chain whose database half the fold gate covers with a real fold.
  *
+ * A chapter carries two facts and the spec pins both, because the defect this guards against was their
+ * conflation: the lifecycle (`sealed` while the chapter stands in her story, `deleted` for the kept tombstone)
+ * and the provenance of the words in it (`editedByPlayer`). A row can be sealed AND corrected - she wrote the
+ * chapter, the player changed its words - and a surface that renders one where the other belongs is wrong in
+ * both directions: it stops saying the chapter exists, and it stops saying whose words stand.
+ *
  * The shell only offers the management surfaces once its view is ready, so the stubs the other tests use for
  * that readiness (the draft and the chat list) are stubbed here too; without them the nav button never exists.
  */
 test("the Memory panel shows the companion's chapters and opens one for correction", async ({ page }) => {
   const chapterHandle = `${"D".repeat(42)}A`;
   const projectionRevision = `${"E".repeat(42)}A`;
+  const corrected = "You and I spent the first weeks putting the farm in order.";
   const mutations: Record<string, unknown>[] = [];
   let chapters = [
     {
@@ -827,8 +834,10 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(memoryRead()) });
     const command = route.request().postDataJSON() as Record<string, unknown>;
     mutations.push(command);
+    // The stub answers the way the Host does: the correction replaces the body and the provenance, and leaves
+    // the chapter's lifecycle alone. A chapter is not removed by being corrected.
     if (command.operation === "update_chapter")
-      chapters = [{ ...chapters[0], content: String(command.content), status: "edited", editedByPlayer: true }];
+      chapters = [{ ...chapters[0], content: String(command.content), status: "sealed", editedByPlayer: true }];
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(memoryRead()) });
   });
 
@@ -839,20 +848,36 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
   await expect(panel).toBeVisible();
   await expect(panel.getByText("Spring, first weeks")).toBeVisible();
   await expect(panel.locator('[data-memory-chapter-badge="sealed"]')).toHaveText("She wrote this");
+  // The fold's own text is untouched, so nothing claims a correction the player has not made.
+  await expect(panel.locator("[data-memory-chapter-provenance]")).toHaveCount(0);
 
   // The correction travels as a chapter command carrying the handle the panel was given, not as a Memory row.
-  // This is what the journey is for: the command's shape is the contract, and it is asserted before anything
-  // about the shell's own post-mutation refresh (which the client contract tests cover).
+  // The command's shape is the contract, and the surface's read-back below is the other half of it.
   await panel.getByRole("button", { name: "Correct", exact: true }).click();
   await expect(panel.locator("textarea")).toBeVisible();
-  await panel.locator("textarea").fill("You and I spent the first weeks putting the farm in order.");
+  await panel.locator("textarea").fill(corrected);
   await panel.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => mutations.length).toBe(1);
+  expect(mutations[0]).toEqual({
+    apiVersion: 1,
+    operation: "update_chapter",
+    expectedProjectionRevision: projectionRevision,
+    handle: chapterHandle,
+    content: corrected,
+  });
 
-  // Scope: the panel's own correction command is asserted separately by the client contract tests; what this
-  // journey pins is that the projection's chapters reach the panel and that opening a correction offers the
-  // draft the player edits. Driving the command through the shell needs the shell's own readiness flow
-  // stubbed more faithfully than a chapter fixture does, and a half-driven assertion would be worse than none.
+  // The two facts after the correction landed, each in its own place. The assertion this journey used to make
+  // here - that the chapter still held the fold's seal, on the premise that the save never travelled - pinned a
+  // premise that had gone stale: the write does travel, and what the row now is is the thing worth naming.
+  expect(chapters[0]?.content).toBe(corrected);
+  // The lifecycle survives the correction: the chapter she wrote is still the chapter, still sealed, because a
+  // correction replaces the words and not the chapter.
+  await expect(panel.locator('[data-memory-chapter-badge="sealed"]')).toHaveText("She wrote this");
+  // The provenance is the second fact, shown beside the first rather than in its place.
+  await expect(panel.locator('[data-memory-chapter-provenance="player"]')).toHaveText("You corrected this");
+  // ... and both facts are in the read-back the panel rendered, not only in the labels beside it.
   expect(chapters[0]?.status).toBe("sealed");
+  expect(chapters[0]?.editedByPlayer).toBe(true);
 });
 
 /**

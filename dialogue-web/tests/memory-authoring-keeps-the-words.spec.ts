@@ -138,8 +138,10 @@ async function stubMemory(
           pinned: false,
         },
       ];
+    // The Host's answer to a correction: the body and the provenance change, the chapter's lifecycle does
+    // not. It is still the chapter the fold sealed - only the words in it are now the player's.
     if (command.operation === "update_chapter")
-      chapters = [{ ...sealedChapter, content: command.content, status: "edited", editedByPlayer: true }];
+      chapters = [{ ...sealedChapter, content: command.content, status: "sealed", editedByPlayer: true }];
     await route.fulfill(
       jsonOk({ apiVersion: 1, projectionRevision: nextProjectionRevision, memories, chapters }),
     );
@@ -269,7 +271,10 @@ test.describe("the player's correction of a chapter", () => {
     await expect.poll(() => stub.writes.length).toBe(2);
     await expect(panel.locator("textarea")).toHaveCount(0);
     await expect(panel).toContainText(SENTINEL_CHAPTER);
-    await expect(panel.locator("[data-memory-chapter-badge]")).toHaveText(catalogue.memoryChapterEdited);
+    // Both facts, each in its own place: the correction is the provenance badge ...
+    await expect(panel.locator('[data-memory-chapter-provenance="player"]')).toHaveText(catalogue.memoryChapterEdited);
+    // ... and it did not overwrite the lifecycle, which still says whose chapter this is.
+    await expect(panel.locator('[data-memory-chapter-badge="sealed"]')).toHaveText(catalogue.memoryChapterSealed);
   });
 
   test("a correction lost before the Host answered keeps its draft too", async ({ page }) => {

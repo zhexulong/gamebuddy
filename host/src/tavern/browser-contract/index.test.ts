@@ -433,15 +433,42 @@ test("memory read projection contains only safe bounded rows and validates stric
     editedByPlayer: false,
   };
   assert.equal(TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [chapter] }), true);
-  // ... the player's own correction is the same shape, distinguished only by status/editedByPlayer, ...
+  // ... a chapter the player corrected is the SAME lifecycle with a different provenance: she still wrote
+  // this chapter, the player changed its words, and a client can read both facts at once because they are
+  // two fields. A correction is not a lifecycle state - an `edited` row could no longer say it exists, so
+  // the union that carried it also refused the truth ...
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
       ...memory,
-      chapters: [{ ...chapter, status: "edited", editedByPlayer: true }],
+      chapters: [{ ...chapter, content: "She remembers the first week, and the shutters.", editedByPlayer: true }],
     }),
     true,
   );
-  // ... and a chapter carrying a durable identifier the browser never sees is rejected by the same
+  // ... so `edited` is refused as a lifecycle, ...
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [{ ...chapter, status: "edited" }] }),
+    false,
+  );
+  // ... and a removal is the one lifecycle change: a tombstone the panel still lists, whose prose the
+  // player's removal is what stands ...
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      chapters: [{ ...chapter, status: "deleted", editedByPlayer: true }],
+    }),
+    true,
+  );
+  // ... while the provenance stays its own required fact, not something inferred from a status label.
+  assert.equal(
+    TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({
+      ...memory,
+      chapters: [
+        { handle, title: "The first week on the farm", span: "2026-10-01→2026-10-03", content: "x", status: "sealed" },
+      ],
+    }),
+    false,
+  );
+  // A chapter carrying a durable identifier the browser never sees is rejected by the same
   // strict shape as a memory row.
   assert.equal(
     TavernBrowserValidatorsV1.MemoryReadV1Schema.Check({ ...memory, chapters: [{ ...chapter, chapterId: 7 }] }),
