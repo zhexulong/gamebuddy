@@ -5,6 +5,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/*
+ * red-proof: inject  `--omit-post-history`, `--tool-naming-post-history` and `--omit-card-voice`
+ * were each run against a REAL product turn and each reddened its own judgement by name:
+ * `post_history_sentinel_absent`, `game_tool_named_in_chat_prompt`, `card_voice_sentinel_absent`.
+ * Those are the three flags the live runner already carries, so the assertions are shown able to
+ * fail by the same switch that removes the thing they watch for - not by a fixture that stages
+ * the failure in the test itself.
+ */
+
 import {
   buildWireContractReading,
   judgeCardVoiceOrdering,
