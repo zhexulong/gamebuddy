@@ -49,8 +49,13 @@
  * Usage:
  *   node tools/check-credential-export-isolation.mjs              # the verdict
  *   node tools/check-credential-export-isolation.mjs --root <dir> # the gate's own fixture
+ *
+ * red-proof: self-check  an assembler that copies a credential leaf beside an ordinary profile file ->
+ *                    `assembler_names_credential_file` names the module and the leaf, while the control whose
+ *                    include set omits it is silent (tools/check-credential-export-isolation.mjs)
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -64,6 +69,14 @@ const SOURCE_TREES = Object.freeze(["host/src", "host/scripts", "tools"]);
 
 /** Directories that are never shipped code. */
 const SKIP_DIRECTORIES = new Set(["node_modules", ".git", "dist", "dist-test", "bin", "obj", "coverage"]);
+
+/**
+ * The gate's own entry file is where this rule is STATED, and it carries the fixture that drives it. No module
+ * here copies `auth.json`; the text that quotes one is the falsifier below, and a gate that red on its own rule's
+ * statement would be deleted by the next person who touched it. The same declaration
+ * `check-build-artifact-producers.mjs` makes for its own file.
+ */
+const DECLARATIONS = Object.freeze(["tools/check-credential-export-isolation.mjs"]);
 
 /** A module that copies, archives or streams a file is assembling an artifact. */
 const COPY_PRIMITIVES = Object.freeze([
@@ -131,6 +144,7 @@ function shippedSources(root) {
   for (const tree of SOURCE_TREES) {
     for (const absolute of walk(join(root, tree))) {
       const path = relative(root, absolute).split(sep).join("/");
+      if (DECLARATIONS.includes(path)) continue;
       if (!isShipped(path)) continue;
       files.push({ path, absolute, text: readFileSync(absolute, "utf8") });
     }
@@ -666,9 +680,122 @@ function describe(violation) {
   }
 }
 
+/**
+ * The falsifier, run on every verdict: the gate's own rule driven over two fixture roots.
+ *
+ * The defect tree is the situation the promise exists for - an export that copies an agent directory's files by
+ * name, with the credential store among them. The gate must name the module AND the leaf it admits, not merely
+ * exit 1. The control is the same tree whose include set lists only the ordinary profile file: a gate that
+ * reported everything would pass the first check and fail this one, so the pair says the gate distinguishes.
+ */
+export function selfCheck() {
+  const checks = [];
+  const record = (id, ok, detail) => checks.push({ id, status: ok ? "passed" : "failed", detail });
+  const defect = selfCheckRoot(`import { copyFile } from "node:fs/promises";
+import { join } from "node:path";
+const AGENT_EXPORT_FILES = Object.freeze(["identity-profile.json", "auth.json"]);
+export async function bundle(agentDir, out) {
+  for (const name of AGENT_EXPORT_FILES) await copyFile(join(agentDir, name), join(out, name));
+}
+`);
+  const control = selfCheckRoot(`import { copyFile } from "node:fs/promises";
+import { join } from "node:path";
+const AGENT_EXPORT_FILES = Object.freeze(["identity-profile.json"]);
+export async function bundle(agentDir, out) {
+  for (const name of AGENT_EXPORT_FILES) await copyFile(join(agentDir, name), join(out, name));
+}
+`);
+  const offending = "tools/diagnostic-bundle.mjs";
+  try {
+    const violations = evaluate({ root: defect }).violations;
+    const named = violations.find(
+      (violation) =>
+        violation.code === "assembler_names_credential_file" &&
+        violation.file === offending &&
+        violation.leaf === "auth.json",
+    );
+    record(
+      "an_assembler_that_names_a_credential_file_is_reported_with_module_and_leaf",
+      named !== undefined,
+      named === undefined
+        ? `no such violation; got ${JSON.stringify(violations.map((violation) => violation.code))}`
+        : describe(named),
+    );
+
+    const clean = evaluate({ root: control }).violations;
+    record(
+      "the_same_assembler_that_leaves_the_credential_out_is_silent",
+      clean.length === 0,
+      clean.length === 0 ? "no violation" : JSON.stringify(clean.map((violation) => violation.code)),
+    );
+  } finally {
+    rmSync(defect, { recursive: true, force: true });
+    rmSync(control, { recursive: true, force: true });
+  }
+  return checks;
+}
+
+/**
+ * A fixture root holding the two modules the populations are derived from plus one export assembler. The store
+ * and the runtime layout are the same declarations `check-credential-export-isolation.test.mjs` drives its cases
+ * with, so the falsifier exercises the shipped derivations rather than a second copy of them.
+ */
+function selfCheckRoot(assembler) {
+  const root = mkdtempSync(join(tmpdir(), "credential-export-self-check-"));
+  const write = (path, text) => {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  };
+  write(
+    "host/src/tavern/connection-store.ts",
+    `import { join } from "node:path";
+const AUTH_FILE = "auth.json";
+const CONNECTION_KEYS_FILE = "tavern-connection-keys.json";
+export function connectionAuthPath(agentDir: string): string {
+  return join(agentDir, AUTH_FILE);
+}
+export function connectionKeysPath(agentDir: string): string {
+  return join(agentDir, CONNECTION_KEYS_FILE);
+}
+export async function write(next: Record<string, unknown>, agentDir: string): Promise<void> {
+  await atomicWriteFile(connectionAuthPath(agentDir), JSON.stringify(next));
+  await atomicWriteFile(connectionKeysPath(agentDir), JSON.stringify(next));
+}
+`,
+  );
+  write(
+    "host/src/runtime-identity.ts",
+    `import { join } from "node:path";
+export function resolveRuntimePaths(identity: unknown, root = join("h", ".gamebuddy")): RuntimePaths {
+  const key = identityKey(identity);
+  const resolvedRoot = resolve(root);
+  const runtimeCwd = join(resolvedRoot, "contexts", key);
+  return { runtimeCwd, agentDir: join(runtimeCwd, "pi-agent") };
+}
+`,
+  );
+  write("tools/diagnostic-bundle.mjs", assembler);
+  return root;
+}
+
 function main(argv) {
   const rootAt = argv.indexOf("--root");
   const root = rootAt < 0 ? REPOSITORY_ROOT : resolve(argv[rootAt + 1]);
+  const checks = selfCheck();
+  const failed = checks.filter((entry) => entry.status !== "passed");
+  process.stdout.write(
+    `${JSON.stringify({
+      gate: "credential_export_isolation/v1",
+      status: failed.length === 0 ? "passed" : "failed",
+      checks,
+    })}\n`,
+  );
+  if (failed.length > 0) {
+    process.stdout.write(
+      `credential_export_isolation_self_check_failed: ${failed.map((entry) => `${entry.id}: ${entry.detail}`).join("; ")}\n`,
+    );
+    return 1;
+  }
   const result = evaluate({ root });
   if (result.violations.length === 0) {
     process.stdout.write(

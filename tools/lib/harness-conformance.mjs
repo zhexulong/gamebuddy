@@ -303,6 +303,8 @@ export function checkExperimentalRunners({
  * 2026-10-20; `checkGateFalsifiers` runs each of them again and reads the report it prints.
  */
 const GATES_WITH_FALSIFIER = Object.freeze([
+  "check-build-artifact-producers.mjs",
+  "check-credential-export-isolation.mjs",
   "check-evidence-bundle.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
