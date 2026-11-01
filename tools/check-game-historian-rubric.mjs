@@ -17,6 +17,10 @@
  *   node tools/check-game-historian-rubric.mjs
  *   node tools/check-game-historian-rubric.mjs --run-dir .live-runs/game-ladder/<run>
  *   node tools/check-game-historian-rubric.mjs --run-dir .live-runs/game-ladder --all
+ *
+ * red-proof: self-check  the default run exercises every obligation on its own violating sample
+ *                    (`obligation_<id>_can_fail`) and requires an empty compartment set not to pass
+ *                    (node tools/check-game-historian-rubric.mjs)
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";

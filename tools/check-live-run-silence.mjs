@@ -19,6 +19,9 @@
  * Usage:
  *   node tools/check-live-run-silence.mjs --rules
  *   node tools/check-live-run-silence.mjs --run-dir .live-runs/game-ladder/<run>
+ *
+ * red-proof: self-check  `--rules` runs every rule against a synthetic timeline that violates it, so the gate
+ *                    cannot pass without being able to fail (node tools/check-live-run-silence.mjs --rules)
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

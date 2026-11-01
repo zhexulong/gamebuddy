@@ -10,6 +10,9 @@
  * A declaration that no longer describes the code it waives is reported on the
  * same verdict: the gate must not be quiet about a rule that quietly stopped
  * applying.
+ *
+ * red-proof: inject  an empty `catch {}` with no declaration -> `silent_failure:<kind>:<path>:<symbol>`
+ *                    (tools/lib/silent-failure.test.mjs, "an empty catch with no declaration is a finding")
  */
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

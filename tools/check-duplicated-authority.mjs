@@ -5,6 +5,9 @@
  * Default output is the first finding in `duplicated_authority:<id>:<path>:<line>`
  * form and exit 1; `--json` prints every finding as a JSON array (still exit 1
  * when any exist). A clean repo prints `duplicated_authority: none` and exits 0.
+ *
+ * red-proof: inject  the same literal spelled in a second module -> `duplicated_authority:<id>:<path>:<line>`
+ *                    (tools/lib/duplicated-authority.test.mjs, "a literal in two modules is caught")
  */
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

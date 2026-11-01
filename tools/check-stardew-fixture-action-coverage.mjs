@@ -6,6 +6,10 @@
  * launcher passes for the multi-day scenario must be a DECLARED lane, and that lane must carry the actions that
  * run cannot work without.
  *
+ * red-proof: inject  a lane set that omits an action its run needs -> `fixture_lane_missing_required_action:<lane>:<action>`,
+ *                    and an empty published surface -> `published_surface_empty`
+ *                    (tools/lib/fixture-action-coverage.test.mjs)
+ *
  *   node tools/check-stardew-fixture-action-coverage.mjs
  */
 import { readFileSync } from "node:fs";

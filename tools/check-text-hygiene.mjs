@@ -1,3 +1,5 @@
+// red-proof: inject  an untracked file ending in a trailing space, and a NUL byte inside another -> verdict
+//                    `blocked` with `trailing_whitespace` / `embedded_nul` (tools/check-text-hygiene.test.mjs)
 import { execFileSync } from "node:child_process";
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";

@@ -19,6 +19,9 @@
  *
  * The scan is literal-string based on purpose: it is checking that no file spells
  * the name a second time, which is exactly the thing a shared constant prevents.
+ *
+ * red-proof: inject  a csproj declaring the MSBuild default folder name -> a mismatch, not a pass
+ *                    (tools/check-stardew-mod-folder-name.test.mjs)
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

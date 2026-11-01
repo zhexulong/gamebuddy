@@ -13,6 +13,9 @@
  *   node tools/check-scope-references.mjs --rules read_before_declaration
  *
  * Exit code is 1 when any finding is reported, 0 otherwise.
+ *
+ * red-proof: inject  a catch block reading a binding scoped to the `try` body -> `out_of_scope_reference` naming
+ *                    the binding, and the same source with the rule disabled -> no finding (tools/check-scope-references.test.mjs)
  */
 
 import { readdir } from "node:fs/promises";

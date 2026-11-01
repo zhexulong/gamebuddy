@@ -3,6 +3,9 @@
  * P3.4 dependency advisory/disposition gate. This checker is deliberately
  * conservative: it validates the frozen snapshot, recomputes lock hashes, and
  * never treats a proposal as an approval. No scanner cache or secret is read.
+ *
+ * red-proof: inject  a rebuilt lock identity of 64 zeros where the snapshot names the real bytes ->
+ *                    `mismatched_lock_identity` (tools/check-dependency-risk.test.mjs)
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";

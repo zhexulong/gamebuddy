@@ -70,6 +70,10 @@
  * (`audit-totality.test.mjs`) injects one violation into a scratch copy of the
  * tree and shows the class red, then green again. The classes are pure functions
  * of a root directory so that proof needs no monkey-patching.
+ *
+ * red-proof: inject  one violation per class into a scratch copy of the tree -> that class reports it at
+ *                    `path:line`, and the same class is green again once the edit is reverted
+ *                    (tools/audit-totality.test.mjs)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
