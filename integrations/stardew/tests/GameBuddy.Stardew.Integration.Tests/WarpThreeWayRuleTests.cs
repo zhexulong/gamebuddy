@@ -251,8 +251,15 @@ public sealed class WarpThreeWayRuleTests
         string transition = MethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition(");
         transition.Should().NotContain("IsWarpBufferTile",
             "enter_exit targets a warp tile by definition; excluding it here would seal the companion indoors");
-        transition.Should().Contain("location.warps.FirstOrDefault(",
-            "the travel branch resolves the transition from the warp table that holds the exit tile");
+        transition.Should().Contain("ResolveLocationWarp(",
+            "the transition resolves its tile from the location's own warp table, which is the source the farmhouse/cabin exit depends on");
+        // The rule this pins is that the warp TABLE is consulted for a tile the door table does not own, not the exact
+        // expression that consults it. `2026-11-01` folded the lookup behind `ResolveLocationWarp` so that `enter_exit`
+        // could reach an edge warp the snapshot publishes (`round19`: Farm(41,65)->Forest refused as `door_not_available`
+        // seven times over three minutes). Pinning the call site instead of the callee made a correct widening look like a
+        // violation; pinning the callee keeps the invariant and survives the next refactor of the expression.
+        transition.Should().Contain("ResolveDoorWarp(",
+            "and the door table is still consulted first, so a real door keeps its native entry");
     }
 
     // ---- the four facts are the same tile, so they cannot drift apart -------------------------

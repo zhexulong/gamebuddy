@@ -356,7 +356,7 @@
     ],
     "rockSourceTargets": [
       {
-        "targetId": "rock_source_80d6aa75b8267729",
+        "targetId": "rock:ProbeFarm:3,3",
         "location": "ProbeFarm",
         "x": 3,
         "y": 3,
@@ -367,7 +367,7 @@
     ],
     "treeChopSourceTargets": [
       {
-        "targetId": "tree_chop_source_eaa1f6798ebc9daa",
+        "targetId": "tree_chop_source_03c10dd89cce9e22",
         "location": "ProbeFarm",
         "x": 3,
         "y": 2,

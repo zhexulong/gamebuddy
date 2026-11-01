@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Sensory;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Menus;
@@ -76,6 +77,23 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal static bool IsDismissibleOperationModalType(string typeName) =>
         DismissibleOperationModalTypes.Contains(typeName);
 
+    /// <summary>
+    /// The box's text, bounded to what a receipt can carry.
+    ///
+    /// <para>
+    /// A native dialogue line is authored for a 1200px box and can be long; a receipt is read by a model alongside the rest
+    /// of the turn. The bound matches the one the environment fact line gives a single fact, so a long line costs the same
+    /// everywhere rather than inventing a second budget. Truncation is marked, because a silently shortened sentence is worse
+    /// than a marked one.
+    /// </para>
+    /// </summary>
+    internal static string BoundedModalText(string text)
+    {
+        const int Maximum = 256;
+        string single = text.Replace('\r', ' ').Replace('\n', ' ');
+        return single.Length <= Maximum ? single : single.Substring(0, Maximum) + "...";
+    }
+
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -111,12 +129,25 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (modal is DialogueBox dialogue)
         {
             if (dialogue.isQuestion)
+            {
+                // The refusal must carry the QUESTION, not just the fact that one is being asked.
+                //
+                // `answer_dialogue` takes a `responseKey`, and the only way to choose one is to know what was asked and
+                // which keys are offered. The refusal used to say `question=true;require_answer_dialogue=true` and stop -
+                // which tells a caller to use another action without telling it anything it could use that action WITH.
+                string offered = dialogue.responses is { Length: > 0 } offeredResponses
+                    ? string.Join(",", offeredResponses.Select(response => response.responseKey))
+                    : string.Join(",", (Game1.questionChoices ?? new List<Response>()).Select(response => response.responseKey));
+                string? questionText = NpcDialoguePager.CurrentTextOrNull(dialogue);
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
                     ExecutionState.Rejected,
                     "modal_not_dismissible",
-                    "modal_type=DialogueBox;question=true;require_answer_dialogue=true");
+                    "modal_type=DialogueBox;question=true;require_answer_dialogue=true"
+                        + ";response_keys=" + offered
+                        + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)));
+            }
         }
         else if (!IsDismissibleOperationModalType(modalType))
         {
@@ -159,6 +190,23 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // an object dialogue and can re-open the next queued box -- DialogueBox.cs:198-216 -- and runs
         // Game1.afterDialogues, :243-248). Both terminals below state which of the two ran rather than
         // repeating a claim that is only true of one of them.
+        // WHAT THE BOX SAID, read BEFORE the close consumes it.
+        //
+        // `closeDialogue` pops the speaker's `CurrentDialogue` and dequeues the next queued box (DialogueBox.cs:198-216),
+        // so after it runs there is nothing left to read. Until this line existed the receipt named the modal's TYPE and
+        // nothing else: an informational box saying "tomorrow's forecast: heavy rain" was reported as
+        // `modal_type=DialogueBox;close_effect=native_dialogue_close`, and the companion closed the one thing that had
+        // answered its question without ever seeing the answer.
+        //
+        // The reader is `NpcDialoguePager.CurrentTextOrNull`, not `getCurrentString()` directly: that method is NOT total
+        // (it reads a possibly-null `Text` and a possibly-null speaker) and a live run threw a NullReferenceException out
+        // of it EVERY TICK, which silenced the bridge. Reusing the guarded reader keeps this from being the second place
+        // that learns the same lesson.
+        string? modalText = modal is DialogueBox textBox ? NpcDialoguePager.CurrentTextOrNull(textBox) : null;
+        string modalTextDetail = modalText is null or ""
+            ? string.Empty
+            : ";text=" + BoundedModalText(modalText);
+
         string closeEffect = modal is DialogueBox ? "native_dialogue_close" : "pure_cancel";
         try
         {
@@ -195,7 +243,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Succeeded,
                     "modal_dismissed",
-                    $"modal_type={modalType};dismissed=true;clearing=true;close_effect=engine_shipping_commit",
+                    $"modal_type={modalType};dismissed=true;clearing=true;close_effect=engine_shipping_commit{modalTextDetail}",
                     this.TryCreateLocalObservation(actor));
             }
             else
@@ -218,7 +266,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Succeeded,
                 "modal_dismissed",
-                $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}",
+                $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{modalTextDetail}",
                 this.TryCreateLocalObservation(actor));
         }
 
@@ -227,7 +275,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             executionId,
             ExecutionState.Failed,
             "postcondition_failed",
-            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp};cleared_modal={modalType};close_effect={closeEffect}",
+            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp};cleared_modal={modalType};close_effect={closeEffect}{modalTextDetail}",
             this.TryCreateLocalObservation(actor));
     }
 

@@ -2656,8 +2656,8 @@ public sealed partial class ModEntry : Mod
                 //
                 // This used to be `tree:{location}:{x},{y}:{treeType}` - a readable description that matches NO action's
                 // argument. `chop_tree_source` requires `expectedTargetId` built by
-                // `BuildTreeChopSourceTargetId` (`farmhandexecutioncontroller.cs`), a hash over the location, the tile, the
-                // type and the remaining health. A model reading this affordance therefore copied `ref` (or this
+                // `BuildTreeChopSourceTargetId` (`farmhandexecutioncontroller.cs`), a hash over the location, the tile and the
+                // species (never the durability, which the chop itself spends). A model reading this affordance therefore copied `ref` (or this
                 // description) into `expectedTargetId` and every chop failed: measured 2026-10-31 (`round15`), six
                 // `chop_tree_source` failures, every one carrying `sr1_...` where the hash belonged.
                 //

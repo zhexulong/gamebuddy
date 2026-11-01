@@ -2173,10 +2173,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // The container family's SENSED-ENTITY projection: one row per container, whole contents. Published while
         // EITHER container action is advertised, because both name the same containers, and never derived from the
         // action arguments - perception is a fact about the world, execution is the slice a handler re-derives.
-        IReadOnlyList<BridgeChestState>? chests = null;
-        if (advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
-            || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal))
-            chests = DiscoverChestStates(player);
+        bool containerActionsAdvertised = advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
+            || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal);
+        IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? DiscoverChestStates(player) : null;
+        // The one-row summary beside it, under the same gate: it describes the same containers, so a snapshot that
+        // publishes one and not the other would answer "what is in my chests" in one field and not the other.
+        BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2254,6 +2256,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
+            chestsSummary,
             (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
@@ -2545,7 +2548,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
         TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null,
-        AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, InventoryItemFacts: null, FoodTargets: null,
+        AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, ChestsSummary: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
         // reports Location "unknown" and zeroed stamina/health, and every action
@@ -3008,9 +3011,39 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ToArray();
     }
 
+    /// <summary>
+    /// The identity of one live tree source: the location, the tile and the SPECIES - never the durability.
+    /// </summary>
+    /// <remarks>
+    /// `health` used to be part of the hash, and it is the one value this action exists to change: `Tree.performToolAction`
+    /// subtracts `upgradeLevel switch { 0 => 1f, 1 => 1.25f, ... }` from `health` IN PLACE (Tree.cs:1200), a mature tree
+    /// starts at `startingHealth = 10` (Tree.cs:38, assigned at :187) and a basic axe removes exactly 1 (Tree.cs:1177-1200)
+    /// - so ten swings fell one tree. Node 0 of a two-node plan landed and took the tree from 10 to 9; node 1 arrived
+    /// carrying the `expectedTargetId` the plan had read from the observation, the preflight recomputed a DIFFERENT hash
+    /// from the new health, and the node was refused `tree_chop_target_changed`. The multi-swing interaction was
+    /// structurally impossible inside one plan. It is the same defect `def2fb07` carried on the rock side, repaired the
+    /// same way there (<see cref="BuildRockSourceTargetId"/>): a damaged source is the same source.
+    ///
+    /// What stays is what makes the tree THAT tree. The location and the tile are its address, and the terrain layer
+    /// holds at most one feature per tile, so that pair already names the entity. `treeType` is what keeps this from
+    /// degrading into "any tree at this tile": the tile can be cleared and replanted between the observation and the
+    /// request, and a different species standing there is a different tree.
+    ///
+    /// `stump` is absent for the same reason as `health` - it flips on the very swing that fells the tree (Tree.cs:1495)
+    /// - and it would be a second spelling of the family prefix anyway: the felled phase has its own family and its own
+    /// id (<see cref="BuildTreeStumpTargetId"/>, which has never hashed health). `growthStage` is absent because the
+    /// engine advances it by itself across days (Tree.cs:916) while `chop_tree_source` admits every stage at or above
+    /// `Tree.treeStage`; it is a precondition the execution side checks, not identity.
+    ///
+    /// The execution side still proves the tree is the one asked for: it re-derives THIS id (so location, tile and
+    /// species must all still match) and then requires the feature to be a `Tree`, not a stump, at least
+    /// `Tree.treeStage`, unmossed, untapped and `health > 0` - every remaining way a chop source can stop being the
+    /// source that was observed. Durability is a precondition there (`> 0`, the engine's own still-standing test,
+    /// Tree.cs:587), never part of the name.
+    /// </remarks>
     internal static string BuildTreeChopSourceTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop:{tree.treeType.Value}:{tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop:{tree.treeType.Value}";
         return $"tree_chop_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -3309,9 +3342,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
+    // The readback of the felled phase, identified by the same rule as the source it replaced: the location, the tile and
+    // the species. The durability is what `chop_stump` then spends (5 down to 0), so naming the stump by it would expire
+    // the row on every swing that chipped it.
     private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
-        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}:{tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}";
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}";
         return $"tree_chop_result_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
@@ -3563,7 +3599,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Agent can see how many swings remain; the action itself decides what one landing swing is worth.
         return NearestFirst(location.objects.Pairs
             .Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsBreakableStone(pair.Value)), player)
-            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
+            .Take(8).Select(pair => new BridgeRockSourceTarget($"rock:{location.NameOrUniqueName}:{(int)pair.Key.X},{(int)pair.Key.Y}", location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
     private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
@@ -3781,6 +3817,54 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 items));
         }
         return result;
+    }
+
+    /// <summary>
+    /// The location's chests as ONE bounded line: how many, how many items they hold, how many are full.
+    ///
+    /// <para>
+    /// The count is the LOCATION's, not the radius-6 window `DiscoverChestStates` publishes. Those are different questions
+    /// and both are legitimate: the entity family answers "which container can I name right now", this answers "what is in
+    /// my chests". Folding them together is how `待浇水作物: 0` came to be printed from a 6-tile scan (measured 2026-10-31), so
+    /// the summary walks the same container list with the radius filter dropped rather than reusing the bounded one.
+    /// </para>
+    /// <para>
+    /// Eligibility is <see cref="IsOwnedOrdinaryChest"/> - the predicate both container actions already resolve through - so
+    /// the summary counts exactly the containers a plan could open, never a neighbouring player's or a special chest the
+    /// handlers refuse.
+    /// </para>
+    /// <para>
+    /// "Full" is the engine's own capacity: `Chest.GetActualCapacity()`, which `Chest.addItem` compares against the
+    /// container's slot count (Chest.cs:883-888). That comparison runs AFTER its own `clearNulls()` (`:870`), so the count it
+    /// tests is the number of OCCUPIED slots - which is what this counts, read-only. A container at capacity cannot take a
+    /// new stack; one that can still merge into an existing stack is not room a `chest_store` could use, so this is a fact
+    /// about room rather than a promise about that action's admission.
+    /// </para>
+    /// </summary>
+    private static BridgeChestsSummary SummarizeChests(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return new BridgeChestsSummary(0, 0, 0);
+        int chestCount = 0;
+        int itemCount = 0;
+        int fullCount = 0;
+        foreach ((StardewValley.Objects.Chest chest, int _, int _, bool _) in LocationStorageContainers(location))
+        {
+            if (!IsOwnedOrdinaryChest(chest)) continue;
+            chestCount++;
+            // Same reading as the entity family: an empty slot is not an item the container holds.
+            IList<StardewValley.Item> inventory = chest.GetItemsForPlayer();
+            int occupiedSlots = 0;
+            for (int slot = 0; slot < inventory.Count; slot++)
+            {
+                StardewValley.Item? item = inventory[slot];
+                if (item is null || item.Stack <= 0) continue;
+                occupiedSlots++;
+                itemCount += item.Stack;
+            }
+            if (occupiedSlots >= chest.GetActualCapacity()) fullCount++;
+        }
+        return new BridgeChestsSummary(chestCount, itemCount, fullCount);
     }
 
     /// <summary>
