@@ -61,6 +61,13 @@ overrides:
   # ORT 1.30.0 permits adm-zip ^0.6.0, but 0.6.0 now carries open advisories;
   # pin the first patched release without changing the ORT ABI.
   'onnxruntime-node>adm-zip': 0.6.1
+  # pi-coding-agent names minimatch as an exact pin (`"minimatch": "10.2.6"`), not a
+  # range, so no `pnpm update` can move it. 11.0.3 is the first patched major and pi
+  # imports only the named `minimatch()` function, which 11 keeps. The override stays
+  # scoped to pi on purpose: eslint-plugin-jsx-a11y 6.10.2 calls minimatch through the
+  # v3 default export, which minimatch 9 removed, so a graph-wide override would break
+  # that plugin - and it is development-only, where the audit gate does not gate.
+  '@earendil-works/pi-coding-agent>minimatch': 11.0.3
   # dependency-cruiser 17.3.2 pins these two to vulnerable exact versions.
   'dependency-cruiser>ajv': 8.18.0
   'dependency-cruiser>picomatch': 4.0.5
