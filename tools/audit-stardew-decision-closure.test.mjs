@@ -26,6 +26,7 @@ import {
   DESCRIPTOR_PROJECTION_VOCABULARY,
   validateDescriptorProjection,
 } from "../packages/game-action-program/src/descriptors.mjs";
+import { parseActionSurface } from "../integrations/stardew/action-development/src/action-surface.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceOf = (relativePath) => readFileSync(path.join(ROOT, relativePath), "utf8");
@@ -846,13 +847,25 @@ test("dropping a member from the runtime-only set is named, not absorbed", () =>
 });
 
 test("a projection member the Host does not admit is named as the refusal it becomes", () => {
-  // The live risk, and the `450c8f90` replay: the gateway starts admitting `targetFamily` while the Host's whitelist
-  // still refuses it. The descriptor then parses here and is rejected at registration.
+  // The live risk, and the `450c8f90` replay: the gateway starts admitting a member while the Host's whitelist still
+  // refuses it. The descriptor then parses here and is rejected at registration.
+  //
+  // The injected member is no longer `targetFamily`. That WAS the live case when this proof was written - the gateway
+  // admitted the member and `KNOWN_ACTION_DESCRIPTOR_KEYS` did not - and the case is now closed at both sites, so
+  // appending it again widens nothing and the assertion would pass by having nothing to report. The member is named
+  // here instead, and the precondition below keeps this honest: if the Host ever admits it, this proof fails on the
+  // precondition rather than going quietly green.
+  const injected = "injectedFamily";
+  assert.equal(
+    hostDescriptorKeys().has(injected),
+    false,
+    `'${injected}' is now a member the Host admits, so this proof has nothing to widen - pick a member it refuses`,
+  );
   const widened = {
     ...DESCRIPTOR_PROJECTION_VOCABULARY,
     descriptor: {
       required: DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.required,
-      optional: [...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.optional, "targetFamily"],
+      optional: [...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.optional, injected],
     },
   };
   assert.deepEqual(
@@ -861,7 +874,7 @@ test("a projection member the Host does not admit is named as the refusal it bec
       hostEnvelopeKeys: hostEnvelopeKeys(),
       projection: widened,
     }).map((entry) => [entry.identity, entry.code]),
-    [["targetFamily", "host_whitelist_missing_member"]],
+    [[injected, "host_whitelist_missing_member"]],
   );
 });
 
@@ -962,3 +975,292 @@ test("an argument description is admitted at exactly the shape the Host enforces
   assert.equal(validateDescriptorProjection(described("x".repeat(513))), false);
   assert.equal(validateDescriptorProjection(described(7)), false);
 });
+
+// ---------------------------------------------------------------------------
+// The VALUE rule for `targetFamily`, at the three sites that spell it
+// ---------------------------------------------------------------------------
+//
+// The tests above compare MEMBER vocabularies. `targetFamily` needed the other half as well: three files each decide
+// which strings are a legal snapshot family, and they disagreed for a whole session without anything naming it.
+//
+//  - the producer `action-surface.mjs` holds `TARGET_FAMILY` and judged the generated artifact with it
+//  - the consumer `descriptors.mjs` holds `TARGET_FAMILY_NAME` and is the gateway the Host-side catalog is built from
+//  - the Host `protocol.ts` writes the same rule inline inside `isValidActionDescriptor`, where it cannot be imported
+//
+// The measured disagreement was not one of degree: the producer was still applying `IDENTIFIER`, the ACTION-ID rule, so
+// it admitted 2 of the 68 families the Mod declares (`warps`, `chests`) and refused the other 66.
+//
+// WHY THE FIXTURES ARE DERIVED. A hand-written list of 68 family names is a list of what its author remembered, and it
+// fails open the moment the Mod adds one. The population comes from two authorities instead: the Host's own
+// `SNAPSHOT_KEYS` - the set of fields a family may name - and the published artifact, which is what the Mod actually
+// declares. A rule that refuses a real family is red against the artifact, and a rule that admits a name no snapshot
+// field uses is red against `SNAPSHOT_KEYS`.
+//
+// WHY MUTUAL AGREEMENT ALONE WOULD BE WORTHLESS. Three rules that all admit `tool_slots` agree perfectly and are all
+// wrong. So agreement is asserted BESIDE two absolute properties - every real family passes, every malformed value is
+// refused - and the malformed set is the one place a name is written by hand, because a bad value is a shape nobody
+// derives from a correct one.
+
+/** The first regex literal in `text`, as a `RegExp`; throws rather than returning a permissive default. */
+function regexLiteralIn(text, what) {
+  const literal = /\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\\\n])+\/[gimsuy]*/u.exec(text)?.[0];
+  if (literal === undefined) throw new Error(`decision_closure_target_family_rule_unreadable:${what}`);
+  const lastSlash = literal.lastIndexOf("/");
+  return new RegExp(literal.slice(1, lastSlash), literal.slice(lastSlash + 1));
+}
+
+/**
+ * The three predicates, each re-derived from its own site's source.
+ *
+ * The producer's rule is read in two steps, and that is the point: first WHICH constant the `validateAction` guard
+ * applies to `targetFamily`, then that constant's own definition. Reading a constant's definition directly would have
+ * missed the defect this gate exists for - the guard said `IDENTIFIER`, and a definition-first reader would have found
+ * `IDENTIFIER`'s declaration and reported it as the family rule without noticing that an ACTION-ID rule was judging a
+ * snapshot field.
+ *
+ * The Host's is the awkward one: its rule is inline and unexported, so the regex and the two length bounds are read out
+ * of the `targetFamily` guard block and recombined exactly as that block combines them. Reading the block rather than
+ * restating `64` here is what makes a Host-side change to the bound visible instead of silently ignored.
+ *
+ * Every source is overridable so a case can mutate the REAL text of one site and re-derive through the same reader - a
+ * red proof built on a hand-written lookalike predicate proves only that the assertion runs.
+ */
+function targetFamilyRules({ producerSource, consumerSource, protocolSource } = {}) {
+  const producerText = producerSource ?? sourceOf(PRODUCER_VALIDATOR_PATH);
+  const producerConstant = /!([A-Z][A-Z0-9_]*)\.test\(value\.targetFamily\)/u.exec(producerText)?.[1];
+  if (producerConstant === undefined) {
+    throw new Error("decision_closure_target_family_rule_unreadable:producer guard");
+  }
+  const producerDefinition = new RegExp(
+    `const ${producerConstant} = (\\/(?:\\\\.|[^/\\\\\\n])+\\/[gimsuy]*);`,
+    "u",
+  ).exec(producerText)?.[1];
+  const producer = regexLiteralIn(producerDefinition ?? "", `producer ${producerConstant}`);
+  const consumer = regexLiteralIn(
+    /export const TARGET_FAMILY_NAME = (\/.*\/);/u.exec(
+      consumerSource ?? readFileSync(path.join(ROOT, "packages/game-action-program/src/descriptors.mjs"), "utf8"),
+    )?.[1] ?? "",
+    "consumer TARGET_FAMILY_NAME",
+  );
+
+  const protocolText = protocolSource ?? sourceOf(PROTOCOL_PATH);
+  const guardStart = protocolText.indexOf('if ("targetFamily" in value && value.targetFamily !== undefined) {');
+  if (guardStart < 0) throw new Error("decision_closure_target_family_rule_unreadable:host guard");
+  const guard = protocolText.slice(guardStart, protocolText.indexOf("return true;", guardStart));
+  const hostRegex = regexLiteralIn(guard, "host inline rule");
+  const emptyRefused = /value\.targetFamily\.length === 0/u.test(guard);
+  const ceiling = /value\.targetFamily\.length > (\d+)/u.exec(guard)?.[1];
+  if (!emptyRefused || ceiling === undefined) {
+    throw new Error("decision_closure_target_family_rule_unreadable:host length bounds");
+  }
+  const hostMax = Number(ceiling);
+
+  return Object.freeze({
+    producer: (value) => typeof value === "string" && producer.test(value),
+    consumer: (value) => typeof value === "string" && consumer.test(value),
+    host: (value) => typeof value === "string" && value.length > 0 && value.length <= hostMax && hostRegex.test(value),
+  });
+}
+
+/** Every family the published artifact declares, and every snapshot key a family may name: both derived. */
+function targetFamilyFixtures() {
+  const artifact = JSON.parse(sourceOf(ACTION_SURFACE_PATH));
+  const declared = [
+    ...new Set(
+      (Array.isArray(artifact.actions) ? artifact.actions : [])
+        .map((action) => action.targetFamily)
+        .filter((family) => family !== undefined),
+    ),
+  ].sort();
+  const snapshotKeys = [...hostSnapshotKeys()].sort();
+  return { declared, snapshotKeys };
+}
+
+function hostSnapshotKeys() {
+  return new Set(
+    [...arrayLiteralBody(sourceOf(PROTOCOL_PATH), "const SNAPSHOT_KEYS = [").matchAll(/"([^"]+)"/gu)].map(
+      (match) => match[1],
+    ),
+  );
+}
+
+/**
+ * The value a legal `targetFamily` may NOT be, each with the reason it is illegal.
+ *
+ * Written by hand because these are the shapes a rule exists to refuse - there is no correct population to derive them
+ * from. Each one is a real near-miss rather than a fuzzed string: `ToolSlots` is the C# property name the serializer
+ * never emits, `tool_slots`/`tool-slots` are the two spellings a reader who has not seen the wire would guess, and the
+ * over-long name is the bound every other published lower-camel name carries.
+ */
+const MALFORMED_TARGET_FAMILIES = Object.freeze([
+  ["ToolSlots", "the C# property name; the serializer publishes `toolSlots`"],
+  ["", "present-but-empty says nothing; absent is the surface's statement of no family"],
+  ["tool-slots", "a spelling no snapshot response carries"],
+  ["tool_slots", "the snake_case shape, which is the ACTION-ID rule borrowed into a field name"],
+  ["toolSlots ", "a trailing space is a different name"],
+  ["9lives", "a field name starts with a letter"],
+  ["x".repeat(65), "longer than the 64 every other published lower-camel name is bounded at"],
+  ["x".repeat(200), "far past the bound, so the refusal cannot be a coincidence of the regex"],
+]);
+
+/**
+ * Where the three sites disagree, per fixture, naming the site that is the ODD ONE OUT rather than the pair.
+ *
+ * `sites` is a map of name -> predicate so a case can mutate one and show the finding names THAT one. Naming every
+ * disagreeing site would be technically true and practically useless: when one site drifts the other two still agree
+ * with each other, and a report that named all three would leave the reader to work out which is which. With three
+ * sites a strict minority always exists; if a future fourth site makes the split even, every site is named and the
+ * detail says the split is even, so the case fails loudly instead of guessing.
+ */
+function targetFamilyRuleDrift({ sites, declared, malformed }) {
+  const findings = [];
+  const names = Object.keys(sites);
+  const check = (value, code, detail) => {
+    const verdicts = names.map((name) => [name, sites[name](value)]);
+    const admitted = verdicts.filter(([, admittedThis]) => admittedThis).map(([name]) => name);
+    const refused = verdicts.filter(([, admittedThis]) => !admittedThis).map(([name]) => name);
+    if (admitted.length === names.length || admitted.length === 0) return;
+    const minority = admitted.length < refused.length ? admitted : refused.length < admitted.length ? refused : names;
+    const split =
+      admitted.length === refused.length
+        ? `the split is even (${admitted.length}/${names.length}), so no site can be called the odd one out`
+        : `${minority.join(", ")} disagrees with ${names.filter((name) => !minority.includes(name)).join(", ")}`;
+    for (const name of minority) {
+      findings.push({
+        identity: `${name}:${JSON.stringify(value).slice(0, 32)}`,
+        code,
+        detail: `${detail}; ${split}`,
+      });
+    }
+  };
+
+  for (const value of declared) check(value, "target_family_real_value_refused", `the surface declares '${value}'`);
+  for (const [value, why] of malformed) {
+    check(value, "target_family_malformed_value_admitted", `${why}`);
+  }
+  return findings.sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+const currentTargetFamilyDrift = () =>
+  targetFamilyRuleDrift({
+    sites: targetFamilyRules(),
+    ...targetFamilyFixtures(),
+    malformed: MALFORMED_TARGET_FAMILIES,
+  });
+
+test("the three sites that decide what a targetFamily may be apply one rule", () => {
+  assert.deepEqual(
+    currentTargetFamilyDrift(),
+    [],
+    "the producer, the consumer and the Host disagree about targetFamily",
+  );
+});
+
+test("every family the Mod declares, and every snapshot key, passes all three sites", () => {
+  // The absolute half, so three identically-wrong rules cannot pass. `snapshotKeys` is the wider set: it includes
+  // fields no action consumes yet, and a family is by definition one of them.
+  const { declared, snapshotKeys } = targetFamilyFixtures();
+  assert.ok(declared.length > 60, `the artifact must declare its families (read ${declared.length})`);
+  const sites = targetFamilyRules();
+  for (const value of [...declared, ...snapshotKeys]) {
+    for (const [name, rule] of Object.entries(sites)) {
+      assert.equal(rule(value), true, `${name} refuses '${value}', which the snapshot publishes as a field`);
+    }
+  }
+});
+
+test("every malformed targetFamily is refused by all three sites", () => {
+  const sites = targetFamilyRules();
+  for (const [value, why] of MALFORMED_TARGET_FAMILIES) {
+    for (const [name, rule] of Object.entries(sites)) {
+      assert.equal(rule(value), false, `${name} admits ${JSON.stringify(value)}: ${why}`);
+    }
+  }
+});
+
+test("a site that drifts is named, and the real families show it", () => {
+  // The red proof, and it mutates the REAL source text rather than substituting a lookalike predicate: the producer's
+  // guard is changed back to `IDENTIFIER` - the exact defect this unit repaired - and the reader re-derives the rule
+  // from that text through the same two steps it uses on the real file.
+  const asFound = sourceOf(PRODUCER_VALIDATOR_PATH).replace(
+    "!TARGET_FAMILY.test(value.targetFamily)",
+    "!IDENTIFIER.test(value.targetFamily)",
+  );
+  assert.notEqual(asFound, sourceOf(PRODUCER_VALIDATOR_PATH), "the mutation must actually apply");
+  const findings = targetFamilyRuleDrift({
+    sites: targetFamilyRules({ producerSource: asFound }),
+    ...targetFamilyFixtures(),
+    malformed: MALFORMED_TARGET_FAMILIES,
+  });
+
+  assert.ok(findings.length > 0, "the drifted producer must be visible");
+  assert.deepEqual(
+    [...new Set(findings.map((entry) => entry.identity.split(":")[0]))],
+    ["producer"],
+    "only the drifted site may be named",
+  );
+
+  const refusedReal = findings.filter((entry) => entry.code === "target_family_real_value_refused");
+  // 66 of the 68, exactly as measured: `warps` and `chests` are the two `IDENTIFIER` happens to admit.
+  assert.equal(refusedReal.length, 66, `IDENTIFIER admits 2 of 68, so 66 must be named (named ${refusedReal.length})`);
+  assert.ok(refusedReal.every((entry) => entry.identity.startsWith("producer:")));
+
+  // And the reuse is wrong on a second axis the real families cannot show: `IDENTIFIER` is a SNAKE_CASE rule, so it
+  // ADMITS two of the malformed values. Both must be named, which is why the malformed set is not decoration.
+  const admittedMalformed = findings
+    .filter((entry) => entry.code === "target_family_malformed_value_admitted")
+    .map((entry) => entry.identity);
+  assert.deepEqual(admittedMalformed, [
+    `producer:${JSON.stringify("tool_slots")}`,
+    `producer:${JSON.stringify("x".repeat(65)).slice(0, 32)}`,
+  ]);
+});
+
+test("a site that drifts permissive is named too", () => {
+  // The other direction, and the one a real-family fixture cannot see: a rule widened until it admits anything passes
+  // every real family. The malformed set is what catches it, and the finding must still name the site.
+  const sites = targetFamilyRules();
+  const findings = targetFamilyRuleDrift({
+    sites: { ...sites, consumer: () => true },
+    ...targetFamilyFixtures(),
+    malformed: MALFORMED_TARGET_FAMILIES,
+  });
+
+  assert.deepEqual(
+    [...new Set(findings.map((entry) => entry.identity.split(":")[0]))],
+    ["consumer"],
+    "only the widened site may be named",
+  );
+  assert.equal(findings.length, MALFORMED_TARGET_FAMILIES.length, "every malformed value must be named");
+  assert.ok(findings.every((entry) => entry.code === "target_family_malformed_value_admitted"));
+});
+
+test("the extracted rules are the ones the sites actually use, not lookalikes", () => {
+  // A gate that re-derives a rule can agree with itself while the product uses another - the failure the audit
+  // discipline calls a diagnostic that re-implements the logic. Both importable sites are therefore driven end to end
+  // through their real entry points: the producer through `parseActionSurface`, the consumer through
+  // `validateDescriptorProjection`. The Host's rule stays source-derived, because `protocol.ts` is TypeScript whose
+  // specifiers do not resolve from a `.mjs` test; that gap is stated rather than papered over.
+  const sites = targetFamilyRules();
+
+  for (const [value, why] of MALFORMED_TARGET_FAMILIES) {
+    assert.equal(sites.producer(value), false, why);
+    assert.equal(producerAdmitsTargetFamily(value), false, `parseActionSurface admits ${JSON.stringify(value)}`);
+    assert.equal(sites.consumer(value), false, why);
+    assert.equal(validateDescriptorProjection(descriptorWith({ targetFamily: value })), false);
+  }
+  assert.equal(producerAdmitsTargetFamily("toolSlots"), true);
+  assert.equal(validateDescriptorProjection(descriptorWith({ targetFamily: "toolSlots" })), true);
+});
+
+/** The producer's real entry point: one action carrying `targetFamily`, judged by `parseActionSurface`. */
+function producerAdmitsTargetFamily(value) {
+  const artifact = JSON.parse(sourceOf(ACTION_SURFACE_PATH));
+  artifact.actions[0].targetFamily = value;
+  try {
+    parseActionSurface(JSON.stringify(artifact));
+    return true;
+  } catch {
+    return false;
+  }
+}
