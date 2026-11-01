@@ -2165,6 +2165,12 @@ const readWorldClock = () => {
 
 async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = {}) {
   const traceStart = actionTrace.length;
+  // Where the RECEIPT log stood when this watch began, for the same reason as `traceStart`: a receipt that was
+  // already there belongs to an earlier night (or to the day still being played), so it cannot be this night's
+  // terminal. Measured 2026-10-31 (`round18`): both nights crossed with `entered_via=native_sleep_prompt` on the
+  // Mod's own receipt, and both records still carried `terminal: null` because the watcher only ever looked at
+  // `actionTrace` - which held ZERO rows, because every dispatch in that run went through Body Program.
+  const factStart = factLog.length;
   // The calendar this watch began on. A crossing is `dayOfMonth` becoming a DIFFERENT value, which is true
   // whatever path dispatched the night and whatever the clock reads afterwards.
   //
@@ -2179,11 +2185,88 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   //     day is `timeOfDay: 600`), so it would have waited for a night that had already ended.
   //
   // Judging by the calendar makes the watcher independent of WHICH path dispatched the night - flat, program, or
-  // a native event - which is the fact it was always trying to observe.
+  // a native event - which is the fact it was always trying to observe. The calendar answers WHETHER a night passed
+  // and can never answer HOW; the dispatch below is read from BOTH channels so the receipt that does answer it is
+  // not lost to the channel the night happened to travel.
   const startDay = client.state?.snapshot?.dayOfMonth ?? null;
   const calendarMovedPastStartDay = () => {
     const now = client.state?.snapshot?.dayOfMonth;
     return Number.isInteger(startDay) && Number.isInteger(now) && now !== startDay;
+  };
+  /**
+   * The companion's own `advance_day` dispatches inside this watch window, from EITHER channel.
+   *
+   * `advance_day` is the only thing that starts a `SleepAndAdvanceDayLifecycle`, so this is the dispatch the whole
+   * watcher is built to follow. It reaches the game over TWO channels (see `execution-trace.mjs`), and the watcher
+   * used to read only the first one:
+   *   - FLAT: a request frame this runner sent itself, recorded in `actionTrace`;
+   *   - PROGRAM: a node the Mod ran natively inside a Body Program. There is no request frame, so `actionTrace`
+   *     holds nothing at all for it - but the receipt the Mod mints for the node names its action, because the
+   *     receipt's `actionId` is stamped from the router's own dispatch binding (`ExecutionManager.AddTrace`), the
+   *     same binding a flat dispatch goes through. `accomplishedSince` already reads the log for exactly this reason;
+   *     this is the same fact, read for the night instead of for the day's work.
+   *
+   * Measured 2026-10-31 (`round18`): `actionTrace.jsonl` was 1 byte. The Mod logged `sleep lifecycle finished:
+   * state=passed; reason=day_advanced` at 03:38:25 and its receipt `state=Succeeded;reason=day_advanced;
+   * revision=1559` (request `3982f1bc...`, `actionId=advance_day`) arrived at that same moment - inside this
+   * window, which had begun around 03:36:26 - and the watcher still answered `terminal: null`, so both nights were
+   * recorded `cause: "engine"` with the crossing witnessed only by the calendar. The receipt was in hand; the
+   * watcher never looked.
+   */
+  const advanceDayRequestsSinceStart = () => {
+    const requests = [];
+    const add = (requestId) => {
+      if (typeof requestId !== "string" || requestId.length === 0) return;
+      if (!requests.includes(requestId)) requests.push(requestId);
+    };
+    for (const entry of actionTrace.slice(traceStart)) if (entry?.action === "advance_day") add(entry.requestId);
+    for (const entry of factLog.slice(factStart)) {
+      const receipt = recordedReceipt(entry);
+      if (receipt === null || receipt.actionId !== "advance_day") continue;
+      add(entry.requestId ?? receipt.requestId);
+    }
+    return requests;
+  };
+  /**
+   * The terminal each of those dispatches minted, in dispatch order, skipping any that is still in flight.
+   *
+   * The SAME read a flat dispatch gets (`terminalReceiptFor` on the request the dispatch named), applied to the
+   * request found in whichever channel carried it.
+   */
+  const advanceDayTerminals = () => {
+    const terminals = [];
+    for (const requestId of advanceDayRequestsSinceStart()) {
+      const terminal = terminalReceiptFor(factLog, requestId);
+      if (terminal !== undefined) terminals.push(terminal);
+    }
+    return terminals;
+  };
+  /**
+   * The night's own CROSSING receipt - a `succeeded/day_advanced` terminal - or null when no dispatch in this window
+   * produced one.
+   *
+   * Only a crossing counts as the night's terminal. A `rejected` `advance_day` is a fact about the DISPATCH (the Mod
+   * requires an indoor, standing, unheld actor), and handing it back as the night's terminal would make
+   * `classifyNight` answer `night_not_advanced` about a night the calendar says was crossed - the opposite of what
+   * this record is for. So a refused attempt stays out of `terminal` and the night keeps whatever attribution its
+   * other witnesses support.
+   */
+  const crossingTerminal = () =>
+    advanceDayTerminals().find((entry) => entry.state === "succeeded" && entry.reasonCode === "day_advanced") ?? null;
+  /**
+   * Has a dispatch appeared that can still become this night?
+   *
+   * A dispatch alone is not enough, because `advance_day` can be REFUSED and a refusal mints a terminal too. Watching
+   * a refused night would spend the whole night budget on one nothing started - and the day loop keeps offering turns
+   * until the day is crossed, so a later turn may sleep for real. While every dispatch already ended in a
+   * non-crossing terminal the wait therefore keeps waiting, which is what it did when the only channel it read was
+   * the flat one.
+   */
+  const nightBegan = () => {
+    const requests = advanceDayRequestsSinceStart();
+    if (requests.length === 0) return false;
+    if (crossingTerminal() !== null) return true;
+    return advanceDayTerminals().length < requests.length;
   };
   const observeQuietly = async () => {
     try {
@@ -2204,9 +2287,13 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       if (bridgeDisconnections.length > 0) {
         return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
       }
+      // The night BEGINS when the companion dispatches `advance_day`, read from EITHER channel. Reading only the
+      // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
+      // notice the night only once the calendar had moved - i.e. once it was over.
+      if (nightBegan()) return null;
+      // The engine crossed the night whatever dispatched it (the 02:00 pass-out calls `NewDay` itself), so a moved
+      // calendar is also a night under way.
       if (calendarMovedPastStartDay()) return null;
-      const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
-      if (dispatched !== undefined) return null;
       // A settled day turn is NOT a companion who refused to sleep, and calling it that was the oldest mistake in this
       // watcher. Measured 2026-10-25: the turn settled after 468 s with the world at 15:00 and the companion saying
       // \"太阳落山前要是还不行，我先把碎石和土块收拾利索\" - she intended to keep working, and a turn ends when the model
@@ -2405,11 +2492,12 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
             : null,
       }),
   });
-  // The companion's own `advance_day` for THIS night, if it ever dispatched one, and the terminal receipt its
-  // lifecycle minted. Read here rather than after the crossing check because it is one of the witnesses that decides
-  // the cause, and a cause read from a receipt that has not been looked up yet is the hole the two-valued ternary hid.
-  const dispatched = actionTrace.slice(traceStart).find((entry) => entry.action === "advance_day");
-  const terminal = dispatched === undefined ? null : (terminalReceiptFor(factLog, dispatched.requestId) ?? null);
+  // The companion's own `advance_day` for THIS night - on whichever channel it was dispatched - and the terminal
+  // receipt its lifecycle minted. Read here rather than after the crossing check because it is one of the witnesses
+  // that decides the cause, and a cause read from a receipt that has not been looked up yet is the hole the
+  // two-valued ternary hid.
+  const dispatched = advanceDayRequestsSinceStart();
+  const terminal = crossingTerminal();
   // HOW the night ended, from the witnesses that can answer it. It is a CAUSE on the day's record and never a verdict -
   // the night was watched on to the day the engine opened.
   //
@@ -2432,23 +2520,27 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     enteredVia: parseReceiptEvidence(terminal?.evidence).entered_via ?? null,
     passOutObserved: outcome.passOutObserved === true,
   });
-  // Did the night actually pass? TWO answers, and the calendar is the one that cannot be faked by a dispatch path.
+  // Did the night actually pass? The calendar is the witness that no dispatch path can hide, and it is read even
+  // when a receipt exists - `classifyNight` cross-checks the two against each other rather than trusting either.
   //
   // `actionTrace` records only FLAT dispatches. Measured 2026-10-28 (`round5`): all 42 of that run's dispatches went
   // through Body Program, so `advance_day` - which the Mod DID execute, `dismiss_modal` succeeding at 00:27:59 and
   // SMAPI logging "after save, starting spring 6 Y1" at 00:28:04 - was invisible here. The run was reported as
   // `night_never_started:actor_held_by_cutscene` while the world had in fact rolled over.
   //
-  // The calendar is the fact the watcher was always trying to observe: `dayBefore` is the day this watch began on,
-  // and a different `dayOfMonth` afterwards means the engine opened a new day whatever dispatched it.
+  // So the calendar is the fact the watcher was always trying to observe: `dayBefore` is the day this watch began on,
+  // and a different `dayOfMonth` afterwards means the engine opened a new day whatever dispatched it. What it cannot
+  // say is HOW. That used to cost the night its receipt as well - the crossing branch below fired on EVERY night and
+  // returned `terminal: null` - which is why round18's two `native_sleep_prompt` nights were recorded `engine`.
   const afterNight = await observeQuietly();
   const dayAdvanced = (() => {
     const now = afterNight?.dayOfMonth;
     return Number.isInteger(dayBefore) && Number.isInteger(now) && now !== dayBefore;
   })();
-  if (dayAdvanced) {
-    // No flat `advance_day` receipt exists to read, and inventing one would be a receipt for something the trace
-    // never saw. `release` says what actually closed the night.
+  if (dayAdvanced && terminal === null) {
+    // The calendar is the only witness this night has: no `advance_day` receipt arrived in this window on either
+    // channel, and inventing one would be a receipt for something nothing observed. `release` says what actually
+    // closed the night, and `cause` stays `engine` - the crossing is a fact and its attribution is not.
     return Object.freeze({
       terminal: null,
       after: Object.freeze({ ...afterNight, dayBefore }),
@@ -2458,8 +2550,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       reasonCode: null,
     });
   }
-  // The night's own terminal, already read above because it is one of the cause's witnesses.
-  if (dispatched === undefined) {
+  // The night's own terminal, already read above because it is one of the cause's witnesses. A window in which
+  // nothing dispatched an `advance_day` and no calendar moved held no night to attribute; a dispatch that neither
+  // crossed nor produced a terminal keeps the watch's own reason at the bottom instead.
+  if (dispatched.length === 0 && terminal === null) {
     // `night_never_started:` stays the prefix because that IS the finding - no `advance_day` ever started a night. The
     // suffix is the watch's own reason, and since `rollover_menu_deadlock` exists it says WHICH kind of night never
     // started: one nothing was closing, or one that was merely slow. Flattening the two back into one word here would
