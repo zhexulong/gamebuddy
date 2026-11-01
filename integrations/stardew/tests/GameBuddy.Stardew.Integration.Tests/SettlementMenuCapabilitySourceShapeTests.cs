@@ -23,7 +23,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// night never walks to the bed.
 /// </para>
 /// </summary>
-public sealed class SettlementMenuCapabilityTests
+[Trait("kind", "source-shape")]
+public sealed class SettlementMenuCapabilitySourceShapeTests
 {
     [Fact]
     public void TheDayStartAsksWhetherTheOwnerCanStillActRatherThanWhetherItFinished()
