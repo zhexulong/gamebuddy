@@ -180,7 +180,7 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: TAVERN_ENVIRONMENT_VARIABLE,
     setupFields: [],
     allowedPlayerModels: [
-      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 131_072),
+      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 1_000_000),
     ],
     escapeHatch: false,
     probeBearerAuth: true,

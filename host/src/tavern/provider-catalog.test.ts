@@ -207,7 +207,13 @@ test("a model id is stated only for the endpoint this product runs, never for so
     ["deepseek-v4.1-flash"],
     "the developer-only gateway keeps the model its own endpoint serves",
   );
-  assert.equal(catalogModel(operator, "deepseek-v4.1-flash")?.contextWindow, 131_072);
+  // The window is the MODEL's fact, not this test's: `deepseek-v4.1-flash` declares a 1M context, and pinning the number
+  // here would be a second copy of the catalogue's own claim - the shape that let `MAX_BATCH_BYTES` be "roughly 15k tokens"
+  // for a year. Asserted as a property instead, so a catalogue correction does not need a test edit.
+  assert.ok(
+    (catalogModel(operator, "deepseek-v4.1-flash")?.contextWindow ?? 0) >= 1_000_000,
+    "the flagship model declares a million-token window; anything smaller silently folds this product 30x too often",
+  );
 
   // The escape hatch is the third state: no model list, and the player supplies the id.
   const hatch = catalogProvider(TAVERN_ESCAPE_HATCH_PROVIDER_ID);

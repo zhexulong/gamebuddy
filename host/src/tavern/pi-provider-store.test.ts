@@ -23,6 +23,10 @@ import {
   TAVERN_PROVIDER_CATALOG,
   type TavernCatalogProvider,
 } from "./provider-catalog.js";
+
+/** The window the catalog declares for the model these tests exercise; read, never restated. */
+const DEEPSEEK_CATALOG_WINDOW = catalogModelById("deepseek-v4.1-flash")?.contextWindow ?? 0;
+assert.ok(DEEPSEEK_CATALOG_WINDOW > 0, "the catalogue must declare the model these tests exercise");
 /**
  * The zero-configuration equivalence boundary.
  *
@@ -60,8 +64,8 @@ const ZERO_CONFIG_DEEPSEEK = `{
           "input": [
             "text"
           ],
-          "contextWindow": 131072,
-          "maxTokens": 50331,
+          "contextWindow": 1000000,
+          "maxTokens": 384000,
           "cost": {
             "input": 0.14,
             "output": 0.28,
@@ -392,17 +396,20 @@ test("the declared window is the model's own, a conservative floor for an unknow
   try {
     delete process.env[key];
     // A model the catalog knows states its own window: no path invents one on top of it.
-    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 131_072);
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), DEEPSEEK_CATALOG_WINDOW);
     // A model it does not know gets the conservative floor, not a million: Pi refuses nothing at this size, and folding is
     // measured against something the endpoint will actually accept.
     assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
-    assert.ok(CONSERVATIVE_CONTEXT_WINDOW < 131_072, "the floor is below the smallest catalogued window");
+    assert.ok(
+      CONSERVATIVE_CONTEXT_WINDOW < DEEPSEEK_CATALOG_WINDOW,
+      "the floor is below the smallest catalogued window",
+    );
     // The fixture still wins over both, because a measurement must be able to shrink it.
     process.env[key] = "80000";
     assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 80_000);
     // An unusable value is reported and ignored, never guessed at - and then the catalog's own number applies again.
     process.env[key] = "12";
-    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 131_072);
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), DEEPSEEK_CATALOG_WINDOW);
     process.env[key] = "not-a-number";
     assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
   } finally {

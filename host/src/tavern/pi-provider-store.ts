@@ -62,6 +62,14 @@ const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
  * actually accept.
  */
 export const CONSERVATIVE_CONTEXT_WINDOW = 32_768;
+/**
+ * Share of a model's context window that its output tokens may occupy.
+ *
+ * DeepSeek V4.1 Flash publishes 1,000,000 context and 384,000 max output, so the ratio is 0.384. It is stated once here as
+ * that ratio rather than as the pair of literals it produced: `min(384_000, window * 0.384)` was two constants expressing
+ * one fact, and if either drifts from the model's own figures the smaller one silently wins.
+ */
+const DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT = 0.384;
 
 /**
  * The window to declare for a model.
@@ -150,9 +158,11 @@ export function environmentProviderEntry(modelId: string, catalog?: readonly Tav
               },
         input: ["text"],
         contextWindow,
-        // The output cap has to travel with the window, or a shrunk window asks the provider for more output than
-        // it has room for. 0.384 keeps the production window's own ratio, so the default is unchanged.
-        maxTokens: Math.min(384_000, Math.floor(contextWindow * 0.384)),
+        // The output cap travels with the window, or a shrunk window asks the provider for more output than it has room
+        // for. 0.384 is the model's OWN published output-to-context ratio (DeepSeek V4.1 Flash: 384,000 of 1,000,000), and
+        // 384,000 is that same product - so the two constants are one fact stated twice. Keeping them because they agree today
+        // is the `MAX_BATCH_BYTES` shape; they are derived from the window instead, which is the authority for both.
+        maxTokens: Math.floor(contextWindow * DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT),
         cost: {
           input: 0.14,
           output: 0.28,
