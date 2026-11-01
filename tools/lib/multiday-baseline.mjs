@@ -335,18 +335,29 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     if (!witnessedByCalendar && night.facts.day_started_observed !== "true") {
       violations.push(violation("night_day_started_edge_not_observed", `${where}.evidence.day_started_observed`));
     }
-    // A claim of a save is only believable if the save boundary was ever entered. The lifecycle's own evidence now
-    // distinguishes "a save was observed" from "the save-boundary budget expired and the transition was taken
-    // anyway", because the two produce the same phase sequence (measured 2026-10-17/18: run g28 moved
-    // `AwaitingSave -> AwaitingDayStart` exactly 300 frames after entering it - the budget, not a save - while
-    // `is_saving=false` for the whole run).
-    if (
-      !witnessedByCalendar &&
-      night.facts.save_boundary_not_observed === "true" &&
-      night.facts.saved_observed === "true"
-    ) {
-      violations.push(violation("night_claims_a_save_without_entering_the_save_boundary", `${where}.evidence`));
-    }
+    // A SAVE THAT ARRIVED AFTER THE BOUNDARY POLL EXPIRED IS NOT A CLAIM WITHOUT A BOUNDARY.
+    //
+    // A rule used to fire here when `save_boundary_not_observed=true` met `saved_observed=true`, on the premise that
+    // a save is only believable if `IsSaving` was ever polled true. Measured 2026-11-01 (`round19`,
+    // `2026-11-01T04-56-14-966Z-multiday_routine`), that premise is false, and the rule reds a night the Mod crossed
+    // correctly. The run's own log, for the night the rule fired on:
+    //
+    //   13:08:49  AwaitingSettlement -> AwaitingSave              the save boundary WAS entered
+    //   13:08:54  AwaitingSave -> AwaitingDayStart               on the 300-frame budget, not on a save
+    //   13:09:50  Context: before save / SaveGame.Save() completed without exceptions
+    //   13:09:52  after save, starting spring 6 Y1               the save the receipt reports
+    //
+    // The engine saves SYNCHRONOUSLY, so `Game1.IsSaving` is true only while the update loop is blocked and a
+    // per-frame poll can never see it - which is why `saving_observed` reads false on a night that really saved.
+    // `saved_observed` is SMAPI's own `Saved` edge, the engine's authority for "a save completed". So
+    // `save_boundary_not_observed` records a SEQUENCE - the transition was taken before the save began - and not a
+    // contradiction: both facts are true, and the pair is the ordinary shape of a night whose settlement summary was
+    // committed after the `AwaitingSave` window had already closed.
+    //
+    // Nothing in the receipt distinguishes that honest sequence from a false save claim, so a rule built on their
+    // conjunction can only red honest nights. The claim itself stays protected by `night_saved_edge_not_observed`
+    // above, which demands the save witness rather than an inference from a poll. `save_boundary_not_observed` stays
+    // published because it is the one fact that says the transition was taken on the budget.
 
     // The menu that decides whether a rollover stalls: it must have been closed by the product, and
     // the closure must be a receipted fact rather than an inference.
@@ -442,7 +453,6 @@ const CHECKED_RULES = Object.freeze([
   "night_world_calendar_unobserved",
   "night_world_calendar_mismatch",
   "night_saved_edge_not_observed",
-  "night_claims_a_save_without_entering_the_save_boundary",
   "night_day_started_edge_not_observed",
   "night_cause_claims_a_sleep_without_a_receipt",
   "night_raised_unclosable_menu",

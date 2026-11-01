@@ -357,6 +357,72 @@ test("the Mod's own night edges are required, not inferred", () => {
   assert.deepEqual(codes(noSaving), []);
 });
 
+test("a night that saved after the boundary window closed is not a claim without a boundary (round19)", () => {
+  // MEASURED 2026-11-01 (`round19`, `2026-11-01T04-56-14-966Z-multiday_routine`). This receipt is that night's,
+  // verbatim, and a rule turned it into `night_claims_a_save_without_entering_the_save_boundary` while the Mod log
+  // for the same night recorded every step of the crossing:
+  //
+  //   13:08:49  AwaitingSettlement -> AwaitingSave     the save boundary WAS entered
+  //   13:08:54  AwaitingSave -> AwaitingDayStart      on the 300-frame budget, before the save began
+  //   13:09:50  Context: before save / SaveGame.Save() completed without exceptions
+  //   13:09:52  after save, starting spring 6 Y1      the save `saved_observed=true` reports
+  //   13:09:52  sleep lifecycle finished: state=passed; reason=day_advanced; evidence=receipt
+  //
+  // So the night crossed through the native sleep prompt, the save really ran, and both save facts are TRUE. The rule
+  // read `save_boundary_not_observed` as "the boundary was never entered" when it means "the boundary WAIT expired
+  // before a save" - and the engine saves synchronously, so `IsSaving` is only true while the update loop is blocked
+  // and a per-frame poll cannot see it. A receipt cannot separate that honest sequence from a false save claim, so the
+  // conjunction has no lie left to catch; the save CLAIM stays guarded by `night_saved_edge_not_observed`.
+  const ROUND19_NIGHT_ONE_EVIDENCE =
+    "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+    "saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=true;" +
+    "shipping_summary_settled=committed;day_before=4;days_before=1;day_after=5;days_after=2;" +
+    "enteredVia=native_sleep_prompt;topology=single_player;dayBefore=4;dayAfter=5;daysPlayedBefore=1;daysPlayedAfter=2;" +
+    "savingObserved=False;savedObserved=True;dayStartedObserved=True;saveBoundaryNotObserved=True;readyCheckObserved=False";
+  const round19 = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({
+        day: 1,
+        // The world after that night: spring 6, and the record's own cause (the Mod's `entered_via`).
+        after: { dayOfMonth: 6, seasonIndex: 0 },
+        terminal: { state: "succeeded", reasonCode: "day_advanced", evidence: ROUND19_NIGHT_ONE_EVIDENCE },
+        menus: [{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1793509795642 }],
+      }),
+      DAY({ day: 2 }),
+    ],
+  });
+  assert.deepEqual(
+    codes(round19),
+    [],
+    `a night that entered the save boundary and then saved must not be red: ${JSON.stringify(round19.violations)}`,
+  );
+  assert.equal(round19.daysCrossed, 2, "both nights crossed");
+  assert.equal(round19.unobservedNights, 0, "the mechanism was observed on both: the Mod's own lifecycle receipt");
+
+  // THE ASSERTION'S FORCE SURVIVES, on the fact that can actually carry it: a receipt may not claim a save it has no
+  // witness for. `saved_observed` is SMAPI's own `Saved` edge, so this is the half that tells a real save from a claim.
+  const claimsASaveItDoesNotHave = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({
+        day: 1,
+        after: { dayOfMonth: 6, seasonIndex: 0 },
+        terminal: {
+          state: "succeeded",
+          reasonCode: "day_advanced",
+          evidence: EVIDENCE({ savedObserved: "false", dayBefore: 4, daysBefore: 1, dayAfter: 5, daysAfter: 2 }),
+        },
+      }),
+      DAY({ day: 2, after: { dayOfMonth: 7, seasonIndex: 0 } }),
+    ],
+  });
+  assert.ok(
+    codes(claimsASaveItDoesNotHave).includes("night_saved_edge_not_observed"),
+    "a night whose receipt has no save witness is still red",
+  );
+});
+
 test("the settlement menu must be closed by the product, with its own receipt", () => {
   // The first-night menu is what holds the actor at the end of a night, so zero dismissals makes the
   // whole "a rollover does not stall" claim vacuous.
