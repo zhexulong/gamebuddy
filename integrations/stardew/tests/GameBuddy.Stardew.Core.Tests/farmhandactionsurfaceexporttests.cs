@@ -121,13 +121,18 @@ public sealed class FarmhandActionSurfaceExportTests
 
         foreach (JsonElement action in root.GetProperty("actions").EnumerateArray())
         {
-            // `approach` and `sceneTarget` are each present only on the actions that declare them (WhenWritingNull), and
-            // they are INDEPENDENT: `pickup_forage` declares both, so the expected set is built from what is actually there
-            // rather than picking one branch. Still an EXACT set, not a superset check - an action that gained or lost a
-            // field has to change this assertion.
+            // `approach`, `sceneTarget` and `targetFamily` are each present only on the actions that declare them
+            // (WhenWritingNull), and they are INDEPENDENT: `pickup_forage` declares two of the three, so the expected set is
+            // built from what is actually there rather than picking one branch. Still an EXACT set, not a superset check - an
+            // action that gained or lost a field has to change this assertion.
+            //
+            // `targetFamily` was the third one and this assertion caught its absence the moment it was added - which is the
+            // point of an exact set. It reaches the wire so a refusal can name the family a caller should re-read
+            // (`756a0394`); before that the Host's `requirementOf` clause never fired.
             List<string> declared = new() { "actionId", "identityVersion", "lifecycle", "kind", "argumentSchema", "outputFacts", "resourceTemplate", "effect", "postcondition" };
             if (action.TryGetProperty("approach", out _)) declared.Add("approach");
             if (action.TryGetProperty("sceneTarget", out _)) declared.Add("sceneTarget");
+            if (action.TryGetProperty("targetFamily", out _)) declared.Add("targetFamily");
             action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");
