@@ -63,6 +63,7 @@ import {
   renderedChaptersFromMarkers,
 } from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
+import { buildMemoryRunVerdict, narrateRunVerdict } from "../core/run-verdict.mjs";
 import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
@@ -1425,6 +1426,7 @@ export async function runMemoryLiveLoop({
       });
       const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
       await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+      process.stderr.write(`${narrateRunVerdict("memory", buildMemoryRunVerdict(attributed.stages))}\n`);
       return finalReport;
     }
 
@@ -1522,6 +1524,7 @@ export async function runMemoryLiveLoop({
       });
       const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
       await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+      process.stderr.write(`${narrateRunVerdict("memory", buildMemoryRunVerdict(attributed.stages))}\n`);
       return finalReport;
     }
 
@@ -1697,6 +1700,7 @@ export async function runMemoryLiveLoop({
     });
     const finalReport = Object.freeze({ ...report, capture: await closeIntoReport(capture, root, report) });
     await writeFile(reportPath, `${JSON.stringify(finalReport, null, 2)}\n`, "utf8");
+    process.stderr.write(`${narrateRunVerdict("memory", buildMemoryRunVerdict(attributed.stages))}\n`);
     return finalReport;
   }, flags);
 }

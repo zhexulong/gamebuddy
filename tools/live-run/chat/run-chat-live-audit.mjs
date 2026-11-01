@@ -74,7 +74,9 @@ import { isPass, judgeObserved } from "../core/evidence-verdict.mjs";
 // Aliased on purpose: the usage reading above imports `judgeObserved` under its own name from the same module, and a
 // second binding for one identifier would be a duplicate declaration the day both land. Same function, one spelling.
 import { judgeObserved as judgeWireObserved } from "../core/evidence-verdict.mjs";
+import { buildChatRunVerdict, narrateRunVerdict } from "../core/run-verdict.mjs";
 import { startLocalStubProvider } from "../core/stub-provider.mjs";
+import { buildWireContractReading, narrateWireContract, wireMessageText } from "./wire-contract.mjs";
 import {
   assertRenderedTranscript,
   findBrowserExecutable,
@@ -658,15 +660,11 @@ export function wireCaptureRequested(env = process.env) {
  *
  * The shape matters: Pi's `openai-completions` adapter posts `content` as an array of parts on some turns and as a
  * bare string on others, so a reading that assumes either one sees `undefined` on the other.
+ *
+ * The ONE spelling lives in `wire-contract.mjs`, which is the module that reads message text for a judgement;
+ * this harness re-exports it so its own readers keep one import site.
  */
-export function wireMessageText(message) {
-  const content = message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map((part) => (typeof part === "string" ? part : typeof part?.text === "string" ? part.text : ""))
-    .join("");
-}
+export { wireMessageText } from "./wire-contract.mjs";
 
 const AUTHORED_CONTEXT_MARKER = '<gamebuddy-authored-context version="v2"';
 
@@ -821,6 +819,24 @@ async function bindHostPathLock() {
   ]);
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
   hostPathLockBound = true;
+}
+
+/**
+ * The two product declarations a wire-contract reading sources its population and its anchor from.
+ *
+ * Read from the Host build the harness family already runs against rather than written here: the Game tool
+ * names are a closed registry projection, and the floor anchor is the one asterisk form the Chat surface
+ * teaches. A hand-written copy of either would keep asserting a list the product stopped shipping.
+ */
+async function loadWireContractAnchors() {
+  const [{ STARDEW_ACTION_TOOL_NAMES }, { COMPANION_ACTION_SYNTAX }] = await Promise.all([
+    import(pathToFileURL(join(HOST_ROOT, "dist-test", "action-registry.js")).href),
+    import(pathToFileURL(join(HOST_ROOT, "dist-test", "identity-profile.js")).href),
+  ]);
+  return Object.freeze({
+    gameToolNames: Object.freeze(Object.values(STARDEW_ACTION_TOOL_NAMES)),
+    houseFloor: COMPANION_ACTION_SYNTAX,
+  });
 }
 
 /**
@@ -2590,6 +2606,9 @@ export async function main(argv = process.argv.slice(2)) {
   // Wire capture, when asked for, is mounted BEFORE admission: admission's readiness fact is the product's own probe
   // answering THIS endpoint, so the endpoint has to exist first. Off unless `GAMEBUDDY_CHAT_WIRE_CAPTURE=1`.
   const wireCapture = wireCaptureRequested();
+  // The anchors are read only when capture is on: a real-provider run never asks the contract question, and
+  // loading a second Host build for it would slow every run down for an answer nothing reads.
+  const wireAnchors = wireCapture ? await loadWireContractAnchors() : undefined;
   const stub = wireCapture
     ? await startLocalStubProvider({ modelId: WIRE_MODEL_ID, reply: WIRE_STUB_REPLY })
     : undefined;
@@ -2711,6 +2730,15 @@ export async function main(argv = process.argv.slice(2)) {
     provider: stub,
     turnsDrove: recorder.events().filter((event) => event.code === "turn.submitted").length,
   });
+  // The CONTRACT half of the same capture: sizes and digests say how much went out, never whether the card's
+  // direction arrived in the position its contract names, whether a Game tool name appeared on a surface that
+  // mounts none, or whether the card's voice sits after the Host floor. Planted sentinels answer those three on
+  // the same captured bodies, and the reading is `unobserved` rather than clean when nothing was captured.
+  const wireContract = buildWireContractReading({
+    requests: stub?.requests ?? [],
+    gameToolNames: wireAnchors?.gameToolNames ?? [],
+    houseFloor: wireAnchors?.houseFloor,
+  });
   await stub?.close().catch(() => undefined);
 
   try {
@@ -2802,13 +2830,22 @@ export async function main(argv = process.argv.slice(2)) {
     // `verified` / `failed` / `unobserved` from the evidence vocabulary: a run whose session record could not be read
     // publishes the reason, never a zero that would look like a free run.
     if (environment.usage !== undefined) await capture.record("usage.json", environment.usage);
+    // The run's own verdict in the vocabulary all three loops share (`core/run-verdict.mjs`). Derived from the
+    // probe events this run actually produced - never from `run.finished`'s `collected`, which says the harness
+    // observed what it could, not that the evidence held. A run with no probe manifest therefore publishes
+    // `unobserved` / `no_probe_evidence` instead of a clean bill.
+    const runVerdict = buildChatRunVerdict(recorder.events());
+    await capture.record("run-verdict.json", runVerdict);
+    console.log(narrateRunVerdict("chat", runVerdict));
     // What the model was TOLD. Printed on every wire-capture run beside the trade it makes, and written beside the
     // trace: sizes and digests only, because every field here may carry the player's own words. A run that ASKED for
     // capture and captured nothing prints its reason rather than staying silent, so an empty reading is never mistaken
     // for a clean one.
     if (wireCapture) {
       console.log(narrateWireReading(wireReading));
+      console.log(narrateWireContract(wireContract));
       await capture.record("wire-reading.json", wireReading);
+      await capture.record("wire-contract.json", wireContract);
     }
     await capture.record("capture-inputs.json", {
       schema: "chat_run_audit/capture-inputs/v1",

@@ -171,13 +171,19 @@ function greetingVariantsFromPreview(profileCandidate) {
  * Compiles the card into the exact `<runtimeCwd>/identity-profile.json` the Host reads, through the
  * product's own decoder, converter, validator and writer. Returns the identity the runtime will
  * present, so the caller can put it in its own evidence instead of asserting that a call happened.
+ *
+ * `cardVoiceSentinel` appends a synthetic string to the card's own `characterVoice`. It is appended to the
+ * CARD's directive rather than replacing it, because the ordering claim a wire run makes is about where the
+ * product placed the card's real directive; on a card that declares none it becomes the whole value, which
+ * is still the product's own `characterVoice` path and not a second one.
  */
-export async function compileLiveRunIdentityProfile(runtimeCwd, { cardPath, hostBuildRoot } = {}) {
+export async function compileLiveRunIdentityProfile(runtimeCwd, { cardPath, hostBuildRoot, cardVoiceSentinel } = {}) {
   const card = JSON.parse(await readFile(cardPath, "utf8"));
   const host = await loadHostBuild(hostBuildRoot);
   await bindHostPathLock(hostBuildRoot);
   const preview = host.previewStCard(card);
-  const profile = host.validateIdentityProfile(host.candidateToIdentityProfile(preview, 1));
+  const compiled = host.validateIdentityProfile(host.candidateToIdentityProfile(preview, 1));
+  const profile = withCardVoiceSentinel(compiled, cardVoiceSentinel);
   const profilePath = path.join(runtimeCwd, "identity-profile.json");
   await host.writeIdentityProfile(profilePath, profile);
   const metadata = host.identityProfileMetadata(profile);
@@ -189,6 +195,19 @@ export async function compileLiveRunIdentityProfile(runtimeCwd, { cardPath, host
     // The runtime root the Host will read, so a mismatch with this process's cwd is visible rather
     // than sampled from files this run never mounted.
     readBack: await host.readIdentityProfile(profilePath),
+  });
+}
+
+/** One profile with `sentinel` appended to its own `characterVoice`, or unchanged when none was asked for. */
+function withCardVoiceSentinel(profile, sentinel) {
+  if (typeof sentinel !== "string" || sentinel.length === 0) return profile;
+  const existing = profile.characterVoice?.text ?? "";
+  return Object.freeze({
+    ...profile,
+    characterVoice: Object.freeze({
+      text: existing.length === 0 ? sentinel : `${existing}\n${sentinel}`,
+      source: profile.characterVoice?.source ?? "card",
+    }),
   });
 }
 
@@ -208,21 +227,22 @@ export async function seedLiveRunGreetingRecord(runtimeCwd, { cardPath, hostBuil
   const host = await loadHostBuild(hostBuildRoot);
   await bindHostPathLock(hostBuildRoot);
   const buildRoot = hostBuildUrl(hostBuildRoot);
-  const [{ resolveRuntimePaths }, { resolveTavernPaths }, { TavernArtifactStore }, { createGreetingManagementService }] =
-    await Promise.all([
-      import(new URL("runtime-identity.js", buildRoot)),
-      import(new URL("tavern/tavern-paths.js", buildRoot)),
-      import(new URL("tavern/artifact-store.js", buildRoot)),
-      import(new URL("tavern/greeting-management/greeting-management.js", buildRoot)),
-    ]);
+  const [
+    { resolveRuntimePaths },
+    { resolveTavernPaths },
+    { TavernArtifactStore },
+    { createGreetingManagementService },
+  ] = await Promise.all([
+    import(new URL("runtime-identity.js", buildRoot)),
+    import(new URL("tavern/tavern-paths.js", buildRoot)),
+    import(new URL("tavern/artifact-store.js", buildRoot)),
+    import(new URL("tavern/greeting-management/greeting-management.js", buildRoot)),
+  ]);
   const paths = resolveRuntimePaths(identity, root);
   if (path.resolve(paths.runtimeCwd) !== path.resolve(runtimeCwd))
     throw new Error("live_run_persona_runtime_cwd_mismatch");
   const tavernPaths = resolveTavernPaths(paths, identity);
-  const service = createGreetingManagementService(
-    new TavernArtifactStore(paths.root),
-    tavernPaths.companionRoot,
-  );
+  const service = createGreetingManagementService(new TavernArtifactStore(paths.root), tavernPaths.companionRoot);
   const existing = await service.readExact();
   if (existing !== null) {
     // A resumed run keeps the record it already has: rewriting revisions would move the opening out
@@ -267,21 +287,22 @@ export async function seedLiveRunScenarioRecord(runtimeCwd, { cardPath, hostBuil
   const host = await loadHostBuild(hostBuildRoot);
   await bindHostPathLock(hostBuildRoot);
   const buildRoot = hostBuildUrl(hostBuildRoot);
-  const [{ resolveRuntimePaths }, { resolveTavernPaths }, { TavernArtifactStore }, { createScenarioManagementService }] =
-    await Promise.all([
-      import(new URL("runtime-identity.js", buildRoot)),
-      import(new URL("tavern/tavern-paths.js", buildRoot)),
-      import(new URL("tavern/artifact-store.js", buildRoot)),
-      import(new URL("tavern/scenario-management/scenario-management.js", buildRoot)),
-    ]);
+  const [
+    { resolveRuntimePaths },
+    { resolveTavernPaths },
+    { TavernArtifactStore },
+    { createScenarioManagementService },
+  ] = await Promise.all([
+    import(new URL("runtime-identity.js", buildRoot)),
+    import(new URL("tavern/tavern-paths.js", buildRoot)),
+    import(new URL("tavern/artifact-store.js", buildRoot)),
+    import(new URL("tavern/scenario-management/scenario-management.js", buildRoot)),
+  ]);
   const paths = resolveRuntimePaths(identity, root);
   if (path.resolve(paths.runtimeCwd) !== path.resolve(runtimeCwd))
     throw new Error("live_run_persona_runtime_cwd_mismatch");
   const tavernPaths = resolveTavernPaths(paths, identity);
-  const service = createScenarioManagementService(
-    new TavernArtifactStore(paths.root),
-    tavernPaths.companionRoot,
-  );
+  const service = createScenarioManagementService(new TavernArtifactStore(paths.root), tavernPaths.companionRoot);
   const existing = await service.read();
   if (existing !== null) {
     // A resumed run keeps the record it already has, for the same reason the greeting does: the
@@ -303,10 +324,14 @@ export async function seedLiveRunScenarioRecord(runtimeCwd, { cardPath, hostBuil
  * Places the card in a runtime cwd exactly as provisioning does — byte for byte — and compiles the
  * identity profile, greeting record and scenario record the Host actually reads. Returns the evidence
  * so the caller can put it in its own report.
+ *
+ * `wireSentinels` (see `plantWireSentinels`) is threaded through the SAME writes provisioning makes rather
+ * than applied afterwards: the profile and the closing-direction record are each written once here, so a
+ * later re-write would move the profile revision the runtime and the Chat thread already pinned.
  */
 export async function provisionLiveRunPersona(
   runtimeCwd,
-  { dir = LIVE_RUN_PERSONA_DIR, hostBuildRoot, identity, root } = {},
+  { dir = LIVE_RUN_PERSONA_DIR, hostBuildRoot, identity, root, wireSentinels } = {},
 ) {
   if (typeof runtimeCwd !== "string" || runtimeCwd.length === 0) throw new Error("live_run_persona_cwd_invalid");
   const { cardPath, worldbookPath } = liveRunPersonaPaths({ dir });
@@ -317,7 +342,11 @@ export async function provisionLiveRunPersona(
   ]) {
     await copyFile(source, path.join(runtimeCwd, name));
   }
-  const profile = await compileLiveRunIdentityProfile(runtimeCwd, { cardPath, hostBuildRoot });
+  const profile = await compileLiveRunIdentityProfile(runtimeCwd, {
+    cardPath,
+    hostBuildRoot,
+    ...(wireSentinels === undefined ? {} : { cardVoiceSentinel: wireSentinels.cardVoiceSentinel }),
+  });
   const greeting =
     identity === undefined
       ? null
@@ -326,7 +355,67 @@ export async function provisionLiveRunPersona(
     identity === undefined
       ? null
       : await seedLiveRunScenarioRecord(runtimeCwd, { cardPath, hostBuildRoot, identity, root });
-  return Object.freeze({ identity: identityFacts, cardPath, worldbookPath, profile, greeting, scenario });
+  const closingDirection =
+    wireSentinels === undefined || identity === undefined
+      ? null
+      : await plantClosingDirectionSentinel(runtimeCwd, { identity, root, hostBuildRoot, cardPath, ...wireSentinels });
+  return Object.freeze({
+    identity: identityFacts,
+    cardPath,
+    worldbookPath,
+    profile,
+    greeting,
+    scenario,
+    closingDirection,
+  });
+}
+
+/**
+ * The closing direction a wire run asserts about, written through the product's own record writer.
+ *
+ * The card's real `post_history_instructions` is written FIRST - byte for byte, the value the product's own
+ * decoder carried - and the synthetic sentinel is appended after it. Preserving the card's own text is not
+ * politeness: the catalogue renders the record through the run's macros and bounds it, and a run that wrote
+ * only a marker would exercise neither.
+ */
+async function plantClosingDirectionSentinel(
+  runtimeCwd,
+  { identity, root, hostBuildRoot, cardPath, postHistorySentinel, postHistoryDefectLine },
+) {
+  const host = await loadHostBuild(hostBuildRoot);
+  await bindHostPathLock(hostBuildRoot);
+  const buildRoot = hostBuildUrl(hostBuildRoot);
+  const [
+    { resolveRuntimePaths },
+    { resolveTavernPaths },
+    { TavernArtifactStore },
+    { writeCompanionPostHistoryInstructions },
+  ] = await Promise.all([
+    import(new URL("runtime-identity.js", buildRoot)),
+    import(new URL("tavern/tavern-paths.js", buildRoot)),
+    import(new URL("tavern/artifact-store.js", buildRoot)),
+    import(new URL("tavern/post-history-instructions.js", buildRoot)),
+  ]);
+  const paths = resolveRuntimePaths(identity, root);
+  if (path.resolve(paths.runtimeCwd) !== path.resolve(runtimeCwd))
+    throw new Error("live_run_persona_runtime_cwd_mismatch");
+  const card = JSON.parse(await readFile(cardPath, "utf8"));
+  const declared = host.previewStCard(card).postHistoryInstructions;
+  const lines = [];
+  if (typeof declared === "string" && declared.trim().length > 0) lines.push(declared.trim());
+  // A caller's RED proof: one sentence that makes the record wrong in a specific way (a closing direction
+  // naming a mounted Game action). It is written through THIS writer, so the run still exercises the
+  // product's own record path rather than a harness shortcut.
+  if (typeof postHistoryDefectLine === "string" && postHistoryDefectLine.length > 0) lines.push(postHistoryDefectLine);
+  lines.push(postHistorySentinel);
+  const text = lines.join("\n");
+  const tavernPaths = resolveTavernPaths(paths, identity);
+  await writeCompanionPostHistoryInstructions(new TavernArtifactStore(paths.root), tavernPaths.companionRoot, text);
+  return Object.freeze({
+    written: true,
+    declaredPresent: typeof declared === "string" && declared.trim().length > 0,
+    bytes: Buffer.byteLength(text, "utf8"),
+  });
 }
 
 /**
@@ -405,7 +494,12 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
       const artifacts = new TavernArtifactStore(paths.root);
       const record = await createGreetingManagementService(artifacts, tavernPaths.companionRoot).readExact();
       if (record === null || record.variants.length === 0) problems.push("greeting_record_absent");
-      else greeting = Object.freeze({ greetingSetId: record.greetingSetId, revision: record.revision, variants: record.variants.length });
+      else
+        greeting = Object.freeze({
+          greetingSetId: record.greetingSetId,
+          revision: record.revision,
+          variants: record.variants.length,
+        });
       // The character panel answers from this record, so its absence is the "还没有保存场景" panel
       // on a card that carries a scenario: a defect, not a neutral empty state.
       try {

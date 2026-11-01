@@ -454,3 +454,46 @@ test("the runner and this suite are registered as package scripts", async () => 
   assert.equal(scripts["run:memory-live"], "node tools/live-run/memory/run-memory-live-loop.mjs");
   assert.equal(scripts["test:memory-live"], "node --test tools/live-run/memory/run-memory-live-loop.test.mjs");
 });
+
+// ---------------------------------------------------------------------------
+// The shared verdict: the loop's own vocabulary stays, and the shared field is added
+// ---------------------------------------------------------------------------
+
+test("the memory loop publishes the shared run verdict beside its own funnel, and maps by status", async () => {
+  // The loop's judgement is untouched - `attributeMemoryFunnel` still decides, and its per-stage rows
+  // still carry `passed`/`broken`/`observability_gap`/`not_reached`. What the boundary adds is the ONE
+  // field a comparison tool can read across the Game, Chat and Memory loops.
+  const { buildMemoryRunVerdict } = await import("../core/run-verdict.mjs");
+  const { attributeMemoryFunnel } = await import("../../lib/memory-funnel.mjs");
+
+  // A seed that was never read back: L1 is a gap, and the rollup must be `unobserved` with L1's own
+  // reason - not `verified` because the later stages were never exercised.
+  const attributed = attributeMemoryFunnel({ seedRequired: true, seedPresentInReadback: false });
+  const verdict = buildMemoryRunVerdict(attributed.stages);
+  assert.equal(verdict.schema, "live_run_verdict/v1");
+  assert.equal(verdict.state, "unobserved");
+  assert.equal(verdict.reason, "seed_readback_unobserved");
+  // The local status is preserved: a reader can still see WHICH stage was a gap.
+  assert.equal(verdict.checks[0].id, "L1_write");
+  assert.equal(verdict.checks[0].local, "observability_gap");
+
+  // An unobserved run is never `passed` and never a zero-shaped reading.
+  assert.notEqual(verdict.state, "verified");
+});
+
+test("the runner writes the shared verdict and never derives it from a lifecycle status", async () => {
+  // A source-level assertion, because the failure it prevents is a WIRING regression: the mapping
+  // exists, the report is written, and the line that publishes the verdict is silently dropped. The
+  // second half is the one that matters most - deriving the verdict from `collected` would turn the
+  // harness's own lifecycle fact into a clean bill, which is exactly the defect
+  // `core/evidence-verdict.mjs` was written for.
+  const source = await readFile(join(here, "run-memory-live-loop.mjs"), "utf8");
+  assert.match(source, /import \{ buildMemoryRunVerdict, narrateRunVerdict \} from "\.\.\/core\/run-verdict\.mjs";/u);
+  const calls = source.match(/buildMemoryRunVerdict\(attributed\.stages\)/gu) ?? [];
+  assert.equal(calls.length, 3, "every report-writing branch must publish the shared verdict");
+  assert.equal(
+    /state:\s*"collected"/u.test(source),
+    false,
+    "a lifecycle status must never stand in for the shared verdict",
+  );
+});

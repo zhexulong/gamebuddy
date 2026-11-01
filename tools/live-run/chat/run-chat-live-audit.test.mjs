@@ -1188,3 +1188,35 @@ test("the stub answers the product's own two routes, and records the body it was
     await stub.close();
   }
 });
+
+test("the wire-contract reading is published beside the wire reading, and both are wired", async () => {
+  // Two artifacts, two questions. `wire-reading.json` answers HOW MUCH went out (sizes and digests);
+  // `wire-contract.json` answers WHETHER the card's direction arrived where its contract names it, whether a
+  // Game tool name appeared on a surface that mounts none, and whether the card's voice sits after the Host
+  // floor. A source-level assertion, because the failure this prevents is a wiring regression: the reading
+  // exists and the line that writes it is dropped.
+  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  assert.match(source, /from "\.\/wire-contract\.mjs";/u);
+  for (const name of ["buildWireContractReading", "narrateWireContract"])
+    assert.match(source, new RegExp(`\\b${name}\\b`, "u"), `${name} must be imported by the harness`);
+  assert.match(source, /await capture\.record\("wire-contract\.json", wireContract\);/u);
+  assert.match(source, /const wireAnchors = wireCapture \? await loadWireContractAnchors\(\) : undefined;/u);
+  // The two anchors are the product's declarations, never a list written into the harness.
+  assert.match(source, /Object\.values\(STARDEW_ACTION_TOOL_NAMES\)/u);
+  assert.match(source, /houseFloor: COMPANION_ACTION_SYNTAX/u);
+});
+
+test("the chat loop publishes the shared run verdict and never derives it from `collected`", async () => {
+  const source = await readFile(new URL("./run-chat-live-audit.mjs", import.meta.url), "utf8");
+  assert.match(source, /import \{ buildChatRunVerdict, narrateRunVerdict \} from "\.\.\/core\/run-verdict\.mjs";/u);
+  assert.match(source, /const runVerdict = buildChatRunVerdict\(recorder\.events\(\)\);/u);
+  assert.match(source, /await capture\.record\("run-verdict\.json", runVerdict\);/u);
+  // The lifecycle status is `collected`/`boundary_failed`; neither is a verdict, and turning one into a
+  // pass is the defect `core/evidence-verdict.mjs` exists to remove. The verdict reads the trace's probe
+  // events, so a run with no probe manifest publishes `unobserved` instead of the run's own closure.
+  assert.equal(
+    /buildChatRunVerdict\((?:[^)]|\n)*?(?:collected|boundary_failed)/u.test(source),
+    false,
+    "the verdict must come from the probe events, never from the run's lifecycle status",
+  );
+});
