@@ -16,7 +16,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// seam `BodyOwnerNamingTests` and `HeldToolProjectionTests` use for the same reason.
 /// </para>
 /// </summary>
-public class ActiveExecutionProjectionTests
+[Trait("kind", "source-shape")]
+public class ActiveExecutionProjectionSourceShapeTests
 {
     [Fact]
     public void NoSemanticEventBuilder_BuildsTheWholeSnapshot()

@@ -32,6 +32,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// the value that means "one swing left" instead of to the engine's own "is there anything left to hit".
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the one predicate the radar, both revalidations and the handler's terminal must share cannot be driven apart by a single live swing, while the rest of the class builds real `Object`s in a headless farm and calls the shipped discovery for real; keeping each pin beside the behaviour it protects.
 public sealed class RockSourceSwingOutcomeTests
 {
     /// <summary>

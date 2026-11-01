@@ -21,7 +21,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// `health = 1f` so a single swing would fell it.
 /// </para>
 /// </summary>
-public sealed class ChopTreeSwingOutcomeTests
+[Trait("kind", "source-shape")]
+public sealed class ChopTreeSwingOutcomeSourceShapeTests
 {
     [Fact]
     public void ASwingThatMerelyDamagesALivingTreeIsSuccess()
