@@ -1,3 +1,13 @@
+/*
+ * The fixture arm of the companion live scenario suite: the same suite as
+ * `run-stardew-companion-live-scenarios.mjs`, driven by a fixture adapter instead of a real install,
+ * writing its summary and a per-scenario timeline to an output directory.
+ *
+ * What it settles: the scenario shapes and their evidence digests are stable when the game is
+ * replaced by a controlled adapter - so a live-run failure can be attributed to the install rather
+ * than to the suite. The forbidden-flag guard below is the boundary that keeps this arm from being
+ * pointed at a real install by accident.
+ */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
