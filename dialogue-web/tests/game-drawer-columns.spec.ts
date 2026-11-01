@@ -277,6 +277,10 @@ test("a published capability board keeps its own cell and its own cards", async 
     boardColumn.some((block) => block.name === "game-group-session"),
     "the session group sits under the published board",
   ).toBe(true);
-  // And the guide is still reachable beside it, in the same reading order it had.
-  expect(wide.activate!.top, "the guide's primary control is still on screen").toBeLessThan(900);
+  // And the guide is still reachable beside it, in the same reading order it had. The bound is the
+  // viewport this reading was taken in, not a literal 900: at any other window a hardcoded 900 would
+  // pass a control that hangs below the fold, or fail one that fits.
+  expect(wide.activate!.top, "the guide's primary control is still on screen").toBeLessThan(
+    wide.viewport.height,
+  );
 });
