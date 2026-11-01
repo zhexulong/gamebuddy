@@ -195,7 +195,7 @@ test("audit.9: one package reached both ways is classified by its runtime path",
   const advisories = classifyReport(FULL_REPORT);
   const runtime = advisories.find((candidate) => candidate.ghsa === BOTH_WAYS.github_advisory_id);
   assert.equal(runtime.runtime, true);
-  assert.deepEqual(runtime.paths, ["host>both-ways"]);
+  assert.deepEqual(runtime.paths, [{ path: "host>both-ways", devOnly: false }]);
   assert.equal(advisories.find((candidate) => candidate.ghsa === DEVELOPMENT.github_advisory_id).runtime, false);
 });
 
@@ -215,4 +215,61 @@ test("audit.12: judge on an empty population with no assessments is a pass", () 
   assert.equal(verdict.verdict, "passed");
   assert.equal(verdict.runtime, 0);
   assert.equal(verdict.unassessed, 0);
+});
+
+/**
+ * The advisory that cost a lane a wrong answer: 36 sorted paths, and the first three alphabetically were the
+ * eslint chain while the two Host paths that made it a runtime advisory sat at the end. The printer showed the
+ * three dev paths and the finding read as tooling noise. Paths here are the real shape, dev finding first so
+ * the shipped ones sort last.
+ */
+const MIXED = advisory({
+  ghsa: "GHSA-mmmm-nnnn-oooo",
+  pkg: "mixed-thing",
+  severity: "high",
+  dev: true,
+  paths: [
+    ".>linter>aaa>mixed-thing",
+    ".>linter>bbb>mixed-thing",
+    ".>linter>ccc>mixed-thing",
+    ".>linter>ddd>mixed-thing",
+  ],
+});
+MIXED.findings.push({
+  version: "1.2.3",
+  paths: ["host>shipped-route>mixed-thing"],
+  dev: false,
+  optional: false,
+  bundled: false,
+});
+
+test("audit.13: the printer shows every shipped path and counts what a cap omitted", () => {
+  const result = gate({
+    root: fixture({ assessments: [], reports: { mixed: { advisories: { 5555: MIXED } } } }),
+    report: "mixed",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^ {4}via host>shipped-route>mixed-thing$/mu);
+  assert.match(result.stderr, /^ {4}via \(dev-only\) \.>linter>aaa>mixed-thing$/mu);
+  assert.match(result.stderr, /^ {4}paths_omitted=1 shipped_among_omitted=0$/mu);
+  assert.doesNotMatch(result.stderr, /linter>ddd/u);
+});
+
+test("audit.14: an advisory with more shipped paths than the cap prints all of them", () => {
+  const many = advisory({ ghsa: "GHSA-pppp-qqqq-rrrr", pkg: "many-thing", severity: "high", dev: false, paths: [] });
+  many.findings[0].paths = [
+    "host>a>many-thing",
+    "host>b>many-thing",
+    "host>c>many-thing",
+    "host>d>many-thing",
+    "host>e>many-thing",
+  ];
+  const result = gate({
+    root: fixture({ assessments: [], reports: { many: { advisories: { 6666: many } } } }),
+    report: "many",
+  });
+  assert.equal(result.status, 1);
+  for (const letter of ["a", "b", "c", "d", "e"])
+    assert.match(result.stderr, new RegExp(`^ {4}via host>${letter}>many-thing$`, "mu"));
+  assert.doesNotMatch(result.stderr, /paths_omitted/u);
 });

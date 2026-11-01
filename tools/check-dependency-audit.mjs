@@ -50,6 +50,12 @@
  *   node tools/check-dependency-audit.mjs                  # the verdict; exit 1 on a violation
  *   node tools/check-dependency-audit.mjs --audit <file>   # judge a saved `pnpm audit --json` report
  *   node tools/check-dependency-audit.mjs --root <dir>     # the gate's own fixture
+ *
+ * red-proof: inject  an advisory whose first three sorted paths are `dev: true` and whose fourth is
+ *                    `dev: false` -> the printer shows the shipped path and `paths_omitted=1
+ *                    shipped_among_omitted=0`, where printing `.slice(0, 3)` showed three dev-only
+ *                    paths and hid the one that decided the verdict
+ *                    (tools/check-dependency-audit.test.mjs)
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -68,6 +74,9 @@ const MIN_REASON_LENGTH = 40;
 /** Openers that state a disposition instead of a fact. */
 const SHUGHS = /^(?:accepted|accept|n\/?a|ok|fine|known|todo|tbd|low[- ]risk|ignore[ds]?|wontfix)(?:\W|$)/iu;
 
+/** How many development-only paths one advisory prints before the rest are counted instead. */
+const DEV_PATH_LIMIT = 3;
+
 function violation(code, detail, advisory) {
   return { code, detail, advisory };
 }
@@ -81,6 +90,30 @@ function advisoryKey(advisory) {
   return typeof advisory.github_advisory_id === "string" && advisory.github_advisory_id !== ""
     ? advisory.github_advisory_id
     : `npm-${advisory.id}`;
+}
+
+/**
+ * Every dependency path the report listed, each tagged with whether it is development-only.
+ *
+ * `pnpm audit` sets `dev` per FINDING, and a finding is one vulnerable package VERSION, not one path: a
+ * version reached by any production path gets `dev: false` and every path to that version rides under it.
+ * Measured on `GHSA-g3hv-75wg-m249`: 33 eslint paths sat in a `dev: false` finding only because two Host
+ * paths reached the same 10.2.6 install, and they became a `dev: true` finding the moment the Host moved
+ * off it. So `devOnly` means "no path to this version ships", computed with `classify`'s own predicate and
+ * its own field, one finding at a time - there is no second classifier. It errs toward printing a path,
+ * never toward hiding one.
+ *
+ * The tag exists because the printer must show the paths that decide the verdict: this advisory listed 36
+ * sorted paths, the first three alphabetically were the jsx-a11y chain, and the two Host paths that made it
+ * a runtime advisory sorted last and were never printed - which is how a gated runtime finding was read as
+ * "only an eslint build dependency".
+ */
+function pathsByDevClass(findings) {
+  const devOnly = new Map();
+  for (const finding of findings)
+    for (const path of Array.isArray(finding.paths) ? finding.paths : [])
+      devOnly.set(path, (devOnly.get(path) ?? true) && finding.dev === true);
+  return [...devOnly.keys()].sort().map((path) => ({ path, devOnly: devOnly.get(path) }));
 }
 
 /**
@@ -98,7 +131,7 @@ function classify(advisory) {
     versions: [...new Set(findings.map((finding) => finding.version).filter((v) => typeof v === "string"))],
     vulnerable: advisory.vulnerable_versions,
     patched: advisory.patched_versions,
-    paths: [...new Set(findings.flatMap((finding) => (Array.isArray(finding.paths) ? finding.paths : [])))].sort(),
+    paths: pathsByDevClass(findings),
   };
 }
 
@@ -251,6 +284,28 @@ const valueOf = (argv, name) => {
   return index < 0 ? undefined : argv[index + 1];
 };
 
+/**
+ * The `via` lines for one advisory. The paths that ship decide the verdict, so every one of them is
+ * printed and only the development-only tail is capped; when that cap drops anything, the line says how
+ * many paths were not printed and how many of those ship, so a truncation can never hide a path whose
+ * classification differs from the ones shown.
+ */
+function pathLines(paths) {
+  if (paths.length === 0) return ["    via none: the report listed no dependency path for this advisory"];
+  const shipped = paths.filter((entry) => !entry.devOnly);
+  const development = paths.filter((entry) => entry.devOnly);
+  const lines = [
+    ...shipped.map((entry) => `    via ${entry.path}`),
+    ...development.slice(0, DEV_PATH_LIMIT).map((entry) => `    via (dev-only) ${entry.path}`),
+  ];
+  const omitted = development.slice(DEV_PATH_LIMIT);
+  if (omitted.length > 0)
+    lines.push(
+      `    paths_omitted=${omitted.length} shipped_among_omitted=${omitted.filter((entry) => !entry.devOnly).length}`,
+    );
+  return lines;
+}
+
 function print(verdict, out = process.stdout, err = process.stderr) {
   const severity = SEVERITIES.map((name) => `${name}=${verdict.counts[name] ?? 0}`).join(" ");
   out.write(
@@ -269,7 +324,7 @@ function print(verdict, out = process.stdout, err = process.stderr) {
       `    versions=${issue.advisory.versions.join(",") || "?"} ` +
         `vulnerable=${issue.advisory.vulnerable} patched=${issue.advisory.patched}\n`,
     );
-    for (const path of issue.advisory.paths.slice(0, 3)) err.write(`    via ${path}\n`);
+    for (const line of pathLines(issue.advisory.paths)) err.write(`${line}\n`);
   }
   if (verdict.unassessed > 0)
     err.write(`  a shipped advisory needs a decision in ${ASSESSMENTS}, or a version that no longer carries it\n`);

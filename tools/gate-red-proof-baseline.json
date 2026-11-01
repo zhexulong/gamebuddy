@@ -16,7 +16,6 @@
     "check:architecture",
     "check:chat-card-voice",
     "check:complexity-gate",
-    "check:dependency-audit",
     "check:dialogue-web-boundaries",
     "check:diff",
     "check:error-identity-classification",
