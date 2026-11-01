@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -578,15 +578,29 @@ function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): 
  * Drops whole facts from the END while the line is over its byte cap, so a bound
  * can never eat the clock it opens with. Every fact is dropped rather than
  * truncated: half a name reads as a shorter name.
+ *
+ * It also reports WHAT it dropped. The rendered line cannot say what was cut out of it
+ * (`joinBoundedFacts` only ever returns the survivors), so "did the block ever exceed the cap,
+ * and what was lost" is answerable only from here - which is why the observer below is built on
+ * this rather than on the joined string.
  */
-function joinBoundedFacts(facts: readonly string[]): string {
+function boundGameEnvironmentFacts(facts: readonly string[]): Readonly<{ kept: string[]; dropped: string[] }> {
   const kept = [...facts];
-  while (kept.length > 1 && Buffer.byteLength(kept.join("；"), "utf8") > MAX_GAME_ENVIRONMENT_FACTS_BYTES) kept.pop();
-  return kept.join("；");
+  const dropped: string[] = [];
+  while (kept.length > 1 && Buffer.byteLength(kept.join("；"), "utf8") > MAX_GAME_ENVIRONMENT_FACTS_BYTES) {
+    const removed = kept.pop();
+    if (removed !== undefined) dropped.unshift(removed);
+  }
+  return { kept, dropped };
 }
 
-export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const facts = [
+function joinBoundedFacts(facts: readonly string[]): string {
+  return boundGameEnvironmentFacts(facts).kept.join("；");
+}
+
+/** Every fact this snapshot could render, in the order the line prints them. */
+function composeGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string[] {
+  return [
     formatGameClock(source.timeOfDay, zh),
     formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
     formatGameWeather(source.weather, zh),
@@ -597,8 +611,184 @@ export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, z
     formatUnwateredCrops(source, zh),
     formatGameStamina(source.stamina, source.exhausted, zh),
   ].filter((fact) => fact !== "");
-  if (facts.length === 0) return "";
-  return joinBoundedFacts(facts);
+}
+
+export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const facts = composeGameEnvironmentFacts(source, zh);
+  return facts.length === 0 ? "" : joinBoundedFacts(facts);
+}
+
+/** One rendered block plus what the byte cap cost it, as the record's reader needs it. */
+export type GameEnvironmentFactsRender = Readonly<{
+  /** The exact line the provider returns; `""` when the snapshot carries no facts at all. */
+  text: string;
+  bytes: number;
+  /** Facts the cap dropped from the END, in the order they were dropped. */
+  dropped: readonly string[];
+}>;
+
+/**
+ * The same line `formatGameEnvironmentFacts` prints, with the parts of it a READER cannot recover:
+ * its exact byte cost and the facts the cap removed to reach it.
+ *
+ * Deliberately shares every formatter with `formatGameEnvironmentFacts` rather than re-deriving the
+ * facts: two implementations of the same line would let the record disagree with the prompt it claims
+ * to describe, which is the one thing that would make this record worthless.
+ */
+export function renderGameEnvironmentFactsObservation(
+  source: GameEnvironmentFactsSource,
+  zh: boolean,
+): GameEnvironmentFactsRender {
+  const bounded = boundGameEnvironmentFacts(composeGameEnvironmentFacts(source, zh));
+  const text = bounded.kept.join("；");
+  return Object.freeze({ text, bytes: Buffer.byteLength(text, "utf8"), dropped: Object.freeze(bounded.dropped) });
+}
+
+/**
+ * What the provider RENDERED, recorded once per assembled request.
+ *
+ * The transform asks the registered provider for the block on every request and injects the answer; the
+ * session stores MESSAGES, so nothing downstream of a run can say what the model was shown. Measured
+ * 2026-11-01 on round18 (24 minutes, 75 assembled plans): the bound session contained `位置:` 0 times,
+ * `脚下` 0 times and `待浇水` 0 times, while `formatGameEnvironmentFacts` renders all three correctly when
+ * called directly. So two verdict criteria (`tools/live-run/round-verdict.mjs` rows 2 and 5) reported
+ * UNOBSERVABLE by construction - the instrument could not see the request, not the product.
+ *
+ * This file is a RECORD, not a durable document. It lives beside the run manifest under the runtime root,
+ * is never written into the session, the transcript or player memory, no product path reads it, and it is
+ * non-durable by design - exactly like the block it describes. A reader asks it: was the block rendered
+ * on every request or did it vanish; what did the unwatered count say, and did it ever go non-zero; did
+ * same-map villagers arrive with tiles; did the line ever reach the byte cap and what did the cap drop.
+ */
+export const ENVIRONMENT_FACTS_RECORD_FILENAME = "environment-facts.jsonl";
+export const ENVIRONMENT_FACTS_RECORD_SCHEMA = "gamebuddy_environment_facts_render/v1";
+/**
+ * The record's bound, sized from the measured turn count rather than guessed.
+ *
+ * The largest session measured in this loop is 285 turns (`round-verdict.mjs`'s own fold note) and
+ * round18 assembled 75 requests in 24 minutes. A recorded line measured 309 B for a busy farm (clock,
+ * date, weather, location, tile, held tool, two nearby villagers, two destinations, 24 unwatered crops
+ * and stamina), so 285 turns cost ~88 KB. 1200 records is 4.2x the largest measured run and cannot
+ * exceed ~740 KB even if every line used the formatter's whole 512 B fact budget. The byte cap is the
+ * second net, because the record must stay bounded for a caller that registers its own provider.
+ *
+ * After either cap the file receives ONE truncation line and then nothing, so a runaway session cannot
+ * fill a disk and a reader can see that the tail was cut rather than believe the run ended there.
+ */
+export const MAX_ENVIRONMENT_FACTS_RECORD_LINES = 1200;
+export const MAX_ENVIRONMENT_FACTS_RECORD_BYTES = 1024 * 1024;
+
+/** One line of the record: what was rendered, for which snapshot, and what the cap cost it. */
+export type EnvironmentFactsRenderRecord = Readonly<{
+  schema: string;
+  /** When the transform asked, ISO-8601 - ordering one render against a game event needs a clock. */
+  at: string;
+  /** The snapshot revision the line was rendered from; `null` when no snapshot was usable. */
+  revision: number | null;
+  bytes: number;
+  /** Whether the rendered line still exceeded `MAX_GAME_ENVIRONMENT_FACTS_BYTES` after the cap ran. */
+  overCap: boolean;
+  /** Present only when the cap dropped something. */
+  dropped?: readonly string[];
+  /** The exact string the provider returned - `""` when the block rendered empty (and was stripped). */
+  text: string;
+}>;
+
+/**
+ * Where this run's renders are recorded: beside the run manifest, inside the runtime root.
+ *
+ * The manifest is per surface session (`resolveRuntimePaths` puts it under `surface-sessions/<id>/` when
+ * there is one), so a record written here belongs to one run rather than to every run that shares the
+ * continuity - and it is nowhere near `<sessionDir>`, the transcript or the memory store.
+ */
+export function environmentFactsRecordPath(paths: RuntimePaths): string {
+  return join(dirname(paths.runManifestPath), ENVIRONMENT_FACTS_RECORD_FILENAME);
+}
+
+/**
+ * The provider Magic Context mounts: render the CURRENT snapshot, then record what was rendered.
+ *
+ * ORDER MATTERS. The render happens first and outside every `try`, so a formatter that throws throws
+ * exactly as it did before this record existed - the request path's behaviour is unchanged. Only the
+ * RECORD is best-effort: a diagnostic that cannot be written must never become a failed turn, so a write
+ * failure disables further writes (one bad path costs one syscall, not one per turn) and the absent file
+ * is the report.
+ *
+ * SYNCHRONOUS, MEASURED, NOT BUFFERED. `appendFileSync` of a 309 B line on this platform (Windows,
+ * Node 24) costs 0.15-0.19 ms per call over 500 calls; round18's turn cadence was 24 minutes for 75
+ * assembled requests (~19 s per turn, and the provider runs once per request), so the record costs
+ * ~0.001% of a turn. Buffering would buy nothing measurable and would lose precisely the interesting
+ * turns - the ones immediately before a killed run - which is the failure this record exists for. An
+ * `O_APPEND` handle would be cheaper (0.0035 ms) but needs a close hook this provider has none of, and a
+ * leaked descriptor per runtime is a worse trade than 0.15 ms.
+ */
+export function createRenderedEnvironmentFactsProvider(integration: GameConnection, recordPath: string): () => string {
+  const connection = integration as import("./game-connection.js").StardewBridgeConnection;
+  let lines = 0;
+  let bytes = 0;
+  let directoryReady = false;
+  let writable = true;
+  let sealed = false;
+
+  const append = (line: string): void => {
+    const size = Buffer.byteLength(line, "utf8");
+    try {
+      if (!directoryReady) {
+        mkdirSync(dirname(recordPath), { recursive: true });
+        directoryReady = true;
+      }
+      appendFileSync(recordPath, line, "utf8");
+    } catch {
+      writable = false;
+      return;
+    }
+    lines += 1;
+    bytes += size;
+  };
+
+  const record = (rendered: GameEnvironmentFactsRender, revision: number | null): void => {
+    if (!writable || sealed) return;
+    const at = new Date().toISOString();
+    const line = `${JSON.stringify({
+      schema: ENVIRONMENT_FACTS_RECORD_SCHEMA,
+      at,
+      revision,
+      bytes: rendered.bytes,
+      overCap: rendered.bytes > MAX_GAME_ENVIRONMENT_FACTS_BYTES,
+      ...(rendered.dropped.length === 0 ? {} : { dropped: rendered.dropped }),
+      text: rendered.text,
+    })}\n`;
+    const size = Buffer.byteLength(line, "utf8");
+    if (lines >= MAX_ENVIRONMENT_FACTS_RECORD_LINES || bytes + size > MAX_ENVIRONMENT_FACTS_RECORD_BYTES) {
+      sealed = true;
+      append(
+        `${JSON.stringify({
+          schema: ENVIRONMENT_FACTS_RECORD_SCHEMA,
+          at,
+          truncated: true,
+          lines,
+          bytes,
+          reason: "environment_facts_record_cap_reached",
+        })}\n`,
+      );
+      return;
+    }
+    append(line);
+  };
+
+  return (): string => {
+    const snapshot = connection.state?.snapshot;
+    if (snapshot === null || snapshot === undefined) {
+      // Recorded, not skipped: "the block rendered empty" and "the block was never asked for" are
+      // different facts, and only the record can tell a vanished block from a run with no snapshot.
+      record({ text: "", bytes: 0, dropped: Object.freeze([]) }, null);
+      return "";
+    }
+    const locale = snapshot.presentationLocale?.toLowerCase() ?? "";
+    const rendered = renderGameEnvironmentFactsObservation(snapshot, locale.startsWith("zh"));
+    record(rendered, Number.isSafeInteger(snapshot.revision) ? snapshot.revision : null);
+    return rendered.text;
+  };
 }
 /**
  * Magic Context's native trigger may now run the embedded-SDK, no-tool
@@ -1441,15 +1631,15 @@ export async function createRuntimeWithFixedToolsCore(
       // `runtime_environment_facts_provider_already_registered`. `undefined` is
       // the vendored module's own removal path: the block is stripped until the
       // replacement provider renders.
+      //
+      // The provider is built by `createRenderedEnvironmentFactsProvider`, which renders exactly what
+      // this closure used to return AND records it beside this run's manifest: the transform calls it
+      // once per assembled request, and that call is the only moment the rendered block exists anywhere
+      // a later reader could look. Nothing here writes the block into the session or player memory.
       memoryHooks.setRuntimeEnvironmentFacts(undefined);
-      memoryHooks.setRuntimeEnvironmentFacts(() => {
-        const connection = integration as import("./game-connection.js").StardewBridgeConnection;
-        const snapshot = connection.state?.snapshot;
-        if (snapshot === null || snapshot === undefined) return "";
-        const locale = snapshot.presentationLocale?.toLowerCase() ?? "";
-        const zh = locale.startsWith("zh");
-        return formatGameEnvironmentFacts(snapshot, zh);
-      });
+      memoryHooks.setRuntimeEnvironmentFacts(
+        createRenderedEnvironmentFactsProvider(integration, environmentFactsRecordPath(paths)),
+      );
     }
   }
 
