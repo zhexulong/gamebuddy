@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   MAX_PROGRAM_STATUS_WAIT_MS,
+  createProgramProgressObserver,
   isTerminalProgramStatus,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
@@ -294,3 +295,143 @@ test("an already-finished plan costs exactly one read", async () => {
   assert.equal(outcome.waited.reachedTerminal, true);
   assert.equal(reads, 1);
 });
+
+/**
+ * THE defect this file grew a second half for (`round18`).
+ *
+ * 65 `program_status` calls spent 281 s of a 24-minute run, the longest of them asking for the whole 30,000 ms bound, and
+ * the plans were finishing (66 programs of 290 nodes at 93% success). The wait was not slow: the answer a caller got was
+ * a node list with states, which says nothing about how much work is left or whether the node in front of it is moving.
+ * With no basis to pick a bound, the maximum is the only safe choice - so the result has to carry the basis.
+ */
+test("a plan with work left says how much is left, and which node it is on", () => {
+  const observer = createProgramProgressObserver();
+  const progress = observer.observe(
+    plan([
+      ["n1", "succeeded"],
+      ["n2", "running"],
+      ["n3", "pending"],
+      ["n4", "awaiting_host_admission"],
+    ]),
+    0,
+  );
+  assert.deepEqual(progress, {
+    total: 4,
+    settled: 1,
+    remaining: 3,
+    running: 1,
+    queued: 2,
+    current: { nodeId: "n2", state: "running", observedInStateMs: 0 },
+  });
+});
+
+test("the current node's clock is the plan's, not this call's", () => {
+  // The measured cost: four consecutive 30 s waits on one plan all returned the same `running` node. Across those calls
+  // the node had been running for two minutes, and no call could say so - each one only knew its own bound.
+  const observer = createProgramProgressObserver();
+  const payload = plan([
+    ["n1", "succeeded"],
+    ["n2", "running"],
+    ["n3", "pending"],
+  ]);
+  observer.observe(payload, 1_000);
+  const later = observer.observe(payload, 5_000);
+  assert.equal(later?.current?.observedInStateMs, 4_000);
+  assert.equal(later?.remaining, 2, "two nodes still to get through");
+});
+
+test("a node that changed state is timed from the change, not from when the node first appeared", () => {
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    plan([
+      ["n1", "running"],
+      ["n2", "pending"],
+    ]),
+    0,
+  );
+  const moved = observer.observe(
+    plan([
+      ["n1", "succeeded"],
+      ["n2", "awaiting_host_admission"],
+    ]),
+    7_000,
+  );
+  // `n2` is the plan's work now, and it has been waiting on admission for no time at all: reporting `n1`'s seven
+  // seconds as its predecessor's would tell a caller to stop waiting on a node that just started.
+  assert.deepEqual(moved?.current, { nodeId: "n2", state: "awaiting_host_admission", observedInStateMs: 0 });
+  assert.equal(moved?.settled, 1);
+  assert.equal(moved?.running, 0);
+  assert.equal(moved?.queued, 1);
+});
+
+test("a rejected node and the dependents it skipped are settled work, not work still to wait for", () => {
+  // A plan with a rejected node stays `active`, so these would otherwise count as outstanding and keep a caller
+  // waiting on work the Mod will never dispatch.
+  const observer = createProgramProgressObserver();
+  const progress = observer.observe(
+    plan([
+      ["n1", "succeeded"],
+      ["n2", "rejected"],
+      ["n3", "skipped_dependency"],
+      ["n4", "abandoned"],
+      ["n5", "cancelled"],
+    ]),
+    0,
+  );
+  assert.equal(progress?.settled, 5);
+  assert.equal(progress?.remaining, 0);
+  assert.equal(progress?.current, null, "nothing left names no current node");
+});
+
+test("a plan waiting on its next admission names the node it is waiting for", () => {
+  const observer = createProgramProgressObserver();
+  const progress = observer.observe(
+    plan([
+      ["n1", "succeeded"],
+      ["n2", "awaiting_host_admission"],
+    ]),
+    2_000,
+  );
+  assert.deepEqual(progress?.current, { nodeId: "n2", state: "awaiting_host_admission", observedInStateMs: 0 });
+  assert.equal(progress?.running, 0, "nothing is dispatched, so nothing owes a receipt");
+});
+
+test("a read that found no plan reports no progress instead of an empty one", () => {
+  // Zeroes would read as "a plan with nothing left", which is the one thing this must never say about a plan it did not
+  // read; the caller's next move on `not_found` is to stop asking, not to wait.
+  const observer = createProgramProgressObserver();
+  assert.equal(observer.observe({ code: "not_found", snapshot: null }), null);
+  assert.equal(observer.observe({ code: "invalid_input", snapshot: null }), null);
+  assert.equal(observer.observe({ code: "found", snapshot: null }), null);
+});
+
+test("a stopped plan keeps no clock, so a reused program id cannot inherit one", () => {
+  const observer = createProgramProgressObserver();
+  observer.observe(plan([["n1", "running"]]), 0);
+  observer.observe(plan([["n1", "succeeded"]], "succeeded"), 4_000);
+  // The same id, active again, is different work: its node starts its own clock rather than inheriting n1's seconds.
+  const again = observer.observe(plan([["n1", "running"]]), 9_000);
+  assert.equal(again?.current?.observedInStateMs, 0);
+});
+
+test("a STOP epoch starts its own clock, because it ends the work the old one was timing", () => {
+  // STOP cancels the plan's nodes and the same ids are re-dispatched in a new epoch; a clock carried across it would
+  // time work that no longer exists and tell a caller a node it has never waited on had been running for a minute.
+  const observer = createProgramProgressObserver();
+  observer.observe(plan([["n1", "running"]], "active", 0), 0);
+  const afterStop = observer.observe(plan([["n1", "running"]], "active", 1), 30_000);
+  assert.equal(afterStop?.current?.observedInStateMs, 0);
+});
+
+/** One `program_status` payload for the progress reads: a plan whose nodes are named by state. */
+function plan(nodes: readonly (readonly [string, string])[], state = "active", stopEpoch = 0) {
+  return {
+    code: "found",
+    snapshot: {
+      programId: "p1",
+      state,
+      stopEpoch,
+      nodes: nodes.map(([nodeId, nodeState]) => ({ nodeId, state: nodeState })),
+    },
+  };
+}

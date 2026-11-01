@@ -69,7 +69,12 @@ import {
   type GameVoicePresentationAttachment,
 } from "../voice-gateway-client.js";
 import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
-import { isTerminalProgramStatus, waitForTerminalProgramStatus } from "../program-status-wait.js";
+import {
+  isTerminalProgramStatus,
+  programStatusProgress,
+  waitForTerminalProgramStatus,
+  type ProgramStatusProgress,
+} from "../program-status-wait.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -300,8 +305,12 @@ function createBodyProgramTools(
         label: "stardew_action_program_status",
         // The siblings described themselves with their own names, which is zero information (measured: an agent
         // reading this list could not tell what any of the three was for).
+        //
+        // `progress` is what the caller sizes its NEXT wait from, and it exists because the result used to give it
+        // nothing to size one with: measured 2026-11-02, 65 status calls spent 281 s of a 24-minute run, every long one
+        // asking for the whole 30,000 ms bound, because the answer named the nodes and never the work left.
         description:
-          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened. An expired wait also says whether the plan changed while it waited: `waited.snapshotChanged: false` means the plan stood still for the whole wait, so asking again the same way will report the same thing - do something else instead (check the game, change the approach) rather than waiting again.",
+          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. `progress` summarises what is left: `total`, `settled`, `remaining`, `running` (dispatched, receipt still owed), `queued` (not started) and `current` - the node the plan is on now, with `observedInStateMs`, how long the Host has watched it in that state (`0` means it has just appeared, not that it has done nothing). Measured actions take seconds, not tens of seconds (`move_to_tile` p90 3.6 s, `harvest_crop` p90 4.1 s), so `progress` is what tells you whether `current` is working or stuck. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened. Choose waitMs from `progress` rather than passing the 30,000 maximum by habit: a wait costs nothing when the plan settles inside it, and costs everything it asked for when it does not. An expired wait also says whether the plan changed while it waited: `waited.snapshotChanged: false` means the plan stood still for the whole wait, so asking again the same way will report the same thing - do something else instead (check the game, change the approach) rather than waiting again.",
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -311,14 +320,22 @@ function createBodyProgramTools(
           if (!isBodyProgramStatusRequest(params)) throw new Error("invalid_body_program_tool_arguments");
           const { waitMs } = params as { waitMs?: number };
           const request = { programId: params.programId };
-          const read = () =>
-            withPort(request, validateStatusRequest, validateBodyProgramStatusResult, (port) => port.status(request));
+          // Every read passes through the observation ledger, every poll the wait makes included, so a node's clock
+          // runs from when this Host first watched it in that state - not from when this particular call started.
+          const read = async () => {
+            const result = await withPort(request, validateStatusRequest, validateBodyProgramStatusResult, (port) =>
+              port.status(request),
+            );
+            programStatusProgress.observe(result);
+            return result;
+          };
           const first = await read();
           // Omitted or zero keeps the old behaviour exactly: one read, return. Only a caller that asked to wait
           // pays for the loop, so no existing path gets slower or starts blocking.
-          if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(first)) return toolResult(first, null);
+          if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(first))
+            return toolResult(first, null, programStatusProgress.observe(first));
           const waited = await waitForTerminalProgramStatus(read, first, waitMs);
-          return toolResult(waited.result, waited.waited);
+          return toolResult(waited.result, waited.waited, programStatusProgress.observe(waited.result));
         },
       }),
     ),
@@ -499,7 +516,7 @@ function bodyProgramToolParameters(name: string) {
             minimum: 0,
             maximum: 30_000,
             description:
-              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running, and waited.snapshotChanged says whether the plan's own state or nodes moved at all during the wait.",
+              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running, waited.snapshotChanged says whether the plan's own state or nodes moved at all during the wait, and progress says what work is left and how long the current node has been in its state - read it before choosing this value instead of passing the maximum out of habit.",
           }),
         ),
       },
@@ -693,13 +710,20 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
  * One tool result, with the wait's own outcome BESIDE the payload, not inside it.
  *
  * `waited` is `null` for a plain read, so a caller can tell "I did not wait" from "I waited and it was still
- * running" - the distinction the poll loop existed to express and a fixed `running` reply hides.
+ * running" - the distinction the poll loop existed to express and a fixed `running` reply hides. `progress` rides
+ * beside them both, because a read that did not wait still has to say how much work is left for the next decision to be
+ * an informed one; it is absent only for the tools that have no plan to report on.
  */
 function toolResult<TDetails>(
   details: TDetails,
   waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }> | null,
+  progress?: ProgramStatusProgress | null,
 ) {
-  const published = (waited === null ? details : { ...(details as Record<string, unknown>), waited }) as TDetails;
+  const published = {
+    ...(details as Record<string, unknown>),
+    ...(waited === null ? {} : { waited }),
+    ...(progress === undefined ? {} : { progress }),
+  } as TDetails;
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(published) }],
     details: published,

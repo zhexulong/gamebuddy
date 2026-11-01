@@ -5,9 +5,11 @@
  * a model that wanted to know had one option: ask again. Measured on the 2026-10-26 run, 48 calls at a p50 gap of
  * 6,365 ms and a max of 34,918 ms - each gap a whole model turn spent learning nothing.
  *
- * The facts a wait needs are already published, so this module adds no state and no authority: it reads the same
+ * The facts a wait needs are already published, so this module adds no authority: it reads the same
  * `program_status` payload the tool already reads, and it never invents a finished state. On expiry the caller gets
- * the last real snapshot plus `reachedTerminal: false`.
+ * the last real snapshot plus `reachedTerminal: false`. The one thing it now remembers is when it first saw each node
+ * in its state (`createProgramProgressObserver`), because the wire carries no timestamp and a caller choosing its next
+ * wait needs to know how long the node in front of it has been there.
  *
  * "It did not finish" alone is not an answer a caller can act on. The wait re-reads the live journal every interval
  * (`PROGRAM_STATUS_POLL_INTERVAL_MS`), so it already knows whether the journal published anything at all while it
@@ -19,6 +21,26 @@
  * An unchanged snapshot is only that fact when nothing is executing. While an action runs, the snapshot it compares
  * cannot change by construction (see `NODE_STATES_IN_FLIGHT`), so silence there is the action working, not the plan
  * stalling - and returning early on it hands the caller a still-running plan it can only ask about again.
+ *
+ * ## Why the wait is informed, not shortened
+ *
+ * Measured 2026-11-02 over one 24-minute run: `stardew_action_program_status` was called 65 times for 281 s, the longest
+ * single call spending its whole 30,000 ms bound (`round 7` was worse: 89 calls, 452 s). A fifth of that run sat inside
+ * one read-only tool, and the plans were finishing - 66 programs of 290 nodes at 93% success. So the waste was the
+ * polling, not the execution.
+ *
+ * The bound is not what was wrong with it. A wait returns the instant the plan settles, so a large bound costs nothing
+ * when the plan finishes inside it; it costs only when the plan does not. What was wrong is that the result gave a
+ * caller nothing to choose a bound FROM: a node list with states, and no statement of how much work was left or how
+ * long the node in front of it had been in that state. With no basis, the only safe choice is the maximum, every time.
+ *
+ * That makes this (b) - return progress, not just state - rather than (a). `createProgramProgressObserver` publishes
+ * `total`, `settled`, `remaining`, `running`, `queued` and the current node with the time the Host has watched it in
+ * its state, so a second call is informed rather than blind. Two things are deliberately NOT done. Omitting `waitMs`
+ * still means "one read and return": "what is the state now" is a different question from "wait for it", and a
+ * blocking default would charge every cheap check for a wait it did not ask for. And the 30 s cap stays, because no
+ * smaller cap can know when a plan genuinely needs longer - it would turn one wait into three with the caller learning
+ * nothing in between.
  */
 
 /** The only non-terminal program state (`BodyProgramState`, `BodyProgramModels.cs:144`). */
@@ -70,6 +92,25 @@ export interface ProgramStatusWaitOutcome<TResult> {
 const NODE_STATES_IN_FLIGHT: ReadonlySet<string> = new Set(["host_admitted", "running"]);
 
 /**
+ * The node states with nothing left to run (`BodyProgramNodeState`, `BodyProgramModels.cs:145`).
+ *
+ * Everything here has stopped for good, so counting one of them as outstanding work would overstate what waiting can
+ * still deliver. `rejected` and `skipped_dependency` are the two a naive reader misses: a plan whose remaining nodes
+ * depend on a rejected one is still `active`, and the Mod will never dispatch the node that was refused or the
+ * descendants it skipped. `abandoned` is the ADR-006 state for a dispatch whose outcome can never be known - settled
+ * ignorance, which the plan itself reports as `failed`.
+ */
+const NODE_STATES_SETTLED: ReadonlySet<string> = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "recovery_required",
+  "rejected",
+  "skipped_dependency",
+  "abandoned",
+]);
+
+/**
  * Is every action this snapshot shows finished, with nothing dispatched and unsettled?
  *
  * `true` means no publication is owed, so an unchanged snapshot is the actionable "asking again will say the same"
@@ -89,6 +130,111 @@ export function hasNothingInFlight(payload: unknown): boolean {
       NODE_STATES_IN_FLIGHT.has((node as Record<string, unknown>).state as string),
   );
 }
+
+/**
+ * The work a `program_status` payload still has outstanding, and how long the node in front of it has been there.
+ *
+ * A node list with states is not an answer to "should I wait again": four nodes of which two are `pending` reads the
+ * same as four nodes of which three settled while the caller was not looking. The counts make the remaining work
+ * something the caller can decide from, and `current.observedInStateMs` says whether the node it would be waiting on is
+ * behaving like a normal action (measured per-action p90s are seconds, not tens of seconds) or has stopped moving.
+ */
+export interface ProgramStatusProgress {
+  readonly total: number;
+  /** Nodes in a settled state (`NODE_STATES_SETTLED`): nothing more will happen to them. */
+  readonly settled: number;
+  /** `total - settled`: what the plan still has to get through, including the node executing now. */
+  readonly remaining: number;
+  /** Nodes dispatched with their receipt still owed (`host_admitted`, `running`). */
+  readonly running: number;
+  /** Nodes not started yet: `pending`, or waiting for this Host's admission. */
+  readonly queued: number;
+  /**
+   * The node the plan is on now - the first one in flight, or the next one it will start when nothing is in flight.
+   *
+   * `observedInStateMs` is how long THIS HOST has continuously watched that node in that state, across calls, so `0`
+   * means the state is new to this process and does not mean the node has done nothing.
+   */
+  readonly current: Readonly<{ nodeId: string; state: string; observedInStateMs: number }> | null;
+}
+
+/** How many plans the Host keeps a node clock for. A measured run submitted 66 programs in 24 minutes, so this is slack. */
+const MAX_OBSERVED_PROGRAMS = 64;
+
+/** How long an unread plan keeps its clock: longer than any action, shorter than a session, so ids cannot be inherited. */
+const OBSERVATION_RETENTION_MS = 10 * 60_000;
+
+/** One plan's node clocks: when the Host first saw each node in the state it is in now. */
+type ObservedProgram = { nodes: Map<string, { state: string; since: number }>; lastSeen: number };
+
+export interface ProgramProgressObserver {
+  /** The progress a `program_status` payload describes, or `null` when that payload is not a found plan. */
+  observe(payload: unknown, nowMs?: number): ProgramStatusProgress | null;
+}
+
+/**
+ * A ledger of "when did this Host first see THIS node in THIS state", and the progress it makes answerable.
+ *
+ * The elapsed time cannot come off the wire: `BodyProgramNodeStatus` carries no timestamp (protocol.ts:1503) and the
+ * Mod's own history is the event log, which a status read does not page. The Host is already reading these payloads,
+ * so it times what it reads. That is observation, not authority: a node's clock restarts whenever its state changes,
+ * nothing here can make a plan look finished, and a payload that is not `found` is answered with `null`.
+ */
+export function createProgramProgressObserver(): ProgramProgressObserver {
+  const programs = new Map<string, ObservedProgram>();
+  return Object.freeze({
+    observe(payload: unknown, nowMs: number = Date.now()): ProgramStatusProgress | null {
+      const plan = readPlanProgressSource(payload);
+      if (plan === null) return null;
+      // Keyed by the plan AND its STOP epoch: a STOP is a new epoch of the same id, whose nodes are about to be
+      // cancelled and re-dispatched, so inheriting the previous epoch's clock would time work that no longer exists.
+      const key = `${plan.programId}|${plan.stopEpoch}`;
+      const anchors = new Map(programs.get(key)?.nodes ?? []);
+      let settled = 0;
+      let running = 0;
+      let current: ProgramStatusProgress["current"] = null;
+      let next: ProgramStatusProgress["current"] = null;
+      for (const node of plan.nodes) {
+        const anchor = anchors.get(node.nodeId);
+        if (anchor === undefined || anchor.state !== node.state)
+          anchors.set(node.nodeId, { state: node.state, since: nowMs });
+        const view = Object.freeze({
+          nodeId: node.nodeId,
+          state: node.state,
+          observedInStateMs: Math.max(0, nowMs - anchors.get(node.nodeId)!.since),
+        });
+        if (NODE_STATES_SETTLED.has(node.state)) settled += 1;
+        else if (NODE_STATES_IN_FLIGHT.has(node.state)) {
+          running += 1;
+          if (current === null) current = view;
+        } else if (next === null) next = view;
+      }
+      // A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another
+      // plan's work as this one's.
+      if (plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE)
+        programs.set(key, { nodes: anchors, lastSeen: nowMs });
+      else programs.delete(key);
+      pruneObservations(programs, nowMs);
+      const remaining = plan.nodes.length - settled;
+      return Object.freeze({
+        total: plan.nodes.length,
+        settled,
+        remaining,
+        running,
+        queued: remaining - running,
+        current: current ?? next,
+      });
+    },
+  });
+}
+
+/**
+ * The Host's own observation of the plans it reads.
+ *
+ * One per process on purpose: the number is about the plan, not about the call, so a node the previous call already
+ * saw running has been running since then rather than since this one began.
+ */
+export const programStatusProgress: ProgramProgressObserver = createProgramProgressObserver();
 
 /**
  * How many consecutive polls with an unchanged snapshot end a wait early.
@@ -195,6 +341,56 @@ function programSnapshot(payload: unknown): string {
   if (typeof snapshot !== "object" || snapshot === null) return `${String(record.code)}|`;
   const program = snapshot as Record<string, unknown>;
   return `${String(record.code)}|${String(program.state)}|${JSON.stringify(program.nodes ?? null)}`;
+}
+
+/**
+ * The part of a `program_status` payload the progress counts read: its own state and its nodes' states, and nothing else.
+ *
+ * Only a `found` payload describes a plan. `not_found` and `invalid_input` have no nodes to count, and answering them
+ * with zeroes would read as "a plan with nothing left" - the one thing this must never say about a plan it did not read.
+ */
+function readPlanProgressSource(payload: unknown): {
+  programId: string;
+  stopEpoch: string;
+  state: string;
+  nodes: readonly Readonly<{ nodeId: string; state: string }>[];
+} | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const record = payload as Record<string, unknown>;
+  if (record.code !== "found") return null;
+  const snapshot = record.snapshot;
+  if (typeof snapshot !== "object" || snapshot === null) return null;
+  const plan = snapshot as Record<string, unknown>;
+  const nodes: { nodeId: string; state: string }[] = [];
+  if (Array.isArray(plan.nodes))
+    for (const node of plan.nodes) {
+      if (typeof node !== "object" || node === null) continue;
+      const entry = node as Record<string, unknown>;
+      nodes.push({ nodeId: String(entry.nodeId ?? ""), state: String(entry.state ?? "") });
+    }
+  return {
+    programId: String(plan.programId ?? ""),
+    stopEpoch: String(plan.stopEpoch ?? ""),
+    state: String(plan.state ?? ""),
+    nodes,
+  };
+}
+
+/** Drop clocks nobody will read again, oldest first, so a long session cannot grow this without bound. */
+function pruneObservations(programs: Map<string, ObservedProgram>, nowMs: number): void {
+  for (const [programId, entry] of programs)
+    if (nowMs - entry.lastSeen > OBSERVATION_RETENTION_MS) programs.delete(programId);
+  while (programs.size > MAX_OBSERVED_PROGRAMS) {
+    let oldestId: string | undefined;
+    let oldestSeen = Number.POSITIVE_INFINITY;
+    for (const [programId, entry] of programs)
+      if (entry.lastSeen < oldestSeen) {
+        oldestSeen = entry.lastSeen;
+        oldestId = programId;
+      }
+    if (oldestId === undefined) return;
+    programs.delete(oldestId);
+  }
 }
 
 function defaultSleep(milliseconds: number): Promise<void> {
