@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CompanionEventPump,
-  FACT_BATCH_CHARS_PER_TOKEN,
-  FOLD_CHUNK_CEILING_TOKENS,
+  FACT_BATCH_CHARS_PER_TOKEN_MIN,
+  FACT_BATCH_SHARE_OF_CHUNK,
   MAX_BATCH_BYTES,
+  deriveMaxBatchBytes,
 } from "./event-pump.js";
 
 /**
@@ -135,26 +136,45 @@ test("the snapshot is never separated from the batch that triggers it", async ()
 });
 
 /**
- * The bound is a FRACTION of the consumer, not a token count that looked about right.
+ * The bound is DERIVED from the consumer, not a token count that looked about right.
  *
- * The previous value was 60,000 characters on the stated belief that this was "roughly 15k tokens" - about
- * 4 characters per token. Real fact batches measure 2.47-2.76 chars/token (round18, 22 batches), so 60,000
- * was 22,534 tokens against a fold chunk ceiling of 22,879: 98-106% of a whole chunk, depending on the batch.
+ * Two values failed here in the same direction. 120,000 characters was half a fold at best. Then 60,000 was
+ * chosen as "roughly 15k tokens", assuming ~4 characters per token - but real fact batches measure 2.47-2.76
+ * chars/token, so 60,000 was 22,534 tokens against a 22,879-token chunk: 98-106% of a whole one. 22 uncleared
+ * batches then held 434,021 tokens, 96% of all active message tokens, and the next burst filled a 200,000-token
+ * window and answered stopReason: "length".
  *
- * A batch that big is one a fold can never get ahead of. Every pass spends its entire budget on a single
- * delivery, five deliveries in 28 seconds left 434,021 tokens of uncleared batches in the protected tail, and
- * the next burst filled a 200,000-token window (203,926) and answered stopReason: "length".
- *
- * This asserts the RATIO rather than the literal, so it stays true if the ceiling or the measured ratio moves.
- * A batch must be under half a chunk; at 18,000 characters it is 32%, so one pass drains three.
+ * These assertions are on the DERIVATION, so they stay true if the chunk or the ratio moves: what has to hold is
+ * the relationship, not the literal.
  */
-test("a batch is a fraction of one fold chunk, not approximately one", () => {
-  const batchTokens = MAX_BATCH_BYTES / FACT_BATCH_CHARS_PER_TOKEN;
-  const share = batchTokens / FOLD_CHUNK_CEILING_TOKENS;
+test("the batch bound is a fraction of the fold chunk it is derived from", () => {
+  const share = MAX_BATCH_BYTES / FACT_BATCH_CHARS_PER_TOKEN_MIN;
+  const chunk = share / FACT_BATCH_SHARE_OF_CHUNK;
   assert.ok(
-    share < 0.5,
-    `one batch is ${batchTokens.toFixed(0)} tokens, ${(share * 100).toFixed(0)}% of a ` +
-      `${String(FOLD_CHUNK_CEILING_TOKENS)}-token fold chunk. Above half, a fold pass spends its whole budget on ` +
-      "one delivery and the protected tail never shrinks - which is the defect this bound exists to prevent.",
+    FACT_BATCH_SHARE_OF_CHUNK < 0.5,
+    "the share must be under half a chunk: at half, one fold pass spends its whole budget on a single delivery " +
+      "and the protected tail cannot shrink at all",
   );
+  assert.equal(
+    Math.floor(chunk * FACT_BATCH_SHARE_OF_CHUNK * FACT_BATCH_CHARS_PER_TOKEN_MIN),
+    MAX_BATCH_BYTES,
+    "MAX_BATCH_BYTES must be exactly what deriveMaxBatchBytes produces for the chunk it names",
+  );
+  assert.equal(
+    deriveMaxBatchBytes(22_879),
+    MAX_BATCH_BYTES,
+    "and the exported fallback chunk is the one the constant was derived from",
+  );
+});
+
+test("a doubles-sized chunk yields a doubles-sized bound, so the bound tracks its consumer", () => {
+  // Within one character: the derivation floors, so an exact double can land one short.
+  const doubled = deriveMaxBatchBytes(45_758);
+  assert.ok(
+    Math.abs(doubled - MAX_BATCH_BYTES * 2) <= 1,
+    `doubling the chunk must double the bound (got ${String(doubled)} against ${String(MAX_BATCH_BYTES * 2)})`,
+  );
+  // A degenerate input falls back rather than producing zero, which would stall every delivery.
+  assert.equal(deriveMaxBatchBytes(0), MAX_BATCH_BYTES);
+  assert.equal(deriveMaxBatchBytes(Number.NaN), MAX_BATCH_BYTES);
 });

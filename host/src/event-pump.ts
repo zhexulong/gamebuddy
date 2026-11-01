@@ -88,6 +88,38 @@ export const MAX_PENDING_SEMANTIC_EVENTS = 512;
 export const MAX_PENDING_LIFECYCLE = 128;
 export const MAX_PENDING_WORLD_FACTS = 32;
 
+export const HISTORIAN_CHUNK_FALLBACK_TOKENS = 22_879;
+
+/**
+ * Share of one fold chunk a single delivered batch may occupy.
+ *
+ * Below a half on purpose: at half, a fold pass spends its entire budget on one delivery and the protected
+ * tail cannot shrink at all. A third leaves room for two more batches per pass.
+ */
+export const FACT_BATCH_SHARE_OF_CHUNK = 0.32;
+
+/**
+ * Mean characters per token measured on real fact batches.
+ *
+ * 4 (the usual English approximation) is wrong for this product by a factor of 1.5, which is exactly how
+ * 60,000 characters came to be believed a 15k-token batch. Measured 2.47-2.76 across 22 batches from
+ * `2026-10-31T19-26-54`; the low end is used in the derivation so the bound errs small.
+ */
+export const FACT_BATCH_CHARS_PER_TOKEN_MIN = 2.47;
+
+/**
+ * Size one batch against the chunk that consumes it.
+ *
+ * @param foldChunkTokens Tokens one fold pass can absorb; Magic Context's `deriveHistorianChunkTokens` is the
+ * authority for this when it is reachable.
+ * @returns The character bound for one delivery.
+ */
+export function deriveMaxBatchBytes(foldChunkTokens: number): number {
+  const usable =
+    Number.isFinite(foldChunkTokens) && foldChunkTokens > 0 ? foldChunkTokens : HISTORIAN_CHUNK_FALLBACK_TOKENS;
+  return Math.floor(usable * FACT_BATCH_SHARE_OF_CHUNK * FACT_BATCH_CHARS_PER_TOKEN_MIN);
+}
+
 /**
  * How many characters one delivered batch may serialize to.
  *
@@ -98,44 +130,34 @@ export const MAX_PENDING_WORLD_FACTS = 32;
  * further action for the rest of the run, while the companion stood in the farmhouse with
  * `can_move=True; navigate=idle`.
  *
- * THE DERIVATION, and the error it corrects. A fold run's non-emergency chunk ceiling is about 22,879
- * tokens; a batch must be a FRACTION of that so one fold can drain several batches per pass. The previous
- * value was 60,000 characters on the belief, stated here, that this was "roughly 15k tokens". That belief
- * assumed ~4 characters per token. These batches are JSON of Chinese prose and English keys, and the real
- * ratio measured across 22 of them (`round18`, `2026-10-31T19-26-54`) is 2.47-2.76 characters per token,
- * mean 2.66. So 60,000 characters was not 15k tokens: it was 22,534, and the largest batches measured
- * 24,228 - 105.9% of one whole fold chunk.
+ * A batch must be a FRACTION of the fold chunk that consumes it, so one fold pass drains several batches
+ * instead of barely one. Two earlier values got that wrong in the same direction:
  *
- * A batch that equals the chunk is a batch the fold can never get ahead of: every pass spends its entire
- * budget on one delivery, five deliveries in 28 seconds put 434,021 tokens of uncleared batches in the
- * protected tail, and the next burst filled a 200,000-token window (203,926), answering `stopReason:
- * "length"`. The same arithmetic as the 120,000 -> 60,000 reduction, one step further: it was right that
- * a batch must fit inside the consumer, and wrong about how many tokens a character costs.
+ *   - 120,000 characters was half a fold at best, measured 2026-10-29 (`round7`): 29 fold runs, ten
+ *     messages each, three `gamebuddy_fact_batch` messages still uncleared - 104,972 of 123,130 input
+ *     tokens (85%).
+ *   - 60,000 characters was chosen as "roughly 15k tokens", assuming ~4 characters per token. These
+ *     batches are JSON of Chinese prose beside English keys and measure 2.47-2.76 chars/token across 22
+ *     of them (`2026-10-31T19-26-54`), mean 2.66. So 60,000 was 22,534 tokens against a 22,879-token
+ *     chunk: 98-106% of a whole one.
  *
- * 18,000 characters at the worst measured ratio (2.47) is 7,287 tokens - 32% of a chunk - so one fold pass
- * drains three batches instead of barely one, and five batches in 28 seconds cost ~36k tokens rather than
- * ~113k.
+ * The consequence of the second: 22 uncleared batches held 434,021 tokens - 96% of all active message
+ * tokens - while folding had already run 86 times. Five deliveries in 28 seconds then filled a
+ * 200,000-token window (203,926) and the model answered `stopReason: "length"`.
+ *
+ * THE BOUND IS DERIVED, NOT CHOSEN. `deriveMaxBatchBytes` applies the same shape Magic Context uses for its
+ * own budgets (`derive-budgets.ts`: a percentage of the consumer's context, clamped): a share of the fold
+ * chunk, converted at the measured characters-per-token ratio.
  *
  * THE TRADE THIS MAKES, stated rather than hidden: a smaller bound means more deliveries, so one burst
  * becomes several batches instead of one. That is the direction the fold wants - it drains a fixed token
  * budget per pass, so more, smaller items drain where fewer, larger ones stall - but it is not free: each
  * delivery is a model turn. If a future measurement shows turn count rising faster than the tail shrinks,
- * the ratio is what to revisit, not the principle.
+ * the fraction is what to revisit, not the principle.
  *
  * Overflow is not dropped: `takeBatch` puts it back and the next flush delivers it.
  */
-export const MAX_BATCH_BYTES = 18_000;
-
-/**
- * The token cost this bound is derived from, and the ratio it assumes.
- *
- * Exported so a test can assert the arithmetic rather than the literal: if the fold chunk ceiling or the
- * characters-per-token ratio moves, the ratio between them is what has to stay true, not the number.
- */
-export const FOLD_CHUNK_CEILING_TOKENS = 22_879;
-
-/** Mean characters per token measured on real fact batches; see `MAX_BATCH_BYTES`. */
-export const FACT_BATCH_CHARS_PER_TOKEN = 2.66;
+export const MAX_BATCH_BYTES = deriveMaxBatchBytes(HISTORIAN_CHUNK_FALLBACK_TOKENS);
 
 export interface CompanionTurnSink {
   /**
