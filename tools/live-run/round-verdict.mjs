@@ -269,16 +269,23 @@ record(
 const assessment = result.multiday?.assessment ?? result.assessment ?? null;
 const dayRecords = result.multiday?.dayRecords ?? result.dayRecords ?? [];
 const nightsNull = dayRecords.filter((day) => day?.night === null || day?.night === undefined).length;
+// A night that was never crossed has no mechanism to judge, so "no violation" is not a pass - it is the absence of
+// evidence. Measured 2026-11-01 on `round20`: `crossed=0, nightsNull=1` reported PASS, which is a green tick over a run
+// that never reached the thing this criterion exists to check. `nightsNull` is not the signal either: it counts days whose
+// record carries no night, which is 1 on a single-day run for reasons that have nothing to do with attribution.
+const nightsJudged = assessment === null ? 0 : (assessment.daysCrossed ?? 0);
 record(
   "4 night mechanism",
-  assessment === null
+  assessment === null || nightsJudged === 0
     ? "NOT EXERCISED"
-    : nightsNull === 0 || (assessment.unobservedNights ?? 0) === 0
+    : (assessment.unobservedNights ?? 0) === 0
       ? "PASS"
       : "FAIL",
   assessment === null
     ? "no assessment in result.json"
-    : `crossed=${assessment.daysCrossed} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"} nightsNull=${nightsNull}`,
+    : nightsJudged === 0
+      ? `no night was crossed, so there is no mechanism to judge (daysCrossed=0, days recorded=${dayRecords.length})`
+      : `crossed=${assessment.daysCrossed} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"}`,
   resultPath,
 );
 
