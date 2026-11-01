@@ -11,7 +11,7 @@
 // process. When 0, every stage that requires a live turn records a NAMED SKIP and the geometry
 // probes that survive without a turn still run.
 const path = require("node:path");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn, observe } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn, observe, readDurableTranscript } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 const SKIP = (reason) => `SKIPPED:${reason}`;
@@ -208,8 +208,6 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
     say("=== ITEM: the controls strip on the newest settled companion bubble ===");
     say(JSON.stringify(await page.evaluate(stripFacts), null, 1));
     await shot(page, "72-skip-no-credential.png");
-    // What this driver cost and what the runtime holds, read from the product's own marks.
-    await observe(page, say, "f");
 
     flush();
     await browser.close().catch(() => undefined);
@@ -357,6 +355,41 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   }
   say(`text after switching forward equals the regenerated text: ${forward?.text === (newReply?.text ?? null)} indicator=${JSON.stringify(forward?.indicator ?? null)}`);
   await shot(page, "83-variant-switched-forward.png");
+
+  // What this driver cost and what the runtime holds, read from the product's own marks.
+  await observe(page, say, "f");
+
+  /*
+   * Capability observation: what the chat DID with the turn it just ran, read from the durable state
+   * (`/api/tavern/v1/state`) rather than from the DOM. The DOM is what this driver just measured; a
+   * second read of the same thing is not a second opinion.
+   *
+   * The worldbook half is NOT observed here, and the reason is worth stating: the state body carries
+   * `chat` and `selection` but not the worldbook, so a driver cannot see which entries were active.
+   * The end-to-end fact that the always-on entry reaches the model was established separately, by
+   * saying a line carrying its key and reading the reply, which quoted the entry's own content
+   * ("西边那两畦草", "铜的留着修水壶"). Repeating that here would be a second, weaker copy of a fact
+   * already measured on the same page.
+   */
+  const durable = await readDurableTranscript(page);
+  if (!durable.ok) {
+    say(`CAPABILITY transcript: unobserved:state_read_failed:${durable.status ?? durable.failed ?? "unknown"}`);
+  } else {
+    const rows = durable.transcript ?? [];
+    const player = rows.filter((row) => row.role === "player").length;
+    const companion = rows.filter((row) => row.role === "companion").length;
+    say(`CAPABILITY transcript: rows=${rows.length} player=${player} companion=${companion} title=${JSON.stringify(durable.title)}`);
+    const last = rows[rows.length - 1];
+    const unanswered = last !== undefined && last.role === "player";
+    say(
+      `CAPABILITY transcript order: ${unanswered ? "FAIL the last durable row is a player line" : "ok the last durable row is a reply"}`,
+    );
+    /* The opening greeting makes companion = player + 1 before anyone types; anything else is drift. */
+    const balanced = companion === player || companion === player + 1;
+    say(
+      `CAPABILITY transcript balance: ${balanced ? "ok" : `FAIL companion=${companion} against player=${player} (only +0 or +1 is a chat with an opening)`}`,
+    );
+  }
 
   flush();
   await browser.close().catch(() => undefined);
