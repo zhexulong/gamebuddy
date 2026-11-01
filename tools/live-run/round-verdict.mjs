@@ -61,40 +61,100 @@ function sessionPath(runDir) {
 }
 
 /**
- * Whether the prompt the model received is still readable.
+ * The rendered environment block, read from the run's own record.
  *
- * <p>
- * Magic Context folds old fact batches, so a run's per-turn `<runtime-environment>` block survives only until it is folded -
- * measured 2026-11-01: one `gamebuddy_fact_batch` left in a 285-turn session. A prompt-level criterion answering "no" from
- * that absence would be answering from the fold, not from the run.
- * </p>
+ * `<runtime-environment>` is produced by the Magic Context transform when a request is ASSEMBLED and is never
+ * written to the session, which stores MESSAGES. Measured 2026-11-01 on round18 (24 minutes, 75 assembled plans):
+ * `位置:` 0, `脚下` 0, `待浇水` 0 in the bound session, while `formatGameEnvironmentFacts` renders all three when
+ * called directly. So a prompt-level criterion here had no file to read and reported UNOBSERVABLE by
+ * construction - a fact about the instrument, not about the product.
+ *
+ * The file exists now: the registered provider records what it rendered, per request, in
+ * `environment-facts.jsonl` beside the run manifest (`createRenderedEnvironmentFactsProvider`,
+ * `host/src/runtime-core.internal.ts`), and the run's capture copies it into the run directory. One line reads
+ * `{ at, revision, bytes, overCap, dropped?, text }`, so a reader can ask the four questions that were
+ * unanswerable: did the block render on every request, what did the unwatered count say, did same-map
+ * villagers arrive with tiles, and what did the byte cap drop.
+ *
+ * A run that PREDATES the record has no such file. That criterion is then NOT EXERCISED, and the detail says why
+ * (the record did not exist when that run assembled its requests) rather than claiming the block never rendered.
+ * It is deliberately NOT the old structural UNOBSERVABLE: nothing about these criteria is unreadable any more, and
+ * every run from the one that introduced the record on can be answered.
  */
-/**
- * Whether the rendered environment block can be read back at all.
- *
- * <p>
- * It cannot, and that is structural rather than incidental: `<runtime-environment>` is produced by the vendored Magic Context
- * transform when a request is assembled (`setRuntimeEnvironmentFacts`, runtime-core.internal.ts:1445) and is never written to
- * the session. The session holds MESSAGES. Measured 2026-11-01 on a 24-minute run: `位置:` 0, `待浇水` 0, `脚下` 0, while the
- * formatter itself renders them correctly when called directly.
- * </p>
- *
- * <p>
- * So a prompt-level criterion here reports UNOBSERVABLE by construction. Reporting FAIL would be claiming the product did
- * something wrong when the instrument simply cannot see the request.
- * </p>
- */
-function promptEvidenceReadable(sessionText, contextSummary) {
-  if (sessionText.length === 0) return { readable: false, why: "no session found" };
-  // The block is injected at request time and never persisted; a session that carries it would be the exception.
-  if (!sessionText.includes("<runtime-environment>") || !/位置:|待浇水/.test(sessionText))
+const ENVIRONMENT_FACTS_RECORD = "environment-facts.jsonl";
+
+function findEnvironmentFactsRecord(runDir) {
+  const found = [];
+  const walk = (directory, depth) => {
+    if (depth < 0) return;
+    let entries;
+    try {
+      entries = readdirSync(directory);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = join(directory, entry);
+      let stat;
+      try {
+        stat = statSync(path);
+      } catch {
+        continue;
+      }
+      if (stat.isDirectory()) walk(path, depth - 1);
+      else if (entry === ENVIRONMENT_FACTS_RECORD) found.push({ path, mtime: stat.mtimeMs });
+    }
+  };
+  walk(join(runDir, "runtime-root", "contexts"), 6);
+  // A run can hold more than one activation (a disconnect/resume mounts a fresh surface session, and each one
+  // keeps its own record). The file named here is the newest, so the verdict says WHICH record it read rather
+  // than blending two activations' renders into one number.
+  found.sort((left, right) => right.mtime - left.mtime);
+  return found[0]?.path ?? null;
+}
+
+function readEnvironmentFactsRecord(runDir) {
+  const path = findEnvironmentFactsRecord(runDir);
+  if (path === null)
     return {
-      readable: false,
-      why: "the environment block is injected at request time and never persisted, so the session cannot show it",
+      path: null,
+      renders: [],
+      truncated: false,
+      why: `this run has no ${ENVIRONMENT_FACTS_RECORD}: it predates the record, so nothing captured what the provider rendered`,
     };
-  const dropped = contextSummary?.droppedTokens ?? 0;
-  if (dropped > 0) return { readable: false, why: `${dropped} tokens were folded away` };
-  return { readable: true, why: "the block is present in the session" };
+  const renders = [];
+  let truncated = false;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (record?.truncated === true) {
+      truncated = true;
+      continue;
+    }
+    renders.push(record);
+  }
+  return { path, renders, truncated, why: null };
+}
+
+/** How much of the run the record actually covers - the sentence beside every prompt-level count. */
+function renderCoverage(environmentFacts) {
+  const renders = environmentFacts.renders.length;
+  const blank = environmentFacts.renders.filter((record) => (record?.text ?? "").trim().length === 0).length;
+  const dropped = environmentFacts.renders.filter(
+    (record) => Array.isArray(record?.dropped) && record.dropped.length > 0,
+  ).length;
+  const overCap = environmentFacts.renders.filter((record) => record?.overCap === true).length;
+  const parts = [`${renders} request(s) rendered`];
+  if (blank > 0) parts.push(`${blank} with an empty block`);
+  if (dropped > 0) parts.push(`${dropped} with facts dropped by the line's byte cap`);
+  if (overCap > 0) parts.push(`${overCap} still over the byte cap after it ran`);
+  if (environmentFacts.truncated) parts.push("tail truncated at the record's own cap");
+  return parts.join(", ");
 }
 
 function unusedPromptEvidenceReadable(sessionText, contextSummary) {
@@ -143,33 +203,35 @@ record(
   modLogPath + " (or SMAPI-latest.txt)",
 );
 
-// Everything the MODEL saw lives in the bound session, not in mod-log.txt: the environment fact line is delivered as a
-// user message each turn. Reading the prompt from the Mod log answered "not exercised" from an absence that only meant
-// "wrong file" - which is the same class of mistake this report exists to prevent.
-const sessionText = boundSession === null ? "" : readFileSync(boundSession, "utf8");
-const promptEvidence = promptEvidenceReadable(sessionText, result.contextSummary ?? result.multiday?.contextSummary);
+// Everything the MODEL saw about the environment lives in the run's own record, not in the bound session: the block
+// is delivered inside an assembled request and never persisted. Reading it from the Mod log answered "not exercised"
+// from an absence that only meant "wrong file" - the same class of mistake this report exists to prevent.
+const environmentFacts = readEnvironmentFactsRecord(runDir);
+const renderedTexts = environmentFacts.renders.map((entry) => (typeof entry?.text === "string" ? entry.text : ""));
+const environmentRecordSource = environmentFacts.path ?? `no ${ENVIRONMENT_FACTS_RECORD} in this run`;
 
 // 2. The false zero: did the prompt ever print a non-zero unwatered count with a nearest tile?
 // The FACT carries a colon and a count ("待浇水作物: 24", "unwatered crops: 24"). The conduct merely mentions the
 // concept ("... and unwatered crops") - matching that word alone counted the system prompt 27 times and read it as a rendered
 // fact, which is the fourth time in this loop that a counter measured a sentence about the thing instead of the thing.
-const unwateredLines = sessionText.split("\\n").filter((line) => /待浇水作物: \d|unwatered crops: \d/.test(line));
-const unwateredNonZero = unwateredLines.filter((line) => /待浇水作物: [1-9]|unwatered crops: [1-9]/.test(line));
+// The count is read from the RECORD, so it is measured over what was rendered rather than over what survived a fold.
+const unwateredFacts = renderedTexts.filter((text) => /待浇水作物: \d|unwatered crops: \d/.test(text));
+const unwateredNonZero = unwateredFacts.filter((text) => /待浇水作物: [1-9]|unwatered crops: [1-9]/.test(text));
 record(
   "2 unwatered false zero",
   unwateredNonZero.length > 0
     ? "PASS"
-    : unwateredLines.length === 0
-      ? promptEvidence.readable
+    : environmentFacts.path === null
+      ? "NOT EXERCISED"
+      : unwateredFacts.length === 0
         ? "NOT EXERCISED"
-        : "UNOBSERVABLE"
-      : "FAIL",
-  unwateredLines.length === 0
-    ? promptEvidence.readable
-      ? "no unwatered fact reached the model at all"
-      : `cannot tell: ${promptEvidence.why}`
-    : `${unwateredNonZero.length} non-zero of ${unwateredLines.length} rendered`,
-  boundSession ?? "no session",
+        : "FAIL",
+  environmentFacts.path === null
+    ? `cannot answer from this run: ${environmentFacts.why} (not a claim that the block never rendered)`
+    : unwateredFacts.length === 0
+      ? `no unwatered fact reached the model (${renderCoverage(environmentFacts)})`
+      : `${unwateredNonZero.length} non-zero of ${unwateredFacts.length} rendered (${renderCoverage(environmentFacts)})`,
+  environmentRecordSource,
 );
 
 // 3. Tool choice: plan_work vs submit_action_program, from the session's own tool calls.
@@ -220,20 +282,24 @@ record(
   resultPath,
 );
 
-// 5. Same-map villager coordinates in the rendered prompt.
-const villagerLines = sessionText.split("\\n").filter((line) => /on this map:|本图村民|另有 \d+ 人/.test(line));
-const withCoords = villagerLines.filter((line) => /\(\d+,\d+\)/.test(line));
+// 5. Same-map villager coordinates in the rendered prompt. Same record, same reason: `本图可去: Shane(72,18)` exists
+// only inside a request. A villager fact that arrived as a bare count ("另有 12 人") is a rendered fact with no tile,
+// so it stays FAIL rather than being read as a pass from the word "map".
+const villagerFacts = renderedTexts.filter((text) => /on this map:|本图可去|本图村民|另有 \d+ 人/.test(text));
+const withCoords = villagerFacts.filter((text) => /\(\d+,\d+\)/.test(text));
 record(
   "5 villager coordinates",
   withCoords.length > 0
     ? "PASS"
-    : villagerLines.length === 0
-      ? promptEvidence.readable
+    : environmentFacts.path === null
+      ? "NOT EXERCISED"
+      : villagerFacts.length === 0
         ? "NOT EXERCISED"
-        : "UNOBSERVABLE"
-      : "FAIL",
-  `${withCoords.length} with coordinates of ${villagerLines.length} rendered`,
-  boundSession ?? "no session",
+        : "FAIL",
+  environmentFacts.path === null
+    ? `cannot answer from this run: ${environmentFacts.why} (not a claim that no villager was on her map)`
+    : `${withCoords.length} with coordinates of ${villagerFacts.length} rendered (${renderCoverage(environmentFacts)})`,
+  environmentRecordSource,
 );
 
 // 6. pickup_forage, which needs the scene binding to be constructible.
