@@ -379,6 +379,11 @@ function describeRun(result) {
  */
 const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
+    gate: "check-action-coverage.mjs",
+    reason:
+      "a report, not a gate: it exits 0 unconditionally unless --fail-under <n> is passed, and no script, workflow or list in this repository passes one (`git grep -n fail-under` finds the flag only in its own header and its own argument parser), so nobody has defined what well-covered means and its default run has no threshold to fail against",
+  },
+  {
     gate: "check-ci-coverage.mjs",
     reason:
       "compares two inventories (gate scripts vs workflow invocation); its falsifier needs synthetic inventories, which is real work rather than a flag - recorded here so the gap is visible instead of silent",
