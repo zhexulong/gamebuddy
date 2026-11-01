@@ -135,6 +135,7 @@
     "eval": "node tools/eval.mjs",
     "check:eval-instruments": "node tools/eval.mjs",
     "test:eval": "node --test tools/eval.test.mjs",
+    "test:chat-quality-transcript": "node --test tools/live-run/chat/transcript-from-live-run.test.mjs",
     "run:shots": "node tools/shots/run.mjs",
     "run:stardew-action-gates-batch": "node tools/run-stardew-action-gates-batch.mjs",
     "run:stardew-automation-cadence": "node tools/run-stardew-automation-cadence.mjs",

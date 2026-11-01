@@ -37,7 +37,7 @@
  * not measure.
  */
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -278,6 +278,12 @@ export async function runLiveRun({
       recordPublished: catalog.postHistoryInstructions ?? null,
       reading,
       cardVoicePresent: mountedProfile.characterVoice !== undefined,
+      /*
+       * The captured request bodies, kept whole so a caller can reshape them into another
+       * instrument's input. `reading.requests` is a COUNT, not the bodies - the wire-contract reading
+       * reports how many requests happened, and a transcript needs what they carried.
+       */
+      capturedRequests: provider.requests,
     });
   } finally {
     runtime.session.dispose?.();
@@ -285,13 +291,24 @@ export async function runLiveRun({
   }
 }
 
+import { countsOf, transcriptFromLiveRun } from "./transcript-from-live-run.mjs";
+
 function parseArguments(argv) {
-  const options = { omitPostHistory: false, toolNamingPostHistory: false, omitCardVoice: false, help: false };
-  for (const argument of argv) {
+  const options = {
+    omitPostHistory: false,
+    toolNamingPostHistory: false,
+    omitCardVoice: false,
+    transcriptOut: null,
+    help: false,
+  };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
     if (argument === "--help") options.help = true;
     else if (argument === "--omit-post-history") options.omitPostHistory = true;
     else if (argument === "--tool-naming-post-history") options.toolNamingPostHistory = true;
     else if (argument === "--omit-card-voice") options.omitCardVoice = true;
+    else if (argument.startsWith("--transcript=")) options.transcriptOut = argument.slice("--transcript=".length);
+    else if (argument === "--transcript" && index + 1 < argv.length) options.transcriptOut = argv[(index += 1)];
     else throw new Error(`unknown argument: ${argument}`);
   }
   return options;
@@ -301,7 +318,10 @@ async function main(argv) {
   const options = parseArguments(argv);
   if (options.help) {
     process.stdout.write(
-      "usage: node tools/live-run/chat/run-wire-contract-live.mjs [--omit-post-history] [--tool-naming-post-history] [--omit-card-voice]\n",
+      "usage: node tools/live-run/chat/run-wire-contract-live.mjs [--omit-post-history] [--tool-naming-post-history] [--omit-card-voice] [--transcript <path>]\n" +
+        "  --transcript <path>  also write the captured turns as a conversational-quality transcript\n" +
+        "                       (prefix stability is observable from it; the other three dimensions need\n" +
+        "                       expectations nobody has declared, and the gate reports them blocked)\n",
     );
     return 0;
   }
@@ -337,6 +357,27 @@ async function main(argv) {
       runRoot: run.root,
     })}\n`,
   );
+  if (options.transcriptOut !== null) {
+    const transcript = transcriptFromLiveRun({
+      requests: run.capturedRequests,
+      identity: { surface: "tavern", source: "run-wire-contract-live" },
+    });
+    const counts = countsOf(transcript);
+    const destination = resolve(options.transcriptOut);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, `${JSON.stringify(transcript, null, 2)}\n`);
+    process.stdout.write(
+      `\n  transcript  : ${destination}\n` +
+        `  turns       : ${counts.turns} (${counts.withStable} carrying an M0 stable block)\n` +
+        `  observable  : prefixBitStability\n` +
+        `  blocked     : ${Object.keys(transcript.notObservable).join(", ")} - no expectations declared\n`,
+    );
+    if (counts.withStable === 0) {
+      process.stdout.write(
+        "  transcript_note: no turn carried an M0 block, so prefix stability cannot be measured from this run\n",
+      );
+    }
+  }
   return run.reading.state === "verified" ? 0 : 1;
 }
 
