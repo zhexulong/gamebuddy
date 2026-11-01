@@ -274,7 +274,15 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     }
     const night = classifyNight({ terminal: record.terminal, after: record.after });
     if (!night.advanced) {
-      violations.push(violation(night.reasonCode ?? "night_not_advanced", `${where}.night`));
+      // `where` NAMES A FIELD THE RECORD ACTUALLY HAS.
+      //
+      // It used to say `${where}.night`, and no day record has ever carried a `night` field - `runMultiDayLoop`
+      // writes `{ day, terminal, after, menus, nextDayAccomplishedActionIds }` and `onDay` adds `cause`
+      // (`multiday-loop.mjs:313-320`). Measured 2026-11-01: all three of round18/19/20's `result.json` files were read
+      // as reporting `dayRecords[N].night.terminal = null`, and a reader who went looking for that field found it
+      // absent in every run - the verdict was pointing at a path that does not exist. A violation a reader cannot
+      // navigate to is a violation that gets argued with instead of fixed.
+      violations.push(violation(night.reasonCode ?? "night_not_advanced", `${where}.terminal`));
       continue;
     }
     daysCrossed += 1;
@@ -313,7 +321,7 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     const outsideScope = nightOutsideBaselineScope(
       night.dayBefore === undefined ? night : { ...night, seasonIndex: seasonIndexFor(record.after) },
     );
-    if (outsideScope !== null) violations.push(violation(outsideScope, `${where}.night`));
+    if (outsideScope !== null) violations.push(violation(outsideScope, `${where}.terminal`));
 
     // The Mod's own night facts. `saving_observed` is not required (a dismissed menu skips the
     // menu-owned save), but the two edges that DECIDE the terminal are.
@@ -330,10 +338,12 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     // violation for a night nobody witnessed at all.
     const witnessedByCalendar = night.witness === "calendar";
     if (!witnessedByCalendar && night.facts.saved_observed !== "true") {
-      violations.push(violation("night_saved_edge_not_observed", `${where}.evidence.saved_observed`));
+      violations.push(violation("night_saved_edge_not_observed", `${where}.terminal.evidence.saved_observed`));
     }
     if (!witnessedByCalendar && night.facts.day_started_observed !== "true") {
-      violations.push(violation("night_day_started_edge_not_observed", `${where}.evidence.day_started_observed`));
+      violations.push(
+        violation("night_day_started_edge_not_observed", `${where}.terminal.evidence.day_started_observed`),
+      );
     }
     // A SAVE THAT ARRIVED AFTER THE BOUNDARY POLL EXPIRED IS NOT A CLAIM WITHOUT A BOUNDARY.
     //
@@ -444,6 +454,7 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
 }
 
 const CHECKED_RULES = Object.freeze([
+  "day_records_missing",
   "baseline_window_out_of_range",
   "day_record_not_object",
   "night_terminal_missing",
@@ -455,6 +466,7 @@ const CHECKED_RULES = Object.freeze([
   "night_saved_edge_not_observed",
   "night_day_started_edge_not_observed",
   "night_cause_claims_a_sleep_without_a_receipt",
+  "night_mechanism_unobserved",
   "night_raised_unclosable_menu",
   "level_up_menu_not_resolved",
   "level_up_branch_chosen_by_harness",

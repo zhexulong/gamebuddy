@@ -423,6 +423,231 @@ test("a night that saved after the boundary window closed is not a claim without
   );
 });
 
+test("a violation names a field the record actually has (round18/19/20)", () => {
+  // WHAT THE REPORT WAS READING. `round18` (`2026-10-31T19-26-54-087Z`), `round19` (`2026-11-01T04-56-14-966Z`) and
+  // `round20` (`2026-11-01T15-44-43-186Z`) were each described as publishing `dayRecords[N].night.terminal = null`
+  // beside `night_saved_edge_not_observed` / `night_day_started_edge_not_observed`. Three claims, and the artifacts
+  // refute all three:
+  //
+  //   1. NO DAY RECORD HAS EVER CARRIED A `night` FIELD. `runMultiDayLoop` writes `{ day, terminal, after, menus,
+  //      nextDayAccomplishedActionIds }` (`multiday-loop.mjs:313-320`) and the runner's `onDay` adds `cause`. Checked
+  //      against all 163 multiday runs on disk: zero records carry `night`. So `dayRecords[N].night.terminal` is a path
+  //      that resolves to nothing - and `undefined` on a phantom path is exactly what reads as `terminal: null`.
+  //   2. NEITHER EDGE CODE IS A VIOLATION ON ANY OF THE THREE. It appears in exactly one place in each `result.json`:
+  //      `multiday.assessment.checkedRules[8]` and `[10]`. `checkedRules` is the CATALOGUE of rules the gate knows how
+  //      to apply, published beside the verdict; `violations` is what fired. round18's two were
+  //      `night_mechanism_unobserved`, round19's was `next_day_produced_no_farm_work`, and round20 died before a night.
+  //   3. THE MOD DOES PUBLISH BOTH EDGES. All 8 `advance_day` terminals in the corpus carry `saved_observed=true` and
+  //      `day_started_observed=true`, and the baseline reads them from `record.terminal.evidence`, where they are.
+  //
+  // So the harness was wrong twice in the same way: it named paths that do not exist. This is the gate for that class -
+  // every `where` a violation carries must RESOLVE on the record it names, so the next phantom path fails here instead
+  // of costing another round of "the terminal is null".
+  const resolve = (record, where) => {
+    // `dayRecords[i].a.b` walks `record.a.b`; `dayRecords` alone names the argument itself. The one indirection is the
+    // evidence PROJECTION: `terminal.evidence` is the Mod's `key=value;...` string, so a path that continues past it
+    // names a KEY in that projection rather than a property of the string.
+    const segments = where.split(".").slice(1);
+    let cursor = record;
+    for (const [position, segment] of segments.entries()) {
+      if (position > 0 && segments[position - 1] === "evidence" && typeof cursor === "string") {
+        return Object.prototype.hasOwnProperty.call(parseReceiptEvidence(cursor), segment)
+          ? { resolved: true }
+          : { resolved: false, segment };
+      }
+      if (cursor === null || typeof cursor !== "object" || !Object.prototype.hasOwnProperty.call(cursor, segment)) {
+        return { resolved: false, segment };
+      }
+      cursor = cursor[segment];
+    }
+    return { resolved: true };
+  };
+  // One fixture per rule, so the gate covers the catalogue rather than whatever a single test happens to reach.
+  const battery = [
+    [DAY({ terminal: { state: "blocked", reasonCode: "day_start_not_observed" } }), DAY({ day: 2 })],
+    [DAY({ terminal: null, after: { dayOfMonth: 6 } }), DAY({ day: 2 })],
+    [
+      DAY({
+        terminal: { state: "succeeded", reasonCode: "day_advanced", evidence: "state=passed;reason=day_advanced" },
+      }),
+      DAY({ day: 2 }),
+    ],
+    [
+      DAY({
+        terminal: {
+          state: "succeeded",
+          reasonCode: "day_advanced",
+          evidence: EVIDENCE({ dayBefore: 6, dayAfter: 6, daysBefore: 6, daysAfter: 6 }),
+        },
+      }),
+      DAY({ day: 2 }),
+    ],
+    [DAY({ after: {} }), DAY({ day: 2 })],
+    [DAY({ after: { dayOfMonth: 6 } }), DAY({ day: 2 })],
+    [DAY({ terminal: { evidence: EVIDENCE({ savedObserved: "false" }) } }), DAY({ day: 2 })],
+    [DAY({ terminal: { evidence: EVIDENCE({ dayStartedObserved: "false" }) } }), DAY({ day: 2 })],
+    [ENGINE_TAKEN_NIGHT({ cause: "sleep" }), DAY({ day: 2 })],
+    [ENGINE_TAKEN_NIGHT({ cause: "engine" }), DAY({ day: 2 })],
+    [DAY({ menus: [MENU({ menuType: "LetterViewerMenu", decision: "blocked" })] }), DAY({ day: 2 })],
+    [DAY({ menus: [MENU({ menuType: "LevelUpMenu", decision: "respond_level_up" })] }), DAY({ day: 2 })],
+    [
+      DAY({
+        menus: [
+          MENU({
+            menuType: "LevelUpMenu",
+            decision: "respond_level_up",
+            respondReceipt: { state: "succeeded", reasonCode: "level_up_resolved" },
+            respondChoice: "branch_a",
+          }),
+        ],
+      }),
+      DAY({ day: 2 }),
+    ],
+    [DAY({ menus: [] }), DAY({ day: 2, menus: [] })],
+    [DAY({ nextDayAccomplishedActionIds: [] }), DAY({ day: 2 })],
+    [
+      DAY({ terminal: { evidence: EVIDENCE({ dayBefore: 27, daysBefore: 27, dayAfter: 28, daysAfter: 28 }) } }),
+      DAY({ day: 2 }),
+    ],
+    [DAY()],
+    [null, DAY({ day: 2 })],
+  ];
+  const seen = new Set();
+  for (const dayRecords of battery) {
+    const result = assessMultiDayBaseline({ dayRecords, daysRequested: dayRecords.length });
+    for (const entry of result.violations) {
+      seen.add(entry.code.split(":")[0]);
+      // `daysCrossed` and `dayRecords` name the assessment's own arguments, not a record inside it.
+      if (!entry.where.startsWith("dayRecords[")) continue;
+      const index = Number.parseInt(entry.where.slice("dayRecords[".length), 10);
+      const outcome = resolve(dayRecords[index], entry.where);
+      assert.ok(
+        outcome.resolved,
+        `${entry.code} points at ${entry.where}, and "${String(outcome.segment)}" does not exist on that record ` +
+          `(fields: ${Object.keys(dayRecords[index] ?? {}).join(",")}). A violation a reader cannot navigate to is a ` +
+          "violation that gets argued with instead of fixed.",
+      );
+    }
+  }
+  // The battery must actually reach the rules the report named, or this gate is green because nothing ran.
+  assert.ok(seen.has("night_saved_edge_not_observed"), `battery never exercised the save edge: ${[...seen].join(",")}`);
+  assert.ok(seen.has("night_day_started_edge_not_observed"), "battery never exercised the day-start edge");
+  assert.ok(seen.has("night_terminal_missing"), "battery never exercised a night nobody witnessed");
+});
+
+test("the rule catalogue lists every rule the gate can fire (round18)", () => {
+  // `checkedRules` exists so a reader can tell "this rule passed" from "this rule was never applied" - and the report
+  // that read round18's two edge codes out of it did exactly the opposite. That mistake is only possible while a rule
+  // can fire without appearing in the catalogue; it becomes impossible once the catalogue is complete.
+  //
+  // It was not complete. `day_records_missing` and `night_mechanism_unobserved` could both be emitted and neither was
+  // listed - and `night_mechanism_unobserved` is precisely the violation round18 DID publish, twice. A reader who took
+  // the catalogue for the rule set would not have seen it at all.
+  //
+  // The population comes from the gate's own OUTPUT rather than a hand-kept list: every code any fixture below makes
+  // the gate emit must be catalogued, and every catalogued code must be reachable. A rule added later that forgets the
+  // catalogue fails here by name.
+  // Each entry carries its own `daysRequested`, so the window rule is exercised as a rule and not only by accident.
+  const battery = [
+    { dayRecords: null },
+    { dayRecords: [null, DAY({ day: 2 })] },
+    { dayRecords: [DAY({ terminal: { state: "blocked", reasonCode: "day_start_not_observed" } }), DAY({ day: 2 })] },
+    { dayRecords: [DAY({ terminal: null, after: { dayOfMonth: 6 } }), DAY({ day: 2 })] },
+    {
+      dayRecords: [
+        DAY({
+          terminal: { state: "succeeded", reasonCode: "day_advanced", evidence: "state=passed;reason=day_advanced" },
+        }),
+        DAY({ day: 2 }),
+      ],
+    },
+    {
+      dayRecords: [
+        DAY({
+          terminal: {
+            state: "succeeded",
+            reasonCode: "day_advanced",
+            evidence: EVIDENCE({ dayBefore: 6, dayAfter: 6, daysBefore: 6, daysAfter: 6 }),
+          },
+        }),
+        DAY({ day: 2 }),
+      ],
+    },
+    { dayRecords: [DAY({ after: {} }), DAY({ day: 2 })] },
+    { dayRecords: [DAY({ after: { dayOfMonth: 6 } }), DAY({ day: 2 })] },
+    { dayRecords: [DAY({ terminal: { evidence: EVIDENCE({ savedObserved: "false" }) } }), DAY({ day: 2 })] },
+    { dayRecords: [DAY({ terminal: { evidence: EVIDENCE({ dayStartedObserved: "false" }) } }), DAY({ day: 2 })] },
+    { dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "sleep" }), DAY({ day: 2 })] },
+    { dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "engine" }), DAY({ day: 2 })] },
+    { dayRecords: [DAY({ menus: [MENU({ menuType: "LetterViewerMenu", decision: "blocked" })] }), DAY({ day: 2 })] },
+    {
+      dayRecords: [DAY({ menus: [MENU({ menuType: "LevelUpMenu", decision: "respond_level_up" })] }), DAY({ day: 2 })],
+    },
+    {
+      dayRecords: [
+        DAY({
+          menus: [
+            MENU({
+              menuType: "LevelUpMenu",
+              decision: "respond_level_up",
+              respondReceipt: { state: "succeeded", reasonCode: "level_up_resolved" },
+              respondChoice: "branch_a",
+            }),
+          ],
+        }),
+        DAY({ day: 2 }),
+      ],
+    },
+    // A summary that was HELD and never cleared, and the first-night rule that reads the same fact: a menu with no
+    // dismissal receipt and no `clearedAt` is neither dismissed by the product nor committed by the lifecycle.
+    { dayRecords: [DAY({ menus: [{ menuType: "ShippingMenu", decision: "wait" }] }), DAY({ day: 2, menus: [] })] },
+    { dayRecords: [DAY({ nextDayAccomplishedActionIds: [] }), DAY({ day: 2 })] },
+    {
+      dayRecords: [
+        DAY({ terminal: { evidence: EVIDENCE({ dayBefore: 27, daysBefore: 27, dayAfter: 28, daysAfter: 28 }) } }),
+        DAY({ day: 2 }),
+      ],
+    },
+    // The window, on both sides of it.
+    { dayRecords: [DAY()], daysRequested: 1 },
+    { dayRecords: [DAY(), DAY({ day: 2 }), DAY({ day: 3 }), DAY({ day: 4 })], daysRequested: 4 },
+    // The minimum, with the window itself inside range.
+    { dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2, forceMinimum: true },
+  ];
+  const fired = new Set();
+  for (const entry of battery) {
+    const result = assessMultiDayBaseline({
+      dayRecords: entry.dayRecords,
+      daysRequested: entry.daysRequested ?? 2,
+    });
+    for (const violation of result.violations) fired.add(violation.code.split(":")[0]);
+  }
+  // `baseline_days_crossed_below_minimum` cannot fire while the window rule is satisfied and both nights cross, so it
+  // is reached through the one shape that leaves the count short without leaving the window: a night that did not cross.
+  for (const violation of assessMultiDayBaseline({
+    dayRecords: [DAY({ terminal: null, after: { dayOfMonth: 6 } }), DAY({ day: 2 })],
+    daysRequested: 2,
+  }).violations) {
+    fired.add(violation.code.split(":")[0]);
+  }
+  const catalogued = new Set(assessMultiDayBaseline({ dayRecords: [] }).checkedRules.map((code) => code.split(":")[0]));
+  const uncatalogued = [...fired].filter((code) => !catalogued.has(code)).sort();
+  assert.deepEqual(
+    uncatalogued,
+    [],
+    `the gate can fire rules its own catalogue does not list: ${uncatalogued.join(", ")}. A reader told "here is what ` +
+      'was checked" must not be able to miss a rule that fired.',
+  );
+  const unreachable = [...catalogued].filter((code) => !fired.has(code)).sort();
+  assert.deepEqual(unreachable, [], `the catalogue lists rules no fixture could make fire: ${unreachable.join(", ")}`);
+  // The two codes the report read as violations ARE catalogue entries on a healthy night, and the violations list is
+  // empty: the two fields answer different questions, which is the whole point.
+  const healthy = assessMultiDayBaseline({ dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })], daysRequested: 2 });
+  assert.deepEqual(codes(healthy), []);
+  assert.ok(healthy.checkedRules.includes("night_saved_edge_not_observed"));
+  assert.ok(healthy.checkedRules.includes("night_day_started_edge_not_observed"));
+});
+
 test("the settlement menu must be closed by the product, with its own receipt", () => {
   // The first-night menu is what holds the actor at the end of a night, so zero dismissals makes the
   // whole "a rollover does not stall" claim vacuous.
