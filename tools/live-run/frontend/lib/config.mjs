@@ -1,16 +1,37 @@
-// Shared path + run-config plumbing for the shots capture kit.
+// Shared path + run-config plumbing for the frontend live run.
 //
 // A run owns two roots:
 //   outRoot  - the deliverable set (PNGs + per-item *.txt + README.txt + REPORT.txt); this is what CI
-//              fabric uploads. The lane that owns the run is the only observer of the PNGs.
+//              artifact uploads. The lane that owns the run is the only observer of the PNGs.
 //   stageRoot - everything else: pinned worktree, build artifact, the run root (KEPT), browser profile,
 //              state files and logs. Defaults to `<outRoot>.stage`; override with --stage.
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 
 export const KIT_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-export const REPO_ROOT = dirname(dirname(KIT_ROOT));
+
+/**
+ * The repository root, found by walking up to the directory that owns `.git`.
+ *
+ * This was `dirname(dirname(KIT_ROOT))` - a fixed number of levels, which was correct while the kit
+ * lived at `tools/shots/lib` and silently wrong the moment it moved to `tools/live-run/frontend/lib`:
+ * it resolved to `tools/`, so the prerequisite check looked for `tools/node_modules/.pnpm/node_modules`
+ * and failed four siblings that are present in the real tree. A path derived by counting directories
+ * from a file that can move is a path that will be wrong after the move, and the failure it produces
+ * names the missing dependency rather than the arithmetic.
+ */
+export const REPO_ROOT = (() => {
+  let directory = KIT_ROOT;
+  for (;;) {
+    if (existsSync(join(directory, ".git"))) return directory;
+    const parent = resolve(directory, "..");
+    if (parent === directory) {
+      throw new Error(`no .git above ${KIT_ROOT}: the kit must live inside the repository`);
+    }
+    directory = parent;
+  }
+})();
 
 export function runPaths(run) {
   const stage = run.stageRoot;
