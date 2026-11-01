@@ -10,7 +10,7 @@
 // leaving the rest of the conversation in place. So the driver first makes sure the open conversation
 // is long enough to carry both (two exchanges), gated on the provider credential exactly as driver F
 // gates its own turn (`GB_SHOTS_CREDENTIAL_PRESENT`).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -279,6 +279,7 @@ const durableRows = async (page) => {
   }
   say(`rewind: ${rewindOutcome}`);
 
+  await observe(page, say, "p");
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-P");

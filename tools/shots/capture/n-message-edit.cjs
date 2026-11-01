@@ -9,7 +9,7 @@
 // this driver first ensures the row it needs exists rather than assuming one is mounted. When the
 // open conversation carries no message of its own, it gets one real turn, gated exactly as driver F
 // gates its own (`GB_SHOTS_CREDENTIAL_PRESENT`, set by the orchestrator; the value never crosses in).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -319,6 +319,7 @@ const editorFacts = () => {
   await page.waitForTimeout(1200);
   await shot(page, "86-message-edited-400x800.png");
 
+  await observe(page, say, "n");
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-N");

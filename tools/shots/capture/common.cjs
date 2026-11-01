@@ -292,9 +292,12 @@ async function createChat(page, { openingIndex = 0, settleMs = 1500, rounds = 20
   return { started, committed, landed: false };
 }
 
+const { observe } = require("./observation.cjs");
+
 module.exports = {
   connect,
   reporter,
+  observe,
   SHOTS,
   PAGE_HELPERS,
   activateSurface,

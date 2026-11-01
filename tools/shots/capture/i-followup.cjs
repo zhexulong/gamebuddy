@@ -5,7 +5,7 @@
 //       roughly one glyph of room; a bare clip none)
 //   (3) the Game surface's 「游戏数据与诊断」 disclosure: open or closed, and are its large boxes
 //       actually rendered?
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe } = require("./common.cjs");
 
 const layoutProbe = () => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -139,6 +139,7 @@ const diagnosticsProbe = () => {
   say("=== (3) the same @400x800 ===");
   say(JSON.stringify(await page.evaluate(diagnosticsProbe), null, 1));
 
+  await observe(page, say, "i");
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-I");

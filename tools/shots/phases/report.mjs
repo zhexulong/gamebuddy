@@ -265,6 +265,7 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
   const linesForMeasurements = [];
   measurementsFor(linesForMeasurements, driverTexts, run);
   L.push(...linesForMeasurements);
+  observationsFor(L, driverTexts);
   L.push("");
 
   section(L, "SCREENSHOTS (collected in the out root)");
@@ -323,6 +324,51 @@ function existsSync(p) {
   } catch {
     return false;
   }
+}
+
+/* ---------- observations: what the run cost, what it held, what it painted ---------- */
+
+/**
+ * The three sections that answer questions the geometry sections cannot: how long a turn took, how big
+ * the runtime got, and when the first screen painted.
+ *
+ * These read the lines the drivers' own `observe()` wrote, prefixed `TIMINGS` / `RUNTIME` / `PAINT`.
+ * The prefix is the contract between the two modules: a section that stops being emitted shows up here
+ * as a named absence rather than as an empty list, because an instrument that reports nothing and an
+ * instrument that measured nothing must not look the same.
+ */
+function observationsFor(L, driverTexts) {
+  const pick = (prefix) =>
+    DRIVER_OUTS.flatMap((key) => {
+      const text = driverTexts[key];
+      if (text === null) return [];
+      return text
+        .split("\n")
+        .filter((line) => line.startsWith(`${prefix} `))
+        .map((line) => `${key}: ${line.slice(prefix.length + 1)}`);
+    });
+
+  const timings = pick("TIMINGS");
+  const runtime = pick("RUNTIME");
+  const paint = pick("PAINT");
+
+  L.push("");
+  L.push("=== TIMINGS — the turn marks the product recorded ===");
+  if (timings.length === 0) {
+    L.push("  unobserved: no driver wrote a TIMINGS line (no turn ran, or the marks never reached the page)");
+  } else {
+    for (const line of timings) L.push(`  ${line}`);
+  }
+
+  L.push("");
+  L.push("=== RUNTIME — DOM size, heap and mark counts at the end of each driver ===");
+  if (runtime.length === 0) L.push("  unobserved: no driver wrote a RUNTIME line");
+  else for (const line of runtime) L.push(`  ${line}`);
+
+  L.push("");
+  L.push("=== PAINT — first paint, first contentful paint, largest contentful paint ===");
+  if (paint.length === 0) L.push("  unobserved: no driver wrote a PAINT line");
+  else for (const line of paint) L.push(`  ${line}`);
 }
 
 /* ---------- measurements: read each driver's facts ---------- */

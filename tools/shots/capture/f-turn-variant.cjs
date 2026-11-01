@@ -11,7 +11,7 @@
 // process. When 0, every stage that requires a live turn records a NAMED SKIP and the geometry
 // probes that survive without a turn still run.
 const path = require("node:path");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn, observe } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 const SKIP = (reason) => `SKIPPED:${reason}`;
@@ -208,6 +208,9 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
     say("=== ITEM: the controls strip on the newest settled companion bubble ===");
     say(JSON.stringify(await page.evaluate(stripFacts), null, 1));
     await shot(page, "72-skip-no-credential.png");
+    // What this driver cost and what the runtime holds, read from the product's own marks.
+    await observe(page, say, "f");
+
     flush();
     await browser.close().catch(() => undefined);
     say("DONE-F");

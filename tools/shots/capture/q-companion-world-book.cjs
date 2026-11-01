@@ -11,7 +11,7 @@
 // pins its revision at open time and never rebases it, so this driver produces that staleness the
 // only way it can be produced inside one tab — a second writer on the page's own session — and then
 // measures the sentence the surface shows when the save it still offers is pressed.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe } = require("./common.cjs");
 
 const bookFacts = () => {
   const section = document.querySelector("[data-companion-world-book]");
@@ -346,6 +346,7 @@ const stimulusWrite = async ({ handle, token, expectedRevision, entries }) => {
     say(`the recovered save's status: ${observed.lastStatus}; entry 0 body now reads ${JSON.stringify(recovered.entries[0]?.body)}`);
   }
 
+  await observe(page, say, "q");
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-Q");
