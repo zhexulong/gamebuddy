@@ -13,10 +13,10 @@ public readonly record struct TargetCandidate(int X, int Y, int Slot);
 /// The order an addressable target family is published in, when the family is larger than one plan can consume.
 ///
 /// <para>
-/// `MAX_PLAN_NODES` is 16, so one script names at most sixteen rows, while the seed and sapling families publish up to
-/// 64 each. Measured 2026-10-29 (`round7`): those two families were 6.8 KB and 7.2 KB of a 32.8 KB observation, and the
-/// iteration order - inventory slot, then x, then y - put whichever tile the loops reached first at the front, so the
-/// sixteen a script could reach soonest were scattered through a list of sixty-four.
+/// `TARGETS_NAMED_PER_PLAN` (Host) is 16, so one script names at most sixteen rows, while the seed and sapling families
+/// publish up to 64 each. Measured 2026-10-29 (`round7`): those two families were 6.8 KB and 7.2 KB of a 32.8 KB
+/// observation, and the iteration order - inventory slot, then x, then y - put whichever tile the loops reached first
+/// at the front, so the sixteen a script could reach soonest were scattered through a list of sixty-four.
 /// </para>
 /// <para>
 /// Trimming is NOT available here, and that is the constraint that shaped this file: `ExecutePlantSeed` recomputes

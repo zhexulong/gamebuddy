@@ -13,7 +13,7 @@ namespace GameBuddy.Stardew.Core;
 /// succeeded).
 ///
 /// The budget, stated: the actor's start and its ring take a few tiles, each prop takes one, and a corridor
-/// has to survive between them - so a component hosts roughly a tenth of its tiles, bounded at both ends.
+/// has to survive between them - so a component hosts roughly a twentieth of its tiles, bounded at both ends.
 /// The lower bound keeps a small farm usable; the ceiling keeps a large one from becoming a quarry.
 /// </summary>
 public static class PropCapacity
@@ -41,11 +41,12 @@ public static class PropCapacity
         const int MinimumTiles = 3 + TilesPerPropWithCorridor;
         if (componentTiles < MinimumTiles) return 0;
 
-        // A tenth of the piece, so several tiles of walkable ground survive between placements and the
+        // A TWENTIETH of the piece, so several tiles of walkable ground survive between placements and the
         // corridor the day depends on cannot be fenced off.
         // Measured, not guessed: on the 122-tile multi-day piece, ~12 props severed the door from the work
         // (component_tiles went 123 -> 122 and the field dropped out of it). A corridor needs several tiles of
-        // slack per prop, so a twentieth is the budget that leaves the farm walkable.
+        // slack per prop, so a twentieth is the budget that leaves the farm walkable: 123 / 20 == 6, which the
+        // `TheMeasuredMultiDayFarmIsInsideTheBudget` test pins between 4 and 8.
         int budget = Math.Max(1, componentTiles / 20);
 
         return Math.Min(budget, Ceiling);

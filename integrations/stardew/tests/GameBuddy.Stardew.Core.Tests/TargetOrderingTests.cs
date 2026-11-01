@@ -8,9 +8,9 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// <summary>
 /// The published order of an addressable target family when the family is larger than one plan can consume.
 ///
-/// `MAX_PLAN_NODES` is 16 and the seed/sapling families publish up to 64 rows, so one script names at most sixteen of
-/// them. Measured 2026-10-29 (`round7`): those families were 6.8 KB and 7.2 KB of a 32.8 KB observation and the sixteen
-/// a plan could reach soonest were scattered through the list.
+/// `TARGETS_NAMED_PER_PLAN` (Host) is 16 and the seed/sapling families publish up to 64 rows, so one script names at most
+/// sixteen of them. Measured 2026-10-29 (`round7`): those families were 6.8 KB and 7.2 KB of a 32.8 KB observation and
+/// the sixteen a plan could reach soonest were scattered through the list.
 ///
 /// Trimming is not an option - `ExecutePlantSeed` recomputes the target id from slot and tile and refuses on a
 /// mismatch - so every case below is about ORDER and one asserts that nothing is dropped.

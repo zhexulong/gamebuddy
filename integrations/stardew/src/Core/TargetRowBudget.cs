@@ -37,7 +37,8 @@ public static class TargetRowBudget
     public const int FamilyRowLimit = 64;
 
     /// <summary>
-    /// `MAX_PLAN_NODES`: the most targets one plan can name, and so the most rows one plan can consume from one key.
+    /// `TARGETS_NAMED_PER_PLAN` (Host): the most distinct targets one plan can name, and so the most rows one plan can
+    /// consume from one key. Not `MAX_PLAN_NODES` - that is the 256-node journal corruption bound, a different question.
     /// </summary>
     public const int PlanNodes = 16;
 
