@@ -36,7 +36,11 @@ class FakeClient {
 
   withdraw() {
     this.withdrawn = true;
-    this.state = { ...this.state, capabilities: ["cancel_active_execution", "inspect_self"], snapshot: this.snapshot() };
+    this.state = {
+      ...this.state,
+      capabilities: ["cancel_active_execution", "inspect_self"],
+      snapshot: this.snapshot(),
+    };
   }
 
   async observe() {
@@ -52,8 +56,7 @@ class FakeClient {
       if (request.args.query === "") throw new Error("bridge_rejected:invalid_navigation_read_request");
       return { status: "resolved", reason: "exact_current_locale", destination: { kind: "label", label: "Farm" } };
     }
-    if (request.args.nodeRef !== undefined)
-      return { status: "blocked", reason: "world_map_node_invalid" };
+    if (request.args.nodeRef !== undefined) return { status: "blocked", reason: "world_map_node_invalid" };
     return {
       status: "succeeded",
       reason: "world_map_observed",
@@ -73,7 +76,9 @@ let foreignScopeAttempted = false;
 let withdrawalCalls = 0;
 let reconnected = null;
 const result = await runNavigationReadOnlyDirectGate(initial, initial.receipts, config, {
-  closeActiveConnection: () => { closed = true; },
+  closeActiveConnection: () => {
+    closed = true;
+  },
   connectForeignScope: async () => {
     foreignScopeAttempted = true;
     throw new Error("bridge_rejected:authentication_failed");
@@ -101,7 +106,10 @@ assert.equal(result.executionReceiptCount, 0);
 assert.equal(closed, true);
 assert.equal(foreignScopeAttempted, true);
 assert.equal(withdrawalCalls, 1);
-assert.equal(initial.readRequests.every((request) => request.operation !== "execute"), true);
+assert.equal(
+  initial.readRequests.every((request) => request.operation !== "execute"),
+  true,
+);
 assert.equal(reconnected.readRequests.length, 1);
 
 console.log(JSON.stringify({ state: "navigation_read_only_gate_replay_completed", valid: true }));

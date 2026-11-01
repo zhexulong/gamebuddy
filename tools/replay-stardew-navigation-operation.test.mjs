@@ -45,15 +45,21 @@ function requestFrame({ now, requestId = "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA", selec
 }
 
 function receiptFrame(entry) {
-  return newEnvelope("execution_receipt", scope, {
-    executionId: entry.executionId ?? "ex1_EEEEEEEEEEEEEEEEEEEEEEEE",
-    requestId: entry.requestId ?? "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA",
-    actionId: entry.actionId ?? NAVIGATION_ACTION,
-    state: entry.state,
-    reasonCode: entry.reasonCode ?? "navigation_started",
-    revision: entry.now ?? Date.now(),
-    evidence: entry.evidence ?? null,
-  }, "corr_1", entry.now ?? Date.now());
+  return newEnvelope(
+    "execution_receipt",
+    scope,
+    {
+      executionId: entry.executionId ?? "ex1_EEEEEEEEEEEEEEEEEEEEEEEE",
+      requestId: entry.requestId ?? "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+      actionId: entry.actionId ?? NAVIGATION_ACTION,
+      state: entry.state,
+      reasonCode: entry.reasonCode ?? "navigation_started",
+      revision: entry.now ?? Date.now(),
+      evidence: entry.evidence ?? null,
+    },
+    "corr_1",
+    entry.now ?? Date.now(),
+  );
 }
 
 function completedFrames(overrides = {}) {
@@ -87,7 +93,11 @@ test("replay: a completed navigation lineage is valid, one terminal, and green",
 
 test("replay: a label selector variant is admissible (both typed selector forms)", () => {
   const frames = completedFrames();
-  frames[0] = requestFrame({ now: Date.now(), requestId: "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA", selector: { kind: "label", label: "Mines" } });
+  frames[0] = requestFrame({
+    now: Date.now(),
+    requestId: "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+    selector: { kind: "label", label: "Mines" },
+  });
   const report = replayNavigationOperation(frames, { scope });
   assert.equal(report.ok, true);
 });

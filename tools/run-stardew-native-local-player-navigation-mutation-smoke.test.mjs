@@ -72,7 +72,12 @@ function fake({
           status: "candidates",
           reason: "fuzzy_match",
           candidates: [
-            { label: "game-derived-target", contextLabel: null, destination: { kind: "ref", label: null, ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" }, unlockState: "unknown" },
+            {
+              label: "game-derived-target",
+              contextLabel: null,
+              destination: { kind: "ref", label: null, ref: "dr1_AAAAAAAAAAAAAAAAAAAAAA" },
+              unlockState: "unknown",
+            },
           ],
         };
       }
@@ -100,7 +105,9 @@ function fake({
         ...accepted,
         state: terminalState,
         reasonCode: terminalReason,
-        evidence: evidence ?? { detail: "destination=game-derived-target;location=game-derived-target;arrived=true;postcondition=true" },
+        evidence: evidence ?? {
+          detail: "destination=game-derived-target;location=game-derived-target;arrived=true;postcondition=true",
+        },
       };
       if (!omitTerminal) receipts.push(terminal);
       if (duplicateTerminal) receipts.push({ ...terminal });
@@ -136,7 +143,9 @@ test("producer facts flow through one typed mutation, exact correlation, and a f
 test("localized destination label binds to receipt destination while fresh canonical location binds separately", async () => {
   const harness = fake({
     freshLocation: "CanonicalTargetIdentity",
-    evidence: { detail: "destination=game-derived-target;location=CanonicalTargetIdentity;arrived=true;postcondition=true" },
+    evidence: {
+      detail: "destination=game-derived-target;location=CanonicalTargetIdentity;arrived=true;postcondition=true",
+    },
   });
   const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
     terminalTimeoutMs: 50,
@@ -166,43 +175,66 @@ test("blocked result identifies the last content-free smoke stage", async () => 
   assert.equal(result.state, "blocked");
   assert.equal(result.stage, "observe_before");
   assert.equal(result.reasonCode, "bridge_response_timeout");
-  assert.equal(harness.calls.some(([kind]) => kind === "execute"), false);
+  assert.equal(
+    harness.calls.some(([kind]) => kind === "execute"),
+    false,
+  );
 });
 
 test("failed, empty-evidence, and stale completion outcomes fail closed", async (t) => {
   await t.test("failed terminal", async () => {
     const harness = fake({ terminalState: "failed", terminalReason: "navigation_failed" });
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 50 });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 50,
+    });
     assert.match(result.reasonCode, /^navigation_mutation_terminal_failed:failed:/);
   });
   await t.test("empty evidence", async () => {
     const harness = fake({ evidence: null });
     harness.client.execute = async (request) => {
-      const accepted = { requestId: request.requestId, executionId: "execution-navigation", state: "accepted", reasonCode: "accepted", revision: 5 };
+      const accepted = {
+        requestId: request.requestId,
+        executionId: "execution-navigation",
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: 5,
+      };
       harness.receipts.push({ ...accepted, state: "succeeded", reasonCode: "navigation_completed", evidence: null });
       return accepted;
     };
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 50 });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 50,
+    });
     assert.equal(result.reasonCode, "navigation_mutation_evidence_empty");
   });
   await t.test("missing terminal outcome", async () => {
     const harness = fake({ omitTerminal: true });
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 5 });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 5,
+    });
     assert.equal(result.reasonCode, "native_terminal_receipt_missing_or_stale");
   });
   await t.test("multiple correlated terminal outcomes", async () => {
     const harness = fake({ duplicateTerminal: true });
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 50 });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 50,
+    });
     assert.equal(result.reasonCode, "navigation_mutation_terminal_receipt_count_invalid");
   });
   await t.test("stale or mismatched fresh postcondition", async () => {
     const harness = fake({ freshLocation: "Farm" });
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 50 });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 50,
+    });
     assert.equal(result.reasonCode, "navigation_mutation_fresh_location_mismatch");
   });
   await t.test("receipt destination does not match the selected label", async () => {
-    const harness = fake({ evidence: { detail: "destination=other-label;location=game-derived-target;arrived=true;postcondition=true" } });
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), { terminalTimeoutMs: 50 });
+    const harness = fake({
+      evidence: { detail: "destination=other-label;location=game-derived-target;arrived=true;postcondition=true" },
+    });
+    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config(), {
+      terminalTimeoutMs: 50,
+    });
     assert.equal(result.reasonCode, "navigation_mutation_evidence_destination_mismatch");
   });
   await t.test("non-isolated capability", async () => {
@@ -213,15 +245,28 @@ test("failed, empty-evidence, and stale completion outcomes fail closed", async 
   });
   await t.test("non-isolated topology", async () => {
     const harness = fake();
-    const result = await runNavigationMutationSmoke(harness.client, harness.receipts, config({ Portfolio: { Enable: true } }));
+    const result = await runNavigationMutationSmoke(
+      harness.client,
+      harness.receipts,
+      config({ Portfolio: { Enable: true } }),
+    );
     assert.equal(result.reasonCode, "native_local_fixture_topology_not_isolated");
   });
 });
 
 test("source constraints forbid hardcoded destination, direct warp, and fixture world mutation", async () => {
-  const runner = await readFile(new URL("./run-stardew-native-local-player-navigation-mutation-smoke.mjs", import.meta.url), "utf8");
-  assert.match(runner, /inspect_world_map[\s\S]*NavigationMutationTargetLabel[\s\S]*find_destination[\s\S]*executeFresh[\s\S]*waitForTerminal[\s\S]*waitForFreshSnapshot/);
-  assert.doesNotMatch(runner, /warpFarmer|client\.travel|move_to_tile|destination:\s*\{\s*kind:\s*"label",\s*label:\s*"/);
+  const runner = await readFile(
+    new URL("./run-stardew-native-local-player-navigation-mutation-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    runner,
+    /inspect_world_map[\s\S]*NavigationMutationTargetLabel[\s\S]*find_destination[\s\S]*executeFresh[\s\S]*waitForTerminal[\s\S]*waitForFreshSnapshot/,
+  );
+  assert.doesNotMatch(
+    runner,
+    /warpFarmer|client\.travel|move_to_tile|destination:\s*\{\s*kind:\s*"label",\s*label:\s*"/,
+  );
   const entry = await readFile(new URL("../integrations/stardew/ModEntry.cs", import.meta.url), "utf8");
   const start = entry.indexOf('if (fixture.FixtureScenario == "navigation_mutation_v1")');
   const branch = entry.slice(start, entry.indexOf("if (fixture.FixtureScenario is not", start));

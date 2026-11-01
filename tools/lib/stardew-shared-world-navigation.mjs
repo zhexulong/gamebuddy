@@ -47,13 +47,23 @@ async function freshActionable(client, timeoutMs) {
   let lastError = null;
   while (Date.now() < deadline) {
     try {
-      return await waitForFreshSnapshot(client, { requireActionable: true, timeoutMs: Math.max(1, deadline - Date.now()) });
+      return await waitForFreshSnapshot(client, {
+        requireActionable: true,
+        timeoutMs: Math.max(1, deadline - Date.now()),
+      });
     } catch (error) {
       lastError = error;
       if (!(error instanceof Error) || !/native_fresh_snapshot_timeout/.test(error.message)) throw error;
     }
     const cached = client.state?.snapshot ?? null;
-    if (cached !== null && typeof cached.location === "string" && cached.location.length > 0 && cached.location !== "unknown" && Number.isSafeInteger(cached.tile?.x) && cached.tile.x >= 0) {
+    if (
+      cached !== null &&
+      typeof cached.location === "string" &&
+      cached.location.length > 0 &&
+      cached.location !== "unknown" &&
+      Number.isSafeInteger(cached.tile?.x) &&
+      cached.tile.x >= 0
+    ) {
       return cached;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -68,7 +78,12 @@ function tileOf(value) {
 
 /** Chebyshev adjacency, matching the Mod's interaction radius. */
 export function isAdjacent(left, right) {
-  return Number.isInteger(left?.x) && Number.isInteger(left?.y) && Math.abs(left.x - right.x) <= 1 && Math.abs(left.y - right.y) <= 1;
+  return (
+    Number.isInteger(left?.x) &&
+    Number.isInteger(left?.y) &&
+    Math.abs(left.x - right.x) <= 1 &&
+    Math.abs(left.y - right.y) <= 1
+  );
 }
 
 /** The eight tiles within Chebyshev 1 of a tile, plus the tile itself. */
@@ -163,7 +178,12 @@ async function traverseWarp(client, receipts, warp, trace, { timeoutMs = DEFAULT
  * Move the actor into `targetLocationName`, following location warps only as far
  * as the bounded hop limit allows. Fails closed when no advertised route exists.
  */
-export async function ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
+export async function ensureActorAtLocation(
+  client,
+  receipts,
+  targetLocationName,
+  { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {},
+) {
   const trace = [];
   for (let hop = 0; hop < MAX_ROUTE_HOPS; hop++) {
     const snapshot = await freshActionable(client, timeoutMs);
@@ -184,7 +204,13 @@ export async function ensureActorAtLocation(client, receipts, targetLocationName
  * never weakens the contract's own precondition, only chooses where to stand so
  * that precondition can hold.
  */
-export async function ensureStandingTile(client, receipts, targetLocationName, standingTiles, { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {}) {
+export async function ensureStandingTile(
+  client,
+  receipts,
+  targetLocationName,
+  standingTiles,
+  { timeoutMs = DEFAULT_STEP_TIMEOUT_MS } = {},
+) {
   const { snapshot, trace } = await ensureActorAtLocation(client, receipts, targetLocationName, { timeoutMs });
   const usable = new Map(standingTiles(snapshot).map((tile) => [`${tile.x},${tile.y}`, tile]));
   if (usable.size === 0) throw new Error("no_usable_standing_tile");

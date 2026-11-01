@@ -27,7 +27,15 @@ const pass = {
   observationScope: "current_source_only",
   opaqueEdgeIds: ["te1_91aF2bC3dE4f5a6b7c8d9e0f1A2B3c4D", "te1_02b4C6d8E0f2a3b4c5d6e7f8a9b0A1B2C"],
   permittedFamilyCounts: { ordinaryWarp: 1, ordinaryDoor: 1 },
-  excludedFamilyCounts: { action: 0, touchAction: 0, modHook: 0, special: 0, m8: 0, missingIdentity: 0, unsafeApproach: 0 },
+  excludedFamilyCounts: {
+    action: 0,
+    touchAction: 0,
+    modHook: 0,
+    special: 0,
+    m8: 0,
+    missingIdentity: 0,
+    unsafeApproach: 0,
+  },
   dryPlanSafe: true,
   correlationApiShapeVerified: true,
   mutationCount: 0,
@@ -37,28 +45,41 @@ const pass = {
 };
 
 async function fixture(root) {
-  const f = join(root, "fixture"), saveName = "GameBuddyFixtureTest_123", save = join(f, saveName);
+  const f = join(root, "fixture"),
+    saveName = "GameBuddyFixtureTest_123",
+    save = join(f, saveName);
   await mkdir(save, { recursive: true });
   await writeFile(join(save, saveName), "safe");
   await writeFile(join(save, "SaveGameInfo"), "info");
-  await writeFile(join(f, "fixture-manifest.json"), JSON.stringify({
-    schemaVersion: 1,
-    fixtureKind: "stardew_navigation_transition_characterization",
-    saveDirectoryName: saveName,
-    files: [
-      { path: `${saveName}/${saveName}`, sha256: sha256("safe") },
-      { path: `${saveName}/SaveGameInfo`, sha256: sha256("info") },
-    ],
-  }));
+  await writeFile(
+    join(f, "fixture-manifest.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      fixtureKind: "stardew_navigation_transition_characterization",
+      saveDirectoryName: saveName,
+      files: [
+        { path: `${saveName}/${saveName}`, sha256: sha256("safe") },
+        { path: `${saveName}/SaveGameInfo`, sha256: sha256("info") },
+      ],
+    }),
+  );
   return f;
 }
 async function builds(root) {
-  const game = join(root, "game"), probe = join(root, "probe"), loader = join(root, "loader");
+  const game = join(root, "game"),
+    probe = join(root, "probe"),
+    loader = join(root, "loader");
   await Promise.all([mkdir(game), mkdir(probe), mkdir(loader)]);
   await writeFile(join(game, "StardewModdingAPI.exe"), "smapi");
-  await writeFile(join(probe, "manifest.json"), JSON.stringify({ UniqueID: "zhexulong.GameBuddy.NavigationTransitionCharacterization" }));
+  await writeFile(
+    join(probe, "manifest.json"),
+    JSON.stringify({ UniqueID: "zhexulong.GameBuddy.NavigationTransitionCharacterization" }),
+  );
   await writeFile(join(probe, "StardewNavigationTransitionCharacterization.dll"), "probe");
-  await writeFile(join(loader, "manifest.json"), JSON.stringify({ UniqueID: "zhexulong.GameBuddy.NavigationP4Loader" }));
+  await writeFile(
+    join(loader, "manifest.json"),
+    JSON.stringify({ UniqueID: "zhexulong.GameBuddy.NavigationP4Loader" }),
+  );
   await writeFile(join(loader, "StardewNavigationP4Loader.dll"), "loader");
   return { game, probe, loader };
 }
@@ -76,64 +97,87 @@ async function writeObservation(args, launchEnv) {
   const arm = JSON.parse(await readFile(join(profile, "GameBuddy.NavigationTransitionCharacterization", "arm.json")));
   const observation = JSON.stringify(pass);
   const integrityMac = createHmac("sha256", launchEnv.GAMEBUDDY_NAVIGATION_TRANSITION_CHARACTERIZATION_TRANSACTION_KEY)
-    .update(`observation|${arm.nonce}|${arm.transactionPath}|${arm.observationPath}|${observation}`).digest("hex");
+    .update(`observation|${arm.nonce}|${arm.transactionPath}|${arm.observationPath}|${observation}`)
+    .digest("hex");
   await writeFile(arm.observationPath, JSON.stringify({ nonce: arm.nonce, observation, integrityMac }));
 }
 
 test("rejects incomplete environment and profile identity", async () => {
-  assert.throws(() => validateTransitionRunEnvironment({ GAMEBUDDY_STARDEW_GAME_PATH: "E:/game" }), /probe_build_missing/);
+  assert.throws(
+    () => validateTransitionRunEnvironment({ GAMEBUDDY_STARDEW_GAME_PATH: "E:/game" }),
+    /probe_build_missing/,
+  );
   assert.throws(() => assertTransitionProfile(["GameBuddy.NavigationP4Loader"]), /not_exact/);
   assert.throws(() => assertExactDirectory(["manifest.json"], ["manifest.json", "probe.dll"]), /not_exact/);
-  assert.throws(() => assertExactSmapiLaunch("E:/other.exe", ["--mods-path", "E:/mods"], "E:/game", "E:/mods"), /identity/);
+  assert.throws(
+    () => assertExactSmapiLaunch("E:/other.exe", ["--mods-path", "E:/mods"], "E:/game", "E:/mods"),
+    /identity/,
+  );
 });
 
 test("authenticates observation, proves cleanup, and writes only the final artifact", async () => {
   const root = await mkdtemp(join(tmpdir(), "transition-runner-"));
-  const build = await builds(root), fixtureRoot = await fixture(root), artifactPath = join(root, "artifact.json");
+  const build = await builds(root),
+    fixtureRoot = await fixture(root),
+    artifactPath = join(root, "artifact.json");
   let launchCount = 0;
   const result = await runNavigationTransitionCharacterization({
     env: environment(build, fixtureRoot, root, artifactPath),
     tempRoot: root,
     deadlineMs: 10_000,
     listProcesses: async () => [],
-    launch: async (_script, args, launchEnv) => { launchCount++; await writeObservation(args, launchEnv); },
+    launch: async (_script, args, launchEnv) => {
+      launchCount++;
+      await writeObservation(args, launchEnv);
+    },
   });
   assert.equal(launchCount, 1);
   assert.equal(result.validation.valid, true, result.validation.errors.join(","));
   assert.deepEqual(result.artifact.fixtureCleanup, { restored: true, noStardewProcess: true, noSmapiProcess: true });
   assert.deepEqual(JSON.parse(await readFile(artifactPath, "utf8")), result.artifact);
-  await assert.rejects(readFile(join(root, "AppData", "StardewValley", "Saves", "GameBuddyFixtureTest_123", "SaveGameInfo")), /ENOENT/);
+  await assert.rejects(
+    readFile(join(root, "AppData", "StardewValley", "Saves", "GameBuddyFixtureTest_123", "SaveGameInfo")),
+    /ENOENT/,
+  );
   assert.deepEqual((await readdir(root)).sort(), ["AppData", "artifact.json", "fixture", "game", "loader", "probe"]);
   await rm(root, { recursive: true, force: true });
 });
 
 test("rejects missing terminal and still cleans transaction", async () => {
   const root = await mkdtemp(join(tmpdir(), "transition-missing-"));
-  const build = await builds(root), fixtureRoot = await fixture(root);
-  await assert.rejects(runNavigationTransitionCharacterization({
-    env: environment(build, fixtureRoot, root, join(root, "artifact.json")),
-    tempRoot: root,
-    deadlineMs: 10_000,
-    listProcesses: async () => [],
-    launch: async () => {},
-  }), /ENOENT|terminal/);
+  const build = await builds(root),
+    fixtureRoot = await fixture(root);
+  await assert.rejects(
+    runNavigationTransitionCharacterization({
+      env: environment(build, fixtureRoot, root, join(root, "artifact.json")),
+      tempRoot: root,
+      deadlineMs: 10_000,
+      listProcesses: async () => [],
+      launch: async () => {},
+    }),
+    /ENOENT|terminal/,
+  );
   assert.deepEqual((await readdir(root)).sort(), ["AppData", "fixture", "game", "loader", "probe"]);
   await rm(root, { recursive: true, force: true });
 });
 
 test("reports fixture hash failure instead of producing an artifact", async () => {
   const root = await mkdtemp(join(tmpdir(), "transition-integrity-"));
-  const build = await builds(root), fixtureRoot = await fixture(root);
-  await assert.rejects(runNavigationTransitionCharacterization({
-    env: environment(build, fixtureRoot, root, join(root, "artifact.json")),
-    tempRoot: root,
-    deadlineMs: 10_000,
-    listProcesses: async () => [],
-    launch: async (_script, _args, launchEnv) => {
-      await writeFile(join(fixtureRoot, "GameBuddyFixtureTest_123", "SaveGameInfo"), "changed");
-      void launchEnv;
-    },
-  }), /hash_mismatch/);
+  const build = await builds(root),
+    fixtureRoot = await fixture(root);
+  await assert.rejects(
+    runNavigationTransitionCharacterization({
+      env: environment(build, fixtureRoot, root, join(root, "artifact.json")),
+      tempRoot: root,
+      deadlineMs: 10_000,
+      listProcesses: async () => [],
+      launch: async (_script, _args, launchEnv) => {
+        await writeFile(join(fixtureRoot, "GameBuddyFixtureTest_123", "SaveGameInfo"), "changed");
+        void launchEnv;
+      },
+    }),
+    /hash_mismatch/,
+  );
   assert.equal((await readdir(root)).includes("artifact.json"), false);
   await rm(root, { recursive: true, force: true });
 });

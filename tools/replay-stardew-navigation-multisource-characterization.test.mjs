@@ -2,7 +2,11 @@ import assert from "node:assert";
 import test from "node:test";
 
 import { newEnvelope } from "../host/dist-test/protocol.js";
-import { COMPLETION_REASON, NAVIGATION_ACTION, replayNavigationOperation } from "./replay-stardew-navigation-operation.mjs";
+import {
+  COMPLETION_REASON,
+  NAVIGATION_ACTION,
+  replayNavigationOperation,
+} from "./replay-stardew-navigation-operation.mjs";
 
 /**
  * Combined multi-hop replay + multi-source characterization integration tests.
@@ -46,15 +50,21 @@ function requestFrame({ now, requestId = "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA" } = {}
 }
 
 function receiptFrame(entry) {
-  return newEnvelope("execution_receipt", scope, {
-    executionId: entry.executionId ?? "ex1_EEEEEEEEEEEEEEEEEEEEEEEE",
-    requestId: entry.requestId ?? "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA",
-    actionId: entry.actionId ?? NAVIGATION_ACTION,
-    state: entry.state,
-    reasonCode: entry.reasonCode ?? "navigation_started",
-    revision: entry.now ?? Date.now(),
-    evidence: entry.evidence ?? null,
-  }, "corr_1", entry.now ?? Date.now());
+  return newEnvelope(
+    "execution_receipt",
+    scope,
+    {
+      executionId: entry.executionId ?? "ex1_EEEEEEEEEEEEEEEEEEEEEEEE",
+      requestId: entry.requestId ?? "rq1_AAAAAAAAAAAAAAAAAAAAAAAAAA",
+      actionId: entry.actionId ?? NAVIGATION_ACTION,
+      state: entry.state,
+      reasonCode: entry.reasonCode ?? "navigation_started",
+      revision: entry.now ?? Date.now(),
+      evidence: entry.evidence ?? null,
+    },
+    "corr_1",
+    entry.now ?? Date.now(),
+  );
 }
 
 function multiHopFrames(overrides = {}) {

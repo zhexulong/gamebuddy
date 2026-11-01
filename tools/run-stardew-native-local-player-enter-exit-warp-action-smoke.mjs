@@ -73,8 +73,7 @@ export async function runEnterExitWarpActionSmoke(
     // not need, so a move to the tile the actor ALREADY stands on answers
     // `succeeded/target_reached` directly. Live showed exactly that, and demanding
     // `accepted` failed the phase for a correct run.
-    const moveTerminal =
-      move.state === "accepted" ? await waitForTerminal(receipts, move, moveTimeoutMs) : move;
+    const moveTerminal = move.state === "accepted" ? await waitForTerminal(receipts, move, moveTimeoutMs) : move;
     if (moveTerminal.state !== "succeeded" || moveTerminal.reasonCode !== "target_reached")
       throw new Error(`enter_exit_warp_action_move_failed:${moveTerminal.state}/${moveTerminal.reasonCode}`);
 
@@ -82,7 +81,9 @@ export async function runEnterExitWarpActionSmoke(
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
     const settled = requireFarmTile(snapshot);
     if (settled.x !== standing.x || settled.y !== standing.y)
-      throw new Error(`enter_exit_warp_action_standing_tile_drifted:${standing.x},${standing.y}:${settled.x},${settled.y}`);
+      throw new Error(
+        `enter_exit_warp_action_standing_tile_drifted:${standing.x},${standing.y}:${settled.x},${settled.y}`,
+      );
     target = southOf(settled);
     if (!Number.isInteger(target.x) || !Number.isInteger(target.y) || target.y < 0)
       throw new Error("enter_exit_warp_action_target_tile_missing");
@@ -92,9 +93,7 @@ export async function runEnterExitWarpActionSmoke(
     // `enter_exit` on this tile resolves natively, so the Mod may answer with an IMMEDIATE
     // terminal instead of `accepted`; live produced `rejected/door_gate_refused` directly.
     const terminal =
-      accepted.state === "accepted"
-        ? await waitForTerminal(receipts, accepted, enterExitTimeoutMs)
-        : accepted;
+      accepted.state === "accepted" ? await waitForTerminal(receipts, accepted, enterExitTimeoutMs) : accepted;
 
     // (c) Postconditions.
     if (SUCCESS_STATES.has(terminal.state))
@@ -113,7 +112,9 @@ export async function runEnterExitWarpActionSmoke(
     if (after.location !== snapshot.location)
       throw new Error(`enter_exit_warp_action_moved_location:${snapshot.location}:${after.location}`);
     if (after.tile?.x !== snapshot.tile.x || after.tile?.y !== snapshot.tile.y)
-      throw new Error(`enter_exit_warp_action_moved_tile:${snapshot.tile.x},${snapshot.tile.y}:${after.tile?.x},${after.tile?.y}`);
+      throw new Error(
+        `enter_exit_warp_action_moved_tile:${snapshot.tile.x},${snapshot.tile.y}:${after.tile?.x},${after.tile?.y}`,
+      );
 
     return {
       state: "passed",
@@ -181,7 +182,8 @@ function southOf(tile) {
 
 /** The actor's tile, with the fixture's own location premise asserted. */
 function requireFarmTile(snapshot) {
-  if (snapshot.location !== "Farm") throw new Error(`enter_exit_warp_action_not_on_farm:${snapshot.location ?? "(none)"}`);
+  if (snapshot.location !== "Farm")
+    throw new Error(`enter_exit_warp_action_not_on_farm:${snapshot.location ?? "(none)"}`);
   if (!Number.isInteger(snapshot.tile?.x) || !Number.isInteger(snapshot.tile?.y))
     throw new Error("enter_exit_warp_action_actor_tile_missing");
   return snapshot.tile;

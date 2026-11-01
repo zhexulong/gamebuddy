@@ -65,11 +65,15 @@ export async function runAgentLivePreflightTestHarness(options = {}) {
     directory(options.gamePath ?? "game"),
     directory(options.releaseDir ?? "release"),
   ]);
-  items.push(item(
-    "runtime_paths",
-    gamePathReady && releaseDirReady ? "ready" : "blocked",
-    gamePathReady && releaseDirReady ? "game and release directories accessible" : "game-path or release-dir inaccessible",
-  ));
+  items.push(
+    item(
+      "runtime_paths",
+      gamePathReady && releaseDirReady ? "ready" : "blocked",
+      gamePathReady && releaseDirReady
+        ? "game and release directories accessible"
+        : "game-path or release-dir inaccessible",
+    ),
+  );
 
   const paths = FIXTURE_PATH_REQUIREMENTS.map((relative) => TOOLS_DIR + relative);
   const present = await Promise.all(paths.map(fileExists));
@@ -84,13 +88,17 @@ export async function runAgentLivePreflightTestHarness(options = {}) {
     }
   }
   const fixtureReady = missing.length === 0 && exportsReady;
-  items.push(item(
-    "fixture_transaction",
-    fixtureReady ? "ready" : "blocked",
-    fixtureReady ? "prepare, navigation mutation, restore, and cleanup owners present" : missing.length > 0 ? `missing: ${missing.join(",")}` : "fixture owner contract unreadable",
-  ));
+  items.push(
+    item(
+      "fixture_transaction",
+      fixtureReady ? "ready" : "blocked",
+      fixtureReady
+        ? "prepare, navigation mutation, restore, and cleanup owners present"
+        : missing.length > 0
+          ? `missing: ${missing.join(",")}`
+          : "fixture owner contract unreadable",
+    ),
+  );
 
-  return items.every((entry) => entry.status === "ready")
-    ? report("PREFLIGHT_READY", items)
-    : report("BLOCKED", items);
+  return items.every((entry) => entry.status === "ready") ? report("PREFLIGHT_READY", items) : report("BLOCKED", items);
 }

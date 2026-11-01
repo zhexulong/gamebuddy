@@ -128,15 +128,18 @@ export async function runUseWarpItemSmoke(
       throw new Error(
         `use_warp_item_consumed_totem_not_refused:${negativeTerminal.state}/${negativeTerminal.reasonCode}`,
       );
-    const REFUSALS = ["item_not_owned_in_slot", "item_slot_changed", "item_not_a_warp_totem", "warp_item_already_at_destination"];
+    const REFUSALS = [
+      "item_not_owned_in_slot",
+      "item_slot_changed",
+      "item_not_a_warp_totem",
+      "warp_item_already_at_destination",
+    ];
     if (!REFUSALS.includes(negativeTerminal.reasonCode))
       throw new Error(`use_warp_item_consumed_totem_unexpected_refusal:${negativeTerminal.reasonCode}`);
 
     const after = await observeFresh(client);
     if (after.location !== arrived.location)
-      throw new Error(
-        `use_warp_item_refusal_moved_world:before=${arrived.location};after=${after.location}`,
-      );
+      throw new Error(`use_warp_item_refusal_moved_world:before=${arrived.location};after=${after.location}`);
 
     return {
       state: "passed",
@@ -183,7 +186,9 @@ function chooseWarpTotem(snapshot) {
     throw new Error(`use_warp_item_no_usable_totem:candidates=${JSON.stringify(summarizeCandidates(targets))}`);
   const away = usable.filter((entry) => entry.destination !== snapshot.location);
   if (away.length === 0)
-    throw new Error(`use_warp_item_declared_given_absent:location=${snapshot.location};candidates=${JSON.stringify(summarizeCandidates(usable))}`);
+    throw new Error(
+      `use_warp_item_declared_given_absent:location=${snapshot.location};candidates=${JSON.stringify(summarizeCandidates(usable))}`,
+    );
   return away[0];
 }
 

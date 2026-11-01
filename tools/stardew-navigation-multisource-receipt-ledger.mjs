@@ -27,7 +27,8 @@ const DIGEST = /^[a-f0-9]{64}$/;
 const claimRecords = new WeakMap();
 
 function validRegistryRecord(record) {
-  return !!record &&
+  return (
+    !!record &&
     typeof record === "object" &&
     !Array.isArray(record) &&
     Object.keys(record).length === 4 &&
@@ -35,17 +36,22 @@ function validRegistryRecord(record) {
     Object.hasOwn(record, "artifactSha256") &&
     Object.hasOwn(record, "targetBuild") &&
     Object.hasOwn(record, "observationScope") &&
-    typeof record.receiptId === "string" && RECEIPT_ID.test(record.receiptId) &&
-    typeof record.artifactSha256 === "string" && DIGEST.test(record.artifactSha256) &&
+    typeof record.receiptId === "string" &&
+    RECEIPT_ID.test(record.receiptId) &&
+    typeof record.artifactSha256 === "string" &&
+    DIGEST.test(record.artifactSha256) &&
     record.targetBuild === TARGET_BUILD &&
-    record.observationScope === OBSERVATION_SCOPE;
+    record.observationScope === OBSERVATION_SCOPE
+  );
 }
 
 function validRegistry(registry) {
-  return Array.isArray(registry) &&
+  return (
+    Array.isArray(registry) &&
     registry.every(validRegistryRecord) &&
     new Set(registry.map((record) => record.receiptId)).size === registry.length &&
-    new Set(registry.map((record) => record.artifactSha256)).size === registry.length;
+    new Set(registry.map((record) => record.artifactSha256)).size === registry.length
+  );
 }
 
 function blocked() {
@@ -57,7 +63,14 @@ function blocked() {
  * and fixed reviewed registry. Test instances may inject both explicitly.
  */
 function createMultiSourceReceiptLedger({ root, registry, io = { lstat, mkdir, writeFile } }) {
-  if (typeof root !== "string" || !validRegistry(registry) || !io || typeof io.lstat !== "function" || typeof io.mkdir !== "function" || typeof io.writeFile !== "function") {
+  if (
+    typeof root !== "string" ||
+    !validRegistry(registry) ||
+    !io ||
+    typeof io.lstat !== "function" ||
+    typeof io.mkdir !== "function" ||
+    typeof io.writeFile !== "function"
+  ) {
     throw new TypeError("invalid_multisource_receipt_ledger_configuration");
   }
   const frozenRegistry = Object.freeze(registry.map((record) => Object.freeze({ ...record })));
@@ -65,15 +78,26 @@ function createMultiSourceReceiptLedger({ root, registry, io = { lstat, mkdir, w
   function preparePassedClaim({ rawArtifact }) {
     if (!Buffer.isBuffer(rawArtifact)) return blocked();
     let artifact = null;
-    try { artifact = JSON.parse(rawArtifact.toString("utf8")); } catch { return blocked(); }
+    try {
+      artifact = JSON.parse(rawArtifact.toString("utf8"));
+    } catch {
+      return blocked();
+    }
     if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return blocked();
     if (!validateMultiSourceTransitionCharacterization(artifact).valid) return blocked();
-    if (artifact.terminalStatus !== "passed" || artifact.predicateCode !== PASS_PREDICATE || artifact.targetBuild !== TARGET_BUILD || artifact.observationScope !== OBSERVATION_SCOPE) return blocked();
+    if (
+      artifact.terminalStatus !== "passed" ||
+      artifact.predicateCode !== PASS_PREDICATE ||
+      artifact.targetBuild !== TARGET_BUILD ||
+      artifact.observationScope !== OBSERVATION_SCOPE
+    )
+      return blocked();
     const artifactSha256 = createHash("sha256").update(rawArtifact).digest("hex");
-    const record = frozenRegistry.find((entry) =>
-      entry.artifactSha256 === artifactSha256 &&
-      entry.targetBuild === artifact.targetBuild &&
-      entry.observationScope === artifact.observationScope,
+    const record = frozenRegistry.find(
+      (entry) =>
+        entry.artifactSha256 === artifactSha256 &&
+        entry.targetBuild === artifact.targetBuild &&
+        entry.observationScope === artifact.observationScope,
     );
     if (!record) return blocked();
     const claim = Object.freeze({});

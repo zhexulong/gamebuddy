@@ -100,7 +100,8 @@ const run = (options) => {
   const session = makeClient(options);
   return {
     ...session,
-    result: () => runUseWarpItemSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000, arrivalTimeoutMs: 1_000 }),
+    result: () =>
+      runUseWarpItemSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000, arrivalTimeoutMs: 1_000 }),
   };
 };
 
@@ -140,7 +141,11 @@ test("use_warp_item: an arrival receipt whose world did not move fails the run",
   const original = session.client.execute;
   session.client.execute = async (request) => {
     const accepted = await original(request);
-    session.client.state.snapshot = snapshotWith({ revision: session.client.state.snapshot.revision, location: "Farm", totems: [] });
+    session.client.state.snapshot = snapshotWith({
+      revision: session.client.state.snapshot.revision,
+      location: "Farm",
+      totems: [],
+    });
     return accepted;
   };
   const result = await session.result();

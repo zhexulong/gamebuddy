@@ -102,7 +102,8 @@ export async function runNavigationMutationSmoke(
     });
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     if (after.revision !== terminal.revision) throw new Error("navigation_mutation_postcondition_revision_mismatch");
-    if (evidence.destination !== destination.label) throw new Error("navigation_mutation_evidence_destination_mismatch");
+    if (evidence.destination !== destination.label)
+      throw new Error("navigation_mutation_evidence_destination_mismatch");
     if (evidence.location !== after.location) throw new Error("navigation_mutation_fresh_location_mismatch");
 
     // Optional piggybackedScene attachment: the Mod may attach a bounded
@@ -111,14 +112,15 @@ export async function runNavigationMutationSmoke(
     // live gate records whether it was attached and whether its shape and
     // location agree with the fresh postcondition.
     const piggybackedScene = terminal.piggybackedScene ?? null;
-    const piggybackedSceneVerified = piggybackedScene !== null
-      && typeof piggybackedScene.observationId === "string"
-      && piggybackedScene.observationId.startsWith("so1_")
-      && typeof piggybackedScene.currentLocation === "string"
-      && piggybackedScene.currentLocation === after?.location
-      && Array.isArray(piggybackedScene.affordances)
-      && typeof piggybackedScene.partial === "boolean"
-      && (piggybackedScene.partial
+    const piggybackedSceneVerified =
+      piggybackedScene !== null &&
+      typeof piggybackedScene.observationId === "string" &&
+      piggybackedScene.observationId.startsWith("so1_") &&
+      typeof piggybackedScene.currentLocation === "string" &&
+      piggybackedScene.currentLocation === after?.location &&
+      Array.isArray(piggybackedScene.affordances) &&
+      typeof piggybackedScene.partial === "boolean" &&
+      (piggybackedScene.partial
         ? PARTIAL_TRUNCATION_REASONS.has(piggybackedScene.truncatedReason)
         : piggybackedScene.truncatedReason === null);
 
@@ -127,8 +129,7 @@ export async function runNavigationMutationSmoke(
     stage = "postcondition_find";
     const freshFound = await client.navigationRead({ operation: "find_destination", args: { query } });
     const freshDestination = requireResolvedLabelDestination(freshFound);
-    if (!sameSelector(freshDestination, destination))
-      throw new Error("navigation_mutation_fresh_selector_mismatch");
+    if (!sameSelector(freshDestination, destination)) throw new Error("navigation_mutation_fresh_selector_mismatch");
 
     return {
       state: "passed",
@@ -164,9 +165,7 @@ if (import.meta.main) {
   const session = await connectNativeLocalClient(config, { loadModule: loadDistTestClient });
   try {
     const result = await runNavigationMutationSmoke(session.client, session.receipts, config);
-    const reported = result.state === "blocked"
-      ? { ...result, diagnostics: session.diagnostics }
-      : result;
+    const reported = result.state === "blocked" ? { ...result, diagnostics: session.diagnostics } : result;
     console.log(JSON.stringify(reported));
     if (result.state !== "passed") process.exitCode = 2;
   } finally {
@@ -176,13 +175,13 @@ if (import.meta.main) {
 
 function validateConfig(config) {
   const fixture = config?.NativeLocalPlayerFixture;
-    if (
-      fixture?.Enable !== true ||
-      fixture.Bootstrap?.Enable === true ||
-      fixture.FixtureScenario !== SCENARIO ||
-      typeof fixture.NavigationMutationTargetLabel !== "string" ||
-      fixture.NavigationMutationTargetLabel.length < 1 ||
-      fixture.NavigationMutationTargetLabel.length > 128
+  if (
+    fixture?.Enable !== true ||
+    fixture.Bootstrap?.Enable === true ||
+    fixture.FixtureScenario !== SCENARIO ||
+    typeof fixture.NavigationMutationTargetLabel !== "string" ||
+    fixture.NavigationMutationTargetLabel.length < 1 ||
+    fixture.NavigationMutationTargetLabel.length > 128
   )
     throw new Error("navigation_mutation_fixture_config_invalid");
   if (

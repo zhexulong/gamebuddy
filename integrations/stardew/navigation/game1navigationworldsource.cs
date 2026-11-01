@@ -25,27 +25,20 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             return new NavigationWorldView(false, false, null, 0, 0, false, Array.Empty<NavigationTransitionLeg>(), false, false, false, false);
 
         var legs = new List<NavigationTransitionLeg>();
-        foreach (Warp warp in location!.warps)
+        foreach (WorldEdge edge in EnumerateEdges(location!))
         {
-            if (warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName)
-                || !InRange(warp.X, warp.Y, warp.TargetX, warp.TargetY))
+            if (string.IsNullOrWhiteSpace(edge.TargetLocation))
                 continue;
-            legs.Add(new NavigationTransitionLeg(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, false));
-        }
-        foreach ((Point point, string _) in location.doors.Pairs)
-        {
-            Warp? warp = ResolveDoorWarp(location, point);
-            if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName) || !InRange(point.X, point.Y, warp.TargetX, warp.TargetY))
+            // An interior exit is a warp the engine's own `Building.updateInteriorWarps` rewrites onto the parent's
+            // human-door tile, so it is admitted without the range test the other two families take.
+            if (edge.Family != WorldEdgeFamily.InteriorExit
+                && !InRange(edge.SourceX, edge.SourceY, edge.TargetX, edge.TargetY))
                 continue;
-            legs.Add(new NavigationTransitionLeg(warp.TargetName, point.X, point.Y, warp.TargetX, warp.TargetY, true));
-        }
-        if (location is FarmHouse or Cabin)
-        {
-            foreach (Warp warp in location.warps.Where(candidate => !candidate.npcOnly.Value && string.Equals(candidate.TargetName, "Farm", StringComparison.Ordinal)))
-                legs.Add(new NavigationTransitionLeg(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, true));
+            legs.Add(new NavigationTransitionLeg(
+                edge.TargetLocation!, edge.SourceX, edge.SourceY, edge.TargetX, edge.TargetY, edge.IsDoor));
         }
 
-        string? current = location.NameOrUniqueName;
+        string? current = location!.NameOrUniqueName;
         return new NavigationWorldView(
             true,
             player!.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
@@ -98,33 +91,29 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             }
 
             List<NavigationTransitionLeg> legs = new();
-            foreach (Warp warp in location.warps)
+            foreach (WorldEdge edge in EnumerateEdges(location))
             {
-                if (warp is null || warp.npcOnly.Value)
+                // A door is transit, not a walkable graph edge, and this topology holds walkable edges only. The
+                // planner refuses a door leg outright - `navigationrouteplanner.cs:118` answers `route_topology_invalid`
+                // for the WHOLE topology - and the executor refuses to arm one
+                // (`navigation_transition_family_not_materialized`, at
+                // `farmhandexecutioncontroller.movementactions.cs:872`, `farmhandexecutioncontroller.cs:4810` and
+                // `:5033`). Publishing the edge here would make BFS answer a route the executor will not walk, which is
+                // discovery advertising a capability execution refuses. `CurrentView` still publishes door legs, because
+                // `enter_exit` consumes those; the two projections differ on purpose.
+                if (edge.Family != WorldEdgeFamily.Warp)
                     continue;
-                if (string.IsNullOrWhiteSpace(warp.TargetName))
+                if (string.IsNullOrWhiteSpace(edge.TargetLocation))
                 {
                     reasonCode = "ordinary_warp_target_identity_invalid";
                     return false;
                 }
-                // A SOURCE coordinate may be NEGATIVE, and that is the native engine's own encoding for an edge exit.
-                //
-                // In a Stardew map, walking off the west edge warps from `X = -1` and walking off the north edge warps
-                // from `Y = -1`; the tile is outside the grid because the trigger IS the boundary. Town's own map asset
-                // declares its exits that way: `-1 53 BusStop 42 23`, `-1 54 BusStop 42 23`, `-1 55 BusStop 42 23`,
-                // `79 -1 Mountain 15 40`, `80 -1 Mountain 15 40`, `-1 89 Forest 118 25`, `-1 90 Forest 118 25`. Only the
-                // south Beach warps (`53 110 Beach 38 0`) are non-negative.
-                //
-                // MEASURED 2026-10-30 (`round9`): this guard dropped every negative-axis exit, so Town's published
-                // `warps` contained Beach alone, the topology gave Town one outgoing edge, and `navigate_to_destination`
-                // to the Farm was a legal `destination_unreachable` - which the companion then hit three times trying to
-                // get home. The destination still has to be inside a real map, so `TargetX`/`TargetY` keep the strict
-                // check below.
-                if (warp.X < -1 || warp.Y < -1 || warp.X > MaximumTileCoordinate || warp.Y > MaximumTileCoordinate)
+                if (!SourceCoordinateInRange(edge.SourceX, edge.SourceY))
                     continue;
-                if (!CoordinateInRange(warp.TargetX, warp.TargetY))
+                if (!CoordinateInRange(edge.TargetX, edge.TargetY))
                     continue;
-                legs.Add(new NavigationTransitionLeg(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, false));
+                legs.Add(new NavigationTransitionLeg(
+                    edge.TargetLocation!, edge.SourceX, edge.SourceY, edge.TargetX, edge.TargetY, false));
             }
             sources.Add(new NavigationOrdinaryWarpLegs(sourceId, legs));
         }
@@ -296,17 +285,99 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     ///
     /// <para>
     /// Do not use this for a warp's SOURCE column: an edge exit triggers from `-1` (west or north), which is outside
-    /// every map by construction - see `DiscoverWarps` for the map asset that spells its exits that way.
+    /// every map by construction - see <see cref="SourceCoordinateInRange"/>.
     /// </para>
     /// </summary>
     private static bool CoordinateInRange(int x, int y) =>
         x >= 0 && y >= 0 && x <= MaximumTileCoordinate && y <= MaximumTileCoordinate;
 
     /// <summary>
+    /// A warp SOURCE coordinate, where `-1` is legal because it is the native engine's own encoding for an edge exit.
+    ///
+    /// <para>
+    /// Walking off the west edge warps from `X = -1` and walking off the north edge from `Y = -1`; the tile is outside
+    /// the grid because the trigger IS the boundary. Town's own map asset declares its exits that way: `-1 53 BusStop`,
+    /// `79 -1 Mountain`, `-1 89 Forest`. MEASURED 2026-10-30 (`round9`): a guard that required both axes non-negative
+    /// dropped every one of them, so Town's published `warps` contained Beach alone and `navigate_to_destination` to the
+    /// Farm was a legal `destination_unreachable` - hit three times by a companion trying to get home.
+    /// </para>
+    /// </summary>
+    private static bool SourceCoordinateInRange(int x, int y) =>
+        x >= -1 && y >= -1 && x <= MaximumTileCoordinate && y <= MaximumTileCoordinate;
+
+    /// <summary>
     /// The largest legal tile index any coordinate may carry, source or destination. One bound for both checks, so a
     /// later reader cannot tighten one of them and leave the other.
     /// </summary>
     private const int MaximumTileCoordinate = 1000;
+
+    /// <summary>
+    /// Every transition this location declares, before either consumer decides whether it may use it.
+    ///
+    /// <para>
+    /// This is the ONE owner of "what counts as an edge". There used to be two: <see cref="CurrentView"/> enumerated
+    /// location warps, the door table and the interior exits, while <see cref="TryCreateCurrentOrdinaryWarpTopology"/>
+    /// enumerated location warps alone. Nothing forced the two to agree, so they did not: the topology answered
+    /// `destination_unreachable` for transitions the view published. Adding the missing loops to the second function
+    /// would have made a THIRD hand-written statement of the same fact, so the enumeration lives here and each caller
+    /// projects the shape it needs.
+    /// </para>
+    /// <para>
+    /// It yields raw facts and enforces only the rule that is identical for every consumer: an NPC-only warp moves no
+    /// player, so it is not a player edge. The tile ranges each caller accepts, and whether it may use a door at all,
+    /// belong to the projections - they genuinely differ, see <see cref="SourceCoordinateInRange"/> and the door
+    /// exclusion in <see cref="TryCreateCurrentOrdinaryWarpTopology"/>.
+    /// </para>
+    /// </summary>
+    private static IEnumerable<WorldEdge> EnumerateEdges(GameLocation location)
+    {
+        foreach (Warp warp in location.warps)
+        {
+            if (warp is null || warp.npcOnly.Value)
+                continue;
+            yield return new WorldEdge(warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.Warp);
+        }
+
+        foreach ((Point point, string _) in location.doors.Pairs)
+        {
+            Warp? warp = ResolveDoorWarp(location, point);
+            if (warp is null)
+                continue;
+            yield return new WorldEdge(warp.TargetName, point.X, point.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.Door);
+        }
+
+        // A farmhouse or cabin exit lives in the interior's warp table and in no door table, so it needs its own
+        // family: it is the only way out of an interior.
+        if (location is FarmHouse or Cabin)
+        {
+            foreach (Warp warp in location.warps.Where(candidate => !candidate.npcOnly.Value
+                && string.Equals(candidate.TargetName, "Farm", StringComparison.Ordinal)))
+                yield return new WorldEdge(
+                    warp.TargetName, warp.X, warp.Y, warp.TargetX, warp.TargetY, WorldEdgeFamily.InteriorExit);
+        }
+    }
+
+    /// <summary>The native table a declared transition was read from.</summary>
+    private enum WorldEdgeFamily
+    {
+        Warp,
+        Door,
+        InteriorExit,
+    }
+
+    /// <summary>One declared transition, before any consumer decides whether it may use it.</summary>
+    private readonly record struct WorldEdge(
+        string? TargetLocation,
+        int SourceX,
+        int SourceY,
+        int TargetX,
+        int TargetY,
+        WorldEdgeFamily Family)
+    {
+        /// <summary>Whether this transition is a door rather than a walkable map warp - the one fact the two
+        /// projections disagree about.</summary>
+        internal bool IsDoor => this.Family != WorldEdgeFamily.Warp;
+    }
 
     private static Warp? ResolveDoorWarp(GameLocation location, Point point)
     {

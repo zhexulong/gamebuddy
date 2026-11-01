@@ -35,7 +35,10 @@ export const BUNDLE_FILES = Object.freeze([
 export const BUNDLE_MANIFEST_UNIQUE_ID = "zhexulong.GameBuddy";
 export const BUNDLE_MANIFEST_ENTRY_DLL = "GameBuddy.Stardew.dll";
 export const M8_ANCHORS = Object.freeze([
-  "enter_mine", "use_mine_ladder", "select_mine_elevator_floor", "reach_mine_floor",
+  "enter_mine",
+  "use_mine_ladder",
+  "select_mine_elevator_floor",
+  "reach_mine_floor",
 ]);
 export const DISPATCH_ANCHORS = Object.freeze(["warpFarmer", ".Execute(", "EnterMineShaft"]);
 export const ORDINARY_WARP_ANCHOR = "warps";
@@ -62,7 +65,8 @@ function ready(checks) {
   return Object.freeze({
     state: "PREFLIGHT_READY",
     blockers: Object.freeze([]),
-    checks,    mutationCount: 0,
+    checks,
+    mutationCount: 0,
     executionReceiptCount: 0,
     ready: true,
   });
@@ -109,7 +113,11 @@ export async function runTopologyPreflight(options = {}) {
   } else {
     const dllPath = join(gamePath, ASSEMBLY_NAME);
     let version = null;
-    try { version = await readVersion(dllPath); } catch { version = null; }
+    try {
+      version = await readVersion(dllPath);
+    } catch {
+      version = null;
+    }
     if (version !== TARGET_BUILD) {
       blockers.push({ check: "target_version", reason: "version_mismatch", expected: TARGET_BUILD, actual: version });
       checks.version = { status: "blocked", reason: "version_mismatch" };
@@ -124,16 +132,34 @@ export async function runTopologyPreflight(options = {}) {
   } else {
     for (const name of BUNDLE_FILES) {
       let present = true;
-      try { createHash("sha256").update(await readFile(join(releaseDir, name))).digest("hex"); } catch { present = false; }
+      try {
+        createHash("sha256")
+          .update(await readFile(join(releaseDir, name)))
+          .digest("hex");
+      } catch {
+        present = false;
+      }
       bundle[name] = { present };
       if (!present) blockers.push({ check: "bundle", reason: "bundle_missing", file: name });
     }
     let uniqueId = null;
     let entryDll = null;
-    try { const m = JSON.parse(await readFile(join(releaseDir, "manifest.json"), "utf8")); uniqueId = m.UniqueID; entryDll = m.EntryDll; } catch { blockers.push({ check: "bundle_manifest", reason: "manifest_unreadable" }); }
-    if (uniqueId !== BUNDLE_MANIFEST_UNIQUE_ID) blockers.push({ check: "bundle_manifest", reason: "unique_id_mismatch", actual: uniqueId });
-    if (entryDll !== BUNDLE_MANIFEST_ENTRY_DLL) blockers.push({ check: "bundle_manifest", reason: "entry_dll_mismatch", actual: entryDll });
-    checks.bundle = { status: blockers.some((b) => b.check === "bundle" || b.check === "bundle_manifest") ? "blocked" : "ready", manifest: { uniqueId, entryDll }, files: bundle };
+    try {
+      const m = JSON.parse(await readFile(join(releaseDir, "manifest.json"), "utf8"));
+      uniqueId = m.UniqueID;
+      entryDll = m.EntryDll;
+    } catch {
+      blockers.push({ check: "bundle_manifest", reason: "manifest_unreadable" });
+    }
+    if (uniqueId !== BUNDLE_MANIFEST_UNIQUE_ID)
+      blockers.push({ check: "bundle_manifest", reason: "unique_id_mismatch", actual: uniqueId });
+    if (entryDll !== BUNDLE_MANIFEST_ENTRY_DLL)
+      blockers.push({ check: "bundle_manifest", reason: "entry_dll_mismatch", actual: entryDll });
+    checks.bundle = {
+      status: blockers.some((b) => b.check === "bundle" || b.check === "bundle_manifest") ? "blocked" : "ready",
+      manifest: { uniqueId, entryDll },
+      files: bundle,
+    };
   }
   // --- Caller-supplied transition artifact (direct source-only authority) ---
   // When multi_hop_ordinary_warp is requested, the old transition artifact is
@@ -151,32 +177,49 @@ export async function runTopologyPreflight(options = {}) {
       checks.artifact = { status: "skipped", reason: "not_required_for_multi_hop" };
     }
   } else {
-    try { parsed = JSON.parse(await readFile(artifactPath, "utf8")); } catch { blockers.push({ check: "transition_artifact", reason: "artifact_unreadable" }); }
+    try {
+      parsed = JSON.parse(await readFile(artifactPath, "utf8"));
+    } catch {
+      blockers.push({ check: "transition_artifact", reason: "artifact_unreadable" });
+    }
     const validation = parsed ? validateTransitionCharacterization(parsed) : { valid: false, errors: ["unreadable"] };
     const allowed = !!(parsed && allowsTransitionImplementation(parsed));
     passed = allowed && validation.valid;
-    const familyOk = passed &&
+    const familyOk =
+      passed &&
       parsed.observationScope === "current_source_only" &&
       Number.isSafeInteger(parsed.permittedFamilyCounts?.ordinaryWarp) &&
       parsed.permittedFamilyCounts.ordinaryWarp > 0 &&
       parsed.permittedFamilyCounts.ordinaryDoor === 0;
-    const zeroExcluded = passed && parsed.excludedFamilyCounts &&
-      Object.values(parsed.excludedFamilyCounts).every((n) => n === 0);
+    const zeroExcluded =
+      passed && parsed.excludedFamilyCounts && Object.values(parsed.excludedFamilyCounts).every((n) => n === 0);
     const nonMutating = passed && parsed.mutationCount === 0 && parsed.executionReceiptCount === 0;
-    const cleaned = passed && parsed.fixtureCleanup?.restored === true && parsed.fixtureCleanup?.noStardewProcess === true;
-    if (!validation.valid) blockers.push({ check: "transition", reason: "artifact_invalid", errors: validation.errors });
+    const cleaned =
+      passed && parsed.fixtureCleanup?.restored === true && parsed.fixtureCleanup?.noStardewProcess === true;
+    if (!validation.valid)
+      blockers.push({ check: "transition", reason: "artifact_invalid", errors: validation.errors });
     if (passed && !familyOk) blockers.push({ check: "transition_family", reason: "ordinary_warp_only_violated" });
     if (passed && !zeroExcluded) blockers.push({ check: "transition_family", reason: "excluded_family_count_present" });
     if (passed && !nonMutating) blockers.push({ check: "transition", reason: "invariant_violated" });
     if (passed && !cleaned) blockers.push({ check: "transition", reason: "fixture_cleanup_incomplete" });
     if (!passed) blockers.push({ check: "transition", reason: "blocked_artifact" });
-    checks.artifact = { status: blockers.some((b) => b.check === "transition" || b.check === "transition_family") ? "blocked" : "ready", terminalStatus: parsed?.terminalStatus, predicateCode: parsed?.predicateCode, allowed, observationScope: parsed?.observationScope };
+    checks.artifact = {
+      status: blockers.some((b) => b.check === "transition" || b.check === "transition_family") ? "blocked" : "ready",
+      terminalStatus: parsed?.terminalStatus,
+      predicateCode: parsed?.predicateCode,
+      allowed,
+      observationScope: parsed?.observationScope,
+    };
   }
 
   // --- Multi-source transition artifact (audit projection; never sole authority) ---
   if (requestedNavigationScope === "multi_hop_ordinary_warp") {
     if (!multiSourceArtifactPath) {
-      blockers.push({ check: "multi_source_artifact", reason: "multi_source_artifact_required_or_invalid", detail: "multi_hop_ordinary_warp requires a multi-source transition artifact" });
+      blockers.push({
+        check: "multi_source_artifact",
+        reason: "multi_source_artifact_required_or_invalid",
+        detail: "multi_hop_ordinary_warp requires a multi-source transition artifact",
+      });
       checks.multiSourceArtifact = { status: "blocked", reason: "multi_source_artifact_required_or_invalid" };
     } else {
       let multiParsed = null;
@@ -185,18 +228,40 @@ export async function runTopologyPreflight(options = {}) {
         multiRaw = await readFile(multiSourceArtifactPath);
         multiParsed = JSON.parse(multiRaw.toString("utf8"));
       } catch {
-        blockers.push({ check: "multi_source_artifact", reason: "multi_source_artifact_required_or_invalid", detail: "multi-source artifact unreadable" });
+        blockers.push({
+          check: "multi_source_artifact",
+          reason: "multi_source_artifact_required_or_invalid",
+          detail: "multi-source artifact unreadable",
+        });
         checks.multiSourceArtifact = { status: "blocked", reason: "multi_source_artifact_required_or_invalid" };
       }
       if (multiParsed) {
         const multiValidation = validateMultiSourceTransitionCharacterization(multiParsed);
         const multiAllowed = allowsMultiHopTopologyImplementation(multiParsed);
         if (!multiValidation.valid) {
-          blockers.push({ check: "multi_source_artifact", reason: "multi_source_artifact_required_or_invalid", detail: "multi-source artifact invalid", errors: multiValidation.errors });
-          checks.multiSourceArtifact = { status: "blocked", reason: "multi_source_artifact_required_or_invalid", valid: false };
+          blockers.push({
+            check: "multi_source_artifact",
+            reason: "multi_source_artifact_required_or_invalid",
+            detail: "multi-source artifact invalid",
+            errors: multiValidation.errors,
+          });
+          checks.multiSourceArtifact = {
+            status: "blocked",
+            reason: "multi_source_artifact_required_or_invalid",
+            valid: false,
+          };
         } else if (!multiAllowed) {
-          blockers.push({ check: "multi_source_artifact", reason: "multi_source_artifact_required_or_invalid", detail: `multi-source artifact blocked: ${multiParsed.predicateCode}` });
-          checks.multiSourceArtifact = { status: "blocked", reason: "multi_source_artifact_required_or_invalid", terminalStatus: multiParsed.terminalStatus, predicateCode: multiParsed.predicateCode };
+          blockers.push({
+            check: "multi_source_artifact",
+            reason: "multi_source_artifact_required_or_invalid",
+            detail: `multi-source artifact blocked: ${multiParsed.predicateCode}`,
+          });
+          checks.multiSourceArtifact = {
+            status: "blocked",
+            reason: "multi_source_artifact_required_or_invalid",
+            terminalStatus: multiParsed.terminalStatus,
+            predicateCode: multiParsed.predicateCode,
+          };
         } else {
           const prepared = receiptLedger.preparePassedClaim({ rawArtifact: multiRaw });
           if (!prepared.ok) {
@@ -204,7 +269,11 @@ export async function runTopologyPreflight(options = {}) {
             checks.multiSourceArtifact = { status: "blocked", reason: "multi_source_receipt_required_or_invalid" };
           } else {
             multiSourceReceiptClaim = prepared.claim;
-            checks.multiSourceArtifact = { status: "ready", terminalStatus: "passed", predicateCode: "successful_multisource_characterization" };
+            checks.multiSourceArtifact = {
+              status: "ready",
+              terminalStatus: "passed",
+              predicateCode: "successful_multisource_characterization",
+            };
           }
         }
       }
@@ -212,33 +281,59 @@ export async function runTopologyPreflight(options = {}) {
     // If a source-only artifact was also supplied, keep its existing direct
     // behavior: emit the existing scope blocker if it's current_source_only.
     if (parsed && passed && parsed.observationScope === "current_source_only") {
-      blockers.push({ check: "transition_scope", reason: "current_source_only_cannot_authorize_multi_hop", detail: "artifact observationScope is current_source_only; multi_hop_ordinary_warp requires a validated multi-source artifact" });
+      blockers.push({
+        check: "transition_scope",
+        reason: "current_source_only_cannot_authorize_multi_hop",
+        detail:
+          "artifact observationScope is current_source_only; multi_hop_ordinary_warp requires a validated multi-source artifact",
+      });
       checks.transition_scope = { status: "blocked", reason: "current_source_only_cannot_authorize_multi_hop" };
     }
   } else if (requestedNavigationScope !== undefined && requestedNavigationScope !== "current_source_only") {
     // Unknown future scope: fail closed.
-    blockers.push({ check: "transition_scope", reason: "unknown_requested_scope", detail: `requestedNavigationScope=${requestedNavigationScope}` });
+    blockers.push({
+      check: "transition_scope",
+      reason: "unknown_requested_scope",
+      detail: `requestedNavigationScope=${requestedNavigationScope}`,
+    });
     checks.transition_scope = { status: "blocked", reason: "unknown_requested_scope" };
   }
   // --- Source-only, no-dispatch, no-M8 static closure ---
   const sources = {};
   for (const name of NAVIGATION_SOURCES) {
     let text = null;
-    try { text = await readFile(join(navSrcDir, name), "utf8"); } catch { text = null; }
+    try {
+      text = await readFile(join(navSrcDir, name), "utf8");
+    } catch {
+      text = null;
+    }
     sources[name] = { present: text !== null, anchors: {} };
-    if (text === null) { blockers.push({ check: "navigation_source", reason: "source_missing", file: name }); continue; }
+    if (text === null) {
+      blockers.push({ check: "navigation_source", reason: "source_missing", file: name });
+      continue;
+    }
     for (const anchor of DISPATCH_ANCHORS)
-      if (text.includes(anchor)) { sources[name].anchors[anchor] = true; blockers.push({ check: "navigation_source", reason: "dispatch_anchor", file: name }); }
+      if (text.includes(anchor)) {
+        sources[name].anchors[anchor] = true;
+        blockers.push({ check: "navigation_source", reason: "dispatch_anchor", file: name });
+      }
     for (const anchor of M8_ANCHORS)
-      if (text.includes(anchor)) { sources[name].anchors[anchor] = true; blockers.push({ check: "navigation_source", reason: "m8_anchor", file: name }); }
+      if (text.includes(anchor)) {
+        sources[name].anchors[anchor] = true;
+        blockers.push({ check: "navigation_source", reason: "m8_anchor", file: name });
+      }
     if (name === "Game1NavigationWorldSource.cs" && !text.includes(ORDINARY_WARP_ANCHOR))
       blockers.push({ check: "navigation_source", reason: "ordinary_warp_contract_missing", file: name });
   }
-  checks.source = { status: blockers.some((b) => b.check === "navigation_source") ? "blocked" : "ready", files: sources };
+  checks.source = {
+    status: blockers.some((b) => b.check === "navigation_source") ? "blocked" : "ready",
+    files: sources,
+  };
 
   if (blockers.length > 0) return blocked(checks, blockers);
   if (requestedNavigationScope === "multi_hop_ordinary_warp") {
-    if (!multiSourceReceiptClaim) return blocked(checks, [{ check: "multi_source_receipt", reason: "multi_source_receipt_required_or_invalid" }]);
+    if (!multiSourceReceiptClaim)
+      return blocked(checks, [{ check: "multi_source_receipt", reason: "multi_source_receipt_required_or_invalid" }]);
     if (deferMultiSourceReceiptConsume) {
       const report = ready(checks);
       deferredMultiSourceClaims.set(report, { ledger: receiptLedger, claim: multiSourceReceiptClaim });
@@ -266,10 +361,22 @@ async function cliMain(args) {
     requestedNavigationScope: bindFlag(args, "--requested-navigation-scope"),
   };
   const report = await runTopologyPreflight(options);
-  console.log(JSON.stringify({ state: report.state, ready: report.ready, checks: report.checks, blockers: report.blockers, mutationCount: report.mutationCount, executionReceiptCount: report.executionReceiptCount }));
+  console.log(
+    JSON.stringify({
+      state: report.state,
+      ready: report.ready,
+      checks: report.checks,
+      blockers: report.blockers,
+      mutationCount: report.mutationCount,
+      executionReceiptCount: report.executionReceiptCount,
+    }),
+  );
   process.exitCode = report.ready ? 0 : 1;
 }
 
 if (process.argv[1] && new URL(`file:${process.argv[1]}`).href === import.meta.url) {
-  cliMain(process.argv.slice(2)).catch((error) => { console.error(String(error?.message || error)); process.exitCode = 1; });
+  cliMain(process.argv.slice(2)).catch((error) => {
+    console.error(String(error?.message || error));
+    process.exitCode = 1;
+  });
 }

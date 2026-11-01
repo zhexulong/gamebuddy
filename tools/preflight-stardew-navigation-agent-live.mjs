@@ -46,7 +46,13 @@ function blocked(items) {
 }
 
 function hasOnlyProductionData(options) {
-  if (options === null || typeof options !== "object" || Array.isArray(options) || Object.getPrototypeOf(options) !== Object.prototype) return false;
+  if (
+    options === null ||
+    typeof options !== "object" ||
+    Array.isArray(options) ||
+    Object.getPrototypeOf(options) !== Object.prototype
+  )
+    return false;
   if (Object.keys(options).some((name) => !OPTION_NAMES.has(name))) return false;
   return ["gamePath", "releaseDir"].every((name) => typeof options[name] === "string" && options[name].length > 0);
 }
@@ -73,18 +79,23 @@ async function readFixtureSource(path) {
 }
 
 export async function runAgentLivePreflight(options = {}) {
-  if (!hasOnlyProductionData(options)) return blocked([item("input", "blocked", "game-path and release-dir are required strings")]);
+  if (!hasOnlyProductionData(options))
+    return blocked([item("input", "blocked", "game-path and release-dir are required strings")]);
 
   const items = [];
   const [gamePathReady, releaseDirReady] = await Promise.all([
     isDirectory(options.gamePath),
     isDirectory(options.releaseDir),
   ]);
-  items.push(item(
-    "runtime_paths",
-    gamePathReady && releaseDirReady ? "ready" : "blocked",
-    gamePathReady && releaseDirReady ? "game and release directories accessible" : "game-path or release-dir inaccessible",
-  ));
+  items.push(
+    item(
+      "runtime_paths",
+      gamePathReady && releaseDirReady ? "ready" : "blocked",
+      gamePathReady && releaseDirReady
+        ? "game and release directories accessible"
+        : "game-path or release-dir inaccessible",
+    ),
+  );
 
   const fixturePaths = FIXTURE_PATH_REQUIREMENTS.map((relative) => TOOLS_DIR + relative);
   const fixturePresent = await Promise.all(fixturePaths.map(exists));
@@ -99,15 +110,19 @@ export async function runAgentLivePreflight(options = {}) {
     }
   }
   const fixtureReady = missing.length === 0 && fixtureExportsReady;
-  items.push(item(
-    "fixture_transaction",
-    fixtureReady ? "ready" : "blocked",
-    fixtureReady ? "prepare, navigation mutation, restore, and cleanup owners present" : missing.length > 0 ? `missing: ${missing.join(",")}` : "fixture owner contract unreadable",
-  ));
+  items.push(
+    item(
+      "fixture_transaction",
+      fixtureReady ? "ready" : "blocked",
+      fixtureReady
+        ? "prepare, navigation mutation, restore, and cleanup owners present"
+        : missing.length > 0
+          ? `missing: ${missing.join(",")}`
+          : "fixture owner contract unreadable",
+    ),
+  );
 
-  return items.every((entry) => entry.status === "ready")
-    ? report("PREFLIGHT_READY", items)
-    : blocked(items);
+  return items.every((entry) => entry.status === "ready") ? report("PREFLIGHT_READY", items) : blocked(items);
 }
 
 function argument(args, name) {
@@ -120,13 +135,15 @@ async function cliMain(args) {
     gamePath: argument(args, "--game-path"),
     releaseDir: argument(args, "--release-dir"),
   });
-  console.log(JSON.stringify({
-    state: result.state,
-    topology: result.topology,
-    items: result.items,
-    mutationCount: result.mutationCount,
-    executionReceiptCount: result.executionReceiptCount,
-  }));
+  console.log(
+    JSON.stringify({
+      state: result.state,
+      topology: result.topology,
+      items: result.items,
+      mutationCount: result.mutationCount,
+      executionReceiptCount: result.executionReceiptCount,
+    }),
+  );
   process.exitCode = result.ready ? 0 : 1;
 }
 

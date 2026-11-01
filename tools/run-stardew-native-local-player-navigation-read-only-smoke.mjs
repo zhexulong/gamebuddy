@@ -12,11 +12,7 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "find_destination", "i
  * target-version native world. This sends no execution request and treats any
  * receipt fact as a failed zero-mutation assertion.
  */
-export async function runNavigationReadOnlySmoke(
-  client,
-  receipts,
-  config,
-) {
+export async function runNavigationReadOnlySmoke(client, receipts, config) {
   validateFixtureConfig(config);
   const before = await observeFresh(client, { actionable: true });
   assertRequiredCapabilities(before);
@@ -118,7 +114,10 @@ function assertFindResult(result) {
     throw new Error("navigation_read_only_find_result_invalid");
   if (result.status === "resolved" && result.destination == null)
     throw new Error("navigation_read_only_find_result_invalid");
-  if (result.status === "candidates" && (!Array.isArray(result.candidates) || result.candidates.length < 1 || result.candidates.length > 3))
+  if (
+    result.status === "candidates" &&
+    (!Array.isArray(result.candidates) || result.candidates.length < 1 || result.candidates.length > 3)
+  )
     throw new Error("navigation_read_only_find_result_invalid");
 }
 

@@ -31,31 +31,40 @@ test("agent-live: environment and fixture admission is ready without receipt evi
   assert.equal(result.ready, true);
   assert.equal(result.mutationCount, 0);
   assert.equal(result.executionReceiptCount, 0);
-  assert.deepEqual(result.items.map((entry) => entry.name), ["runtime_paths", "fixture_transaction"]);
+  assert.deepEqual(
+    result.items.map((entry) => entry.name),
+    ["runtime_paths", "fixture_transaction"],
+  );
   for (const entry of result.items) assert.equal(entry.status, "ready", entry.name);
 });
 
 test("agent-live: inaccessible game or release path blocks without consuming any receipt", async () => {
-  const result = await runAgentLivePreflightTestHarness(readyOptions({
-    isDirectory: async (path) => path === "game",
-  }));
+  const result = await runAgentLivePreflightTestHarness(
+    readyOptions({
+      isDirectory: async (path) => path === "game",
+    }),
+  );
   assert.equal(result.state, "BLOCKED");
   assert.equal(item(result, "runtime_paths").status, "blocked");
   assert.equal(result.executionReceiptCount, 0);
 });
 
 test("agent-live: a missing fixture owner blocks", async () => {
-  const result = await runAgentLivePreflightTestHarness(readyOptions({
-    exists: async (path) => !path.endsWith("restore-stardew-native-local-player-fixture.mjs"),
-  }));
+  const result = await runAgentLivePreflightTestHarness(
+    readyOptions({
+      exists: async (path) => !path.endsWith("restore-stardew-native-local-player-fixture.mjs"),
+    }),
+  );
   assert.equal(result.state, "BLOCKED");
   assert.equal(item(result, "fixture_transaction").status, "blocked");
 });
 
 test("agent-live: unreadable fixture contract blocks", async () => {
-  const result = await runAgentLivePreflightTestHarness(readyOptions({
-    readFile: async () => "export function fixtureActions() {}",
-  }));
+  const result = await runAgentLivePreflightTestHarness(
+    readyOptions({
+      readFile: async () => "export function fixtureActions() {}",
+    }),
+  );
   assert.equal(result.state, "BLOCKED");
   assert.equal(item(result, "fixture_transaction").status, "blocked");
 });
@@ -79,7 +88,8 @@ test("agent-live production: imports only environment and fixture admission depe
     "registry",
     "marker",
     "claim",
-  ]) assert.equal(source.includes(forbidden), false, forbidden);
+  ])
+    assert.equal(source.includes(forbidden), false, forbidden);
   assert.match(source, /export\s+async\s+function\s+runAgentLivePreflight/);
 });
 

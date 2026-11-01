@@ -126,7 +126,10 @@ test("validator: wrong schemaVersion is rejected", () => {
 });
 
 test("validator: wrong targetBuild is rejected", () => {
-  assert.equal(validateMultiSourceTransitionCharacterization(passArtifact({ targetBuild: "1.6.14.9999" })).valid, false);
+  assert.equal(
+    validateMultiSourceTransitionCharacterization(passArtifact({ targetBuild: "1.6.14.9999" })).valid,
+    false,
+  );
 });
 
 test("validator: wrong terminalStatus is rejected", () => {
@@ -137,18 +140,36 @@ test("validator: wrong terminalStatus is rejected", () => {
 
 test("validator: topology primitive keys are rejected", () => {
   const forbiddenKeys = [
-    "location", "source", "target", "destination",
-    "route", "path", "hop", "leg",
-    "tile", "coordinate", "x", "y",
-    "warp", "door", "edge",
-    "opaqueId", "assemblyIdentity", "assemblyPath",
-    "log", "trace", "reason",
+    "location",
+    "source",
+    "target",
+    "destination",
+    "route",
+    "path",
+    "hop",
+    "leg",
+    "tile",
+    "coordinate",
+    "x",
+    "y",
+    "warp",
+    "door",
+    "edge",
+    "opaqueId",
+    "assemblyIdentity",
+    "assemblyPath",
+    "log",
+    "trace",
+    "reason",
   ];
   for (const key of forbiddenKeys) {
     const artifact = passArtifact({ [key]: "some_value" });
     const result = validateMultiSourceTransitionCharacterization(artifact);
     assert.equal(result.valid, false, `key "${key}" should be rejected`);
-    assert.ok(result.errors.some((e) => e.includes(`forbidden_key:${key}`)), `expected forbidden_key:${key} error`);
+    assert.ok(
+      result.errors.some((e) => e.includes(`forbidden_key:${key}`)),
+      `expected forbidden_key:${key} error`,
+    );
   }
 });
 
@@ -166,7 +187,10 @@ test("validator: a passed artifact with false observation boolean is rejected", 
   for (const { override, expected } of tests) {
     const result = validateMultiSourceTransitionCharacterization(passArtifact(override));
     assert.equal(result.valid, false, `override ${JSON.stringify(override)} should be rejected`);
-    assert.ok(result.errors.some((e) => e.includes(expected)), `expected error containing ${expected}`);
+    assert.ok(
+      result.errors.some((e) => e.includes(expected)),
+      `expected error containing ${expected}`,
+    );
   }
 });
 
@@ -195,13 +219,19 @@ test("validator: a passed artifact with nonzero mutation/warp/receipt/publicatio
 });
 
 test("validator: a passed artifact with incomplete cleanup is rejected", () => {
-  const noRestore = passArtifact({ fixtureCleanup: { restored: false, noStardewProcess: true, noSmapiProcess: true, temporaryProfileRemoved: true } });
+  const noRestore = passArtifact({
+    fixtureCleanup: { restored: false, noStardewProcess: true, noSmapiProcess: true, temporaryProfileRemoved: true },
+  });
   assert.equal(validateMultiSourceTransitionCharacterization(noRestore).valid, false);
 
-  const processRunning = passArtifact({ fixtureCleanup: { restored: true, noStardewProcess: false, noSmapiProcess: true, temporaryProfileRemoved: true } });
+  const processRunning = passArtifact({
+    fixtureCleanup: { restored: true, noStardewProcess: false, noSmapiProcess: true, temporaryProfileRemoved: true },
+  });
   assert.equal(validateMultiSourceTransitionCharacterization(processRunning).valid, false);
 
-  const partialCleanup = passArtifact({ fixtureCleanup: { restored: true, noStardewProcess: true, noSmapiProcess: true, temporaryProfileRemoved: false } });
+  const partialCleanup = passArtifact({
+    fixtureCleanup: { restored: true, noStardewProcess: true, noSmapiProcess: true, temporaryProfileRemoved: false },
+  });
   assert.equal(validateMultiSourceTransitionCharacterization(partialCleanup).valid, false);
 });
 
@@ -211,7 +241,11 @@ test("validator: a blocked artifact with consistent predicate is accepted but do
   for (const predicate of BLOCK_PREDICATES) {
     const artifact = blockedArtifact(predicate);
     const result = validateMultiSourceTransitionCharacterization(artifact);
-    assert.equal(result.valid, true, `blocked predicate "${predicate}" should be valid: ${JSON.stringify(result.errors)}`);
+    assert.equal(
+      result.valid,
+      true,
+      `blocked predicate "${predicate}" should be valid: ${JSON.stringify(result.errors)}`,
+    );
     assert.equal(allowsMultiHopTopologyImplementation(artifact), false);
   }
 });
@@ -221,7 +255,10 @@ test("validator: a blocked artifact with inconsistent predicate is rejected", ()
   const bad = blockedArtifact("world_not_ready", { worldReadyObserved: true });
   const result = validateMultiSourceTransitionCharacterization(bad);
   assert.equal(result.valid, false);
-  assert.ok(result.errors.some((e) => e.includes("blocked_predicate_inconsistent")), JSON.stringify(result.errors));
+  assert.ok(
+    result.errors.some((e) => e.includes("blocked_predicate_inconsistent")),
+    JSON.stringify(result.errors),
+  );
 
   // gameplay_mutation_observed with gameplayMutationCount=0 is inconsistent
   const bad2 = blockedArtifact("gameplay_mutation_observed", { gameplayMutationCount: 0 });
@@ -250,7 +287,10 @@ test("validator: a blocked artifact that looks like a pass is rejected (blocked_
   });
   const result = validateMultiSourceTransitionCharacterization(bad);
   assert.equal(result.valid, false);
-  assert.ok(result.errors.some((e) => e.includes("blocked_implies_pass")), JSON.stringify(result.errors));
+  assert.ok(
+    result.errors.some((e) => e.includes("blocked_implies_pass")),
+    JSON.stringify(result.errors),
+  );
 });
 
 test("validator: an unknown blocked predicate is rejected", () => {
@@ -302,11 +342,24 @@ test("validator: the validator never accepts source-only validator output shapes
     terminalStatus: "passed",
     targetBuild: "1.6.15.24356",
     targetBinding: "tb1_7a1c9e0d22b4f6a1c3e5d7098a2b4c6e8d0f1a3c5d7e9f1a3b5c7d9e1f3a5b7c",
-    methodAnchors: { warpResolver: "GameLocation.warps", doorResolver: "GameLocation.getWarpFromDoor", approachPlanner: "PathFindController", correlation: "IPlayerEvents.Warped" },
+    methodAnchors: {
+      warpResolver: "GameLocation.warps",
+      doorResolver: "GameLocation.getWarpFromDoor",
+      approachPlanner: "PathFindController",
+      correlation: "IPlayerEvents.Warped",
+    },
     observationScope: "current_source_only",
     opaqueEdgeIds: ["te1_91aF2bC3dE4f5a6b7c8d9e0f1A2B3c4D"],
     permittedFamilyCounts: { ordinaryWarp: 1, ordinaryDoor: 0 },
-    excludedFamilyCounts: { action: 0, touchAction: 0, modHook: 0, special: 0, m8: 0, missingIdentity: 0, unsafeApproach: 0 },
+    excludedFamilyCounts: {
+      action: 0,
+      touchAction: 0,
+      modHook: 0,
+      special: 0,
+      m8: 0,
+      missingIdentity: 0,
+      unsafeApproach: 0,
+    },
     dryPlanSafe: true,
     correlationApiShapeVerified: true,
     mutationCount: 0,

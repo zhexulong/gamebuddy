@@ -6,10 +6,14 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../host/dist-test/stardew-game
 export const NAVIGATION_ACTION = "navigate_to_destination";
 export const COMPLETION_REASON = "navigation_completed";
 const NON_TERMINAL_STATES = new Set(["accepted", "running", "meaningful_progress"]);
-const FORBIDDEN_EVIDENCE_PRIMITIVES = Object.freeze([ "route", "tile", "warp", "leg", "source" ]);
+const FORBIDDEN_EVIDENCE_PRIMITIVES = Object.freeze(["route", "tile", "warp", "leg", "source"]);
 
-function isRecord(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
-function isOpaqueId(v) { return typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v); }
+function isRecord(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+function isOpaqueId(v) {
+  return typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v);
+}
 const defaultCompletionEvidence = (p) =>
   STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(NAVIGATION_ACTION, p);
 function forbiddenEvidencePrimitives(payload) {
@@ -17,18 +21,16 @@ function forbiddenEvidencePrimitives(payload) {
   // Privacy is a replay invariant independent of the current wire schema:
   // support a string evidence form as well as nested object evidence so an
   // alternate validator cannot silently bypass primitive filtering.
-  const bodies = typeof evidence === "string"
-    ? [evidence]
-    : isRecord(evidence)
-      ? [JSON.stringify(evidence)]
-      : [];
+  const bodies = typeof evidence === "string" ? [evidence] : isRecord(evidence) ? [JSON.stringify(evidence)] : [];
   const haystack = bodies.join(" ").toLowerCase();
   return FORBIDDEN_EVIDENCE_PRIMITIVES.filter((p) => haystack.includes(p));
 }
 
 function blocked(code, detail, items = []) {
   return Object.freeze({
-    ok: false, valid: false, success: false,
+    ok: false,
+    valid: false,
+    success: false,
     state: "navigation_replay_blocked",
     blocker: Object.freeze({ code, detail }),
     items: Object.freeze(items),
@@ -38,12 +40,19 @@ function blocked(code, detail, items = []) {
 }
 function notSuccess(blocker, tp, receipts, raw) {
   return Object.freeze({
-    ok: false, valid: true, success: false,
+    ok: false,
+    valid: true,
+    success: false,
     state: "navigation_replay_blocked",
     blocker,
     items: Object.freeze(raw),
     validation: Object.freeze({ valid: true, mutationCount: 0, executionReceiptCount: receipts.length }),
-    terminal: Object.freeze({ requestId: tp.requestId, executionId: tp.executionId, reasonCode: tp.reasonCode, state: tp.state }),
+    terminal: Object.freeze({
+      requestId: tp.requestId,
+      executionId: tp.executionId,
+      reasonCode: tp.reasonCode,
+      state: tp.state,
+    }),
   });
 }
 
@@ -52,27 +61,22 @@ function checkMultiHop(receipts) {
   // running, correct lifecycle ordering, and a single strict completion.
   const accepted = receipts.filter((r) => r.payload.state === "accepted");
   const running = receipts.filter((r) => r.payload.state === "running");
-  if (accepted.length !== 1)
-    return { ok: false, code: "multi_hop_accepted_count", detail: { count: accepted.length } };
-  if (running.length < 2)
-    return { ok: false, code: "multi_hop_running_count", detail: { count: running.length } };
+  if (accepted.length !== 1) return { ok: false, code: "multi_hop_accepted_count", detail: { count: accepted.length } };
+  if (running.length < 2) return { ok: false, code: "multi_hop_running_count", detail: { count: running.length } };
   // Ordering: accepted must appear before any running, and every running
   // before the single terminal.
   const acceptedIdx = receipts.indexOf(accepted[0]);
   const runningIndices = running.map((r) => receipts.indexOf(r));
-  const terminalIdx = Math.max(...receipts.map((r, i) =>
-    !NON_TERMINAL_STATES.has(r.payload.state) ? i : -1));
-  if (acceptedIdx !== 0)
-    return { ok: false, code: "multi_hop_ordering", detail: "accepted_not_first_receipt" };
+  const terminalIdx = Math.max(...receipts.map((r, i) => (!NON_TERMINAL_STATES.has(r.payload.state) ? i : -1)));
+  if (acceptedIdx !== 0) return { ok: false, code: "multi_hop_ordering", detail: "accepted_not_first_receipt" };
   if (runningIndices.some((idx) => idx < acceptedIdx))
     return { ok: false, code: "multi_hop_ordering", detail: "running_before_accepted" };
   if (terminalIdx <= Math.max(...runningIndices))
     return { ok: false, code: "multi_hop_ordering", detail: "terminal_not_after_running" };
   // No non-terminal receipt after the terminal.
   const allNonTerminals = receipts.filter((r) => NON_TERMINAL_STATES.has(r.payload.state));
-  const lastNonTerminalIdx = allNonTerminals.length > 0
-    ? Math.max(...allNonTerminals.map((r) => receipts.indexOf(r)))
-    : -1;
+  const lastNonTerminalIdx =
+    allNonTerminals.length > 0 ? Math.max(...allNonTerminals.map((r) => receipts.indexOf(r))) : -1;
   if (lastNonTerminalIdx > terminalIdx)
     return { ok: false, code: "multi_hop_ordering", detail: "nonterminal_after_terminal" };
   return { ok: true };
@@ -120,19 +124,38 @@ export function replayNavigationOperation(frames, options = {}) {
   }
   if (pairSet.size !== 1) return blocked("correlation_mismatch", { distinctPairs: pairSet.size }, items);
   const firstPayload = receipts[0].payload;
-  if (requests[0].payload.requestId !== firstPayload.requestId)
-    return blocked("request_receipt_mismatch", {}, items);
+  if (requests[0].payload.requestId !== firstPayload.requestId) return blocked("request_receipt_mismatch", {}, items);
   const terminals = receipts.filter(({ payload }) => !NON_TERMINAL_STATES.has(payload.state));
   if (terminals.length !== 1) return blocked("single_terminal_violation", { terminalCount: terminals.length }, items);
   const terminal = terminals[0].payload;
   if (terminal.actionId !== NAVIGATION_ACTION)
-    return notSuccess(Object.freeze({ code: "terminal_not_navigation_action", detail: { actionId: terminal.actionId } }), terminal, receipts, items);
+    return notSuccess(
+      Object.freeze({ code: "terminal_not_navigation_action", detail: { actionId: terminal.actionId } }),
+      terminal,
+      receipts,
+      items,
+    );
   if (terminal.state !== "succeeded")
-    return notSuccess(Object.freeze({ code: "terminal_not_succeeded", detail: { state: terminal.state } }), terminal, receipts, items);
+    return notSuccess(
+      Object.freeze({ code: "terminal_not_succeeded", detail: { state: terminal.state } }),
+      terminal,
+      receipts,
+      items,
+    );
   if (terminal.reasonCode !== COMPLETION_REASON)
-    return notSuccess(Object.freeze({ code: "terminal_not_navigation_completed", detail: { state: terminal.state } }), terminal, receipts, items);
+    return notSuccess(
+      Object.freeze({ code: "terminal_not_navigation_completed", detail: { state: terminal.state } }),
+      terminal,
+      receipts,
+      items,
+    );
   if (!completionEvidence(terminal))
-    return notSuccess(Object.freeze({ code: "completion_evidence_rejected", detail: { state: terminal.state } }), terminal, receipts, items);
+    return notSuccess(
+      Object.freeze({ code: "completion_evidence_rejected", detail: { state: terminal.state } }),
+      terminal,
+      receipts,
+      items,
+    );
   // --- multi-hop mode check ---
   if (mode === "multi_hop_ordinary_warp") {
     const hopResult = checkMultiHop(receipts);
@@ -141,27 +164,46 @@ export function replayNavigationOperation(frames, options = {}) {
     }
   }
   return Object.freeze({
-    ok: true, valid: true, success: true,
+    ok: true,
+    valid: true,
+    success: true,
     state: "navigation_replay_completed",
     blocker: null,
     items,
     validation: Object.freeze({ valid: true, mutationCount: 0, executionReceiptCount: receipts.length }),
-    terminal: Object.freeze({ requestId: firstPayload.requestId, executionId: firstPayload.executionId, reasonCode: terminal.reasonCode, state: terminal.state }),
+    terminal: Object.freeze({
+      requestId: firstPayload.requestId,
+      executionId: firstPayload.executionId,
+      reasonCode: terminal.reasonCode,
+      state: terminal.state,
+    }),
     mode: mode === "multi_hop_ordinary_warp" ? "multi_hop_ordinary_warp" : "direct",
   });
 }
 async function cliMain() {
   const fileArgs = process.argv.slice(2);
-  if (fileArgs.length === 0) throw new Error("usage: node tools/replay-stardew-navigation-operation.mjs <frames.json> ...");
+  if (fileArgs.length === 0)
+    throw new Error("usage: node tools/replay-stardew-navigation-operation.mjs <frames.json> ...");
   const frames = [];
   for (const file of fileArgs) {
     const value = JSON.parse(await readFile(file, "utf8"));
-    if (Array.isArray(value)) frames.push(...value); else frames.push(value);
+    if (Array.isArray(value)) frames.push(...value);
+    else frames.push(value);
   }
   const report = replayNavigationOperation(frames);
-  console.log(JSON.stringify({ state: report.state, blocker: report.blocker?.code ?? null, validation: report.validation, terminal: report.terminal }));
+  console.log(
+    JSON.stringify({
+      state: report.state,
+      blocker: report.blocker?.code ?? null,
+      validation: report.validation,
+      terminal: report.terminal,
+    }),
+  );
   process.exitCode = report.ok ? 0 : 1;
 }
 if (process.argv[1] && new URL(`file:${process.argv[1]}`).href === import.meta.url) {
-  cliMain().catch((error) => { console.error(String(error?.message || error)); process.exitCode = 1; });
+  cliMain().catch((error) => {
+    console.error(String(error?.message || error));
+    process.exitCode = 1;
+  });
 }

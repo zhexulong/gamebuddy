@@ -22,7 +22,10 @@ const inside = (root, path) => {
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const mac = (token, value) => createHmac("sha256", token).update(value).digest("hex");
 const equalMac = (left, right) =>
-  typeof left === "string" && SHA256.test(left) && SHA256.test(right) && timingSafeEqual(Buffer.from(left), Buffer.from(right));
+  typeof left === "string" &&
+  SHA256.test(left) &&
+  SHA256.test(right) &&
+  timingSafeEqual(Buffer.from(left), Buffer.from(right));
 
 async function assertNoLink(path, io) {
   const meta = await io.lstat(path);
@@ -76,7 +79,11 @@ export function assertTransitionProfile(entries) {
   return true;
 }
 export function assertExactDirectory(entries, expected) {
-  if (!Array.isArray(entries) || entries.length !== expected.length || entries.some((entry) => !expected.includes(entry)))
+  if (
+    !Array.isArray(entries) ||
+    entries.length !== expected.length ||
+    entries.some((entry) => !expected.includes(entry))
+  )
     throw new Error("transition_mod_directory_not_exact");
   return true;
 }
@@ -86,14 +93,19 @@ export function assertExactSmapiLaunch(executable, args, gamePath, profileRoot) 
     args.length !== 2 ||
     args[0] !== "--mods-path" ||
     resolve(args[1]) !== resolve(profileRoot)
-  ) throw new Error("transition_smapi_identity_or_mods_path_invalid");
+  )
+    throw new Error("transition_smapi_identity_or_mods_path_invalid");
 }
 
 const defaultListProcesses = () =>
   new Promise((resolvePromise, reject) => {
     const child = spawn(
       "powershell.exe",
-      ["-NoProfile", "-Command", "Get-Process StardewValley,StardewModdingAPI -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"],
+      [
+        "-NoProfile",
+        "-Command",
+        "Get-Process StardewValley,StardewModdingAPI -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
+      ],
       { windowsHide: true },
     );
     let output = "";
@@ -109,7 +121,9 @@ const defaultLaunch = (script, args, env) =>
       stdio: "inherit",
     });
     child.on("error", reject);
-    child.on("exit", (code) => (code === 0 ? resolvePromise() : reject(new Error(`transition_launcher_failed:${code}`))));
+    child.on("exit", (code) =>
+      code === 0 ? resolvePromise() : reject(new Error(`transition_launcher_failed:${code}`)),
+    );
   });
 
 async function verifyCopiedSave(root, fixture, io) {
@@ -149,7 +163,10 @@ export async function runNavigationTransitionCharacterization(options = {}) {
   const profile = join(tx, "Mods");
   const observationPath = join(tx, "observation.json");
   const workingSavePath = join(input.saveRoot, fixture.saveDirectoryName);
-  const stagingSavePath = join(input.saveRoot, `.${fixture.saveDirectoryName}.transition-stage-${randomBytes(16).toString("hex")}`);
+  const stagingSavePath = join(
+    input.saveRoot,
+    `.${fixture.saveDirectoryName}.transition-stage-${randomBytes(16).toString("hex")}`,
+  );
   const stagingOwnerPath = `${stagingSavePath}.owner`;
   const stagingOwnerToken = randomBytes(32).toString("hex");
   let primaryError;
@@ -170,7 +187,8 @@ export async function runNavigationTransitionCharacterization(options = {}) {
     stagingSaveOwned = true;
     await io.cp(fixture.saveRoot, stagingSavePath, { recursive: true, errorOnExist: true });
     await assertNoLink(stagingOwnerPath, io);
-    if ((await io.readFile(stagingOwnerPath, "utf8")) !== stagingOwnerToken) throw new Error("transition_stage_ownership_unproven");
+    if ((await io.readFile(stagingOwnerPath, "utf8")) !== stagingOwnerToken)
+      throw new Error("transition_stage_ownership_unproven");
     await verifyCopiedSave(stagingSavePath, fixture, io);
     await io.rename(stagingSavePath, workingSavePath);
     await io.rm(stagingOwnerPath, { force: false });
@@ -182,36 +200,108 @@ export async function runNavigationTransitionCharacterization(options = {}) {
     const probeProfile = join(profile, "GameBuddy.NavigationTransitionCharacterization");
     await io.mkdir(loaderProfile, { recursive: true });
     await io.mkdir(probeProfile, { recursive: true });
-    await io.cp(join(input.loaderBuildPath, "manifest.json"), join(loaderProfile, "manifest.json"), { errorOnExist: true });
-    await io.cp(join(input.loaderBuildPath, "StardewNavigationP4Loader.dll"), join(loaderProfile, "StardewNavigationP4Loader.dll"), { errorOnExist: true });
-    await io.cp(join(input.probeBuildPath, "manifest.json"), join(probeProfile, "manifest.json"), { errorOnExist: true });
-    await io.cp(join(input.probeBuildPath, "StardewNavigationTransitionCharacterization.dll"), join(probeProfile, "StardewNavigationTransitionCharacterization.dll"), { errorOnExist: true });
-    if (JSON.parse(await io.readFile(join(loaderProfile, "manifest.json"))).UniqueID !== loaderId) throw new Error("transition_loader_manifest_invalid");
-    if (JSON.parse(await io.readFile(join(probeProfile, "manifest.json"))).UniqueID !== probeId) throw new Error("transition_probe_manifest_invalid");
+    await io.cp(join(input.loaderBuildPath, "manifest.json"), join(loaderProfile, "manifest.json"), {
+      errorOnExist: true,
+    });
+    await io.cp(
+      join(input.loaderBuildPath, "StardewNavigationP4Loader.dll"),
+      join(loaderProfile, "StardewNavigationP4Loader.dll"),
+      { errorOnExist: true },
+    );
+    await io.cp(join(input.probeBuildPath, "manifest.json"), join(probeProfile, "manifest.json"), {
+      errorOnExist: true,
+    });
+    await io.cp(
+      join(input.probeBuildPath, "StardewNavigationTransitionCharacterization.dll"),
+      join(probeProfile, "StardewNavigationTransitionCharacterization.dll"),
+      { errorOnExist: true },
+    );
+    if (JSON.parse(await io.readFile(join(loaderProfile, "manifest.json"))).UniqueID !== loaderId)
+      throw new Error("transition_loader_manifest_invalid");
+    if (JSON.parse(await io.readFile(join(probeProfile, "manifest.json"))).UniqueID !== probeId)
+      throw new Error("transition_probe_manifest_invalid");
 
     const token = randomBytes(32).toString("hex");
     const nonce = randomBytes(24).toString("hex");
     const deadlineUnixMs = now() + deadlineMs;
     const armCanonical = `arm|${nonce}|${tx}|${observationPath}|${deadlineUnixMs}`;
-    await io.writeFile(join(probeProfile, "arm.json"), JSON.stringify({ nonce, transactionPath: tx, observationPath, deadlineUnixMs, integrityMac: mac(token, armCanonical) }), { encoding: "utf8", flag: "wx" });
-    const loaderFiles = [...fixture.files].map(([path, sha256]) => ({ path, sha256 })).sort((left, right) => left.path.localeCompare(right.path));
-    if (loaderFiles.length !== 2 || loaderFiles.some((file) => file.path.slice(fixture.saveDirectoryName.length + 1).includes("/")))
+    await io.writeFile(
+      join(probeProfile, "arm.json"),
+      JSON.stringify({
+        nonce,
+        transactionPath: tx,
+        observationPath,
+        deadlineUnixMs,
+        integrityMac: mac(token, armCanonical),
+      }),
+      { encoding: "utf8", flag: "wx" },
+    );
+    const loaderFiles = [...fixture.files]
+      .map(([path, sha256]) => ({ path, sha256 }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (
+      loaderFiles.length !== 2 ||
+      loaderFiles.some((file) => file.path.slice(fixture.saveDirectoryName.length + 1).includes("/"))
+    )
       throw new Error("transition_fixture_shape_not_supported_by_loader");
     const loadCanonical = `load|${fixture.saveDirectoryName}|${deadlineUnixMs}|${loaderFiles.map((file) => `${file.path}:${file.sha256}`).join("|")}`;
-    await io.writeFile(join(loaderProfile, "fixture-load.json"), JSON.stringify({ observedSaveSlot: fixture.saveDirectoryName, deadlineUnixMs, files: loaderFiles, integrityMac: mac(token, loadCanonical) }), { encoding: "utf8", flag: "wx" });
+    await io.writeFile(
+      join(loaderProfile, "fixture-load.json"),
+      JSON.stringify({
+        observedSaveSlot: fixture.saveDirectoryName,
+        deadlineUnixMs,
+        files: loaderFiles,
+        integrityMac: mac(token, loadCanonical),
+      }),
+      { encoding: "utf8", flag: "wx" },
+    );
     assertTransitionProfile(await io.readdir(profile));
-    assertExactDirectory(await io.readdir(loaderProfile), ["manifest.json", "StardewNavigationP4Loader.dll", "fixture-load.json"]);
-    assertExactDirectory(await io.readdir(probeProfile), ["manifest.json", "StardewNavigationTransitionCharacterization.dll", "arm.json"]);
-    const script = options.launcherPath ?? join(dirname(fileURLToPath(import.meta.url)), "start-stardew-navigation-transition-characterization.ps1");
-    assertExactSmapiLaunch(join(input.gamePath, "StardewModdingAPI.exe"), ["--mods-path", profile], input.gamePath, profile);
-    await (options.launch ?? defaultLaunch)(script, ["-GamePath", input.gamePath, "-ModsPath", profile, "-ObservedSaveSlot", fixture.saveDirectoryName, "-ObservationPath", observationPath, "-DeadlineUnixMs", String(deadlineUnixMs)], {
-      ...process.env,
-      GAMEBUDDY_NAVIGATION_P4_TRANSACTION_KEY: token,
-      GAMEBUDDY_NAVIGATION_TRANSITION_CHARACTERIZATION_TRANSACTION_KEY: token,
-    });
+    assertExactDirectory(await io.readdir(loaderProfile), [
+      "manifest.json",
+      "StardewNavigationP4Loader.dll",
+      "fixture-load.json",
+    ]);
+    assertExactDirectory(await io.readdir(probeProfile), [
+      "manifest.json",
+      "StardewNavigationTransitionCharacterization.dll",
+      "arm.json",
+    ]);
+    const script =
+      options.launcherPath ??
+      join(dirname(fileURLToPath(import.meta.url)), "start-stardew-navigation-transition-characterization.ps1");
+    assertExactSmapiLaunch(
+      join(input.gamePath, "StardewModdingAPI.exe"),
+      ["--mods-path", profile],
+      input.gamePath,
+      profile,
+    );
+    await (options.launch ?? defaultLaunch)(
+      script,
+      [
+        "-GamePath",
+        input.gamePath,
+        "-ModsPath",
+        profile,
+        "-ObservedSaveSlot",
+        fixture.saveDirectoryName,
+        "-ObservationPath",
+        observationPath,
+        "-DeadlineUnixMs",
+        String(deadlineUnixMs),
+      ],
+      {
+        ...process.env,
+        GAMEBUDDY_NAVIGATION_P4_TRANSACTION_KEY: token,
+        GAMEBUDDY_NAVIGATION_TRANSITION_CHARACTERIZATION_TRANSACTION_KEY: token,
+      },
+    );
     const record = JSON.parse(await io.readFile(observationPath, "utf8"));
-    if (now() >= deadlineUnixMs || record?.nonce !== nonce || typeof record?.observation !== "string") throw new Error("transition_terminal_not_authenticated_to_arm");
-    if (!equalMac(record.integrityMac, mac(token, `observation|${nonce}|${tx}|${observationPath}|${record.observation}`))) throw new Error("transition_terminal_mac_invalid");
+    if (now() >= deadlineUnixMs || record?.nonce !== nonce || typeof record?.observation !== "string")
+      throw new Error("transition_terminal_not_authenticated_to_arm");
+    if (
+      !equalMac(record.integrityMac, mac(token, `observation|${nonce}|${tx}|${observationPath}|${record.observation}`))
+    )
+      throw new Error("transition_terminal_mac_invalid");
     observation = JSON.parse(record.observation);
   } catch (error) {
     primaryError = error;
@@ -232,7 +322,8 @@ export async function runNavigationTransitionCharacterization(options = {}) {
     if (stagingSaveOwned) {
       try {
         await assertNoLink(stagingOwnerPath, io);
-        if ((await io.readFile(stagingOwnerPath, "utf8")) !== stagingOwnerToken) throw new Error("transition_stage_ownership_unproven");
+        if ((await io.readFile(stagingOwnerPath, "utf8")) !== stagingOwnerToken)
+          throw new Error("transition_stage_ownership_unproven");
         await verifyCopiedSave(stagingSavePath, fixture, io);
         await io.rm(stagingSavePath, { recursive: true, force: false });
         await io.rm(stagingOwnerPath, { force: false });
@@ -245,10 +336,12 @@ export async function runNavigationTransitionCharacterization(options = {}) {
   const errors = [primaryError, integrityError, cleanupError].filter(Boolean);
   if (errors.length) {
     await io.rm(tx, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 });
-    if (errors.length > 1) throw new AggregateError(errors, `transition_failed:${errors.map((error) => error.message).join(";")}`);
+    if (errors.length > 1)
+      throw new AggregateError(errors, `transition_failed:${errors.map((error) => error.message).join(";")}`);
     throw errors[0];
   }
-  if (input.artifactPath && inside(tx, input.artifactPath)) throw new Error("transition_artifact_must_not_be_inside_transaction");
+  if (input.artifactPath && inside(tx, input.artifactPath))
+    throw new Error("transition_artifact_must_not_be_inside_transaction");
   // The transaction contains the temporary Mods profile, authenticated arm,
   // and raw observation. Delete it before constructing or publishing the final
   // artifact so a later profile cleanup failure cannot leave completion output.

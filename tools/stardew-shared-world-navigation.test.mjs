@@ -8,7 +8,14 @@ import {
   isAdjacent,
 } from "./lib/stardew-shared-world-navigation.mjs";
 
-const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "machine_inspect"];
+const CAPABILITIES = [
+  "cancel_active_execution",
+  "inspect_self",
+  "move_to_tile",
+  "travel",
+  "enter_exit",
+  "machine_inspect",
+];
 
 /** A scripted fake bridge: it applies the exact outcomes the helpers expect. */
 function createFake({ start, warps = [], onMove } = {}) {
@@ -31,7 +38,12 @@ function createFake({ start, warps = [], onMove } = {}) {
       if (action === "move_to_tile") {
         const outcome = onMove ? onMove({ location, tile, args }) : { ok: true };
         if (outcome.ok) tile = { x: args.x, y: args.y };
-        publish({ ...accepted, state: outcome.ok ? "succeeded" : "rejected", reasonCode: outcome.ok ? "target_reached" : "no_path", revision: ++revision });
+        publish({
+          ...accepted,
+          state: outcome.ok ? "succeeded" : "rejected",
+          reasonCode: outcome.ok ? "target_reached" : "no_path",
+          revision: ++revision,
+        });
       } else if (action === "enter_exit" || action === "travel") {
         const warp = warps.find((candidate) => candidate.sourceX === args.x && candidate.sourceY === args.y);
         if (warp === undefined) {
@@ -39,7 +51,12 @@ function createFake({ start, warps = [], onMove } = {}) {
         } else {
           location = warp.targetLocation;
           tile = { x: warp.targetX, y: warp.targetY };
-          publish({ ...accepted, state: "succeeded", reasonCode: action === "enter_exit" ? "enter_exit_completed" : "travel_completed", revision: ++revision });
+          publish({
+            ...accepted,
+            state: "succeeded",
+            reasonCode: action === "enter_exit" ? "enter_exit_completed" : "travel_completed",
+            revision: ++revision,
+          });
         }
       } else {
         publish({ ...accepted, state: "rejected", reasonCode: "unsupported", revision: ++revision });
@@ -54,7 +71,16 @@ function createFake({ start, warps = [], onMove } = {}) {
       return () => listeners.delete(listener);
     },
   };
-  const snapshot = () => ({ revision, location, tile: { ...tile }, actionable: true, activeExecution: null, capabilities: CAPABILITIES, warps, machineTargets: [] });
+  const snapshot = () => ({
+    revision,
+    location,
+    tile: { ...tile },
+    actionable: true,
+    activeExecution: null,
+    capabilities: CAPABILITIES,
+    warps,
+    machineTargets: [],
+  });
   const publish = (payload) => {
     for (const listener of listeners) listener({ type: "execution_receipt", payload });
   };
@@ -85,7 +111,10 @@ test("candidateStandingTiles covers the full Chebyshev-1 neighbourhood, nearest 
   assert.deepEqual(tiles[0], { x: 4, y: 7 });
   // The eight neighbours are exactly those within Chebyshev 1.
   assert.deepEqual(
-    tiles.map((tile) => `${tile.x},${tile.y}`).slice(1).sort(),
+    tiles
+      .map((tile) => `${tile.x},${tile.y}`)
+      .slice(1)
+      .sort(),
     ["3,6", "3,7", "3,8", "4,6", "4,8", "5,6", "5,7", "5,8"],
   );
 });
@@ -114,13 +143,22 @@ test("ensureActorAtLocation fails closed when no route is advertised", async () 
 });
 
 test("ensureActorAtLocation fails closed when the warp traversal is rejected", async () => {
-  const session = sessionOf(createFake({ start: CABIN, warps: [CABIN_WARP], onMove: ({ location }) => (location === CABIN.location ? { ok: false } : { ok: true }) }));
+  const session = sessionOf(
+    createFake({
+      start: CABIN,
+      warps: [CABIN_WARP],
+      onMove: ({ location }) => (location === CABIN.location ? { ok: false } : { ok: true }),
+    }),
+  );
   await assert.rejects(ensureActorAtLocation(session.client, session.receipts, "Farm"), /warp_traversal_failed/);
 });
 
 test("ensureAdjacentTo crosses locations then walks to a neighbour of the target", async () => {
   const session = sessionOf(createFake({ start: CABIN, warps: [CABIN_WARP] }));
-  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 30, y: 40 } });
+  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, {
+    location: "Farm",
+    tile: { x: 30, y: 40 },
+  });
   assert.equal(snapshot.location, "Farm");
   assert.equal(isAdjacent(snapshot.tile, { x: 30, y: 40 }), true);
   assert.deepEqual(
@@ -131,20 +169,34 @@ test("ensureAdjacentTo crosses locations then walks to a neighbour of the target
 
 test("ensureAdjacentTo skips the walk when the arrival tile is already adjacent", async () => {
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 31, y: 40 } } }));
-  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 30, y: 40 } });
+  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, {
+    location: "Farm",
+    tile: { x: 30, y: 40 },
+  });
   assert.deepEqual(snapshot.tile, { x: 31, y: 40 });
   assert.deepEqual(trace, []);
 });
 
 test("ensureAdjacentTo fails closed when no adjacent tile is reachable", async () => {
-  const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
-  await assert.rejects(ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 30, y: 40 } }), /no_reachable_adjacent_tile/);
+  const session = sessionOf(
+    createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }),
+  );
+  await assert.rejects(
+    ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 30, y: 40 } }),
+    /no_reachable_adjacent_tile/,
+  );
 });
 
 test("ensureAdjacentTo rejects a malformed target instead of guessing", async () => {
   const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } } }));
-  await assert.rejects(ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 1.5, y: 2 } }), /invalid_target_tile/);
-  await assert.rejects(ensureAdjacentTo(session.client, session.receipts, { tile: { x: 1, y: 2 } }), /invalid_target_location/);
+  await assert.rejects(
+    ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 1.5, y: 2 } }),
+    /invalid_target_tile/,
+  );
+  await assert.rejects(
+    ensureAdjacentTo(session.client, session.receipts, { tile: { x: 1, y: 2 } }),
+    /invalid_target_location/,
+  );
 });
 
 /**
@@ -164,7 +216,10 @@ test("locomotion completes when the post-transition revision can no longer be re
     if (reads > 2) throw new Error("observe_snapshot_not_admitted");
     return await base();
   };
-  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, { location: "Farm", tile: { x: 14, y: 14 } });
+  const { snapshot, trace } = await ensureAdjacentTo(session.client, session.receipts, {
+    location: "Farm",
+    tile: { x: 14, y: 14 },
+  });
   assert.equal(isAdjacent(snapshot.tile, { x: 14, y: 14 }), true);
   assert.deepEqual(
     trace.map((entry) => entry.step),
@@ -201,7 +256,10 @@ test("ensureAdjacentToFreshTarget re-reads a moved target instead of retrying it
       onMove: ({ args }) => ({ ok: Math.max(Math.abs(args.x - 50), Math.abs(args.y - 50)) <= 1 }),
     }),
   );
-  const reads = [{ x: 30, y: 40 }, { x: 50, y: 50 }];
+  const reads = [
+    { x: 30, y: 40 },
+    { x: 50, y: 50 },
+  ];
   let read = 0;
   const targets = () => [reads[Math.min(read++, reads.length - 1)]];
   const { snapshot, target } = await ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", targets, {
@@ -243,8 +301,7 @@ test("ensureAdjacentToFreshTarget re-reads the target after a FAILED move, insid
       },
     }),
   );
-  const targets = () =>
-    candidateStandingTiles(pet).filter((tile) => tile.x !== pet.x || tile.y !== pet.y);
+  const targets = () => candidateStandingTiles(pet).filter((tile) => tile.x !== pet.x || tile.y !== pet.y);
   const { snapshot, target } = await ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", targets, {
     attempts: 1,
     waitPolls: 0,
@@ -254,9 +311,14 @@ test("ensureAdjacentToFreshTarget re-reads the target after a FAILED move, insid
 });
 
 test("ensureAdjacentToFreshTarget fails closed after the attempt budget is exhausted", async () => {
-  const session = sessionOf(createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }));
+  const session = sessionOf(
+    createFake({ start: { location: "Farm", tile: { x: 4, y: 4 } }, onMove: () => ({ ok: false }) }),
+  );
   await assert.rejects(
-    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], { attempts: 2, waitPolls: 0 }),
+    ensureAdjacentToFreshTarget(session.client, session.receipts, "Farm", () => [{ x: 30, y: 40 }], {
+      attempts: 2,
+      waitPolls: 0,
+    }),
     /target_tile_unreachable/,
   );
 });

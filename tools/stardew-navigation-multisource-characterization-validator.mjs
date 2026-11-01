@@ -86,12 +86,46 @@ export function validateMultiSourceTransitionCharacterization(value) {
 
   // Reject topology/privacy primitives that should never appear in any artifact.
   const forbiddenPrimitives = [
-    "location", "locations", "source", "sources", "target", "targets", "destination",
-    "route", "routes", "path", "paths", "hop", "hops", "leg", "legs",
-    "tile", "tiles", "coordinate", "coordinates", "x", "y",
-    "warp", "warps", "door", "doors", "edge", "edges",
-    "opaqueId", "opaqueIds", "assemblyIdentity", "assemblyPath", "assemblyHash", "mvid",
-    "log", "logs", "trace", "traces", "reason", "reasons", "stack",
+    "location",
+    "locations",
+    "source",
+    "sources",
+    "target",
+    "targets",
+    "destination",
+    "route",
+    "routes",
+    "path",
+    "paths",
+    "hop",
+    "hops",
+    "leg",
+    "legs",
+    "tile",
+    "tiles",
+    "coordinate",
+    "coordinates",
+    "x",
+    "y",
+    "warp",
+    "warps",
+    "door",
+    "doors",
+    "edge",
+    "edges",
+    "opaqueId",
+    "opaqueIds",
+    "assemblyIdentity",
+    "assemblyPath",
+    "assemblyHash",
+    "mvid",
+    "log",
+    "logs",
+    "trace",
+    "traces",
+    "reason",
+    "reasons",
+    "stack",
   ];
   for (const key of Object.keys(value)) {
     if (forbiddenPrimitives.includes(key)) {
@@ -122,7 +156,8 @@ export function validateMultiSourceTransitionCharacterization(value) {
     if (value.gameplayMutationCount !== 0) errors.push("non_mutating_invariant:gameplayMutationCount");
     if (value.playerWarpEventCount !== 0) errors.push("non_mutating_invariant:playerWarpEventCount");
     if (value.executionReceiptCount !== 0) errors.push("non_mutating_invariant:executionReceiptCount");
-    if (value.bridgeOrCatalogPublicationCount !== 0) errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
+    if (value.bridgeOrCatalogPublicationCount !== 0)
+      errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
   } else if (status === "blocked" && typeof predicate === "string") {
     // A blocked artifact may carry a nonzero count only when its predicate
     // requires that fact. If the predicate is unrelated to the count, it
@@ -134,13 +169,15 @@ export function validateMultiSourceTransitionCharacterization(value) {
     // executionReceiptCount and bridgeOrCatalogPublicationCount must always be
     // zero for any blocked publishable artifact (no predicate requires them).
     if (value.executionReceiptCount !== 0) errors.push("non_mutating_invariant:executionReceiptCount");
-    if (value.bridgeOrCatalogPublicationCount !== 0) errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
+    if (value.bridgeOrCatalogPublicationCount !== 0)
+      errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
   } else {
     // Unknown status; enforce all zero.
     if (value.gameplayMutationCount !== 0) errors.push("non_mutating_invariant:gameplayMutationCount");
     if (value.playerWarpEventCount !== 0) errors.push("non_mutating_invariant:playerWarpEventCount");
     if (value.executionReceiptCount !== 0) errors.push("non_mutating_invariant:executionReceiptCount");
-    if (value.bridgeOrCatalogPublicationCount !== 0) errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
+    if (value.bridgeOrCatalogPublicationCount !== 0)
+      errors.push("non_mutating_invariant:bridgeOrCatalogPublicationCount");
   }
 
   if (!exactRecord(value.fixtureCleanup, CLEANUP_KEYS)) {
@@ -162,7 +199,8 @@ export function validateMultiSourceTransitionCharacterization(value) {
   // ---- pass-terminal proof requirements ----
   if (status === "passed") {
     if (value.productionExtractorInvoked !== true) errors.push("passed_proof:production_extractor_invoked");
-    if (value.productionExtractorInvocationCount !== 1) errors.push("passed_proof:production_extractor_invocation_count");
+    if (value.productionExtractorInvocationCount !== 1)
+      errors.push("passed_proof:production_extractor_invocation_count");
     if (value.gameThreadObserved !== true) errors.push("passed_proof:game_thread_observed");
     if (value.worldReadyObserved !== true) errors.push("passed_proof:world_ready_observed");
     if (value.multiSourceObserved !== true) errors.push("passed_proof:multi_source_observed");

@@ -9,19 +9,11 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostProductionModule } from "./lib/host-production-module.mjs";
 
-const READ_ONLY_CAPABILITIES = [
-  "cancel_active_execution",
-  "find_destination",
-  "inspect_self",
-  "inspect_world_map",
-];
+const READ_ONLY_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map"];
 // `inspect_self` and `cancel_active_execution` are fixed protocol controls,
 // not Navigation publications. Removing the two enabled read operations must
 // withdraw only those operations, while preserving the control surface.
-const WITHDRAWN_CAPABILITIES = [
-  "cancel_active_execution",
-  "inspect_self",
-];
+const WITHDRAWN_CAPABILITIES = ["cancel_active_execution", "inspect_self"];
 
 /**
  * Direct target-runtime gate for the two Navigation read-only operations.
@@ -115,10 +107,7 @@ export async function runNavigationReadOnlyDirectGate(
   await waitForPolicyReload();
   const withdrawn = await waitForWithdrawal(activeClient);
   assertCapabilities(withdrawn, WITHDRAWN_CAPABILITIES);
-  const withdrawnOperation = await expectCapabilityNotReady(
-    activeClient,
-    { operation: "inspect_world_map", args: {} },
-  );
+  const withdrawnOperation = await expectCapabilityNotReady(activeClient, { operation: "inspect_world_map", args: {} });
   trackReceipts(activeReceipts);
   await assertNoExecution(activeClient, observedReceipts);
   await activeClose();
@@ -127,10 +116,10 @@ export async function runNavigationReadOnlyDirectGate(
   activeClient = freshForFind.client;
   activeReceipts = freshForFind.receipts;
   activeClose = freshForFind.close;
-  const withdrawnFindOperation = await expectCapabilityNotReady(
-    activeClient,
-    { operation: "find_destination", args: { query } },
-  );
+  const withdrawnFindOperation = await expectCapabilityNotReady(activeClient, {
+    operation: "find_destination",
+    args: { query },
+  });
   trackReceipts(activeReceipts);
   await assertNoExecution(activeClient, observedReceipts);
   await activeClose();
@@ -185,7 +174,7 @@ function validateFixtureConfig(config) {
   )
     throw new Error("navigation_read_only_fixture_config_invalid");
 }
-  validateNativeLocalFixturePolicy(value, { requiredActions: ["inspect_world_map", "find_destination"] });
+validateNativeLocalFixturePolicy(value, { requiredActions: ["inspect_world_map", "find_destination"] });
 
 function assertCapabilities(snapshot, expectedCapabilities) {
   const actual = [...(snapshot?.capabilities ?? [])].sort();
@@ -219,7 +208,8 @@ function assertFindResult(result) {
 function firstContinuation(result) {
   const nodeRef = result.entries.find((entry) => typeof entry?.nodeRef === "string")?.nodeRef;
   if (nodeRef !== undefined) return { operation: "inspect_world_map", args: { nodeRef } };
-  if (typeof result.nextCursor === "string") return { operation: "inspect_world_map", args: { cursor: result.nextCursor } };
+  if (typeof result.nextCursor === "string")
+    return { operation: "inspect_world_map", args: { cursor: result.nextCursor } };
   return null;
 }
 

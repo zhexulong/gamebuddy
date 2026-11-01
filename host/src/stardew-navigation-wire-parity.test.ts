@@ -6,11 +6,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
-import {
-  validateBridgeMessage,
-  type BridgeMessage,
-  type Scope,
-} from "./protocol.js";
+import { validateBridgeMessage, type BridgeMessage, type Scope } from "./protocol.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -23,9 +19,7 @@ const serializerTest =
   "GameBuddy.Stardew.Core.Tests.BridgeProtocolSerializationTests.TrySerialize_NavigationResolvedEnvelope_WritesHostWireParityFixtureWhenRequested";
 
 function runSerializer(outputPath: string): Promise<void> {
-  const repoRoot = /[\\/]host$/i.test(process.cwd())
-    ? resolve(process.cwd(), "..")
-    : resolve(process.cwd());
+  const repoRoot = /[\\/]host$/i.test(process.cwd()) ? resolve(process.cwd(), "..") : resolve(process.cwd());
   const project = resolve(
     repoRoot,
     "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj",
