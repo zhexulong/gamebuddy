@@ -43,7 +43,7 @@ import {
   SETTINGS_PANEL,
   useSurfaceRoute,
 } from "../composed-surface-route";
-import { markTurn } from "./turn-timings";
+import { markTurn, observeTurnEvent } from "./turn-timings";
 
 /**
  * Same-origin composed reference-game shell. The composed root is the only
@@ -127,6 +127,12 @@ export function ComposedReferenceGameApp() {
   const seededDraftRef = useRef<Readonly<{ chat: string | null; revision: number; text: string }> | null>(null);
   const localeRef = useRef<Locale>(resolveLocale());
   const eventSourceRef = useRef<{ close(): void } | null>(null);
+  /*
+   * The idempotency key of the turn currently in flight, so a mark recorded later (first delta, settle)
+   * can be attributed to the same turn a `submit` mark named. Cleared when the turn ends: a mark that
+   * outlives its turn would attach the next turn's timing to the previous turn's key.
+   */
+  const turnKeyRef = useRef<string | null>(null);
   // Bumped after the Host commits a turn-level Chat switch. The mounted identity
   // is new, so the live event subscription must reconnect on the new conversation
   // instead of continuing the previous Chat's cursor.
@@ -340,18 +346,24 @@ export function ComposedReferenceGameApp() {
           checkpoint = checkpoint.applyEvent(event);
           cursor = lastEventId;
           if (event.eventType === "companion.delta") {
-            setPreview((existing) =>
-              Object.freeze({
+            setPreview((existing) => {
+              /* The first delta of a turn is the moment the player sees words; later deltas are the same paint. */
+              observeTurnEvent(event, turnKeyRef.current, existing?.turnHandle ?? null);
+              return Object.freeze({
                 turnHandle: event.payload.turnHandle,
                 text:
                   existing?.turnHandle === event.payload.turnHandle
                     ? `${existing.text}${event.payload.delta}`
                     : event.payload.delta,
-              }),
-            );
+              });
+            });
             return;
           }
-          if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") setPreview(null);
+          if (event.eventType === "message.committed" || event.eventType === "turn.state_changed") {
+            setPreview(null);
+            /* The mark mapping lives in `turn-timings`: it is a fact about the contract's state union. */
+            if (observeTurnEvent(event, turnKeyRef.current, null).terminal) turnKeyRef.current = null;
+          }
           // Not awaited: the pass owns the reads, so a frame that arrives while it
           // runs still validates its own position here and then marks it pending.
           void reconcile();
@@ -428,6 +440,7 @@ export function ComposedReferenceGameApp() {
     const idempotencyKey = newIdempotencyKey();
     const pending = beginTurnMutation(idempotencyKey, current);
     if (pending === null) return;
+    turnKeyRef.current = idempotencyKey;
     markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
     setOptimistic(Object.freeze({ idempotencyKey: pending.idempotencyKey, text }));
     setPollFailure(false);

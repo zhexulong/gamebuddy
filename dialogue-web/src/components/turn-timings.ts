@@ -51,7 +51,7 @@ function supported() {
  * Record one mark. Silent when the runtime has no Performance API, which is the case in some
  * server-rendered test harnesses - a missing timing must never break a turn.
  */
-export function markTurn(stage: TurnMarkStage, detail: { surface?: string; turnKey?: string } = {}) {
+export function markTurn(stage: TurnMarkStage, detail: { surface?: string; turnKey?: string | null } = {}) {
   if (!supported()) return;
   const name = TURN_MARK[stage];
   const trimmed: Record<string, string> = {};
@@ -60,6 +60,47 @@ export function markTurn(stage: TurnMarkStage, detail: { surface?: string; turnK
     if (value !== undefined && value !== null) trimmed[key] = String(value);
   }
   performance.mark(name, { detail: trimmed });
+}
+
+/**
+ * Record the marks a turn event implies, and say whether the turn is over.
+ *
+ * This lives here rather than in the shell for two reasons. The shell is at its line ceiling, so
+ * inline branching for five stages pushed it over; and the mapping from a contract event to a mark is
+ * a fact about the CONTRACT (`BrowserTurnV1["state"]`), which is what this module already encodes.
+ *
+ * `payload` is read structurally rather than typed against one event member: the caller hands over the
+ * whole discriminated union, and only these two optional fields are ever touched.
+ *
+ * Returns `terminal: true` when the turn reached a terminal state, so the caller can forget the key - a
+ * key that outlives its turn attaches the next turn's timing to the previous turn's name.
+ */
+export function observeTurnEvent(
+  event: Readonly<{ eventType: string; payload?: unknown }>,
+  turnKey: string | null,
+  previousTurnHandle: string | null,
+): { readonly terminal: boolean; readonly isFirstDelta: boolean } {
+  const payload = (event.payload ?? {}) as Readonly<{ turnHandle?: string; state?: string }>;
+  if (event.eventType === "companion.delta") {
+    /* The FIRST delta of a turn is the moment the player sees words; later deltas are the same paint. */
+    const isFirstDelta = previousTurnHandle !== payload.turnHandle;
+    if (isFirstDelta) markTurn("firstToken", { surface: "chat", turnKey });
+    return { terminal: false, isFirstDelta };
+  }
+  if (event.eventType !== "turn.state_changed") return { terminal: false, isFirstDelta: false };
+  if (payload.state === "running") {
+    markTurn("accepted", { surface: "chat", turnKey });
+    return { terminal: false, isFirstDelta: false };
+  }
+  if (payload.state === "completed" || payload.state === "cancelled") {
+    markTurn("settled", { surface: "chat", turnKey });
+    return { terminal: true, isFirstDelta: false };
+  }
+  if (payload.state === "failed") {
+    markTurn("failed", { surface: "chat", turnKey });
+    return { terminal: true, isFirstDelta: false };
+  }
+  return { terminal: false, isFirstDelta: false };
 }
 
 /**
