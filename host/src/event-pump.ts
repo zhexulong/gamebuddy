@@ -98,19 +98,44 @@ export const MAX_PENDING_WORLD_FACTS = 32;
  * further action for the rest of the run, while the companion stood in the farmhouse with
  * `can_move=True; navigate=idle`.
  *
- * 60_000 is roughly 15k tokens of batch on its own, leaving room for the prompt, the conversation and the
- * model's output inside any context window this product runs on. It is also above the largest HEALTHY batch
- * observed in that run (ordinary ones were 8-60k characters), so it rarely splits a delivery that already worked.
+ * THE DERIVATION, and the error it corrects. A fold run's non-emergency chunk ceiling is about 22,879
+ * tokens; a batch must be a FRACTION of that so one fold can drain several batches per pass. The previous
+ * value was 60,000 characters on the belief, stated here, that this was "roughly 15k tokens". That belief
+ * assumed ~4 characters per token. These batches are JSON of Chinese prose and English keys, and the real
+ * ratio measured across 22 of them (`round18`, `2026-10-31T19-26-54`) is 2.47-2.76 characters per token,
+ * mean 2.66. So 60,000 characters was not 15k tokens: it was 22,534, and the largest batches measured
+ * 24,228 - 105.9% of one whole fold chunk.
  *
- * THE REASON IT CAME DOWN FROM 120_000, and the number that fixes it: a fold run's non-emergency chunk ceiling is
- * about 22,879 tokens, so a 120_000-byte batch (~45k tokens) is HALF A FOLD at best. Measured 2026-10-29 (`round7`):
- * 29 successful fold runs, ten messages each, and three `gamebuddy_fact_batch` messages still uncleared - 104,972 of
- * 123,130 input tokens (85%). A batch larger than the thing that consumes it cannot be consumed: every fold spends its
- * whole budget on one delivery and the tail never shrinks. 60_000 keeps a batch inside one chunk.
+ * A batch that equals the chunk is a batch the fold can never get ahead of: every pass spends its entire
+ * budget on one delivery, five deliveries in 28 seconds put 434,021 tokens of uncleared batches in the
+ * protected tail, and the next burst filled a 200,000-token window (203,926), answering `stopReason:
+ * "length"`. The same arithmetic as the 120,000 -> 60,000 reduction, one step further: it was right that
+ * a batch must fit inside the consumer, and wrong about how many tokens a character costs.
+ *
+ * 18,000 characters at the worst measured ratio (2.47) is 7,287 tokens - 32% of a chunk - so one fold pass
+ * drains three batches instead of barely one, and five batches in 28 seconds cost ~36k tokens rather than
+ * ~113k.
+ *
+ * THE TRADE THIS MAKES, stated rather than hidden: a smaller bound means more deliveries, so one burst
+ * becomes several batches instead of one. That is the direction the fold wants - it drains a fixed token
+ * budget per pass, so more, smaller items drain where fewer, larger ones stall - but it is not free: each
+ * delivery is a model turn. If a future measurement shows turn count rising faster than the tail shrinks,
+ * the ratio is what to revisit, not the principle.
  *
  * Overflow is not dropped: `takeBatch` puts it back and the next flush delivers it.
  */
-export const MAX_BATCH_BYTES = 60_000;
+export const MAX_BATCH_BYTES = 18_000;
+
+/**
+ * The token cost this bound is derived from, and the ratio it assumes.
+ *
+ * Exported so a test can assert the arithmetic rather than the literal: if the fold chunk ceiling or the
+ * characters-per-token ratio moves, the ratio between them is what has to stay true, not the number.
+ */
+export const FOLD_CHUNK_CEILING_TOKENS = 22_879;
+
+/** Mean characters per token measured on real fact batches; see `MAX_BATCH_BYTES`. */
+export const FACT_BATCH_CHARS_PER_TOKEN = 2.66;
 
 export interface CompanionTurnSink {
   /**
@@ -214,8 +239,7 @@ export class CompanionEventPump {
       // is the OLDEST observation, and it is COUNTED (`droppedFacts`), so the loss is named rather
       // than silent. A terminal receipt and an execution OUTCOME keep failing closed: those are the
       // authority for an execution, and losing one leaves a request that never settles.
-      const evictedKey =
-        evictable?.[0] ?? (fact.kind === "world_fact" ? oldestWorldFactKey(destination) : undefined);
+      const evictedKey = evictable?.[0] ?? (fact.kind === "world_fact" ? oldestWorldFactKey(destination) : undefined);
       if (evictedKey === undefined)
         throw new Error(
           fact.kind === "execution_receipt" ? "event_pump_terminal_overflow" : "event_pump_event_overflow",

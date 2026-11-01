@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, MAX_BATCH_BYTES } from "./event-pump.js";
+import {
+  CompanionEventPump,
+  FACT_BATCH_CHARS_PER_TOKEN,
+  FOLD_CHUNK_CEILING_TOKENS,
+  MAX_BATCH_BYTES,
+} from "./event-pump.js";
 
 /**
  * A batch has to fit in a model's context, and nothing enforced that.
@@ -126,5 +131,30 @@ test("the snapshot is never separated from the batch that triggers it", async ()
   assert.ok(
     first.worldFacts.some((fact) => fact.kind === "snapshot"),
     "the snapshot belongs to the batch it was captured for",
+  );
+});
+
+/**
+ * The bound is a FRACTION of the consumer, not a token count that looked about right.
+ *
+ * The previous value was 60,000 characters on the stated belief that this was "roughly 15k tokens" - about
+ * 4 characters per token. Real fact batches measure 2.47-2.76 chars/token (round18, 22 batches), so 60,000
+ * was 22,534 tokens against a fold chunk ceiling of 22,879: 98-106% of a whole chunk, depending on the batch.
+ *
+ * A batch that big is one a fold can never get ahead of. Every pass spends its entire budget on a single
+ * delivery, five deliveries in 28 seconds left 434,021 tokens of uncleared batches in the protected tail, and
+ * the next burst filled a 200,000-token window (203,926) and answered stopReason: "length".
+ *
+ * This asserts the RATIO rather than the literal, so it stays true if the ceiling or the measured ratio moves.
+ * A batch must be under half a chunk; at 18,000 characters it is 32%, so one pass drains three.
+ */
+test("a batch is a fraction of one fold chunk, not approximately one", () => {
+  const batchTokens = MAX_BATCH_BYTES / FACT_BATCH_CHARS_PER_TOKEN;
+  const share = batchTokens / FOLD_CHUNK_CEILING_TOKENS;
+  assert.ok(
+    share < 0.5,
+    `one batch is ${batchTokens.toFixed(0)} tokens, ${(share * 100).toFixed(0)}% of a ` +
+      `${String(FOLD_CHUNK_CEILING_TOKENS)}-token fold chunk. Above half, a fold pass spends its whole budget on ` +
+      "one delivery and the protected tail never shrinks - which is the defect this bound exists to prevent.",
   );
 });
