@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { checkDependencyRisk, LOCKFILE_PATHS } from "./check-dependency-risk.mjs";
+import { checkDependencyRisk, DISPOSITION_STATUSES, LOCKFILE_PATHS } from "./check-dependency-risk.mjs";
 
 const bytes = Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, `fixture:${path}`]));
 const hashes = Object.fromEntries(
@@ -184,15 +184,42 @@ test("date-time validation is strict and rejects Date.parse-only values", async 
 });
 
 test("every disposition other than proposed_acceptance is an explicit blocking status", async () => {
-  for (const status of ["fixed", "not_affected", "mitigated", "accepted"]) {
+  for (const status of DISPOSITION_STATUSES.filter((candidate) => candidate !== "proposed_acceptance")) {
     const report = await check(snapshot({ advisories: [advisoryFixture({ status })] }));
-    assert.equal(report.exitCode, 1);
+    assert.equal(report.exitCode, 1, status);
     assert.ok(
       report.issues.some(
         ({ code, detail }) => code === "unverified_disposition_status" && detail.includes(`:${status};`),
       ),
+      status,
     );
   }
+});
+
+/**
+ * The policy this gate has, stated once so no reader has to infer it from two lists: EVERY disposition a
+ * schema-valid snapshot may carry blocks, so `passed` requires `advisories: []`. Derived from the exported
+ * constant rather than a hand-written copy of it, so a status added there is covered without editing this loop.
+ */
+test("gate.acceptance: every valid disposition blocks, so only an empty advisory list can pass", async () => {
+  for (const status of DISPOSITION_STATUSES) {
+    const report = await check(snapshot({ advisories: [advisoryFixture({ status })] }));
+    assert.equal(report.verdict, "blocked", `${status} must block`);
+    assert.equal(report.exitCode, 1, `${status} must exit 1`);
+  }
+  assert.equal((await check()).verdict, "passed");
+});
+
+/**
+ * Cross-check, not a second policy: the constant is the gate's own list, and the schema is the contract that
+ * list claims to admit. A status added to one and not the other would make the gate reject a legal snapshot
+ * (or admit an illegal one) with no finding naming the drift.
+ */
+test("gate.acceptance: the disposition list is exactly the advisory schema's status enum", async () => {
+  const schema = JSON.parse(
+    await readFile(new URL("../security/dependency-advisories.schema.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual([...DISPOSITION_STATUSES].sort(), [...schema.$defs.advisory.properties.status.enum].sort());
 });
 
 test("each advisory lock hash binds to both the snapshot identity and current bytes", async () => {

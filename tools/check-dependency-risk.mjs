@@ -4,8 +4,20 @@
  * conservative: it validates the frozen snapshot, recomputes lock hashes, and
  * never treats a proposal as an approval. No scanner cache or secret is read.
  *
+ * EVERY DISPOSITION BLOCKS. A snapshot advisory is tagged `fixed`, `not_affected`, `mitigated`,
+ * `proposed_acceptance` or `accepted`, and all five are blocking: there is no acceptance path and no
+ * status that can discharge an advisory in place. The only green this gate can produce is a snapshot whose
+ * `advisories` array is empty - a tree the scan found nothing in, reproducible from the tree alone. Any
+ * other disposition, however reasonable the sentence behind it, is a decision that the vulnerable version
+ * is still installed, so the fix is a version that no longer carries it (see `26e01086`, where pi's
+ * minimatch moved to the patched major rather than being recorded as accepted).
+ *
  * red-proof: inject  a rebuilt lock identity of 64 zeros where the snapshot names the real bytes ->
  *                    `mismatched_lock_identity` (tools/check-dependency-risk.test.mjs)
+ * red-proof: inject  exempting `mitigated` from the blocking push (the acceptance path this gate must not
+ *                    have) -> `AssertionError: mitigated must block`, actual passed / expected blocked;
+ *                    dropping `mitigated` from the disposition list instead -> the schema cross-check
+ *                    fails naming the missing member (tools/check-dependency-risk.test.mjs)
  */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -17,12 +29,26 @@ export const LOCKFILE_PATHS = Object.freeze([
   "integrations/stardew/packages.lock.json",
 ]);
 export const VALID_SCOPES = Object.freeze(["runtime", "build", "test", "external-not-distributed"]);
-export const VALID_STATUSES = Object.freeze(["fixed", "not_affected", "mitigated", "proposed_acceptance", "accepted"]);
-export const BLOCKING_STATUSES = Object.freeze([
-  "proposed_acceptance",
+/**
+ * The dispositions a snapshot advisory may carry - the schema's `status` enum - and the WHOLE of this
+ * gate's blocking policy, in one list.
+ *
+ * EVERY member blocks. There is no acceptance path: a `passed` verdict can only come from a snapshot
+ * whose `advisories` is empty. `fixed`, `not_affected` and `mitigated` describe a tree no scanner in
+ * this repository verifies, and `proposed_acceptance`/`accepted` would record a decision instead of
+ * removing the vulnerable version. That is deliberate: a green certificate reproducible from the tree
+ * alone is the property this gate exists to protect, so the answer to an advisory is a version that no
+ * longer carries it.
+ *
+ * One list rather than a validation list beside a blocking list, because those two would imply a policy
+ * difference that does not exist. The previous pair held the same five values in two orders, and a
+ * reader looking for the acceptance path between them would find nothing - because there is nothing.
+ */
+export const DISPOSITION_STATUSES = Object.freeze([
   "fixed",
   "not_affected",
   "mitigated",
+  "proposed_acceptance",
   "accepted",
 ]);
 const HASH_RE = /^[a-f0-9]{64}$/;
@@ -87,7 +113,7 @@ function validDate(value, field, issues) {
   const validCalendar = monthNumber >= 1 && monthNumber <= 12 && dayNumber >= 1 && dayNumber <= daysInMonth;
   const validClock = Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59;
   const validOffset = !offsetSign || (Number(offsetHour) <= 23 && Number(offsetMinute) <= 59);
-  if (!validCalendar || !validClock || !validOffset) issues.push(issue("invalid_date", field));
+  if (!(validCalendar && validClock && validOffset)) issues.push(issue("invalid_date", field));
 }
 function validatePurl(value, field, issues) {
   // The schemas constrain purls by pattern, but intentionally do not impose a
@@ -157,13 +183,12 @@ export function validateSnapshot(snapshot) {
     if (identity.present && identity.sha256 === null) issues.push(issue("missing_lock_hash", path));
     if (!identity.present && identity.sha256 !== null) issues.push(issue("mismatched_lock_identity", path));
   }
-  if (!Array.isArray(snapshot.advisories)) issues.push(issue("invalid_field", "snapshot.advisories"));
-  else {
+  if (Array.isArray(snapshot.advisories)) {
     snapshot.advisories.forEach((advisory, index) =>
       validateAdvisory(advisory, `snapshot.advisories[${index}]`, issues),
     );
     validateUniqueAdvisoryIds(snapshot.advisories, "snapshot.advisories", "duplicate_advisory_id", issues);
-  }
+  } else issues.push(issue("invalid_field", "snapshot.advisories"));
   return issues;
 }
 
@@ -198,7 +223,7 @@ function validateAdvisory(advisory, field, issues) {
     issues.push(issue("missing_reachability_evidence", field));
   }
   validateHashes(advisory.lockfileHashes, `${field}.lockfileHashes`, issues);
-  if (!VALID_STATUSES.includes(advisory.status)) issues.push(issue("invalid_status", `${field}.status`));
+  if (!DISPOSITION_STATUSES.includes(advisory.status)) issues.push(issue("invalid_status", `${field}.status`));
   return issues;
 }
 
@@ -219,11 +244,10 @@ function validateAcceptances(acceptances) {
   if (typeof acceptances.snapshotId !== "string" || !ID_RE.test(acceptances.snapshotId))
     issues.push(issue("invalid_snapshot_id", "acceptances.snapshotId"));
   validateHashes(acceptances.lockfileHashes, "acceptances.lockfileHashes", issues);
-  if (!Array.isArray(acceptances.records)) issues.push(issue("invalid_field", "acceptances.records"));
-  else {
+  if (Array.isArray(acceptances.records)) {
     acceptances.records.forEach((record, index) => validateAcceptance(record, `acceptances.records[${index}]`, issues));
     validateUniqueAdvisoryIds(acceptances.records, "acceptances.records", "duplicate_acceptance_advisory_id", issues);
-  }
+  } else issues.push(issue("invalid_field", "acceptances.records"));
   return issues;
 }
 
@@ -329,26 +353,29 @@ export async function checkDependencyRisk({
   for (const advisory of snapshot.advisories) {
     if (advisory.scannerIdentity !== snapshot.scanner.identity)
       issues.push(issue("scanner_identity_mismatch", advisory.advisoryId));
-    if (BLOCKING_STATUSES.includes(advisory.status)) {
-      const code = advisory.status === "proposed_acceptance" ? "unresolved_advisory" : "unverified_disposition_status";
-      issues.push(
-        issue(code, `${advisory.advisoryId}:${advisory.status}; no signed/verified disposition evidence exists`),
-      );
-    }
+    // Unconditional, and that is the policy: validation above admitted only DISPOSITION_STATUSES, and every
+    // member blocks, so there is no status this branch could exempt. Written without a membership test so no
+    // future list can turn one of them into an acceptance path by omission.
+    issues.push(
+      issue(
+        advisory.status === "proposed_acceptance" ? "unresolved_advisory" : "unverified_disposition_status",
+        `${advisory.advisoryId}:${advisory.status}; no signed/verified disposition evidence exists`,
+      ),
+    );
     if (
-      !sameHashes(
-        advisory.lockfileHashes,
-        Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, snapshot.lockfiles[path].sha256])),
-      ) ||
-      !sameHashes(advisory.lockfileHashes, actualHashes)
+      !(
+        sameHashes(
+          advisory.lockfileHashes,
+          Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, snapshot.lockfiles[path].sha256])),
+        ) && sameHashes(advisory.lockfileHashes, actualHashes)
+      )
     ) {
       issues.push(issue("advisory_lockfile_mismatch", advisory.advisoryId));
     }
   }
   for (const record of acceptances.records) {
     const advisory = advisoryById.get(record.advisoryId);
-    if (!advisory) issues.push(issue("acceptance_advisory_missing", record.advisoryId));
-    else {
+    if (advisory) {
       for (const field of ["package", "purl", "affectedVersion", "severity", "scope", "scannerIdentity"])
         if (record[field] !== advisory[field])
           issues.push(issue("acceptance_binding_mismatch", `${record.advisoryId}.${field}`));
@@ -363,7 +390,7 @@ export async function checkDependencyRisk({
         )
       )
         issues.push(issue("acceptance_binding_mismatch", `${record.advisoryId}.lockfileHashes`));
-    }
+    } else issues.push(issue("acceptance_advisory_missing", record.advisoryId));
     if (record.status === "proposed_acceptance") issues.push(issue("proposed_acceptance_blocking", record.advisoryId));
     if (record.status === "accepted") issues.push(issue("accepted_status_rejected", record.advisoryId));
     if (Date.parse(record.expiresAt) <= now.getTime() || Date.parse(record.reviewBy) <= now.getTime())
