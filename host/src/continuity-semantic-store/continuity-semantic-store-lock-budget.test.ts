@@ -308,6 +308,30 @@ function journalArtifactSuffix(journalMode: string): string {
   return journalMode.toLowerCase() === "wal" ? "-wal" : "-journal";
 }
 
+/**
+ * SQLite's WAL file format, which is what turns `wal_autocheckpoint` - a count in PAGEs - into the byte
+ * ceiling the file can reach: every frame is one page image behind a 24-byte frame header, and the file
+ * opens with a 32-byte header. Both are the format's own numbers, so a ceiling derived through them
+ * stays a prediction of the file SQLite writes rather than of one observation of it.
+ */
+const WAL_FRAME_HEADER_BYTES = 24;
+const WAL_FILE_HEADER_BYTES = 32;
+/**
+ * How many times a run must pass the store's auto-checkpoint ceiling before it can say anything about
+ * folding: once is an accident of where the run stopped, and the drain has to survive being used.
+ */
+const WAL_CROSSINGS = 5;
+/**
+ * Commits spent learning how many frames one commit appends. They run before the -wal can reach the
+ * ceiling, so nothing has folded yet and every reading is that commit's own frames.
+ */
+const WAL_CALIBRATION_COMMITS = 32;
+/**
+ * The most commits the run may spend. A threshold that moved upward is then REPORTED - the coverage
+ * assertion names it - rather than paid for in wall-clock time.
+ */
+const WAL_COMMIT_CAP = 5000;
+
 /** Resolves once a child has printed `token`, so the parent acts while the child really holds its lock. */
 function awaitToken(child: ReturnType<typeof spawn>, token: string): Promise<void> {
   return new Promise((resolve) => {
@@ -960,6 +984,11 @@ test("pure reads answer while a writer holds the lock, so no read waits out the 
  * mode into SQL, and the artifact it must leave is DERIVED from the mode that path applied - `-journal`
  * for a rollback journal, `-wal` for WAL. Pinning one name would have made this test either silently
  * vacuous (asserting a file the mode never writes) or wrongly red the day the mode moved.
+ *
+ * Under WAL the artifact is not only recovery material, it is also the FOLD: the committed row's frames
+ * sit in the `-wal` and have not reached the database file, so this test goes on to assert that the
+ * reopen's clean close folds them back - the artifact is gone afterwards and the row is still there.
+ * Without that half, a store whose recovery only ever replays an ever-growing `-wal` would pass.
  */
 test("the semantic store survives a killed commit and reopens with the committed history intact", async () => {
   const subject = fixtureRoot();
@@ -1025,37 +1054,424 @@ test("the semantic store survives a killed commit and reopens with the committed
   );
 
   // No manual intervention: just open the authority the way the Host does at startup.
-  const recovered = openProductionContinuityStore({ runtimeRoot: subject.root });
+  const artifactBytesAtKill = existsSync(journalPath) ? statSync(journalPath).size : 0;
+  if (journalArtifactSuffix(journalMode) === "-wal")
+    assert.ok(
+      artifactBytesAtKill > WAL_FILE_HEADER_BYTES,
+      `the -wal was ${String(
+        artifactBytesAtKill,
+      )} bytes when the writer was killed, which is a header and no frames: nothing about recovery, folding or growth is being tested, so the kill landed outside the window this test exists for`,
+    );
   try {
-    recovered.validateBootstrap(bootstrap);
-    const reader = new DatabaseSync(join(subject.root, DATABASE));
+    const recovered = openProductionContinuityStore({ runtimeRoot: subject.root });
     try {
-      const kept = reader
-        .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='kept-row'")
-        .get();
-      const lost = reader
-        .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='lost-row'")
-        .get();
+      recovered.validateBootstrap(bootstrap);
+      const reader = new DatabaseSync(join(subject.root, DATABASE));
+      try {
+        const kept = reader
+          .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='kept-row'")
+          .get();
+        const lost = reader
+          .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='lost-row'")
+          .get();
+        assert.ok(
+          kept,
+          "the committed row was lost across a killed commit: the store did not recover to its last commit",
+        );
+        assert.equal(
+          lost,
+          undefined,
+          "the interrupted row is present, so a transaction that never committed was made durable",
+        );
+        assert.equal(
+          (reader.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check,
+          "ok",
+          "the database reports damage after recovering from a killed commit",
+        );
+      } finally {
+        reader.close();
+      }
+    } finally {
+      recovered.close();
+    }
+    // WAL makes the artifact carry a second obligation the rollback journal did not: the killed writer's
+    // committed frames are still IN the -wal after the reopen, and folding them into the database file is
+    // the clean close's job. If that did not happen, the row above would only have been replayed by an open
+    // connection - one crash away from being the next crash's problem - so the artifact has to be gone and
+    // the row has to be readable without it.
+    assert.equal(
+      existsSync(journalPath) ? statSync(journalPath).size : 0,
+      0,
+      `${journalArtifactSuffix(journalMode)} still holds ${String(
+        existsSync(journalPath) ? statSync(journalPath).size : 0,
+      )} of the ${String(
+        artifactBytesAtKill,
+      )} bytes it held at the kill, at ${journalPath}, after the recovered authority closed cleanly: the recovered frames were replayed but never folded back into the database file, so the next start inherits the same recovery work instead of a settled database`,
+    );
+    const reread = new DatabaseSync(join(subject.root, DATABASE));
+    try {
       assert.ok(
-        kept,
-        "the committed row was lost across a killed commit: the store did not recover to its last commit",
+        reread.prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='kept-row'").get(),
+        `the committed row is not in ${DATABASE} with no ${journalArtifactSuffix(journalMode)} beside it: after the close the row existed only in the journal artifact, which is not durable state`,
       );
       assert.equal(
-        lost,
+        reread.prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id='lost-row'").get(),
         undefined,
-        "the interrupted row is present, so a transaction that never committed was made durable",
-      );
-      assert.equal(
-        (reader.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check,
-        "ok",
-        "the database reports damage after recovering from a killed commit",
+        "the interrupted row survived into the database file across the close, so a transaction that never committed was folded in",
       );
     } finally {
-      reader.close();
+      reread.close();
     }
   } finally {
-    recovered.close();
     removeRoot(subject.root);
+  }
+});
+
+/**
+ * The store's own live connection, captured while its open path runs.
+ *
+ * `wal_autocheckpoint` is a per-connection setting and a checkpoint runs on one connection, so a second
+ * connection opened on the same file would answer with ITS threshold and checkpoint ITS view - the
+ * reading would describe the probe instead of the write path the product runs. This records `this` for
+ * the first statement the open path issues and restores the prototypes immediately, so nothing outside
+ * this call can observe the patch.
+ */
+function openWithLiveConnection(runtimeRoot: string): {
+  control: ReturnType<typeof openProductionContinuityStore>;
+  connection: DatabaseSync;
+} {
+  const captured: DatabaseSync[] = [];
+  const originalExec = DatabaseSync.prototype.exec;
+  const originalPrepare = DatabaseSync.prototype.prepare;
+  const record = (original: unknown) =>
+    function recorded(this: DatabaseSync, ...args: unknown[]) {
+      if (!captured.includes(this)) captured.push(this);
+      return (original as (...rest: unknown[]) => unknown).call(this, ...args);
+    };
+  DatabaseSync.prototype.exec = record(originalExec) as typeof originalExec;
+  DatabaseSync.prototype.prepare = record(originalPrepare) as typeof originalPrepare;
+  let control: ReturnType<typeof openProductionContinuityStore>;
+  try {
+    control = openProductionContinuityStore({ runtimeRoot });
+  } finally {
+    DatabaseSync.prototype.exec = originalExec;
+    DatabaseSync.prototype.prepare = originalPrepare;
+  }
+  const connection = captured[0];
+  assert.ok(
+    connection !== undefined,
+    "the store's open path issued no statement on any connection, so the connection its journal settings live on could not be read and this gate would be describing a probe instead",
+  );
+  return { control, connection };
+}
+
+/** One PRAGMA read as a number from a live connection, so a renamed or absent pragma fails loudly. */
+function pragmaNumber(connection: DatabaseSync, name: string): number {
+  const row = connection.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined;
+  const value = row?.[name];
+  assert.equal(
+    typeof value,
+    "number",
+    `PRAGMA ${name} answered ${JSON.stringify(row)} instead of a number, so the value the store's connection runs cannot be reported`,
+  );
+  return value as number;
+}
+
+/**
+ * A WAL that nothing folds back is a file that grows with every commit: the store writes on every command,
+ * and the Host is up for as long as a player is playing. That is the "bounded collections have a drain"
+ * rule at the file level, and it is the one cost the move to WAL took on without measuring.
+ *
+ * Nothing in this store calls a checkpoint, so the drain is SQLite's auto-checkpoint alone:
+ * `wal_autocheckpoint` pages. Two readings are asserted, and neither is a byte count typed from one
+ * observation:
+ *
+ *   1. The frames still in the -wal after the last commit, which `PRAGMA wal_checkpoint(PASSIVE)` reports as
+ *      `log` before it folds anything. Auto-checkpoint runs inside the commit that leaves more than
+ *      `wal_autocheckpoint` pages behind, so this can never exceed the threshold: it is the exact, textbook
+ *      statement of "the file is being folded at the rate it is filled", and it needs no sampling at all.
+ *   2. The FILE's high-water mark. A reset reuses the -wal instead of shrinking it (SQLite truncates it only
+ *      under `journal_size_limit`, which the store leaves at its default of -1), so the size reached on disk
+ *      is the threshold plus the frames of the one commit that crossed it. Those frames are bounded by what a
+ *      commit can dirty - at most one frame per page of the database, so at most `page_count` - which is a
+ *      number the connection reports rather than one this test watched for.
+ *
+ * MEASURED on this machine (2026-11-01, Windows, `node:sqlite`, `synchronous=FULL`, the store's own
+ * `createGameSessionMetadata` write path at 5-8ms/commit, `wal_autocheckpoint=1000`, `page_size=4096`, so
+ * 4 120 bytes per frame and 100 KB of database for every 45 commits):
+ *
+ *   commits      1:    251 352 bytes  (the fixture's own bootstrap transaction is in the file)
+ *   commits    251:  3 415 512 bytes
+ *   commits    501:  4 128 272 bytes  = 1 002 frames, the high-water mark of the whole run
+ *   commits   5000:  4 128 272 bytes  unchanged for the remaining 4 500 commits
+ *
+ * 5 000 commits appended 15 000 frames; an undrained file would have been ~62 MB. A reset-free measurement
+ * of the same write path shows a commit appending 3, 5, 6, 7, 8 or 9 frames (376 of 400 commits append 3),
+ * which is why the high-water mark is a page or two past the threshold rather than exactly at it, and why the
+ * per-commit frames cannot be read off the file once resets have started clipping it. What the run does NOT
+ * do is shrink back and forth: the size is a high-water mark, not a sawtooth, so the assertion is a ceiling
+ * and not a shape. The pages themselves do go back: the database file grew 4 096 -> 901 120 bytes.
+ */
+test("the -wal stays under one auto-checkpoint's worth of pages across a long commit run", (t) => {
+  const root = canonicalTestRootSync("store-wal-growth-");
+  const { control, connection } = openWithLiveConnection(root);
+  try {
+    const journalMode = String((connection.prepare("PRAGMA journal_mode").get() as any).journal_mode).toLowerCase();
+    const autoCheckpointPages = pragmaNumber(connection, "wal_autocheckpoint");
+    const pageSize = pragmaNumber(connection, "page_size");
+    const frameBytes = pageSize + WAL_FRAME_HEADER_BYTES;
+    assert.equal(
+      journalMode,
+      "wal",
+      `the store's own connection reports journal_mode=${journalMode}: this gate measures the -wal a WAL store keeps beside its database, so it names the mode it measured instead of assuming one`,
+    );
+    assert.ok(
+      autoCheckpointPages > 0,
+      `the store's connection runs wal_autocheckpoint=${String(
+        autoCheckpointPages,
+      )}, which disables the only thing that folds the -wal back: this store issues no checkpoint of its own, so with the threshold at 0 (or below) the file grows with every commit for as long as the Host runs, which is exactly the unbounded shape this gate exists to catch. The knob is wal_autocheckpoint`,
+    );
+
+    const databasePath = join(root, DATABASE);
+    const walPath = `${databasePath}-wal`;
+    const walBytes = () => (existsSync(walPath) ? statSync(walPath).size : 0);
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store: any = control.bindBootstrapContext({ bootstrap, metadata });
+    let commits = 0;
+    const commit = () => {
+      store.createGameSessionMetadata({
+        creationRequestId: `wal-growth-${commits}`,
+        integrationId: "stardew",
+        continuityIdentityId: principal.continuityId,
+      });
+      commits += 1;
+    };
+
+    // Calibration: how many frames one commit appends. Read while the -wal is still far below the threshold,
+    // so no reset has clipped it yet and every delta is that commit's own frames.
+    let previous = walBytes();
+    const calibration: number[] = [];
+    for (let index = 0; index < WAL_CALIBRATION_COMMITS; index += 1) {
+      commit();
+      const size = walBytes();
+      calibration.push(size - previous);
+      previous = size;
+    }
+    const grown = calibration.filter((delta) => delta > 0);
+    assert.ok(
+      grown.length > 0,
+      `the -wal did not grow on any of the ${String(WAL_CALIBRATION_COMMITS)} calibration commits (${calibration.join(
+        ", ",
+      )} bytes): nothing is being appended, so no reading here describes growth`,
+    );
+    const smallestCommitFrames = Math.max(1, Math.floor(Math.min(...grown) / frameBytes));
+    const plannedCommits = Math.min(
+      WAL_COMMIT_CAP,
+      Math.ceil((WAL_CROSSINGS * autoCheckpointPages) / smallestCommitFrames),
+    );
+
+    let peakBytes = walBytes();
+    let peakAt = commits;
+    const step = Math.max(1, Math.floor(plannedCommits / 8));
+    const curve: { at: number; bytes: number }[] = [{ at: commits, bytes: peakBytes }];
+    for (let index = WAL_CALIBRATION_COMMITS; index < plannedCommits; index += 1) {
+      commit();
+      const size = walBytes();
+      if (size > peakBytes) {
+        peakBytes = size;
+        peakAt = commits;
+      }
+      if (commits % step === 0 || commits === plannedCommits) curve.push({ at: commits, bytes: size });
+    }
+
+    // What is still IN the -wal after the last commit - the exact statement of the drain. `PASSIVE`
+    // checkpoints as far as it can without waiting for anyone, and reports the frame count it was asked to
+    // fold as `log`; the number is read before that folding, so it is the auto-checkpoint's own residue.
+    const residue = connection.prepare("PRAGMA wal_checkpoint(PASSIVE)").get() as {
+      busy: number;
+      log: number;
+      checkpointed: number;
+    };
+    // One commit may dirty at most one frame per page of the database, which is what bounds the crossing
+    // commit's overhang. Read from the connection, not watched for.
+    const pageCount = pragmaNumber(connection, "page_count");
+    const ceilingBytes = (autoCheckpointPages + pageCount) * frameBytes + WAL_FILE_HEADER_BYTES;
+    for (const point of curve)
+      t.diagnostic(
+        `after ${String(point.at).padStart(5)} commits the -wal is ${String(point.bytes).padStart(9)} bytes (${(
+          point.bytes / 1024
+        ).toFixed(0)} KB)`,
+      );
+    t.diagnostic(
+      `wal_autocheckpoint=${String(autoCheckpointPages)} pages of ${String(pageSize)} bytes, ${String(
+        commits,
+      )} commits appending at least ${String(smallestCommitFrames)} frame(s) each, ${String(
+        pageCount,
+      )} database pages (so at most ${String(pageCount)} frames in the crossing commit), high-water ${String(
+        peakBytes,
+      )} bytes after ${String(peakAt)} commits, ceiling ${String(ceilingBytes)} bytes, ${String(
+        residue.log,
+      )} frames still in the file`,
+    );
+
+    // Coverage first: a run that never appended several ceilings' worth of frames cannot say anything
+    // about a ceiling, and the knob that decides how many commits that takes is named here.
+    assert.ok(
+      commits * smallestCommitFrames >= WAL_CROSSINGS * autoCheckpointPages,
+      `this run could append only ${String(
+        commits * smallestCommitFrames,
+      )} frames at ${String(smallestCommitFrames)}/commit, which does not pass wal_autocheckpoint=${String(
+        autoCheckpointPages,
+      )} the ${String(WAL_CROSSINGS)} times the ceiling has to be tested; the run is capped at WAL_COMMIT_CAP=${String(
+        WAL_COMMIT_CAP,
+      )} commits, so either the threshold moved upward or a commit appends fewer frames than it used to`,
+    );
+    // The drain, stated exactly: after an ordinary commit the file holds no more frames than the threshold
+    // the connection says it checkpoints at.
+    assert.ok(
+      residue.log <= autoCheckpointPages,
+      `${String(residue.log)} frames were still in the -wal after ${String(
+        commits,
+      )} ordinary commits, past wal_autocheckpoint=${String(
+        autoCheckpointPages,
+      )}: the auto-checkpoint is not folding the file back at the rate commits fill it, so it grows with every write for as long as the Host runs. The knob is wal_autocheckpoint`,
+    );
+    assert.ok(
+      peakBytes <= ceilingBytes,
+      `the -wal file reached ${String(peakBytes)} bytes (${(peakBytes / 1024).toFixed(
+        0,
+      )} KB) over ${String(commits)} commits, past the ${String(
+        ceilingBytes,
+      )} bytes that wal_autocheckpoint=${String(autoCheckpointPages)} pages plus one commit of at most ${String(
+        pageCount,
+      )} frames allows: the file's high-water mark is climbing past what a checkpoint can leave behind, so commits are being appended to it without the fold that is supposed to follow. The knob is wal_autocheckpoint`,
+    );
+    const kept = (
+      connection.prepare("SELECT COUNT(*) AS rows FROM production_game_session_metadata").get() as { rows: number }
+    ).rows;
+    assert.equal(
+      kept,
+      commits,
+      `only ${String(kept)} of ${String(
+        commits,
+      )} committed rows survive after their -wal frames were folded back into the database file: folding must not cost data`,
+    );
+    assert.equal(
+      (connection.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check,
+      "ok",
+      `the database reports damage after ${String(commits)} commits and their checkpoints`,
+    );
+  } finally {
+    control.close();
+    removeRoot(root);
+  }
+});
+
+/**
+ * The other end of the same property: the frames a checkpoint folds back have to LEAVE the -wal, and a
+ * clean close has to take the file away entirely.
+ *
+ * Both are read from the file rather than from SQLite's return codes alone, because "the checkpoint ran"
+ * and "the file is empty" are two different facts and the one that ships is the second. The direction is
+ * the assertion: the database file grows by the pages that left the -wal, which is the difference between
+ * folding back and discarding. This is also the red proof for a close that leaves the artifact behind: an
+ * exit without a checkpoint leaves a -wal that the next start has to recover from, every single time.
+ */
+test("a checkpoint truncates the -wal and a clean close removes it", (t) => {
+  const root = canonicalTestRootSync("store-wal-fold-");
+  const { control, connection } = openWithLiveConnection(root);
+  try {
+    const databasePath = join(root, DATABASE);
+    const walPath = `${databasePath}-wal`;
+    const shmPath = `${databasePath}-shm`;
+    const walBytes = () => (existsSync(walPath) ? statSync(walPath).size : 0);
+    const metadata = control.bootstrapFresh(bootstrap);
+    const store: any = control.bindBootstrapContext({ bootstrap, metadata });
+    const write = (suffix: string) =>
+      store.createGameSessionMetadata({
+        creationRequestId: `wal-fold-${suffix}`,
+        integrationId: "stardew",
+        continuityIdentityId: principal.continuityId,
+      });
+    write("before-fold");
+
+    const beforeFold = walBytes();
+    const databaseBeforeFold = statSync(databasePath).size;
+    assert.ok(
+      beforeFold > 0,
+      `the -wal holds nothing before the checkpoint, so a truncation would prove nothing: the fixture committed through the store's own write path and its frames are supposed to be in the file`,
+    );
+    const folded = connection.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as {
+      busy: number;
+      log: number;
+      checkpointed: number;
+    };
+    const afterFold = walBytes();
+    const databaseAfterFold = statSync(databasePath).size;
+    t.diagnostic(
+      `checkpoint(TRUNCATE): busy=${String(folded.busy)} log=${String(folded.log)} checkpointed=${String(
+        folded.checkpointed,
+      )}; -wal ${String(beforeFold)} -> ${String(afterFold)} bytes, database ${String(
+        databaseBeforeFold,
+      )} -> ${String(databaseAfterFold)} bytes`,
+    );
+    assert.equal(
+      folded.busy,
+      0,
+      `the checkpoint could not complete (busy=${String(folded.busy)}): something else holds the file, so the truncation below did not run and would read as a pass for the wrong reason`,
+    );
+    assert.equal(
+      afterFold,
+      0,
+      `a TRUNCATE checkpoint left ${String(
+        afterFold,
+      )} bytes in the -wal (checkpointed=${String(folded.checkpointed)} frames): folding the frames back has to empty the file, not merely mark them copied`,
+    );
+    assert.ok(
+      databaseAfterFold > databaseBeforeFold,
+      `the database file did not grow (${String(databaseBeforeFold)} -> ${String(
+        databaseAfterFold,
+      )} bytes) although ${String(beforeFold)} bytes left the -wal: the frames were dropped instead of folded back into the database`,
+    );
+
+    // A truncated file has to keep taking writes, or the reading above describes a store that stopped.
+    const written = write("after-fold");
+    assert.ok(
+      walBytes() > 0,
+      "the -wal stayed empty after the store committed again, so the connection can no longer append and the truncation above left it unusable",
+    );
+    assert.ok(
+      store.readGameSessionMetadata({ gameSessionId: written.gameSessionId }),
+      "the row committed after the truncation cannot be read back, so the checkpoint cost data",
+    );
+
+    control.close();
+    assert.equal(
+      existsSync(walPath) ? statSync(walPath).size : 0,
+      0,
+      `the -wal still holds ${String(
+        existsSync(walPath) ? statSync(walPath).size : 0,
+      )} bytes after the last connection closed cleanly: a clean close is supposed to checkpoint and remove the file, so this one leaves the next start with a journal to replay`,
+    );
+    assert.equal(
+      existsSync(shmPath),
+      false,
+      `the -shm is still at ${shmPath} after the last connection closed cleanly, so the store did not release the shared-memory file it shares with a co-resident connection`,
+    );
+    const reread = new DatabaseSync(databasePath);
+    try {
+      assert.ok(
+        reread
+          .prepare("SELECT 1 FROM production_game_session_metadata WHERE game_session_id=?")
+          .get(written.gameSessionId),
+        `the row committed before the close is not in ${DATABASE} with no -wal beside it: the close discarded the file instead of folding its frames into the database`,
+      );
+    } finally {
+      reread.close();
+    }
+  } finally {
+    control.close();
+    removeRoot(root);
   }
 });
 
