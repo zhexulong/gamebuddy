@@ -3130,7 +3130,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         // A stack is independent of every other stack - a row in slot A can never address slot B's item - so ordering
         // each stack's own window IS the whole list's order, and the stacks stay in inventory order. The reason the
-        // order matters at all: `MAX_PLAN_NODES` is 16, so one script uses at most sixteen rows, and Chebyshev is the
+        // order matters at all: `TARGETS_NAMED_PER_PLAN` is 16, so one script uses at most sixteen rows, and Chebyshev is the
         // metric the range gate will apply (a tile nearer by Manhattan can still be further from being in range).
         // Measured 2026-10-29, `round7`: 7.2 KB of these rows per observation, in scan order, so the sixteen a script
         // could reach soonest were scattered.
@@ -3599,7 +3599,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Agent can see how many swings remain; the action itself decides what one landing swing is worth.
         return NearestFirst(location.objects.Pairs
             .Where(pair => Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player) && NativeItemPredicates.IsBreakableStone(pair.Value)), player)
-            .Take(8).Select(pair => new BridgeRockSourceTarget($"rock:{location.NameOrUniqueName}:{(int)pair.Key.X},{(int)pair.Key.Y}", location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
+            .Take(8).Select(pair => new BridgeRockSourceTarget(BuildRockSourceTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.MinutesUntilReady)).ToArray();
     }
 
     private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)

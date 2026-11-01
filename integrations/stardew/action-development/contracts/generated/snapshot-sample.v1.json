@@ -356,7 +356,7 @@
     ],
     "rockSourceTargets": [
       {
-        "targetId": "rock:ProbeFarm:3,3",
+        "targetId": "rock_source_80d6aa75b8267729",
         "location": "ProbeFarm",
         "x": 3,
         "y": 3,
