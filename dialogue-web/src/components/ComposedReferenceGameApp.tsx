@@ -43,6 +43,7 @@ import {
   SETTINGS_PANEL,
   useSurfaceRoute,
 } from "../composed-surface-route";
+import { markTurn } from "./turn-timings";
 
 /**
  * Same-origin composed reference-game shell. The composed root is the only
@@ -427,6 +428,7 @@ export function ComposedReferenceGameApp() {
     const idempotencyKey = newIdempotencyKey();
     const pending = beginTurnMutation(idempotencyKey, current);
     if (pending === null) return;
+    markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
     setOptimistic(Object.freeze({ idempotencyKey: pending.idempotencyKey, text }));
     setPollFailure(false);
     setInputText("");
