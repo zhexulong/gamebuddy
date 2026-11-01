@@ -1139,14 +1139,12 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   expect(measured.strip.box.width, "the strip is inside the reply's own column").toBeLessThanOrEqual(
     measured.listWidth,
   );
-  // The box the four actions now give the strip (measured 400x800): copy, rewind, edit and delete at
-  // 44 px each plus three 4 px gaps is 188 px, and the pager's own row is 184 px wide, so the strip
-  // takes the wider of the two - 301, its whole column - and 98 tall. The old one-row box was
-  // 286x46 with four controls and no copy.
-  expect(
-    { width: measured.strip.box.width, height: measured.strip.box.height },
-    "the strip takes its column and is two rows tall",
-  ).toEqual({ width: 301, height: 98 });
+  // `{ width: 301, height: 98 }` was pinned here. `98` is `rows === 2` (above) plus a 44 px row, a 6 px
+  // gap, a 46 px row and 2 px of border, and the height ceiling above already states it. `301` was the
+  // strip's own stretch to its column, which no rule designates: the CSS comment this journey exists for
+  // names 301 as the SYMPTOM of the break being wrong (a `flex-basis: 100%` stepper measured 301 instead
+  // of its own box) and says the stepper's box is the number this journey pins - which is the assertion
+  // immediately below.
   expect({ width: measured.pager.width, height: measured.pager.height }, "and the pager keeps its own 184 px").toEqual({
     width: 184,
     height: 46,
