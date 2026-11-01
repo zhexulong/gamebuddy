@@ -44,7 +44,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// dispatch stays gated on the door table alone.
 /// </para>
 /// </summary>
-public sealed class TransitionTileIsResolvableTests
+[Trait("kind", "source-shape")]
+public sealed class TransitionTileIsResolvableSourceShapeTests
 {
     private const string MovementActions = "farmhandexecutioncontroller.movementactions.cs";
     private const string Controller = "farmhandexecutioncontroller.cs";
