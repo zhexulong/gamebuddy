@@ -358,6 +358,513 @@ test("the projection admits no descriptor member the Host's registration whiteli
   );
 });
 
+// ---------------------------------------------------------------------------
+// The other two spellings of the same member vocabulary
+// ---------------------------------------------------------------------------
+//
+// The tests above compare the published ARTIFACT with the projection that consumes it. Both of them are files on
+// disk, which leaves the seam that has already fired twice unwatched: the Mod's C# record ORIGINATES the vocabulary,
+// and the producer validator that judges the generated artifact spells it a second time. `approach` drifted across
+// that seam (`693c19a8` producer side, `eff7646f` consumer side - never together) and `sceneTarget` drifted the other
+// way (`450c8f90` added it to the record and did not regenerate the artifact). A member added to the record alone is
+// invisible to every artifact-reading assertion, which is why the record is parsed here instead.
+
+/** The Mod's C# source that originates the published descriptor shape. */
+const SURFACE_PUBLICATION_PATH = "integrations/stardew/src/Core/Policy/farmhandactionsurfacepublication.cs";
+/** The producer validator for the generated artifact: the second spelling of the same vocabulary. */
+const PRODUCER_VALIDATOR_PATH = "integrations/stardew/action-development/src/action-surface.mjs";
+
+/** `ActionId` -> `actionId`: the .NET `JsonNamingPolicy.CamelCase` this serializer is configured with. */
+function camelCaseMember(pascalName) {
+  if (!/^[A-Z][a-z0-9]/u.test(pascalName)) {
+    // A leading acronym (`URL`, `ID`) would need the real policy's run-lowercasing, and guessing it here would publish
+    // a member name the serializer does not use. Refusing is the only reading that cannot be silently wrong.
+    throw new Error(`decision_closure_member_not_camel_caseable:${pascalName}`);
+  }
+  return `${pascalName[0].toLowerCase()}${pascalName.slice(1)}`;
+}
+
+/** Which bucket one parameter's attributes put it in. */
+function bucketOf(attributes, recordName, segment) {
+  if (attributes.some((attribute) => /JsonIgnoreCondition\.Always/u.test(attribute))) return "ignored";
+  if (attributes.some((attribute) => /JsonIgnoreCondition\.WhenWritingNull/u.test(attribute))) return "optional";
+  if (attributes.length === 0) return "required";
+  throw new Error(`decision_closure_parameter_attribute_unclassified:${recordName}:${segment.trim()}`);
+}
+
+/**
+ * One C# record's parameters, as the member vocabulary it declares.
+ *
+ * The depth counter starts at 1, because the record's own `(` is already open where the scan begins. Starting at 0
+ * reads the first ten parameters as un-opened text and then breaks on the first attribute that carries its own
+ * `(Condition = ...)`, returning a truncated list whose last "member" is `Condition` - a parse failure that makes the
+ * gate green forever. `recordMemberVocabulary` is pinned to an exact member list by its own test below, which is what
+ * turns that failure into a red assertion instead.
+ *
+ * Comments are stripped before anything else: the doc comments in this file carry apostrophes and parentheses ("the
+ * holder's PHASE", "(`cropTargets`)") that would otherwise open a phantom string or bracket and swallow the record.
+ */
+function recordMemberVocabulary(source, recordName) {
+  const anchor = `record ${recordName}(`;
+  const at = source.indexOf(anchor);
+  if (at < 0) throw new Error(`decision_closure_record_not_found:${recordName}`);
+  const segments = [];
+  let current = "";
+  let depth = 1;
+  let index = at + anchor.length;
+  while (index < source.length) {
+    const skipped = skipCommentOrString(source, index);
+    if (skipped !== null) {
+      current += skipped.text;
+      index = skipped.next;
+      continue;
+    }
+    const char = source[index];
+    if ("([{<".includes(char)) {
+      depth += 1;
+    } else if (")]}>}".includes(char)) {
+      depth -= 1;
+      if (depth === 0) return memberVocabularyFrom([...segments, current], recordName);
+    }
+    if (char === "," && depth === 1) {
+      segments.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+    index += 1;
+  }
+  throw new Error(`decision_closure_record_unbalanced:${recordName}`);
+}
+
+/**
+ * The comment or string literal starting at `index`, as `{ text, next }`, or null when `index` is code.
+ *
+ * A comment contributes a space and a string contributes its own bytes, so a `,` inside either cannot split a
+ * parameter and an unbalanced bracket inside a doc comment cannot close the record.
+ */
+function skipCommentOrString(source, index) {
+  const char = source[index];
+  const pair = `${char}${source[index + 1] ?? ""}`;
+  if (pair === "//" || pair === "/*") {
+    const end = pair === "//" ? source.indexOf("\n", index) : source.indexOf("*/", index + 2);
+    const next = end < 0 ? source.length : end + (pair === "//" ? 0 : 2);
+    return { text: " ", next };
+  }
+  if (char !== '"') return null;
+  let cursor = index + 1;
+  while (cursor < source.length && source[cursor] !== '"') cursor += source[cursor] === "\\" ? 2 : 1;
+  const next = Math.min(cursor + 1, source.length);
+  return { text: source.slice(index, next), next };
+}
+
+/** The member list a parameter list describes, refusing any parameter it cannot classify by name and bucket. */
+function memberVocabularyFrom(segments, recordName) {
+  const members = segments.map((segment) => {
+    const attributes = [...segment.matchAll(/\[([^\]]*)\]/gu)].map((match) => match[1]);
+    const declaration = segment.replace(/\[[^\]]*\]/gu, " ").trim();
+    if (declaration === "" || /[[\]]/u.test(declaration)) {
+      throw new Error(`decision_closure_parameter_unparsed:${recordName}:${segment.trim()}`);
+    }
+    const equals = declaration.indexOf("=");
+    const head = (equals < 0 ? declaration : declaration.slice(0, equals)).trim();
+    const name = /([A-Za-z_][A-Za-z0-9_]*)$/u.exec(head);
+    if (name === null) throw new Error(`decision_closure_parameter_unparsed:${recordName}:${head}`);
+    return { name: camelCaseMember(name[1]), bucket: bucketOf(attributes, recordName, segment) };
+  });
+  for (const [position, member] of members.entries()) {
+    if (members.findIndex((other) => other.name === member.name) !== position) {
+      throw new Error(`decision_closure_duplicate_parameter:${recordName}:${member.name}`);
+    }
+  }
+  const inBucket = (bucket) => new Set(members.filter((member) => member.bucket === bucket).map((m) => m.name));
+  return { members, required: inBucket("required"), optional: inBucket("optional"), ignored: inBucket("ignored") };
+}
+
+/** The producer validator's own two lists: the artifact's required core and the fields it may omit. */
+function producerActionVocabulary(source) {
+  const read = (anchor) =>
+    new Set([...arrayLiteralBody(source, anchor).matchAll(/"([^"]+)"/gu)].map((match) => match[1]));
+  return {
+    required: read("const ACTION_SURFACE_ACTION_KEYS = Object.freeze(["),
+    optional: read("const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["),
+  };
+}
+
+/**
+ * The drift between the Mod's record and the producer vocabulary, named member by member.
+ *
+ * Both sides are read from source: the record by parsing the declaration, the producer by reading its two arrays. A
+ * member the record declares and the producer does not know is an artifact that can never be regenerated to carry it;
+ * a member the producer knows and the record does not declare is a vocabulary entry with nothing behind it.
+ */
+function descriptorVocabularyDrift({ modSource, producerSource }) {
+  const mod = recordMemberVocabulary(modSource, "FarmhandActionDescriptorProjection");
+  const producer = producerActionVocabulary(producerSource);
+  const findings = [];
+  for (const bucket of ["required", "optional"]) {
+    const producerList = bucket === "required" ? "ACTION_SURFACE_ACTION_KEYS" : "ACTION_SURFACE_OPTIONAL_ACTION_KEYS";
+    for (const member of mod[bucket]) {
+      if (producer[bucket].has(member)) continue;
+      findings.push({
+        identity: member,
+        code: "mod_member_absent_from_producer_vocabulary",
+        detail:
+          `the Mod's FarmhandActionDescriptorProjection declares ${bucket} member '${member}' but the producer validator's ` +
+          `${producerList} does not list it, so the generated artifact can never carry it`,
+      });
+    }
+    for (const member of producer[bucket]) {
+      if (mod[bucket].has(member)) continue;
+      findings.push({
+        identity: member,
+        code: "producer_member_absent_from_mod_record",
+        detail:
+          `the producer validator's ${producerList} lists '${member}' but the Mod's FarmhandActionDescriptorProjection ` +
+          `declares no such ${bucket} member`,
+      });
+    }
+  }
+  for (const member of mod.ignored) {
+    if (!(producer.required.has(member) || producer.optional.has(member))) continue;
+    findings.push({
+      identity: member,
+      code: "mod_ignored_member_in_producer_vocabulary",
+      detail: `the Mod never serializes '${member}' (JsonIgnoreCondition.Always) but the producer validator admits it`,
+    });
+  }
+  return findings.sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+/** The argument-entry pair, from the same two sources, against the projection's exported argument vocabulary. */
+function argumentVocabularyDrift({ modSource, projection }) {
+  const mod = recordMemberVocabulary(modSource, "FarmhandActionArgumentSchema");
+  const findings = [];
+  for (const bucket of ["required", "optional"]) {
+    const published = new Set(projection.argumentSchemaEntry[bucket]);
+    for (const member of mod[bucket]) {
+      if (published.has(member)) continue;
+      findings.push({
+        identity: member,
+        code: "mod_argument_member_absent_from_projection",
+        detail:
+          `the Mod's FarmhandActionArgumentSchema declares ${bucket} member '${member}' but the projection's ` +
+          `argumentSchemaEntry.${bucket} vocabulary does not admit it`,
+      });
+    }
+    for (const member of published) {
+      if (mod[bucket].has(member)) continue;
+      findings.push({
+        identity: member,
+        code: "projection_argument_member_absent_from_mod_record",
+        detail:
+          `the projection's argumentSchemaEntry.${bucket} vocabulary admits '${member}' but the Mod's ` +
+          `FarmhandActionArgumentSchema declares no such member`,
+      });
+    }
+  }
+  return findings.sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+test("the Mod's descriptor record parses to exactly the member vocabulary it declares", () => {
+  // The parser's own self-check, and the reason it is a pinned list rather than a count: a truncated parse is the one
+  // failure that makes this gate green forever. The version that started its depth counter at 0 returned ten of these
+  // thirteen members and reported `condition` as the last one, and every assertion built on it passed.
+  const vocabulary = recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), "FarmhandActionDescriptorProjection");
+  assert.deepEqual(vocabulary.members, [
+    { name: "actionId", bucket: "required" },
+    { name: "identityVersion", bucket: "required" },
+    { name: "lifecycle", bucket: "required" },
+    { name: "kind", bucket: "required" },
+    { name: "argumentSchema", bucket: "required" },
+    { name: "outputFacts", bucket: "required" },
+    { name: "resourceTemplate", bucket: "required" },
+    { name: "effect", bucket: "required" },
+    { name: "postcondition", bucket: "required" },
+    { name: "watchdogMs", bucket: "ignored" },
+    { name: "approach", bucket: "optional" },
+    { name: "sceneTarget", bucket: "optional" },
+    { name: "targetFamily", bucket: "optional" },
+  ]);
+  // The other record is parsed by the same reader and must not bleed into this one: `Enum` and `Description` also carry
+  // `WhenWritingNull` and belong to FarmhandActionArgumentSchema.
+  assert.deepEqual(recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), "FarmhandActionArgumentSchema").members, [
+    { name: "type", bucket: "required" },
+    { name: "enum", bucket: "optional" },
+    { name: "description", bucket: "optional" },
+  ]);
+});
+
+/**
+ * A second reading of the same record: one parameter per line, which is how this file is formatted.
+ *
+ * The bracket scanner above is the authority, and this is the check that it did not quietly stop early - a different
+ * algorithm that shares none of its state. A doc comment is skipped, a blank line is skipped, and the scan ends at the
+ * parameter that closes the list (on its own line in one record, at the end of the last parameter in the other). It
+ * throws rather than returning a shorter list when a line does not fit the shape, so a reformatting of the record is a
+ * loud failure instead of a silent narrowing.
+ */
+function recordParametersByLine(source, recordName) {
+  const anchor = `record ${recordName}(`;
+  const at = source.indexOf(anchor);
+  if (at < 0) throw new Error(`decision_closure_record_not_found:${recordName}`);
+  const names = [];
+  for (const line of source
+    .slice(at + anchor.length)
+    .split("\n")
+    .slice(1)) {
+    const text = line.trim();
+    if (text === "" || text.startsWith("///")) continue;
+    const closes = /[)];?$/u.test(text);
+    const body = text.replace(/[)];?$/u, "").trim();
+    if (body === "") return names;
+    const declaration = body.replace(/^\[[^\]]*\]\s*/u, "");
+    const name = /([A-Za-z_][A-Za-z0-9_]*)\s*(?:=[^,]*)?,?$/u.exec(declaration);
+    if (name === null) throw new Error(`decision_closure_parameter_line_unparsed:${recordName}:${text}`);
+    names.push(camelCaseMember(name[1]));
+    if (closes) return names;
+  }
+  throw new Error(`decision_closure_record_unterminated:${recordName}`);
+}
+
+test("the record parser agrees with a line-oriented reading of the same declaration", () => {
+  // The cross-check that makes a truncated parse impossible to miss: the bracket scanner and this reader share no state,
+  // and the pinned list above would happily accept a consistently wrong reading if both were wrong the same way.
+  for (const recordName of ["FarmhandActionDescriptorProjection", "FarmhandActionArgumentSchema"]) {
+    assert.deepEqual(
+      recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), recordName).members.map((member) => member.name),
+      recordParametersByLine(sourceOf(SURFACE_PUBLICATION_PATH), recordName),
+      `${recordName}: the two readings of one declaration disagree`,
+    );
+  }
+});
+
+test("the Mod's descriptor record and the producer validator spell one member vocabulary", () => {
+  assert.deepEqual(
+    descriptorVocabularyDrift({
+      modSource: sourceOf(SURFACE_PUBLICATION_PATH),
+      producerSource: sourceOf(PRODUCER_VALIDATOR_PATH),
+    }),
+    [],
+    "the record that originates the vocabulary and the validator that judges the artifact disagree",
+  );
+});
+
+test("the Mod's descriptor record and the generated artifact carry one member vocabulary", () => {
+  // The leg that closes the hole the other two cannot see. The producer validator is PERMISSIVE about optional members:
+  // adding one to `ACTION_SURFACE_OPTIONAL_ACTION_KEYS` makes it ACCEPT an artifact that does not carry it. So a member
+  // added to the record AND to the producer, with the artifact left unregenerated, passes every artifact-reading
+  // assertion in this file and every producer check - and the model is never told the field exists. Measured at
+  // `dac67971`: the record gained `targetFamily`, the artifact did not carry it, and nothing compared the two.
+  //
+  // The comparison is a UNION, not bucket by bucket: a record-optional member that every action happens to declare is
+  // required in the artifact, and both spellings describe the same member. `watchdogMs` is excluded by construction
+  // because it is `JsonIgnoreCondition.Always` - and if it ever reached the artifact, this assertion names it.
+  const record = recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), "FarmhandActionDescriptorProjection");
+  const declared = new Set([...record.required, ...record.optional]);
+  const published = publishedSurfaceMembers().descriptorMembers;
+  const findings = [
+    ...[...declared]
+      .filter((member) => !published.has(member))
+      .map((member) => ({
+        identity: member,
+        code: "record_member_absent_from_generated_artifact",
+        detail:
+          `the Mod's FarmhandActionDescriptorProjection declares '${member}' but no action in the generated artifact ` +
+          `carries it - the artifact was not regenerated after the record changed`,
+      })),
+    ...[...published]
+      .filter((member) => !declared.has(member))
+      .map((member) => ({
+        identity: member,
+        code: "artifact_member_absent_from_record",
+        detail:
+          `the generated artifact carries '${member}' but the Mod's FarmhandActionDescriptorProjection declares no such ` +
+          `member - the artifact is newer than the record that is supposed to originate it`,
+      })),
+  ];
+  assert.deepEqual(
+    findings.sort((left, right) => left.identity.localeCompare(right.identity)),
+    [],
+    "the record and the artifact it generates disagree about the member vocabulary",
+  );
+});
+
+test("a member the record declares and the artifact omits is named, even when the producer admits it", () => {
+  // The hole stated as a case. The producer is widened to accept the member - which is what an author does when adding
+  // one - and the artifact is left alone. Every other assertion in this file reads the artifact, so this is the only
+  // one that can see the gap, and the delta against the current tree keeps the proof independent of any existing drift.
+  const record = recordMemberVocabulary(sourceOf(SURFACE_PUBLICATION_PATH), "FarmhandActionDescriptorProjection");
+  const published = publishedSurfaceMembers().descriptorMembers;
+  const baseline = new Set([...record.required, ...record.optional].filter((member) => !published.has(member)));
+  const injected = [...record.required, ...record.optional, "injectedFamily"].filter(
+    (member) => !(published.has(member) || baseline.has(member)),
+  );
+  assert.deepEqual(injected, ["injectedFamily"], "a member the record declares and the artifact omits must be visible");
+});
+
+test("a member added to the Mod's record alone is named as producer drift", () => {
+  // The `450c8f90` shape: the record gains a member and the artifact is not regenerated. Every assertion that reads the
+  // artifact off disk passes, so the drift has to be found by comparing the record with the producer vocabulary.
+  //
+  // The assertion is the DELTA the injection adds, not the whole finding set: this tree may already carry a real drift
+  // (it does - `targetFamily`), and a proof that also fails on the pre-existing finding proves nothing about the
+  // injection. `baseline` is the same tree unmutated, so anything the delta does not name is not this case's business.
+  const current = sourceOf(SURFACE_PUBLICATION_PATH);
+  const producerSource = sourceOf(PRODUCER_VALIDATOR_PATH);
+  const baseline = new Set(
+    descriptorVocabularyDrift({ modSource: current, producerSource }).map((entry) => entry.identity),
+  );
+  const injectedDrift = (mutated) =>
+    descriptorVocabularyDrift({ modSource: mutated, producerSource })
+      .filter((entry) => !baseline.has(entry.identity))
+      .map((entry) => [entry.identity, entry.code]);
+
+  const withOptional = current.replace(
+    "[property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TargetFamily = null",
+    "[property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TargetFamily = null,\n    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? InjectedFamily = null",
+  );
+  assert.notEqual(withOptional, current, "the mutation must actually apply");
+  assert.deepEqual(injectedDrift(withOptional), [["injectedFamily", "mod_member_absent_from_producer_vocabulary"]]);
+
+  // A REQUIRED member is the same defect with a worse consequence: the artifact's own required-key check then refuses
+  // every action, not just the ones that would have carried the field.
+  const withRequired = current.replace("    string Effect,", "    string Effect,\n    string InjectedRequired,");
+  assert.notEqual(withRequired, current, "the mutation must actually apply");
+  assert.deepEqual(injectedDrift(withRequired), [["injectedRequired", "mod_member_absent_from_producer_vocabulary"]]);
+});
+
+test("the Mod's argument record and the projection spell one argument vocabulary", () => {
+  assert.deepEqual(
+    argumentVocabularyDrift({
+      modSource: sourceOf(SURFACE_PUBLICATION_PATH),
+      projection: DESCRIPTOR_PROJECTION_VOCABULARY,
+    }),
+    [],
+    "the argument-entry vocabulary the Mod serializes and the one the gateway admits disagree",
+  );
+});
+
+/**
+ * The members the Host knows that are never published to the agent, each with the reason it is here.
+ *
+ * The equality below cannot be stated without this list, and the list is what makes a fifth runtime-only member a
+ * reviewed addition instead of a silent one. Every entry is a member `KNOWN_ACTION_DESCRIPTOR_KEYS` admits that the
+ * published projection does not:
+ *
+ *  - `arguments`     the REGISTRATION wire's form of the argument map (`BridgeProtocolModels.cs`
+ *                    `FarmhandActionDescriptorWire.Arguments`, a list of `{name, type, enum, description}`). The static
+ *                    artifact publishes the same facts as `argumentSchema`, keyed by name, so the list form is never
+ *                    published; the Host reads both (`action-registry.ts:813`).
+ *  - `watchdogMs`    the Mod's own execution budget. `JsonIgnoreCondition.Always` on the record, because it sizes a
+ *                    dispatch deadline rather than describing anything the agent decides with.
+ *  - `nativeBinding` the native method an emote/dispatch arm calls. Sent on the registration wire and required by
+ *                    `action-registry.ts:904` for those arms; never a member of the projection record at all.
+ *  - `evidenceSchema` Host-tolerated only: no C# source emits it (measured: zero occurrences under
+ *                    `integrations/stardew`), so it is a whitelist entry with no producer.
+ *  - `canonicalCodec` the same, for the codec name.
+ */
+const RUNTIME_ONLY_KEYS = Object.freeze([
+  "arguments",
+  "canonicalCodec",
+  "evidenceSchema",
+  "nativeBinding",
+  "watchdogMs",
+]);
+
+/**
+ * The drift between the projection and the Host's registration whitelist, once the runtime-only members are separated.
+ *
+ * The subset assertion above says nothing the projection admits is unknown to the Host. This is the other half: the
+ * Host knows nothing the projection does not publish or the runtime-only list does not explain. `hostEnvelopeKeys` is
+ * subtracted from the projection side because those members are judged on the registration envelope, not inside the
+ * descriptor (`actionId`, `identityVersion`, `lifecycle`, `kind`).
+ */
+function hostWhitelistDrift({ hostDescriptorKeys, hostEnvelopeKeys, projection, runtimeOnly = RUNTIME_ONLY_KEYS }) {
+  const findings = [];
+  const published = new Set(
+    [...projection.descriptor.required, ...projection.descriptor.optional].filter(
+      (member) => !hostEnvelopeKeys.has(member),
+    ),
+  );
+  for (const member of runtimeOnly) {
+    if (!published.has(member)) continue;
+    findings.push({
+      identity: member,
+      code: "runtime_only_member_also_published",
+      detail: `'${member}' is listed as runtime-only but the projection publishes it to the agent`,
+    });
+  }
+  const expected = new Set([...published, ...runtimeOnly]);
+  for (const member of expected) {
+    if (hostDescriptorKeys.has(member)) continue;
+    findings.push({
+      identity: member,
+      code: "host_whitelist_missing_member",
+      detail:
+        `the Host's KNOWN_ACTION_DESCRIPTOR_KEYS does not admit '${member}', so a registration carrying it is refused ` +
+        `with hasOnlyKeys before any value rule runs`,
+    });
+  }
+  for (const member of hostDescriptorKeys) {
+    if (expected.has(member)) continue;
+    findings.push({
+      identity: member,
+      code: "host_whitelist_member_not_accounted",
+      detail:
+        `the Host's KNOWN_ACTION_DESCRIPTOR_KEYS admits '${member}' but nothing publishes it and ` +
+        `RUNTIME_ONLY_KEYS does not name it`,
+    });
+  }
+  return findings.sort((left, right) => left.identity.localeCompare(right.identity));
+}
+
+const currentHostWhitelistDrift = () =>
+  hostWhitelistDrift({
+    hostDescriptorKeys: hostDescriptorKeys(),
+    hostEnvelopeKeys: hostEnvelopeKeys(),
+    projection: DESCRIPTOR_PROJECTION_VOCABULARY,
+  });
+
+test("the Host's descriptor whitelist is the published projection plus the runtime-only members", () => {
+  assert.deepEqual(currentHostWhitelistDrift(), [], "the Host and the projection disagree about the member vocabulary");
+});
+
+test("dropping a member from the runtime-only set is named, not absorbed", () => {
+  // The red proof for the equality above: `canonicalCodec` is a Host-side member nothing publishes, so removing it
+  // from the explanation leaves a whitelist entry the projection cannot account for.
+  const findings = hostWhitelistDrift({
+    hostDescriptorKeys: hostDescriptorKeys(),
+    hostEnvelopeKeys: hostEnvelopeKeys(),
+    projection: DESCRIPTOR_PROJECTION_VOCABULARY,
+    runtimeOnly: RUNTIME_ONLY_KEYS.filter((member) => member !== "canonicalCodec"),
+  });
+  assert.deepEqual(
+    findings.map((entry) => [entry.identity, entry.code]),
+    [["canonicalCodec", "host_whitelist_member_not_accounted"]],
+  );
+});
+
+test("a projection member the Host does not admit is named as the refusal it becomes", () => {
+  // The live risk, and the `450c8f90` replay: the gateway starts admitting `targetFamily` while the Host's whitelist
+  // still refuses it. The descriptor then parses here and is rejected at registration.
+  const widened = {
+    ...DESCRIPTOR_PROJECTION_VOCABULARY,
+    descriptor: {
+      required: DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.required,
+      optional: [...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.optional, "targetFamily"],
+    },
+  };
+  assert.deepEqual(
+    hostWhitelistDrift({
+      hostDescriptorKeys: hostDescriptorKeys(),
+      hostEnvelopeKeys: hostEnvelopeKeys(),
+      projection: widened,
+    }).map((entry) => [entry.identity, entry.code]),
+    [["targetFamily", "host_whitelist_missing_member"]],
+  );
+});
+
 /** A descriptor the projection accepts as the only member variation, for the shape cases below. */
 function descriptorWith(overrides) {
   return {
