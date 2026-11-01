@@ -145,6 +145,10 @@
       "reason": "the headless sample world does not construct this family"
     },
     {
+      "field": "wateringWhereabouts",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
       "field": "petTargets",
       "reason": "the headless sample world does not construct this family"
     },
