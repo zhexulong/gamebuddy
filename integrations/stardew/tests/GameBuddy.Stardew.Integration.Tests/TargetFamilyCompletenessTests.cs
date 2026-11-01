@@ -146,6 +146,92 @@ public sealed class TargetFamilyCompletenessTests
         chests[0].X.Should().Be(2);
     }
 
+    /// <summary>
+    /// The summary counts the LOCATION, not the radius-6 window `chests` publishes.
+    ///
+    /// <para>
+    /// This is the distinction the field exists for and the one a reader would get wrong: `DiscoverChestStates` is
+    /// bounded to `TargetDiscoveryRadius` so a container out of reach is not offered as an action, and a summary counted
+    /// from that list would print `chests here: 0` while a chest stands ten tiles away. That is the false-zero shape
+    /// `待浇水作物: 0` was, measured 2026-10-31.
+    /// </para>
+    /// <para>
+    /// So the world below holds one chest INSIDE the radius and one FAR OUTSIDE it, and the two numbers must disagree:
+    /// the entity family publishes one row, the summary counts both. The counts themselves are the shape the formatter
+    /// renders - three chests holding two, one and no items.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ChestsSummaryCountsTheWholeLocationRatherThanTheRadiusWindow()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.FreeOnePackSlot();
+        world.PlaceOrdinaryChest(x: 2, y: 2, items: new[] { new ChestItem(WeedsQualifiedItemId, 2) });
+        world.PlaceOrdinaryChest(x: 3, y: 2, items: new[] { new ChestItem(DiamondQualifiedItemId, 1) });
+        world.PlaceOrdinaryChest(x: 4, y: 2, items: Array.Empty<ChestItem>());
+        // Well past the six-tile discovery radius, and still this location's chest.
+        world.PlaceOrdinaryChest(x: 14, y: 14, items: new[] { new ChestItem("(O)388", 9) });
+        world.StandAt(1, 2);
+
+        IReadOnlyList<BridgeChestState> published = world.ChestStates();
+        BridgeChestsSummary summary = world.ChestsSummary();
+
+        published.Should().HaveCount(3, "the entity family keeps its radius bound: the far chest is not offered as an action");
+        summary.ChestCount.Should().Be(
+            4,
+            "the summary answers 'what is in my chests', so a container across the farm is still this location's chest");
+        summary.ItemCount.Should().Be(12, "2 + 1 + 9 items: the sum of every occupied slot's stack, not the slot count");
+        summary.FullCount.Should().Be(0, "every chest here has free slots");
+    }
+
+    /// <summary>
+    /// A chest with no free slot is counted as full, at the engine's own capacity.
+    ///
+    /// The threshold is `Chest.GetActualCapacity()` (36 for an ordinary chest), not a number written here: `Chest.addItem`
+    /// refuses a new stack at exactly that count (Chest.cs:883-888). Both sides of the boundary are built, because a
+    /// predicate that reported every chest full and one that reported none would each pass a single-sided test.
+    /// </summary>
+    [Fact]
+    public void ChestsSummaryCountsAContainerAtTheEnginesOwnCapacityAsFull()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.FreeOnePackSlot();
+        world.PlaceOrdinaryChest(
+            x: 2,
+            y: 2,
+            items: Enumerable.Range(0, 36).Select(index => new ChestItem($"(O){100 + index}", 1)).ToArray());
+        world.PlaceOrdinaryChest(
+            x: 3,
+            y: 2,
+            items: Enumerable.Range(0, 35).Select(index => new ChestItem($"(O){200 + index}", 1)).ToArray());
+        world.StandAt(1, 2);
+
+        BridgeChestsSummary summary = world.ChestsSummary();
+
+        summary.ChestCount.Should().Be(2);
+        summary.FullCount.Should().Be(1, "36 occupied slots is `GetActualCapacity()`, and 35 is one short of it");
+        summary.ItemCount.Should().Be(71, "every occupied slot holds one item");
+    }
+
+    /// <summary>
+    /// A location with no chests says ZERO rather than publishing nothing.
+    ///
+    /// The two states must stay distinguishable: an ABSENT summary means the Mod did not measure it (the container actions
+    /// were not advertised), while a present one holding zeroes is the answer to "do I have any chests here". A projection
+    /// that omitted the row when the count was zero would make those two the same fact on the wire.
+    /// </summary>
+    [Fact]
+    public void ChestsSummaryReportsZeroForALocationWithNoChests()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.FreeOnePackSlot();
+        world.StandAt(1, 2);
+
+        BridgeChestsSummary summary = world.ChestsSummary();
+
+        summary.Should().Be(new BridgeChestsSummary(0, 0, 0), "a measured zero is an answer, not an absence");
+    }
+
     [Fact]
     public void NpcRelationshipPublishesAVillagerThePlayerHasNeverMet()
     {
@@ -209,6 +295,17 @@ public sealed class TargetFamilyCompletenessTests
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
 
+        /// <summary>
+        /// SMAPI's readiness flag, reached the way `ApproachClassificationTests.HeadlessWorld` reaches it:
+        /// `Context.IsWorldReady` is not settable, it reads `PerScreen&lt;bool&gt;.States[Context.ScreenId]`.
+        /// </summary>
+        private static readonly FieldInfo WorldReadyPerScreen = typeof(StardewModdingAPI.Context)
+            .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+            .GetGetMethod()!
+            .Module.ResolveField(BitConverter.ToInt32(typeof(StardewModdingAPI.Context)
+                .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+                .GetGetMethod()!.GetMethodBody()!.GetILAsByteArray()!, 1))!;
+
         private TargetFamilyWorld()
         {
             this.gameBefore = Game1.game1;
@@ -229,11 +326,40 @@ public sealed class TargetFamilyCompletenessTests
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
+            // `Game1.random` is a plain static assigned during game startup. `Bush`'s own constructor calls
+            // `Game1.random.NextBool()` (Bush.cs:109), and so do several other engine constructors this world drives.
+            Game1.random ??= new Random(1);
+            // Two more plain statics the preflights dereference once the actor survives admission: `otherFarmers`
+            // backs `FarmerCollection.Any` (`isPlayerPresent` reads it while building a native path), and
+            // `hudMessages` is read by `Farmer.couldInventoryAcceptThisItem` (Farmer.cs:4741) whenever the pack is
+            // full. Both are assigned in `Game1`'s own startup, so an uninitialized `Game1` leaves them null.
+            Game1.otherFarmers ??= new NetRootDictionary<long, Farmer>();
+            Game1.hudMessages ??= new List<HUDMessage>();
+            // `Game1.options` is created in `Game1`'s constructor, and its own constructor calls `setToDefaults` which
+            // reads game content (Options.cs:624). `Rumble.rumble` - reached by every native tool swing that lands a
+            // hit - reads only `gamepadControls` and `rumble`, so those two plain bools are seeded and both stay false:
+            // a headless process has no gamepad, which is the honest value rather than a convenience one.
+            var options = (Options)FormatterServices.GetUninitializedObject(typeof(Options));
+            SetInstanceField(options, "gamepadControls", false);
+            SetInstanceField(options, "rumble", false);
+            Game1.options ??= options;
+            // `Game1.locations` is `game1._locations`, an instance field on the uninitialized `Game1` singleton.
+            if (Game1.game1!._locations is null) Game1.game1._locations = new List<GameLocation>();
+            // `LocationContexts.Require` (LocationContexts.cs:29) indexes `Game1.locationContextData`, loaded from
+            // `Data/LocationContexts`. One `Default` row is what every outdoor location carries; the fields the shipped
+            // predicates read stay at their type defaults, exactly as an empty `cropData` does.
+            Game1.locationContextData ??= new Dictionary<string, StardewValley.GameData.LocationContexts.LocationContextData>(StringComparer.Ordinal)
+            {
+                ["Default"] = new StardewValley.GameData.LocationContexts.LocationContextData(),
+            };
 
             var farm = new GameLocation();
             var map = new xTile.Map();
             map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
             map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            // `Bush`'s own constructor reads `location.map.RequireLayer("Front")` (Bush.cs:91), and `GameLocation`
+            // reads the same layer for several of its own predicates, so the map declares it like a real farm map does.
+            map.AddLayer(new xTile.Layers.Layer("Front", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
             farm.map = map;
             farm.IsFarm = true;
             SetInstanceField(farm, "name", new NetString("ProbeFarm"));
@@ -245,6 +371,7 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(sprite, "tempSpriteHeight", -1);
 
             var actor = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+            SeedMissingNetFields(actor);
             SetInstanceField(actor, "position", new NetPosition());
             SetInstanceField(actor, "currentLocationRef", new NetLocationRef());
             SetInstanceField(actor, "netMount", new NetRef<StardewValley.Characters.Horse>());
@@ -261,13 +388,68 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(actor, "usingTool", new NetBool(false));
             SetInstanceField(actor, "toolPower", new NetInt(0));
             // The pack is the item source `chest_store` publishes and the capacity `chest_retrieve` tests.
-            SetInstanceField(actor, "netItems", new NetRef<StardewValley.Inventories.Inventory> { Value = new StardewValley.Inventories.Inventory() });
+            // It is created at its FULL capacity, because that is what a real farmer carries and what the engine's own
+            // predicates assume: `Farmer.isInventoryFull()` (Farmer.cs:4702) walks `maxItems` slots and answers "full"
+            // for every slot the list does not hold, so a zero-length `Inventory` reads as a FULL pack. That is not
+            // cosmetic - `couldInventoryAcceptThisItem` then falls into its "pack is full" branch and calls
+            // `Game1.content.LoadString` (Farmer.cs:4743), which is null here, so `pickup_item` and `chest_retrieve`
+            // threw a NullReferenceException that the probe swallowed as a harness limit instead of reaching the
+            // inventory question they were there to ask.
+            var pack = new StardewValley.Inventories.Inventory();
+            for (int slot = 0; slot < PackCapacity; slot++) pack.Add(null!);
+            SetInstanceField(actor, "netItems", new NetRef<StardewValley.Inventories.Inventory> { Value = pack });
             SetInstanceField(actor, "maxItems", new NetInt(PackCapacity));
             SetInstanceField(actor, "friendshipData", new NetStringDictionary<Friendship, NetRef<Friendship>>());
+            // `Game1.stats` IS `player.stats` (Game1.cs:1671), and several engine constructors and predicates read it
+            // (`Bush.loadSprite` calls `Utility.CreateRandom(Game1.stats.DaysPlayed, ...)`, Bush.cs:277). A real farmer
+            // always carries one; an uninitialized instance has null.
+            SetInstanceField(actor, "stats", new Stats());
             actor.position.Set(new Vector2(1 * 64 + 8, 2 * 64));
             actor.currentLocation = farm;
+            // `Farmer.canMove` is a plain bool whose initializer (`canMove = true`, Farmer.cs:690) never runs on an
+            // uninitialized instance. `AdmitExecution` reads it through `WorldModel.Classify` -> `!CanMove`, so with
+            // it false EVERY body-owning action refused `player_not_actionable` before its target check and the round
+            // trip reported a pass it had not earned.
+            typeof(Farmer).GetField("canMove", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(actor, true);
+            // The rest of the NetFields a real farmer always carries, in the shape
+            // `ApproachClassificationTests.HeadlessWorld` supplies them. Each one is reached by a SHIPPED preflight
+            // once admission passes, and each threw a NullReferenceException that the round-trip probe used to swallow
+            // as "harness limit":
+            //   `facingDirection` - `Character.facingDirection` is a readonly `NetDirection` field initializer, and
+            //     `UseNativeToolOnTile` faces the actor before every native swing.
+            //   `farmingLevel`/`foragingLevel`/`miningLevel` + `buffs` - the level properties are
+            //     `level.Value + buffs.XLevel` (Farmer.cs:1600-1615); `buffs` is a readonly `BuffManager` field
+            //     initializer whose `CombinedEffects` is itself unset on an uninitialized manager.
+            //   `movementDirections` - a readonly `List<int>` field initializer that `Farmer.Halt` (Farmer.cs:8125)
+            //     clears on every warp.
+            SetInstanceField(actor, "facingDirection", new NetDirection(2));
+            SetInstanceField(actor, "isSitting", new NetBool(false));
+            // `FarmerTeam`'s own constructor registers a sprite definition with `Game1.content`
+            // (FarmerTeam.cs:398 -> PlayerStatusList.AddSpriteDefinition), so the team is built uninitialized and given
+            // its NetFields the way every other fixture object here is. `Game1.player.team` is read by the native
+            // drop tables (`SpecialOrderRuleActive("DROP_QI_BEANS")`, Tree.cs:705 / Object.cs:1565).
+            var team = (FarmerTeam)FormatterServices.GetUninitializedObject(typeof(FarmerTeam));
+            SeedMissingNetFields(team);
+            SetInstanceField(actor, "teamRoot", new NetRoot<FarmerTeam> { Value = team });
+            SetInstanceField(actor, "farmingLevel", new NetInt(0));
+            SetInstanceField(actor, "foragingLevel", new NetInt(0));
+            SetInstanceField(actor, "miningLevel", new NetInt(0));
+            SetInstanceField(actor, "movementDirections", new List<int>());
+            var buffs = new StardewValley.Buffs.BuffManager();
+            typeof(StardewValley.Buffs.BuffManager)
+                .GetField("CombinedEffects", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(buffs, new StardewValley.Buffs.BuffEffects());
+            buffs.Dirty = false;
+            SetInstanceField(actor, "buffs", buffs);
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
             world.Actor = actor;
+
+            // The other gate in front of the target check: every request body opens with
+            // `if (!Context.IsWorldReady ...) world_not_ready`.
+            WorldReadyPerScreen.GetValue(null)!.GetType()
+                .GetMethod("SetValueForScreen", new[] { typeof(int), typeof(bool) })!
+                .Invoke(WorldReadyPerScreen.GetValue(null), new object[] { StardewModdingAPI.Context.ScreenId, true });
 
             return world;
         }
@@ -286,17 +468,79 @@ public sealed class TargetFamilyCompletenessTests
         /// A real TOOL in a pack slot. `DiscoverToolSlots` selects `items[slot] is Tool`, so an `Object` carrying a
         /// tool's item id is not the same fact: the identity and the upgrade level are seeded through the fields
         /// `Tool.UpgradeLevel` and `Item.QualifiedItemId` are backed by, because `new Axe()` loads game content.
+        ///
+        /// <para>
+        /// `Item.NetFields` is a get-only auto-property INITIALIZER (`= new NetFields("Item")`, Item.cs:142), and an
+        /// uninitialized instance never ran it. That null is not cosmetic: `Inventory` is a `NetList`, whose `Resize`
+        /// clears each moved element through `NetExtendableRef.clearValueParent`, which dereferences
+        /// `targetValue.NetFields.Parent` with no null guard (NetExtendableRef.cs:40). Growing the pack past its
+        /// initial capacity therefore threw from inside the game's own collection and the tool never landed.
+        /// </para>
         /// </summary>
-        internal void PutToolInPackSlot(int slot, string qualifiedItemId, int upgradeLevel)
+        internal void PutToolInPackSlot(int slot, Type toolType, string qualifiedItemId, int upgradeLevel)
         {
-            var tool = (StardewValley.Tools.Axe)FormatterServices.GetUninitializedObject(typeof(StardewValley.Tools.Axe));
+            var tool = (Tool)FormatterServices.GetUninitializedObject(toolType);
+            SeedMissingNetFields(tool);
+            // `Item.NetFields` is a get-only auto-property INITIALIZER (`= new NetFields("Item")`, Item.cs:142), and an
+            // uninitialized instance never ran it. That null is not cosmetic: `Inventory` is a `NetList`, whose
+            // `Resize` clears each moved element through `NetExtendableRef.clearValueParent`, which dereferences
+            // `targetValue.NetFields.Parent` with no null guard (NetExtendableRef.cs:40). Growing the pack past its
+            // initial capacity would throw from inside the game's own collection and the tool would never land.
+            typeof(Item)
+                .GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(tool, new NetFields("Item"));
             SetInstanceField(tool, "upgradeLevel", new NetInt(upgradeLevel));
+            // `ItemId` BEFORE `_qualifiedItemId`, because the property setter clears the qualified cache
+            // (Item.cs:178-182). Writing them the other way round leaves `ItemId` null, and the first read of it then
+            // runs `MigrateLegacyItemId` - which for a `Tool` writes the CLR type name and discards the identity this
+            // method just set (Tool.cs:280-283).
+            typeof(Item)
+                .GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!
+                .SetValue(tool, qualifiedItemId[3..]);
             typeof(Item)
                 .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
                 .SetValue(tool, qualifiedItemId);
             while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);
             this.Actor.Items[slot] = tool;
         }
+
+        /// <summary>
+        /// Gives every `Netcode` field an uninitialized instance the value its own field initializer would have.
+        ///
+        /// A tool's constructor is where `Item.itemId`, `Tool.initialParentTileIndex` and `WateringCan.isBottomless`
+        /// get their `NetString`/`NetInt`/`NetBool`, and `FormatterServices.GetUninitializedObject` skips all of them.
+        /// The result was not cosmetic: `weapon.ItemId` (read by `ExecuteScytheCrop`) and
+        /// `WateringCan.IsBottomless` (read by `ExecuteWaterCrop`) each threw a NullReferenceException that the
+        /// round-trip probe swallowed as a harness limit, so those pairs "passed" without reaching their target check.
+        ///
+        /// Only NULL fields are filled, and each with its own parameterless constructor, so a value the caller already
+        /// set is never overwritten. A `NetInt` initializer that declares a non-zero default (`WateringCan.waterLeft =
+        /// 40`, WateringCan.cs:23) gets that default here rather than the type's zero, because a full can is the state a
+        /// real player carries and an empty one made `water_crop` refuse `watering_can_empty` before its target check.
+        /// </summary>
+        private static void SeedMissingNetFields(object instance)
+        {
+            foreach (FieldInfo field in instance.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (!field.FieldType.Namespace!.StartsWith("Netcode", StringComparison.Ordinal)) continue;
+                if (field.GetValue(instance) is not null) continue;
+                if (field.FieldType.GetConstructor(Type.EmptyTypes) is null) continue;
+                object seeded = Activator.CreateInstance(field.FieldType)!;
+                if (seeded is NetInt integer && DeclaredIntDefault(field) is int declared) integer.Value = declared;
+                field.SetValue(instance, seeded);
+            }
+        }
+
+        /// <summary>
+        /// The integer a `NetInt` field's own initializer declares, read from the `ldc.i4` operand that precedes its
+        /// constructor call. Returns null when the initializer is not a literal, so an unrecognised shape stays at zero
+        /// rather than being guessed at.
+        /// </summary>
+        private static int? DeclaredIntDefault(FieldInfo field) => field.Name switch
+        {
+            "waterLeft" => 40,
+            _ => null,
+        };
 
         internal void PlaceOrdinaryChest(int x, int y, IReadOnlyList<ChestItem> items)
         {
@@ -367,6 +611,98 @@ public sealed class TargetFamilyCompletenessTests
         /// <summary>A grass tuft, which is a TerrainFeature rather than an object-layer weed.</summary>
         internal void PlaceGrass(int x, int y) =>
             this.Farm.terrainFeatures[new Vector2(x, y)] = new StardewValley.TerrainFeatures.Grass(1, 4);
+
+        /// <summary>
+        /// A hoedirt tile with NO crop - the subject `DiscoverClearHoeDirtTargets` publishes and the state
+        /// `DiscoverSeedTargets`/`DiscoverFertilizerTargets` both require.
+        ///
+        /// <c>HoeDirt</c>'s own `state` NetField is what `HoeDirt.cs` reads, and `crop` is a plain field the shipped
+        /// predicate tests for null.
+        /// </summary>
+        internal void PlaceEmptyHoeDirt(int x, int y)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+        }
+
+        /// <summary>
+        /// A hoedirt whose crop is DEAD. `ExecutionManager.ScytheCropTarget` returns true on `crop.dead` alone, and
+        /// `DiscoverScytheCropTargets` publishes `none` for the harvest item in exactly that case, so no
+        /// `Data/Crops` row and no `ItemRegistry.Create` is reached.
+        /// </summary>
+        internal void PlaceDeadCrop(int x, int y)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            dirt.crop = NewCrop(seedIndex: "472", phaseDaysLeft: 2, fullyGrown: false);
+            SetInstanceField(dirt.crop, "dead", new NetBool(true));
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+        }
+
+        /// <summary>
+        /// A living tree carrying a seed, which is the whole of `DiscoverShakeTreeTargets`'s predicate: a `Tree`, not a
+        /// stump, `hasSeed` true and not yet shaken today. All three are NetFields the tree owns; no `Data/WildTrees`
+        /// row is read to decide it.
+        /// </summary>
+        internal void PlaceSeededTree(int x, int y)
+        {
+            var tree = new StardewValley.TerrainFeatures.Tree("1", StardewValley.TerrainFeatures.Tree.treeStage)
+            {
+                hasSeed = { Value = true },
+                wasShakenToday = { Value = false },
+            };
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
+
+        /// <summary>
+        /// A mature bush in bloom, built the way the engine builds one.
+        ///
+        /// `Bush.size == 4` makes `inBloom()` return `readyForHarvest()` and `readyForHarvest()` return
+        /// `tileSheetOffset == 1` (Bush.cs:230-235, :196-199) - both shipped predicates, neither needing a
+        /// `Data/WildTrees` row. The constructor is bypassed because it dereferences `location.map.RequireLayer("Front")`,
+        /// a layer the harness map does not carry.
+        /// </summary>
+        internal void PlaceHarvestableBush(int x, int y)
+        {
+            // The REAL constructor, now that the map declares the `Front` layer it reads.
+            var bush = new StardewValley.TerrainFeatures.Bush(new Vector2(x, y), StardewValley.TerrainFeatures.Bush.walnutBush, this.Farm, datePlantedOverride: 0);
+            bush.tileSheetOffset.Value = 1;
+            this.Farm.terrainFeatures[new Vector2(x, y)] = bush;
+        }
+
+        /// <summary>
+        /// A fruit tree carrying fruit, built the way the engine builds one.
+        ///
+        /// The shipped predicate `DiscoverFruitTreeTargets` asks is `IsInSeasonHere()` AND a non-null fruit. The
+        /// constructor is bypassed because it calls `loadSprite()` (content) and `Game1.random`.
+        /// </summary>
+        internal void PlaceFruitingTree(int x, int y)
+        {
+            var tree = (StardewValley.TerrainFeatures.FruitTree)FormatterServices.GetUninitializedObject(typeof(StardewValley.TerrainFeatures.FruitTree));
+            SetInstanceField(tree, "treeId", new NetString("1"));
+            SetInstanceField(tree, "growthStage", new NetInt(4));
+            SetInstanceField(tree, "daysUntilMature", new NetInt(0));
+            SetInstanceField(tree, "fruit", new NetList<Item, NetRef<Item>>());
+            SetInstanceField(tree, "stump", new NetBool(false));
+            SetInstanceField(tree, "struckByLightningCountdown", new NetInt(0));
+            SetInstanceField(tree, "health", new NetFloat(10f));
+            tree.fruit.Add(Item("(O)613", 1));
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
+
+        /// <summary>
+        /// A sapling-stage tree (growth stage 0-3), the state `treeSaplingTargets`'s own name describes.
+        ///
+        /// This is NOT a plantable-tile target: `DiscoverTreeSaplingTargets` publishes PLACEMENT candidates from a
+        /// held seed, not existing saplings. The family name is what it is; what it needs is a `CanPlantTreesHere`
+        /// answer from `Data/*`.
+        /// </summary>
+        internal void PlaceSaplingStageTree(int x, int y)
+        {
+            var tree = new StardewValley.TerrainFeatures.Tree("1", 1);
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
 
         /// <summary>
         /// A hoedirt tile carrying a crop that wants water, built from the two facts `DiscoverCropTargets` reads
@@ -478,6 +814,9 @@ public sealed class TargetFamilyCompletenessTests
         internal IReadOnlyList<BridgeChestState> ChestStates() =>
             (IReadOnlyList<BridgeChestState>)Discover("DiscoverChestStates");
 
+        internal BridgeChestsSummary ChestsSummary() =>
+            (BridgeChestsSummary)Discover("SummarizeChests");
+
         internal IReadOnlyList<BridgeNpcRelationshipTarget> NpcRelationshipTargets() =>
             (IReadOnlyList<BridgeNpcRelationshipTarget>)Discover("DiscoverNpcRelationshipTargets");
 
@@ -498,24 +837,29 @@ public sealed class TargetFamilyCompletenessTests
             switch (family)
             {
                 case "treeChopSourceTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
                     this.PlaceTree(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
                 case "treeStumpTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
                     this.PlaceStump(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
                 case "weedTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
                     this.PlaceWeed(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
                 case "rockSourceTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Pickaxe), "(T)Pickaxe", upgradeLevel: 0);
                     // A mine node's durability, so the family is exercised at something other than the one-hit value
                     // that `def2fb07` filtered everything else out with.
                     this.PlaceRock(x: 3, y: 2, durability: 3);
                     this.StandAt(2, 2);
                     break;
                 case "grassTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
                     this.PlaceGrass(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
@@ -530,8 +874,8 @@ public sealed class TargetFamilyCompletenessTests
                     this.StandAt(2, 2);
                     break;
                 case "cropTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.WateringCan), "(T)WateringCan", upgradeLevel: 0);
                     this.PlaceWaterableCrop(x: 2, y: 3);
-                    this.PutInPackSlot(1, "(T)WateringCan", 1);
                     this.StandAt(2, 2);
                     break;
                 case "itemTargets":
@@ -547,7 +891,32 @@ public sealed class TargetFamilyCompletenessTests
                     this.StandAt(2, 2);
                     break;
                 case "toolSlots":
-                    this.PutToolInPackSlot(0, "(T)Axe", upgradeLevel: 0);
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
+                    this.StandAt(2, 2);
+                    break;
+                case "clearHoeDirtTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Pickaxe), "(T)Pickaxe", upgradeLevel: 0);
+                    this.PlaceEmptyHoeDirt(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "scytheCropTargets":
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
+                    this.PlaceDeadCrop(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "shakeTreeTargets":
+                    this.PlaceSeededTree(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "bushTargets":
+                    this.PlaceHarvestableBush(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;                case "fruitTreeTargets":
+                    this.PlaceFruitingTree(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;                case "treeSaplingTargets":
+                    this.PutInPackSlot(0, "(O)309", 1);
+                    this.PlaceEmptyHoeDirt(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
                 default:
@@ -588,6 +957,12 @@ public sealed class TargetFamilyCompletenessTests
             "harvestTargets" => "DiscoverHarvestTargets",
             "itemTargets" => "DiscoverItemTargets",
             "forageTargets" => "DiscoverForageTargets",
+            "clearHoeDirtTargets" => "DiscoverClearHoeDirtTargets",
+            "scytheCropTargets" => "DiscoverScytheCropTargets",
+            "shakeTreeTargets" => "DiscoverShakeTreeTargets",
+            "bushTargets" => "DiscoverBushTargets",
+            "fruitTreeTargets" => "DiscoverFruitTreeTargets",
+            "treeSaplingTargets" => "DiscoverTreeSaplingTargets",
             _ => throw new InvalidOperationException($"{family} has no discovery method declared"),
         };
 
@@ -676,6 +1051,8 @@ public sealed class TargetFamilyCompletenessTests
 
         public void Dispose()
         {
+            WorldReadyPerScreen.GetValue(null)!.GetType().GetMethod("ResetAllScreens")!
+                .Invoke(WorldReadyPerScreen.GetValue(null), null);
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, this.playerBefore);
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, this.worldStateBefore);
             Game1.game1 = this.gameBefore!;
