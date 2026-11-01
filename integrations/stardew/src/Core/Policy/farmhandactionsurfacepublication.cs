@@ -43,7 +43,20 @@ public sealed record FarmhandActionDescriptorProjection(
     /// Omitted when null, like `Approach`, so the ninety-four actions that require no binding keep the exact wire shape
     /// they had before.
     /// </para>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionObservationBindingProjection? SceneTarget = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionObservationBindingProjection? SceneTarget = null,
+    /// <summary>
+    /// The snapshot family that supplies this action's targets (`cropTargets`), or null when it addresses nothing a
+    /// snapshot publishes (`advance_day`, `dismiss_modal`).
+    ///
+    /// <para>
+    /// Omitted when null, like `Approach` and `SceneTarget`, so the actions that address nothing keep the exact wire
+    /// shape they had before. Published because a refusal that says a target was refused without naming the family
+    /// the caller should re-read leaves it guessing at a vocabulary it cannot see - and because the two halves that
+    /// must agree (the `Discover*` projection that publishes rows and the preflight that refuses them) are otherwise
+    /// connected by nothing at all in this assembly.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TargetFamily = null
 );
 
 /// <summary>
@@ -155,7 +168,8 @@ public static class FarmhandActionSurfacePublication
                     sceneTarget.Version,
                     sceneTarget.Required,
                     sceneTarget.RequiredProperties)
-                : null);
+                : null,
+            TargetFamily: descriptor.TargetFamily);
     }
 
     private static void ValidateIdentity(string value, string name)

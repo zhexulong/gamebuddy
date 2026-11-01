@@ -167,7 +167,11 @@ public sealed record FarmhandActionDescriptorWire(
     long? WatchdogMs = null,
     // The spatial precondition the Mod enforces, so the companion can stand in the right place instead of learning it
     // by being refused. Absent when the action declares none (WhenWritingNull), which is NOT "stand anywhere".
-    FarmhandActionApproachRequirementWire? Approach = null
+    FarmhandActionApproachRequirementWire? Approach = null,
+    // The snapshot family that supplies this action's targets (`cropTargets`), or null when it addresses nothing a
+    // snapshot publishes. Published so a refusal can name the family to re-read instead of leaving the caller to
+    // guess at a vocabulary it cannot see.
+    string? TargetFamily = null
 );
 
 public sealed record FarmhandActionRegistrationWire(

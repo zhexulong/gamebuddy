@@ -12,6 +12,7 @@
       "dialogue-web/src/**/*.{ts,tsx,css}"
     ],
     "experimentalScannerIgnores": [
+      "scratch",
       ".worktrees",
       "ref",
       "node_modules",

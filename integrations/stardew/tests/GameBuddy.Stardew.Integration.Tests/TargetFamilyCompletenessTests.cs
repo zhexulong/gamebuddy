@@ -255,6 +255,11 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(actor, "cursorSlotItem", new NetRef<Item>());
             SetInstanceField(actor, "currentToolIndex", new NetInt(0));
             SetInstanceField(actor, "netItemStowed", new NetBool(false));
+            // WIA admission reads the per-tick disposition (WorldModel.ReadFacts), so a probe Farmer must supply every
+            // NetField it touches. The round-trip probe drives each action's REAL preflight, which means this world's
+            // actor now has to survive admission as well as discovery.
+            SetInstanceField(actor, "usingTool", new NetBool(false));
+            SetInstanceField(actor, "toolPower", new NetInt(0));
             // The pack is the item source `chest_store` publishes and the capacity `chest_retrieve` tests.
             SetInstanceField(actor, "netItems", new NetRef<StardewValley.Inventories.Inventory> { Value = new StardewValley.Inventories.Inventory() });
             SetInstanceField(actor, "maxItems", new NetInt(PackCapacity));
@@ -275,8 +280,23 @@ public sealed class TargetFamilyCompletenessTests
             this.Actor.Items[slot] = Item(qualifiedItemId, stack);
         }
 
-        /// <summary>Leaves one empty pack slot, which is what `couldInventoryAcceptThisItem` needs to say yes.</summary>
         internal void FreeOnePackSlot() => this.Actor.Items.Add(null!);
+
+        /// <summary>
+        /// A real TOOL in a pack slot. `DiscoverToolSlots` selects `items[slot] is Tool`, so an `Object` carrying a
+        /// tool's item id is not the same fact: the identity and the upgrade level are seeded through the fields
+        /// `Tool.UpgradeLevel` and `Item.QualifiedItemId` are backed by, because `new Axe()` loads game content.
+        /// </summary>
+        internal void PutToolInPackSlot(int slot, string qualifiedItemId, int upgradeLevel)
+        {
+            var tool = (StardewValley.Tools.Axe)FormatterServices.GetUninitializedObject(typeof(StardewValley.Tools.Axe));
+            SetInstanceField(tool, "upgradeLevel", new NetInt(upgradeLevel));
+            typeof(Item)
+                .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(tool, qualifiedItemId);
+            while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);
+            this.Actor.Items[slot] = tool;
+        }
 
         internal void PlaceOrdinaryChest(int x, int y, IReadOnlyList<ChestItem> items)
         {
@@ -348,11 +368,266 @@ public sealed class TargetFamilyCompletenessTests
         internal void PlaceGrass(int x, int y) =>
             this.Farm.terrainFeatures[new Vector2(x, y)] = new StardewValley.TerrainFeatures.Grass(1, 4);
 
+        /// <summary>
+        /// A hoedirt tile carrying a crop that wants water, built from the two facts `DiscoverCropTargets` reads
+        /// (`needsWatering()` / `isWatered()`), never from a hand-written row.
+        /// </summary>
+        internal void PlaceWaterableCrop(int x, int y)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            dirt.crop = NewCrop(seedIndex: "472", phaseDaysLeft: 2, fullyGrown: false);
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+        }
+
+        /// <summary>
+        /// A hoedirt tile whose crop reports `readyForHarvest()` through the engine's own day counter, so
+        /// `DiscoverHarvestTargets` decides it - the family whose season-killed case was `24d8168e`.
+        /// </summary>
+        internal void PlaceHarvestableCrop(int x, int y)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            dirt.crop = NewCrop(seedIndex: "472", phaseDaysLeft: 0, fullyGrown: true);
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+        }
+
+        /// <summary>One object-layer forageable, the subject `DiscoverForageTargets` scans for.</summary>
+        internal void PlaceForage(int x, int y, string qualifiedItemId)
+        {
+            StardewValley.Object forage = PlacedObject(qualifiedItemId, name: "Daffodil", category: -81);
+            forage.IsSpawnedObject = true;
+            forage.Stack = 1;
+            this.Farm.objects[new Vector2(x, y)] = forage;
+        }
+
+        /// <summary>One Debris chunk on a tile, the subject `DiscoverItemTargets` publishes.</summary>
+        internal void PlaceGroundDrop(int x, int y, string qualifiedItemId)
+        {
+            var chunks = new NetObjectShrinkList<Chunk>();
+            chunks.Add(new Chunk(new Vector2(x * 64, y * 64), 0f, 0f, 0));
+            var debris = (Debris)FormatterServices.GetUninitializedObject(typeof(Debris));
+            SetInstanceField(debris, "chunks", chunks);
+            SetInstanceField(debris, "debrisType", new NetEnum<Debris.DebrisType>(Debris.DebrisType.OBJECT));
+            SetInstanceField(debris, "itemId", new NetString(qualifiedItemId[3..]));
+            SetInstanceField(debris, "netItem", new NetRef<Item> { Value = Item(qualifiedItemId, 1) });
+            SetInstanceField(debris, "netItemQuality", new NetInt(0));
+            SetInstanceField(debris, "DroppedByPlayerID", new NetLong(ActorId));
+            this.Farm.debris.Add(debris);
+        }
+
+        /// <summary>
+        /// One edge warp the location declares. The `warps` family is projected INLINE in `CreateBridgeSnapshot`
+        /// (`player.currentLocation.warps.Select(...)`), not by a `Discover*` method, which is why it has no entry in
+        /// <see cref="DiscoveryMethodFor"/> and gets its own row projection below.
+        /// </summary>
+        internal void PlaceEdgeWarp(int sourceX, int sourceY, string targetLocation, int targetX, int targetY) =>
+            this.Farm.warps.Add(new StardewValley.Warp(sourceX, sourceY, targetLocation, targetX, targetY, flipFarmer: false));
+
+        /// <summary>
+        /// The `warps` rows in the shape `CreateBridgeSnapshot` publishes: the location's own warp list, filtered by
+        /// the same bounds the snapshot applies. The one projection this file restates, because the family has no
+        /// `Discover*` method to drive - stated here rather than leaving the family in `Undriven` as though a headless
+        /// world could not declare a warp, which it plainly can.
+        /// </summary>
+        internal IReadOnlyList<object> WarpRows() =>
+            this.Farm.warps
+                .Where(warp => !warp.npcOnly.Value
+                    && !string.IsNullOrWhiteSpace(warp.TargetName)
+                    && warp.X >= -1 && warp.Y >= -1 && warp.X <= 1000 && warp.Y <= 1000
+                    && warp.TargetX >= 0 && warp.TargetY >= 0 && warp.TargetX <= 1000 && warp.TargetY <= 1000)
+                .Select(warp => (object)new RoundTripWarpRow(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY))
+                .ToArray();
+
+        /// <summary>One published warp, carrying the field names `travel`/`enter_exit` read (`sourceX`, `sourceY`).</summary>
+        internal sealed record RoundTripWarpRow(int SourceX, int SourceY, string Target, int TargetX, int TargetY);
+
+        /// <summary>
+        /// A crop built without a content manager: `netSeedIndex`, `indexOfHarvest` and the day counters are the fields
+        /// the two crop projections read, and `new Crop(id, ...)` needs `Data/Crops` which this process never loads.
+        ///
+        /// The four fields below are exactly what `HoeDirt.readyForHarvest()` (`HoeDirt.cs:465-476`) and
+        /// `HoeDirt.isWatered()` (`:391`) read, so the shipped predicates decide - this method writes state, never an
+        /// answer.
+        /// </summary>
+        private static StardewValley.Crop NewCrop(string seedIndex, int phaseDaysLeft, bool fullyGrown)
+        {
+            var crop = (StardewValley.Crop)FormatterServices.GetUninitializedObject(typeof(StardewValley.Crop));
+            SetInstanceField(crop, "netSeedIndex", new NetString(seedIndex));
+            SetInstanceField(crop, "indexOfHarvest", new NetString("24"));
+            SetInstanceField(crop, "overrideTexturePath", new NetString(null));
+            SetInstanceField(crop, "rowInSpriteSheet", new NetInt(0));
+            SetInstanceField(crop, "fullyGrown", new NetBool(fullyGrown));
+            SetInstanceField(crop, "forageCrop", new NetBool(false));
+            SetInstanceField(crop, "dead", new NetBool(false));
+            SetInstanceField(crop, "dayOfCurrentPhase", new NetInt(0));
+            // `HoeDirt.readyForHarvest()` is `currentPhase >= phaseDays.Count - 1` (HoeDirt.cs:467), so the phase list
+            // and the current phase are what decide it - never a flag this method writes.
+            var phases = new NetIntList();
+            for (int index = 0; index < 5; index++) phases.Add(1);
+            SetInstanceField(crop, "phaseDays", phases);
+            SetInstanceField(crop, "currentPhase", new NetInt(fullyGrown ? 4 : 1));
+            // `Crop.GetData()` reads `Game1.cropData` (Data/Crops), which a process without content never loads. An
+            // EMPTY dictionary is honest: every crop then takes the engine's own documented default
+            // (`GetHarvestMethod()?.HarvestMethod ?? HarvestMethod.Grab`, `RegrowsAfterHarvest() -> false`), so the
+            // shipped predicates still decide.
+            Game1.cropData ??= new Dictionary<string, StardewValley.GameData.Crops.CropData>(StringComparer.Ordinal);
+            return crop;
+        }
+
         internal IReadOnlyList<BridgeChestState> ChestStates() =>
             (IReadOnlyList<BridgeChestState>)Discover("DiscoverChestStates");
 
         internal IReadOnlyList<BridgeNpcRelationshipTarget> NpcRelationshipTargets() =>
             (IReadOnlyList<BridgeNpcRelationshipTarget>)Discover("DiscoverNpcRelationshipTargets");
+
+        /// <summary>
+        /// Builds one honest instance of every family this headless world can construct, through the SAME placement
+        /// helpers the completeness cases use.
+        ///
+        /// Nothing is written into a projection's input by hand to make a family appear: each family is built from the
+        /// game types the engine itself would build and the SHIPPED `Discover*` method decides whether it publishes.
+        /// A family this world cannot build is not silently empty - `TargetFamilyRoundTripTests` names it in `Undriven`
+        /// with the blocker, so the gap is a count rather than an absence.
+        /// </summary>
+        internal void PopulateFor(string family)
+        {
+            // The pack first: every tool-driven action's preflight refuses `*_not_equipped_in_requested_slot` or
+            // `tool_not_owned:<category>` BEFORE it ever looks at the target, so a world without the declared tool
+            // makes the round trip pass while the target check never runs - the vacuous shape this gate exists for.
+            switch (family)
+            {
+                case "treeChopSourceTargets":
+                    this.PlaceTree(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "treeStumpTargets":
+                    this.PlaceStump(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "weedTargets":
+                    this.PlaceWeed(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "rockSourceTargets":
+                    // A mine node's durability, so the family is exercised at something other than the one-hit value
+                    // that `def2fb07` filtered everything else out with.
+                    this.PlaceRock(x: 3, y: 2, durability: 3);
+                    this.StandAt(2, 2);
+                    break;
+                case "grassTargets":
+                    this.PlaceGrass(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
+                case "chests":
+                    this.FreeOnePackSlot();
+                    this.PutInPackSlot(1, "(O)72", 1);
+                    this.PlaceOrdinaryChest(x: 2, y: 3, items: new[] { new ChestItem("(O)72", 3) });
+                    this.StandAt(2, 2);
+                    break;
+                case "npcRelationshipTargets":
+                    this.PlaceVillager("Abigail", x: 2, y: 3, friendship: null);
+                    this.StandAt(2, 2);
+                    break;
+                case "cropTargets":
+                    this.PlaceWaterableCrop(x: 2, y: 3);
+                    this.PutInPackSlot(1, "(T)WateringCan", 1);
+                    this.StandAt(2, 2);
+                    break;
+                case "itemTargets":
+                    this.PlaceGroundDrop(x: 2, y: 3, qualifiedItemId: "(O)24");
+                    this.StandAt(2, 2);
+                    break;
+                case "forageTargets":
+                    this.PlaceForage(x: 2, y: 3, qualifiedItemId: "(O)16");
+                    this.StandAt(2, 2);
+                    break;
+                case "warps":
+                    this.PlaceEdgeWarp(sourceX: 3, sourceY: 2, targetLocation: "Forest", targetX: 10, targetY: 10);
+                    this.StandAt(2, 2);
+                    break;
+                case "toolSlots":
+                    this.PutToolInPackSlot(0, "(T)Axe", upgradeLevel: 0);
+                    this.StandAt(2, 2);
+                    break;
+                default:
+                    throw new InvalidOperationException(
+                        $"{family} has no populate rule: a family this file claims to drive must say how the world builds it");
+            }
+        }
+
+        /// <summary>The rows the REAL `Discover*` publishes for one family, in the wire shape the snapshot carries.</summary>
+        internal IReadOnlyList<object> Rows(string family) =>
+            // `DiscoverToolSlots` reads the PACK, not the actor, so it takes a different argument from every other
+            // discovery method. Named here rather than widening `Discover` with an optional parameter that no other
+            // family would use.
+            family == "toolSlots"
+                ? (IReadOnlyList<object>)typeof(ExecutionManager)
+                    .GetMethod("DiscoverToolSlots", BindingFlags.NonPublic | BindingFlags.Static)!
+                    .Invoke(null, new object?[] { this.Actor.Items })!
+                : (IReadOnlyList<object>)Discover(DiscoveryMethodFor(family));
+
+        /// <summary>
+        /// The discovery method each family's rows come from, read from the ONE family-to-method mapping the
+        /// snapshot's own construction already uses rather than a second table here.
+        ///
+        /// `warps` is absent on purpose: it is projected INLINE in `CreateBridgeSnapshot`
+        /// (`player.currentLocation.warps.Select(...)`), so it has no `Discover*` method to drive. Its round trip is
+        /// asserted through <see cref="WarpRows"/> instead, which reads the same `location.warps` the snapshot reads.
+        /// </summary>
+        private static string DiscoveryMethodFor(string family) => family switch
+        {
+            "treeChopSourceTargets" => "DiscoverTreeChopSourceTargets",
+            "treeStumpTargets" => "DiscoverTreeStumpTargets",
+            "weedTargets" => "DiscoverWeedTargets",
+            "rockSourceTargets" => "DiscoverRockSourceTargets",
+            "grassTargets" => "DiscoverGrassTargets",
+            "chests" => "DiscoverChestStates",
+            "npcRelationshipTargets" => "DiscoverNpcRelationshipTargets",
+            "cropTargets" => "DiscoverCropTargets",
+            "harvestTargets" => "DiscoverHarvestTargets",
+            "itemTargets" => "DiscoverItemTargets",
+            "forageTargets" => "DiscoverForageTargets",
+            _ => throw new InvalidOperationException($"{family} has no discovery method declared"),
+        };
+
+        /// <summary>Why a family published nothing, so a vacuous round trip names the world it was run against.</summary>
+        internal string Describe(string family) =>
+            $"{family} published 0 rows against objects={this.Farm.objects.Count()} "
+            + $"terrainFeatures={this.Farm.terrainFeatures.Count()} characters={this.Farm.characters.Count} "
+            + $"debris={this.Farm.debris.Count} warps={this.Farm.warps.Count} buildings={this.Farm.buildings.Count} "
+            + $"actor={this.Actor.Tile.X},{this.Actor.Tile.Y}";
+
+        /// <summary>
+        /// A manager the action's own preflight can be driven through, with the scope bound to this probe actor so
+        /// the admission guard passes and the target checks are the ones that decide.
+        /// </summary>
+        internal ExecutionManager NewExecutionManager(string actionId)
+        {
+            var scope = new BridgeScope("stardew", "save_probe", "world_probe", ActorId.ToString(System.Globalization.CultureInfo.InvariantCulture), "companion_probe");
+            var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { actionId });
+            var executions = new ExecutionManager(
+                new DummyMonitor(),
+                () => publication,
+                executionJournal: new FarmhandExecutionJournal(new RoundTripPersistence()),
+                executionScope: scope);
+            executions.SetTestActorResolver(() => this.Actor);
+            return executions;
+        }
+
+        /// <summary>An in-memory journal store: this probe never restarts, so nothing has to survive one.</summary>
+        private sealed class RoundTripPersistence : IModGlobalDataPersistence
+        {
+            private FarmhandExecutionJournalState? state;
+
+            public FarmhandExecutionJournalState? Read(string key) => this.state;
+
+            public bool TryWrite(string key, FarmhandExecutionJournalState value)
+            {
+                this.state = value;
+                return true;
+            }
+        }
 
         /// <summary>
         /// One real `Discover*` family by name, so a caller outside this file drives the SAME production projection this
