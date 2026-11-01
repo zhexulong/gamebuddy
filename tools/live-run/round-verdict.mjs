@@ -185,22 +185,33 @@ const smapiPath = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", 
 const modLogPath = join(runDir, "mod-log.txt");
 const boundSession = sessionPath(runDir);
 
-// 1. Contract errors: the run is worthless as evidence if these are non-zero. SMAPI log only.
+// 1. Contract errors: the run is worthless as evidence if these are non-zero.
+//
+// Read BOTH files, because the two carry different halves and neither alone is the whole answer. Measured 2026-11-01 on
+// `round20`, whose bridge died of `invalid_snapshot:rockSourceTargets`: `mod-log.txt` mentions it 0 times, `result.json` 3
+// times (in `bridgeDisconnections`, `failure`, and the verdict's own `reasonCode`). The Mod does not log a bridge refusal -
+// the Host closes the pipe and records why. A criterion that read only the Mod log therefore printed
+// `invalid_snapshot=0 PASS` over a run whose bridge had been closed by exactly that code.
+//
+// The three codes are counted in the Mod log (the Mod refuses a frame it built) and in the Host's own disconnection records
+// (the Host refuses a frame it received), and the two counts are reported separately so a reader can tell which side spoke.
 const modLog = existsSync(modLogPath)
   ? readFileSync(modLogPath, "utf8")
   : existsSync(smapiPath)
     ? readFileSync(smapiPath, "utf8")
     : "";
+const hostDisconnections = JSON.stringify(result.bridgeDisconnections ?? []);
 const contractErrors = ["invalid_snapshot", "invalid_args", "invalid_observe_scene_result"].map((code) => ({
   code,
-  count: modLog.split(code).length - 1,
+  mod: modLog.split(code).length - 1,
+  host: hostDisconnections.split(code).length - 1,
 }));
-const contractTotal = contractErrors.reduce((total, entry) => total + entry.count, 0);
+const contractTotal = contractErrors.reduce((total, entry) => total + entry.mod + entry.host, 0);
 record(
   "1 contract errors",
   contractTotal === 0 ? "PASS" : "FAIL",
-  contractErrors.map((entry) => `${entry.code}=${entry.count}`).join(" "),
-  modLogPath + " (or SMAPI-latest.txt)",
+  contractErrors.map((entry) => `${entry.code}=mod:${entry.mod},host:${entry.host}`).join(" "),
+  `${modLogPath} (mod side) + result.json bridgeDisconnections (host side)`,
 );
 
 // Everything the MODEL saw about the environment lives in the run's own record, not in the bound session: the block
