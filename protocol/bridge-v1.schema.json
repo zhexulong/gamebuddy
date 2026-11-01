@@ -2770,6 +2770,10 @@
           },
           "maxItems": 64
         },
+        "chestsSummary": {
+          "description": "The current location's chests in one row: how many, how many items they hold, and how many are at the engine's own chest capacity. Location-wide rather than radius-bounded, and with no location member of its own - it describes `location`.",
+          "$ref": "#/$defs/chestsSummary"
+        },
         "shippingBinTargets": {
           "type": "array",
           "items": {
@@ -3327,7 +3331,7 @@
         "health": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 25
         }
       }
     },
@@ -4372,6 +4376,33 @@
         "stack": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "chestsSummary": {
+      "description": "The current location's chests as one bounded line: how many there are, how many items they hold between them, and how many have no free slot left. `fullCount` counts containers at the engine's own `Chest.GetActualCapacity()`, where `Chest.addItem` stops accepting a new stack.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chestCount",
+        "itemCount",
+        "fullCount"
+      ],
+      "properties": {
+        "chestCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "itemCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "fullCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
         }
       }
     },

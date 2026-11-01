@@ -489,13 +489,26 @@ export function isRockSourceTargetFact(value: unknown): boolean {
     // per swing (Pickaxe.cs:139-140). It used to be `const 1` - "the basic pickaxe
     // removes it in one swing" - which refused every multi-hit rock the Mod had
     // correctly discovered, so the whole snapshot failed and no action could run.
-    // The population is 1-25 (Farm.cs:540-606, MineShaft.cs:1733-1798, :4351-4460);
-    // the bound is the schema's, and a value outside it is a malformed frame, not a
-    // gameplay judgement this layer is entitled to make.
+    //
+    // Both bounds are the ENGINE's, cited rather than rounded:
+    //
+    //   1..25  Every path that creates a breakable stone writes 1 or more and never 0:
+    //          the constructor's `default` arm writes 1 and 8/10/12/14/25 get their own
+    //          durability (Object.cs:920-943), the mountain writes 2-16 (Farm.cs:551-601,
+    //          Mountain.cs:259-317), a mine node writes 1 up to 25 (MineShaft.cs:4354-4359),
+    //          the volcano writes 1-16 (VolcanoDungeon.cs:1521-1556). 25 is the largest
+    //          value ANY of them writes, and nothing clamps above it - so 25 is a measured
+    //          ceiling, not a round number near one (the previous `100` was exactly that).
+    //          A stone only reaches 0 INSIDE the swing that removes it - the subtraction at
+    //          Object.cs:1129-1133 / Pickaxe.cs:139-146 is followed by the object's removal
+    //          at Pickaxe.cs:169-178 in the same call - and `DiscoverRockSourceTargets` runs
+    //          on the game thread, so 0 is never a discoverable stone. The floor stays 1.
+    //
+    // A value outside these is a malformed frame, not a gameplay judgement this layer makes.
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
     value.health >= 1 &&
-    value.health <= 100 &&
+    value.health <= 25 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128
@@ -1051,6 +1064,31 @@ function isChestItemFact(value: unknown): boolean {
     typeof value.stack === "number" &&
     Number.isSafeInteger(value.stack) &&
     value.stack > 0
+  );
+}
+
+/**
+ * The container SUMMARY: the current location's chest count, item count and full count, in one row.
+ *
+ * A scalar record rather than an array family, so it is validated here beside the container it summarises and named in
+ * `SNAPSHOT_KEYS` - the same treatment `artifactSpotFarmSourceCount` gets for the same reason (one number, not a list of
+ * targets). It carries no `location` member on purpose: it describes `snapshot.location`, and a second spelling of that
+ * fact could disagree with the field it is read beside.
+ *
+ * `itemCount` is the sum of every occupied slot's stack, so its ceiling is what a location's containers can hold rather
+ * than the 36-slot cap of any one container. `fullCount` cannot exceed `chestCount`, and that is checked rather than
+ * assumed: two numbers that describe the same containers must agree about how many there are.
+ */
+export function isChestsSummaryFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["chestCount", "itemCount", "fullCount"]) &&
+    isNonNegativeSafeInteger(value.chestCount) &&
+    value.chestCount <= 1_000_000 &&
+    isNonNegativeSafeInteger(value.itemCount) &&
+    value.itemCount <= 1_000_000_000 &&
+    isNonNegativeSafeInteger(value.fullCount) &&
+    value.fullCount <= value.chestCount
   );
 }
 
