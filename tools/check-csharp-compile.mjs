@@ -41,6 +41,10 @@
  * Usage:
  *   node tools/check-csharp-compile.mjs            # the verdict; exit 1 on any failure
  *   node tools/check-csharp-compile.mjs --list     # the derived project population
+ *
+ * red-proof: inject  a tree whose one tracked project has a type error -> `csharp_compile_compile_error:<project>`,
+ *                    exit 1, and the project named rather than counted
+ *                    (tools/check-csharp-compile.test.mjs, "the gate reports an uncompilable project by name")
  */
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -136,8 +140,8 @@ export function classify({ project, exitCode, output }) {
 }
 
 /** Every tracked C# project: the population, derived, never maintained here. */
-export function trackedProjects() {
-  const listed = spawnSync("git", ["ls-files", "*.csproj"], { cwd: ROOT, encoding: "utf8", windowsHide: true });
+export function trackedProjects(root = ROOT) {
+  const listed = spawnSync("git", ["ls-files", "*.csproj"], { cwd: root, encoding: "utf8", windowsHide: true });
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr.trim()}`);
   return listed.stdout
     .split("\n")
@@ -152,19 +156,22 @@ function gamePathArguments() {
   return configured === "" ? [] : [`-p:GamePath=${configured}`];
 }
 
-function build(project) {
+function build(project, root) {
   const built = spawnSync(
     "dotnet",
     ["build", project, "-c", CONFIGURATION, "--nologo", "-v", "q", ...gamePathArguments()],
-    { cwd: ROOT, encoding: "utf8", windowsHide: true, timeout: BUILD_TIMEOUT_MS },
+    { cwd: root, encoding: "utf8", windowsHide: true, timeout: BUILD_TIMEOUT_MS },
   );
   return { exitCode: built.status ?? 1, output: `${built.stdout ?? ""}${built.stderr ?? ""}` };
 }
 
-function main(argv) {
-  const projects = trackedProjects();
+export function main(
+  argv,
+  { root = ROOT, write = (line) => process.stdout.write(line), writeError = (line) => process.stderr.write(line) } = {},
+) {
+  const projects = trackedProjects(root);
   if (argv.includes("--list")) {
-    for (const project of projects) process.stdout.write(`${project}\n`);
+    for (const project of projects) write(`${project}\n`);
     return 0;
   }
 
@@ -172,28 +179,28 @@ function main(argv) {
   let excluded = 0;
   const failures = [];
   for (const project of projects) {
-    const verdict = classify({ project, ...build(project) });
+    const verdict = classify({ project, ...build(project, root) });
     if (verdict.outcome === "compiled") {
       compiled += 1;
     } else if (verdict.outcome === "declared_exclusion") {
       excluded += 1;
       // Printed on every run, green ones included: an exclusion nobody reads is coverage that
       // looks whole and is not.
-      process.stdout.write(`csharp_compile_excluded:${project}:${exclusionsByProject.get(project).cost}\n`);
+      write(`csharp_compile_excluded:${project}:${exclusionsByProject.get(project).cost}\n`);
     } else {
       failures.push({ project, code: verdict.outcome, detail: verdict.detail });
     }
   }
 
-  process.stdout.write(
+  write(
     `csharp_compile projects=${projects.length} compiled=${compiled} excluded=${excluded} ` +
       `failed=${failures.length}\n`,
   );
   for (const failure of failures) {
-    process.stderr.write(`csharp_compile_${failure.code}:${failure.project}:${failure.detail}\n`);
+    writeError(`csharp_compile_${failure.code}:${failure.project}:${failure.detail}\n`);
   }
   if (failures.length > 0) {
-    process.stderr.write(
+    writeError(
       `csharp_compile_failed: ${failures.length} of ${projects.length} tracked C# projects do not build ` +
         `(named above; a CS diagnostic is committed source that does not compile)\n`,
     );

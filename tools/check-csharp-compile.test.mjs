@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { classify, EXCLUSIONS, trackedProjects } from "./check-csharp-compile.mjs";
+import { classify, EXCLUSIONS, main, trackedProjects } from "./check-csharp-compile.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MOD = "integrations/stardew/GameBuddy.Stardew.csproj";
@@ -109,6 +111,81 @@ test("every exclusion names a project that exists, so a rename cannot leave a de
     assert.ok(listed.has(entry.project), `${entry.project} is registered but is not a tracked project`);
     assert.ok(entry.refusal.trim() !== "", `${entry.project} registers no refusal text`);
     assert.ok(entry.cost.trim() !== "", `${entry.project} registers no cost`);
+  }
+});
+
+/**
+ * A tree the gate can be run against as a whole: its own git repository, so `git ls-files` answers the
+ * population question the way it does in this one, and one project of two.
+ */
+function scratchProjectTree(projects) {
+  const root = mkdtempSync(join(tmpdir(), "csharp-compile-gate-"));
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 0, `git ${args.join(" ")} failed: ${result.stderr}`);
+  };
+  git("init", "-q");
+  for (const [name, source] of Object.entries(projects)) {
+    writeFileSync(
+      join(root, `${name}.csproj`),
+      '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>\n    <TargetFramework>net8.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n',
+    );
+    writeFileSync(join(root, `${name}.cs`), source);
+  }
+  git("add", ".");
+  return root;
+}
+
+/** Run the gate's own entry over a tree, capturing what it printed and the exit code it returns. */
+function runGate(root) {
+  const printed = [];
+  const errors = [];
+  const exitCode = main([], {
+    root,
+    write: (line) => printed.push(line),
+    writeError: (line) => errors.push(line),
+  });
+  return { exitCode, stdout: printed.join(""), stderr: errors.join("") };
+}
+
+// The gate's own question is "does the committed source compile", and a report that says `failed=0`
+// over a project the compiler refused would answer it wrongly while looking green. So the falsifier
+// runs the real entry point over a tree whose one project has a real type error: the gate must name
+// that project and exit 1. The control is the same tree with the type error removed, so a gate that
+// simply fails on any scratch tree is not mistaken for one that reports.
+test("the gate reports an uncompilable project by name", () => {
+  const broken = scratchProjectTree({
+    Broken: "public static class Broken\n{\n    public static string? Name = Missing.Name;\n}\n",
+  });
+  const good = scratchProjectTree({
+    Whole: 'public static class Whole\n{\n    public static string Name = "whole";\n}\n',
+  });
+  try {
+    const report = runGate(broken);
+    assert.equal(report.exitCode, 1, `the gate must fail on an uncompilable project, printed: ${report.stdout}`);
+    assert.match(report.stderr, /csharp_compile_compile_error:Broken\.csproj:/u);
+    assert.match(report.stderr, /error CS\d{4}/u, "the finding carries the compiler's own diagnostic");
+    assert.match(report.stdout, /csharp_compile projects=1 compiled=0 excluded=0 failed=1/u);
+
+    const control = runGate(good);
+    assert.equal(control.exitCode, 0, `a project that compiles must pass, printed: ${control.stdout}`);
+    assert.match(control.stdout, /csharp_compile projects=1 compiled=1 excluded=0 failed=0/u);
+    assert.equal(control.stderr, "");
+  } finally {
+    rmSync(broken, { recursive: true, force: true });
+    rmSync(good, { recursive: true, force: true });
+  }
+});
+
+// The population is derived, so a tree the gate has never seen is covered by existing - and the
+// consequence is that a project outside it cannot be "compiled" by accident either.
+test("the population follows the tree the gate is pointed at", () => {
+  const root = scratchProjectTree({ First: "public static class First {}\n" });
+  try {
+    assert.deepEqual(trackedProjects(root), ["First.csproj"]);
+    assert.ok(trackedProjects().length > trackedProjects(root).length, "this repository tracks more than a probe tree");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

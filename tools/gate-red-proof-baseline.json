@@ -18,7 +18,6 @@
     "check:chat-card-voice",
     "check:complexity-gate",
     "check:credential-export-isolation",
-    "check:csharp-compile",
     "check:dependency-audit",
     "check:dialogue-web-boundaries",
     "check:diff",

@@ -388,6 +388,11 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install; on a checkout it exits 1 before printing a report, which is why it is not a gate whose default run self-verifies",
   },
   { gate: "check-commit-staging.mjs", reason: "reads the git index; no offline rule set" },
+  {
+    gate: "check-csharp-compile.mjs",
+    reason:
+      "builds every tracked csproj, so its default run is 29 dotnet builds rather than a rule list to print; the falsifier in check-csharp-compile.test.mjs runs the gate's own entry over a scratch repository whose one project has a type error and requires it to name that project",
+  },
   { gate: "check-crab-pot-output-fixture-contract.mjs", reason: "requires --contract input" },
   { gate: "check-dependency-risk.mjs", reason: "static report; falsifier in check-dependency-risk.test.mjs" },
   {
