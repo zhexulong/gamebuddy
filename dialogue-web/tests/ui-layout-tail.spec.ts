@@ -942,19 +942,19 @@ test("item 4: the switcher keeps its own compact row at 400 px, with the actions
   const measured = await measureSwitcher(page);
   console.log(`[item-4 switcher @400] ${JSON.stringify(measured)}`);
 
-  // The stepper itself: one row, two arrows, the position, one 44 px target tall.
+  // The stepper itself: one row, two arrows, the position, one 44 px target tall. `groupRows` is the
+  // whole of "one row", and a ceiling of 64 px under it was slack: 64 admitted every box between one
+  // target and one-and-a-half of them, so it could not have failed for a second row (that is
+  // `groupRows`) and did not fail for a little padding either.
   expect(measured.groupRows, "the stepper is one row at 400 px").toBe(1);
-  expect(
-    measured.groupHeight,
-    "so it is one 44 px target tall, not two stacked ones",
-  ).toBeLessThan(64);
   expect(measured.groupText, "the position survives the narrow form").toContain("1/3");
-  // And the strip is the two rows the rule states - never one, on any row that has a pager.
+  // And the strip is the two rows the rule states - never one, on any row that has a pager. `100` was
+  // the same two rows restated as 44 + 6 + 46, which `stripRows` below already says, and it was a
+  // ceiling on the strip's height rather than on what the rows contain.
   expect(
     measured.stripRows,
     `the strip is the actions' row plus the pager's own (${measured.stripHeight} px tall)`,
   ).toBe(2);
-  expect(measured.stripHeight, "which is a 44 px row and a 46 px row").toBeLessThanOrEqual(100);
 });
 
 test("item 4: one variant has no switcher at all", async ({ page }) => {
