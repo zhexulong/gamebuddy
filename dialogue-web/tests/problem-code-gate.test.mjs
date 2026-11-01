@@ -915,7 +915,10 @@ test("problem-code.13: the provider-cause vocabulary is one list, spelled the sa
 
   const failures = [];
   const declared = new Set(authority);
-  if (!/providerFailure:[^\n]*PROVIDER_FAILURE_CLASSES/u.test(contractSource))
+  // Whitespace-insensitive: the property and its derived enum are the same fact however prettier
+  // folds them. Matching one line would fail on a line break and pass on a reformat that hand-spelled
+  // the members - the shape this rule exists to prevent.
+  if (!/providerFailure:[\s\S]{0,200}?PROVIDER_FAILURE_CLASSES/u.test(contractSource))
     failures.push("the wire contract spells its provider-cause union by hand instead of deriving it");
   for (const mirror of mirrors) {
     const set = new Set(mirror.members);
