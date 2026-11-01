@@ -188,14 +188,6 @@ function fixtureChecks() {
         }),
     ],
     [
-      "claims_a_save_without_a_save_boundary",
-      "night_claims_a_save_without_entering_the_save_boundary",
-      // `day()` takes FLAT overrides, so the evidence is passed flat too: the first version of this case nested it
-      // under `terminal`, the helper ignored it, and the "falsifier" exercised nothing while still reading as a
-      // falsifier.
-      () => day({ evidence: `${EVIDENCE()};save_boundary_not_observed=true` }),
-    ],
-    [
       "festival",
       "night_landed_on_a_festival_day",
       () =>
@@ -216,6 +208,39 @@ function fixtureChecks() {
       produced.join(","),
     );
   }
+
+  // 2c. A night that saved AFTER the boundary window closed is not red, and this case is the real one: round19's own
+  // receipt (`2026-11-01T04-56-14-966Z-multiday_routine`) carries `save_boundary_not_observed=true` beside
+  // `saved_observed=true`, and the Mod log for that same night records `AwaitingSave` entered at 13:08:49, the budget
+  // taken at 13:08:54, `SaveGame.Save() completed` at 13:09:50 and `after save, starting spring 6 Y1` at 13:09:52.
+  // Both save facts are true, because the engine saves synchronously and a per-frame poll cannot see `IsSaving`. The
+  // claim a receipt CAN make without evidence - a save with no witness - is still red (asserted here beside it, so the
+  // removed rule's force is not quietly gone with it).
+  const round19Receipt =
+    "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+    "saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=true;" +
+    "shipping_summary_settled=committed;day_before=4;days_before=1;day_after=5;days_after=2";
+  const savedAfterTheBoundary = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      day({ evidence: round19Receipt, after: { dayOfMonth: 6, timeOfDay: 610, seasonIndex: 0 } }),
+      day({ day: 2 }),
+    ],
+  });
+  check(
+    "a_save_after_the_boundary_window_is_not_a_claim",
+    !codes(savedAfterTheBoundary).includes("night_claims_a_save_without_entering_the_save_boundary"),
+    codes(savedAfterTheBoundary).join(","),
+  );
+  const saveWithoutAWitness = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [day({ evidence: EVIDENCE({ savedObserved: "false" }) }), day({ day: 2 })],
+  });
+  check(
+    "a_save_with_no_witness_is_still_red",
+    codes(saveWithoutAWitness).includes("night_saved_edge_not_observed"),
+    codes(saveWithoutAWitness).join(","),
+  );
 
   // 3. The window is enforced: a one-night "multi-day" run cannot claim the baseline.
   const oneNight = assessMultiDayBaseline({ dayRecords: [day()], daysRequested: 1 });
