@@ -26,7 +26,7 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
  * this session.
  */
-const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget"]);
+const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
@@ -47,6 +47,22 @@ const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
 export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
+/**
+ * A snapshot FIELD name, which is a different kind of name from `IDENTIFIER` and must not borrow its rule.
+ *
+ * `targetFamily` names the `BridgeSnapshot` array an action's targets come from (`toolSlots`, `warps`,
+ * `refillWateringCanTargets`), and the Mod's serializer publishes every such array under the .NET camelCase
+ * policy: lower first letter, then the C# property's own words, no separators. All 109 keys of the Host's
+ * `SNAPSHOT_KEYS` are that shape and the longest is 27 characters. `IDENTIFIER` is the ACTION-ID rule
+ * (`move_to_tile`, `equip_tool`), so applying it here accepted 2 of the 68 families the Mod declares (measured
+ * 2026-10-29) - it is the reuse, not the values, that was wrong.
+ *
+ * 64 is the bound every other published lower-camel name carries (the Host's argument names, its scene-target
+ * property names), so a value this producer admits cannot be refused for its length later. A bad value looks
+ * like `ToolSlots` (the C# property name, which no snapshot response carries), `tool-slots` or `tool_slots` (a
+ * spelling the serializer never emits), the empty string, or a name longer than 64 characters.
+ */
+const TARGET_FAMILY = /^[a-z][A-Za-z0-9]{0,63}$/;
 /** A `tool:<category>` claim key: a symbolic resource whose subject is a tool category. */
 const TOOL_CLAIM_KEY = /^tool:[a-z][a-z0-9_]{1,63}$/;
 /**
@@ -451,7 +467,14 @@ function validateAction(value, seenActionIds) {
   if (typeof lifecycle !== "string" || !LIFECYCLES.has(lifecycle)) fail("invalid_lifecycle");
   if (typeof kind !== "string" || !KINDS.has(kind)) fail("invalid_kind");
 
-  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }) });
+  if (value.targetFamily !== undefined) {
+    // The snapshot family this action's targets come from: a snapshot FIELD name, so `TARGET_FAMILY` and not
+    // `IDENTIFIER` (see its comment). An empty string is refused because a present-but-empty family says nothing
+    // while an ABSENT one means "this action addresses no published family".
+    if (typeof value.targetFamily !== "string" || !TARGET_FAMILY.test(value.targetFamily)) fail("invalid_target_family");
+  }
+
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }) });
 }
 
 /**

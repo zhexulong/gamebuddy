@@ -26,7 +26,7 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
 // derivation lives one layer up, in `tools/audit-stardew-decision-closure.test.mjs`, where both directions are asserted
 // against the published surface and `protocol.ts`'s `KNOWN_ACTION_DESCRIPTOR_KEYS` - so a member added to either side is
 // judged and named instead of silently missed.
-const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget"]);
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
@@ -78,6 +78,19 @@ const MAX_STRING_LENGTH = 128;
 const MAX_DESCRIPTION_LENGTH = 512;
 const MAX_VOCABULARY_VALUES = 128;
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
+/**
+ * A snapshot FIELD name (`toolSlots`, `warps`, `refillWateringCanTargets`), which `targetFamily` must be.
+ *
+ * Not `IDENTIFIER`: that is the ACTION-ID rule, and an action id is a snake_case verb phrase while a snapshot family
+ * is a .NET property name the serializer publishes under camelCase. Measured 2026-10-29: `IDENTIFIER` admitted 2 of the
+ * 68 families the Mod declares. Every one of the Host's 109 `SNAPSHOT_KEYS` is this shape (lower first letter, no
+ * separator, no digit, longest 27), and 64 is the bound the Host applies to every other published lower-camel name, so
+ * a value this gateway admits cannot be refused at registration for its length.
+ *
+ * Exported because `tools/audit-stardew-decision-closure.test.mjs` asserts that the three sites spelling this one fact
+ * (this gateway, the producer `action-surface.mjs`, and `protocol.ts`'s `isValidActionDescriptor`) still agree.
+ */
+export const TARGET_FAMILY_NAME = /^[a-z][A-Za-z0-9]{0,63}$/;
 // A tool requirement's claim key is `tool:<category>`: the category is the KEY half of the claim and the
 // upgrade-level requirement is its VALUE (see the Mod's `FarmhandActionDefinitions` / `BodyProgramModels`
 // `IsResourceClaimKey`). It is admitted as one fixed prefix plus an identifier rather than as a general
@@ -170,6 +183,10 @@ function isValidDescriptor(descriptor) {
   // unreadable: the Mod omits the declaration entirely instead of sending a null one.
   const approach = ownValue(descriptor, "approach");
   const sceneTarget = ownValue(descriptor, "sceneTarget");
+  // Admitting the MEMBER is not enough, exactly as for `approach` and `sceneTarget`: this module is the gateway the
+  // Host-side catalog is built from, so a value it admits and the Host refuses is a descriptor that parses here and dies
+  // at registration. The value rule is `TARGET_FAMILY_NAME`, the Host's own.
+  const targetFamily = ownValue(descriptor, "targetFamily");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -181,7 +198,8 @@ function isValidDescriptor(descriptor) {
     && EFFECTS.has(effect)
     && validPostcondition(postcondition)
     && (approach === INVALID || validApproach(approach))
-    && (sceneTarget === INVALID || validSceneTarget(sceneTarget));
+    && (sceneTarget === INVALID || validSceneTarget(sceneTarget))
+    && (targetFamily === INVALID || (typeof targetFamily === "string" && TARGET_FAMILY_NAME.test(targetFamily)));
 }
 
 /**

@@ -1447,6 +1447,13 @@ export type ActionRegistrationDescriptor = Readonly<{
    */
   approach?: Readonly<{ relation: string; withinTiles?: number }>;
   postcondition?: string | Readonly<{ name: string }>;
+  /**
+   * The snapshot family that supplies this action's targets (`cropTargets`), or absent when the surface declares none.
+   *
+   * A `BridgeSnapshot` FIELD name, which is why `isValidActionDescriptor` holds it to a lower-camel name rather than
+   * to the action-id rule: `move_to_tile` is a snake_case verb phrase and `toolSlots` is a serialized property.
+   */
+  targetFamily?: string;
 }>;
 
 export type ActionRegistration = Readonly<{
@@ -4418,6 +4425,7 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "watchdogMs",
   "approach",
   "postcondition",
+  "targetFamily",
 ] as const;
 
 export function isValidActionDescriptor(value: unknown): value is ActionRegistrationDescriptor {
@@ -4565,6 +4573,19 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     if (
       "withinTiles" in value.approach &&
       !(Number.isSafeInteger(value.approach.withinTiles) && (value.approach.withinTiles as number) > 0)
+    )
+      return false;
+  }
+
+  if ("targetFamily" in value && value.targetFamily !== undefined) {
+    // The snapshot family this action's targets come from: an identifier naming a snapshot FIELD, so the same shape a
+    // family id is held to. Empty is refused because a present-but-empty family says nothing while an ABSENT one means
+    // "this action addresses no published family".
+    if (
+      typeof value.targetFamily !== "string" ||
+      value.targetFamily.length === 0 ||
+      value.targetFamily.length > 64 ||
+      !/^[a-z][a-zA-Z0-9]{0,63}$/.test(value.targetFamily)
     )
       return false;
   }
