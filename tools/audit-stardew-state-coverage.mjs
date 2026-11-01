@@ -436,6 +436,68 @@ export function auditStateCoverage({ root = ROOT, decompileRoot } = {}) {
 }
 
 /**
+ * A C# source with its comments removed, for a judgement about whether an identifier is PUBLISHED.
+ *
+ * A `///` doc comment that explains why a flag must NOT be read in a given hook mentions the flag by
+ * name, and a raw substring search over the file then reports it as published - the gate reading a
+ * sentence about the opposite. Measured on `passedOut`: its only occurrences in the world-fact
+ * publishers are two doc-comment lines saying the day-started hook always sees it as false, which is
+ * evidence the companion CANNOT see it, and the gate read that evidence backwards.
+ *
+ * String literals are left alone: a state that reaches the wire through an evidence string is a real
+ * publication, and that is exactly what an `evidence` anchor names.
+ */
+function withoutComments(source) {
+  let out = "";
+  let index = 0;
+  let inString = false;
+  let inVerbatim = false;
+  while (index < source.length) {
+    const character = source[index];
+    const next = source[index + 1];
+    if (inString) {
+      out += character;
+      if (inVerbatim && character === '"' && next === '"') {
+        out += next;
+        index += 2;
+        continue;
+      }
+      if (!inVerbatim && character === "\\") {
+        out += next ?? "";
+        index += 2;
+        continue;
+      }
+      if (character === '"') {
+        inString = false;
+        inVerbatim = false;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      inVerbatim = source[index - 1] === "@";
+      out += character;
+      index += 1;
+      continue;
+    }
+    if (character === "/" && next === "/") {
+      while (index < source.length && source[index] !== "\n") index += 1;
+      continue;
+    }
+    if (character === "/" && next === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
+      index += 2;
+      continue;
+    }
+    out += character;
+    index += 1;
+  }
+  return out;
+}
+
+/**
  * The two publication surfaces a state can reach: the wire snapshot builder's body, and the
  * `Sensory/*.cs` world-fact publishers. Read once per audit so every verdict reads the same text.
  */
@@ -448,10 +510,11 @@ function readPublicationSurface(root) {
         "the publication surface this gate reads is the wire snapshot builder, and it cannot be guessed",
     );
   }
+  const code = withoutComments(body);
   const facts = ["NpcDialoguePager.cs", "StardewSalientEventHooks.cs"].map((name) =>
-    readFileSync(path.join(root, WORLD_FACT_DIR, name), "utf8"),
+    withoutComments(readFileSync(path.join(root, WORLD_FACT_DIR, name), "utf8")),
   );
-  const inSnapshot = (fragment) => body.includes(fragment);
+  const inSnapshot = (fragment) => code.includes(fragment);
   const inWorldFact = (fragment) => facts.some((text) => text.includes(fragment));
   return { inSnapshot, inWorldFact, publishedAnywhere: (fragment) => inSnapshot(fragment) || inWorldFact(fragment) };
 }
