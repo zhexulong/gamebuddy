@@ -432,13 +432,53 @@ function planShapeParameters() {
   );
 }
 
+/**
+ * The families whose rows carry no `x`/`y`, so a script reading `row.x` here gets `undefined`.
+ *
+ * The parameter text is the only place a script learns a family's row shape, and it used to say "every entry carries
+ * `targetId`, `x` and `y`" with four named exceptions. Measured 2026-11-01 against `protocol/bridge-v1.schema.json`,
+ * the wire's own authority: 13 of the 69 families carry no tile, the text named 4 of them, and one of the four it
+ * named (`chests`) does carry `x`/`y`. A plan over `minecartTargets` or `shopTargets` that believed the text read a
+ * coordinate the row never had. The gate in `continuity-semantic-game-runtime-materializer.test.ts` derives this set
+ * from the schema, so a family that gains or loses a tile fails there by name instead of shipping a wrong shape.
+ */
+const PLAN_TILELESS_FAMILIES: readonly string[] = Object.freeze([
+  "craftingRecipeTargets",
+  "cookingRecipeTargets",
+  "dailyQuestTargets",
+  "doorTargets",
+  "foodTargets",
+  "mineElevatorFloorTargets",
+  "minecartTargets",
+  "museumRewardTargets",
+  "shopTargets",
+  "specialOrderTargets",
+  "tailoringTargets",
+  "warpItemTargets",
+  "wearableTargets",
+]);
+
+/**
+ * The families whose rows carry no `targetId`: an action addressed by a tile, a slot or a coordinate cannot be named
+ * through one, so these are the four whose row shape the parameters state in their own fields instead.
+ *
+ * Derived from the same schema read as `PLAN_TILELESS_FAMILIES`, and gated the same way: `chests` names its container
+ * by `chestId`, which is what `chest_store` copies, so it belongs to this set rather than to a hand-written list.
+ */
+const PLAN_UNIDENTIFIED_FAMILIES: readonly string[] = Object.freeze([
+  "chests",
+  "doorTargets",
+  "foodTargets",
+  "warpItemTargets",
+]);
+
 function planToolParameters() {
   return Type.Object(
     {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\`, \`x\` and \`y\` except doorTargets (sourceX, sourceY, targetX, targetY), foodTargets (slot, qualifiedItemId), warpItemTargets (slot, qualifiedItemId, destination) and chests (chestId, displayName, isFridge, and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated). \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
     },
     { additionalProperties: false },
