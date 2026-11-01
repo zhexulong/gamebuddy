@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import type { ActionRegistration, BodyProgramCandidateRequest, Snapshot } from "./protocol.js";
-import { isNonNegativeSafeInteger, isOpaqueId, isTileCoordinate } from "./protocol-target-facts.js";
+import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
 /**
  * Host-side plan script compiler (CARD-BODY-PROGRAM-SYNTHESIZER-BOUNDARY, as amended by the owner).
@@ -244,6 +244,52 @@ const MAX_PLAN_BUILDER_CALLS = 1024;
 
 /** The argument kinds a Body Program node may carry, exactly as the Mod's catalog projection maps them. */
 const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string", "boolean", "destination_selector"]);
+
+/**
+ * The two read-only actions whose ANSWERS are the only place two arguments can come from.
+ *
+ * Neither is a plan step - observation and world-map discovery are read-only, so the builder generates no method for
+ * them - which is exactly why their names have to be spelled here: `pickup_forage`'s scene binding and
+ * `navigate_to_destination`'s destination selector are facts the SNAPSHOT does not publish, and a refusal that names only
+ * the field leaves the author with nothing to read. Both names are checked against the surface artifact in
+ * `body-program-script.test.ts` (they must be published actions of kind `read_only`), so a rename fails there instead of
+ * leaving a refusal that points at a name nothing publishes.
+ */
+const SCENE_OBSERVATION_ACTION_ID = "observe_scene";
+const DESTINATION_DISCOVERY_ACTION_ID = "find_destination";
+
+/**
+ * The prefix every scene reference the Host publishes carries (`observe_scene`'s `affordances[].ref`).
+ *
+ * Duplicated as ONE constant because `protocol.ts`'s `isSceneReference` is not exported and the compiler has to refuse a
+ * hand-written ref at the call that wrote it rather than one round trip later: measured 2026-10-31 (`round18`), five
+ * `pickup_forage` calls carried `{ observationId, ref }` the model had invented. `body-program-script.test.ts` keeps the
+ * two in step by reading that predicate out of `protocol.ts` and comparing this prefix and length against it.
+ */
+const SCENE_REFERENCE_PREFIX = "sr1_";
+const SCENE_REFERENCE_RANDOM_CHARS = 16;
+
+/** How many rows of one family are sampled when deriving the fields it publishes. */
+const PLAN_SOURCE_ROWS_SAMPLED = 4;
+
+/** How many field paths one family may contribute, so a wide record cannot spend a refusal on its own shape. */
+const PLAN_SOURCE_MAX_FIELDS = 24;
+
+/**
+ * How much of a field name and an argument name must agree before the field counts as the same fact.
+ *
+ * `expectedQualifiedItemId` -> `qualifiedItemId` scores 1.0 and -> `qualifiedHarvestItemId` scores 0.75 (they share
+ * qualified/item/id, which is why `harvest_crop`'s own row field is found), while `expectedTargetId` ->
+ * `qualifiedItemId` scores 0.33 and must NOT match: naming an item id as the source of a target id is worse than
+ * naming nothing, because it is the one answer a model will believe.
+ */
+const PLAN_SOURCE_MATCH_FLOOR = 0.6;
+
+/** How much of a value the script passed is quoted back in a refusal, and it is quoted as printable ASCII only. */
+const PLAN_REASON_VALUE_CHARS = 24;
+
+/** How many actions one unknown-argument refusal names when the name it refused IS declared somewhere else. */
+const PLAN_ARGUMENT_OWNERS_LISTED = 3;
 
 /**
  * The lifecycles a node may name: the same two the Mod's own Body Program catalog projects
@@ -568,7 +614,12 @@ export function compilePlanScript(
   if (snapshot === null || snapshot === undefined || !isUsableSnapshot(snapshot))
     return refused("plan_snapshot_unavailable", scriptSource, snapshotRevision);
 
-  const state: PlanScriptState = { nodes: [], refusal: null, calls: 0 };
+  const state: PlanScriptState = {
+    nodes: [],
+    refusal: null,
+    calls: 0,
+    argumentOwners: planArgumentOwners(dependencies.actions),
+  };
   const frozen = deepFreeze(structuredClone(snapshot));
   const sandbox = Object.freeze({
     snapshot: frozen,
@@ -650,6 +701,14 @@ type PlanScriptState = {
   refusal: string | null;
   requirement?: PlanArgumentRequirement;
   calls: number;
+  /**
+   * The vocabulary's own answer to "which actions declare this argument name", built once per compile.
+   *
+   * An unknown argument is nearly always a name carried over from another action (`water_crop` with a `slot`, because
+   * twelve other actions take one), so the refusal can name the actions that DO declare it - a correction instead of a
+   * riddle - without a hand-written table in this file.
+   */
+  argumentOwners: ReadonlyMap<string, readonly string[]>;
 };
 
 /**
@@ -663,7 +722,8 @@ function createPlanBuilder(
   state: PlanScriptState,
 ): unknown {
   const methods = new Map<string, (arguments_: unknown) => void>();
-  for (const action of actions) methods.set(action.actionId, (arguments_) => emitPlanNode(action, arguments_, state));
+  for (const action of actions)
+    methods.set(action.actionId, (arguments_) => emitPlanNode(action, arguments_, snapshot, state));
   const equipFor = (actionId: unknown, target: unknown) => equipForAction(actions, snapshot, actionId, target, state);
   return new Proxy(
     {},
@@ -727,7 +787,7 @@ function equipForAction(
     refusePlan(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
   // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
   // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
-  emitPlanNode(equip, { tool: category }, state);
+  emitPlanNode(equip, { tool: category }, snapshot, state);
   return slot;
 }
 
@@ -807,7 +867,333 @@ function requirementOf(action: PublishedPlanAction): PlanArgumentRequirement {
   });
 }
 
-function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: PlanScriptState): void {
+/** Which actions declare each argument name, in the vocabulary's own order, bounded per name. */
+function planArgumentOwners(actions: readonly PublishedPlanAction[]): ReadonlyMap<string, readonly string[]> {
+  const owners = new Map<string, string[]>();
+  for (const action of actions)
+    for (const argument of action.arguments) {
+      const bucket = owners.get(argument.name);
+      if (bucket === undefined) owners.set(argument.name, [action.actionId]);
+      else if (bucket.length < PLAN_ARGUMENT_OWNERS_LISTED && !bucket.includes(action.actionId))
+        bucket.push(action.actionId);
+    }
+  return owners;
+}
+
+/**
+ * What one argument must be, in the surface's own terms: its declared type, its declared closed set where there is one,
+ * and - for the two kinds whose bounds are the Host's rather than an enum - the bound itself.
+ *
+ * This is half of every argument refusal's answer. The other half is `planArgumentSource`.
+ */
+function planArgumentExpectation(declaration: PlanArgumentShape): string {
+  if (declaration.type === "destination_selector") return "destination_selector[one_of:label,ref]";
+  // A tile coordinate and a backpack index are both `integer` on the wire and both refuse a negative or fractional
+  // value, which is the fact `travel({ x: 12.5 })` needed and `argument_not_canonical` did not state.
+  const kind = declaration.type === "integer" ? "integer[non_negative]" : declaration.type;
+  if (declaration.enum !== undefined) return `${kind}[one_of:${declaration.enum.join(",")}]`;
+  return kind;
+}
+
+/** One row family the snapshot publishes: its name, the field paths its rows carry, and how many rows it holds. */
+type PlanSnapshotRowFamily = Readonly<{ name: string; fields: readonly string[]; rows: number }>;
+
+/**
+ * The row families the snapshot currently publishes, with the field paths each one carries.
+ *
+ * Read from the LIVE snapshot, never from a table in this file, because the only answer a refusal can be held to is one
+ * about the object the script was handed. One nesting level is followed (`chests[].items[].qualifiedItemId`), which is
+ * where the container families keep the item id `chest_store` asks for; the depth stops there because a second level is
+ * a different action's question.
+ */
+function planSnapshotRowFamilies(snapshot: Snapshot): readonly PlanSnapshotRowFamily[] {
+  const families: PlanSnapshotRowFamily[] = [];
+  for (const [name, value] of Object.entries(snapshot as Readonly<Record<string, unknown>>)) {
+    if (!Array.isArray(value) || value.length === 0) continue;
+    const fields = new Set<string>();
+    for (const row of value.slice(0, PLAN_SOURCE_ROWS_SAMPLED)) {
+      if (!isRecord(row)) continue;
+      for (const [field, fieldValue] of Object.entries(row)) {
+        if (fields.size >= PLAN_SOURCE_MAX_FIELDS) break;
+        fields.add(field);
+        if (!Array.isArray(fieldValue)) continue;
+        const nested = fieldValue.find((entry) => isRecord(entry));
+        if (!isRecord(nested)) continue;
+        for (const nestedField of Object.keys(nested)) fields.add(`${field}[].${nestedField}`);
+      }
+    }
+    if (fields.size > 0)
+      families.push(Object.freeze({ name, fields: Object.freeze([...fields].sort()), rows: value.length }));
+  }
+  return families;
+}
+
+/** `qualifiedItemId` -> [qualified, item, id]. Both argument names and field names split the same way. */
+function planNameWords(name: string): readonly string[] {
+  return name
+    .replaceAll("[]", ".")
+    .split(/(?=[A-Z])|[._]/u)
+    .map((word) => word.toLowerCase())
+    .filter((word) => word.length > 0);
+}
+
+/** `expected` is the caller's word for "this is my assertion", not part of the fact it names. */
+function planArgumentFieldWords(argumentName: string): readonly string[] {
+  const words = planNameWords(argumentName);
+  return words[0] === "expected" ? words.slice(1) : words;
+}
+
+/** How much of a field name and an argument name agree: shared words over the words either one has. */
+function planFieldMatch(field: string, words: readonly string[]): number {
+  if (words.length === 0) return 0;
+  const fieldWords = planNameWords(field);
+  if (fieldWords.length === 0) return 0;
+  let shared = 0;
+  for (const word of words) if (fieldWords.includes(word)) shared += 1;
+  return shared === 0 ? 0 : shared / (words.length + fieldWords.length - shared);
+}
+
+/** Whether a field path IS the fact the argument names, word for word (`expectedTargetId` -> `targetId`). */
+function planFieldIsTheArgument(field: string, words: readonly string[]): boolean {
+  return planNameWords(field).join(" ") === words.join(" ");
+}
+
+/**
+ * The row families of this snapshot, ordered by how much of THIS action they answer.
+ *
+ * A family scores one point for every argument the action declares that it publishes a field for, so `harvest_crop`
+ * ranks `harvestTargets` (x, y, targetId and - under a name of its own - `qualifiedHarvestItemId`) level with
+ * `forageTargets` and then wins on the next key: the family whose NAME shares a word with the action id
+ * (`pickup_item` -> `itemTargets` rather than `forageTargets`, `harvest_crop` -> `harvestTargets` rather than
+ * `forageTargets`, which carries the same four field names). Ties then go to the larger family, then alphabetically, so
+ * the answer is a function of the input and never of iteration order. HOW WELL a field matches decides which field of
+ * the chosen family is named (exact before approximate), never which family is the action's own.
+ */
+function planRowFamiliesFor(action: PublishedPlanAction, snapshot: Snapshot): readonly PlanSnapshotRowFamily[] {
+  const actionWords = planNameWords(action.actionId);
+  return planSnapshotRowFamilies(snapshot)
+    .map((family) => {
+      let answered = 0;
+      for (const argument of action.arguments) {
+        const words = planArgumentFieldWords(argument.name);
+        const best = Math.max(0, ...family.fields.map((field) => planFieldMatch(field, words)));
+        if (best >= PLAN_SOURCE_MATCH_FLOOR) answered += 1;
+      }
+      const named = planNameWords(family.name).filter((word) => actionWords.includes(word)).length;
+      return { family, answered, named };
+    })
+    .sort(
+      (left, right) =>
+        right.answered - left.answered ||
+        right.named - left.named ||
+        right.family.rows - left.family.rows ||
+        left.family.name.localeCompare(right.family.name),
+    )
+    .map((entry) => entry.family);
+}
+
+/** Whether this action names a TARGET at all, which is what decides where its tile coordinates are published. */
+function planNamesATarget(action: PublishedPlanAction): boolean {
+  return action.arguments.some((argument) => planArgumentFieldWords(argument.name).at(-1) === "id");
+}
+
+/** A one-level path into the snapshot that ends in the fact an argument names (`snapshot.tile.x`), if there is one. */
+function planSnapshotScalarPath(snapshot: Snapshot, argumentWords: readonly string[]): string | undefined {
+  for (const [name, value] of Object.entries(snapshot as Readonly<Record<string, unknown>>)) {
+    if (isRecord(value)) {
+      for (const field of Object.keys(value))
+        if (planFieldIsTheArgument(field, argumentWords)) return `snapshot.${name}.${field}`;
+      continue;
+    }
+    if (Array.isArray(value)) continue;
+    if (planFieldIsTheArgument(name, argumentWords)) return `snapshot.${name}`;
+  }
+  return undefined;
+}
+
+/**
+ * WHERE the value for one argument is published - the third part of every argument refusal's answer.
+ *
+ * Measured 2026-10-31 (`round18`): 9 of 66 plans were refused for reasons the model could not have known, and the five
+ * worst were `pickup_forage` scene bindings the model hand-wrote because the refusal named a field and nothing else. The
+ * old answer to `pickup_item` omitting `expectedQualifiedItemId` said exactly what the model had failed at and not where to
+ * look; this is the "where to look", derived from the snapshot the script was actually handed, or the name of the
+ * read-only action whose answer carries it when the snapshot carries it at all.
+ */
+function planArgumentSource(action: PublishedPlanAction, snapshot: Snapshot, argumentName: string): string {
+  const declaration = action.arguments.find((argument) => argument.name === argumentName);
+  // A destination is not a snapshot fact: the selector copies a label (or an opaque ref) out of `find_destination`'s
+  // answer, and no snapshot family publishes one.
+  if (declaration?.type === "destination_selector") return DESTINATION_DISCOVERY_ACTION_ID;
+  // A tile coordinate on an action that names no target is the actor's own tile: there is no row to read, and
+  // `tile.x`/`tile.y` are the one coordinate pair every usable snapshot publishes.
+  if ((argumentName === "x" || argumentName === "y") && !planNamesATarget(action))
+    return `snapshot.tile.${argumentName}`;
+  const words = planArgumentFieldWords(argumentName);
+  const families = planRowFamiliesFor(action, snapshot);
+  // The action's OWN family first, and only then the others: a field name that differs by a word inside the family the
+  // action is about (`harvestTargets[].qualifiedHarvestItemId` for `expectedQualifiedItemId`) is a better answer than an
+  // exact name in a family the action is not about (`forageTargets[].qualifiedItemId`), because the second points at rows
+  // the plan is not allowed to harvest. Within one family, exact beats approximate.
+  for (const family of families) {
+    const exact = family.fields.find((candidate) => planFieldIsTheArgument(candidate, words));
+    if (exact !== undefined) return `snapshot.${family.name}[].${exact}`;
+    const approximate = family.fields.find((candidate) => planFieldMatch(candidate, words) >= PLAN_SOURCE_MATCH_FLOOR);
+    if (approximate !== undefined) return `snapshot.${family.name}[].${approximate}`;
+  }
+  return planSnapshotScalarPath(snapshot, words) ?? "not_in_snapshot";
+}
+
+/**
+ * What the script ACTUALLY passed, in one bounded word.
+ *
+ * `travel({ x: 12.5 })` was refused `argument_not_canonical:travel.x` and nothing said the value was a float: the model
+ * could not tell a rounding slip from a wrong field, from the wrong action. Printable ASCII only and bounded, because a
+ * value the model wrote must not be able to forge a line in a log or spend the turn's context.
+ */
+function planReceivedValue(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  switch (typeof value) {
+    case "number":
+      return `number(${planBoundedReasonText(String(value))})`;
+    case "string":
+      return `string(${planBoundedReasonText(value)})`;
+    case "boolean":
+      return `boolean(${String(value)})`;
+    case "object":
+      return "object";
+    case "undefined":
+      return "missing";
+    default:
+      return typeof value;
+  }
+}
+
+function planBoundedReasonText(value: string): string {
+  const printable = value.replace(/[^\u0020-\u007e]/gu, "");
+  return printable.length > PLAN_REASON_VALUE_CHARS ? `${printable.slice(0, PLAN_REASON_VALUE_CHARS)}...` : printable;
+}
+
+/** A scene reference exactly as the Host publishes it: the prefix, sixteen random characters, nothing else. */
+function planIsSceneReference(value: string): boolean {
+  return (
+    value.startsWith(SCENE_REFERENCE_PREFIX) &&
+    value.length === SCENE_REFERENCE_PREFIX.length + SCENE_REFERENCE_RANDOM_CHARS &&
+    /^[A-Za-z0-9_-]+$/u.test(value)
+  );
+}
+
+/** The longest a binding property may be, matching the bound every opaque id on this wire is held to. */
+const MAX_PLAN_BINDING_PROPERTY_CHARS = 128;
+
+/** The key a declared scene binding travels under: beside `argumentSchema`, never inside it. */
+const PLAN_SCENE_BINDING_NAME = "sceneTarget";
+
+/**
+ * What is wrong with the binding the script supplied, or `null` when it is one `observe_scene` could have produced.
+ *
+ * The property list is the surface's own declaration (`requiredProperties`), so a renamed required property reaches the
+ * refusal as the Mod renamed it; only the SHAPE of the two properties `ObservationBinding/v1` defines is the Host's
+ * (`protocol.ts`'s `isObservationBindingV1`), and that shape is checked here because the compiler is the last reader
+ * before the node is dispatched.
+ */
+function planSceneBindingProblem(requiredProperties: readonly string[], value: unknown): string | null {
+  if (value === undefined) return "missing";
+  if (!isRecord(value)) return "not_an_object";
+  for (const name of Object.keys(value))
+    if (!requiredProperties.includes(name)) return `unexpected:${planBoundedReasonText(name)}`;
+  for (const name of requiredProperties) {
+    const given = value[name];
+    if (typeof given !== "string" || given.length === 0) return `not_text:${name}`;
+    if (given.length > MAX_PLAN_BINDING_PROPERTY_CHARS) return `too_long:${name}`;
+    // The two properties the Mod's ObservationBinding/v1 declares, each with the shape its own side validates.
+    if (name === "observationId" && !isOpaqueId(given)) return `not_an_opaque_id:${name}`;
+    if (name === "ref" && !planIsSceneReference(given)) return `not_a_scene_reference:${name}`;
+  }
+  return null;
+}
+
+/**
+ * Refuses a call carrying an argument this action does not declare.
+ *
+ * The answer names the set the action DOES take (`allowed`), and - because an invented argument is nearly always a name
+ * carried over from another action - the actions that really declare it, up to a bound. Measured 2026-10-31
+ * (`round18`): one plan called `water_crop` with a `slot` because twelve other actions take one, and the refusal said only
+ * that the argument was unknown.
+ */
+function refuseUnknownArguments(
+  action: PublishedPlanAction,
+  supplied: Readonly<Record<string, unknown>>,
+  state: PlanScriptState,
+  requirement: PlanArgumentRequirement,
+): void {
+  const allowed = action.arguments.length === 0 ? "none" : action.arguments.map((argument) => argument.name).join(",");
+  for (const name of Object.keys(supplied)) {
+    if (action.arguments.some((argument) => argument.name === name)) continue;
+    if (name === PLAN_SCENE_BINDING_NAME && action.sceneBindingRequirement.declared) continue;
+    const owners = (state.argumentOwners.get(name) ?? []).slice(0, PLAN_ARGUMENT_OWNERS_LISTED);
+    const declaredBy = owners.length === 0 ? "none" : owners.join(",");
+    refusePlan(
+      `plan_script_unknown_argument:${action.actionId}.${name}:allowed:${allowed}:declared_by:${declaredBy}`,
+      state,
+      requirement,
+    );
+  }
+}
+
+/**
+ * Refuses a call that omits the scene binding the surface demands, or supplies one `observe_scene` could not have
+ * produced.
+ *
+ * A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY: `pickup_forage` declares an
+ * `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a value the caller computes but
+ * the ref of a scene observation the caller just made. Reading only `action.arguments` meant a script that omitted it
+ * compiled, dispatched, and was refused `observation_binding_malformed` by the Mod (measured 2026-10-31, `round17`: five
+ * calls, five refusals).
+ *
+ * The binding is DEMANDED and VALIDATED here. It is not CARRIED: `sceneTarget` is not an argument, and a node's
+ * `bindings` map is a fact REFERENCE (`{nodeId, factName}`), so no part of a compiled node can hold an
+ * `ObservationBinding/v1`; `RouteReenteringBodyProgramExecutor` builds its `BridgeExecutionArgs` with no `SceneTarget`.
+ * A plan node for such an action therefore still cannot execute, and carrying it is a Mod-side change - a different
+ * decision from this one, which is only that a HAND-WRITTEN binding is refused at the call that wrote it and that the
+ * answer says where a real one comes from. Measured 2026-10-31 (`round18`): five calls forged `{ observationId, ref }`,
+ * because the refusal before this one named the field and nothing else.
+ */
+function refuseUnsatisfiedSceneBinding(
+  action: PublishedPlanAction,
+  supplied: Readonly<Record<string, unknown>>,
+  state: PlanScriptState,
+  requirement: PlanArgumentRequirement,
+): void {
+  const binding = action.sceneBindingRequirement;
+  if (!binding.declared) return;
+  // Both parts of the answer are the surface's or the Host's own, never a guess: the properties the Mod declares, and the
+  // read-only action that answers with them. The snapshot cannot: no family publishes an observation id.
+  const expects = `scene_binding{${binding.requiredProperties.join(",")}}`;
+  const from = SCENE_OBSERVATION_ACTION_ID;
+  if (Object.hasOwn(supplied, PLAN_SCENE_BINDING_NAME)) {
+    const problem = planSceneBindingProblem(binding.requiredProperties, supplied[PLAN_SCENE_BINDING_NAME]);
+    if (problem !== null)
+      refusePlan(
+        `plan_script_binding_not_canonical:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}:got:${problem}`,
+        state,
+        requirement,
+      );
+  } else
+    refusePlan(
+      `plan_script_missing_binding:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}`,
+      state,
+      requirement,
+    );
+}
+
+function emitPlanNode(
+  action: PublishedPlanAction,
+  arguments_: unknown,
+  snapshot: Snapshot,
+  state: PlanScriptState,
+): void {
   state.calls += 1;
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${state.calls}`, state);
   if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${state.nodes.length + 1}`, state);
@@ -824,28 +1210,43 @@ function emitPlanNode(action: PublishedPlanAction, arguments_: unknown, state: P
     refusePlan(`plan_script_argument_not_canonical:${action.actionId}`, state, requirement);
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
-  // `sceneTarget` is required by the binding check below but is NOT an argument, so it must be exempt from the
-  // unknown-argument scan - otherwise a correct call is refused for supplying the very thing that was demanded.
-  const bindingName = "sceneTarget";
-  for (const name of Object.keys(supplied))
-    if (!declared.has(name) && !(name === bindingName && action.sceneBindingRequirement.declared))
-      refusePlan(`plan_script_unknown_argument:${action.actionId}.${name}`, state, requirement);
-  // A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY.
+  refuseUnknownArguments(action, supplied, state, requirement);
+  refuseUnsatisfiedSceneBinding(action, supplied, state, requirement);
+  // AN OMITTED ARGUMENT IS REFUSED, NOT INFERRED, EVEN WHEN ITS VALUE IS IN THE SNAPSHOT.
   //
-  // `pickup_forage` declares an `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a
-  // value the caller computes but the ref of a scene observation the caller just made. Reading only `action.arguments`
-  // meant a script that omitted it compiled, dispatched, and was refused `observation_binding_malformed` by the Mod
-  // (measured 2026-10-31, `round17`: five calls, five refusals). A pre-condition the authoring side cannot see is a
-  // refusal deferred by one round trip.
-  if (action.sceneBindingRequirement.declared && !Object.hasOwn(supplied, "sceneTarget"))
-    refusePlan(`plan_script_missing_binding:${action.actionId}.sceneTarget`, state, requirement);
+  // Inferring was considered and rejected. `expectedQualifiedItemId` when exactly one target row matches the x/y of the
+  // same script is the case that invites it, and there are four reasons it is wrong:
+  //   1. Those arguments are ASSERTIONS the Mod re-checks at execution against the live target. A value this compiler
+  //      filled in is an assertion nobody made; when the row it picked is the wrong one (`forageTargets`, `itemTargets`,
+  //      `harvestTargets` and `cropTargets` overlap in tile space) the plan is refused at runtime, aimed at a line whose
+  //      author never wrote that value and cannot see which row was read.
+  //   2. (x, y) does not identify a row. It selects among EVERY family publishing x and y, so choosing one is a Host-side
+  //      claim about what the caller meant, and this projection may only narrow what the Mod published - never add.
+  //   3. It is silent. The measured cost of the alternative is one teaching refusal per class (`round18`: the model had
+  //      `qualifiedItemId` in its target rows and omitted the argument anyway); the cost of inference is a model that
+  //      believes the argument is optional and cannot say why the same plan fails when two families share a tile.
+  //   4. `planProgramId` is content-addressed on the nodes, and a journal replays a node's arguments as written. A
+  //      Host-inferred value has no provenance to replay.
   const canonical: Record<string, PlanArgument> = {};
   for (const [name, declaration] of declared) {
-    if (!Object.hasOwn(supplied, name))
-      refusePlan(`plan_script_missing_argument:${action.actionId}.${name}`, state, requirement);
+    const argumentPath = `${action.actionId}.${name}`;
+    if (!Object.hasOwn(supplied, name)) {
+      // Both halves of the answer are derived from what the caller already holds: the declaration, and the snapshot.
+      const expects = planArgumentExpectation(declaration);
+      const from = planArgumentSource(action, snapshot, name);
+      refusePlan(`plan_script_missing_argument:${argumentPath}:${expects}:${from}`, state, requirement);
+    }
     const value = canonicalPlanArgument(declaration, supplied[name]);
-    if (value === undefined)
-      refusePlan(`plan_script_argument_not_canonical:${action.actionId}.${name}`, state, requirement);
+    if (value === undefined) {
+      const expects = planArgumentExpectation(declaration);
+      const from = planArgumentSource(action, snapshot, name);
+      const received = planReceivedValue(supplied[name]);
+      refusePlan(
+        `plan_script_argument_not_canonical:${argumentPath}:${expects}:${from}:got:${received}`,
+        state,
+        requirement,
+      );
+    }
     canonical[name] = value;
   }
   // The script's statement order IS the plan's order: "till this tile, then fertilise it" is two calls,

@@ -5,9 +5,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  MAX_PLAN_NODES,
   type CompiledPlan,
   compilePlanScript,
+  MAX_PLAN_NODES,
+  type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
   planShape,
@@ -33,6 +34,12 @@ type SurfaceAction = Readonly<{
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
   postcondition?: Readonly<{ name?: string }>;
+  sceneTarget?: Readonly<{
+    type: string;
+    version: number;
+    required: boolean;
+    requiredProperties: readonly string[];
+  }>;
 }>;
 
 const SURFACE = (
@@ -54,6 +61,9 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
+            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
+            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   }),
@@ -185,7 +195,7 @@ test("the same script and snapshot compile to a byte-identical program and progr
   const first = compile(WATER_BY_DOOR, overrides);
   const second = compile(WATER_BY_DOOR, overrides);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
-  if (!first.ok || !second.ok) assert.fail("both compiles must produce a plan");
+  if (!(first.ok && second.ok)) assert.fail("both compiles must produce a plan");
   assert.equal(planProgramId(11, first.program.nodes), planProgramId(11, second.program.nodes));
   // A different plan over the same world is a DIFFERENT program: the id is content-addressed, so the second
   // plan cannot be answered as the first one's duplicate.
@@ -302,19 +312,384 @@ test("every action the surface declares day_advanced refuses a step written afte
 });
 
 test("a builder method generated from the published surface rejects a wrong, missing or non-canonical argument", () => {
-  // `move_to_tile` declares exactly x and y. Every one of these is the mistake a script actually makes.
+  // `move_to_tile` declares exactly x and y. Every one of these is the mistake a script actually makes, and every
+  // answer names the argument, what it must be and where the value is published - see the argument-surface gates below.
   assert.equal(
     refusalOf(compile("builder.move_to_tile({ x: 10, y: 10, expectedTargetId: 'nope' });")),
-    "plan_script_unknown_argument:move_to_tile.expectedTargetId",
+    "plan_script_unknown_argument:move_to_tile.expectedTargetId:allowed:x,y:declared_by:ride_minecart,select_mine_elevator_floor,mount_transport",
   );
-  assert.equal(refusalOf(compile("builder.move_to_tile({ x: 10 });")), "plan_script_missing_argument:move_to_tile.y");
+  assert.equal(
+    refusalOf(compile("builder.move_to_tile({ x: 10 });")),
+    "plan_script_missing_argument:move_to_tile.y:integer[non_negative]:snapshot.tile.y",
+  );
   assert.equal(
     refusalOf(compile("builder.move_to_tile({ x: '10', y: 10 });")),
-    "plan_script_argument_not_canonical:move_to_tile.x",
+    "plan_script_argument_not_canonical:move_to_tile.x:integer[non_negative]:snapshot.tile.x:got:string(10)",
   );
   // A real action that the Mod declares read-only has no method at all, and the refusal names it: a plan is made of
   // executions, and an observation is not a step the Mod can run.
   assert.equal(refusalOf(compile("builder.observe_scene({});")), "plan_script_unknown_action:observe_scene");
+});
+
+/**
+ * THE REFUSAL IS THE ONLY PLACE THIS SHAPE IS TAUGHT, SO EVERY ARGUMENT REFUSAL ANSWERS THREE THINGS.
+ *
+ * Measured 2026-10-31 (`round18`): 9 of 66 plans were refused for reasons the model could not have known, and the five
+ * worst were `pickup_forage` calls whose `{ observationId, ref }` the model had written BY HAND - because the refusal
+ * named the field and nothing else, so guessing was the only way to comply. Every answer below is therefore
+ * `<code>:<actionId>.<argument>:<what it must be>:<where the value is published>`, and these gates read the catalog's
+ * own argument list rather than a hand-written one: every plannable action, every declared argument, and the source an
+ * answer names has to RESOLVE in the snapshot the script was handed.
+ */
+
+/** One declared argument, as the surface publishes it. */
+type DeclaredArgument = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
+
+/**
+ * The snapshot the argument-surface gates hand the compiler: one live row per family, carrying the field names each
+ * family really publishes (`harvestTargets` carries `qualifiedHarvestItemId`, not `qualifiedItemId`).
+ */
+const SOURCE_SNAPSHOT: Partial<Snapshot> = {
+  currentTool: "(T)WateringCan",
+  currentToolSlot: 0,
+  currentToolSlotItem: "(T)WateringCan",
+  toolSlots: [{ slot: 0, label: "(T)WateringCan", upgradeLevel: 0, category: "watering_can" }],
+  cropTargets: [{ targetId: "crop_01", x: 11, y: 10, cropId: "spring_onion", displayName: "Parsnip" }],
+  forageTargets: [{ targetId: "forage_01", x: 12, y: 10, qualifiedItemId: "(O)22", displayName: "Daffodil", stack: 1 }],
+  itemTargets: [{ targetId: "item_01", x: 13, y: 10, qualifiedItemId: "(O)390", displayName: "Stone", stack: 1 }],
+  harvestTargets: [
+    {
+      targetId: "harvest_01",
+      x: 14,
+      y: 10,
+      cropId: "spring_onion",
+      qualifiedHarvestItemId: "(O)24",
+      displayName: "Parsnip",
+      regrowsAfterHarvest: false,
+    },
+  ],
+  seedTargets: [
+    { targetId: "seed_01", slot: 2, x: 15, y: 10, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds" },
+  ],
+  debrisTargets: [debris("debris_01", 3, "pickaxe")],
+  chests: [
+    {
+      chestId: "chest_0123456789abcdef",
+      x: 9,
+      y: 10,
+      displayName: "Chest",
+      isFridge: false,
+      items: [{ slot: 0, qualifiedItemId: "(O)388", displayName: "Wood", stack: 40 }],
+    },
+  ],
+  pendingLevelUpChoices: [
+    {
+      skill: 0,
+      level: 5,
+      leftId: 20,
+      leftTitle: "Rancher",
+      leftDescription: "ranch",
+      rightId: 21,
+      rightTitle: "Tiller",
+      rightDescription: "crops",
+    },
+  ],
+  warps: [{ sourceX: 3, sourceY: 12, targetLocation: "Town", targetX: 40, targetY: 12, accessible: true }],
+};
+
+/** A literal of the declared KIND, so a call reaches the check under test instead of failing earlier. */
+function sampleLiteral(declaration: DeclaredArgument): string {
+  if (declaration.type === "integer") return "1";
+  if (declaration.type === "boolean") return "true";
+  if (declaration.type === "destination_selector") return "{ kind: 'label', label: 'Mine' }";
+  return `'${declaration.enum?.[0] ?? "sample_text"}'`;
+}
+
+/** A value of a DIFFERENT kind than the declaration asks for: what a wrong-typed script passes, and what the answer says. */
+function wrongKindLiteral(declaration: DeclaredArgument): Readonly<{ literal: string; received: string }> {
+  if (declaration.type === "integer") return { literal: "'not_a_number'", received: "string(not_a_number)" };
+  if (declaration.type === "boolean") return { literal: "'yes'", received: "string(yes)" };
+  if (declaration.type === "destination_selector") return { literal: "'Bus Stop'", received: "string(Bus Stop)" };
+  return { literal: "42", received: "number(42)" };
+}
+
+/**
+ * `builder.<actionId>({ ... })` for one published action, with what this test chooses to omit, override or add - and the
+ * binding the surface demands, with one sampled value per property it lists.
+ */
+function callScript(
+  action: PublishedPlanAction,
+  options: Readonly<{
+    omit?: readonly string[];
+    values?: Readonly<Record<string, string>>;
+    add?: Readonly<Record<string, string>>;
+  }> = {},
+): string {
+  const omit = options.omit ?? [];
+  const parts: string[] = [];
+  for (const argument of action.arguments)
+    if (!omit.includes(argument.name))
+      parts.push(`${argument.name}: ${options.values?.[argument.name] ?? sampleLiteral(argument)}`);
+  const binding = action.sceneBindingRequirement;
+  if (binding.declared && !omit.includes("sceneTarget"))
+    parts.push(
+      `sceneTarget: { ${binding.requiredProperties
+        .map((property) => `${property}: ${property === "ref" ? "'sr1_0123456789abcdef'" : "'observation_1'"}`)
+        .join(", ")} }`,
+    );
+  for (const [name, literal] of Object.entries(options.add ?? {})) parts.push(`${name}: ${literal}`);
+  return `builder.${action.actionId}({ ${parts.join(", ")} });`;
+}
+
+/** Whether a `snapshot.<family>[].<field>` path an answer names really resolves in the snapshot the script was handed. */
+function snapshotPublishes(source: unknown, path: string): boolean {
+  const segments = path.split(".");
+  if (segments[0] !== "snapshot") return false;
+  let current: unknown = source;
+  for (const segment of segments.slice(1)) {
+    const rows = segment.endsWith("[]");
+    const key = rows ? segment.slice(0, -2) : segment;
+    if (typeof current !== "object" || current === null) return false;
+    const holder = current as Record<string, unknown>;
+    if (!Object.hasOwn(holder, key)) return false;
+    current = holder[key];
+    if (!rows) continue;
+    if (!Array.isArray(current)) return false;
+    const first = current.find((entry) => typeof entry === "object" && entry !== null);
+    if (first === undefined) return false;
+    current = first;
+  }
+  return true;
+}
+
+/** The two halves of an answer that are not the reason code's family or its argument: what, and where from. */
+function answerOf(code: string, prefix: string): Readonly<{ expects: string; from: string }> {
+  if (!code.startsWith(prefix)) throw new Error(`expected ${prefix}..., received ${code}`);
+  const rest = code.slice(prefix.length);
+  const at = rest.lastIndexOf(":");
+  if (at <= 0) throw new Error(`${code} carries no "what it must be" and "where from" pair`);
+  return { expects: rest.slice(0, at), from: rest.slice(at + 1) };
+}
+
+/** The three source kinds an answer may name when the value is not a path into the snapshot. */
+const NAMED_SOURCES = Object.freeze(["observe_scene", "find_destination", "not_in_snapshot"]);
+
+/**
+ * The gate the measured refusals asked for: for EVERY action whose surface declares an argument, omitting that argument
+ * must answer with the argument, what it must be, and where the value is published - and that source must be a path the
+ * snapshot really resolves, or one of the two read-only answers / the explicit "the snapshot does not carry it".
+ */
+test("every declared argument, omitted, is refused with what it must be and where the value is published", () => {
+  const withArguments = ACTIONS.filter((action) => action.arguments.length > 0);
+  assert.ok(withArguments.length > 50, "the surface declares arguments on most of its actions");
+  const faults: string[] = [];
+  for (const action of withArguments)
+    for (const argument of action.arguments) {
+      const subject = `${action.actionId}.${argument.name}`;
+      const result = compile(callScript(action, { omit: [argument.name] }), { ...SOURCE_SNAPSHOT });
+      const code = result.ok ? "accepted" : result.reasonCode;
+      const prefix = `plan_script_missing_argument:${subject}:`;
+      if (!code.startsWith(prefix)) {
+        faults.push(`${subject}: expected ${prefix}..., received ${code}`);
+        continue;
+      }
+      const answer = answerOf(code, prefix);
+      // (b) what was expected: the declared type, and every value of a declared closed set.
+      if (!answer.expects.includes(argument.type) && argument.type !== "destination_selector")
+        faults.push(`${subject}: ${answer.expects} does not name the declared type ${argument.type}`);
+      if (argument.type === "destination_selector" && !answer.expects.includes("destination_selector"))
+        faults.push(`${subject}: ${answer.expects} does not name the destination selector`);
+      for (const value of argument.enum ?? [])
+        if (!answer.expects.includes(value))
+          faults.push(`${subject}: ${answer.expects} does not name the declared value ${value}`);
+      // (c) where the value comes from: a path the snapshot resolves, or the explicit non-snapshot answer.
+      if (!(NAMED_SOURCES.includes(answer.from) || snapshotPublishes(snapshot(SOURCE_SNAPSHOT), answer.from)))
+        faults.push(`${subject}: ${answer.from} is neither a resolvable snapshot path nor a named source`);
+    }
+  assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * The same population against a snapshot that publishes almost nothing: the answer must still say where the value is,
+ * and a path it names must still resolve. A refusal that invents `snapshot.something` on a sparse world would be worse
+ * than one that says nothing, because it is the answer a model acts on.
+ */
+test("a sparse snapshot changes the source, never the shape of the answer", () => {
+  const sparse = snapshot();
+  const faults: string[] = [];
+  for (const action of ACTIONS.filter((candidate) => candidate.arguments.length > 0))
+    for (const argument of action.arguments) {
+      const result = compilePlanScript(
+        { script: callScript(action, { omit: [argument.name] }) },
+        { snapshot: sparse, actions: ACTIONS },
+      );
+      const code = result.ok ? "accepted" : result.reasonCode;
+      const prefix = `plan_script_missing_argument:${action.actionId}.${argument.name}:`;
+      if (!code.startsWith(prefix)) {
+        faults.push(`${action.actionId}.${argument.name}: ${code}`);
+        continue;
+      }
+      const { from } = answerOf(code, prefix);
+      if (!(NAMED_SOURCES.includes(from) || snapshotPublishes(sparse, from)))
+        faults.push(`${action.actionId}.${argument.name}: ${from} does not resolve on a sparse snapshot`);
+    }
+  assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * The two measured item-id refusals, asserted exactly: `pickup_item`'s row publishes `qualifiedItemId`, and
+ * `harvest_crop`'s publishes `qualifiedHarvestItemId`. The second is why the field is DERIVED rather than looked up by
+ * name - a refusal that could only repeat the argument would leave the model to guess a name it cannot see.
+ */
+test("the measured item-id refusals point at the row field that actually carries the value", () => {
+  assert.equal(
+    refusalOf(compile("builder.pickup_item({ x: 13, y: 10, expectedTargetId: 'item_01' });", { ...SOURCE_SNAPSHOT })),
+    "plan_script_missing_argument:pickup_item.expectedQualifiedItemId:string:snapshot.itemTargets[].qualifiedItemId",
+  );
+  assert.equal(
+    refusalOf(
+      compile("builder.harvest_crop({ x: 14, y: 10, expectedTargetId: 'harvest_01' });", { ...SOURCE_SNAPSHOT }),
+    ),
+    "plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
+  );
+});
+
+/**
+ * The `water_crop` + `slot` refusal, which is CORRECT and used to be unhelpful: an argument this action does not take must
+ * answer with the set it does take, and - because an invented argument is nearly always a name carried over from another
+ * action - with the actions that really declare it.
+ */
+test("an unknown argument names the allowed set and the actions that do declare it", () => {
+  const faults: string[] = [];
+  for (const action of ACTIONS) {
+    const allowed = action.arguments.length === 0 ? "none" : action.arguments.map((entry) => entry.name).join(",");
+    const code = refusalOf(compile(callScript(action, { add: { notAnArgument: "1" } })));
+    const expected = `plan_script_unknown_argument:${action.actionId}.notAnArgument:allowed:${allowed}:declared_by:none`;
+    if (code !== expected) faults.push(`${action.actionId}: expected ${expected}, received ${code}`);
+  }
+  assert.deepEqual(faults, [], faults.join("\n"));
+
+  const waterCrop = ACTIONS.find((action) => action.actionId === "water_crop");
+  assert.ok(waterCrop, "water_crop is plannable");
+  const slot = refusalOf(compile(callScript(waterCrop, { add: { slot: "0" } })));
+  assert.equal(
+    slot,
+    "plan_script_unknown_argument:water_crop.slot:allowed:x,y,expectedTargetId:declared_by:use_raft,plant_seed,fertilize_tile",
+  );
+  // Every action the answer names really declares a `slot`, so the correction is a fact the caller can check.
+  for (const owner of slot.split(":declared_by:")[1]!.split(","))
+    assert.ok(
+      ACTIONS.find((action) => action.actionId === owner)?.arguments.some((argument) => argument.name === "slot"),
+      `${owner} declares a slot`,
+    );
+});
+
+/**
+ * A wrong KIND is refused with the four facts a guess needs: which argument, what it must be, where the right value is,
+ * and what the script actually passed. `travel({ x: 12.5 })` was refused `argument_not_canonical:travel.x` and the model
+ * could not tell a rounding slip from the wrong field from the wrong action.
+ */
+test("a value of the wrong kind names the argument, its expectation, its source and what was passed", () => {
+  const faults: string[] = [];
+  for (const action of ACTIONS.filter((candidate) => candidate.arguments.length > 0))
+    for (const argument of action.arguments) {
+      const subject = `${action.actionId}.${argument.name}`;
+      const wrong = wrongKindLiteral(argument);
+      const result = compile(callScript(action, { values: { [argument.name]: wrong.literal } }), {
+        ...SOURCE_SNAPSHOT,
+      });
+      const code = result.ok ? "accepted" : result.reasonCode;
+      const prefix = `plan_script_argument_not_canonical:${subject}:`;
+      if (!code.startsWith(prefix)) {
+        faults.push(`${subject}: expected ${prefix}..., received ${code}`);
+        continue;
+      }
+      const { expects, from } = answerOf(code.slice(0, code.lastIndexOf(":got:")), prefix);
+      if (!expects.includes(argument.type) && argument.type !== "destination_selector")
+        faults.push(`${subject}: ${expects} does not name the declared type ${argument.type}`);
+      if (!(NAMED_SOURCES.includes(from) || snapshotPublishes(snapshot(SOURCE_SNAPSHOT), from)))
+        faults.push(`${subject}: ${from} is neither a resolvable snapshot path nor a named source`);
+      const got = code.slice(code.lastIndexOf(":got:") + ":got:".length);
+      if (got !== wrong.received) faults.push(`${subject}: expected got:${wrong.received}, received got:${got}`);
+    }
+  assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * The five forged bindings of `round18`, and the one call that can satisfy the same demand.
+ *
+ * The binding is not an argument and cannot be computed: the Mod publishes which properties it needs, and only
+ * `observe_scene` answers with them. So the refusal says that, a hand-written pair is refused at the call that wrote it,
+ * and the shape the refusal enforces is the shape `protocol.ts` validates.
+ */
+test("a mandatory scene binding says where a real one comes from, and a forged one is refused at the call", () => {
+  const withBinding = ACTIONS.filter((action) => action.sceneBindingRequirement.declared);
+  assert.ok(withBinding.length >= 1, "the surface still declares a mandatory binding");
+  for (const action of withBinding) {
+    const binding = action.sceneBindingRequirement;
+    assert.ok(binding.declared);
+    const expectation = `scene_binding{${binding.requiredProperties.join(",")}}`;
+    assert.equal(
+      refusalOf(compile(callScript(action, { omit: ["sceneTarget"] }))),
+      `plan_script_missing_binding:${action.actionId}.sceneTarget:${expectation}:observe_scene`,
+    );
+  }
+
+  const forged =
+    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
+    "sceneTarget: { observationId: 'observation_forage_01', ref: 'forage_01' } });";
+  assert.equal(
+    refusalOf(compile(forged, { ...SOURCE_SNAPSHOT })),
+    "plan_script_binding_not_canonical:pickup_forage.sceneTarget:scene_binding{observationId,ref}:observe_scene:got:not_a_scene_reference:ref",
+  );
+  // A binding that only invents the observation id is refused for that, by name.
+  assert.match(
+    refusalOf(
+      compile(
+        "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
+          "sceneTarget: { observationId: 'not an id', ref: 'sr1_0123456789abcdef' } });",
+        { ...SOURCE_SNAPSHOT },
+      ),
+    ),
+    /got:not_an_opaque_id:observationId$/u,
+  );
+  // And the call the surface actually asks for is accepted: the binding is validated, not impossible.
+  const real =
+    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
+    "sceneTarget: { observationId: 'observation_1', ref: 'sr1_0123456789abcdef' } });";
+  assert.ok(compile(real, { ...SOURCE_SNAPSHOT }).ok, "a binding of the right shape compiles");
+});
+
+/**
+ * The two read-only names a refusal sends the caller to must be names the surface publishes, and the scene-reference
+ * shape the compiler enforces must be the one `protocol.ts` validates - both read from source, so a rename or a
+ * reformat fails here instead of in a refusal that points at nothing.
+ */
+test("the refusals' named sources are published actions, and their shapes are the Host's own", () => {
+  for (const actionId of ["observe_scene", "find_destination"])
+    assert.equal(
+      SURFACE.find((action) => action.actionId === actionId)?.kind,
+      "read_only",
+      `${actionId} is a published read-only action, so a refusal may name it`,
+    );
+
+  // Read through the repository root, the same way SURFACE_PATH is resolved, so this holds from the source tree and from
+  // the compiled test artifact alike.
+  const protocol = readFileSync(resolve(hostRoot, "../host/src/protocol.ts"), "utf8");
+  const declared = /function isSceneReference\(value: unknown\): value is string \{[\s\S]{0,200}?\/(\^[^/]+)\//u.exec(
+    protocol,
+  )?.[1];
+  assert.ok(declared, "protocol.ts still declares the scene-reference shape");
+  const isSceneReference = new RegExp(declared, "u");
+  const reference = `sr1_${"a".repeat(16)}`;
+  assert.equal(isSceneReference.test(reference), true, "the protocol predicate accepts the sample reference");
+  const call = (ref: string) =>
+    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
+    `sceneTarget: { observationId: 'observation_1', ref: '${ref}' } });`;
+  assert.ok(compile(call(reference), { ...SOURCE_SNAPSHOT }).ok, "the compiler accepts the shape the protocol accepts");
+  const tooShort = `sr1_${"a".repeat(15)}`;
+  assert.equal(isSceneReference.test(tooShort), false, "the protocol predicate refuses a short reference");
+  assert.match(refusalOf(compile(call(tooShort), { ...SOURCE_SNAPSHOT })), /got:not_a_scene_reference:ref$/u);
 });
 
 test("a builder method is generated for exactly the lifecycles the Mod's Body Program catalog admits", () => {
@@ -407,7 +782,10 @@ test("a script that swallows a builder refusal still fails the plan, and a clock
 try { builder.move_to_tile({ x: 10, y: 10, unexpected: 1 }); } catch (error) {}
 builder.move_to_tile({ x: 11, y: 10 });
 `);
-  assert.equal(refusalOf(swallowed), "plan_script_unknown_argument:move_to_tile.unexpected");
+  assert.equal(
+    refusalOf(swallowed),
+    "plan_script_unknown_argument:move_to_tile.unexpected:allowed:x,y:declared_by:none",
+  );
   assert.equal(refusalOf(compile("throw new TypeError('nope');")), "plan_script_threw:TypeError");
   assert.equal(refusalOf(compile("while (true) {}")), "plan_script_timeout:50");
   assert.equal(refusalOf(compile("   ")), "plan_script_invalid");
@@ -1027,6 +1405,9 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
+            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
+            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   });
