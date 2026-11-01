@@ -838,6 +838,9 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
     // the chapter's lifecycle alone. A chapter is not removed by being corrected.
     if (command.operation === "update_chapter")
       chapters = [{ ...chapters[0], content: String(command.content), status: "sealed", editedByPlayer: true }];
+    // A removal is the lifecycle change that does take the chapter out - into the tombstone the panel keeps.
+    if (command.operation === "delete_chapter")
+      chapters = [{ ...chapters[0], status: "deleted", editedByPlayer: true }];
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(memoryRead()) });
   });
 
@@ -878,6 +881,16 @@ test("the Memory panel shows the companion's chapters and opens one for correcti
   // ... and both facts are in the read-back the panel rendered, not only in the labels beside it.
   expect(chapters[0]?.status).toBe("sealed");
   expect(chapters[0]?.editedByPlayer).toBe(true);
+
+  // The removal is the other lifecycle change, and it is the only one: the row stays listed as a tombstone
+  // so the removal is a fact the player can see. The provenance badge goes with it - the removal already
+  // says whose act took the chapter out, and "you corrected this" beside it would claim an edit where the
+  // player made a removal. Both halves are asserted, because a badge that merely stops rendering and a
+  // badge that was never wired look identical from the outside.
+  await panel.getByRole("button", { name: "Remove", exact: true }).click();
+  await expect.poll(() => mutations.length).toBe(2);
+  await expect(panel.locator('[data-memory-chapter-badge="deleted"]')).toHaveText("Removed");
+  await expect(panel.locator("[data-memory-chapter-provenance]")).toHaveCount(0);
 });
 
 /**
