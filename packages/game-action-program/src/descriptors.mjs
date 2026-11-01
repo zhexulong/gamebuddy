@@ -207,18 +207,6 @@ function validApproach(value) {
   return Number.isSafeInteger(withinTiles) && withinTiles > 0;
 }
 
-function validArgumentSchema(value) {
-  const keys = dataKeys(value);
-  return keys !== null && keys.length <= MAX_ARGUMENTS
-    && keys.every((key) => ARGUMENT_IDENTIFIER.test(key))
-    && keys.every((key) => validArgumentSchemaEntry(ownValue(value, key)));
-}
-
-/**
- * One argument entry: its declared type plus the producer's own value vocabulary when the argument is a
- * closed set (`FarmhandActionArgumentSchema.Enum`). The vocabulary is part of the descriptor, so a consumer
- * that rejects it cannot read the domain it is supposed to project.
- */
 /**
  * The ObservationBinding/v1 requirement the Mod publishes when an action needs a scene reference first.
  *
@@ -241,6 +229,18 @@ function validSceneTarget(value) {
     && requiredProperties.every((property) => typeof property === "string" && SCENE_TARGET_PROPERTY.test(property));
 }
 
+function validArgumentSchema(value) {
+  const keys = dataKeys(value);
+  return keys !== null && keys.length <= MAX_ARGUMENTS
+    && keys.every((key) => ARGUMENT_IDENTIFIER.test(key))
+    && keys.every((key) => validArgumentSchemaEntry(ownValue(value, key)));
+}
+
+/**
+ * One argument entry: its declared type plus the producer's own value vocabulary when the argument is a
+ * closed set (`FarmhandActionArgumentSchema.Enum`). The vocabulary is part of the descriptor, so a consumer
+ * that rejects it cannot read the domain it is supposed to project.
+ */
 function validArgumentSchemaEntry(entry) {
   if (entry === INVALID || !sameKeysOrOptional(entry, ARGUMENT_SCHEMA_REQUIRED_KEY_SET, ARGUMENT_SCHEMA_OPTIONAL_KEY_SET)) {
     return false;
