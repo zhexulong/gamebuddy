@@ -331,6 +331,29 @@ export const DECLARED = Object.freeze([
       SELF_TESTS_EXEMPTION,
     ]),
   }),
+  Object.freeze({
+    id: "operator-gateway-provider-id",
+    description:
+      "The provider id of the operator's environment connection has one owner, `TAVERN_ENVIRONMENT_PROVIDER_ID` in " +
+      "host/src/tavern/provider-catalog.ts. A harness that spells it again is how the credential it writes into " +
+      "`auth.json` and the provider entry the runtime reads end up naming two providers - each half valid, the pair " +
+      "silent. Every tools/ path reads it through tools/lib/operator-gateway.mjs, the tools-side mirror of the owner " +
+      "(tools/ must not import Host source), and that mirror is asserted equal to its precedent by " +
+      "tools/lib/operator-gateway.test.mjs. Tests are exempt as a CLASS rather than file by file: a test that pins " +
+      "what the resolver answers has to name the value it expects, and naming each such file here would put a list in " +
+      "front of the gate that grows with the suite and never with the defect.",
+    ownerPath: "host/src/tavern/provider-catalog.ts",
+    valuePattern: "cpa-oai",
+    assertionsInTestFilesOnly: true,
+    allowedOtherPaths: Object.freeze([
+      {
+        path: "tools/lib/operator-gateway.mjs",
+        reason: "the tools-side mirror of this owner, equality-asserted by tools/lib/operator-gateway.test.mjs",
+      },
+      SELF_EXEMPTION,
+      SELF_TESTS_EXEMPTION,
+    ]),
+  }),
 ]);
 
 function toPosix(path) {
@@ -348,6 +371,22 @@ function isExcludedName(name) {
     name.startsWith("_devdist") ||
     name.startsWith(".worktrees")
   );
+}
+
+/**
+ * The repository's test naming convention, for a rule that exempts assertions rather than files.
+ *
+ * `assertionsInTestFilesOnly` was added with the `operator-gateway-provider-id` rule: a test that pins what a resolver
+ * answers has to spell the value it expects (the same reason the `operator-gateway-endpoint` rule names the two test
+ * files that pin its default), and the alternative - one exemption per test file - is a list that grows with the suite
+ * and never with the defect. A path this pattern does not match is still reported, so product and harness code cannot
+ * re-declare the value while a test may assert on it.
+ */
+const TEST_FILE_PATTERN = /(?:\.test|\.spec)\.[cm]?[jt]sx?$/u;
+
+/** Whether a repo-relative, POSIX-separated path is one of the repository's test files. */
+export function isTestFile(path) {
+  return TEST_FILE_PATTERN.test(path);
 }
 
 function hasScannedExtension(name) {
@@ -482,6 +521,7 @@ export function findDuplicatedAuthorities(repoRoot, declared = DECLARED) {
       for (const match of text.matchAll(pattern)) {
         if (!hasStandaloneBoundary(text, match.index, match[0].length)) continue;
         if (isInside(comments, match.index)) continue;
+        if (entry.assertionsInTestFilesOnly === true && isTestFile(path)) continue;
         findings.push({
           id: entry.id,
           path,

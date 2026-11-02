@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { DECLARED, GATE_PATHS, findDuplicatedAuthorities, formatFinding } from "./duplicated-authority.mjs";
+import { DECLARED, findDuplicatedAuthorities, formatFinding, GATE_PATHS } from "./duplicated-authority.mjs";
 
 // red-proof: inject - a literal spelled in two modules outside its declared owner; the gate reports
 // both paths with line and text (`a literal in two modules is caught, with path, line and text`).
@@ -165,6 +165,37 @@ test("the published-action-id-list rule catches a hand-written id list, not a si
     ["tools/probe.mjs"],
   );
   assert.equal(findings.length, 1);
+});
+
+test("the provider-id rule catches a harness literal and exempts a test that asserts on it", () => {
+  // The rule exists because a harness that spells the id again can file the credential under one provider and read the
+  // entry under another; each half valid, the pair silent. A TEST that pins what a resolver answers has to name the
+  // value, which is why the exemption is the test-file class and not one entry per suite.
+  const root = makeRepo({
+    "host/src/tavern/provider-catalog.ts": 'export const TAVERN_ENVIRONMENT_PROVIDER_ID = "cpa-oai" as const;\n',
+    "tools/harness.mjs": 'const provider = "cpa-oai";\n',
+    "tools/harness.test.mjs": 'assert.equal(resolved, "cpa-oai");\n',
+  });
+  const findings = findDuplicatedAuthorities(root, [rule("operator-gateway-provider-id")]);
+  assert.deepEqual(
+    findings.map((finding) => [finding.path, finding.line]),
+    [["tools/harness.mjs", 1]],
+    "the harness is reported; the test asserting on the value is not",
+  );
+});
+
+test("a scratch-named file is not scanned, and the same literal under a tracked name is", () => {
+  // The exclusion is by NAME, so it covers a scratch FILE at a tracked root - a git-ignored `.tmp-*.ts` used to be
+  // read, and its literals were reported against rules the author of a throwaway probe never touched.
+  const root = makeRepo({
+    "src/owner.mjs": 'export const value = "sentinel-value";\n',
+    ".tmp-probe.mjs": 'const scratch = "sentinel-value";\n',
+    "src/probe.mjs": 'const real = "sentinel-value";\n',
+  });
+  assert.deepEqual(
+    findDuplicatedAuthorities(root, SYNTHETIC).map((finding) => finding.path),
+    ["src/probe.mjs"],
+  );
 });
 
 /**
