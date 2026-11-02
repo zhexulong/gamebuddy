@@ -389,6 +389,9 @@ internal sealed class StardewBodyController
 
     private bool TryStartCore(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence)
     {
+        // Cleared per call. `reachabilityHint` is instance state, and a stale hint from the previous refusal would
+        // otherwise attach to a refusal that computed nothing - a `closest=` pointing at a tile from an unrelated walk.
+        this.reachabilityHint = null;
         evidence = null;
         if (this.active is not null)
         {
@@ -561,6 +564,21 @@ internal sealed class StardewBodyController
                 // The probe abandoned its own claim (component beyond its budget), so no
                 // reachability statement is made and the native verdict stands alone.
                 evidence += ";path_search=undecided";
+            }
+            // THE HINT BELONGS ON THIS BRANCH TOO, and its absence here is why every live run since the hint was
+            // written still refused with a bare reason code.
+            //
+            // Measured 2026-11-02 (`round24`, first day, `go_mining`): 27 `move_to_tile` refusals in Mountain, the
+            // model's session containing `closest=` 0 times and `blocked_by` 0 times, while every receipt carried
+            // `reason=no_native_path` and nothing else. The first branch below (the cardinal flood saying the target's
+            // component is unreachable) set this field; THIS branch - native finder returned null - did not, and that
+            // is the branch a walk through Mountain's landslide takes.
+            //
+            // Filled only when the flood actually found something: `ClosestToTarget` is null when it found nothing
+            // closer, and `FormatReachableHint` already renders that as the empty string rather than a false claim.
+            if (verdict is ReachabilityVerdict hintSource)
+            {
+                this.reachabilityHint = FormatReachableHint(hintSource.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
             }
             return false;
         }
