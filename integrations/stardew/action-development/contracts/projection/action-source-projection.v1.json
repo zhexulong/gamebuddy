@@ -139,7 +139,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "toolSlots"
         },
         "handlerGroup": null
       },
@@ -155,25 +156,23 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
             }
           },
           "outputFacts": {},
           "resourceTemplate": {
-            "claims": [
-              {
-                "key": "embodied_actor",
-                "value": "ScopePlayer"
-              }
-            ]
+            "claims": []
           },
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "warps"
         },
         "handlerGroup": null
       },
@@ -214,7 +213,8 @@
           "approach": {
             "relation": "adjacent",
             "withinTiles": 1
-          }
+          },
+          "targetFamily": "minecartTargets"
         },
         "handlerGroup": null
       },
@@ -272,7 +272,8 @@
           "effect": "write",
           "postcondition": {
             "name": "mine_elevator_floor_selected"
-          }
+          },
+          "targetFamily": "mineElevatorFloorTargets"
         },
         "handlerGroup": null
       },
@@ -288,7 +289,8 @@
           "kind": "execution",
           "argumentSchema": {
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "x": {
               "type": "integer"
@@ -309,7 +311,8 @@
           "effect": "write",
           "postcondition": {
             "name": "raft_launched"
-          }
+          },
+          "targetFamily": "raftTargets"
         },
         "handlerGroup": null
       },
@@ -346,7 +349,8 @@
           "effect": "write",
           "postcondition": {
             "name": "horse_mounted"
-          }
+          },
+          "targetFamily": "horseTargets"
         },
         "handlerGroup": null
       },
@@ -383,7 +387,8 @@
           "effect": "write",
           "postcondition": {
             "name": "mine_entered"
-          }
+          },
+          "targetFamily": "mineEntranceTargets"
         },
         "handlerGroup": null
       },
@@ -399,20 +404,17 @@
           "kind": "execution",
           "argumentSchema": {
             "x": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
             },
             "y": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates."
             }
           },
           "outputFacts": {},
           "resourceTemplate": {
-            "claims": [
-              {
-                "key": "embodied_actor",
-                "value": "ScopePlayer"
-              }
-            ]
+            "claims": []
           },
           "effect": "write",
           "postcondition": {
@@ -421,7 +423,8 @@
           "approach": {
             "relation": "adjacent",
             "withinTiles": 1
-          }
+          },
+          "targetFamily": "warps"
         },
         "handlerGroup": null
       },
@@ -455,7 +458,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "soilTiles"
         },
         "handlerGroup": null
       },
@@ -499,7 +503,17 @@
           "approach": {
             "relation": "adjacent",
             "withinTiles": 1
-          }
+          },
+          "sceneTarget": {
+            "type": "ObservationBinding",
+            "version": 1,
+            "required": true,
+            "requiredProperties": [
+              "observationId",
+              "ref"
+            ]
+          },
+          "targetFamily": "forageTargets"
         },
         "handlerGroup": null
       },
@@ -539,7 +553,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "itemTargets"
         },
         "handlerGroup": null
       },
@@ -580,7 +595,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "cropTargets"
         },
         "handlerGroup": null
       },
@@ -602,7 +618,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -623,7 +640,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "seedTargets"
         },
         "handlerGroup": null
       },
@@ -645,7 +663,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -666,7 +685,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "fertilizerTargets"
         },
         "handlerGroup": null
       },
@@ -705,7 +725,8 @@
           "effect": "read",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "machineTargets"
         },
         "handlerGroup": null
       },
@@ -727,10 +748,12 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "description": "Exactly (O)433, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
               "type": "string"
@@ -748,7 +771,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "machineTargets"
         },
         "handlerGroup": null
       },
@@ -785,7 +809,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "machineTargets"
         },
         "handlerGroup": null
       },
@@ -826,7 +851,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "animalProductTargets"
         },
         "handlerGroup": null
       },
@@ -867,7 +893,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "feedTroughTargets"
         },
         "handlerGroup": null
       },
@@ -883,7 +910,8 @@
           "kind": "execution",
           "argumentSchema": {
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -901,7 +929,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "foodTargets"
         },
         "handlerGroup": null
       },
@@ -941,7 +970,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "harvestTargets"
         },
         "handlerGroup": null
       },
@@ -963,10 +993,12 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "description": "Exactly (O)322, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
               "type": "string"
@@ -984,7 +1016,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "woodFenceTargets"
         },
         "handlerGroup": null
       },
@@ -1006,10 +1039,12 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "description": "Exactly (O)710, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1027,7 +1062,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "crabPotTargets"
         },
         "handlerGroup": null
       },
@@ -1049,10 +1085,12 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "description": "Exactly (O)685, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1070,7 +1108,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "baitCrabPotTargets"
         },
         "handlerGroup": null
       },
@@ -1092,7 +1131,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -1113,7 +1153,8 @@
           "effect": "write",
           "postcondition": {
             "name": "owned_object_placed"
-          }
+          },
+          "targetFamily": "worldObjectTargets"
         },
         "handlerGroup": null
       },
@@ -1135,7 +1176,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1153,7 +1195,8 @@
           "effect": "write",
           "postcondition": {
             "name": "placed_item_removed"
-          }
+          },
+          "targetFamily": "worldObjectTargets"
         },
         "handlerGroup": null
       },
@@ -1175,7 +1218,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1193,7 +1237,8 @@
           "effect": "write",
           "postcondition": {
             "name": "container_source_broken"
-          }
+          },
+          "targetFamily": "worldObjectTargets"
         },
         "handlerGroup": null
       },
@@ -1231,14 +1276,15 @@
               },
               {
                 "key": "tool:axe",
-                "value": "BasicOnly"
+                "value": "AnyUpgrade"
               }
             ]
           },
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "treeChopSourceTargets"
         },
         "handlerGroup": null
       },
@@ -1249,6 +1295,52 @@
         "kind": "execution",
         "descriptor": {
           "actionId": "break_rock_source",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer",
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:pickaxe",
+                "value": "AnyUpgrade"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          },
+          "targetFamily": "rockSourceTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_hoedirt",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_hoedirt",
           "identityVersion": 1,
           "lifecycle": "published",
           "kind": "execution",
@@ -1273,58 +1365,14 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
-              },
-              {
-                "key": "tool:pickaxe",
-                "value": "BasicOnly"
               }
             ]
           },
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
-        },
-        "handlerGroup": null
-      },
-      {
-        "actionId": "clear_hoedirt",
-        "identityVersion": 1,
-        "lifecycle": "published",
-        "kind": "execution",
-        "descriptor": {
-          "actionId": "clear_hoedirt",
-          "identityVersion": 1,
-          "lifecycle": "published",
-          "kind": "execution",
-          "argumentSchema": {
-            "x": {
-              "type": "integer"
-            },
-            "y": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
-            },
-            "expectedTargetId": {
-              "type": "string"
-            }
           },
-          "outputFacts": {},
-          "resourceTemplate": {
-            "claims": [
-              {
-                "key": "embodied_actor",
-                "value": "ScopePlayer"
-              }
-            ]
-          },
-          "effect": "write",
-          "postcondition": {
-            "name": "native_action_postcondition"
-          }
+          "targetFamily": "clearHoeDirtTargets"
         },
         "handlerGroup": null
       },
@@ -1347,7 +1395,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1365,7 +1413,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "artifactSpotTargets"
         },
         "handlerGroup": null
       },
@@ -1388,7 +1437,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1406,7 +1455,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "refillWateringCanTargets"
         },
         "handlerGroup": null
       },
@@ -1528,7 +1578,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1546,7 +1596,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "debrisTargets"
         },
         "handlerGroup": null
       },
@@ -1583,7 +1634,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "npcRelationshipTargets"
         },
         "handlerGroup": null
       },
@@ -1620,7 +1672,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "petTargets"
         },
         "handlerGroup": null
       },
@@ -1657,7 +1710,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "petBowlTargets"
         },
         "handlerGroup": null
       },
@@ -1694,7 +1748,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "slimeHutchTroughTargets"
         },
         "handlerGroup": null
       },
@@ -1716,7 +1771,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -1737,7 +1793,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "npcRelationshipTargets"
         },
         "handlerGroup": null
       },
@@ -1774,7 +1831,8 @@
           "effect": "write",
           "postcondition": {
             "name": "npc_talked"
-          }
+          },
+          "targetFamily": "npcRelationshipTargets"
         },
         "handlerGroup": null
       },
@@ -1880,20 +1938,13 @@
           "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
-            "x": {
-              "type": "integer"
-            },
-            "y": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
+            "chestId": {
+              "type": "string",
+              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
-            },
-            "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The item id to move, copied from `qualifiedItemId` of the chestStoreTargets row. There is no `slot`: the body takes the FIRST stack of this item id in the backpack and releases exactly that stack, and the receipt's `source_slot` names which one moved. Refused `item_not_owned_in_slot` when the backpack holds none of it by then."
             }
           },
           "outputFacts": {},
@@ -1908,7 +1959,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "chests"
         },
         "handlerGroup": null
       },
@@ -1923,20 +1975,13 @@
           "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
-            "x": {
-              "type": "integer"
-            },
-            "y": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
+            "chestId": {
+              "type": "string",
+              "description": "The container's published id, copied from `targetId` of the chestStoreTargets / chestRetrieveTargets row you mean. It already names the location, the tile and the chest type, so there is no separate `x`/`y` argument: the body re-derives the tile from this id and refuses `chest_target_changed` when no live container answers to it (removed, moved, or replaced by another chest type). A fridge is named by the same kind of id."
             },
             "expectedQualifiedItemId": {
-              "type": "string"
-            },
-            "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The item id to move, copied from `qualifiedItemId` of the chestRetrieveTargets row. There is no `slot`: the body takes the FIRST stack in the container holding this item id, so the item id is the whole address on the container's side too. Refused `chest_empty` when nothing there still holds it."
             }
           },
           "outputFacts": {},
@@ -1951,7 +1996,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "chests"
         },
         "handlerGroup": null
       },
@@ -1989,14 +2035,15 @@
               },
               {
                 "key": "tool:axe",
-                "value": "BasicOnly"
+                "value": "AnyUpgrade"
               }
             ]
           },
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "treeStumpTargets"
         },
         "handlerGroup": null
       },
@@ -2018,7 +2065,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -2039,7 +2087,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "treeSaplingTargets"
         },
         "handlerGroup": null
       },
@@ -2062,7 +2111,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2084,7 +2133,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "weedTargets"
         },
         "handlerGroup": null
       },
@@ -2095,6 +2145,52 @@
         "kind": "execution",
         "descriptor": {
           "actionId": "cut_grass",
+          "identityVersion": 1,
+          "lifecycle": "live_verified",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer",
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:scythe",
+                "value": "AnyUpgrade"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          },
+          "targetFamily": "grassTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "clear_cask",
+        "identityVersion": 1,
+        "lifecycle": "live_verified",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "clear_cask",
           "identityVersion": 1,
           "lifecycle": "live_verified",
           "kind": "execution",
@@ -2119,57 +2215,14 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
-              },
-              {
-                "key": "tool:scythe",
-                "value": "AnyUpgrade"
-              }
-            ]
-          },
-          "effect": "write",
-          "postcondition": {
-            "name": "native_action_postcondition"
-          }
-        },
-        "handlerGroup": null
-      },
-      {
-        "actionId": "clear_cask",
-        "identityVersion": 1,
-        "lifecycle": "live_verified",
-        "kind": "execution",
-        "descriptor": {
-          "actionId": "clear_cask",
-          "identityVersion": 1,
-          "lifecycle": "live_verified",
-          "kind": "execution",
-          "argumentSchema": {
-            "x": {
-              "type": "integer"
-            },
-            "y": {
-              "type": "integer"
-            },
-            "slot": {
-              "type": "integer"
-            },
-            "expectedTargetId": {
-              "type": "string"
-            }
-          },
-          "outputFacts": {},
-          "resourceTemplate": {
-            "claims": [
-              {
-                "key": "embodied_actor",
-                "value": "ScopePlayer"
               }
             ]
           },
           "effect": "write",
           "postcondition": {
             "name": "cask_cleared"
-          }
+          },
+          "targetFamily": "caskTargets"
         },
         "handlerGroup": null
       },
@@ -2191,7 +2244,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2209,7 +2263,8 @@
           "effect": "write",
           "postcondition": {
             "name": "mannequin_dressed"
-          }
+          },
+          "targetFamily": "mannequinTargets"
         },
         "handlerGroup": null
       },
@@ -2231,7 +2286,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2249,7 +2305,8 @@
           "effect": "write",
           "postcondition": {
             "name": "sign_display_set"
-          }
+          },
+          "targetFamily": "signTargets"
         },
         "handlerGroup": null
       },
@@ -2271,7 +2328,8 @@
               "type": "integer"
             },
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The backpack slot HOLDING the item this action consumes, which must also be `snapshot.currentToolSlot`: the handler reads `Items[CurrentToolIndex]` and refuses with a named `*_not_held_in_requested_slot` code when the named slot is not the held one. `snapshot.currentToolSlotItem` names what that slot holds."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2289,7 +2347,8 @@
           "effect": "write",
           "postcondition": {
             "name": "silo_hay_deposited"
-          }
+          },
+          "targetFamily": "siloTargets"
         },
         "handlerGroup": null
       },
@@ -2305,7 +2364,8 @@
           "kind": "execution",
           "argumentSchema": {
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "x": {
               "type": "integer"
@@ -2326,7 +2386,8 @@
           "effect": "write",
           "postcondition": {
             "name": "tool_light_toggled"
-          }
+          },
+          "targetFamily": "lanternSlots"
         },
         "handlerGroup": null
       },
@@ -2363,7 +2424,8 @@
           "effect": "write",
           "postcondition": {
             "name": "silo_hay_taken"
-          }
+          },
+          "targetFamily": "siloTargets"
         },
         "handlerGroup": null
       },
@@ -2404,7 +2466,8 @@
           "approach": {
             "relation": "adjacent",
             "withinTiles": 1
-          }
+          },
+          "targetFamily": "obeliskTargets"
         },
         "handlerGroup": null
       },
@@ -2441,7 +2504,8 @@
           "effect": "write",
           "postcondition": {
             "name": "animal_door_toggled"
-          }
+          },
+          "targetFamily": "animalDoorTargets"
         },
         "handlerGroup": null
       },
@@ -2457,7 +2521,8 @@
           "kind": "execution",
           "argumentSchema": {
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
             },
             "expectedQualifiedItemId": {
               "type": "string"
@@ -2475,7 +2540,8 @@
           "effect": "write",
           "postcondition": {
             "name": "warp_item_arrived"
-          }
+          },
+          "targetFamily": "warpItemTargets"
         },
         "handlerGroup": null
       },
@@ -2491,7 +2557,8 @@
           "kind": "execution",
           "argumentSchema": {
             "slot": {
-              "type": "integer"
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "x": {
               "type": "integer"
@@ -2512,7 +2579,8 @@
           "effect": "write",
           "postcondition": {
             "name": "ore_panned"
-          }
+          },
+          "targetFamily": "panSites"
         },
         "handlerGroup": null
       },
@@ -2549,7 +2617,8 @@
           "effect": "write",
           "postcondition": {
             "name": "mail_claimed"
-          }
+          },
+          "targetFamily": "mailboxTargets"
         },
         "handlerGroup": null
       },
@@ -2590,7 +2659,8 @@
           "effect": "write",
           "postcondition": {
             "name": "building_chest_loaded"
-          }
+          },
+          "targetFamily": "buildingChestTargets"
         },
         "handlerGroup": null
       },
@@ -2627,7 +2697,8 @@
           "effect": "write",
           "postcondition": {
             "name": "building_chest_output_collected"
-          }
+          },
+          "targetFamily": "buildingChestTargets"
         },
         "handlerGroup": null
       },
@@ -2650,7 +2721,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2668,7 +2739,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "scytheCropTargets"
         },
         "handlerGroup": null
       },
@@ -2705,7 +2777,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "bushTargets"
         },
         "handlerGroup": null
       },
@@ -2742,7 +2815,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "fruitTreeTargets"
         },
         "handlerGroup": null
       },
@@ -2779,7 +2853,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "shakeTreeTargets"
         },
         "handlerGroup": null
       },
@@ -2816,7 +2891,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "pedestalTargets"
         },
         "handlerGroup": null
       },
@@ -2853,7 +2929,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "fenceGateTargets"
         },
         "handlerGroup": null
       },
@@ -2884,7 +2961,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "craftingRecipeTargets"
         },
         "handlerGroup": null
       },
@@ -2915,7 +2993,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "cookingRecipeTargets"
         },
         "handlerGroup": null
       },
@@ -2952,7 +3031,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "crabPotCollectTargets"
         },
         "handlerGroup": null
       },
@@ -2989,7 +3069,8 @@
           "effect": "write",
           "postcondition": {
             "name": "item_purchased"
-          }
+          },
+          "targetFamily": "shopTargets"
         },
         "handlerGroup": null
       },
@@ -3010,14 +3091,13 @@
             "y": {
               "type": "integer"
             },
-            "slot": {
-              "type": "integer"
-            },
             "expectedQualifiedItemId": {
-              "type": "string"
+              "type": "string",
+              "description": "The item id to ship, copied from `qualifiedItemId` of the shippingBinTargets row. There is no `slot`: the body takes the FIRST carried stack of this item id on arrival and ships exactly that stack, because the walk to a bin takes many ticks and a magnet pickup or a stack merge shifts slots on the way. The receipt's `slot` names which stack actually moved."
             },
             "expectedTargetId": {
-              "type": "string"
+              "type": "string",
+              "description": "The bin's published id, copied from `targetId` of the shippingBinTargets row. It already names the location and the bin's footprint, so the body re-resolves the live bin from it; a bin that has moved or been replaced is refused `shipping_bin_target_changed` instead of being retargeted onto whatever now stands there."
             }
           },
           "outputFacts": {},
@@ -3032,7 +3112,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "targetFamily": "shippingBinTargets"
         },
         "handlerGroup": null
       },
@@ -3070,7 +3151,8 @@
           "effect": "write",
           "postcondition": {
             "name": "wearable_equipped"
-          }
+          },
+          "targetFamily": "wearableTargets"
         },
         "handlerGroup": null
       },
@@ -3105,7 +3187,8 @@
           "effect": "write",
           "postcondition": {
             "name": "wearable_unequipped"
-          }
+          },
+          "targetFamily": "wearableTargets"
         },
         "handlerGroup": null
       },
@@ -3232,7 +3315,8 @@
           "effect": "write",
           "postcondition": {
             "name": "level_up_resolved"
-          }
+          },
+          "targetFamily": "pendingLevelUpChoices"
         },
         "handlerGroup": null
       },
@@ -3330,7 +3414,8 @@
           "effect": "write",
           "postcondition": {
             "name": "placed_object_recolored"
-          }
+          },
+          "targetFamily": "colorTargets"
         },
         "handlerGroup": null
       },
@@ -3367,7 +3452,8 @@
           "effect": "write",
           "postcondition": {
             "name": "fish_pond_cleared"
-          }
+          },
+          "targetFamily": "fishPondTargets"
         },
         "handlerGroup": null
       },
@@ -3407,7 +3493,8 @@
           "effect": "write",
           "postcondition": {
             "name": "farm_building_built"
-          }
+          },
+          "targetFamily": "farmBuildingTargets"
         },
         "handlerGroup": null
       },
@@ -3438,7 +3525,8 @@
           "effect": "write",
           "postcondition": {
             "name": "daily_quest_accepted"
-          }
+          },
+          "targetFamily": "dailyQuestTargets"
         },
         "handlerGroup": null
       },
@@ -3469,7 +3557,8 @@
           "effect": "write",
           "postcondition": {
             "name": "special_order_accepted"
-          }
+          },
+          "targetFamily": "specialOrderTargets"
         },
         "handlerGroup": null
       },
@@ -3500,7 +3589,8 @@
           "effect": "write",
           "postcondition": {
             "name": "museum_rewards_collected"
-          }
+          },
+          "targetFamily": "museumRewardTargets"
         },
         "handlerGroup": null
       },
@@ -3595,7 +3685,8 @@
           "effect": "write",
           "postcondition": {
             "name": "clothing_tailored"
-          }
+          },
+          "targetFamily": "tailoringTargets"
         },
         "handlerGroup": null
       },
@@ -3632,7 +3723,8 @@
           "effect": "write",
           "postcondition": {
             "name": "clothing_dyed"
-          }
+          },
+          "targetFamily": "tailoringTargets"
         },
         "handlerGroup": null
       }
@@ -3734,14 +3826,12 @@
     "executableActionIds": [
       "move_to_tile",
       "equip_tool",
-      "travel",
       "ride_minecart",
       "ride_bus",
       "select_mine_elevator_floor",
       "use_raft",
       "mount_transport",
       "enter_mine",
-      "enter_exit",
       "till_soil",
       "pickup_forage",
       "pickup_item",
