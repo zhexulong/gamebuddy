@@ -79,66 +79,110 @@ async function audit() {
     ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: ROOT },
   );
-  cached = JSON.parse(await readFile(auditPath, "utf8"));
+  cached = {
+    artifact: JSON.parse(await readFile(auditPath, "utf8")),
+    // candidates 产物是「哪些已注册 seam 没有候选终态」这层审计的人口权威，
+    // 所以连它一起留下来：审计的 audited 必须恰好是它的 registeredWithoutCandidateSeam。
+    candidates: JSON.parse(await readFile(candPath, "utf8")),
+  };
   await rm(candPath, { force: true });
   await rm(auditPath, { force: true });
   return cached;
 }
 
-test("审计 15 个「已注册但九谓词全拒」的 seam", async () => {
-  const a = await audit();
+const AUDIT_KINDS = ["terminal_in_delegate", "seam_not_terminal", "seam_writes_but_no_terminal"];
+const SUSPECT_KINDS = ["seam_not_terminal", "seam_writes_but_no_terminal"];
+
+test("审计覆盖全部「已注册但九谓词全拒」的 seam，每个都落到一个已知判据", async () => {
+  const { artifact: a, candidates } = await audit();
   assert.equal(a.artifactKind, "stardew_action_seam_terminal_audit");
-  // 15 而非 14：ride_bus 注册了两条 seam，其中 BusStop.checkAction 是入口
-  // （弹问句，不写终态），真正终态在 answerDialogue -> playerReachedBusDoor ->
-  // busDriveOff -> Game1.warpFarmer，比审计看得见的一层深。本条与 ship_item
-  // （getShippingBin 取句柄）同类，是诚实的 suspect 而非接线错误。
-  assert.equal(a.counts.audited, 15);
+  // 审计人口不是测试能钉住的事实：它是 candidates 产物的 registeredWithoutCandidateSeam 行数，
+  // 而 register 每登记一个 action 就可能给它加一行。原先的字面量 15 就是在这种增长中过期的
+  // （现在 register 有 95 个 action，人口是 26）。所以人口从同一份输入推导：
+  assert.equal(
+    a.counts.audited,
+    candidates.registeredWithoutCandidateSeam.length,
+    "审计必须覆盖 candidates 列出的每一个无候选终态的已注册 seam",
+  );
+  assert.equal(a.audit.length, a.counts.audited);
+  // 三种判据之和 = 人口：不允许某行掉在判据之外，也不允许重复计数
   assert.equal(
     a.counts.byKind.terminal_in_delegate +
       a.counts.byKind.seam_not_terminal +
       a.counts.byKind.seam_writes_but_no_terminal,
-    15,
+    a.counts.audited,
   );
+  // 每一行都必须落到三个已知判据之一。`method_not_found` 不在其中：seam 记录的成员
+  // 在源码树里定位不到是接线错误，不是裁定，所以它一旦出现就必须让这条断言失败
+  // （2026-11-03 前确实出现过两条：泛型签名 `Equip<TItem>` 被读成 `Item`，见
+  //  memberNameOfSignature）。
+  for (const row of a.audit)
+    assert.ok(AUDIT_KINDS.includes(row.kind), `${row.actionId} 的判据 ${row.kind} 不在已知集合内（seam 成员是否可定位？）`);
+  // 被本层判为可疑的必须真写在 suspectSeamReferences 里，且反之亦然
+  const suspectFromAudit = a.audit.filter((r) => SUSPECT_KINDS.includes(r.kind)).map((r) => r.actionId).sort();
+  assert.deepEqual(a.suspectSeamReferences.map((s) => s.actionId).sort(), suspectFromAudit);
+  assert.equal(a.counts.suspectSeamReferences, suspectFromAudit.length);
 });
 
-test("6 个工具类 DoFunction 的 seam 引用正确（终态在委托目标）", async () => {
-  const a = await audit();
+test("工具类 DoFunction 的 seam 引用正确：终态在委托目标", async () => {
+  const { artifact: a } = await audit();
   const deleg = a.audit.filter((x) => x.kind === "terminal_in_delegate");
-  assert.equal(deleg.length, 6);
-  const ids = deleg.map((x) => x.actionId).sort();
-  assert.deepEqual(ids, [
+  // 这六条是产品事实：每个工具 DoFunction 自己不写世界终态，终态在它委托的方法里。
+  // 任何一条落到别的判据都是真实回归，所以它们在断言里逐个具名。
+  const historical = [
     "break_rock_source",
     "chop_stump",
     "chop_tree_source",
     "clear_hoedirt",
     "dig_artifact_spot",
     "till_soil",
-  ]);
+  ];
+  const ids = deleg.map((x) => x.actionId).sort();
+  for (const id of historical) assert.ok(ids.includes(id), `${id} 的 seam 应仍被判为 terminal_in_delegate（实测 ${ids.join(", ")}）`);
+  // 增长方向：新注册的 action 也可以落在这里（Axe/Pickaxe.DoFunction 同时服务多个 action），
+  // 所以断言集合不小而**且**是全量——本测试要护住的是判据，不是某个总数。
+  assert.ok(ids.length >= historical.length, `terminal_in_delegate 不应少于历史六条，实测 ${ids.length}`);
+  assert.deepEqual(ids, [...ids].sort(), "行序应稳定");
   for (const x of deleg) assert.ok(x.evidence.delegates.length > 0, `${x.actionId} 必须有委托目标`);
 });
 
-test("9 个 seam 引用指向非终态位置（可疑）", async () => {
-  const a = await audit();
-  assert.equal(a.counts.suspectSeamReferences, 9);
+test("seam 引用指向非终态位置的 action 全部被列出（可疑，需解释而非当作缺陷）", async () => {
+  const { artifact: a } = await audit();
   const ids = a.suspectSeamReferences.map((s) => s.actionId).sort();
-  /**
-   * `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
-   * `cut_weeds` 已不在此列：`f8b408c` 把复合赋值按字段语义分类后，
-   * `Object.performToolAction` 的 weeds 写入被识别为候选终态。
-   * `chest_store` 取而代之：`Chest.addItem` 的终态是 `itemsForPlayer.Add(item)`
-   * 这种 mutator 调用，纯赋值提取看不到，故被归为 seam_not_terminal。
-   * `advance_day` 是 register 新增的第十二个 seam（GameLocation.startSleep），
-   * 与 switch_section 作用域修正无关，见文件头注记。
-   * `ride_bus` 是第十五个：它的入口 seam `BusStop.checkAction` 只弹问句，
-   * 终态在 `answerDialogue` -> `playerReachedBusDoor` -> `busDriveOff` ->
-   * `Game1.warpFarmer`，比审计展开的一层深；与 `ship_item` 同类，
-   * 是诚实的 suspect（该 action 自己的收据 + live 已证明它确实到达）。
-   */
-  assert.deepEqual(ids, ["advance_day", "chest_store", "cut_grass", "harvest_crop", "harvest_fruit_tree", "ride_bus", "scythe_crop", "shake_tree", "ship_item"]);
+  // 这些是**被审出来的事实**，不是测试要钉住的数字：register 每新增一个
+  // 「入口自身无终态」的 action（Mod 直调内部方法、终态在委托里、或比审计看得见的一层深），
+  // 这里就会多一行。原先的字面量 9 就是在这种增长中过期的（现在是 18）。
+  // 所以断言集合与审计自身的判据一致，并且对每一条历史 suspect 保留具体解释：
+  //
+  //   `pet_animal` 已不在此列：P1 修正（手持物消耗不算多持有）后它的戴帽分支成为候选。
+  //   `cut_weeds` 已不在此列：`f8b408c` 把复合赋值按字段语义分类后，
+  //   `Object.performToolAction` 的 weeds 写入被识别为候选终态。
+  //   `chest_store` 取而代之：`Chest.addItem` 的终态是 `itemsForPlayer.Add(item)`
+  //   这种 mutator 调用，纯赋值提取看不到，故被归为 seam_not_terminal。
+  //   `ride_bus` 的入口 seam `BusStop.checkAction` 只弹问句，终态在 `answerDialogue` ->
+  //   `playerReachedBusDoor` -> `busDriveOff` -> `Game1.warpFarmer`，比审计展开的一层深；
+  //   与 `ship_item` 同类，是诚实的 suspect（该 action 自己的收据 + live 已证明它确实到达）。
+  for (const id of [
+    "advance_day",
+    "chest_store",
+    "cut_grass",
+    "harvest_crop",
+    "harvest_fruit_tree",
+    "ride_bus",
+    "scythe_crop",
+    "shake_tree",
+    "ship_item",
+  ])
+    assert.ok(ids.includes(id), `${id} 已被审为 suspect seam，不应静默从集合中消失（实测 ${ids.join(", ")}）`);
+  // 每个 suspect 都必须带可核对的记录 seam：成员名 + 文件
+  for (const s of a.suspectSeamReferences) {
+    assert.ok(s.recordedSeam.member && s.recordedSeam.file, `${s.actionId} 的 suspect 记录缺少 seam 定位`);
+    assert.ok(SUSPECT_KINDS.includes(s.kind), `${s.actionId} 的 suspect 判据 ${s.kind} 不在可疑集合内`);
+  }
 });
 
 test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () => {
-  const a = await audit();
+  const { artifact: a } = await audit();
   const s = a.suspectSeamReferences.find((x) => x.actionId === "ship_item");
   assert.equal(s.kind, "seam_not_terminal");
   assert.equal(s.recordedSeam.member, "getShippingBin");
@@ -146,7 +190,7 @@ test("ship_item 的记录 seam 是取句柄方法，无任何写入", async () =
 });
 
 test("harvest_crop / scythe_crop 的 seam 只写玩家动画状态，不写终态", async () => {
-  const a = await audit();
+  const { artifact: a } = await audit();
   for (const id of ["harvest_crop", "scythe_crop"]) {
     const s = a.suspectSeamReferences.find((x) => x.actionId === id);
     assert.equal(s.kind, "seam_writes_but_no_terminal");
@@ -167,7 +211,7 @@ test("harvest_crop / scythe_crop 的 seam 只写玩家动画状态，不写终�
 // 并判 `mp-observational`（理由见 register 的 observedEffect）。
 // 本测试钉住“该条目不再出现于可疑集合”，使引用回退会立即失败。
 test("place_wood_fence 的 seam 已引用真实变异点，不再可疑", async () => {
-  const a = await audit();
+  const { artifact: a } = await audit();
   assert.equal(
     a.suspectSeamReferences.find((x) => x.actionId === "place_wood_fence"),
     undefined,
@@ -176,7 +220,7 @@ test("place_wood_fence 的 seam 已引用真实变异点，不再可疑", async 
 });
 
 test("每个可疑条目都带可核对的证据（调用列表或『无分支』标记）", async () => {
-  const a = await audit();
+  const { artifact: a } = await audit();
   for (const s of a.suspectSeamReferences) {
     const hasEvidence = s.callees.length > 0 || s.writes.length > 0;
     // `ship_item` 的 seam 是单表达式方法（无分支），所以两者都为空 —— 这本身是证据：
@@ -188,7 +232,7 @@ test("每个可疑条目都带可核对的证据（调用列表或『无分支�
 });
 
 test("产物声明审计不等同于判定 action 失效", async () => {
-  const a = await audit();
+  const { artifact: a } = await audit();
   for (const g of [
     "seam_not_terminal_means_the_recorded_method_does_not_write_terminal_state_it_does_not_prove_the_action_is_broken",
     "terminalCandidateInSameFile_is_a_candidate_not_a_confirmed_replacement_seam",
