@@ -26,7 +26,7 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
  * this session.
  */
-const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;

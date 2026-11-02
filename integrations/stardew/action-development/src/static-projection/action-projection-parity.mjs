@@ -1,3 +1,5 @@
+import { ACTION_SURFACE_OPTIONAL_ACTION_KEYS } from "../action-surface.mjs";
+
 const ERROR_PREFIX = "stardew_projection_parity";
 
 export const PROJECTION_PARITY_SCHEMA = "gamebuddy-stardew-action-projection-parity/v1";
@@ -14,7 +16,18 @@ export const PROJECTION_PARITY_ENVELOPE_KEYS = Object.freeze([
   "absentRoutes",
 ]);
 const PROJECTION_PARITY_SURFACE_KEYS = Object.freeze(["schema", "catalogRevision", "actions"]);
-const PROJECTION_PARITY_ACTION_KEYS = Object.freeze([
+/*
+ * The descriptor members every action must carry, and the optional ones it may carry.
+ *
+ * The optional half is IMPORTED from `action-surface.mjs` rather than restated. That module is the
+ * upstream validator of the same artefact this file reads, so it is the one place that decides what a
+ * published descriptor is allowed to carry - and it had already gained `approach`, `sceneTarget` and
+ * `targetFamily` while this list stayed at the original nine. Nothing caught it because `action:ci` is
+ * gated behind `GAMEBUDDY_STARDEW_GAME_PATH` in CI and that variable is never assigned, so this file
+ * went unexecuted from 2026-09-29 (its last commit) until 80 of 95 published actions carried a member
+ * it would have rejected.
+ */
+const PROJECTION_PARITY_ACTION_REQUIRED_KEYS = Object.freeze([
   "actionId",
   "identityVersion",
   "lifecycle",
@@ -151,6 +164,28 @@ function exactKeys(value, expected, code) {
     fail(code);
   }
   for (const key of expected) dataDescriptor(value, key, code);
+}
+
+/**
+ * The action shape: every required member present, and nothing outside required-or-optional.
+ *
+ * A separate function rather than `exactKeys`, because an action has a fixed CORE and a set of members a
+ * surface may omit. `exactKeys` answers "is the key set exactly this", which is the wrong question here
+ * in BOTH directions: it rejects an action that omits an optional member, and it would reject one that
+ * carries a member the list had not learned about yet. `action-surface.mjs` already made this exact split
+ * for this exact reason; the two validators read the same artefact, so they answer it the same way.
+ */
+function actionDescriptorKeys(value) {
+  const keys = ownKeys(value, "invalid_action_shape");
+  for (const key of PROJECTION_PARITY_ACTION_REQUIRED_KEYS) {
+    if (!keys.includes(key)) fail("invalid_action_shape");
+    dataDescriptor(value, key, "invalid_action_shape");
+  }
+  for (const key of keys) {
+    if (PROJECTION_PARITY_ACTION_REQUIRED_KEYS.includes(key)) continue;
+    if (!ACTION_SURFACE_OPTIONAL_ACTION_KEYS.includes(key)) fail("invalid_action_shape");
+    dataDescriptor(value, key, "invalid_action_shape");
+  }
 }
 
 function isArray(value, code) {
@@ -353,7 +388,13 @@ export function validateActionProjectionParity(input) {
   const seenActionIds = new Set();
   const normalizedActions = actions.map((action) => {
     assertPlainJsonObject(action, "invalid_action");
-    exactKeys(action, PROJECTION_PARITY_ACTION_KEYS, "invalid_action_shape");
+    /*
+     * A descriptor has a fixed CORE and a set of members a surface may omit, so the shape is
+     * "every required member present, nothing outside required-or-optional". `exactKeys` is for maps
+     * whose key set is fixed; using it here is what made this check wrong in both directions, which is
+     * why `action-surface.mjs` grew the same split and says so in its own comment.
+     */
+    actionDescriptorKeys(action);
     const actionId = identifierOf(dataDescriptor(action, "actionId", "invalid_action_shape").value, "invalid_action_id");
     const identityVersion = dataDescriptor(action, "identityVersion", "invalid_action_shape").value;
     const lifecycle = dataDescriptor(action, "lifecycle", "invalid_action_shape").value;
