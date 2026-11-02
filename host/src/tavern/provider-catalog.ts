@@ -159,6 +159,37 @@ export type TavernCatalogModel = Readonly<{
    * catalog does not know falls back to a conservative constant rather than to a million.
    */
   contextWindow?: number;
+  /**
+   * What this model costs per million tokens, when the catalog states it.
+   *
+   * Pi computes `usage.cost` from exactly these four numbers (`calculateCost` in `@earendil-works/pi-ai`), and an entry it
+   * cannot price is billed at zero rather than left blank - so a wrong rate is not untidy, it is a wrong cost on every
+   * recorded turn and on every spend reading taken from one. That is why the rate lives here, on the model this Host sells,
+   * instead of in whatever builder happens to serialize it: `deepseek-v4.1-flash` is described by five entries in Pi's own
+   * catalog at three different rates, so no single upstream number is "the" price and choosing one at serialization time is
+   * a choice no reader can see.
+   *
+   * A model this Host does not price states no rate at all, rather than borrowing a neighbour's.
+   *
+   * The numbers are a DECLARATION of what the model costs, not a measurement of what the endpoint billed. The operator's
+   * gateway is a configurable address and nothing in this process can read its billing, so the declared rate below is the
+   * upstream's published rate for this exact model id - the operator's own reading to correct when the gateway's invoice
+   * says otherwise.
+   */
+  cost?: TavernModelCost;
+}>;
+
+/**
+ * A model's price per million tokens, in the currency its provider bills in.
+ *
+ * Four numbers and nothing else, because those are the four Pi multiplies token counts by; a tier table or a per-request
+ * fee would have to be modelled here before this Host could declare one.
+ */
+export type TavernModelCost = Readonly<{
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
 }>;
 
 export type TavernCatalogProvider = Readonly<{
@@ -209,6 +240,7 @@ const defineModel = (
   defaultThinkingLevel: CompanionThinkingLevel,
   reasoningDialect: TavernModelReasoningDialect,
   contextWindow: number,
+  cost: TavernModelCost,
 ): TavernCatalogModel =>
   Object.freeze({
     modelId,
@@ -217,6 +249,7 @@ const defineModel = (
     defaultThinkingLevel,
     reasoningDialect,
     contextWindow,
+    cost: Object.freeze({ ...cost }),
   });
 
 const defineProvider = (provider: TavernCatalogProvider): TavernCatalogProvider =>
@@ -242,7 +275,15 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     environmentVariable: TAVERN_ENVIRONMENT_VARIABLE,
     setupFields: [],
     allowedPlayerModels: [
-      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 1_000_000),
+      defineModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", ["low", "high", "max"], "high", "deepseek", 1_000_000, {
+        // The upstream's published rate for THIS model id, per million tokens. It replaced 0.14 / 0.28 / 0.0028 / 0.14,
+        // which are `deepseek-v4-flash`'s input and output rates - one model generation older - and a cache pair that no
+        // catalog entry states at all (every entry for this id says `cacheWrite: 0`).
+        input: 0.3,
+        output: 1.2,
+        cacheRead: 0.006,
+        cacheWrite: 0,
+      }),
     ],
     escapeHatch: false,
     probeBearerAuth: true,

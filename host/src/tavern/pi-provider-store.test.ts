@@ -67,10 +67,10 @@ const ZERO_CONFIG_DEEPSEEK = `{
           "contextWindow": 1000000,
           "maxTokens": 384000,
           "cost": {
-            "input": 0.14,
-            "output": 0.28,
-            "cacheRead": 0.0028,
-            "cacheWrite": 0.14
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0
           },
           "compat": {
             "supportsDeveloperRole": false,
@@ -434,7 +434,7 @@ test("the declared window is the model's own, a conservative floor for an unknow
  * pass by accident. The catalog parameter makes the entry under test a non-environment one, which is the
  * shape a player's own model takes once any provider does describe its models.
  */
-test("a model another entry declares keeps its own window and its own dialects", () => {
+test("a model another entry declares keeps its own window, its own dialects and its own price", () => {
   const key = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
   const previous = process.env[key];
   delete process.env[key];
@@ -449,6 +449,7 @@ test("a model another entry declares keeps its own window and its own dialects",
           defaultThinkingLevel: "high" as const,
           reasoningDialect: "deepseek" as const,
           contextWindow: 163_840,
+          cost: { input: 0.42, output: 1.68, cacheRead: 0.008, cacheWrite: 0.21 },
         }),
       ]),
     }) satisfies TavernCatalogProvider;
@@ -459,6 +460,16 @@ test("a model another entry declares keeps its own window and its own dialects",
     assert.equal(catalogModelById("byok-deepseek-chat", catalog)?.contextWindow, 163_840);
     assert.equal(declaredContextWindow("byok-deepseek-chat", catalog), 163_840);
     assert.notEqual(declaredContextWindow("byok-deepseek-chat", catalog), CONSERVATIVE_CONTEXT_WINDOW);
+
+    // The price is the third fact of the model and is read the same way, from the entry that declares it. The rates here
+    // are deliberately unlike any model the shipped catalog prices, so a lookup that fell back to the environment entry -
+    // the defect the window had - would emit a number this assertion does not expect.
+    assert.deepEqual(catalogModelById("byok-deepseek-chat", catalog)?.cost, {
+      input: 0.42,
+      output: 1.68,
+      cacheRead: 0.008,
+      cacheWrite: 0.21,
+    });
 
     // The dialect is the same fact asked a second way, and it travels with the window: a `deepseek` model
     // gets the collapsed effort vocabulary wherever its entry lives, not only under the environment one.
@@ -473,6 +484,8 @@ test("a model another entry declares keeps its own window and its own dialects",
       thinkingFormat: "deepseek",
       requiresReasoningContentOnAssistantMessages: true,
     });
+    // The emitted `cost` is the declared one, not a literal written beside it in the serializer: one authority per fact.
+    assert.deepEqual(model["cost"], { input: 0.42, output: 1.68, cacheRead: 0.008, cacheWrite: 0.21 });
 
     // An id no entry in that same catalog declares is still the conservative floor, and still the neutral
     // dialect - widening the lookup must not turn an unknown model into a described one.
@@ -481,6 +494,11 @@ test("a model another entry declares keeps its own window and its own dialects",
     const unknownModel = (unknown["models"] as readonly Readonly<Record<string, unknown>>[])[0]!;
     assert.equal(unknownModel["contextWindow"], CONSERVATIVE_CONTEXT_WINDOW);
     assert.equal((unknownModel["compat"] as Readonly<Record<string, unknown>>)["thinkingFormat"], undefined);
+    // ...and it declares no price at all. A cost block is what Pi's `calculateCost` multiplies token counts by, so a model
+    // nobody priced that still carried one would report a confident spend for a model this Host cannot price. Absence is
+    // the honest reading: Pi's `models.json` schema makes `cost` optional, so the entry stays valid and the rate reads as
+    // zero - visibly unpriced - rather than as somebody else's price.
+    assert.equal(Object.hasOwn(unknownModel, "cost"), false, "an unpriced model must declare no cost block");
   } finally {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;

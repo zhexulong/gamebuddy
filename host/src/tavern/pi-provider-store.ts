@@ -8,6 +8,7 @@ import {
   isTavernPiApi,
   operatorGatewayBaseUrl,
   type TavernCatalogProvider,
+  type TavernModelCost,
   type TavernModelReasoningDialect,
   type TavernPiApi,
   TAVERN_ENVIRONMENT_PROVIDER_ID,
@@ -115,6 +116,22 @@ function reasoningDialectOf(modelId: string, catalog?: readonly TavernCatalogPro
   return catalogModelById(modelId, catalog)?.reasoningDialect ?? "native";
 }
 /**
+ * The price this runtime declares for one model, or `undefined` when no catalog entry states one.
+ *
+ * Read the same way the window and the dialect are: from the entry that DECLARES the model, not from wherever it happens to
+ * be served. Pi multiplies token counts by these four numbers to fill `usage.cost`, so a rate that misses reaches every
+ * recorded turn and every spend reading taken from one - which is what the previous hardcoded pair did: `0.14 / 0.28`
+ * are `deepseek-v4-flash`'s rates, one model generation older than the id they were attached to, and `cacheWrite: 0.14`
+ * matched no catalog entry for that id at all.
+ *
+ * A model no entry prices yields `undefined` rather than a guess. See `declaredCost`'s caller for what the entry then omits.
+ */
+function declaredCost(modelId: string, catalog?: readonly TavernCatalogProvider[]): TavernModelCost | undefined {
+  const declared = catalogModelById(modelId, catalog)?.cost;
+  return declared === undefined ? undefined : { ...declared };
+}
+
+/**
  * The operator-managed Agent provider entry (zero-configuration default).
  *
  * Its address is read from the catalog rather than restated here: `models.json` is what the Agent actually talks
@@ -126,6 +143,7 @@ export function environmentProviderEntry(modelId: string, catalog?: readonly Tav
   const reasoningDialect = reasoningDialectOf(modelId, catalog);
   // Read once: the window and the output cap have to describe the same model, and two reads could straddle a change.
   const contextWindow = declaredContextWindow(modelId, catalog);
+  const cost = declaredCost(modelId, catalog);
   return {
     name: "CPA OpenAI-compatible Agent",
     baseUrl: operatorGatewayBaseUrl(),
@@ -171,12 +189,12 @@ export function environmentProviderEntry(modelId: string, catalog?: readonly Tav
         // 384,000 is that same product - so the two constants are one fact stated twice. Keeping them because they agree today
         // is the `MAX_BATCH_BYTES` shape; they are derived from the window instead, which is the authority for both.
         maxTokens: Math.floor(contextWindow * DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT),
-        cost: {
-          input: 0.14,
-          output: 0.28,
-          cacheRead: 0.0028,
-          cacheWrite: 0.14,
-        },
+        // Present only when the catalog prices this model. Pi's `models.json` schema makes `cost` optional and defaults an
+        // absent block to all zeros (`provider-composer.js`), so omitting it does NOT leave the reading blank - it bills the
+        // turn at zero. That is the honest answer for a model this Host cannot price: zero is visibly unpriced, whereas a
+        // borrowed rate is a confident number about someone else's invoice. The alternative - Pi refusing the entry - is not
+        // available, which is why this is an omission rather than a validation failure.
+        ...(cost === undefined ? {} : { cost }),
         compat: {
           supportsDeveloperRole: false,
           supportsReasoningEffort: true,
