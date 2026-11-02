@@ -193,6 +193,20 @@ jobs:
         timeout-minutes: 90
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
+      # THE TWO GATES THAT COMPARE THE BRIDGE'S TWO DECLARATIONS, wired where a commit cannot skip them.
+      #
+      # `snapshot-loopback` exists precisely for "the Mod publishes what the Host rejects", and it WAS red on
+      # 2026-11-01 (`rockSourceTargets` carried an id with `:` and `,` that `opaqueId` can never match) while a live
+      # run died at 64s with `invalid_snapshot:rockSourceTargets`. Nobody ran it, because neither script was invoked by
+      # any job or hook - and `pnpm test` does not reach them either, since they live in `host/src` as `.test.ts` rather
+      # than in the compiled `dist-test` corpus. A gate nobody runs is a comment.
+      #
+      # Both run through `bun test` (the same shape `test:stardew-completion-evidence` uses): they import `./protocol.js`
+      # and `./wire-declaration.test-support.js`, which are the ESM specifiers the COMPILED tree resolves, and Bun maps
+      # them onto the `.ts` sources. `node --test --experimental-strip-types` does not, which is why the two scripts were
+      # green-in-name-only for as long as they were.
+      - run: pnpm test:stardew-wire-agreement
+      - run: pnpm test:stardew-snapshot-loopback
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
       # (including the embedded-runtime declaration the background historian is gated on) and the session
       # entry it publishes. This one file has no `test:` script of its own, so the aggregate corpus step
@@ -415,6 +429,22 @@ jobs:
         id: stardew_nogame_tests
         if: ${{ !cancelled() }}
         run: node integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/run-nogame-tests.mjs
+      # The action-development package's own gate chain: scaffold contract, the three action-artefact
+      # checks (surface, export, source projection) and the static production admission. Every one of
+      # them reads files or drives dotnet; none needs a licensed game folder, which is why this step is
+      # NOT gated the way the two suites below are.
+      #
+      # It ran nowhere before this step existed. `action:ci` had no caller in any workflow, and the
+      # package's own `test` script sat behind the GAMEBUDDY_STARDEW_GAME_PATH gate below - so the
+      # artefact checks went unexecuted from 2026-09-29 to 2026-11-02 while the surface they validate
+      # changed shape. The source projection drifted, the parity checker still expected nine descriptor
+      # members when 80 of 95 published actions carried a tenth, and a stale checked-in artefact was
+      # committed on 2026-10-30 under a message that said the gate stopped being red. A gate with no
+      # caller cannot be red, and a gate that cannot be red is indistinguishable from a green one.
+      - name: Stardew action-development gates
+        id: stardew_action_development_gates
+        if: ${{ !cancelled() }}
+        run: pnpm --dir integrations/stardew/action-development action:ci
       # The integration suite's own source says no game, Host receiver or schema is involved, but its
       # project references the mod project, so the Stardew mod build package runs and requires a licensed
       # game folder that a hosted runner does not have. Gated on an explicitly configured game path rather
