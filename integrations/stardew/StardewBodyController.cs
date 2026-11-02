@@ -449,7 +449,7 @@ internal sealed class StardewBodyController
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
-                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}"
+                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer)}"
                 // The staging hint belongs on THIS path too, and its absence here was the whole reason the model could not act.
                 //
                 // Measured 2026-11-01 (`round21`): nine `move_to_tile` refusals in Mountain, each carrying 284 bytes of evidence
@@ -475,7 +475,7 @@ internal sealed class StardewBodyController
             // reading — plus, below, the two facts the native null path conflates.
             evidence += $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
             evidence += $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
-            evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}";
+            evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer)}";
             // The native finder returned null. That is TWO different facts, and the receipt
             // must not collapse them:
             //   * the planner's own (cardinal) component does not contain the target's
@@ -1014,9 +1014,51 @@ internal sealed class StardewBodyController
     /// which reads as "nothing is in the way" about a wall. Resource clumps, large terrain features and buildings
     /// live in their own collections, so asking only the first two answered <c>none</c> for a real obstacle.
     /// </summary>
-    internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile)
+    /// <summary>
+    /// Why a tile is not standable, asked in the SAME order the engine asks it.
+    ///
+    /// <para>
+    /// The order is the point, not the detail. `GameLocation.isTilePassable` (GameLocation.cs:2898) reads the Back tile,
+    /// then the Buildings tile; a location that blocks more than tiles overrides `isCollidingPosition` (Mountain.cs:352 for
+    /// `landslide` and `railroadAreaBlocked`). This method used to enumerate ENTITIES only - objects, terrain features,
+    /// clumps, large features, buildings - so a constraint that is none of those reported `none`.
+    /// </para>
+    /// <para>
+    /// Measured 2026-11-01 (`round23`): 25 `no_native_path` refusals in Mountain, every one carrying `blocked_by=none`,
+    /// while the companion re-aimed at nine coordinates. The mine entrance is behind `landslide`, which is
+    /// `DaysPlayed < 5` (Mountain.cs:34) over tiles (50,4)-(52,8) (Mountain.cs:36). It is a NetBool, not an object, so
+    /// enumerating entity types could never name it.
+    /// </para>
+    /// <para>
+    /// This reports the LAYER that refuses, not the field that makes the layer refuse. `location_constraint` says the map
+    /// itself is blocking, which is the distinction the caller needs: "you aimed wrong" versus "this map will not let you
+    /// through right now". Naming `landslide` specifically would require reading a private `NetBool`, and that is a separate
+    /// decision - this answers the question without it.
+    /// </para>
+    /// </summary>
+    internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile, Farmer? player = null)
     {
         Point point = new((int)tile.X, (int)tile.Y);
+
+        // The engine's own two tile tests, in its own order. Asking `isTilePassable` would collapse them into one
+        // boolean; asking the layers separately names which one refused.
+        xTile.Tiles.Tile? backTile = location.map?.GetLayer("Back")?.Tiles[point.X, point.Y];
+        if (backTile is not null && backTile.TileIndexProperties.ContainsKey("Passable"))
+            return $"back_tile:Passable@{point.X},{point.Y}";
+
+        xTile.Tiles.Tile? buildingTile = location.map?.GetLayer("Buildings")?.Tiles[point.X, point.Y];
+        if (buildingTile is not null
+            && !buildingTile.TileIndexProperties.ContainsKey("Shadow")
+            && !buildingTile.TileIndexProperties.ContainsKey("Passable"))
+            return $"buildings_tile:blocked@{point.X},{point.Y}";
+
+        // A location-level constraint is invisible to every entity query: it is a rectangle test inside a virtual the
+        // location overrides. Probe it the way a walking character would, over the tile's own pixel box.
+        if (player is not null
+            && location.isCollidingPosition(new Microsoft.Xna.Framework.Rectangle(point.X * 64, point.Y * 64, 64, 64),
+                Game1.viewport, isFarmer: true, damagesFarmer: 0, glider: false, player))
+            return $"location_constraint@{point.X},{point.Y}";
+
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
             return $"{item.QualifiedItemId}@{point.X},{point.Y}";
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
@@ -1089,7 +1131,7 @@ internal sealed class StardewBodyController
                 parts.Add($"{direction}:off_map");
                 continue;
             }
-            string occupant = DescribeTargetOccupant(location, neighbourTile);
+            string occupant = DescribeTargetOccupant(location, neighbourTile, actor);
             bool walkable = IsWalkableTile(location, actor, neighbourTile);
             // A blocked tile that holds a REMOVABLE object is a different message from one that does not: the first
             // tells the caller the wall can be taken down with a tool it already has, the second that it cannot. The
