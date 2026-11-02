@@ -7,6 +7,7 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import { createCompanionRuntime, DEFAULT_COMPANION_MODEL_CONFIG } from "./runtime.js";
+import { catalogModelById } from "./tavern/provider-catalog.js";
 
 // The runtime writes an identity profile under a path lock, and releasing a lock on Windows goes through the build-time
 // reclaimer - the same binding every other path-lock consumer's suite makes. Without it the release fails and the failure
@@ -44,9 +45,12 @@ test("Companion Agent registry is identity-scoped and uses DeepSeek V4.1 Flash t
     assert.match(models, /"apiKey": "\$CPA_OAI_API_KEY"/);
     assert.match(models, /"thinkingFormat": "deepseek"/);
     assert.match(models, /"requiresReasoningContentOnAssistantMessages": true/);
-    // The DeepSeek V4 line declares 131,072; the assertion says the document carries that model's own window rather than a
-    // product-wide default, which is what it used to carry.
-    assert.match(models, /"contextWindow": 131072/);
+    // The document carries the model's own declared window, not a product-wide default
+    // and not a number written here: the catalog is that fact's owner, so the assertion
+    // reads it. A stale literal in this line (131,072, two model generations back) was
+    // the same second-spelling defect the price had, and it went unnoticed because a
+    // test that pins a value cannot notice the value changing.
+    assert.match(models, new RegExp(`"contextWindow": ${catalogModelById("deepseek-v4.1-flash")?.contextWindow}`));
     assert.doesNotMatch(models, /sk-|Bearer\s+[A-Za-z0-9]/i);
     assert.match(models, /127\.0\.0\.1:8317\/v1/);
     assert.doesNotMatch(models, /xiaomimimo|MIMO_API_KEY|mimo-v2\.5|XAI_API_KEY/i);
