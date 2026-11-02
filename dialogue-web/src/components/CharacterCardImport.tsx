@@ -148,6 +148,18 @@ export function CharacterCardImport({
 }): ReactElement {
   const labels = characterLabels(locale);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * The staged review and its heading: where the player is taken when a card is staged.
+   *
+   * The heading carries the focus (`tabIndex={-1}`), the way this shell already moves a
+   * keyboard player to a surface's own title (`SurfaceView`) and to a drawer's title
+   * (`ContextDrawer`): moving the scrollport without moving the focus leaves a keyboard
+   * user reading the wrong region while the screen shows another.
+   */
+  const reviewRef = useRef<HTMLElement>(null);
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  /** The staged card the player has already been taken to, so a re-render cannot yank them back. */
+  const revealedImportId = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   /** The Host's staged report, held until the player confirms or cancels it. */
@@ -169,6 +181,40 @@ export function CharacterCardImport({
       active = false;
     };
   }, [api]);
+
+  /**
+   * A staged card is a decision, so the decision is brought to the player.
+   *
+   * The import card is not the top of this surface: the companion roster comes first,
+   * and on the paste path the open paste box sits inside this card as well. Measured at
+   * 1440x900 with the report capped and the decision row pinned, the review began at
+   * y 737 on a three-companion roster - partly visible - and at y 873 with five, which
+   * is past the 844 px scrollport, so `position: sticky` could no longer reach the
+   * control (it is clamped to its own card) and `导入此角色卡` read y 882..926 against a
+   * 900 px window. The roster's length is the player's data, so no rule inside the card
+   * can bound it: what is left is to bring the review into view when it appears.
+   *
+   * It fires on the transition into a NEW staged card, never on re-render: a player who
+   * has scrolled away and is reading the roster is not dragged back while they look.
+   * `block: "nearest"` is the smallest move that makes the whole review (heading, capped
+   * report and pinned decision row) fit the region - measured after this reveal at five
+   * companions: the review reads y 389..844 and the confirm control y 800..844, where
+   * `block: "start"` would scroll the review to the very top and hide the roster it came
+   * from for no gain. Focus rides along (`preventScroll` first, then one explicit scroll)
+   * so the scrollport and the caret land in the same place.
+   */
+  useEffect(() => {
+    if (staged === null) {
+      revealedImportId.current = null;
+      return;
+    }
+    if (revealedImportId.current === staged.importId) return;
+    revealedImportId.current = staged.importId;
+    const review = reviewRef.current;
+    if (review === null) return;
+    reviewHeadingRef.current?.focus({ preventScroll: true });
+    review.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }, [staged]);
 
   const refreshHistory = async (): Promise<void> => {
     try {
@@ -332,8 +378,10 @@ export function CharacterCardImport({
       </details>
 
       {staged !== null && stagedReport !== null && (
-        <section aria-label={labels.importReviewTitle} data-card-import-review>
-          <h4>{labels.importReviewTitle}</h4>
+        <section aria-label={labels.importReviewTitle} data-card-import-review ref={reviewRef}>
+          <h4 ref={reviewHeadingRef} tabIndex={-1}>
+            {labels.importReviewTitle}
+          </h4>
           <p className="management-settings-hint">{labels.importReviewHint}</p>
           {/* One sentence per row, in the player's words. The list role is
               explicit because the block is styled without markers

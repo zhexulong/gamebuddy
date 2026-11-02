@@ -137,28 +137,47 @@ function stageResult(): Record<string, unknown> {
  * this roster, so the roster's own height is part of the premise: a review that is
  * only reachable on an empty library is not reachable.
  */
-const COMPANIONS = [1, 2, 3].map((index) => ({
-  handle: `${"E".repeat(41)}${index}A`,
-  name: `Companion ${index}`,
-  isCurrent: index === 1,
-}));
+function rosterOf(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    handle: `${"E".repeat(41)}${index + 1}A`,
+    name: `Companion ${index + 1}`,
+    isCurrent: index === 0,
+  }));
+}
 
-const characterReads: Readonly<Record<string, unknown>> = {
-  companions: { apiVersion: 1, companions: COMPANIONS },
-  persona: { apiVersion: 1, present: false, revision: null, name: null, description: null },
-  scenario: { apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null },
-  greeting: { apiVersion: 1, present: false, revision: null, label: null, variants: [] },
-  "import-history": { apiVersion: 1, entries: [] },
-  "world-info": { state: "none", revision: chatHandle, items: [] },
-};
+const COMPANIONS = rosterOf(3);
 
-async function stubRoutes(page: Page): Promise<void> {
+/**
+ * The first roster length whose review box starts PAST the scrollport, which is the
+ * case a sticky footer cannot reach: measured at 1440x900, a review is 455 px tall
+ * and its top moves with the roster at 68 px per companion - 737 px at three
+ * companions (partly visible, so the pinned row still shows), 805 at four, and
+ * **873 at five, against an 844 px scrollport**. Six reads 941. Five is therefore the
+ * boundary, and the number is asserted by the test rather than trusted here: the
+ * review's unscrolled top is recomputed from the post-reveal rect and the region's
+ * own scrollTop, so a restyled roster that moves the boundary fails loudly instead
+ * of quietly measuring a case this gate no longer covers.
+ */
+const TRIGGER_COMPANIONS = 5;
+
+function characterReads(companions: readonly unknown[]): Readonly<Record<string, unknown>> {
+  return {
+    companions: { apiVersion: 1, companions },
+    persona: { apiVersion: 1, present: false, revision: null, name: null, description: null },
+    scenario: { apiVersion: 1, present: false, revision: null, name: null, description: null, preview: null },
+    greeting: { apiVersion: 1, present: false, revision: null, label: null, variants: [] },
+    "import-history": { apiVersion: 1, entries: [] },
+    "world-info": { state: "none", revision: chatHandle, items: [] },
+  };
+}
+
+async function stubRoutes(page: Page, companions: readonly unknown[] = COMPANIONS): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );
-  for (const [path, body] of Object.entries(characterReads))
+  for (const [path, body] of Object.entries(characterReads(companions)))
     await page.route(`**/api/tavern/v1/${path}`, (route) => route.fulfill(jsonOk(body)));
   await page.route("**/api/tavern/v1/imports", (route) => route.fulfill(jsonOk(stageResult())));
   await page.route(`**/api/tavern/v1/imports/${importIdHandle}/review`, (route) =>
@@ -178,8 +197,8 @@ async function stubRoutes(page: Page): Promise<void> {
  * assertion, so a green reading here is green there too; the fix does not depend on
  * what is above the card at all, which is what the reveal below is for.
  */
-async function stageCard(page: Page) {
-  await stubRoutes(page);
+async function stageCard(page: Page, companions: readonly unknown[] = COMPANIONS) {
+  await stubRoutes(page, companions);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
   const surface = page.getByTestId("characters-surface");
   await expect(surface).toBeVisible();
@@ -259,6 +278,11 @@ const MEASURE = () => {
     surfaceContent: [...document.querySelectorAll<HTMLElement>(".surface-content")]
       .filter((node) => node.getClientRects().length > 0)
       .map((node) => ({ scrollTop: round(node.scrollTop), scrollHeight: node.scrollHeight, clientHeight: node.clientHeight })),
+    activeElement: {
+      tag: document.activeElement?.tagName ?? null,
+      text: (document.activeElement?.textContent ?? "").slice(0, 60),
+      inReview: document.activeElement?.closest("[data-card-import-review]") !== null,
+    },
     review: box(review),
     confirm: { ...box(confirm), scrollAncestors: scrollAncestors(confirm) },
     cancel: { ...box(cancel), scrollAncestors: scrollAncestors(cancel) },
@@ -282,6 +306,7 @@ type Reading = {
   card: { top: number; height: number } | null;
   roster: { top: number; height: number } | null;
   surfaceContent: { scrollTop: number; scrollHeight: number; clientHeight: number }[];
+  activeElement: { tag: string | null; text: string; inReview: boolean };
   review: { top: number; bottom: number; height: number; insideViewport: boolean };
   confirm: { top: number; bottom: number; height: number; insideViewport: boolean; scrollAncestors: Ancestor[] };
   cancel: { top: number; bottom: number; height: number; insideViewport: boolean; scrollAncestors: Ancestor[] };
@@ -358,6 +383,63 @@ test.describe("the card-import review's decision row is in the first viewport", 
     expect(["auto", "scroll"], "the report is the region that scrolls its overflow").toContain(
       reading.report!.overflowY,
     );
+  });
+
+  /**
+   * The residual case, named for the roster length that triggers it.
+   *
+   * Five companions is the first length whose review box starts past the 844 px
+   * scrollport (measured: 873 px, against 805 at four and 737 at three), and a
+   * `position: sticky` footer is clamped to its own card, so it cannot reach a
+   * player from there. Measured without the reveal, `导入此角色卡` read y 882..926
+   * against a 900 px window with `clips: true` on the surface's own scroll.
+   *
+   * The premise is asserted rather than assumed: the review's unscrolled top is
+   * recomputed from its post-reveal rect plus the region's own scrollTop, so if a
+   * restyle moves the boundary below five companions this test says so instead of
+   * passing on a case that no longer tests anything.
+   */
+  test("revealing a staged card: 5 companions is the roster that hides the card", async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await stageCard(page, rosterOf(TRIGGER_COMPANIONS));
+    const reading = await measure(page);
+    const region = reading.surfaceContent[0]!;
+
+    const unscrolledReviewTop = region.scrollTop + reading.review.top;
+    expect(
+      unscrolledReviewTop,
+      `this is the residual case only if the review starts past the scrollport: its unscrolled top is ` +
+        `${unscrolledReviewTop} px against a ${region.clientHeight} px region at ${TRIGGER_COMPANIONS} companions`,
+    ).toBeGreaterThan(region.clientHeight);
+
+    expect(
+      reading.confirm.insideViewport,
+      `导入此角色卡 reads y ${reading.confirm.top}..${reading.confirm.bottom} against a 900 px window ` +
+        `after the reveal (review ${reading.review.top}..${reading.review.bottom})`,
+    ).toBe(true);
+    expect(reading.confirm.top, "and not above the window either").toBeGreaterThanOrEqual(0);
+    expect(reading.confirm.bottom, "fully inside the fold").toBeLessThanOrEqual(900);
+    expect(reading.cancel.insideViewport, "取消 came with it").toBe(true);
+
+    // The pinned row does not escape the review - the reveal moved the card, not the
+    // row alone, so the footer is still inside the box it belongs to.
+    expect(
+      reading.confirm.top >= reading.review.top && reading.confirm.bottom <= reading.review.bottom,
+      `the decision row stays inside its card: row ${reading.confirm.top}..${reading.confirm.bottom}, ` +
+        `card ${reading.review.top}..${reading.review.bottom}`,
+    ).toBe(true);
+
+    // A scrollport that moves without its focus leaves a keyboard player reading the
+    // roster while the screen shows the card. The shell's own surfaces put the focus
+    // on the heading they land on, and this is the same shape.
+    expect(
+      reading.activeElement.inReview,
+      `the focus travelled with the reveal, to <${String(reading.activeElement.tag).toLowerCase()}> ` +
+        `"${reading.activeElement.text}"`,
+    ).toBe(true);
+    expect(reading.activeElement.tag, "the review's own heading takes the focus").toBe("H4");
+    expect(reading.windowScrollY, "the window itself still never scrolls").toBe(0);
   });
 
   /**
