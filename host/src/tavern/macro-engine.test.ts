@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasUnrenderedMacro, macroTable, renderMacros, renderWorldBookText } from "./macro-engine.js";
+import {
+  hasUnrenderedMacro,
+  isStandardSillyTavernMacro,
+  LEFT_LITERAL_STANDARD_MACROS,
+  macroTable,
+  renderMacros,
+  renderWorldBookText,
+  unrenderedMacros,
+} from "./macro-engine.js";
 
 test("renderMacros replaces every supported macro, including mixed forms", () => {
   assert.equal(
@@ -77,4 +85,60 @@ test("renderWorldBookText renders the player word from the locale it is given", 
     renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku", locale: "en-US" }),
     "User and Kohaku farm.",
   );
+});
+
+/**
+ * Bucket 1, the boundary that makes the classification worth having: a standard macro whose value is fixed by the format
+ * itself renders exactly, so an entry that used it is kept rather than dropped.
+ *
+ * `{{newline}}` and `{{noop}}` are SillyTavern's own layout macros - a newline, and nothing - so rendering them is not a
+ * guess about a value this product does not have.
+ */
+test("bucket 1: a standard macro with a fixed value renders, so its entry is not dropped for it", () => {
+  const vars = { char: "Rin", user: "Alex" };
+  assert.equal(renderMacros("a{{newline}}b", vars), "a\nb");
+  assert.equal(renderMacros("a{{noop}}b", vars), "ab");
+  assert.equal(hasUnrenderedMacro(renderMacros("line{{newline}}", vars)), false);
+  assert.equal(isStandardSillyTavernMacro("{{newline}}"), true);
+  assert.equal(isStandardSillyTavernMacro("{{noop}}"), true);
+});
+
+/**
+ * Bucket 2, the boundary the player actually hits: a STANDARD SillyTavern macro this engine cannot fill still leaves the
+ * entry out, but it is now recognisable as standard rather than filed with placeholder junk.
+ */
+test("bucket 2: a standard macro this engine cannot fill survives rendering and is recognised as standard", () => {
+  const vars = { char: "Rin", user: "Alex" };
+  for (const key of Object.keys(LEFT_LITERAL_STANDARD_MACROS)) {
+    const token = `{{${key}}}`;
+    assert.equal(renderMacros(token, vars), token, `${token} must stay literal`);
+    assert.equal(hasUnrenderedMacro(renderMacros(token, vars)), true);
+    assert.equal(isStandardSillyTavernMacro(token), true, `${token} must classify as a standard macro`);
+    assert.ok(
+      (LEFT_LITERAL_STANDARD_MACROS[key] ?? "").length > 20,
+      `${key} must carry a real reason, not a placeholder`,
+    );
+  }
+  // The four faces of the same macro set: a parametric draw, and the camel-case spelling a card may write.
+  for (const token of ["{{random::a::b}}", "{{lastMessage}}", "{{TIME}}", "{{idle_duration}}"])
+    assert.equal(isStandardSillyTavernMacro(token), true, `${token} must classify as standard`);
+});
+
+/**
+ * Bucket 3, the boundary that keeps bucket 2 honest: a token neither table knows is reported as unrecognised, which is a
+ * claim about THIS importer rather than about SillyTavern.
+ */
+test("bucket 3: a token neither table knows is unrecognised, not called a SillyTavern macro", () => {
+  for (const token of ["{{unknown_macro}}", "{{nope}}", "{{...}}", "{{// note}}", "{{ !cancelled() }}"])
+    assert.equal(isStandardSillyTavernMacro(token), false, `${token} must not classify as standard`);
+});
+
+/**
+ * The reporting half of the rule: naming what survived is what turns a count into something the player can act on, and
+ * two occurrences of one macro must read as one entry-side fact rather than two.
+ */
+test("unrenderedMacros names each surviving macro once, in the order the text uses them", () => {
+  assert.deepEqual(unrenderedMacros("a {{time}} b {{original}} c {{time}} d"), ["{{time}}", "{{original}}"]);
+  assert.deepEqual(unrenderedMacros("clean prose"), []);
+  assert.deepEqual(unrenderedMacros(renderWorldBookText("{{char}} and {{user}}", { char: "Rin", user: "Alex" })), []);
 });

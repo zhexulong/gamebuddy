@@ -616,7 +616,15 @@ export type TavernManagementDialogueWebOptions = Readonly<{
               classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
               reason: string;
             }>[];
-            losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+            losses?: readonly Readonly<{
+              field: string;
+              reason: string;
+              count: number;
+              omitted?: readonly Readonly<{
+                title: string;
+                macros: readonly Readonly<{ token: string; standard: boolean }>[];
+              }>[];
+            }>[];
           }>;
         }>;
       }>
@@ -641,7 +649,15 @@ export type TavernManagementDialogueWebOptions = Readonly<{
               classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
               reason: string;
             }>[];
-            losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+            losses?: readonly Readonly<{
+              field: string;
+              reason: string;
+              count: number;
+              omitted?: readonly Readonly<{
+                title: string;
+                macros: readonly Readonly<{ token: string; standard: boolean }>[];
+              }>[];
+            }>[];
           }>;
         }>;
       }>
@@ -717,6 +733,25 @@ type BrowserSession = Readonly<{
  */
 type AdmissionSession = Readonly<{ csrf: string; expiresAtMs: number }>;
 type ProblemCode = TavernProblemV1["code"] | "payload_too_large" | "settings_revision_conflict";
+
+/**
+ * The decoder's named losses, copied into the exact mutable shape the wire schema declares.
+ *
+ * The ledger records these readonly (they are frozen artifacts), while the wire type is a plain
+ * array produced by the schema - so the projection states the copy instead of relying on a
+ * variance that `exactOptionalPropertyTypes` does not grant.
+ */
+function omittedLossRows(
+  omitted: readonly Readonly<{
+    title: string;
+    macros: readonly Readonly<{ token: string; standard: boolean }>[];
+  }>[],
+): { title: string; macros: { token: string; standard: boolean }[] }[] {
+  return omitted.map((entry) => ({
+    title: entry.title,
+    macros: entry.macros.map((macro) => ({ token: macro.token, standard: macro.standard })),
+  }));
+}
 
 /**
  * Closed dispatcher for the independent tavern_management profile. It mounts
@@ -2017,7 +2052,12 @@ export function createTavernManagementDialogueWebRequestHandler(
               ? {}
               : {
                   losses: imported.report.artifact.losses.map((loss) =>
-                    Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count }),
+                    Object.freeze({
+                      field: loss.field,
+                      reason: loss.reason,
+                      count: loss.count,
+                      ...(loss.omitted === undefined ? {} : { omitted: omittedLossRows(loss.omitted) }),
+                    }),
                   ),
                 }),
           });
@@ -2085,7 +2125,12 @@ export function createTavernManagementDialogueWebRequestHandler(
             ? {}
             : {
                 losses: staged.report.artifact.losses.map((loss) =>
-                  Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count }),
+                  Object.freeze({
+                    field: loss.field,
+                    reason: loss.reason,
+                    count: loss.count,
+                    ...(loss.omitted === undefined ? {} : { omitted: omittedLossRows(loss.omitted) }),
+                  }),
                 ),
               }),
         });

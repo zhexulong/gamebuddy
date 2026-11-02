@@ -511,16 +511,32 @@ export type StCardImportDispositionV1 = Readonly<{
   classification: "accepted_typed" | "preserved_opaque" | "dropped_unsupported" | "rejected_invalid";
   reason: string;
 }>;
+export type StCardImportOmittedMacroV1 = Readonly<{
+  /** The macro as the card wrote it, e.g. `{{original}}`. */
+  token: string;
+  /** Whether SillyTavern itself defines it, as far as this importer's own macro tables know. */
+  standard: boolean;
+}>;
+export type StCardImportOmittedEntryV1 = Readonly<{
+  /** The card's own `comment`/`name` for the entry - what the player searches for in the card. */
+  title: string;
+  macros: readonly StCardImportOmittedMacroV1[];
+}>;
 /**
  * One counted loss inside an accepted field. A card's own `system_prompt`
  * beyond the voice bound reports `field: "system_prompt"`,
  * `reason: "character_voice_too_long"` - the decoder's own ledger, so a review
  * reports the loss rather than inferring one.
+ *
+ * `omitted` names the lost items where the player can act on them, so the review
+ * can say which entry and which macro instead of only how many. It is capped, so
+ * it can be shorter than `count`.
  */
 export type StCardImportLossV1 = Readonly<{
   field: string;
   reason: string;
   count: number;
+  omitted?: readonly StCardImportOmittedEntryV1[];
 }>;
 export type StCardImportStageResultV1 = Readonly<{
   apiVersion: 1;
@@ -2100,6 +2116,9 @@ function isCompanionProfileGreetingVariant(value: unknown): value is CompanionPr
 const IMPORT_FIELD_KEYS = ["field", "eligibility", "chars"] as const;
 const IMPORT_DISPOSITION_KEYS = ["field", "classification", "reason"] as const;
 const IMPORT_LOSS_KEYS = ["field", "reason", "count"] as const;
+const IMPORT_LOSS_KEYS_WITH_OMITTED = [...IMPORT_LOSS_KEYS, "omitted"] as const;
+const IMPORT_OMITTED_ENTRY_KEYS = ["title", "macros"] as const;
+const IMPORT_OMITTED_MACRO_KEYS = ["token", "standard"] as const;
 const IMPORT_STAGE_KEYS = ["apiVersion", "importId", "name", "candidateRevision", "fields", "dispositions"] as const;
 const IMPORT_STAGE_KEYS_WITH_LOSSES = [...IMPORT_STAGE_KEYS, "losses"] as const;
 const IMPORT_READ_KEYS = [
@@ -2161,13 +2180,37 @@ function isImportDispositions(value: unknown): value is readonly StCardImportDis
   return Array.isArray(value) && value.length <= 128 && value.every(isImportDisposition);
 }
 
-function isImportLoss(value: unknown): value is StCardImportLossV1 {
+function isImportOmittedMacro(value: unknown): value is StCardImportOmittedMacroV1 {
   return (
     isRecord(value) &&
-    hasExactKeys(value, IMPORT_LOSS_KEYS) &&
+    hasExactKeys(value, IMPORT_OMITTED_MACRO_KEYS) &&
+    isLengthBoundedString(value.token, 1, 64) &&
+    typeof value.standard === "boolean"
+  );
+}
+
+function isImportOmittedEntry(value: unknown): value is StCardImportOmittedEntryV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, IMPORT_OMITTED_ENTRY_KEYS) &&
+    isLengthBoundedString(value.title, 1, 256) &&
+    Array.isArray(value.macros) &&
+    value.macros.length <= 8 &&
+    value.macros.every(isImportOmittedMacro)
+  );
+}
+
+function isImportLoss(value: unknown): value is StCardImportLossV1 {
+  if (!isRecord(value)) return false;
+  const withOmitted = Object.hasOwn(value, "omitted");
+  const keys = withOmitted ? IMPORT_LOSS_KEYS_WITH_OMITTED : IMPORT_LOSS_KEYS;
+  return (
+    hasExactKeys(value, keys) &&
     isLengthBoundedString(value.field, 1, 128) &&
     isLengthBoundedString(value.reason, 1, 128) &&
-    isNonNegativeSafeInteger(value.count)
+    isNonNegativeSafeInteger(value.count) &&
+    (!withOmitted ||
+      (Array.isArray(value.omitted) && value.omitted.length <= 32 && value.omitted.every(isImportOmittedEntry)))
   );
 }
 

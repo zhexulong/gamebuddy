@@ -1,9 +1,15 @@
 import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
-import { hasUnrenderedMacro, renderWorldBookText } from "./tavern/macro-engine.js";
+import {
+  hasUnrenderedMacro,
+  isStandardSillyTavernMacro,
+  renderWorldBookText,
+  unrenderedMacros,
+} from "./tavern/macro-engine.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { isCompletePngFile } from "./tavern/companion-avatar/index.js";
 import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
+import type { StCardImportOmittedEntry } from "./tavern/types.js";
 
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
@@ -11,6 +17,23 @@ const MAX_PNG_CHUNKS = ST_CARD_DECODER_LIMITS_V1.pngChunks;
 const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 /** Bounded rejection code for a malformed `alternate_greetings` entry. */
 const INVALID_ALTERNATE_GREETINGS = "invalid_alternate_greetings";
+/**
+ * How many dropped world-book entries one import names individually.
+ *
+ * The LIST is what the player can act on, and a card with a thousand entries must not turn that list into a
+ * thousand-row response: `count` stays the true total, this only bounds the named rows.
+ */
+const MAX_REPORTED_OMITTED_ENTRIES = 32;
+/** How many macros one named entry lists. An entry is still named when it carries more than this. */
+const MAX_REPORTED_OMITTED_MACROS = 8;
+/**
+ * The most characters of a macro token one report row carries.
+ *
+ * `hasUnrenderedMacro`'s own pattern accepts `{{` followed by any run without braces, so a card can author a token far
+ * longer than any real macro. The wire bound has to hold for those too, or one pathological entry would fail the whole
+ * staged response instead of being reported as the loss it is.
+ */
+const MAX_REPORTED_MACRO_TOKEN_CHARS = 64;
 
 /**
  * Bounded reasons an import can LOSE card material it was handed.
@@ -42,18 +65,48 @@ export type StCardImportLoss = Readonly<{
   reason: StCardImportLossReason;
   /** How many items were lost, always at least 1. */
   count: number;
+  /**
+   * Which items were lost, named so the player can find them in the card and fix them.
+   *
+   * A count is not actionable: "3 entries lost" leaves the player with nothing to search for, while "entry lost:
+   * contains {{original}}" names both the entry and the thing to remove. Present only for a loss whose items the player
+   * can act on; a truncated key list, for instance, has none. Capped at `MAX_REPORTED_OMITTED_ENTRIES`, so this can be
+   * shorter than `count` - the count is the truth, this is the sample the player is shown.
+   */
+  omitted?: readonly StCardImportOmittedEntry[];
 }>;
+
+/** One world-book entry this import could not carry, named the way the card names it. */
+export type { StCardImportOmittedEntry, StCardImportOmittedMacro } from "./tavern/types.js";
 
 /** The one channel an import reports a loss through. */
 type StCardImportLossLedger = Readonly<{
-  record(field: string, reason: StCardImportLossReason, count: number): void;
+  record(
+    field: string,
+    reason: StCardImportLossReason,
+    count: number,
+    omitted?: readonly StCardImportOmittedEntry[],
+  ): void;
   entries(): readonly StCardImportLoss[];
 }>;
 function createLossLedger(): StCardImportLossLedger {
   const entries: StCardImportLoss[] = [];
   return Object.freeze({
-    record(field: string, reason: StCardImportLossReason, count: number): void {
-      if (count > 0) entries.push(Object.freeze({ field, reason, count }));
+    record(
+      field: string,
+      reason: StCardImportLossReason,
+      count: number,
+      omitted?: readonly StCardImportOmittedEntry[],
+    ): void {
+      if (count > 0)
+        entries.push(
+          Object.freeze({
+            field,
+            reason,
+            count,
+            ...(omitted === undefined || omitted.length === 0 ? {} : { omitted: Object.freeze([...omitted]) }),
+          }),
+        );
     },
     entries: (): readonly StCardImportLoss[] => Object.freeze([...entries]),
   });
@@ -664,6 +717,8 @@ function extractCharacterBook(
   let unrenderableContent = 0;
   let truncatedKeys = 0;
   let truncatedSecondaryKeys = 0;
+  /** The dropped entries this import names, bounded by `MAX_REPORTED_OMITTED_ENTRIES`. */
+  const omittedEntries: StCardImportOmittedEntry[] = [];
   entries.forEach((raw, index) => {
     if (!isRecord(raw)) return;
     // The card's own `enabled: false` is the author saying "this entry does not
@@ -679,6 +734,13 @@ function extractCharacterBook(
       if (raw.content !== undefined) unreadableContent += 1;
       return;
     }
+    // The title is resolved BEFORE the render probe so a dropped entry can still be named in the report: the player
+    // has to be able to find it in the card, and the card's own `comment` ("大肥鱼家族") is what they will search
+    // for. The AUTHOR's text, not a rendering - a report row is a label, not model context.
+    const authoredTitle =
+      boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
+      boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
+      `Imported background ${index + 1}`;
     // Card macros are part of the format, and rendering them is the READER's job, not this
     // decoder's: every reader renders at its own seam (`worldbook.ts:231-232` for the World Info
     // tools, `catalog-service.ts:630-631` for the authored-context catalog,
@@ -690,18 +752,33 @@ function extractCharacterBook(
     // same character in another Tavern.
     //
     // The render is still performed, but ONLY as the probe: an entry whose macro set cannot fully
-    // render is dropped rather than written into her world book, and the drop is counted below,
+    // render is dropped rather than written into her world book, and the drop is named below,
     // never silent. The value STORED is the author's own text; the value TESTED is the rendering.
-    if (hasUnrenderedMacro(renderWorldBookText(content, { char: charName }))) {
+    const probe = renderWorldBookText(content, { char: charName });
+    if (hasUnrenderedMacro(probe)) {
       unrenderableContent += 1;
+      if (omittedEntries.length < MAX_REPORTED_OMITTED_ENTRIES)
+        omittedEntries.push(
+          Object.freeze({
+            title: authoredTitle,
+            macros: Object.freeze(
+              unrenderedMacros(probe)
+                .slice(0, MAX_REPORTED_OMITTED_MACROS)
+                .map((token) =>
+                  Object.freeze({
+                    token:
+                      token.length <= MAX_REPORTED_MACRO_TOKEN_CHARS
+                        ? token
+                        : token.slice(0, MAX_REPORTED_MACRO_TOKEN_CHARS),
+                    standard: isStandardSillyTavernMacro(token),
+                  }),
+                ),
+            ),
+          }),
+        );
       return;
     }
-    const title = renderWorldBookText(
-      boundedText(raw.comment, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
-        boundedText(raw.name, ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes) ??
-        `Imported background ${index + 1}`,
-      { char: charName },
-    );
+    const title = renderWorldBookText(authoredTitle, { char: charName });
     // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
     // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
     // every keyword-gated entry unreachable no matter how correct the rest of the chain was.
@@ -739,7 +816,7 @@ function extractCharacterBook(
     );
   });
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
-  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent);
+  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent, omittedEntries);
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
   return Object.freeze({

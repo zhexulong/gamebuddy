@@ -500,14 +500,37 @@ export const StCardImportDispositionV1Schema = strictObject({
   reason: Type.String({ minLength: 1, maxLength: 128 }),
 });
 /**
+ * One macro that kept a world-book entry out of the imported book.
+ *
+ * `standard` is whether SillyTavern itself defines the macro - rendered by the reader, or deliberately left literal. It
+ * is only ever a statement about the macros this importer knows, which is why `false` reads as "unrecognised" rather
+ * than as "not a SillyTavern macro".
+ */
+export const StCardImportOmittedMacroV1Schema = strictObject({
+  token: Type.String({ minLength: 1, maxLength: 64 }),
+  standard: Type.Boolean(),
+});
+/**
+ * One world-book entry this import could not carry, named the way the card names it, so the player can find the entry and
+ * the macro to remove instead of being handed a count with nothing to search for.
+ */
+export const StCardImportOmittedEntryV1Schema = strictObject({
+  title: Type.String({ minLength: 1, maxLength: 256 }),
+  macros: Type.Array(StCardImportOmittedMacroV1Schema, { maxItems: 8 }),
+});
+/**
  * One counted loss inside an accepted field (a card's own directive beyond the
  * voice bound is `system_prompt` / `character_voice_too_long`). It is the
  * decoder's own loss ledger, surfaced so a review never has to infer a loss.
+ *
+ * `omitted` names the lost items where the player can act on them. It is capped, so it can be shorter than `count` - the
+ * count is the truth and the list is the sample the player is shown.
  */
 export const StCardImportLossV1Schema = strictObject({
   field: Type.String({ minLength: 1, maxLength: 128 }),
   reason: Type.String({ minLength: 1, maxLength: 128 }),
   count: Revision,
+  omitted: Type.Optional(Type.Array(StCardImportOmittedEntryV1Schema, { maxItems: 32 })),
 });
 /**
  * The card-file ceiling, base64-inflated: `ST_CARD_DECODER_LIMITS_V1.inputBytesPng`

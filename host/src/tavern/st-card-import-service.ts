@@ -292,7 +292,14 @@ function reportFromDecode(
       ? {}
       : {
           losses: Object.freeze(
-            report.losses.map((loss) => Object.freeze({ field: loss.field, reason: loss.reason, count: loss.count })),
+            report.losses.map((loss) =>
+              Object.freeze({
+                field: loss.field,
+                reason: loss.reason,
+                count: loss.count,
+                ...(loss.omitted === undefined ? {} : { omitted: loss.omitted }),
+              }),
+            ),
           ),
         }),
   });

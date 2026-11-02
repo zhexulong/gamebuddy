@@ -5,33 +5,111 @@
  */
 export function renderMacros(text: string, vars: MacroTable): string {
   return text.replace(MACRO_PATTERN, (macro) => {
-    const key = macro
-      .toLowerCase()
-      .replace(/^<|>$/gu, "")
-      .replace(/^\{\{|\}\}$/gu, "");
-    switch (key) {
-      case "char":
-      case "bot":
-        return vars.char ?? "";
-      case "user":
-        return vars.user ?? "";
-      // The card's own prose, which SillyTavern exposes as macros and authors use inside world-book entries. They are
-      // the companion's own text, so resolving them reads nothing the catalogue did not already carry - and without them
-      // an entry that mentions `{{scenario}}` was dropped entirely by catalog-service's unrendered-macro rule.
-      case "scenario":
-        return vars.scenario ?? macro;
-      case "personality":
-        return vars.personality ?? macro;
-      case "description":
-        return vars.description ?? macro;
-      // Time and date are deliberately NOT rendered here. They change every turn, and this text is part of the cached
-      // stable prefix: substituting them would re-fold the prefix on each turn and break the byte stability the cache
-      // depends on. An entry that needs the clock asks for it in the volatile layer, where the same macros are rendered
-      // against the turn's own facts.
-      default:
-        return macro;
-    }
+    const resolve = RESOLVED_MACROS.get(macroKey(macro) ?? "");
+    // `undefined` from the table is the macro being left exactly as the card wrote it - either a standard macro this
+    // engine deliberately cannot fill (`LEFT_LITERAL_STANDARD_MACROS`) or one it does not know at all. Both land on the
+    // same value, which is what keeps `hasUnrenderedMacro` the single rule a caller has to read.
+    return resolve?.(vars) ?? macro;
   });
+}
+
+/**
+ * One macro name, normalised to the spelling the tables are keyed by: `{{Char}}`, `<BOT>` and `{{ char }}` all read
+ * their own key. `undefined` means the token does not start with a macro name at all (`{{...}}`, `{{// note}}`).
+ */
+function macroKey(token: string): string | undefined {
+  const angle = /^<([a-z_]+)>$/iu.exec(token);
+  if (angle !== null) return angle[1]!.toLowerCase();
+  // Only the leading NAME of a parametric macro: `{{random::a::b}}` is `random`, `{{getvar::x}}` is `getvar`. The
+  // arguments are not part of what decides whether the macro can be rendered.
+  return /^\{\{\s*([a-z_][a-z0-9_]*)/iu.exec(token)?.[1]?.toLowerCase();
+}
+
+/**
+ * Bucket 1 - the macros `renderMacros` resolves, and where each value comes from.
+ *
+ * A resolver returning `undefined` is "this table does not have that value in this run", and the macro then stays
+ * literal - which is how `{{scenario}}` in a card that wrote no scenario is dropped by the caller's unrendered-macro
+ * rule instead of being silently emptied.
+ *
+ * `{{newline}}` and `{{noop}}` are the two macros here that carry no run state at all: SillyTavern defines them as a
+ * newline and as nothing, so resolving them is exact rather than a guess, and an entry that used one to lay its own
+ * text out is not dropped for it.
+ */
+const RESOLVED_MACROS: ReadonlyMap<string, (vars: MacroTable) => string | undefined> = new Map([
+  ["char", (vars: MacroTable) => vars.char ?? ""],
+  ["bot", (vars: MacroTable) => vars.char ?? ""],
+  ["user", (vars: MacroTable) => vars.user ?? ""],
+  // The card's own prose, which SillyTavern exposes as macros and authors use inside world-book entries. They are
+  // the companion's own text, so resolving them reads nothing the catalogue did not already carry - and without them
+  // an entry that mentions `{{scenario}}` was dropped entirely by catalog-service's unrendered-macro rule.
+  ["scenario", (vars: MacroTable) => vars.scenario],
+  ["personality", (vars: MacroTable) => vars.personality],
+  ["description", (vars: MacroTable) => vars.description],
+  ["newline", () => "\n"],
+  ["noop", () => ""],
+]);
+
+/**
+ * Bucket 2 - standard SillyTavern macros this engine deliberately leaves literal, each with the reason it cannot be
+ * filled at the point this text becomes durable authored content.
+ *
+ * These are NOT unknown placeholder junk. A card author who writes `{{time}}` inside a world-book entry is doing the
+ * normal thing, and the entry is still dropped - but the drop is now reported by name (see `unrenderedMacros` and
+ * `isStandardSillyTavernMacro`), so the player can go and edit the card instead of finding an entry missing with no
+ * explanation.
+ *
+ * Two different reasons live in this one bucket, and neither is fixable by "just substitute something":
+ *
+ *  - the CLOCK and the DICE have no single value here. Authored text is the cached stable prefix, so a value read per
+ *    assembly would re-fold that prefix every turn and cost the cache it exists for; and a random draw cannot even be
+ *    probed for renderability, because two probes of the same entry disagree.
+ *  - the CONVERSATION does not exist yet. A card is decoded before any turn is generated, so there is no last message,
+ *    no idle duration, no model name and no message to be `original` to. Substituting an empty string or a neutral word
+ *    would not be honest: `她{{original}}说过` rendered with `""` reads as a different sentence, and the player would
+ *    have no way to know the card said something else.
+ *
+ * A macro outside this table and outside `RESOLVED_MACROS` is bucket 3: this importer does not recognise it, which is
+ * reported as such rather than assumed unknown to SillyTavern.
+ */
+export const LEFT_LITERAL_STANDARD_MACROS: Readonly<Record<string, string>> = Object.freeze({
+  time: "SillyTavern fills this from the host's real clock. Authored text is the cached stable prefix, so a per-assembly value would re-fold it every turn; there is no other clock at this seam.",
+  date: "The same clock as `{{time}}`, at day granularity: it still changes while the cached prefix is meant to stay byte-identical.",
+  random:
+    "SillyTavern draws one of the given options on every evaluation, so the same entry reads differently on two assemblies and cannot be probed for renderability at all.",
+  lastmessage:
+    "The previous message of a conversation that does not exist yet: a card is decoded before any turn is generated.",
+  idle_duration: "How long the player has been away, which is conversation state this import has never seen.",
+  original:
+    "The message being generated, which does not exist at import time. Emptying it would silently reword the card's own sentence.",
+  model:
+    "The provider's model name. No connection or model is chosen when a card is decoded, and the name changes per connection.",
+});
+
+/**
+ * Every `{{...}}` macro that survived rendering in `text`, de-duplicated, in the order the text uses them.
+ *
+ * This is the reporting side of the unrendered-macro rule: a caller that drops something because of these can name
+ * them, which is the difference between "3 entries lost" and "entry 大肥鱼家族 lost: contains {{original}}".
+ */
+export function unrenderedMacros(text: string): readonly string[] {
+  const seen = new Set<string>();
+  // A fresh pattern per call: `String.prototype.matchAll` clones the RegExp it is given, but a shared lastIndex is the
+  // kind of state that makes a pure helper stop being pure.
+  for (const match of text.matchAll(/\{\{[^{}]*\}\}/gu)) seen.add(match[0]);
+  return Object.freeze([...seen]);
+}
+
+/**
+ * Whether `token` is a macro SillyTavern itself defines - rendered here, or deliberately left literal.
+ *
+ * `false` is a statement about this importer's own knowledge, not about SillyTavern: it means the token matched neither
+ * table, so the player should look at it as a possible typo or a non-standard extension rather than as a macro this
+ * product refuses to fill.
+ */
+export function isStandardSillyTavernMacro(token: string): boolean {
+  const key = macroKey(token);
+  return key !== undefined && (RESOLVED_MACROS.has(key) || Object.hasOwn(LEFT_LITERAL_STANDARD_MACROS, key));
 }
 
 /** The macro table one rendered companion text is produced with. */

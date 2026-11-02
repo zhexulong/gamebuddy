@@ -86,6 +86,26 @@ export type TavernCompanion = ArtifactRevision &
     profileRevision: number;
     profileHash: string;
   }>;
+/** One macro that kept a world-book entry out of a decoded card. */
+export type StCardImportOmittedMacro = Readonly<{
+  /** The macro as the card wrote it, e.g. `{{original}}`. */
+  token: string;
+  /** Whether SillyTavern itself defines it, as far as the decode's own macro tables know. */
+  standard: boolean;
+}>;
+/**
+ * One world-book entry a decode could not carry, named the way the card names it.
+ *
+ * The audit record holds this so a review surface can say which entry and which macro
+ * instead of only how many: `{{original}}` inside 大肥鱼家族 is something the player can
+ * go and edit, while "3 entries lost" is not. Capped upstream, so a list here can be
+ * shorter than the loss's own `count`.
+ */
+export type StCardImportOmittedEntry = Readonly<{
+  /** The card's own `comment`/`name` for the entry - what the player searches for. */
+  title: string;
+  macros: readonly StCardImportOmittedMacro[];
+}>;
 /** Immutable audit record for a decoded ST card. It contains no raw source payload. */
 export type StCardImportRecord = ArtifactRevision &
   Readonly<{
@@ -105,7 +125,13 @@ export type StCardImportRecord = ArtifactRevision &
      * the decoder's own vocabulary instead of a second mechanism. Optional: an
      * artifact written before the ledger was persisted reads as no losses.
      */
-    losses?: readonly Readonly<{ field: string; reason: string; count: number }>[];
+    losses?: readonly Readonly<{
+      field: string;
+      reason: string;
+      count: number;
+      /** Which items were lost, where the player can act on them. */
+      omitted?: readonly StCardImportOmittedEntry[];
+    }>[];
   }>;
 /** Durable, field-level confirmation for an inert import candidate. */
 export type CandidateReviewRecord = ArtifactRevision &
@@ -440,11 +466,30 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
     v.losses === undefined
       ? undefined
       : array(v.losses, 64).map((x) => {
-          if (!record(x) || !only(x, ["field", "reason", "count"])) fail();
+          if (!record(x)) fail();
+          // The named half is optional and capped: a card that lost more entries than the cap still records the true
+          // `count`, and an artifact written before it existed reads back unchanged.
+          const omitted =
+            x.omitted === undefined
+              ? undefined
+              : array(x.omitted, 32).map((entry) => {
+                  if (!record(entry) || !only(entry, ["title", "macros"])) fail();
+                  const macros = array(entry.macros, 8).map((macro) => {
+                    if (!record(macro) || !only(macro, ["token", "standard"])) fail();
+                    return freeze({
+                      token: requiredText(macro.token, 64),
+                      standard: requiredConstant(macro.standard),
+                    });
+                  });
+                  return freeze({ title: requiredText(entry.title, 256), macros: freeze(macros) });
+                });
+          if (!only(x, omitted === undefined ? ["field", "reason", "count"] : ["field", "reason", "count", "omitted"]))
+            fail();
           return freeze({
             field: requiredId(x.field),
             reason: requiredText(x.reason, 128),
             count: requiredRevision(x.count),
+            ...(omitted === undefined ? {} : { omitted: freeze(omitted) }),
           });
         });
   const importId = requiredId(v.importId);
