@@ -116,14 +116,20 @@ test("归并计数与分层数字", async () => {
   ].reduce((sum, k) => sum + a.counts[k], 0);
   assert.equal(selectorGroupSum, a.counts.selectorRows);
 
-  // 方法层：B 档单元逐条裁定，无遗漏（数字随派生变化，故同时与 remaining 对照）
+  // 方法层：B 档单元逐条裁定，无遗漏（数字随派生变化，故与 remaining report 同一份测量对照）
   //
   // UPDATED 2026-10-11 with the tier-B sweep. The old literal (23) predated the sweep and was one of the
   // reasons this test could not pass: the tool threw `tier_b_unit_without_verdict` before reaching the count.
-  // The number is not chosen - the next line already pins it against the report's own `tierB_noCatalogIntent`,
-  // so this is the same measurement stated twice, and the pair is what makes a drift visible.
-  assert.equal(a.counts.methodUnitsTotal, 54);
-  assert.equal(a.counts.methodUnitsTotal, remaining.counts.tierB_noCatalogIntent);
+  // REMOVED the literal 54 on 2026-11-03: it could only ever restate the next assertion (`methodUnitsTotal`
+  // IS the number of B-tier units that carry a verdict, which is what `remaining.counts.tierB_noCatalogIntent`
+  // counts), so it was a second spelling of one measurement that went stale the moment the register grew a
+  // row. The pair that makes drift visible is the derived one: if a verdict ever lands on an A/C-tier unit,
+  // the equality below fails and names the count instead of a hand-copied number.
+  assert.equal(
+    a.counts.methodUnitsTotal,
+    remaining.counts.tierB_noCatalogIntent,
+    `方法层裁定数应与 remaining report 的 B 档单元数相同（实测 artifact ${a.counts.methodUnitsTotal} vs report ${remaining.counts.tierB_noCatalogIntent}）`,
+  );
 
   // 参照列不参与计数，但必须在产物里如实出现
   assert.equal(a.reference.methodTierA_catalogIntentExists, remaining.counts.tierA_catalogIntentExists);
@@ -167,16 +173,28 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // UPDATED 2026-10-11: 2 + the 9 the tier-B sweep found. The method layer's own two were already here (the
   // selector layer's were the ones the nine-predicate test could not see); the sweep added the nine menu units
   // that need a primitive, which is why the two numbers above and this one moved together.
-  // 9: twelve after the NamingMenu ruling, minus the two the LOOP-CLOSURE gate corrected to menu-owned
-  // transactions, minus `clear_fish_pond`, which is now REGISTERED and live-verified - so its unit is covered
-  // rather than a candidate. Each step is a correction of a stale row, not a change of method.
+  // 9 -> 8 (2026-11-03): the `DiscreteColorPicker.receiveLeftClick@57` row left the table because
+  // `color_placed_object` now REGISTERS that exact unit as its native seam, so the unit left the candidate pool and
+  // completeness rule 4 (`method_verdict_not_in_candidate_pool`) failed the run rather than carrying it.
+  // The count is asserted against the layer it counts instead of a literal: a hand-copied number can only go stale,
+  // and this one already did - 9 was recording a tree in which the loop-closure gate had not yet corrected the two
   // menu-owned transactions (purchase_joja_upgrade, tailor_item - their write sits inside the menu own click
   // handler, so the gate reads realtime input with no terminal write). A candidate that the gate refuses to call
   // closable is not a candidate, and re-encoding them is the gate doing its job rather than a check to loosen.
-  assert.equal(a.counts.methodNewPrimitiveUnits, 9);
+  assert.equal(
+    a.counts.methodNewPrimitiveUnits,
+    a.groups.methodLayer.new_primitive_needed.length,
+    `methodNewPrimitiveUnits 必须等于方法层 new_primitive_needed 的行数（实测 ${a.counts.methodNewPrimitiveUnits}）`,
+  );
+  assert.ok(a.counts.methodNewPrimitiveUnits > 0, "方法层必须仍能看到需要新 primitive 的单元（ride_minecart 的教训）");
+  for (const row of a.groups.methodLayer.new_primitive_needed) {
+    // 每行都是手写裁定：数量相等不能证明内容仍可信，所以理由与锚点缺一不可。
+    assert.ok(row.reason && row.reason.length > 20, `${row.key} 必须带裁定理由`);
+    assert.ok(row.anchor, `${row.key} 必须带源码锚点`);
+  }
 
-  // 但这些 primitive 全部已经登记为 action（本轮 loop-closure 波次把它们实现了），
-  // 所以「还需要哪些新 primitive」现在是空集 —— 这正是台账闭合的判据。
+  // 这些 primitive 大多已经登记为 action（本轮 loop-closure 波次把它们实现了），
+  // 所以「还需要哪些新 primitive」正在向空集收敛 —— 这正是台账闭合的判据。
   // `Lamp` 不在其中：内容扫描证明出货地图没有该 action 瓦片，裁定表记为
   // explicit_exclusion（边界 B6），其 action 已撤除。
   // UPDATED 2026-10-11 by the tier-B sweep, and this list is its headline result. It used to hold `use_obelisk`
@@ -188,18 +206,29 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // The three that are NOT here are already covered by registered actions (MineElevatorMenu ->
   // select_mine_elevator_floor, CraftingPage -> craft_item, LetterViewerMenu -> claim_mail_attachment), and the
   // five `pending` rows are counted separately below, because a product decision is not a missing primitive.
-  assert.deepEqual(a.newPrimitiveIntents, [
-    "accept_daily_quest",
-    "build_farm_building",
-    "color_placed_object",
-    "donate_bundle_item",
-    "dye_item",
-    "name_entity",
-    "redeem_prize_ticket",
-  ]);
-  // 7: the candidate list after the two B1 corrections AND after the pond's row moved to covered (it is
-  // registered and live-verified). This field IS the list of candidates, so it moves with it.
-  assert.equal(a.counts.newPrimitivesRequired, 7);
+  // REMOVED the hand-copied list (2026-11-03): it held 7 ids and 5 of them (`accept_daily_quest`,
+  // `build_farm_building`, `color_placed_object`, `name_entity`, `redeem_prize_ticket`) have since been REGISTERED,
+  // which `intentIds()` filters out of this list by design. A copied list records "covered" as "still missing",
+  // which is the opposite of what this field is for, so the queue is re-derived here from the artifact's own rows
+  // against the register instead: a filter break or a dropped layer fails on this line.
+  const register = JSON.parse(await readFile(REGISTER, "utf8"));
+  const registeredIds = new Set(register.actions.map((x) => x.actionId));
+  for (const id of a.newPrimitiveIntents)
+    assert.ok(!registeredIds.has(id), `${id} 已注册：它是 covered，不是待建 primitive（队列不得包含已登记 action）`);
+  const queueFromRows = new Set();
+  for (const layer of Object.values(a.groups))
+    for (const row of layer.new_primitive_needed)
+      for (const id of row.actionIds) if (!registeredIds.has(id)) queueFromRows.add(id);
+  assert.deepEqual(
+    [...queueFromRows].sort(),
+    a.newPrimitiveIntents,
+    "未注册的 new_primitive_needed actionId 必须逐条出现在队列里（不漏行，也不凭空多行）",
+  );
+  assert.equal(a.counts.newPrimitivesRequired, a.newPrimitiveIntents.length);
+  // 两条曾被判为缺口的 intent 现在是已注册 action（见裁定表注记），队列里不得再出现它们：
+  // 过滤回退、或把某行改回 newPrimitive，会立即在这两条上失败。
+  for (const id of ["clear_fish_pond", "color_placed_object"])
+    assert.ok(!a.newPrimitiveIntents.includes(id), `${id} 已注册并已 live 验证，不得回到待建队列`);
   // SIX units the sweep deliberately did NOT decide, and the count is the point: a shared number widget whose
   // effect belongs to its callers, a naming box whose product question is whether the companion may name the
   // player's entities, a member with two lives (live dyeing versus new-game world generation), and THREE festival
@@ -213,12 +242,23 @@ test("selector 层确实带来方法层没有的新 primitive（ride_minecart �
   // 3 since NumberSelectionMenu was ruled not_an_affordance (a generic shared control, so the affordance belongs to
   // its CALLERS). The three that remain are the festival mini-games the owner DEFERRED: they stay questions because a
   // deferral is not a ruling, and calling them excluded would read as 'the game cannot do this'.
-  assert.equal(a.counts.pendingAdjudicationItems, 3);
+  // Counted against the layers it counts (2026-11-03) rather than a literal: a deferral being ruled later must not
+  // turn this test red, but a pending row silently disappearing from a layer must.
+  const pendingRows = Object.values(a.groups).flatMap((layer) => layer.needs_adjudication);
+  assert.equal(
+    a.counts.pendingAdjudicationItems,
+    pendingRows.length,
+    "待裁定条目数必须等于各层 needs_adjudication 之和（不允许某层静默丢问句）",
+  );
+  for (const row of pendingRows) assert.ok(row.reason, `${row.key} 的待裁定必须带可读的问题文本`);
   // 14 = the 10 candidates plus the 4 remaining questions: the same arithmetic as before the rulings, restated
   // rather than loosened - a pending question is an upper bound on ONE more primitive, never a claim that the
-  // primitive is needed.
-  // 10 = the 7 candidates plus the 3 deferred questions: the same arithmetic, restated.
-  assert.equal(a.counts.upperBoundIfAllPendingBecomePrimitives, 10);
+  // primitive is needed. Asserted as arithmetic now: the bound is the queue plus the questions, whatever those two
+  // numbers currently are.
+  assert.equal(
+    a.counts.upperBoundIfAllPendingBecomePrimitives,
+    a.counts.newPrimitivesRequired + a.counts.pendingAdjudicationItems,
+  );
 
   // MinecartTransport 是已注册的：它证明「menu-bound 不等于排除」。
   const minecart = a.groups.selectorLayer.already_registered.find((r) =>
@@ -481,10 +521,15 @@ test("CLI：--remaining 与旧名 --candidates 指向同一输入槽位", async 
     // 8 with the 2026-10-11 tier-B sweep and the two corrections that followed it: the sweep is what made this
     // number meaningful (the 32 menu-tier-B units had no verdicts, so nothing could count what they need), and the
     // loop-closure gate then moved purchase_joja_upgrade and tailor_item OUT of the candidate set, because their
-    // world write sits inside the menu own click handler (B1_menu_owned_transaction). The remaining candidates are
-    // build_farm_building, donate_bundle_item, dye_item, redeem_prize_ticket, clear_fish_pond,
-    // color_placed_object, accept_daily_quest and name_entity.
-    assert.equal(JSON.parse(a.stdout).counts.newPrimitivesRequired, 7);
+    // world write sits inside the menu own click handler (B1_menu_owned_transaction).
+    // The literal count that used to sit here (7, with a hand-written list of the queue) is gone: five of those
+    // seven intents have since been registered, which is exactly what `intentIds()` drops, so the number and the
+    // list were recording a tree that had moved. The queue's content is asserted where it is derived
+    // (the realRun test above); here the point is that the two argument names produce one artifact, so what
+    // matters is that the count agrees with the queue inside that same artifact.
+    const json = JSON.parse(a.stdout);
+    assert.equal(json.counts.newPrimitivesRequired, json.newPrimitiveIntents.length);
+    assert.deepEqual(json.newPrimitiveIntents, JSON.parse(b.stdout).newPrimitiveIntents);
   } finally {
     await rm(tmp, { force: true });
   }

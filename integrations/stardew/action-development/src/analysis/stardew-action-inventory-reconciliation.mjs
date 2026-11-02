@@ -355,7 +355,14 @@ export const SELECTOR_VERDICTS = Object.freeze({
   Parrot: plainContent("ShowNutHint() dialogue hint", "IslandHut.cs:51"),
   Crystal: plainContent("enterValueEvent.Fire / crystal cave phase state machine", "IslandWestCave1.cs:212"),
   CrystalCaveActivate: plainContent("netPhase state machine + activation visuals + event", "IslandWestCave1.cs:212"),
-  Gunther: plainContent("OpenGuntherDialogueMenu + DataLoader.MuseumRewards", "LibraryMuseum.cs:240"),
+  // `Gunther` was ruled a content_operation here until the register grew seams into
+  // LibraryMuseum: `claim_museum_reward` records `getRewardsForPlayer` (LibraryMuseum.cs:264),
+  // which this tile's dialogue chain reaches, and `redeem_prize_ticket` records
+  // `OnRewardCollected` in the same file. Rule 1 (registered_by_seam) claims the selector now,
+  // so this row can no longer be matched - and completeness rule 1 below
+  // (selector_verdict_not_matched_to_any_selector:Gunther) failed the run instead of keeping a
+  // verdict the mechanical rule had overruled. Removed rather than reordered: letting a hand
+  // verdict outrank a seam hit would let any row hide real coverage.
   LedgerBook: plainContent("readLedgerBook() ledger dialogue", "ManorHouse.cs:31"),
   LostAndFound: plainContent("CheckLostAndFound() item retrieval dialogue", "ManorHouse.cs:31"),
   LeoParrot: plainContent("Emily's parrot temporary sprite doAction()", "GameLocation.cs:9206"),
@@ -533,12 +540,14 @@ export const METHOD_VERDICTS = Object.freeze({
     "the confirm branch calls the public FishPond.ClearPond (PondQueryMenu.cs:135), and that seam is now the REGISTERED, live-verified `clear_fish_pond` action - measured live: the pond empties (occupants 1 -> 0, fish type -> none), the fish land on the ground as items, and a stale target is refused by name. The menu is only where a player expresses it, so this unit is COVERED rather than a missing primitive.",
     "Menus/PondQueryMenu.cs:135",
   ),
-  "DiscreteColorPicker.receiveLeftClick@57": newPrimitive(
-      "color_placed_object",
-      "the picker writes the container's persistent Net field (DiscreteColorPicker.cs:77-78: chest.playerChoiceColor.Value plus resetLidFrame). Cosmetically small but a SAVED world write, so it is not pure UI - the weakest entry here, and the one whose bucket is most worth re-checking.",
-      "DiscreteColorPicker.cs:77 -> chest.playerChoiceColor.Value",
-      "Menus/DiscreteColorPicker.cs:57",
-    ),
+  // `DiscreteColorPicker.receiveLeftClick@57` was a `newPrimitive("color_placed_object", ...)` row here
+  // ("the weakest entry, and the one whose bucket is most worth re-checking"). The bucket has now been
+  // re-checked: `color_placed_object` is a REGISTERED action whose native seam IS
+  // `StardewValley.Menus/DiscreteColorPicker.cs::receiveLeftClick` - the very unit this row proposed.
+  // The candidates tool therefore lists that unit under `matchedWithRegistered`, it is no longer a row of
+  // the remaining-actions report, and completeness rule 4 (method_verdict_not_in_candidate_pool) failed the
+  // run rather than carrying a verdict for a unit that had left the pool. Same outcome as `clear_fish_pond`
+  // below: the intent is covered, so it is no longer a missing primitive.
   "Billboard.receiveLeftClick@360": newPrimitive(
       "accept_daily_quest",
       "MIXED in one member: the board is mostly calendar/quest browsing, and the acceptQuestButton branch writes the quest log and acceptedDailyQuest (:371-372). The world-changing half is what an action would carry.",
