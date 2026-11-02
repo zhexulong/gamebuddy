@@ -46,9 +46,21 @@ const PROJECTION_DROP_REASON =
   "validates and forwards at the bridge layer; the Agent-facing IntegrationExecutionReceipt deliberately does " +
   "not re-expose them.";
 
-/** Per-layer explicitly recorded intentional extra fields, each with a reason. Currently none. */
+/** Per-layer explicitly recorded intentional extra fields, each with a reason. */
 export const DOCUMENTED_EXTRAS = Object.freeze({
-  "BridgeProtocolModels.cs/LocalExecutionReceipt": Object.freeze([]),
+  "BridgeProtocolModels.cs/LocalExecutionReceipt": Object.freeze([
+    //
+    // `Hint` is carried beside `ReasonCode` rather than folded into `Evidence`, because the evidence
+    // string is a diagnostic the model cannot act on and this one is the direction it can. It is a
+    // documented extra rather than an authority field because the wire `BridgeReceipt` deliberately
+    // does not carry it: the hint belongs to the Body Program journal's node status, and the local
+    // receipt only needs it long enough for `RouteReenteringBodyProgramExecutor` to copy it into a
+    // `BodyProgramTerminalResult`. Written at `farmhandexecutioncontroller.cs:5145`, read at
+    // `RouteReenteringBodyProgramExecutor.cs:348`.
+    // `Hint` in the C# record; the extractor normalises every name to lowerCamelCase, so the
+    // allowlist entry carries the normalised spelling.
+    "hint",
+  ]),
   "protocol.ts/ExecutionReceipt": Object.freeze([]),
   "protocol.ts/validateReceipt": Object.freeze([]),
   "schema.json/$defs.receipt": Object.freeze([]),
@@ -176,8 +188,10 @@ export function extractCSharpRecordFields(source, recordName) {
   const tokens = tokenize(source);
   const recordAt = tokens.findIndex(
     (token, index) =>
-      token.type === "word" && token.value === "record" &&
-      tokens[index + 1]?.type === "word" && tokens[index + 1].value === recordName &&
+      token.type === "word" &&
+      token.value === "record" &&
+      tokens[index + 1]?.type === "word" &&
+      tokens[index + 1].value === recordName &&
       tokens[index + 2]?.value === "(",
   );
   if (recordAt < 0) throw new Error(`C# record '${recordName}' declaration not found`);
@@ -239,8 +253,10 @@ export function extractProjectionArgCount(source) {
 
   const newAt = body.findIndex(
     (token, index) =>
-      token.value === "new" && body[index + 1]?.type === "word" &&
-      body[index + 1].value === "BridgeReceipt" && body[index + 2]?.value === "(",
+      token.value === "new" &&
+      body[index + 1]?.type === "word" &&
+      body[index + 1].value === "BridgeReceipt" &&
+      body[index + 2]?.value === "(",
   );
   if (newAt < 0) throw new Error("new BridgeReceipt(...) call not found inside TryProjectReceipt");
   const argsClose = balanced(body, newAt + 2);
@@ -295,8 +311,10 @@ export function extractValidateReceiptSets(source) {
   const tokens = tokenize(source);
   const fnIndex = tokens.findIndex(
     (token, index) =>
-      token.type === "word" && token.value === "function" &&
-      tokens[index + 1]?.type === "word" && tokens[index + 1].value === "validateReceipt" &&
+      token.type === "word" &&
+      token.value === "function" &&
+      tokens[index + 1]?.type === "word" &&
+      tokens[index + 1].value === "validateReceipt" &&
       tokens[index + 2]?.value === "(",
   );
   if (fnIndex < 0) throw new Error("function validateReceipt not found");
@@ -316,8 +334,10 @@ export function extractValidateReceiptSets(source) {
 
   const allowedAt = body.findIndex(
     (token, index) =>
-      token.type === "word" && token.value === "allowedKeys" &&
-      body[index + 1]?.value === "=" && body[index + 2]?.value === "[",
+      token.type === "word" &&
+      token.value === "allowedKeys" &&
+      body[index + 1]?.value === "=" &&
+      body[index + 2]?.value === "[",
   );
   if (allowedAt < 0) throw new Error("validateReceipt allowedKeys array not found");
   const arrayClose = balanced(body, allowedAt + 2);
@@ -329,10 +349,14 @@ export function extractValidateReceiptSets(source) {
   const pushes = [];
   for (let index = 0; index < body.length; index += 1) {
     if (
-      body[index]?.type === "word" && body[index].value === "allowedKeys" &&
-      body[index + 1]?.value === "." && body[index + 2]?.type === "word" &&
-      body[index + 2].value === "push" && body[index + 3]?.value === "(" &&
-      body[index + 4]?.type === "string" && body[index + 5]?.value === ")"
+      body[index]?.type === "word" &&
+      body[index].value === "allowedKeys" &&
+      body[index + 1]?.value === "." &&
+      body[index + 2]?.type === "word" &&
+      body[index + 2].value === "push" &&
+      body[index + 3]?.value === "(" &&
+      body[index + 4]?.type === "string" &&
+      body[index + 5]?.value === ")"
     ) {
       pushes.push(body[index + 4].value);
     }
@@ -364,8 +388,10 @@ export function extractMappingKeysAndReads(source, functionName, readVariable) {
   const tokens = tokenize(source);
   const fnIndex = tokens.findIndex(
     (token, index) =>
-      token.type === "word" && token.value === "function" &&
-      tokens[index + 1]?.type === "word" && tokens[index + 1].value === functionName &&
+      token.type === "word" &&
+      token.value === "function" &&
+      tokens[index + 1]?.type === "word" &&
+      tokens[index + 1].value === functionName &&
       tokens[index + 2]?.value === "(",
   );
   if (fnIndex < 0) throw new Error(`function ${functionName} not found`);
@@ -414,7 +440,9 @@ export function extractMappingKeysAndReads(source, functionName, readVariable) {
   const reads = new Set();
   for (let index = 0; index < body.length; index += 1) {
     if (
-      body[index]?.type === "word" && body[index].value === readVariable && body[index + 1]?.value === "." &&
+      body[index]?.type === "word" &&
+      body[index].value === readVariable &&
+      body[index + 1]?.value === "." &&
       body[index + 2]?.type === "word"
     ) {
       reads.add(body[index + 2].value);
@@ -445,22 +473,45 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
   const pushViolation = (layerName, pathname, field, issue, detail) =>
     violations.push({ layer: layerName, path: pathname, field, issue, detail });
 
-  const checkFieldSet = ({ name, pathname, actualFields, expectedSet, actualOptional = null, expectedOptional = null, extraAllowlist = [] }) => {
+  const checkFieldSet = ({
+    name,
+    pathname,
+    actualFields,
+    expectedSet,
+    actualOptional = null,
+    expectedOptional = null,
+    extraAllowlist = [],
+  }) => {
     const actual = new Set(actualFields);
     for (const field of expectedSet) {
-      if (!actual.has(field)) pushViolation(name, pathname, field, "missing", `authority field '${field}' is not named by this layer`);
+      if (!actual.has(field))
+        pushViolation(name, pathname, field, "missing", `authority field '${field}' is not named by this layer`);
     }
     for (const field of actual) {
       if (!expectedSet.has(field) && !extraAllowlist.includes(field)) {
-        pushViolation(name, pathname, field, "extra", `field '${field}' is named here but is not part of the expected ${[...expectedSet].length}-field set`);
+        pushViolation(
+          name,
+          pathname,
+          field,
+          "extra",
+          `field '${field}' is named here but is not part of the expected ${[...expectedSet].length}-field set`,
+        );
       }
     }
     if (actualOptional !== null && expectedOptional !== null) {
       for (const field of expectedOptional) {
-        if (!actualOptional.has(field)) pushViolation(name, pathname, field, "not_optional", `field '${field}' must be marked optional here`);
+        if (!actualOptional.has(field))
+          pushViolation(name, pathname, field, "not_optional", `field '${field}' must be marked optional here`);
       }
       for (const field of actualOptional) {
-        if (!expectedOptional.has(field)) pushViolation(name, pathname, field, "optional_misclassified", `field '${field}' is marked optional here but must not be`);
+        if (!expectedOptional.has(field))
+          pushViolation(
+            name,
+            pathname,
+            field,
+            "optional_misclassified",
+            `field '${field}' is marked optional here but must not be`,
+          );
       }
     }
   };
@@ -504,20 +555,45 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
   const validatorUnion = new Set([...validator.base, ...validator.pushes]);
   for (const field of authority.wire) {
     if (!validatorUnion.has(field)) {
-      pushViolation("protocol.ts/validateReceipt", PROTOCOL_PATH, field, "missing", "allowedKeys (base array + conditional pushes) never names this authority field");
+      pushViolation(
+        "protocol.ts/validateReceipt",
+        PROTOCOL_PATH,
+        field,
+        "missing",
+        "allowedKeys (base array + conditional pushes) never names this authority field",
+      );
     }
   }
   for (const field of validatorUnion) {
-    if (!fullSet.has(field)) pushViolation("protocol.ts/validateReceipt", PROTOCOL_PATH, field, "extra", "allowedKeys names a field that is not part of the authority");
+    if (!fullSet.has(field))
+      pushViolation(
+        "protocol.ts/validateReceipt",
+        PROTOCOL_PATH,
+        field,
+        "extra",
+        "allowedKeys names a field that is not part of the authority",
+      );
   }
   for (const field of requiredSet) {
     if (!validator.base.includes(field)) {
-      pushViolation("protocol.ts/validateReceipt", PROTOCOL_PATH, field, "required_not_unconditional", "required field must live in the unconditional allowedKeys base array, not a conditional push");
+      pushViolation(
+        "protocol.ts/validateReceipt",
+        PROTOCOL_PATH,
+        field,
+        "required_not_unconditional",
+        "required field must live in the unconditional allowedKeys base array, not a conditional push",
+      );
     }
   }
   for (const field of authority.optional) {
     if (!validator.pushes.includes(field)) {
-      pushViolation("protocol.ts/validateReceipt", PROTOCOL_PATH, field, "optional_not_conditional", "optional field must be in a conditional 'allowedKeys.push'");
+      pushViolation(
+        "protocol.ts/validateReceipt",
+        PROTOCOL_PATH,
+        field,
+        "optional_not_conditional",
+        "optional field must be in a conditional 'allowedKeys.push'",
+      );
     }
   }
 
@@ -533,10 +609,24 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
   if (schema.required !== null) {
     const schemaRequired = new Set(schema.required);
     for (const field of requiredSet) {
-      if (!schemaRequired.has(field)) pushViolation("schema.json/$defs.receipt", SCHEMA_PATH, field, "required_missing", "$defs.receipt.required lacks this always-serialized authority field");
+      if (!schemaRequired.has(field))
+        pushViolation(
+          "schema.json/$defs.receipt",
+          SCHEMA_PATH,
+          field,
+          "required_missing",
+          "$defs.receipt.required lacks this always-serialized authority field",
+        );
     }
     for (const field of schemaRequired) {
-      if (!fullSet.has(field)) pushViolation("schema.json/$defs.receipt", SCHEMA_PATH, field, "extra", "$defs.receipt.required names a field that is not part of the authority");
+      if (!fullSet.has(field))
+        pushViolation(
+          "schema.json/$defs.receipt",
+          SCHEMA_PATH,
+          field,
+          "extra",
+          "$defs.receipt.required names a field that is not part of the authority",
+        );
     }
   }
 
@@ -554,11 +644,25 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
 
   // 7. stardew adapter toIntegrationReceipt — written keys equal projection subset, reads ⊆ authority.
   const toIntegration = extractMappingKeysAndReads(read(STARDEW_ADAPTER_PATH), "toIntegrationReceipt", "receipt");
-  checkMapping("stardew-game-integration-adapter.ts/toIntegrationReceipt", STARDEW_ADAPTER_PATH, toIntegration, projectionSet, fullSet, pushViolation);
+  checkMapping(
+    "stardew-game-integration-adapter.ts/toIntegrationReceipt",
+    STARDEW_ADAPTER_PATH,
+    toIntegration,
+    projectionSet,
+    fullSet,
+    pushViolation,
+  );
 
   // 8. stardew adapter parseStardewReceipt — written keys equal projection subset, reads ⊆ authority.
   const parseReceipt = extractMappingKeysAndReads(read(STARDEW_ADAPTER_PATH), "parseStardewReceipt", "value");
-  checkMapping("stardew-game-integration-adapter.ts/parseStardewReceipt", STARDEW_ADAPTER_PATH, parseReceipt, projectionSet, fullSet, pushViolation);
+  checkMapping(
+    "stardew-game-integration-adapter.ts/parseStardewReceipt",
+    STARDEW_ADAPTER_PATH,
+    parseReceipt,
+    projectionSet,
+    fullSet,
+    pushViolation,
+  );
 
   violations.sort((left, right) =>
     `${left.layer}:${left.field}:${left.issue}`.localeCompare(`${right.layer}:${right.field}:${right.issue}`),
@@ -566,21 +670,32 @@ export function checkStardewExecutionReceiptFieldParity({ root = repositoryRoot,
   return Object.freeze({
     gate,
     verdict: violations.length === 0 ? "passed" : "blocked",
-    authority: Object.freeze({ record: "BridgeReceipt", wireFields: Object.freeze([...authority.wire]), required: Object.freeze([...requiredSet]), optional: Object.freeze([...authority.optional]) }),
-    projection: Object.freeze({ drops: Object.freeze([...DOCUMENTED_PROJECTION_DROPS]), reason: PROJECTION_DROP_REASON }),
+    authority: Object.freeze({
+      record: "BridgeReceipt",
+      wireFields: Object.freeze([...authority.wire]),
+      required: Object.freeze([...requiredSet]),
+      optional: Object.freeze([...authority.optional]),
+    }),
+    projection: Object.freeze({
+      drops: Object.freeze([...DOCUMENTED_PROJECTION_DROPS]),
+      reason: PROJECTION_DROP_REASON,
+    }),
     violations: Object.freeze(violations),
   });
 }
 
 function checkMapping(name, pathname, mapping, projectionSet, fullSet, pushViolation) {
   for (const field of projectionSet) {
-    if (!mapping.written.has(field)) pushViolation(name, pathname, field, "missing", "mapping never writes this projected authority field");
+    if (!mapping.written.has(field))
+      pushViolation(name, pathname, field, "missing", "mapping never writes this projected authority field");
   }
   for (const field of mapping.written) {
-    if (!fullSet.has(field)) pushViolation(name, pathname, field, "extra", "mapping writes a field that is not part of the authority");
+    if (!fullSet.has(field))
+      pushViolation(name, pathname, field, "extra", "mapping writes a field that is not part of the authority");
   }
   for (const field of mapping.reads) {
-    if (!fullSet.has(field)) pushViolation(name, pathname, field, "extra_read", "mapping reads a field that is not part of the authority");
+    if (!fullSet.has(field))
+      pushViolation(name, pathname, field, "extra_read", "mapping reads a field that is not part of the authority");
   }
 }
 

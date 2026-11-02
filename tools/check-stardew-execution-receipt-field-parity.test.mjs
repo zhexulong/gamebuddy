@@ -12,6 +12,7 @@ import test from "node:test";
 
 import {
   checkStardewExecutionReceiptFieldParity,
+  DOCUMENTED_EXTRAS,
   extractCSharpRecordFields,
   extractMappingKeysAndReads,
   extractProjectionArgCount,
@@ -45,7 +46,16 @@ const AUTHORITY_FIELDS = [
 ];
 const REQUIRED_FIELDS = ["executionId", "requestId", "actionId", "state", "reasonCode", "revision", "evidence"];
 const OPTIONAL_FIELDS = ["observation", "piggybackedScene", "nativeNotices"];
-const PROJECTION_FIELDS = ["requestId", "executionId", "actionId", "state", "reasonCode", "revision", "evidence", "nativeNotices"];
+const PROJECTION_FIELDS = [
+  "requestId",
+  "executionId",
+  "actionId",
+  "state",
+  "reasonCode",
+  "revision",
+  "evidence",
+  "nativeNotices",
+];
 
 const sorted = (values) => [...values].sort();
 
@@ -56,9 +66,15 @@ test("parses the Mod authority record BridgeReceipt into its exact wire field se
   assert.deepEqual(sorted(authority.optional), sorted(OPTIONAL_FIELDS));
 });
 
-test("parses the Mod ledger record LocalExecutionReceipt into the same field set", () => {
+test("parses the Mod ledger record LocalExecutionReceipt into the authority's field set plus the declared extras", () => {
+  // The ledger is the Mod's own model, not the wire model: it carries `hint` beside `reasonCode`
+  // so `RouteReenteringBodyProgramExecutor` can copy the actionable direction into a
+  // `BodyProgramTerminalResult`. That is a declared extra, not an authority field - the wire
+  // `BridgeReceipt` deliberately does not carry it. So the assertion is "authority plus exactly the
+  // declared extras", which still reddens when a member is added without a declaration.
   const ledger = extractCSharpRecordFields(sourceOf(BRIDGE_MODELS_PATH), "LocalExecutionReceipt");
-  assert.deepEqual(sorted(ledger.wire), sorted(AUTHORITY_FIELDS));
+  const declared = DOCUMENTED_EXTRAS["BridgeProtocolModels.cs/LocalExecutionReceipt"];
+  assert.deepEqual(sorted(ledger.wire), sorted([...AUTHORITY_FIELDS, ...declared]));
 });
 
 test("counts every authority field passed by TryProjectReceipt to the wire constructor", () => {
@@ -112,7 +128,8 @@ function expectBlockedWith(report, { layer, field, issue }) {
   assert.equal(report.verdict, "blocked", `expected blocked report, got: ${JSON.stringify(report.violations)}`);
   assert.ok(
     report.violations.some(
-      (violation) => violation.layer === layer && violation.field === field && (issue === undefined || violation.issue === issue),
+      (violation) =>
+        violation.layer === layer && violation.field === field && (issue === undefined || violation.issue === issue),
     ),
     `expected violation {layer: ${layer}, field: ${field}, issue: ${issue ?? "any"}} in ${JSON.stringify(report.violations)}`,
   );
@@ -158,7 +175,11 @@ test("mutation (d): deleting a field from toIntegrationReceipt is caught", () =>
   const mutated = original.replace(/^[\t ]*revision: receipt\.revision,\r?\n/mu, "");
   assert.notEqual(mutated, original);
   const report = checkStardewExecutionReceiptFieldParity({ overrides: { [STARDEW_ADAPTER_PATH]: mutated } });
-  expectBlockedWith(report, { layer: "stardew-game-integration-adapter.ts/toIntegrationReceipt", field: "revision", issue: "missing" });
+  expectBlockedWith(report, {
+    layer: "stardew-game-integration-adapter.ts/toIntegrationReceipt",
+    field: "revision",
+    issue: "missing",
+  });
 });
 
 test("mutation (e): deleting a field from parseStardewReceipt is caught", () => {
@@ -166,13 +187,19 @@ test("mutation (e): deleting a field from parseStardewReceipt is caught", () => 
   const mutated = original.replace(/^[\t ]*reasonCode: value\.reasonCode,\r?\n/mu, "");
   assert.notEqual(mutated, original);
   const report = checkStardewExecutionReceiptFieldParity({ overrides: { [STARDEW_ADAPTER_PATH]: mutated } });
-  expectBlockedWith(report, { layer: "stardew-game-integration-adapter.ts/parseStardewReceipt", field: "reasonCode", issue: "missing" });
+  expectBlockedWith(report, {
+    layer: "stardew-game-integration-adapter.ts/parseStardewReceipt",
+    field: "reasonCode",
+    issue: "missing",
+  });
 });
 
 test("mutation (f): an undocumented extra field in the schema properties is caught", () => {
   const schema = JSON.parse(sourceOf(SCHEMA_PATH));
   schema.$defs.receipt.properties.futureField = { type: "string" };
-  const report = checkStardewExecutionReceiptFieldParity({ overrides: { [SCHEMA_PATH]: JSON.stringify(schema, null, 2) } });
+  const report = checkStardewExecutionReceiptFieldParity({
+    overrides: { [SCHEMA_PATH]: JSON.stringify(schema, null, 2) },
+  });
   expectBlockedWith(report, { layer: "schema.json/$defs.receipt", field: "futureField", issue: "extra" });
 });
 
@@ -193,11 +220,15 @@ test("mutation (g): dropping a field from the Mod ledger record is caught", () =
   );
   assert.equal(
     extractCSharpRecordFields(mutated, "LocalExecutionReceipt").wire.length,
-    AUTHORITY_FIELDS.length - 1,
+    AUTHORITY_FIELDS.length + DOCUMENTED_EXTRAS["BridgeProtocolModels.cs/LocalExecutionReceipt"].length - 1,
     "the mutation must actually remove one ledger field",
   );
   const report = checkStardewExecutionReceiptFieldParity({ overrides: { [BRIDGE_MODELS_PATH]: mutated } });
-  expectBlockedWith(report, { layer: "BridgeProtocolModels.cs/LocalExecutionReceipt", field: "observation", issue: "missing" });
+  expectBlockedWith(report, {
+    layer: "BridgeProtocolModels.cs/LocalExecutionReceipt",
+    field: "observation",
+    issue: "missing",
+  });
 });
 
 test("mutation (h): dropping a projection argument in TryProjectReceipt is caught", () => {
@@ -207,5 +238,9 @@ test("mutation (h): dropping a projection argument in TryProjectReceipt is caugh
   const mutated = original.replace(/receipt\.PiggybackedScene,\r?\n[\t ]*receipt\.NativeNotices\);/u, "null);");
   assert.notEqual(mutated, original);
   const report = checkStardewExecutionReceiptFieldParity({ overrides: { [BRIDGE_SESSION_PATH]: mutated } });
-  expectBlockedWith(report, { layer: "BridgeSession.cs/TryProjectReceipt", field: "<wire-constructor>", issue: "count" });
+  expectBlockedWith(report, {
+    layer: "BridgeSession.cs/TryProjectReceipt",
+    field: "<wire-constructor>",
+    issue: "count",
+  });
 });
