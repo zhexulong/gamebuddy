@@ -93,11 +93,12 @@ test("a literal in a comment is not a finding", () => {
   assert.deepEqual(findDuplicatedAuthorities(root, SYNTHETIC), []);
 });
 
-// red-proof: with `//` matched wherever it appears, the `//` of `http://` inside a string
-// started a "comment" at the second slash, so every value spelled as a URL hid the rest of
-// its own line - including the very occurrence the `operator-gateway-endpoint` rule exists to
-// report. Both halves are asserted: the value after a URL on the same line IS reported, and a
-// real `//` comment after a URL string is still a comment.
+// red-proof: fixture  a synthetic tree whose value is spelled as `http://127.0.0.1:8317/v1`
+// -> with `//` matched wherever it appears, the scanner starts a "comment" at the second slash and
+// reports only `[[ 'src/url.mjs', 2 ]]`: the value on the marker's own line is reported nowhere. With
+// the string-literal rule the same tree reports `[ [ 'src/same-line.mjs', 1 ], [ 'src/url.mjs', 2 ] ]`.
+// Both halves are asserted below, including the control: a real `//` comment after a URL string is
+// still a comment.
 test("a // inside a string literal does not start a comment", () => {
   const root = makeRepo({
     "src/owner.mjs": 'export const value = "sentinel-value";\n',
