@@ -1692,7 +1692,7 @@ string? bodyProgramUnavailableReason = null,
             snapshot.CatalogRevision,
             snapshot.StopEpoch,
             snapshot.EventHighWater,
-            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode)).ToArray());
+            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint)).ToArray());
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt);
 

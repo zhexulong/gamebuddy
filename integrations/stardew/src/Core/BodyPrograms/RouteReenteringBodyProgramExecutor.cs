@@ -345,7 +345,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // reached the companion as a bare `Failed` and it re-sent the same doomed node; the reason is a statement
                 // about why nothing happened, not proof that something did, so it cannot be confused with the evidence
                 // the success path requires.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode);
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint);
         }
     }
 

@@ -901,7 +901,11 @@ public static class BridgeProtocol
 && IsJavaScriptSafeInteger(node.NodeAttempt)
          && IsJavaScriptSafeInteger(node.AdmissionAttempt)
          && (node.RejectionCode is null || IsReasonCode(node.RejectionCode))
-         && (node.FailureCode is null || IsReasonCode(node.FailureCode));
+         && (node.FailureCode is null || IsReasonCode(node.FailureCode))
+         // A hint is not a reason code (`closest=49,14;closest_distance=1` is outside that grammar), so it carries the
+         // journal's own length bound instead. Both validators must agree: the typed one guards the outgoing object graph
+         // and the JsonElement one guards a reparse, and a rule present in only one of them is a rule that does not hold.
+         && (node.Hint is null || BodyProgramValidation.IsValidNodeHint(node.Hint));
 
 private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @event is not null
          && IsJavaScriptSafeInteger(@event.Cursor)
@@ -924,15 +928,32 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
-         && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode");
+         && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
+         && IsAbsentNullOrBoundedHint(value, "hint");
 
     /// <summary>
     /// An optional node-status cause code: absent, JSON null (the serializer omits nulls, but an explicit null comes from
     /// the other side's model), or a code in the reason-code grammar.
     /// </summary>
+    /// <summary>
+    /// An optional node-status hint: absent, JSON null, or a string within the declared bound.
+    ///
+    /// <para>
+    /// A hint is not a reason code - it carries `closest=49,14;closest_distance=1`, which is not in the reason-code
+    /// grammar - so it needs its own rule. The bound is the same one the journal enforces
+    /// (`BodyProgramValidation.MaximumNodeHintLength`), so a frame the wire accepts cannot be one the journal refuses.
+    /// </para>
+    /// </summary>
+    private static bool IsAbsentNullOrBoundedHint(JsonElement value, string name) =>
+        !value.TryGetProperty(name, out JsonElement property)
+        || property.ValueKind == JsonValueKind.Null
+        || (property.ValueKind == JsonValueKind.String
+            && property.GetString() is string hint
+            && hint.Length <= 256);
+
     private static bool IsAbsentNullOrReasonCode(JsonElement value, string name) =>
         !value.TryGetProperty(name, out JsonElement property)
         || property.ValueKind == JsonValueKind.Null

@@ -145,8 +145,22 @@ public sealed class StardewBodyControllerPathGoalTests
     public void UnreachableTarget_KeepsTheDeadEndRejection()
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
-        int start = source.IndexOf("public bool TryStart(", StringComparison.Ordinal);
-        start.Should().BeGreaterThanOrEqualTo(0);
+        // The method that DECIDES the dead end, found by what it contains rather than by its name: splitting `TryStart`
+        // into a public wrapper and a private core is a refactor, not a behaviour change, and a test that goes red for
+        // one is a test pinning a spelling. Walk the occurrences and take the body that carries the rejection.
+        int start = -1;
+        for (int candidate = source.IndexOf("bool TryStart(", StringComparison.Ordinal);
+             candidate >= 0;
+             candidate = source.IndexOf("bool TryStart(", candidate + 1, StringComparison.Ordinal))
+        {
+            if (BalancedBody(source, candidate).Contains("NoNativePathReasonCode", StringComparison.Ordinal))
+            {
+                start = candidate;
+                break;
+            }
+        }
+
+        start.Should().BeGreaterThanOrEqualTo(0, "some method decides the dead end; a rename must not hide it");
 
         string body = BalancedBody(source, start);
         // No tile satisfying the predicate means a genuinely unreachable target; the

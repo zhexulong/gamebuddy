@@ -131,7 +131,7 @@ internal sealed partial class ExecutionManager
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
         this.active = specification;
-        if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence))
+        if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence, out string? startHint))
         {
             // 3. The native finder has no route, but the Mod's own clearing search can name the FIRST step that
             //    would open one - a rock, an approach tile and a price. Walking to that approach tile is a MOVE, so
@@ -157,7 +157,7 @@ internal sealed partial class ExecutionManager
             }
 
             this.active = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence, hint: startHint);
         }
 
         string acceptedEvidence = approachSubstituted

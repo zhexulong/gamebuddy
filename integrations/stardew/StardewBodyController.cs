@@ -29,6 +29,17 @@ internal sealed class StardewBodyController
     private bool isStallWaiting;
     private int stallWaitStartedTick;
 
+    /// <summary>
+    /// Where the last refused move COULD have gone, when the flood found a tile closer to the goal.
+    ///
+    /// <para>
+    /// Set on the branch that refuses with `no_native_path`, so the terminal result can carry it as the node's `Hint`.
+    /// Null means the flood found nothing closer - an honest "nowhere better from here", which is a different answer
+    /// from "no hint was computed".
+    /// </para>
+    /// </summary>
+    private string? reachabilityHint;
+
     /// <summary>Navigation L2 watchdog: native movement must show progress before
     /// this many game ticks have elapsed. Stardew's native update loop is 60 FPS,
     /// so the frozen 2 second blocker diagnostic window is 120 ticks
@@ -259,6 +270,7 @@ internal sealed class StardewBodyController
     internal bool TryStartClearApproach(LocalMoveSpec requested, Farmer localPlayer, int tick, out string? evidence)
     {
         evidence = null;
+        this.reachabilityHint = null;
         if (this.active is not null)
             return false;
         if (this.PlanClearApproachWalk(requested, localPlayer, out evidence) is not { } planned)
@@ -347,7 +359,35 @@ internal sealed class StardewBodyController
             $"tile={FormatTile(currentTile)};target={FormatTile(arrived.Requested.TargetTile)};clear_step_cleared=true");
     }
 
-    public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence)
+    /// <summary>
+/// Starts a local move, and on refusal says where the caller CAN go.
+///
+/// <para>
+/// The hint is filled from `reachabilityHint`, which the refusal branches set. It is a separate out-parameter rather
+/// than a slice of `evidence` because the two travel to different places: evidence goes into the receipt and the world
+/// fact and is refused for a failed node, while the hint goes into the node's `Hint` and reaches the model.
+/// </para>
+/// </summary>
+    public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence, out string? hint)
+    {
+        bool started = this.TryStartCore(specification, localPlayer, tick, out reasonCode, out evidence);
+        hint = started ? null : this.reachabilityHint;
+        return started;
+    }
+
+    /// <summary>
+    /// The same start, for a caller with nowhere to put a hint.
+    ///
+    /// <para>
+    /// Three call sites do not mint a Body Program node - a staged approach leg and two gathering handlers - so they have no
+    /// node to hang a `Hint` on. Discarding it here is honest: they never needed it. A caller that DOES settle a node uses
+    /// the overload above, which is what carries the hint to the model.
+    /// </para>
+    /// </summary>
+    public bool TryStart(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence) =>
+        this.TryStart(specification, localPlayer, tick, out reasonCode, out evidence, out _);
+
+    private bool TryStartCore(LocalMoveSpec specification, Farmer localPlayer, int tick, out string reasonCode, out string? evidence)
     {
         evidence = null;
         if (this.active is not null)
@@ -402,7 +442,7 @@ internal sealed class StardewBodyController
         // neighbourhood even in the actor's walkable component - and it is the same probe the refusal evidence below
         // already reports. Asking it first costs a bounded flood and keeps the engine call for the cases that can
         // actually succeed.
-        if (AssessNativeReachability(localPlayer, specification) is { ComponentContainsTarget: false } unreachable)
+        if (AssessNativeReachability(localPlayer, specification, findClosestReachable: true) is { ComponentContainsTarget: false } unreachable)
         {
             reasonCode = NoNativePathReasonCode;
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
@@ -410,9 +450,16 @@ internal sealed class StardewBodyController
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile)}"
-                // What would open the way, and what it costs. A bare `no_native_path` leaves an agent
-                // aiming at neighbouring tiles; this says whether one rock is the whole obstacle.
+                // The staging hint belongs on THIS path too, and its absence here was the whole reason the model could not act.
+                //
+                // Measured 2026-11-01 (`round21`): nine `move_to_tile` refusals in Mountain, each carrying 284 bytes of evidence
+                // that the model never saw - `component_tiles`, `target_enclosed` and `route_exists_cardinal` appear 0 times in
+                // its session, `no_native_path` 26. The flood had already computed the one tile that would have ended the loop
+                // and `FormatReachableHint` was only wired into the branch below, so this branch published the verdict without
+                // the escape. The hint is now on both branches, from the same `ClosestToTarget` the flood already filled.
+                + $";{FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}"
                 + DescribeClearToReach(localPlayer, specification);
+            this.reachabilityHint = FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
             return false;
         }
 

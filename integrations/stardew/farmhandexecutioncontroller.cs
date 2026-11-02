@@ -5137,10 +5137,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             && !location.IsTileOccupiedBy(candidate, (CollisionMask)255, (CollisionMask)0, false);
     }
 
-    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null)
+    private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null)
     {
         string? boundActionId = this.actionIdsByRequestId.TryGetValue(requestId, out string? action) ? action : null;
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation);
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt);
         // Immediate native actions own no continuing controller/animation, so

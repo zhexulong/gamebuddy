@@ -79,7 +79,19 @@ public sealed record LocalExecutionReceipt(
     string? ActionId = null,
     BridgeLocalObservation? Observation = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ObserveSceneResultPayload? PiggybackedScene = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? NativeNotices = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? NativeNotices = null,
+    /// <summary>
+    /// Where the caller can go instead, when the reason is "there is no path to what you asked for".
+    ///
+    /// <para>
+    /// Carried beside <see cref="ReasonCode"/> and NOT as part of <see cref="Evidence"/>: the evidence string is
+    /// `from=...;to=...;target_enclosed=...` and was computed, stored, published as a world fact and then dropped before the
+    /// model ever saw it - `component_tiles`, `target_enclosed` and `route_exists_cardinal` appear 0 times in `round21`'s
+    /// session while `no_native_path` appears 26. This field is the one part of that evidence a model can ACT on, carried
+    /// separately so the Body Program journal can publish it without publishing evidence for a node that proved nothing.
+    /// </para>
+    /// </summary>
+    string? Hint = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -1160,7 +1172,18 @@ string? RejectionCode = null,
 /// send the same node again. This is a cause, never proof of an effect: `failed`/`cancelled` still carry no receipt,
 /// evidence, postcondition or facts (ADR-006 `:163`, `:175`).
 /// </para>
-string? FailureCode = null
+string? FailureCode = null,
+/// <summary>
+/// Where the caller can go instead, when the reason is that the target has no route.
+///
+/// <para>
+/// A hint, not evidence: it claims nothing happened, names no receipt and proves no effect, so the ban above does not
+/// reach it - the same footing as <see cref="FailureCode"/>. Measured 2026-11-01 (`round21`): the companion re-aimed
+/// at nine `move_to_tile` destinations in Mountain because every refusal reached it as a bare
+/// `{"failureCode":"no_native_path"}`; the one fact that would have ended the loop, the closest reachable tile, was
+/// computed and dropped. Bounded and omitted when null, so the wire shape only grows for a node that has one.
+/// </para>
+string? Hint = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

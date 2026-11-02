@@ -182,7 +182,7 @@ public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int N
 /// </para>
 /// </summary>
 public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, IReadOnlyList<RuntimeFact>? Facts,
-    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null);
+    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null, string? Hint = null);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims);
@@ -208,7 +208,28 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     /// This is a reason, never proof of an effect - `ReceiptId`, `Evidence` and `PostconditionVerification` stay absent on
     /// those states (ADR-006 `:163`, `:175`), which is what makes it safe to carry.
     /// </summary>
-    string? FailureCode = null);
+    string? FailureCode = null,
+    /// <summary>
+    /// Where the caller can actually go, when the reason is "the target is unreachable".
+    ///
+    /// <para>
+    /// A hint, not evidence: it claims nothing happened, names no receipt and proves no effect, so ADR-006's ban on
+    /// evidence for a failed node (`:163`, `:175`) does not reach it - the same footing as <see cref="FailureCode"/>,
+    /// which is why it carries the same state restriction.
+    /// </para>
+    /// <para>
+    /// Measured 2026-11-01 (`round21`): nine `move_to_tile` refusals in Mountain arrived at the model as a bare
+    /// `{"failureCode":"no_native_path"}`. The Mod had already computed 284 bytes of reachability evidence per refusal and
+    /// thrown it away at the success-only `Evidence` assignment, and the one field that would have ended the loop - the
+    /// closest tile the actor can actually reach - was in that evidence. Counted in the model's own session file:
+    /// `component_tiles` 0, `target_enclosed` 0, `route_exists_cardinal` 0, `no_native_path` 26. The companion re-aimed at
+    /// nine different coordinates because nothing in its input distinguished them.
+    /// </para>
+    /// <para>
+    /// Bounded by <see cref="BodyProgramValidation.MaximumNodeHintLength"/>: `closest=49,14;closest_distance=1` is 33
+    /// characters, and the ceiling leaves room for a longer form without letting a free-form string become a payload.
+    /// </para>
+    string? Hint = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 /// <summary>Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.</summary>
@@ -259,6 +280,17 @@ internal static class BodyProgramValidation
     /// </para>
     /// </summary>
     internal const int MaximumNodes = 256;
+    /// <summary>
+    /// The largest a node's actionable hint may be.
+    ///
+    /// <para>
+    /// A BOUNDED ADVISORY, not free-form text. `closest=49,14;closest_distance=1` is 33 characters; 256 leaves room for a
+    /// richer form without letting a hint become a second evidence channel. The value is checked on the write path and
+    /// on the read-back path, so a journal carrying a longer one fails closed rather than reaching a model.
+    /// </para>
+    /// </summary>
+    internal const int MaximumNodeHintLength = 256;
+    internal static bool IsValidNodeHint(string? value) => value is null or { Length: <= MaximumNodeHintLength };
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     /// <summary>Descriptor-owned static watchdog budget for ordinary short actions (hang protection, not ETA).</summary>
     internal const long DefaultWatchdogMs = 60_000;

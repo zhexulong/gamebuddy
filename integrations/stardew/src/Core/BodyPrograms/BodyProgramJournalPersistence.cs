@@ -499,7 +499,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
@@ -510,8 +510,9 @@ public static class BodyProgramJournalPersistence
             || !ReadNullableProof(value.GetProperty("receiptId"), out string? receipt) || !ReadNullableProof(value.GetProperty("evidence"), out string? evidence)
              || !ReadNullableProof(value.GetProperty("postconditionVerification"), out string? postcondition) || !ReadNullableDiagnostic(value.GetProperty("recoveryDiagnostic"), out string? diagnostic)
              || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)
-             || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode); return true;
+             || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)
+             || !ReadNullableHint(value.GetProperty("hint"), out string? hint)) return false;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint); return true;
     }
 
     /// <summary>
@@ -522,6 +523,17 @@ public static class BodyProgramJournalPersistence
     {
         result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsReasonCode(result));
+    }
+
+    /// <summary>
+    /// A null-or-bounded-hint field. Anything that is neither null nor within the length bound fails the whole document
+    /// closed: a malformed hint must never be read as "no hint", which is the shape this field exists to close one level
+    /// up - a node that settled without telling the caller where it could go.
+    /// </summary>
+    private static bool ReadNullableHint(JsonElement value, out string? result)
+    {
+        result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsValidNodeHint(result));
     }
 
     private static bool ReadNullableDeadline(JsonElement value, out long? deadline)

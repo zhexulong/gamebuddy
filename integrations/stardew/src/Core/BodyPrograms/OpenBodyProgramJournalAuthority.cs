@@ -487,7 +487,10 @@ public sealed class OpenBodyProgramJournalAuthority
         // and it is legal only on the two states that mean "dispatched, settled, no effect" - a Cancelled node and an
         // Uncertain one (which settles as RecoveryRequired and already carries `RecoveryDiagnostic`) may not claim one.
         else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null
-            || (result.FailureCode is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsReasonCode(result.FailureCode)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+            || (result.FailureCode is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsReasonCode(result.FailureCode)))
+            // A hint is legal on the same two states as a reason code, and for the same reason: it names where to go
+            // next, not what happened. A hint on a Succeeded node would be a claim about a world state nobody checked.
+            || (result.Hint is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidNodeHint(result.Hint)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
@@ -502,6 +505,7 @@ public sealed class OpenBodyProgramJournalAuthority
             PostconditionVerification = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.PostconditionVerification : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
             FailureCode = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.FailureCode : null,
+            Hint = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.Hint : null,
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };

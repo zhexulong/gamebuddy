@@ -1538,6 +1538,13 @@ type BodyProgramNodeStatus = Readonly<{
    * A cause, never proof of an effect: those states still carry no receipt, evidence, postcondition or facts.
    */
   failureCode?: string | null;
+  /**
+   * Where the caller can go instead, when the reason is that the target has no route.
+   *
+   * A hint, not evidence: it claims nothing happened and proves no effect, which is why it can ride beside `failureCode`
+   * on a node whose evidence is deliberately absent (ADR-006). `closest=49,14;closest_distance=1` is the shape.
+   */
+  hint?: string | null;
 }>;
 type BodyProgramStatusSnapshot = Readonly<{
   programId: string;
@@ -4178,11 +4185,14 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     hasExactKeysOrOptional(
       value,
       ["nodeId", "state", "nodeAttempt", "admissionAttempt"],
-      ["rejectionCode", "failureCode"],
+      ["rejectionCode", "failureCode", "hint"],
     ) &&
     isOpaqueId(value.nodeId) &&
     (value.rejectionCode === undefined || value.rejectionCode === null || isReasonCode(value.rejectionCode)) &&
     (value.failureCode === undefined || value.failureCode === null || isReasonCode(value.failureCode)) &&
+    // A hint is not a reason code - `closest=49,14;closest_distance=1` is outside that grammar - so it carries its own
+    // bound. It is the same 256 the Mod's journal enforces, so a frame the wire accepts cannot be one the journal refuses.
+    (value.hint === undefined || value.hint === null || (typeof value.hint === "string" && value.hint.length <= 256)) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)

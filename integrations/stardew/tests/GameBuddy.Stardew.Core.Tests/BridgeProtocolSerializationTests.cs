@@ -519,6 +519,7 @@ public sealed class BridgeProtocolSerializationTests
             AnimalProductTargets: null,
             FeedTroughTargets: null,
             Chests: null,
+            ChestsSummary: null,
             InventoryItemFacts: null,
             FoodTargets: null,
             ShippingBinTargets: null,
@@ -1562,6 +1563,33 @@ public sealed class BridgeBodyProgramProtocolTests
         };
         BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", oversized), out string json, out reason).Should().BeFalse();
         json.Should().BeEmpty();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
+    [Fact]
+    public void TrySerialize_NodeStatusCarriesTheReachabilityHintButRefusesOneThatIsTooLong()
+    {
+        // A hint is what the companion could actually act on: nine `move_to_tile` refusals in Mountain reached the model as
+        // a bare `{"failureCode":"no_native_path"}` because the one field that distinguished them was dropped
+        // (measured 2026-11-01, `round21`: `component_tiles` 0 occurrences in the session, `no_native_path` 26).
+        //
+        // It rides beside `failureCode` on a node whose evidence is deliberately absent, so the rule that admits it must be
+        // the hint's own - a reason-code grammar would refuse `closest=49,14;closest_distance=1`.
+        BridgeBodyProgramNodeStatus hinted = new("node_1", "failed", 1, 1, null, "no_native_path", "closest=49,14;closest_distance=1");
+        BridgeBodyProgramStatusSnapshot snapshot = new("program_1", "failed", 7, 2, 11, new[] { hinted });
+
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", snapshot), out string json, out string reason)
+            .Should().BeTrue();
+        reason.Should().Be("accepted");
+        json.Should().Contain("closest=49,14;closest_distance=1", "a hint that does not reach the wire reaches no model");
+
+        // Past the bound the frame is refused rather than truncated: a silently shortened hint is a hint that names the
+        // wrong tile. The bound is the journal's own, so the wire cannot accept what the read-back path rejects.
+        BridgeBodyProgramNodeStatus oversized = hinted with { Hint = new string('x', BodyProgramValidation.MaximumNodeHintLength + 1) };
+        BridgeBodyProgramStatusSnapshot tooLong = snapshot with { Nodes = new[] { oversized } };
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", tooLong), out string refused, out reason)
+            .Should().BeFalse();
+        refused.Should().BeEmpty();
         reason.Should().Be("invalid_body_program_result");
     }
 
