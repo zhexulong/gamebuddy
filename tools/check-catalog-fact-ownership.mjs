@@ -21,8 +21,9 @@
  * any exist). A clean repo prints `catalog_fact_ownership: none` and exits 0.
  *
  * red-proof: inject  a wrong price literal - `0.14 / 0.28 / 0.0028` for
- * `deepseek-v4.1-flash`, the rates that shipped - beside the model entry in a
- * production file that reads its price from the catalog -> the gate reports
+ * `deepseek-v4.1-flash` (tools/lib/catalog-fact-ownership.test.mjs), the rates that
+ * shipped - beside the model entry in a production file that reads its price from the
+ * catalog -> the gate reports
  * `catalog_fact_ownership:unowned_literal:computed-id:cost:<path>:<line>` with both
  * values, where the same tree with the catalog-derived lookup is green. The derived
  * set is itself falsified by renaming the model in the owner, which the gate then
