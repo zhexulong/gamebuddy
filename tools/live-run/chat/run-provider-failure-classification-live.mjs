@@ -74,8 +74,8 @@ const HOST_TEST_ROOT = join(REPOSITORY_ROOT, "host", "dist-test");
 const DIALOGUE_WEB_SOURCE = join(REPOSITORY_ROOT, "dialogue-web", "src");
 
 /** The endpoint under judgement. A real, third-party service this product does not run. */
-const ENDPOINT = "https://api.deepseek.com/v1";
-const MODEL_ID = "deepseek-chat";
+export const ENDPOINT = "https://api.deepseek.com/v1";
+export const MODEL_ID = "deepseek-chat";
 /**
  * The credential this runner uses, and the ONLY one it can use.
  *
@@ -83,12 +83,12 @@ const MODEL_ID = "deepseek-chat";
  * never read from the environment. A real key that looked like a key would make a
  * wrong-status run indistinguishable from a real charge.
  */
-const FAKE_API_KEY = "sk-invalid-gamebuddy-probe";
+export const FAKE_API_KEY = "sk-invalid-gamebuddy-probe";
 /** The environment variable a real DeepSeek key would live in. Its presence is a refusal. */
 const REAL_KEY_VARIABLE = "DEEPSEEK_API_KEY";
 
 /** How much of the endpoint's own reply is kept, after redaction. */
-const EVIDENCE_BODY_MAX_CHARS = 400;
+export const EVIDENCE_BODY_MAX_CHARS = 400;
 /** Hard ceiling on what is read off the wire, so a hostile body cannot be buffered whole. */
 const EVIDENCE_READ_MAX_BYTES = 8_192;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -326,7 +326,7 @@ export function assertFakeCredentialOnly(environment) {
  * implementation of the probe: the product's probe runs afterwards, and its closed
  * outcome is reported beside this.
  */
-async function readEndpointEvidence({ baseUrl, apiKey, transport = fetch, timeoutMs = REQUEST_TIMEOUT_MS }) {
+export async function readEndpointEvidence({ baseUrl, apiKey, transport = fetch, timeoutMs = REQUEST_TIMEOUT_MS }) {
   try {
     const response = await transport(`${baseUrl}/models`, {
       method: "GET",
