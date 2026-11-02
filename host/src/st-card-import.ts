@@ -356,7 +356,8 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const losses = createLossLedger();
   const spec = typeof value.spec === "string" ? value.spec : typeof data.spec === "string" ? data.spec : undefined;
   const format = spec === "chara_card_v3" || spec === "ccv3" ? "st-v3" : "st-v2";
-  const name = boundedText(data.name, ST_CARD_DECODER_LIMITS_V1.nameBytes) ?? "Imported Companion";
+  const declaredName = boundedText(data.name, ST_CARD_DECODER_LIMITS_V1.nameBytes);
+  const name = declaredName ?? "Imported Companion";
   const description = boundedMultilineText(data.description, ST_CARD_DECODER_LIMITS_V1.textBytes);
   const personality = boundedMultilineText(data.personality, ST_CARD_DECODER_LIMITS_V1.textBytes);
   const scenario = boundedMultilineText(data.scenario, ST_CARD_DECODER_LIMITS_V1.textBytes);
@@ -366,6 +367,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   const alternateGreetings = readAlternateGreetings(data.alternate_greetings);
   const parsedExamples = parseExamples(
     boundedMultilineText(data.mes_example, ST_CARD_DECODER_LIMITS_V1.examplesBytes),
+    declaredName,
     losses,
   );
   // No few-shot is manufactured when the card wrote no `mes_example`. This used
@@ -760,32 +762,72 @@ function extractCharacterBook(
  */
 const EXAMPLE_BLOCK_SEPARATOR = /<START>/u;
 const EXAMPLE_TURN_BOUNDARY = /(?=(?:^|\n)\s*(?:\{\{user\}\}|You|User)\s*:)/iu;
+/** The ST spec's own two speakers, as the label alternations the example parser builds from. */
+const EXAMPLE_USER_LABELS = "\\{\\{user\\}\\}|You|User";
+const EXAMPLE_COMPANION_LABELS = "\\{\\{char\\}\\}|Character|Assistant";
+
+/**
+ * Escapes a card-authored string for literal use inside a RegExp source.
+ *
+ * Without it a card named `A.B` makes `.` a wildcard that accepts `AxB: ...` as
+ * her own label, and a card named `Amber (she/her)` has its parentheses read as a
+ * group so her real label never matches. The escaped set is exactly the RegExp
+ * syntax characters, which is also what keeps the pattern valid under the `u`
+ * flag (an unescaped `{` is an "incomplete quantifier" there).
+ */
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/**
+ * The speaker-label regexes one card's examples are read with.
+ *
+ * The companion's labels are the spec's own (`{{char}}`/`Character`/`Assistant`) plus the
+ * card's declared name, because real cards label her with it: `琥珀: "早安"` and
+ * `Amber: "morning"` are the shape the Chinese and English communities both ship, and the
+ * name is the very label the profile renders her own examples under. Reading only the spec
+ * labels dropped every such block as `unparsed_example_blocks`, so the companion lost all of
+ * her few-shot dialogue. The name is RegExp-escaped (see `escapeRegExpLiteral`).
+ *
+ * The player keeps the spec's own labels only. A v2/v3 card carries no player name at all -
+ * `{{user}}` is resolved by the chat front end at render time - so there is no name to add,
+ * and a card that labels the player with one it invented loses that block as before.
+ */
+function exampleSpeakerPatterns(declaredName: string | undefined): Readonly<{ user: RegExp; companion: RegExp }> {
+  const companionLabels =
+    declaredName === undefined
+      ? EXAMPLE_COMPANION_LABELS
+      : `${EXAMPLE_COMPANION_LABELS}|${escapeRegExpLiteral(declaredName)}`;
+  return Object.freeze({
+    user: new RegExp(`(?:${EXAMPLE_USER_LABELS})\\s*:\\s*([\\s\\S]*?)(?=(?:${companionLabels})\\s*:|$)`, "iu"),
+    companion: new RegExp(`(?:${companionLabels})\\s*:\\s*([\\s\\S]*?)(?=(?:${EXAMPLE_USER_LABELS})\\s*:|$)`, "iu"),
+  });
+}
 
 function parseExamples(
   value: string | undefined,
+  declaredName: string | undefined,
   losses: StCardImportLossLedger,
 ): readonly Readonly<{ user: string; companion: string }>[] {
   if (value === undefined) return [];
+  const patterns = exampleSpeakerPatterns(declaredName);
   const blocks = (value.includes("<START>") ? value.split(EXAMPLE_BLOCK_SEPARATOR) : value.split(EXAMPLE_TURN_BOUNDARY))
     .map((part) => part.trim())
     .filter(Boolean);
   const parsed = blocks.flatMap((part) => {
-    const user = part
-      .match(/(?:\{\{user\}\}|You|User)\s*:\s*([\s\S]*?)(?=(?:\{\{char\}\}|Character|Assistant)\s*:|$)/iu)?.[1]
-      ?.trim();
-    const companion = part
-      .match(/(?:\{\{char\}\}|Character|Assistant)\s*:\s*([\s\S]*?)(?=(?:\{\{user\}\}|You|User)\s*:|$)/iu)?.[1]
-      ?.trim();
+    const user = part.match(patterns.user)?.[1]?.trim();
+    const companion = part.match(patterns.companion)?.[1]?.trim();
     return user !== undefined && companion !== undefined && user.length > 0 && companion.length > 0
       ? [Object.freeze({ user, companion })]
       : [];
   });
-  // The accepted speaker labels are exactly `{{user}}`/`You`/`User` for the
-  // player and `{{char}}`/`Character`/`Assistant` for the companion (the ST
-  // spec's own two speakers, case-insensitively). A card whose examples use any
-  // other label - a literal character name is the common one - loses that block,
-  // and a card's own form teaching may be nothing BUT those blocks, so the loss
-  // is reported with its count rather than vanishing.
+  // The accepted speaker labels are the ST spec's own two speakers - `{{user}}`/
+  // `You`/`User` for the player and `{{char}}`/`Character`/`Assistant` for the
+  // companion, case-insensitively - plus the card's own declared name for the
+  // companion. A card whose examples use any other label - a player name the card
+  // invented, a third participant - loses that block, and a card's own form
+  // teaching may be nothing BUT those blocks, so the loss is reported with its
+  // count rather than vanishing.
   losses.record("mes_example", "unparsed_example_blocks", blocks.length - parsed.length);
   return Object.freeze(parsed);
 }

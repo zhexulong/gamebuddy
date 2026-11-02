@@ -669,9 +669,9 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
     data: {
       name: "Rin",
       description: "calm",
-      // The companion is labelled with her own name: a real card shape the
-      // speaker parser does not accept.
-      mes_example: "<START>\nRin: I am labelled with the card's own name.\nYou: hello",
+      // A label the decoder still does not accept: a third participant's name (the
+      // card's own name IS accepted, and `{{user}}`/`You`/`User` are the player's).
+      mes_example: "<START>\nNarrator: I am neither of the two speakers.\nYou: hello",
     },
   },
   worldbook_keys_truncated: {
@@ -746,7 +746,7 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
 const THREE_LOSS_CARD_DATA = Object.freeze({
   name: "Loss Ledger",
   description: "calm",
-  mes_example: "<START>\nLoss Ledger: I am the card's own name label.\nYou: hi",
+  mes_example: "<START>\nNarrator: I am neither of the two speakers.\nYou: hi",
   character_book: {
     entries: [
       { comment: "Many keys", content: "carried", keys: Array.from({ length: 18 }, (_, index) => `key_${index}`) },
@@ -1006,19 +1006,78 @@ test("a card that ships mes_example keeps exactly its parsed examples, beside it
   assert.deepEqual(preview.losses, []);
   assert.match(buildChatCompanionSystemPrompt(profile), /\[Dialogue Examples\]/);
 });
-test("an example block with a label outside the two ST speakers is reported, never silently dropped", () => {
+test("a card whose examples label the companion with her own name keeps every block", () => {
+  // The failure this catches: the speaker parser accepted only
+  // `{{char}}`/`Character`/`Assistant`, so a card that labels the companion with
+  // her real name - the shape the Chinese and English communities both ship
+  // (`琥珀: "早安"`, `Amber: "morning"`) - lost every block as
+  // `unparsed_example_blocks`, and the companion lost her whole few-shot.
+  const chinese = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "琥珀",
+        description: "农场搭档",
+        mes_example: '<START>\n琥珀: "早安，今天也要一起吗？"\nYou: 嗯。\n<START>\n琥珀: 我去把水壶灌满。\nUser: 好。',
+      },
+    }),
+  );
+  assert.deepEqual(chinese.candidate?.profileCandidate.examples, [
+    { user: "嗯。", companion: '"早安，今天也要一起吗？"' },
+    { user: "好。", companion: "我去把水壶灌满。" },
+  ]);
+  assert.deepEqual(chinese.losses, []);
+
+  const english = previewStCard({
+    spec: "chara_card_v3",
+    data: { name: "Amber", description: "calm", mes_example: "{{user}}: hey\nAmber: morning" },
+  });
+  assert.deepEqual(english.profileCandidate.examples, [{ user: "hey", companion: "morning" }]);
+  assert.deepEqual(english.losses, []);
+});
+
+test("a card's own name in an example label is matched literally, not as a pattern", () => {
+  // The failure this catches: the name is spliced into the label regex, so an
+  // unescaped name is a pattern. `Amber (she/her)` then never matches its own
+  // label (the parentheses read as a group), and `A.B` accepts `AxB:` as hers -
+  // a wildcard that swallows any character.
+  const metacharacters = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Amber (she/her)",
+        description: "calm",
+        mes_example: "<START>\nAmber (she/her): morning\nYou: hey",
+      },
+    }),
+  );
+  assert.deepEqual(metacharacters.candidate?.profileCandidate.examples, [{ user: "hey", companion: "morning" }]);
+  assert.deepEqual(metacharacters.losses, []);
+
+  const wildcard = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "A.B", description: "calm", mes_example: "<START>\nAxB: hello\nYou: hi" },
+    }),
+  );
+  assert.deepEqual(wildcard.candidate?.profileCandidate.examples, []);
+  assert.deepEqual(wildcard.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
+});
+
+test("an example block with a label outside the accepted speakers is reported, never silently dropped", () => {
   // The failure this catches: `mes_example` split into blocks, a block whose
-  // labels were not `{{user}}/You/User` + `{{char}}/Character/Assistant` was
-  // discarded with no report at all - and a card's form teaching (exactly what
-  // its own system_prompt is about) can be nothing BUT those blocks.
+  // labels were neither the two ST speakers nor the card's own name was discarded
+  // with no report at all - and a card's form teaching (exactly what its own
+  // system_prompt is about) can be nothing BUT those blocks.
   const report = decodeStCard(
     JSON.stringify({
       spec: "chara_card_v3",
       data: {
         name: "Rin",
         description: "calm",
-        // The common real shape: the card labels the companion with her own name.
-        mes_example: "<START>\nRin: Let us slow down.\nYou: tired\n\n<START>\n{{user}}: ok\n{{char}}: good",
+        // A third participant writes the turn: not the card's own name, and not
+        // one of the player labels the decoder accepts.
+        mes_example: "<START>\nNarrator: Let us slow down.\nYou: tired\n\n<START>\n{{user}}: ok\n{{char}}: good",
       },
     }),
   );
