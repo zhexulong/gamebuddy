@@ -370,13 +370,18 @@ const en = {
   connectionApiKeyNotRequired: "This connection is probed without a credential.",
   connectionModel: "Model",
   connectionModelId: "Model ID",
-  connectionModelIdHint: "The model name the endpoint serves, for example qwen2.5-coder:7b",
+  connectionModelIdHint: "The model name the endpoint serves",
   connectionModelServed: "served by this endpoint",
   // One sentence, true in both states: an entry whose endpoint this product does not run publishes no
   // model ids at all, so what is shown here can never be more than what the endpoint itself answered.
   connectionModelSuggestionsHint:
     "Type the model id your endpoint serves. Testing the connection is what proves it does.",
   connectionModelsServed: "models served by this endpoint",
+  // The catalog's own suggestions. They are a starting point, not a claim about the endpoint: a
+  // model id the catalog knows may not be served by the endpoint the player configured, and the
+  // probe is what settles that.
+  connectionModelCatalog: "suggested by GameBuddy; the endpoint decides",
+  connectionModelsCatalog: "suggestions from GameBuddy's catalog",
   connectionModelOffered: "Models offered",
   connectionModelsOfferedAmong: "models offered; the one you picked is among them.",
   connectionModelsOfferedNotAmong: "models offered, but not the one you picked.",
@@ -1359,10 +1364,12 @@ const zh: Messages = {
   connectionApiKeyNotRequired: "该连接将在没有凭据的情况下进行测试。",
   connectionModel: "模型",
   connectionModelId: "模型 ID",
-  connectionModelIdHint: "该端点提供的模型名，例如 qwen2.5-coder:7b",
+  connectionModelIdHint: "该端点提供的模型名",
   connectionModelServed: "该端点提供",
   connectionModelSuggestionsHint: "请输入该端点提供的模型 ID。测试连接即可确认它确实提供。",
   connectionModelsServed: "个模型由该端点提供",
+  connectionModelCatalog: "GameBuddy 的建议，最终以端点为准",
+  connectionModelsCatalog: "GameBuddy 目录里的建议",
   connectionModelOffered: "可用模型",
   connectionModelsOfferedAmong: "个模型可选，你选的模型在其中。",
   connectionModelsOfferedNotAmong: "个模型可选，但没有你选的那个。",

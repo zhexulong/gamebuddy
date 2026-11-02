@@ -54,10 +54,15 @@ const MESSAGES = messages("en");
  * The session step vocabulary, read out of the module's own union rather than
  * retyped here, so a member added there is covered without the gate keeping a
  * second copy that can drift.
+ *
+ * The anchor deliberately does NOT include the `export` keyword. This type is used only inside its own
+ * module, so a lint pass that removes a needless `export` must not be able to break this gate - and it
+ * did exactly that once. An anchor on the declaration itself survives a visibility change, which is
+ * the only thing that anchor is about; the union's members are the fact being read.
  */
 const SESSION_FORWARD_ACTIONS = (() => {
   const source = readFileSync(MODULE, "utf8");
-  const start = source.indexOf("export type GameSessionForwardAction =");
+  const start = source.search(/\btype\s+GameSessionForwardAction\s*=/u);
   assert.notEqual(start, -1, "the session step union is declared where this gate reads it");
   const end = source.indexOf(";", start);
   return [...source.slice(start, end).matchAll(/\|\s*"([a-z_]+)"/gu)].map((match) => match[1]);

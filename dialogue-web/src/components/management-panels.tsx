@@ -459,6 +459,17 @@ export function ConnectionSettingsPanel({
   ];
   const servedModels = servedModelsFor(selected?.providerId);
   /**
+   * The catalog's curated ids for this provider: `allowedPlayerModels`, which the Host has published
+   * on the projection since the field existed and which nothing read until now.
+   *
+   * Kept as a SEPARATE list from `servedModels` rather than merged into one datalist, because they
+   * are two different claims and a player can tell them apart in the labels: `servedModels` is what
+   * this endpoint answered when it was last probed, and a catalog id is a suggestion that the
+   * endpoint may well refuse. Merging them would make one list say both things, and the one that
+   * matters - what the endpoint actually serves - would lose.
+   */
+  const catalogModels = selected?.allowedPlayerModels ?? [];
+  /**
    * Who supplies the selected entry's credential, as two facts that must never be
    * merged into one sentence.
    *
@@ -730,10 +741,28 @@ export function ConnectionSettingsPanel({
                 {servedModels.map((id) => (
                   <option key={`served-${id}`} value={id} label={labels.connectionModelServed} />
                 ))}
+                {/*
+                 * The catalog's suggestions, labelled as suggestions. An id can appear in both lists,
+                 * and when it does the endpoint's own answer is the one already rendered above.
+                 */}
+                {catalogModels
+                  .filter((entry) => !servedModels.includes(entry.modelId))
+                  .map((entry) => (
+                    <option
+                      key={`catalog-${entry.modelId}`}
+                      value={entry.modelId}
+                      label={labels.connectionModelCatalog}
+                    />
+                  ))}
               </datalist>
               {servedModels.length > 0 && (
                 <p className="field-hint" data-connection-served-count>
                   {`${servedModels.length} ${labels.connectionModelsServed}`}
+                </p>
+              )}
+              {catalogModels.length > 0 && (
+                <p className="field-hint" data-connection-catalog-count>
+                  {`${catalogModels.length} ${labels.connectionModelsCatalog}`}
                 </p>
               )}
               <p className="field-hint">{labels.connectionModelSuggestionsHint}</p>
