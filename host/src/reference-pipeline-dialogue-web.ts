@@ -17,10 +17,10 @@ import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 // One derived definition of the player-content body ceiling, shared with the delegated dispatcher:
 // a second copy of this number is how the two dispatch paths ended up disagreeing about the same
-// request.
-import { MAX_TAVERN_MESSAGE_BODY_BYTES } from "./reference-pipeline-dialogue-web.core.js";
+// request. The loopback bind address is shared for the same reason: it is the listener's, and
+// deliberately not configurable.
+import { LOOPBACK_HOST, MAX_TAVERN_MESSAGE_BODY_BYTES } from "./reference-pipeline-dialogue-web.core.js";
 
-const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
 const REFERENCE_PROFILE_ID = "gamebuddy.chat-core.reference-pipeline";

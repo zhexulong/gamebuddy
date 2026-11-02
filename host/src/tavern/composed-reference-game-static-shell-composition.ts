@@ -7,6 +7,8 @@ import {
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "../reference-pipeline-dialogue-web.delegated.js";
+// The listener contract this composition mounts its handlers on: one loopback address, defined once.
+import { LOOPBACK_HOST } from "../reference-pipeline-dialogue-web.core.js";
 import {
   createTavernManagementDialogueWebDelegatedHandler,
   type TavernManagementDelegatedHandler,
@@ -39,8 +41,6 @@ import {
   verifyTavernStaticArtifact,
 } from "./static-artifact/index.js";
 import { ownsCompanionAvatarRequest, type CompanionAvatarRequestHandler } from "./companion-avatar/face.js";
-
-const LOOPBACK_HOST = "127.0.0.1";
 
 /**
  * The immutable browser artifact is versioned independently from the mounted

@@ -103,8 +103,10 @@ import {
   verifyComposedReferenceGameBrowserAuth,
   type ComposedReferenceGameBrowserDelegatedAuthCapability,
 } from "./composed-reference-game-browser.js";
+// The bind address and `Host`-header authority, owned by the shared dialogue-web engine: this surface serves
+// the same loopback-only listener contract, so it reads the one definition rather than spelling it again.
+import { LOOPBACK_HOST } from "./reference-pipeline-dialogue-web.core.js";
 
-const LOOPBACK_HOST = "127.0.0.1";
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
 // Draft and message text may carry up to 16 KiB of UTF-8 content plus their
 // JSON envelope and opaque handles. Bound the complete request while still

@@ -18,7 +18,18 @@ import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-s
  * service, or capability state and cannot mint an authenticated request.
  */
 
-const LOOPBACK_HOST = "127.0.0.1";
+/**
+ * The address every dialogue-web listener binds, and the only one its `Host` header check accepts.
+ *
+ * This is the lowest module of the four that start or serve these listeners, and the one the other three
+ * already reach (`isExactLoopbackHost` below, `MAX_TAVERN_MESSAGE_BODY_BYTES`), so the fact lives here and
+ * they import it. It is deliberately NOT configurable: loopback-only is a security invariant of the
+ * authenticated browser surface, not an operator preference. A configurable bind address would let a
+ * deployment publish the CSRF-bearing session to another interface, which is a different product, not a
+ * setting. Four hand-written copies of this string is how one of them drifts into a bind/`Host`-check
+ * disagreement that only shows up as "the browser was refused" on someone else's machine.
+ */
+export const LOOPBACK_HOST = "127.0.0.1";
 export const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
 /**
  * Body ceiling for a route that carries player message text.
