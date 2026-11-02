@@ -13,8 +13,12 @@
  * projection said `Actionable: true`. The model read that as "nothing is in the way", announced it was going to
  * pick cauliflowers, and the game clock stayed frozen at 06:00 for 31 minutes.
  *
- * So: every key in `SNAPSHOT_KEYS` is either READ by one of the projections, or explicitly declared unread here
- * with the reason. A new native field is then a decision someone made, not a fact nobody noticed.
+ * Measured 2026-11-02: the population checked here was a hand-written seventeen-key list, so the six sense-shaped
+ * fields that were published and read by no projection (`weather`, `cropTargets`, `npcRelationshipTargets`,
+ * `animalProductTargets`, `scytheCropTargets`, `animalDoorTargets`) were invisible to it - the list would have
+ * stayed at seventeen forever. The population is now the WIRE SCHEMA's own property set
+ * (`protocol/bridge-v1.schema.json` `$defs.snapshot.properties`), so a field added to the Mod is a decision
+ * someone has to make here, by name, rather than a fact nobody noticed.
  *
  * This is a static check over source and types, not a render. It answers "does any projection look at this key",
  * which is the question that went unanswered. Whether a read field is RENDERED WELL is each projection's own
@@ -43,15 +47,126 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
 ]);
 
 /**
- * Keys deliberately withheld from the model, each with the reason it is withheld.
+ * The reason every world target/entity family is allowed to stay out of the always-on fact block.
+ *
+ * `snapshot-projection.ts` is bounded to `MAX_GAME_SNAPSHOT_PROJECTION_BYTES` (4 KB) and is attached to EVERY
+ * turn, so it carries only the highest-value senses; a single family can be 64 per-tile rows (measured
+ * 2026-11-02: `cropTargets` alone is ~5.7 KB, over the whole projection cap, so projecting it would make the
+ * projection `invalid` and blind the model entirely). Every one of these families is delivered verbatim, on
+ * demand, by a solicited `stardew_observe` - the observation budget spreads the snapshot and shortens only the
+ * families it names - and the action that addresses a row reads it from there.
+ */
+const OBSERVED_FAMILY_REASON =
+  "Delivered verbatim, on demand, by a solicited `stardew_observe` (the observation budget copies the field through); not carried by the byte-bounded per-turn fact block.";
+
+/**
+ * The array families read by no projection and delivered by a solicited observation.
+ *
+ * Derived from the wire schema's array properties (`type: "array"`) minus the families a projection reads - see
+ * `snapshot-projection-coverage.test.ts`, which fails by naming any schema field missing from this list and this
+ * map. Actor-state lists (`professions`, `pendingLevelUps`, `pendingLevelUpChoices`, `activeSpecialOrderKeys`,
+ * `inventoryItemFacts`, `chests`) are here for the same reason: they arrive with the observation and change on
+ * the game's own schedule, not every turn.
+ */
+const UNPROJECTED_OBSERVED_FAMILIES = Object.freeze([
+  "forageTargets",
+  "itemTargets",
+  "harvestTargets",
+  "fertilizerTargets",
+  "woodFenceTargets",
+  "woodFenceResultTargets",
+  "crabPotTargets",
+  "crabPotResultTargets",
+  "crabPotCollectTargets",
+  "baitCrabPotTargets",
+  "baitCrabPotResultTargets",
+  "debrisTargets",
+  "rockSourceTargets",
+  "clearHoeDirtTargets",
+  "artifactSpotTargets",
+  "artifactSpotResultTargets",
+  "treeChopSourceTargets",
+  "treeChopResultTargets",
+  "machineTargets",
+  "wateringCanFacts",
+  "refillWateringCanTargets",
+  "harvestWhereabouts",
+  "npcRelationshipTargets",
+  "animalProductTargets",
+  "feedTroughTargets",
+  "inventoryItemFacts",
+  "foodTargets",
+  "cookingStationTargets",
+  "treeStumpTargets",
+  "weedTargets",
+  "grassTargets",
+  "caskTargets",
+  "mannequinTargets",
+  "signTargets",
+  "siloTargets",
+  "lanternSlots",
+  "scytheCropTargets",
+  "chests",
+  "shippingBinTargets",
+  "minecartTargets",
+  "bushTargets",
+  "fruitTreeTargets",
+  "shakeTreeTargets",
+  "pedestalTargets",
+  "fenceGateTargets",
+  "raftTargets",
+  "horseTargets",
+  "mineEntranceTargets",
+  "mineElevatorFloorTargets",
+  "obeliskTargets",
+  "animalDoorTargets",
+  "buildingChestTargets",
+  "worldObjectTargets",
+  "wearableTargets",
+  "warpItemTargets",
+  "panSites",
+  "mailboxTargets",
+  "shopTargets",
+  "fishPondTargets",
+  "farmBuildingTargets",
+  "dailyQuestTargets",
+  "specialOrderTargets",
+  "activeSpecialOrderKeys",
+  "pendingLevelUps",
+  "pendingLevelUpChoices",
+  "professions",
+  "museumRewardTargets",
+  "tailoringTargets",
+  "colorTargets",
+]);
+
+/**
+ * Keys deliberately withheld from the always-on fact block, each with the reason it is withheld.
+ *
+ * A reason here is not decoration: it is the record that someone looked. An entry that no longer has a reason is
+ * the same as an unread field - the gate cannot tell the difference, and neither can the next reader. Every
+ * non-family entry below was measured 2026-11-02 against `farmhandexecutioncontroller.cs`.
+ */
+const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
+  acceptedDailyQuest:
+    "A planning flag the daily-quest actions read from the latest observation; a boolean that changes once a day is not a per-turn fact. Delivered by `stardew_observe`.",
+  activeExecution:
+    "The Mod's own execution state, which the Host already owns from action receipts; publishing it into the fact block would restate execution state the Host tracks. Delivered by `stardew_observe` and program status.",
+  artifactSpotFarmSourceCount:
+    "A count used only while planning artifact-spot digs, paired with the family it counts. Delivered by `stardew_observe`.",
+  currentToolSlotItem:
+    "The qualified item id in the current tool slot; `currentTool` and `toolSlots[].label` already publish the tool identity, which the environment line renders as a tool word, so this would be a second spelling of a fact already in the prompt.",
+});
+
+/**
+ * Keys no projection reads, each with the reason that is acceptable.
  *
  * A reason here is not decoration: it is the record that someone looked. An entry that no longer has a reason is
  * the same as an unread field - the gate cannot tell the difference, and neither can the next reader.
  */
 export const WITHHELD_SNAPSHOT_KEYS: Readonly<Record<string, string>> = Object.freeze({
-  // Target families are not "withheld" so much as delivered per-family, bounded by `SNAPSHOT_FAMILY_RULES` and
-  // read by the observation budget rather than the turn's fact block. They are listed by family below rather than
-  // one by one.
+  ...WITHHELD_SCALAR_KEYS,
+  ...Object.fromEntries(UNPROJECTED_OBSERVED_FAMILIES.map((key) => [key, OBSERVED_FAMILY_REASON])),
 });
 
 /**

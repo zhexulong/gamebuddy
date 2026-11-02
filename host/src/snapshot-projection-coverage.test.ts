@@ -33,6 +33,14 @@ const repo = (() => {
 
 const read = (relative: string): string => readFileSync(join(repo, relative), "utf8");
 
+/** The wire schema's own property set for `Snapshot`: the authority the coverage population is derived from. */
+function wireSnapshotKeys(): readonly string[] {
+  const document = JSON.parse(read("protocol/bridge-v1.schema.json")) as {
+    $defs: { snapshot: { properties: Record<string, unknown> } };
+  };
+  return Object.keys(document.$defs.snapshot.properties).sort();
+}
+
 test("snapshot projection coverage", async (t) => {
   await t.test("every required key is read by at least one projection", () => {
     const sources = PROJECTION_SOURCES.map((path) => ({ path, text: read(path) }));
@@ -44,6 +52,53 @@ test("snapshot projection coverage", async (t) => {
       [],
       `these keys reach Snapshot but no projection reads them: ${unread.join(", ")}. Project it, or declare it in WITHHELD_SNAPSHOT_KEYS with the reason.`,
     );
+  });
+
+  await t.test("every wire snapshot key is read by a projection or withheld by name", () => {
+    // The population comes from the WIRE SCHEMA, not a hand list: a field added to the Mod is then a named
+    // failure here rather than a fact nobody noticed. This is what the hand-written seventeen-key list this
+    // replaced could not do - it stayed green while six published sense fields reached no projection.
+    const sources = PROJECTION_SOURCES.map((path) => ({ path, text: read(path) }));
+    const unaccounted = wireSnapshotKeys().filter(
+      (key) => !sources.some((source) => projectionReads(source.text, key)) && !(key in WITHHELD_SNAPSHOT_KEYS),
+    );
+    assert.deepEqual(
+      unaccounted,
+      [],
+      `these wire snapshot fields reach the model unprojected and undeclared: ${unaccounted.join(", ")}. Project it, or declare it in WITHHELD_SNAPSHOT_KEYS with the reason.`,
+    );
+  });
+
+  await t.test("a declared key names a field the wire actually publishes", () => {
+    // The mirror of the account above: a declaration that outlives its field is a decision about nothing, and the
+    // gate must fail on the drift (a renamed field) rather than silently narrowing its own population.
+    const wire = new Set(wireSnapshotKeys());
+    const stale = [...Object.keys(WITHHELD_SNAPSHOT_KEYS), ...REQUIRED_PROJECTED_KEYS]
+      .filter((key) => !wire.has(key))
+      .sort();
+    assert.deepEqual(
+      stale,
+      [],
+      `REQUIRED_PROJECTED_KEYS/WITHHELD_SNAPSHOT_KEYS name fields the wire does not publish: ${stale.join(", ")}`,
+    );
+  });
+
+  await t.test("the six sense fields published but read by no projection are accounted for by name", () => {
+    // Named separately from the loop above: these are the fields the 2026-11-02 review measured as reaching no
+    // projection, and dropping any of them should fail by naming it rather than as one line of a list.
+    const sources = PROJECTION_SOURCES.map((path) => ({ path, text: read(path) }));
+    for (const key of [
+      "weather",
+      "cropTargets",
+      "npcRelationshipTargets",
+      "animalProductTargets",
+      "scytheCropTargets",
+      "animalDoorTargets",
+    ])
+      assert.ok(
+        sources.some((source) => projectionReads(source.text, key)) || key in WITHHELD_SNAPSHOT_KEYS,
+        `sense field ${key} reaches the model unprojected and undeclared`,
+      );
   });
 
   await t.test("the disposition detail is projected, because it is the field that names a blocking modal", () => {
