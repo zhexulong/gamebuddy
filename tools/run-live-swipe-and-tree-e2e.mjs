@@ -7,14 +7,19 @@
  * 2. Click "Regenerate" -> Real DeepSeek V4.1 Flash Alternative Generation -> Variant 2 Committed (2/2)
  * 3. Swipe Navigation -> Switch back to Variant 1 (1/2) -> Switch forward to Variant 2 (2/2)
  * 4. Branch Continuation -> Send follow-up on Variant 2 -> Context-aware response verification
+ *
+ * Configuration, never guessed: the gateway address comes from `GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` (the switch the
+ * Host reads for the operator's environment connection). Unset, this run refuses by name rather than dialling an
+ * address of its own invention.
  */
 
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { requiredOperatorGatewayBaseUrl } from "./lib/operator-gateway.mjs";
 
-const API_BASE = process.env.CPA_OAI_BASE_URL || "http://127.0.0.1:8317/v1";
+const API_BASE = requiredOperatorGatewayBaseUrl();
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
 const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 

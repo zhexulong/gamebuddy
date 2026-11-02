@@ -432,6 +432,26 @@ pnpm --dir integrations/stardew/action-development check:bridge-ledger `
 This checks a stale revision rejection, idempotency-key conflict rejection, and a final Tool restore through the formal named-pipe bridge.
 
 
+## Operator gateway configuration for standalone harnesses
+
+Four harnesses here talk to the operator's own gateway (the `cliproxyapi` instance the Host's environment
+connection is configured for) with a plain `openai-completions` request rather than through the Host:
+
+```powershell
+$env:GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL = "http://<host>:<port>/v1"   # the operator's own address
+$env:CPA_OAI_API_KEY = "<the gateway's key>"
+node tools/grade-historian-voice.mjs
+node tools/run-cognitive-companion-test.mjs
+node tools/run-live-chat-card-e2e.mjs
+node tools/run-live-swipe-and-tree-e2e.mjs
+```
+
+`GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` is the switch `host/src/tavern/provider-catalog.ts` owns: the same variable
+that moves the Host's environment connection off its default address. The harnesses read it through
+`tools/lib/operator-gateway.mjs` and refuse by name when it is unset - they carry no default, because a request sent
+to an address nobody configured comes back as a connection error that says nothing about its cause. This checkout
+does not record the address anywhere in the source tree; it is configuration.
+
 ## Ongoing-interaction Historian authoring gate
 
 `run-ongoing-interaction-historian-authoring.mjs` is a provider-backed

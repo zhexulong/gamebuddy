@@ -12,15 +12,20 @@
  *
  *   node tools/grade-historian-voice.mjs [--fixture <path>] [--report <path>]
  *
+ * Both things this grader needs are configuration it will not guess: the credential in `CPA_OAI_API_KEY`, and the
+ * gateway's own address in `GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` - the same switch the Host reads for the operator's
+ * environment connection. With that variable unset the tool refuses by name before it dials anything, because a
+ * request sent to an address nobody configured comes back as a connection error that says nothing about the cause.
+ *
  * Exit codes: 0 judged, 3 blocked (no credential), 2 failed.
  */
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { requiredOperatorGatewayBaseUrl } from "./lib/operator-gateway.mjs";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const DEFAULT_FIXTURE = "tools/fixtures/historian-prompt-ab/voice-change.json";
-const BASE_URL = process.env.GAMEBUDDY_CPA_OAI_BASE_URL ?? "http://127.0.0.1:8317/v1";
 const MODEL = process.env.GAMEBUDDY_GRADER_MODEL ?? "deepseek-v4.1-flash";
 
 const argv = process.argv.slice(2);
@@ -55,6 +60,9 @@ if (apiKey === undefined || apiKey.trim().length === 0) {
   process.stdout.write(`${JSON.stringify({ verdict: "blocked", reason: "credential_absent" })}\n`);
   process.exit(3);
 }
+// Read here rather than at the top: a run with no credential is this tool's own `blocked` outcome, and the address is
+// only needed once there is something to dial with. Unset, it is a named refusal, never a fallback.
+const BASE_URL = requiredOperatorGatewayBaseUrl();
 
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 const arms = Array.isArray(fixture.arms) ? fixture.arms : [];

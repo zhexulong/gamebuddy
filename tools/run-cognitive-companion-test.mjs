@@ -7,9 +7,15 @@
  * 2. Dialogue Content (Zero-leak In-character Speech for TTS)
  * 3. Spontaneous/Concurrent Tool Calls (Async C# SMAPI Physical Actions)
  * 4. Sensory Context Injection vs Mechanical Task Inputs
+ *
+ * Configuration, never guessed: the gateway address comes from `GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` (the switch the
+ * Host reads for the operator's environment connection). Unset, this probe refuses by name rather than dialling an
+ * address of its own invention.
  */
 
-const API_BASE = process.env.CPA_OAI_BASE_URL || "http://127.0.0.1:8317/v1";
+import { requiredOperatorGatewayBaseUrl } from "./lib/operator-gateway.mjs";
+
+const API_BASE = requiredOperatorGatewayBaseUrl();
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
 const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 

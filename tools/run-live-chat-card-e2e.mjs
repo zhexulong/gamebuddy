@@ -9,14 +9,19 @@
  * - Gate 4: Multi-Turn Context Continuity & Memory Gate
  * - Gate 5: Swipe & Tree Branching Consistency Gate
  * - Gate 6: Streaming SLA & Latency Gate
+ *
+ * Configuration, never guessed: the gateway address comes from `GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` (the switch the
+ * Host reads for the operator's environment connection). Unset, this run refuses by name rather than dialling an
+ * address of its own invention.
  */
 
 import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { requiredOperatorGatewayBaseUrl } from "./lib/operator-gateway.mjs";
 
-const API_BASE = process.env.CPA_OAI_BASE_URL || "http://127.0.0.1:8317/v1";
+const API_BASE = requiredOperatorGatewayBaseUrl();
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
 const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 const CARD_PATH = "E:/Downloads/类脑/糯米姬 (0724).json";

@@ -316,34 +316,6 @@ export const DECLARED = Object.freeze([
         path: "host/src/tavern/pi-provider-store.test.ts",
         reason: "a golden `models.json` document asserted byte-for-byte has to name the address it pins",
       },
-      // The four developer harnesses below keep the same address as their unset-environment fallback. They are a
-      // second spelling, not a second owner of the product's endpoint: no Host path reads them, they are run by a
-      // human on the operator's own machine, and a standalone `node tools/....mjs` cannot import the Host module.
-      // Replacing those fallbacks with one tools-level default is the better answer and is recorded as a follow-up.
-      {
-        path: "tools/grade-historian-voice.mjs",
-        reason:
-          "a standalone model-grader harness whose unset-environment fallback is the operator's own gateway; " +
-          "run by a developer, read by no product path",
-      },
-      {
-        path: "tools/run-cognitive-companion-test.mjs",
-        reason:
-          "a standalone benchmark probe whose unset-environment fallback is the operator's own gateway; run by a " +
-          "developer, read by no product path",
-      },
-      {
-        path: "tools/run-live-chat-card-e2e.mjs",
-        reason:
-          "a standalone live-run probe whose unset-environment fallback is the operator's own gateway; run by a " +
-          "developer, read by no product path",
-      },
-      {
-        path: "tools/run-live-swipe-and-tree-e2e.mjs",
-        reason:
-          "a standalone live-run probe whose unset-environment fallback is the operator's own gateway; run by a " +
-          "developer, read by no product path",
-      },
       {
         path: "tools/lib/live-run-preflight.test.mjs",
         reason:
