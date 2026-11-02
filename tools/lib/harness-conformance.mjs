@@ -409,6 +409,12 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-diff.mjs", reason: "runs git diff --check; no offline rule set" },
   { gate: "check-dist-runtime-exports.mjs", reason: "reads the built dist; no offline rule set" },
   { gate: "check-duplicated-authority.mjs", reason: "static source gate; no offline rule set" },
+  {
+    gate: "check-catalog-fact-ownership.mjs",
+    reason:
+      "static source gate; its falsifier suite (tools/lib/catalog-fact-ownership.test.mjs) drives a wrong price and " +
+      "a renamed owner through a synthetic tree, and its own red-proof marker names both",
+  },
   { gate: "check-error-identity-classification.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-gameplay-capability-catalog.mjs", reason: "static catalog gate; falsifier in its test" },
   {
