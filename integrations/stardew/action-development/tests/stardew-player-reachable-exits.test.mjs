@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { memberNameOfSignature } from "../src/stardew-source-analysis-vocabulary.mjs";
 
 /**
  * 玩家可达出口枚举的校准测试。
@@ -36,12 +37,6 @@ const execFileAsync = promisify(execFile);
 
 /** register 是权威；本测试用它推导预期的 seam 成员集，而不是硬编码数量。 */
 const register = JSON.parse(await readFile(REGISTER, "utf8"));
-
-/** 从 native 签名里取出方法名（签名未以 `(` 结尾时取最后一个词）。 */
-function memberOf(signature) {
-  const matches = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-  return matches ? matches[matches.length - 1].replace(/\s*\($/, "") : signature.trim().split(/\s+/).pop();
-}
 
 async function run(maxDepth = "4") {
   const { stdout } = await execFileAsync(
@@ -101,7 +96,7 @@ test("tryToCheckAt 既是根也是 seam，深度为 0", () => {
   assert.equal(root.depth, 0, "它本身就是 world_action_interaction 根之一");
 });
 
-test("已注册 native seam 的 13/15 从玩家输入根可达", () => {
+test("已注册 native seam 的对账覆盖 register 的全部唯一成员，且其中 >=13 个从玩家输入根可达", () => {
   const r = artifact.registerReconciliation;
   assert.ok(r, "应产出 register 对账");
   // 不硬编码数量：register 是权威，对账必须覆盖它列出的每个唯一 native seam 成员。
@@ -110,7 +105,7 @@ test("已注册 native seam 的 13/15 从玩家输入根可达", () => {
   //  于是该成员不再存在，唯一成员数降为 15。硬编码会让这个正确的修复看起来像回归。）
   const declared = new Set();
   for (const action of register.actions)
-    for (const seam of (action.seams ?? []).filter((s) => s.kind === "native")) declared.add(memberOf(seam.signature));
+    for (const seam of (action.seams ?? []).filter((s) => s.kind === "native")) declared.add(memberNameOfSignature(seam.signature));
   assert.equal(r.seamCount, declared.size, `对账应覆盖 register 的全部 ${declared.size} 个唯一 native seam 成员`);
   assert.equal(r.reachableCount + r.unreachableCount, r.seamCount);
   // 修正后的成员集：placementAction 在，canBePlacedHere 不在
@@ -125,12 +120,32 @@ test("已注册 native seam 的 13/15 从玩家输入根可达", () => {
   for (const x of r.reachable) assert.ok(x.actionIds.length > 0, `${x.nativeMember} 应有 action 归属`);
 });
 
-test("不可达 seam 只剩 shipItem（collect 与 createItem 经其它根已可达）", () => {
+test("不可达 seam 只剩四个「Mod 直调内部方法」的 action（collect 与 createItem 经其它根已可达）", () => {
   const r = artifact.registerReconciliation;
   const names = r.unreachable.map((x) => x.nativeMember).sort();
-  assert.deepEqual(names, ["shipItem"], "只剩 shipItem 不在玩家输入闭包里");
+  // 这四个是产品事实，不是数量：它们的 seam 都是玩家输入根闭包**外面**的原生方法，
+  // 因为 Mod 直接调用内部方法而不是模拟玩家按键（这正是 unreachable 集要记录的事）：
+  //   shipItem          Farm.shipItem —— shippingactions.cs:150 直接调用
+  //   accept            Quest.accept —— questactions.cs:104 直接调用
+  //   nameHorse         Horse.nameHorse —— nameentityactions.cs:151 直接调用
+  //   GetHayFromAnySilo GameLocation.GetHayFromAnySilo —— silohaywithdrawactions.cs:80 直接调用
+  // （原来只写了 shipItem：那时这三个 action 还没注册。register 增长后闭包结论不变——
+  //  它们的 native 入口在游戏里只被菜单/建筑逻辑触及，仍不可达——所以旧的单元素断言
+  //  只是登记了一份过时的成员表。名字仍在断言里：哪个 seam 真的变成可达，这条会按名字报错。）
+  assert.deepEqual(names, ["GetHayFromAnySilo", "accept", "nameHorse", "shipItem"]);
   const byName = new Map(r.unreachable.map((x) => [x.nativeMember, x.actionIds]));
+  // 每个不可达项必须��带 action 归属：不可达是**解释**，不是丢弃。
   assert.deepEqual(byName.get("shipItem"), ["ship_item"]);
+  assert.deepEqual(byName.get("accept"), ["accept_daily_quest"]);
+  assert.deepEqual(byName.get("nameHorse"), ["name_entity"]);
+  assert.deepEqual(byName.get("GetHayFromAnySilo"), ["withdraw_silo_hay"]);
+  for (const x of r.unreachable) {
+    assert.equal(x.depth, null, `${x.nativeMember} 不可达时不应有深度`);
+    assert.equal(x.root, null, `${x.nativeMember} 不可达时不应有根`);
+  }
+  // 可达 / 不可达必须恰好划分 register 的 seam 成员（不重不漏）
+  assert.equal(r.reachableCount + r.unreachableCount, r.seamCount);
+  assert.equal(r.unreachableCount, names.length);
   /** `collect` 在新版反编译树里变为 d3 可达（Debris.cs:475 可从 pressUseToolButton 到达） */
   const collect = r.reachable.find((x) => x.nativeMember === "collect");
   assert.ok(collect, "Debris.collect 应可达");
