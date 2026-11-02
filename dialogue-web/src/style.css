@@ -5499,6 +5499,64 @@
     overflow-wrap: anywhere;
   }
 
+  /* The staged report is the one region of the review whose length the machine
+   decides: one row per sentence the Host returned, so a card carrying a dozen
+   world-book entries its ledger could not render produced a dozen rows.
+
+   The bound goes on the REPORT and not on the review, for the reason
+   `.installation-candidates` carries its own: with a `max-height` on the box that
+   also holds the decision, the cap cuts exactly the controls at the bottom. It
+   did. Measured at 1440x900 with a thirteen-row report, the review was 923 px tall
+   inside an 844 px scrollport and `导入此角色卡` read y 1682..1726 against a 900 px
+   window - the row was not clipped by the cap, it was simply painted below the
+   fold, and no scroll affordance in the frame said so.
+
+   So the report scrolls its own overflow and the decision row below it is always
+   painted in full, which is the same trade the installation panel makes: the
+   region a machine fills is the region that scrolls.
+
+   `tabIndex` travels with the cap in the markup - a scroll container a keyboard
+   cannot reach is unscrollable for that player (axe:
+   scrollable-region-focusable). */
+  [data-card-import-review] .card-import-report {
+    max-height: min(32dvh, 300px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+  }
+
+  /* The review's decision row is a footer of the card, not the last thing in a
+   column the player has to read their way down to.
+
+   Capping the report (above) bounds the prose, but it cannot move the review
+   itself: the import card follows the companion roster in this surface's column
+   flow, so the review's own top is decided by how many companions the player has.
+   Measured at 1440x900 with three companions and the report capped, the review
+   began at y 737 in an 844 px scrollport and `导入此角色卡` read y 1137..1181 -
+   still 237 px below the fold, with the report's first rows at 849..1137. The
+   player who was told to confirm a card still could not see the control that
+   confirms it.
+
+   So the row is pinned to the bottom of its own card: `position: sticky` keeps it
+   within `.card-import-review`'s box (it is the box's last child), so it can never
+   float over the roster above or another panel - it appears while the review is on
+   screen and scrolls away with the review when it is not. Measured with this rule:
+   `导入此角色卡` and `取消` read y 840..884, fully inside the window, and the row
+   stays put while the capped report scrolls inside itself.
+
+   The opaque background and the hairline are what make it a footer rather than a
+   label floating over prose: the card's own tone (`--surface-panel`, from
+   `.management-settings-section > section`) and the same hairline the sections use.
+   `z-index` keeps it above the report's scrolled content. */
+  [data-card-import-review] .composer-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-top: 8px;
+    background-color: var(--surface-panel);
+    border-top: 1px solid var(--border-subtle);
+  }
+
   /* The composer's busy slot: a turn the Host has admitted but does not yet
      allow cancelling (`accepted_queued`, `attempt_starting`, a claimed cancel, a
      presented response). It takes the same 44 px slot the Stop control and the
