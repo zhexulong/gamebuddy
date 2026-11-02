@@ -54,51 +54,56 @@ async function report() {
     ],
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, cwd: ROOT },
   );
-  cached = JSON.parse(await readFile(outPath, "utf8"));
+  // candidates 产物是本报告的人口权威，所以连它一起留下来：
+  // 「三档计数之和」只有对照这份行数才是可验证的事实。
+  cached = {
+    artifact: JSON.parse(await readFile(outPath, "utf8")),
+    candidates: JSON.parse(await readFile(candPath, "utf8")),
+  };
   await rm(candPath, { force: true });
   await rm(outPath, { force: true });
   return cached;
 }
 
-test("三档计数之和等于未匹配候选总数", async () => {
-  const a = await report();
+test("三档计数之和等于未匹配候选总数（总数来自 candidates 产物）", async () => {
+  const { artifact: a, candidates } = await report();
   assert.equal(a.artifactKind, "stardew_remaining_action_report");
   const { counts } = a;
   assert.equal(
     counts.tierA_catalogIntentExists + counts.tierB_noCatalogIntent + counts.tierC_nonGameplayWrites,
     counts.unmatchedCandidateUnits,
   );
-  assert.equal(counts.unmatchedCandidateUnits, 64);
+  // 总数不是本测试能钉住的事实：它是 candidates 产物的行数，而那份产物随 register 与源码树增长。
+  // （原先的四个字面量 64 / 28 / 23 / 13 就是在这种增长中过期的：它们只能复述产物自己的数字，
+  //  register 每登记一个 action 就会把旧值变成假信息。）所以期望值从同一份输入推导：
+  assert.equal(
+    counts.unmatchedCandidateUnits,
+    candidates.unmatchedCandidates.length,
+    "报告的三档必须覆盖 candidates 列出的每一行",
+  );
+  // 每个档位计数必须等于那一档的行数（分类不能静默丢行）
+  assert.equal(counts.tierA_catalogIntentExists, a.tiers.A_catalog_intent_exists.length);
+  assert.equal(counts.tierB_noCatalogIntent, a.tiers.B_no_catalog_intent.length);
+  assert.equal(counts.tierC_nonGameplayWrites, a.tiers.C_non_gameplay_writes.length);
   // 2026-09-30 switch_section 作用域修正（见 action-inventory-method.md §三）：
   // case 是兄弟作用域，不再被外层 if 吞掉。原先被 `if (who.IsLocalPlayer)` 吞掉的
   // GameLocation.performAction 的 case 桶恢复为 113 个独立分支，其中 14 个通过九谓词；
   // Event.checkAction / MineShaft.checkAction 的 case 桶各恢复 1 个候选。
-  // → 未匹配候选 64 → 67：+Event.checkAction（A 档 22→23，festivalScore 匹配
-  //   select_event_choice_variant）+ performAction@GameLocation + MineShaft.checkAction（B 档 26→28）
+  // 此后 2026-10-01 的复合赋值字段语义修正（Bush/GiantCrop/ResourceClump 的 health -= ...
+  // 从 cost 移入 writes）、2026-10-05 的三个单元退出候选池（ride_bus 注册其两条 native seam、
+  // BuildingChest 改判 partial merge）、以及本次的 register 增长都在移动这三个数字——
+  // 分档规则本身由下面的 A/B/C 三档内容断言逐条把守。
   //
-  // 2026-10-01 复合赋值字段语义修正（-= 不再一律当代价）：
-  // Bush/GiantCrop/ResourceClump 的 `health -= ...` 从 cost 移入 writes（实体自身的
-  // 终态削减，不是 actor 资源消耗）。三个单元的 `performToolAction` 因此从
-  // C 档（只写 NeedsUpdate）浮出，按 catalog intent 进 A 档（23→26）；
-  // frameCounter（Chest 箱盖动画计时器）加入非 gameplay 名单后
-  // Chest.checkForAction 回落 C 档，C 档净 16→13。
-  //
-  // 2026-10-05：67 → 64。三个单元退出候选池：`ride_bus` 注册它的两条 native seam
-  // （本轮的 bus action）；`BuildingChest` 从「B6 不可达」改为 partial merge（它的入口
-  // 是 Data/Buildings 的 ActionTile，不是地图瓦片——原 B6 判据扫错了层）；以及另一条
-  // lane 的 action 注册所覆盖的出口。A 档 26→28、B 档 28→23 是同一批退出在分档上的
-  // 落点，不是重新分类。
-  assert.equal(counts.tierA_catalogIntentExists, 28);
-  // 字段分类修正:Shears.DoFunction 已登记为 collect_animal_product 的第二个 seam(handler 本就覆盖 MilkPail/Shears),
-  // kickProgress/localKickStartTile(Chest 踢动画)、lastTentTouchedByPlayer(Tent 交互辅助静态)、
-  // HitTimerInstance.Milliseconds(Chest 命中计时)、boulderKnockTimer/boulderKnocksLeft/
-  // doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)从 gameplay 移至非 gameplay
-  assert.equal(counts.tierB_noCatalogIntent, 23);
-  assert.equal(counts.tierC_nonGameplayWrites, 13);
+  // 字段分类修正（保留记录，数字已不在此处）:Shears.DoFunction 已登记为 collect_animal_product 的第二个
+  // seam(handler 本就覆盖 MilkPail/Shears)；kickProgress/localKickStartTile(Chest 踢动画)、
+  // lastTentTouchedByPlayer(Tent 交互辅助静态)、HitTimerInstance.Milliseconds(Chest 命中计时)、
+  // boulderKnockTimer/boulderKnocksLeft/doneHittingBoulderWithToolTimer(IslandNorth 岩缝敲击计时)
+  // 从 gameplay 移至非 gameplay（名单在词汇表模块，下方 C 档测试就是它的执法点）。
+  for (const [tier, list] of Object.entries(a.tiers)) assert.ok(list.length > 0, `${tier} 不应为空`);
 });
 
 test("C 档只含视觉/计时器写入（不含 gameplay 字段）", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   // 名单来自词汇表的单一权威 —— 这里是测试，不是第二份副本。
   const nonGameplay = STARDEW_NON_GAMEPLAY_FIELDS;
   for (const r of a.tiers.C_non_gameplay_writes) {
@@ -121,7 +126,7 @@ test("C 档只含视觉/计时器写入（不含 gameplay 字段）", async () =
 });
 
 test("A 档每条都带 catalog intent 引用", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   assert.ok(a.tiers.A_catalog_intent_exists.length > 0);
   for (const r of a.tiers.A_catalog_intent_exists) {
     assert.ok(r.referenceIntents.length > 0, `${r.class}.${r.member} 必须带 intent`);
@@ -130,7 +135,7 @@ test("A 档每条都带 catalog intent 引用", async () => {
 });
 
 test("B 档有 gameplay 写入但无 intent 引用——这是『可能漏记』", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   assert.ok(a.tiers.B_no_catalog_intent.length > 0);
   for (const r of a.tiers.B_no_catalog_intent) {
     assert.equal(r.referenceIntents.length, 0);
@@ -141,7 +146,7 @@ test("B 档有 gameplay 写入但无 intent 引用——这是『可能漏记』
 });
 
 test("每个单元都带源码锚点", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   for (const tier of Object.values(a.tiers))
     for (const r of tier) {
       assert.ok(r.file.endsWith(".cs"), `${r.class}.${r.member} 必须有源码文件`);
@@ -151,7 +156,7 @@ test("每个单元都带源码锚点", async () => {
 });
 
 test("产物声明一单元不等于一 action、且未做语义归并", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   for (const g of [
     "one_unit_is_not_one_action",
     "no_action_identity_inferred",
@@ -164,7 +169,7 @@ test("产物声明一单元不等于一 action、且未做语义归并", async (
 });
 
 test("报告是纯函数式的（同输入同输出）", async () => {
-  const a = await report();
+  const { artifact: a } = await report();
   const twicePath = path.join(HERE, `.tmp-report-twice-${process.pid}.json`);
   // 用同一 candidates 产物再跑一次
   await writeFile(twicePath, JSON.stringify({ unmatchedCandidates: [] }));
