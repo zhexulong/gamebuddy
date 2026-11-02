@@ -353,13 +353,55 @@ export class CompanionEventPump {
    */
   public turnProducedWork = false;
 
+  /**
+   * The steer currently queued into a running turn, until Pi settles it.
+   *
+   * <p>
+   * Its only job is to stop the same expiring fact being handed to Pi twice: while this is pending the next
+   * `flush` waits for it rather than composing another steer from the same window.
+   * </p>
+   */
+  #steerInFlight: Promise<boolean> | undefined;
+
   /** Authenticated player input has been accepted but is not yet Pi-consumed. */
   public get hasPendingPlayerInput(): boolean {
     return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
   }
 
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
-    if (this.#delivering || !this.hasPendingDelivery) return undefined;
+    if (!this.hasPendingDelivery) return undefined;
+
+    // A batch that expires while a turn is running is delivered INTO that turn rather than after it.
+    //
+    // `steer` enters after the current assistant turn and its tool calls (Pi's own semantics, sdk.md: "A steering
+    // message enters after the current assistant turn and its tool calls"), so it does not preempt a running token
+    // stream. `follow_up` waits for the whole run - and a run here is one model turn that measured 97 tool calls over
+    // 766 seconds, so a milestone delivered that way arrived once the thing it described had ceased to be true.
+    //
+    // Measured 2026-11-01 (`round23`): 16 `time_milestone` facts existed and the model received two, because four
+    // stacked up behind one turn and landed together when it finally stopped - which was nightfall. Four spoken lines
+    // in 27 minutes was the player-visible consequence.
+    //
+    // What stays guarded: a STEER that is still waiting for Pi to consume it must not be taken twice, so this path
+    // waits for Pi's own settlement of it. Everything else is untouched, so `#delivering` still serializes full batches.
+    const steering = this.#steerInFlight;
+    if (steering !== undefined) {
+      const settled = await steering;
+      this.#steerInFlight = undefined;
+      if (!settled) return undefined;
+    }
+
+    if (this.#delivering) {
+      if (!this.#hasExpiringFact()) return undefined;
+      const expiring = this.takeExpiringOnly();
+      if (expiring === undefined) return undefined;
+      this.#steerInFlight = sink.deliver(expiring.serialized, "steer").then(
+        () => true,
+        () => false,
+      );
+      return undefined;
+    }
+
     this.#delivering = true;
     const generation = this.#generation;
     const pending = this.#retryBatch ?? this.takeBatch();
@@ -376,6 +418,79 @@ export class CompanionEventPump {
     }
   }
 
+  /**
+   * The batch a steer carries while a turn is running: the expiring facts ONLY, and nothing else is consumed.
+   *
+   * <p>
+   * It does not go through `takeBatch` because that method's whole contract is to empty every window - which is
+   * correct for a turn that is about to run and catastrophically wrong here, where a second batch is being handed to a
+   * turn that is still working through the first. Taking only the two or three `time_milestone` facts leaves the
+   * snapshot, the receipts and the player's input exactly where the in-flight turn's own follow-up expects them.
+   * </p>
+   */
+  private takeExpiringOnly(): PendingBatch | undefined {
+    const expiring: WorldFact[] = [];
+    for (const [key, fact] of [...this.#worldFacts.entries()]) {
+      if (fact.kind !== "world_fact" || fact.semanticKind !== "time_milestone") continue;
+      expiring.push(fact);
+      this.#worldFacts.delete(key);
+    }
+    if (expiring.length === 0) return undefined;
+
+    const deliveredFacts = expiring.map((fact) => {
+      const projection = fact.contextProjection;
+      if (projection === undefined) return fact;
+      const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
+      return Object.freeze({ ...factWithoutProjection, payload: projection });
+    });
+    const events = deliveredFacts
+      .filter((fact) => fact.kind !== undefined)
+      .map((fact) => normalizeFact(fact))
+      .sort(compareEvents);
+    const triggerEventIds = Object.freeze(expiring.map(factEventId));
+    const serialized = JSON.stringify({
+      kind: "gamebuddy_fact_batch",
+      batchId: randomUUID(),
+      disposition: "steer",
+      triggerEventIds,
+      playerInputs: Object.freeze([]),
+      worldFacts: deliveredFacts,
+      events,
+    });
+    return Object.freeze({
+      batchId: randomUUID(),
+      disposition: "steer" as const,
+      triggerEventIds,
+      inputs: Object.freeze([]),
+      facts: Object.freeze(deliveredFacts),
+      serialized,
+    });
+  }
+
+  /**
+   * Whether anything waiting describes a moment that will have passed by the time a run ends.
+   *
+   * <p>
+   * The distinction the disposition was missing. `inputs.length > 0 ? "steer" : "follow_up"` decided by WHO the
+   * message came from; what matters is whether the message stays true long enough to be worth delivering late. Player
+   * input keeps - a person is waiting for an answer. A time milestone does not: `{"milestone":"1200"}` delivered after
+   * the day ended is a statement about the past dressed as news.
+   * </p>
+   * <p>
+   * Deliberately narrow. An `execution_receipt` terminal state does NOT expire - the result is the result, and
+   * interrupting a running plan to announce one would trade a finished action for a half-finished thought.
+   * </p>
+   */
+  #hasExpiringFact(): boolean {
+    for (const fact of this.#worldFacts.values()) {
+      if (fact.kind === "world_fact" && fact.semanticKind === "time_milestone") return true;
+    }
+    return (
+      this.#retryBatch !== undefined &&
+      this.#retryBatch.facts.some((fact) => fact.kind === "world_fact" && fact.semanticKind === "time_milestone")
+    );
+  }
+
   private takeBatch(): PendingBatch {
     const inputs = this.#inputs.splice(0);
     const snapshot = this.#snapshot;
@@ -387,8 +502,7 @@ export class CompanionEventPump {
     const lifecycle = [...this.#lifecycle.values()];
     this.#lifecycle.clear();
     const worldFacts = [...this.#worldFacts.values()].sort(compareWorldFacts);
-    this.#worldFacts.clear();
-    // A held PROGRESS fact whose slot already delivered this exact state says nothing new, so it does not
+    this.#worldFacts.clear(); // A held PROGRESS fact whose slot already delivered this exact state says nothing new, so it does not
     // enter the batch at all. It is dropped rather than readmitted: re-delivering it is the defect, and the
     // slot's CURRENT state is what the next changed fact will carry.
     const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts].filter((fact) => {
@@ -398,7 +512,12 @@ export class CompanionEventPump {
     // takeBatch is called only when input/fact triggering is already known.
     // Hold is represented by retaining latest state in the pump, never by an
     // empty Pi delivery.
-    const disposition = inputs.length > 0 ? "steer" : "follow_up";
+    // The disposition is chosen by how long the batch's content stays TRUE, not by who sent it.
+    //
+    // Player input steers because a person is waiting. A time milestone steers because `{"milestone":"1200"}`
+    // delivered once the day is over is a statement about the past dressed as news. Everything else follows up:
+    // a receipt's terminal state does not expire, so there is nothing to gain by interrupting a running plan.
+    const disposition = inputs.length > 0 || this.#hasExpiringFact() ? "steer" : "follow_up";
     const batchId = randomUUID();
     const batchInputs = Object.freeze(inputs);
     const normalizedInputs = batchInputs.map((input) => normalizeInput(input));
