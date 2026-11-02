@@ -24,7 +24,7 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree_source"))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -66,7 +66,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || axe.UpgradeLevel != 0)
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree_source"))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -218,7 +218,7 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || hoe.UpgradeLevel != 0)
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || !DeclaredToolAllows(hoe.UpgradeLevel, "dig_artifact_spot"))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -254,7 +254,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteDigArtifactSpot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || hoe.UpgradeLevel != 0)
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || !DeclaredToolAllows(hoe.UpgradeLevel, "dig_artifact_spot"))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -303,7 +303,7 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe probePickaxe || !ReferenceEquals(Game1.player.CurrentTool, probePickaxe) || probePickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe probePickaxe || !ReferenceEquals(Game1.player.CurrentTool, probePickaxe) || !DeclaredToolAllows(probePickaxe.UpgradeLevel, "clear_hoedirt")) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
@@ -333,7 +333,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteClearHoeDirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || pickaxe.UpgradeLevel != 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || !DeclaredToolAllows(pickaxe.UpgradeLevel, "clear_hoedirt")) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
@@ -623,6 +623,28 @@ internal sealed partial class ExecutionManager
             category,
             -1,
             $"tool_upgrade_insufficient:{category}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    /// <summary>
+    /// Whether one owned tool's upgrade level is inside what the action's own registration permits.
+    ///
+    /// <para>
+    /// ONE reading of "may this tier do this action". Six handlers used to carry `tool.UpgradeLevel != 0` inline, which
+    /// is `BasicOnly` spelled in six places while the declarations say `AnyUpgrade` - the same defect `6d5a086d` fixed on
+    /// the declaration side and left standing here. A player who upgraded their axe could no longer chop a tree, and the
+    /// refusal said `basic_axe_not_equipped_in_requested_slot` about a slot that held a perfectly good axe.
+    /// </para>
+    /// <para>
+    /// It reads the claim rather than a table, so a future action declaring `BasicOnly` keeps working and an action that
+    /// declares nothing is not silently narrowed.
+    /// </para>
+    /// </summary>
+    private static bool DeclaredToolAllows(int upgradeLevel, string actionId)
+    {
+        FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
+        if (claim is null) return true;
+        (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
+        return upgradeLevel >= minimum && upgradeLevel <= maximum;
     }
 
     /// <summary>

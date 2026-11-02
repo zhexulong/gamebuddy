@@ -131,6 +131,58 @@ public sealed class RequestedSlotRefusalEvidenceTests
     private static Item ItemWithIdentity(string qualifiedItemId) =>
         SeedIdentity((Item)FormatterServices.GetUninitializedObject(typeof(StardewValley.Object)), qualifiedItemId);
 
+    /// <summary>
+    /// A tool handler may not decide the upgrade tier for itself.
+    ///
+    /// <para>
+    /// The population is derived from the source: every site that mints a `*_not_equipped_in_requested_slot` code, not a
+    /// hand-kept list. Each one must ask <c>DeclaredToolAllows</c>, which reads the action's own `tool:&lt;category&gt;` claim,
+    /// and must NOT carry a literal tier comparison.
+    /// </para>
+    /// <para>
+    /// Measured 2026-11-02: six handlers held <c>tool.UpgradeLevel != 0</c>. `6d5a086d` had just changed every one of those
+    /// actions from `BasicOnly` to `AnyUpgrade` because the native guards do not exist, and left these six saying exactly
+    /// the tier the declarations had stopped declaring. A player who upgraded an axe could not chop a tree, and the refusal
+    /// blamed a slot that held a perfectly good axe. The declaration and the handler were two authorities for one fact.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoToolHandlerDecidesTheUpgradeTierForItself()
+    {
+        string source = File.ReadAllText(RepositorySourcePath(ResourceToolActions));
+        string[] codes = new[]
+        {
+            "\"basic_axe_not_equipped_in_requested_slot\"",
+            "\"basic_hoe_not_equipped_in_requested_slot\"",
+            "\"basic_pickaxe_not_equipped_in_requested_slot\"",
+        };
+
+        int sites = 0;
+        foreach (string code in codes)
+        {
+            for (int index = source.IndexOf(code, StringComparison.Ordinal); index >= 0;
+                 index = source.IndexOf(code, index + code.Length, StringComparison.Ordinal))
+            {
+                // The guard is the `if (...)` that owns this refusal: walk back to the nearest one and take its body.
+                int guardStart = source.LastIndexOf("if (", index, StringComparison.Ordinal);
+                guardStart.Should().BeGreaterThan(-1, "every refusal is guarded");
+                string guard = source[guardStart..index];
+                sites++;
+                guard.Should().NotContain("UpgradeLevel != 0",
+                    "`UpgradeLevel != 0` is `BasicOnly` spelled inline; the declarations say `AnyUpgrade`");
+                // A guard that names no tier at all is also correct - `AnyUpgrade` means exactly "no restriction". The
+                // invariant is not "every guard calls DeclaredToolAllows", it is "no guard decides the tier by literal".
+                if (guard.Contains("UpgradeLevel", StringComparison.Ordinal))
+                    guard.Should().Contain("DeclaredToolAllows(",
+                        "a guard that mentions the upgrade level must read the action's own declared claim, not a literal");
+            }
+        }
+
+        // Non-vacuity: the three codes must exist, or this test passes by finding nothing.
+        sites.Should().BeGreaterThanOrEqualTo(
+            3, "the axe, hoe and pickaxe refusal codes are all still minted; a code that vanished must not read as clean");
+    }
+
     private static string RepositorySourcePath(string relative)
     {
         DirectoryInfo? directory = new(AppContext.BaseDirectory);
