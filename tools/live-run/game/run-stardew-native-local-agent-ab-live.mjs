@@ -36,7 +36,12 @@ import {
   parseReceiptEvidence,
 } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
-import { countPriorMultidayRuns, dailyTaskFor, runOffsetFor } from "../../lib/multiday-daily-tasks.mjs";
+import {
+  countPriorMultidayRuns,
+  dailyTaskFor,
+  overriddenFirstDayTask,
+  runOffsetFor,
+} from "../../lib/multiday-daily-tasks.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
@@ -3352,7 +3357,13 @@ try {
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     if (typeof entry !== "function") return entry;
-    return SCENARIO === "multiday_routine" ? entry(day, dailyTaskFor(dailyRunOffset, day)) : entry(day);
+    if (SCENARIO !== "multiday_routine") return entry(day);
+    // One run sometimes has to see a task from day one rather than on the day the rotation reaches it.
+    // `GAMEBUDDY_FIRST_DAY_TASK` names it; every later day keeps the rotation, so the override cannot
+    // silently change what a series of runs covers.
+    const firstDayTask = overriddenFirstDayTask(process.env.GAMEBUDDY_FIRST_DAY_TASK);
+    const task = day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day);
+    return entry(day, task);
   };
 
   // What the harness says when it offers the same day again. Deliberately carries no instruction: anything

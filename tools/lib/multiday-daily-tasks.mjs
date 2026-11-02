@@ -76,6 +76,28 @@ export const DAILY_TASK_ROTATION = Object.freeze([
  * throwing on a day outside the rotation length, because a run may legitimately be configured for more days
  * than there are tasks and wrapping is more useful than a crash.
  */
+/**
+ * Force the first day's task for one run, without disturbing the rotation.
+ *
+ * <p>
+ * The rotation stays the coverage plan and `dailyTaskFor` stays its one reader. This exists because a single
+ * run sometimes has to observe ONE task from day one - `go_mining` is sixth in the rotation, so a run that
+ * begins at the start of the list cannot reach it before day six, and a run that only lives three days never
+ * sees it at all. Rather than reordering the list (which would silently change what every future run covers)
+ * the first day is overridden and every later day continues from the rotation as usual.
+ * </p>
+ * <p>
+ * Returns `undefined` when no override is set, so the caller keeps the plain rotation answer and the override
+ * cannot be mistaken for a rotation entry.
+ * </p>
+ */
+export function overriddenFirstDayTask(task) {
+  if (task === undefined || task === null || task === "") return undefined;
+  if (!DAILY_TASK_ROTATION.includes(task)) {
+    throw new RangeError(`unknown daily task: ${String(task)}`);
+  }
+  return task;
+}
 export function dailyTaskFor(runOffset, day) {
   const offset = normalise(runOffset);
   // `day` is NOT normalised: it is a 1-based day number the runner owns, and `normalise` reduces modulo the
