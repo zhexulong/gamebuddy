@@ -93,6 +93,34 @@ test("a literal in a comment is not a finding", () => {
   assert.deepEqual(findDuplicatedAuthorities(root, SYNTHETIC), []);
 });
 
+// red-proof: with `//` matched wherever it appears, the `//` of `http://` inside a string
+// started a "comment" at the second slash, so every value spelled as a URL hid the rest of
+// its own line - including the very occurrence the `operator-gateway-endpoint` rule exists to
+// report. Both halves are asserted: the value after a URL on the same line IS reported, and a
+// real `//` comment after a URL string is still a comment.
+test("a // inside a string literal does not start a comment", () => {
+  const root = makeRepo({
+    "src/owner.mjs": 'export const value = "sentinel-value";\n',
+    "src/url.mjs": 'const url = "http://127.0.0.1:8317/v1";\nconst copy = "sentinel-value";\n',
+    "src/same-line.mjs": 'const url = "http://127.0.0.1:8317/v1"; const copy = "sentinel-value";\n',
+  });
+  assert.deepEqual(
+    findDuplicatedAuthorities(root, SYNTHETIC).map((finding) => [finding.path, finding.line]),
+    [
+      ["src/same-line.mjs", 1],
+      ["src/url.mjs", 2],
+    ],
+  );
+});
+
+test("a // comment that follows a URL string is still a comment", () => {
+  const root = makeRepo({
+    "src/owner.mjs": 'export const value = "sentinel-value";\n',
+    "src/commented.mjs": 'const url = "http://127.0.0.1:8317/v1"; // sentinel-value\n',
+  });
+  assert.deepEqual(findDuplicatedAuthorities(root, SYNTHETIC), []);
+});
+
 test("a literal inside a larger token (an excluded string) is not a finding", () => {
   const root = makeRepo({
     "src/owner.mjs": 'export const value = "sentinel-value";\n',

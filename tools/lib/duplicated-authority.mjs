@@ -337,12 +337,41 @@ function listSourceFiles(repoRoot) {
   return files;
 }
 
-/** Character ranges that are a comment, so a literal quoted inside one is documentation, not a declaration. */
+/**
+ * Character ranges that are a comment, so a literal quoted inside one is documentation, not a declaration.
+ *
+ * A comment starts OUTSIDE a string literal: `//` is an operator only when the lexer is in code. Scanning
+ * for `//` without that distinction reads the `//` of `http://` inside a string as a line comment, so every
+ * value spelled as a URL hid the rest of its own line from the gate - a declared value whose occurrence
+ * begins with a scheme could never be reported, and the gate stayed green through the defect it exists for.
+ *
+ * This is a line-oriented lexer, not a parser. It understands the quote characters the scanned languages
+ * share (`"`, `'`, and for JavaScript/TypeScript the template backtick), backslash escapes inside them, and
+ * that a single-line string cannot span a newline. It does NOT understand C# verbatim strings (`@"..."`),
+ * Python triple-quoted strings, or regex literals: those still end at the first matching quote, which is the
+ * behaviour that shipped before and is left alone here rather than guessed at.
+ */
 function commentRanges(text) {
   const ranges = [];
   let index = 0;
+  let quote = null;
   while (index < text.length) {
     const character = text[index];
+    if (quote !== null) {
+      if (character === "\\") {
+        index += 2;
+        continue;
+      }
+      if (character === quote) quote = null;
+      else if (character === "\n" && quote !== "`") quote = null;
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      index += 1;
+      continue;
+    }
     if (character === "/" && text[index + 1] === "*") {
       const end = text.indexOf("*/", index + 2);
       const stop = end === -1 ? text.length : end + 2;
