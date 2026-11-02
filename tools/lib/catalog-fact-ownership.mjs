@@ -130,23 +130,10 @@ export const DECLARED_EXEMPTIONS = Object.freeze([
       "a golden models.json document asserted byte-for-byte against the pre-change serializer " +
       "output has to name the numbers it pins, or it cannot fail",
   }),
-  // The one occurrence this gate reports that is NOT yet fixed, recorded rather
-  // than waived. `gpt-5.6-luna` is not a model this catalog describes, so the
-  // gameplay worker's own writer cannot read a price for it from the owner - it
-  // spells one instead, and the numbers it spells are `gpt-5.6-terra-batch`'s
-  // batch rates (1/6/0.1/1.25) applied to luna. That is the measured defect
-  // again, one surface over: a confident rate about a different model's invoice.
-  // It is recorded here because the correction is a product decision (state
-  // luna's own rate in the catalog, or emit no cost for a model this Host does
-  // not price) and because that file carries another lane's uncommitted work.
-  Object.freeze({
-    path: "host/src/gameplay-task-subagent.ts",
-    fields: Object.freeze(["cost"]),
-    computedId: true,
-    reason:
-      "RECORDED DEFECT, not a waiver: the gameplay worker prices a model the catalog does not " +
-      "describe with another model's batch rates; the fix is a catalog/product decision",
-  }),
+  // The recorded defect this gate was built for, one surface over - the gameplay worker's own
+  // writer spelling `gpt-5.6-terra-batch`'s batch rates for `gpt-5.6-luna` - is fixed, and its
+  // exemption was DELETED with it. This list records a second spelling that still exists, never
+  // one that has been removed: an entry that outlives its occurrence reads as covered and is not.
   ...GATE_PATHS.map((path) =>
     Object.freeze({ path, reason: "the gate has to spell the fact names and the owner path it looks for" }),
   ),

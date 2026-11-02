@@ -22,7 +22,7 @@ import type {
   IntegrationExecutionReceipt,
 } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
-import { operatorGatewayBaseUrl, TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
+import { catalogModelById, operatorGatewayBaseUrl, TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /**
@@ -698,6 +698,11 @@ function declaredTaskModelWindow(): number {
 
 async function createTaskModelRuntime(agentDir: string, config: CompanionModelConfig): Promise<ModelRuntime> {
   const modelsPath = join(agentDir, "models.json");
+  // The price the catalog declares for this model, read rather than restated. The literal that stood here -
+  // `1 / 6 / 0.1 / 1.25` - is `gpt-5.6-terra-batch`'s batch rates, five times this model's input and output, and Pi
+  // multiplies token counts by these four numbers to fill `usage.cost`, so a borrowed rate reaches every recorded
+  // turn and every spend reading taken from one.
+  const declaredCost = catalogModelById(config.modelId)?.cost;
   await writeFile(
     modelsPath,
     JSON.stringify(
@@ -735,7 +740,9 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
                 // Travel with the window: a shrunk window must not ask the provider for a bigger output than
                 // its capacity, and 128k keeps the production ratio (.47) the same as the original fixed pair.
                 maxTokens: Math.min(128_000, Math.floor(declaredTaskModelWindow() * 0.4706)),
-                cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+                // Omitted when the catalog prices nothing: Pi's schema makes `cost` optional and bills an absent block at
+                // zero, which is visibly unpriced rather than a confident number about another model's invoice.
+                ...(declaredCost === undefined ? {} : { cost: declaredCost }),
               },
             ],
           },
