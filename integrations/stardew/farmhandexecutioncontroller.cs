@@ -4843,19 +4843,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     private bool TryStartApproach(LocalMoveSpec specification, out string reasonCode)
-        => this.TryStartApproach(specification, out reasonCode, out _);
+        => this.TryStartApproach(specification, out reasonCode, out _, out _);
 
-    private bool TryStartApproach(LocalMoveSpec specification, out string reasonCode, out string? evidence)
+    private bool TryStartApproach(LocalMoveSpec specification, out string reasonCode, out string? evidence, out string? hint)
     {
         if (this.navigationApproachNative is not null)
         {
             (bool Success, string ReasonCode) result = this.navigationApproachNative.Arm(specification, Game1.player, this.tick);
             reasonCode = result.ReasonCode;
             evidence = null;
+            hint = null;
             return result.Success;
         }
 
-        return this.controller.TryStart(specification, Game1.player, this.tick, out reasonCode, out evidence);
+        return this.controller.TryStart(specification, Game1.player, this.tick, out reasonCode, out evidence, out hint);
     }
 
     private StardewValley.Warp? ResolveApproachWarp(LocalNavigateSpec navigation)
@@ -5066,7 +5067,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             navigation.DeadlineMs);
         this.activeNavigate = nextNavigation;
         this.active = approach;
-        if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence))
+        if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
             this.active = null;
             this.activeNavigate = null;
@@ -5078,7 +5079,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 ExecutionState.Uncertain,
                 "navigation_multi_hop_arm_failed",
                 this.revision,
-                $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true");
+                $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true",
+                Hint: approachHint);
             this.Remember(receipt);
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);

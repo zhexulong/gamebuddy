@@ -909,12 +909,12 @@ internal sealed partial class ExecutionManager
         this.activeNavigationCoordinator = coordinator;
         this.activeNavigate = navigation;
         this.active = approach;
-        if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence))
+        if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
             this.active = null;
             this.activeNavigate = null;
             this.activeNavigationCoordinator = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed", hint: approachHint);
         }
 
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, "navigation=accepted;phase=approaching");
