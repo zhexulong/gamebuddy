@@ -49,6 +49,7 @@ import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubr
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
 import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { dehydrateCompanionSpeech } from "../../../host/dist-test/companion-speech-dehydration.js";
@@ -3059,7 +3060,7 @@ const existingProfile = await readFile(modelProfilePath, "utf8").then(
   (text) => JSON.parse(text),
   () => null,
 );
-const PROVIDER = "cpa-oai";
+const PROVIDER = OPERATOR_GATEWAY_PROVIDER_ID;
 const MODEL = "deepseek-v4.1-flash";
 const needsProvider = (surface) =>
   existingProfile === null ||
@@ -3138,7 +3139,7 @@ await mkdir(runtimePaths.agentDir, { recursive: true });
 if (!process.env.CPA_OAI_API_KEY) throw new Error("CPA_OAI_API_KEY_missing");
 await writeFile(
   join(runtimePaths.agentDir, "auth.json"),
-  JSON.stringify({ "cpa-oai": { type: "api_key", key: process.env.CPA_OAI_API_KEY } }),
+  JSON.stringify({ [OPERATOR_GATEWAY_PROVIDER_ID]: { type: "api_key", key: process.env.CPA_OAI_API_KEY } }),
   "utf8",
 );
 // Readiness, asked before any runtime exists to be built: a root that has run before already carries the provider

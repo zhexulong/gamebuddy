@@ -12,8 +12,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../../lib/operator-gateway.mjs";
 
-const PROVIDER_ID = "cpa-oai";
+const PROVIDER_ID = OPERATOR_GATEWAY_PROVIDER_ID;
 /**
  * The gateway's own `/models` listing blinks: measured on 2026-10-27, one probe read 15 ids and omitted
  * the model the catalog names, which records `not_found` and leaves the root unseeded. The probe is a

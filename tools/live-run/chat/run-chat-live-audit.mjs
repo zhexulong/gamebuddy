@@ -65,6 +65,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 // The session-record parse has ONE spelling, shared with `tools/perf/report-run-cost.mjs`: a second copy of it would
 // quote different tokens for the same run the day either learns a new usage field.
 import { cacheBreaks, peakContext, readUsages, sumOf } from "../../perf/run-cost-usage.mjs";
@@ -332,7 +333,7 @@ function safeReasonCode(error) {
 // surface's port of it, with the same `provider_not_ready:<provider>:<model>:<reason>` vocabulary.
 const MAGIC_CONTEXT_STORE_VARIABLE = "MAGIC_CONTEXT_STORAGE_DIR";
 /** The provider a saved Chat model profile resolves to, per `resolveModelProfileConfig`. */
-const CHAT_PROFILE_PROVIDER = "cpa-oai";
+const CHAT_PROFILE_PROVIDER = OPERATOR_GATEWAY_PROVIDER_ID;
 /** The credential Pi resolves at request time for that provider (the entry carries `$CPA_OAI_API_KEY`). */
 const CHAT_PROVIDER_KEY_VARIABLE = "CPA_OAI_API_KEY";
 /**
