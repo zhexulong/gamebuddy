@@ -62,7 +62,7 @@ if (apiKey === undefined || apiKey.trim().length === 0) {
 }
 // Read here rather than at the top: a run with no credential is this tool's own `blocked` outcome, and the address is
 // only needed once there is something to dial with. Unset, it is a named refusal, never a fallback.
-const BASE_URL = requiredOperatorGatewayBaseUrl();
+const BASE_URL = requiredOperatorGatewayBaseUrl("tools/grade-historian-voice.mjs");
 
 const fixture = JSON.parse(readFileSync(fixturePath, "utf8"));
 const arms = Array.isArray(fixture.arms) ? fixture.arms : [];

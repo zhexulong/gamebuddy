@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { requiredOperatorGatewayBaseUrl } from "./lib/operator-gateway.mjs";
 
-const API_BASE = requiredOperatorGatewayBaseUrl();
+const API_BASE = requiredOperatorGatewayBaseUrl("tools/run-live-swipe-and-tree-e2e.mjs");
 const API_KEY = process.env.CPA_OAI_API_KEY || "cpa";
 const MODEL = process.env.CPA_OAI_MODEL || "deepseek-v4.1-flash";
 

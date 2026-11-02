@@ -6,8 +6,8 @@
  *
  *   - the declaration tests read `host/src/tavern/provider-catalog.ts` and assert this mirror still states the same
  *     provider id and the same address variable;
- *   - the address tests assert the reader refuses BY NAME when the switch is unset, so no harness can fall back onto
- *     an address nobody configured;
+ *   - the address tests assert the reader refuses BY NAME when the switch is unset - naming the variable to set and the
+ *     file that read it - so no harness can fall back onto an address nobody configured, and no refusal is anonymous;
  *   - the last test asserts the module spells no absolute URL at all, which is what makes "the address is read,
  *     never invented" a property of the file rather than a promise in its header.
  *
@@ -59,37 +59,46 @@ test("the address variable is the Host authority's", () => {
   );
 });
 
-test("an unset switch is refused by name, not defaulted", () => {
+const READER = "tools/lib/operator-gateway.test.mjs";
+
+test("an unset switch is refused by name, naming the variable and the file", () => {
   assert.throws(
-    () => requiredOperatorGatewayBaseUrl({}),
+    () => requiredOperatorGatewayBaseUrl(READER, {}),
     (error) => {
       assert.match(error.message, /^operator_gateway_base_url_unset:/u);
       assert.ok(
         error.message.includes(OPERATOR_GATEWAY_BASE_URL_VARIABLE),
         "the refusal has to name the variable the operator has to set",
       );
+      assert.ok(
+        error.message.includes(READER),
+        "the refusal has to name the file that read the address, so it can be traced to a command",
+      );
       return true;
     },
   );
 });
 
+test("a reader that does not name itself is a programming error, not a configuration one", () => {
+  assert.throws(() => requiredOperatorGatewayBaseUrl(), {
+    name: "TypeError",
+    message: /^operator_gateway_reader_required:/u,
+  });
+  assert.throws(() => requiredOperatorGatewayBaseUrl("  "), { name: "TypeError" });
+});
+
 test("a blank switch is refused the same way as an absent one", () => {
-  assert.throws(() => requiredOperatorGatewayBaseUrl({ [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: "   " }), {
+  assert.throws(() => requiredOperatorGatewayBaseUrl(READER, { [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: "   " }), {
     message: /^operator_gateway_base_url_unset:/u,
   });
 });
 
 test("a configured switch is returned trimmed of its trailing slash", () => {
   const configured = "http://127.0.0.1:9/v1";
-  assert.equal(requiredOperatorGatewayBaseUrl({ [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: configured }), configured);
-  assert.equal(
-    requiredOperatorGatewayBaseUrl({ [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: `${configured}///` }),
-    configured,
-  );
-  assert.equal(
-    requiredOperatorGatewayBaseUrl({ [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: " http://host:9/v1 " }),
-    "http://host:9/v1",
-  );
+  const read = (value) => requiredOperatorGatewayBaseUrl(READER, { [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: value });
+  assert.equal(read(configured), configured);
+  assert.equal(read(`${configured}///`), configured);
+  assert.equal(read(" http://host:9/v1 "), "http://host:9/v1");
 });
 
 test("a value that is not a plain http(s) base URL is refused by name", () => {
@@ -102,7 +111,7 @@ test("a value that is not a plain http(s) base URL is refused by name", () => {
   ];
   for (const value of refused) {
     assert.throws(
-      () => requiredOperatorGatewayBaseUrl({ [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: value }),
+      () => requiredOperatorGatewayBaseUrl(READER, { [OPERATOR_GATEWAY_BASE_URL_VARIABLE]: value }),
       { message: new RegExp(`^operator_gateway_base_url_invalid:.*${OPERATOR_GATEWAY_BASE_URL_VARIABLE}`, "u") },
       `${value} has to be refused rather than handed to fetch`,
     );
