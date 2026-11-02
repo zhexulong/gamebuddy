@@ -224,14 +224,3 @@ export const STARDEW_NON_GAMEPLAY_FIELDS =
  */
 export const STARDEW_FIELD_ACCESSOR_SUFFIX =
   /\.(Value|Milliseconds|Seconds|X|Y|Count|Length|Stack)$/i;
-
-/** Purely cosmetic fields, recorded but excluded from gameplay effect accounting. */
-const STARDEW_COSMETIC_FIELDS =
-  /^(jitterStrength|shakeTimer|shakeRotation|maxShake|flipped|alpha|alphaFade|currentParentTileIndex|IndexOfMenuItemView|delayBeforeAnimationStart|motion|acceleration|scale|rotation)$/i;
-
-/** Actor resource fields: writing them is the action's cost, not its world terminal. */
-const STARDEW_COST_FIELDS = /^(Stamina|waterLeft|WaterLeft|health|Health|Money)$/i;
-
-/** Multiplayer-sensitive token patterns the sensitivity checker derives from source. */
-const STARDEW_MP_REJECT_PATTERN =
-  /Context\.IsMultiplayer|!Game1\.IsMasterGame|getAllFarmers\(\)\.Count\(\)\s*!=\s*1|Game1\.server\s+is not null/;

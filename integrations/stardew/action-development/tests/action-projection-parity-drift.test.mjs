@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  ACTION_SURFACE_OPTIONAL_ACTION_KEYS,
   parseActionSurface,
 } from "../src/action-surface.mjs";
 import {
@@ -161,4 +162,28 @@ test("checked-in snapshot survives a strict parse round-trip", async () => {
   // Bound against the checker's own declared limit instead of a magic number, so
   // the snapshot cannot silently exceed what the strict consumer will accept.
   assert.equal(Buffer.byteLength(text, "utf8") <= PROJECTION_PARITY_MAX_JSON_BYTES, true);
+});
+
+test("the two optional-member lists agree, so neither can drift alone", async () => {
+  /*
+   * `action-projection-parity.mjs` cannot import anything (its own test asserts that), so its optional
+   * member list is spelled a second time. That duplication is the cost of the no-import rule, and it is
+   * exactly how the list stayed at the original nine members while 80 of 95 published actions grew
+   * `targetFamily`. This test is what pays that cost back: it lives in a file that CAN import both.
+   *
+   * Red proof: dropping `targetFamily` from the parity module's list fails here by name, before the
+   * stricter per-action check gets a chance to report something less precise.
+   */
+  const source = await readFile(
+    path.join(packageDirectory, "src", "static-projection", "action-projection-parity.mjs"),
+    "utf8",
+  );
+  const at = source.indexOf("PROJECTION_PARITY_ACTION_OPTIONAL_KEYS");
+  assert.notEqual(at, -1, "the parity module must declare its optional member list where this test reads it");
+  const declared = [...source.slice(at, source.indexOf("]", at)).matchAll(/"([a-zA-Z][a-zA-Z0-9]*)"/gu)].map((m) => m[1]);
+  assert.deepEqual(
+    [...declared].sort(),
+    [...ACTION_SURFACE_OPTIONAL_ACTION_KEYS].sort(),
+    "the parity checker's optional members must equal the surface validator's: two lists, one fact",
+  );
 });

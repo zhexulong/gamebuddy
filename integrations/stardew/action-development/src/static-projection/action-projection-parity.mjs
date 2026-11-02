@@ -1,5 +1,3 @@
-import { ACTION_SURFACE_OPTIONAL_ACTION_KEYS } from "../action-surface.mjs";
-
 const ERROR_PREFIX = "stardew_projection_parity";
 
 export const PROJECTION_PARITY_SCHEMA = "gamebuddy-stardew-action-projection-parity/v1";
@@ -38,6 +36,17 @@ const PROJECTION_PARITY_ACTION_REQUIRED_KEYS = Object.freeze([
   "effect",
   "postcondition",
 ]);
+/*
+ * The optional half is spelled here rather than imported, because this module must not import ANYTHING:
+ * it is a package-local strict consumer that the parity tests read as source text, and
+ * `static-projection-parity.test.mjs` asserts it contains no import at all.
+ *
+ * Spelling it again is therefore deliberate, and the cost of that is that it can drift from
+ * `ACTION_SURFACE_OPTIONAL_ACTION_KEYS` in `action-surface.mjs` - which is exactly how this list stayed
+ * at the original nine while 80 of 95 published actions grew `targetFamily`. The drift is now watched by
+ * `action-projection-parity-drift.test.mjs`, which CAN import both and asserts the two lists are equal.
+ */
+const PROJECTION_PARITY_ACTION_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
 const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
   "admittedLifecycles",
   "executableActionIds",
@@ -104,6 +113,19 @@ const PROJECTION_PARITY_MAX_JSON_BYTES = 128 * 1024;
 export { PROJECTION_PARITY_MAX_JSON_BYTES };
 const PROJECTION_PARITY_MAX_REGISTRATIONS = 128;
 const PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH = 128;
+/*
+ * The text scanner's own per-string ceiling, which is NOT the identifier ceiling.
+ *
+ * These were the same number, so `parseStringEnd` rejected any string longer than 128 characters - and
+ * every published descriptor carries prose: the longest string in the checked-in snapshot is a 425-char
+ * argument description. The object path (`validateActionProjectionParity`) accepted the same document,
+ * so the two entry points disagreed about whether it was legal, and the text path could never accept a
+ * real snapshot. Identifier length is enforced where identifiers are read, by `identifierOf`.
+ *
+ * This is still a bound: one string cannot exceed 4 KiB, and the whole document is capped at
+ * PROJECTION_PARITY_MAX_JSON_BYTES.
+ */
+const PROJECTION_PARITY_MAX_STRING_LENGTH = 4096;
 const PROJECTION_PARITY_MAX_IDENTITY_VERSION = 2_147_483_647;
 const PROJECTION_PARITY_MAX_IDS = 128;
 const PROJECTION_PARITY_MAX_SCHEMAS = 64;
@@ -183,7 +205,7 @@ function actionDescriptorKeys(value) {
   }
   for (const key of keys) {
     if (PROJECTION_PARITY_ACTION_REQUIRED_KEYS.includes(key)) continue;
-    if (!ACTION_SURFACE_OPTIONAL_ACTION_KEYS.includes(key)) fail("invalid_action_shape");
+    if (!PROJECTION_PARITY_ACTION_OPTIONAL_KEYS.includes(key)) fail("invalid_action_shape");
     dataDescriptor(value, key, "invalid_action_shape");
   }
 }
@@ -272,7 +294,7 @@ function parseStringEnd(text, start) {
       } catch {
         fail("invalid_json");
       }
-      if (value.length > PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH) fail("bounds");
+      if (value.length > PROJECTION_PARITY_MAX_STRING_LENGTH) fail("bounds");
       return { value, index: index + 1 };
     }
     if (character === "\\") {

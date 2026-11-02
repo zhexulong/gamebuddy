@@ -29,11 +29,23 @@ test("exports the vocabulary the source-analysis tools consume", () => {
     "STARDEW_QUERY_HELPER_FILES",
     "STARDEW_SEMANTIC_EQUIVALENT_EXITS",
     "STARDEW_NON_GAMEPLAY_FIELDS",
-    "STARDEW_COSMETIC_FIELDS",
-    "STARDEW_COST_FIELDS",
-    "STARDEW_MP_REJECT_PATTERN",
   ])
     assert.ok(name in V, `must export ${name}`);
+
+  /*
+   * Three names that used to be listed here - STARDEW_COSMETIC_FIELDS, STARDEW_COST_FIELDS and
+   * STARDEW_MP_REJECT_PATTERN - are gone, and this list was the only thing that ever named them.
+   * `4e8001d2` (chore(knip)) had already removed their `export` because nothing imported them; they
+   * stayed behind as private constants defined once and read nowhere, and this assertion is what kept
+   * them from being noticed as dead. Deleting them is the honest end state: a vocabulary entry that no
+   * tool consults is not a vocabulary, it is a spare part.
+   *
+   * What they encoded did not vanish with them - `stardew-branch-writeset.mjs` classifies cost fields
+   * and the reconciliation tool classifies cosmetic ones - but the two lists are NOT the same as these
+   * were (the branch-writeset cost regex adds waterCanMax/durability/ammo/magazine/usesLeft/fuel and
+   * omits health). Which of the two is right is a question about the game, not about tidiness, so it is
+   * left where it is rather than merged here by guess.
+   */
 });
 
 test("the leftClick family is present — the menu-free shipping entry point", () => {
