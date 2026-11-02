@@ -38,6 +38,7 @@ import { fileURLToPath } from "node:url";
 
 import { assertLiveRunPersonaMounted, provisionLiveRunPersona } from "../live-run/core/persona.mjs";
 import { submitPlayerPrompt } from "../live-run/core/player-input-admission.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "./operator-gateway.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -159,7 +160,7 @@ async function writeAgentCredential(runtimePaths) {
   await mkdir(runtimePaths.agentDir, { recursive: true });
   await writeFile(
     join(runtimePaths.agentDir, "auth.json"),
-    JSON.stringify({ "cpa-oai": { type: "api_key", key } }),
+    JSON.stringify({ [OPERATOR_GATEWAY_PROVIDER_ID]: { type: "api_key", key } }),
     "utf8",
   );
 }

@@ -33,6 +33,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bridgeConfigPath, bridgePipeNameFor } from "./stardew-bridge-pipe.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "./operator-gateway.mjs";
 
 const check = (code, ok, detail) => ({ code, ok, detail });
 
@@ -193,7 +194,7 @@ export function importsWithoutStarting(path, { spawn = spawnSync, timeoutMs = RU
  * The provider a saved model profile resolves to. A profile stores only the model id and the thinking level, so the
  * provider is the product's own resolution (`resolveModelProfileConfig`, host/src/settings/model-profile-store.ts:114).
  */
-const PROFILE_PROVIDER = "cpa-oai";
+const PROFILE_PROVIDER = OPERATOR_GATEWAY_PROVIDER_ID;
 const PROVIDER_PROBE_TIMEOUT_MS = 10_000;
 
 const readJsonIfPresent = async (path) => {
