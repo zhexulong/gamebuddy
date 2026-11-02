@@ -26,7 +26,12 @@ import { join, relative, sep } from "node:path";
 /** Source extensions that are hand-authored. Data/generated `.json` is not scanned. */
 const SCAN_EXTENSIONS = new Set([".cs", ".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ps1", ".py", ".ts", ".tsx"]);
 
-/** Vendored, generated, or scratch trees that never own product literals. */
+/**
+ * Vendored, generated, or scratch trees that never own product literals.
+ *
+ * Matched by NAME, for a file as well as for a directory: the scratch shapes this checkout uses are named
+ * (`.gitignore`'s `/.tmp-*`, `_devdist*`, `.worktrees*`), not placed in one known directory.
+ */
 const EXCLUDED_DIRECTORIES = new Set([
   ".agents",
   ".audit-runs",
@@ -332,7 +337,8 @@ function toPosix(path) {
   return path.split(sep).join("/");
 }
 
-function isExcludedDirectory(name) {
+/** Whether an entry - file or directory - is named as vendored, generated, or scratch. */
+function isExcludedName(name) {
   return (
     EXCLUDED_DIRECTORIES.has(name) ||
     name === "dist" ||
@@ -354,10 +360,15 @@ function listSourceFiles(repoRoot) {
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (isExcludedDirectory(entry.name)) continue;
+        if (isExcludedName(entry.name)) continue;
         walk(join(directory, entry.name));
         continue;
       }
+      // The same names are excluded for FILES as for directories, because the scratch shapes are named, not placed:
+      // `.gitignore:/  .tmp-*` covers a scratch file at a tracked root exactly as it covers a scratch tree, and a file
+      // a checkout treats as disposable cannot own a product literal. Without this a git-ignored `.tmp-*.ts` anywhere
+      // was scanned, and its literals were reported against a rule the author of the scratch file never touched.
+      if (isExcludedName(entry.name)) continue;
       if (!(entry.isFile() && hasScannedExtension(entry.name))) continue;
       const path = join(directory, entry.name);
       if (statSync(path).size > MAX_SCANNED_BYTES) continue;
