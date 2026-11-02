@@ -25,7 +25,7 @@
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { STARDEW_INTERACTION_SHAPES } from "../stardew-source-analysis-vocabulary.mjs";
+import { STARDEW_INTERACTION_SHAPES, memberNameOfSignature } from "../stardew-source-analysis-vocabulary.mjs";
 import { createParser, extractBranches } from "./stardew-branch-writeset.mjs";
 
 /**
@@ -59,10 +59,6 @@ function parseArgs(argv) {
 const options = parseArgs(process.argv.slice(2));
 const sourceRoot = path.resolve(options["source-root"]);
 
-const memberOf = (signature) => {
-  const p = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-  return p ? p[p.length - 1].replace(/\s*\($/, "") : signature.trim().split(/\s+/).pop();
-};
 const baseName = (p) => path.basename(p).replace(/\.cs$/, "");
 
 // ---- 已注册 seam -----------------------------------------------------------
@@ -72,7 +68,7 @@ const registered = [];
 for (const action of register.actions)
   for (const seam of action.seams ?? []) {
     if (seam.kind !== "native") continue;
-    registered.push({ actionId: action.actionId, member: memberOf(seam.signature), file: seam.file });
+    registered.push({ actionId: action.actionId, member: memberNameOfSignature(seam.signature), file: seam.file });
   }
 const registeredMembers = new Set(registered.map((r) => r.member));
 const registeredKeys = new Set(registered.map((r) => `${r.member}::${baseName(r.file)}`));

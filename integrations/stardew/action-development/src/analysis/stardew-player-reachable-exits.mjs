@@ -29,6 +29,7 @@ import {
   STARDEW_INGRESS_ROOT_GROUPS,
   STARDEW_ROUTING_LAYER_DEPTH,
   STARDEW_ROUTING_LAYER_SHAPE,
+  memberNameOfSignature,
 } from "../stardew-source-analysis-vocabulary.mjs";
 
 const require = createRequire(import.meta.url);
@@ -170,15 +171,11 @@ for (const [name, info] of depthOfMember) {
 let registerReport = null;
 if (options["action-register"]) {
   const register = JSON.parse(await readFile(options["action-register"], "utf8"));
-  const memberOf = (sig) => {
-    const p = sig.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-    return p ? p[p.length - 1].replace(/\s*\($/, "") : sig.trim().split(/\s+/).pop();
-  };
   const bySeam = new Map();
   for (const a of register.actions) {
     for (const s of a.seams ?? []) {
       if (s.kind !== "native") continue;
-      const m = memberOf(s.signature);
+      const m = memberNameOfSignature(s.signature);
       if (!bySeam.has(m)) bySeam.set(m, []);
       bySeam.get(m).push(a.actionId);
     }

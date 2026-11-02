@@ -65,6 +65,48 @@ export const STARDEW_INTERACTION_SHAPES = Object.freeze([
   "clicked",
 ]);
 
+/**
+ * The method name a native-seam signature refers to.
+ *
+ * Seam signatures are quoted the way the target tree declares them, which includes
+ * generic methods: `public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where
+ * TItem : Item` names `Equip`. Reading the last `name(` occurrence of that string found
+ * none and fell back to the last word, `Item` — so `equip_wearable` and
+ * `unequip_wearable` resolved to a method that does not exist and were reported as
+ * unresolvable seams. The name is the identifier before the parameter list, skipping a
+ * generic parameter list. A signature with no parameter list (`GameLocation.checkAction`)
+ * keeps the older last-word reading.
+ */
+export function memberNameOfSignature(signature) {
+  const text = String(signature ?? "");
+  const open = text.indexOf("(");
+  const lastWord = () => text.trim().split(/\s+/).pop() ?? "";
+  if (open < 0) return lastWord();
+  let index = open - 1;
+  const skipSpace = () => {
+    while (index >= 0 && /\s/.test(text[index])) index -= 1;
+  };
+  skipSpace();
+  if (text[index] === ">") {
+    let depth = 0;
+    for (; index >= 0; index -= 1) {
+      if (text[index] === ">") depth += 1;
+      else if (text[index] === "<") {
+        depth -= 1;
+        if (depth === 0) {
+          index -= 1;
+          break;
+        }
+      }
+    }
+    skipSpace();
+  }
+  const end = index + 1;
+  while (index >= 0 && /[A-Za-z0-9_]/.test(text[index])) index -= 1;
+  const name = text.slice(index + 1, end);
+  return /^[A-Za-z_]/.test(name) ? name : lastWord();
+}
+
 /** Gameplay-shaped method names, matched against a reachable exit. */
 export const STARDEW_GAMEPLAY_SHAPES =
   /^(checkAction|performUseAction|performToolAction|performObjectDropInAction|placementAction|DoFunction|checkForAction|rotate|animateSpecialMove|performAction|pet|receiveGift|addItem|collect|eatObject|canBePlacedHere|shipItem|createItem|warpFarmer|tryToCheckAt|GetItemsForPlayer|getShippingBin|receiveActionPress|receiveRightClick|exitThisMenu|answerDialogueAction)$/;

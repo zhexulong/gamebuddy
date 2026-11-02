@@ -28,6 +28,7 @@ import {
   STARDEW_MENU_UI_EXITS,
   STARDEW_QUERY_HELPER_FILES,
   STARDEW_SEMANTIC_EQUIVALENT_EXITS,
+  memberNameOfSignature,
 } from "../stardew-source-analysis-vocabulary.mjs";
 
 /**
@@ -68,11 +69,6 @@ const exitsArtifact = JSON.parse(await readFile(options.exits, "utf8"));
 const register = JSON.parse(await readFile(options["action-register"], "utf8"));
 const catalog = JSON.parse(await readFile(options.catalog, "utf8"));
 
-const memberOf = (signature) => {
-  const p = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-  return p ? p[p.length - 1].replace(/\s*\($/, "") : signature.trim().split(/\s+/).pop();
-};
-
 // ---- 索引 -----------------------------------------------------------------
 
 /** nativeMember → 已注册 actionIds */
@@ -80,7 +76,7 @@ const seamToActions = new Map();
 for (const action of register.actions)
   for (const seam of action.seams ?? []) {
     if (seam.kind !== "native") continue;
-    const m = memberOf(seam.signature);
+    const m = memberNameOfSignature(seam.signature);
     if (!seamToActions.has(m)) seamToActions.set(m, new Set());
     seamToActions.get(m).add(action.actionId);
   }

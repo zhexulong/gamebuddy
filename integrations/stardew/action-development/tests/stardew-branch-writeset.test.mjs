@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createParser, extractBranches, isCompilerTemporaryCondition } from "../src/analysis/stardew-branch-writeset.mjs";
+import { memberNameOfSignature } from "../src/stardew-source-analysis-vocabulary.mjs";
 
 /**
  * Golden test：用「已注册 action 的 native seam 映射」校准分支级提取。
@@ -39,13 +40,6 @@ const REGISTER = path.join(
 const parser = await createParser();
 const register = JSON.parse(await readFile(REGISTER, "utf8"));
 
-/** 注册表签名有时带完整参数表，有时只有一个方法名 */
-function memberOf(signature) {
-  const withParens = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-  if (withParens) return withParens[withParens.length - 1].replace(/\s*\($/, "");
-  return signature.trim().split(/\s+/).pop();
-}
-
 /** 对某个 action 的全部 native seam 跑提取 */
 async function extractForAction(actionId) {
   const action = register.actions.find((a) => a.actionId === actionId);
@@ -53,7 +47,7 @@ async function extractForAction(actionId) {
   const seams = (action.seams ?? []).filter((s) => s.kind === "native");
   const results = [];
   for (const seam of seams) {
-    const member = memberOf(seam.signature);
+    const member = memberNameOfSignature(seam.signature);
     const methods = await extractBranches({
       sourceRoot: SOURCE_ROOT,
       relPath: seam.file,
@@ -82,7 +76,7 @@ test("全部已注册 action 的 native seam 都能被定位与解析", async ()
     if (seams.length === 0) continue; // mod_owned seam 不在本工具范围
     nativeSeamActions += 1;
     for (const seam of seams) {
-      const member = memberOf(seam.signature);
+      const member = memberNameOfSignature(seam.signature);
       const methods = await extractBranches({
         sourceRoot: SOURCE_ROOT,
         relPath: seam.file,
@@ -110,7 +104,7 @@ test("GameLocation.checkAction 承载 5 个已注册 action（machine_inspect �
   const users = [];
   for (const action of register.actions)
     for (const seam of (action.seams ?? []).filter((s) => s.kind === "native"))
-      if (seam.file === "StardewValley/GameLocation.cs" && memberOf(seam.signature) === "checkAction")
+      if (seam.file === "StardewValley/GameLocation.cs" && memberNameOfSignature(seam.signature) === "checkAction")
         users.push(action.actionId);
   assert.equal(users.length, 5, `expected 5 actions on checkAction, got ${users.length}: ${users.join(", ")}`);
   assert.ok(users.includes("machine_load") && users.includes("collect_crab_pot_output"));
@@ -118,21 +112,25 @@ test("GameLocation.checkAction 承载 5 个已注册 action（machine_inspect �
   assert.ok(!users.includes("machine_inspect"));
 });
 
-test("Object.placementAction 同时服务 5 个已注册 action", async () => {
+test("Object.placementAction 同时服务多个已注册 action（action identity 不由 seam 决定）", async () => {
   const users = [];
   for (const action of register.actions)
     for (const seam of (action.seams ?? []).filter((s) => s.kind === "native"))
-      if (seam.file === "StardewValley/Object.cs" && memberOf(seam.signature) === "placementAction")
+      if (seam.file === "StardewValley/Object.cs" && memberNameOfSignature(seam.signature) === "placementAction")
         users.push(action.actionId);
+  // 这五条是产品事实，不是数量：任何一个从 register 消失都是真实回归，每个都在消息里具名。
   // place_wood_fence 于本次修复中加入：原先引用纯判断的 canBePlacedHere，
   // 现引用真实变异点 placementAction（见 audit-stardew-action-seam-terminals.test.mjs）。
-  assert.deepEqual(users.sort(), [
-    "fertilize_tile",
-    "place_crab_pot",
-    "place_wood_fence",
-    "plant_sapling",
-    "plant_seed",
-  ]);
+  const historical = ["fertilize_tile", "place_crab_pot", "place_wood_fence", "plant_sapling", "plant_seed"];
+  for (const id of historical)
+    assert.ok(users.includes(id), `${id} 应仍把 Object.placementAction 记为其 native seam（实测 ${users.length} 个：${users.join(", ")}）`);
+  // 本测试要证明的是「一个 native seam 服务多个 action」，所以断言它**多于**历史清单——
+  // 而不是钉住某个总数：`place_owned_object` 注册后此处为 6，将来再加一个使用者不该让测试变红，
+  // 反而应当继续通过（数量由 register 决定，消息里给出实测值）。
+  assert.ok(
+    users.length > historical.length,
+    `Object.placementAction 应服务多于历史五条 action（seam 不决定 action identity），实测 ${users.length}：${users.join(", ")}`,
+  );
 });
 
 // ---- 终态直写：refill 与 ship_item 应产出候选分支 --------------------------

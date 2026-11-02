@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { memberNameOfSignature } from "../src/stardew-source-analysis-vocabulary.mjs";
 
 /**
  * 候选 action 派生的测试。
@@ -78,13 +79,9 @@ test("单位是 (出口, 实现类)，不是原生方法", async () => {
 test("已注册的 36 个 native seam 全部进入枚举（不得再漏）", async () => {
   const a = await derive();
   const register = JSON.parse(await readFile(REGISTER, "utf8"));
-  const memberOf = (sig) => {
-    const p = sig.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-    return p ? p[p.length - 1].replace(/\s*\($/, "") : sig.trim().split(/\s+/).pop();
-  };
   const seams = new Set();
   for (const action of register.actions)
-    for (const seam of action.seams ?? []) if (seam.kind === "native") seams.add(memberOf(seam.signature));
+    for (const seam of action.seams ?? []) if (seam.kind === "native") seams.add(memberNameOfSignature(seam.signature));
 
   const considered = new Set([
     ...a.matched.map((c) => c.member),

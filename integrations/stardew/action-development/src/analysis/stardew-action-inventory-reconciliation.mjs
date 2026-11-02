@@ -48,6 +48,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeTileActionSelectorTree, createSelectorParser } from "./stardew-tile-action-selectors.mjs";
+import { memberNameOfSignature } from "../stardew-source-analysis-vocabulary.mjs";
 
 // ---------------------------------------------------------------------------
 // 规则 3：分类级默认
@@ -797,11 +798,6 @@ function ownersForUnit(seamMembers, file, member) {
   return owners ? [...owners] : [];
 }
 
-const memberOf = (signature) => {
-  const p = signature.match(/([A-Za-z_][A-Za-z0-9_]*)\s*\(/g);
-  return p ? p[p.length - 1].replace(/\s*\($/, "") : signature.trim().split(/\s+/).pop();
-};
-
 /**
  * Registered native seams, indexed by **both** keys:
  *
@@ -823,7 +819,7 @@ function registeredSeamMembers(register) {
   for (const action of register.actions)
     for (const seam of action.seams ?? []) {
       if (seam.kind !== "native") continue;
-      const m = memberOf(seam.signature);
+      const m = memberNameOfSignature(seam.signature);
       if (!m) continue;
       if (!byMember.has(m)) byMember.set(m, new Set());
       byMember.get(m).add(action.actionId);
@@ -848,7 +844,7 @@ function registeredSeamMembers(register) {
 function seamJoin(selector, seamMembers) {
   const hits = [];
   const consider = (text) => {
-    const m = memberOf(text);
+    const m = memberNameOfSignature(text);
     if (!m) return;
     const base = String(selector.file ?? "").split(/[\\/]/).pop().toLowerCase();
     const scoped = seamMembers.byFileMember.get(`${base}\u0000${m}`);
