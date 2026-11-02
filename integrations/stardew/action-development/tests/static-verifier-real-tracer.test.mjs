@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+// requires-game-folder: builds GameBuddy.Stardew.csproj, and Pathoschild.Stardew.ModBuildConfig 4.4.0 emits `<Error Condition="!Exists('$(GamePath)')">` in its BeforeBuild target, so dotnet refuses before any compiler runs. Point GAMEBUDDY_STARDEW_GAME_PATH at a folder holding Stardew Valley.dll to run it.
 import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";

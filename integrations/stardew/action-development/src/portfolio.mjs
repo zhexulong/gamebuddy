@@ -115,7 +115,15 @@ export async function runDeterministicPortfolio({ runCommand = run, runProject =
       const exitCode = await runCommand(process.execPath, [STATIC_PRODUCTION_ADMISSION], [0, 2]);
       if (exitCode === 2) blockedEntries.push(entry.id);
     } else if (entry.kind === "package-tests") {
-      await runCommand(process.execPath, ["src/run-tests.mjs"]);
+      /*
+       * Exit 2 is the same "ran, but something could not run here" contract the static-production
+       * admission entry below uses, and it is the only way this entry can be honest on a hosted runner:
+       * `static-verifier-real-tracer` builds GameBuddy.Stardew.csproj, whose ModBuildConfig target
+       * refuses to run without a licensed game folder. Reporting that as a PASS would be a lie, and
+       * reporting it as a FAILURE made this entry red for a reason unrelated to the code it checks.
+       */
+      const exitCode = await runCommand(process.execPath, ["src/run-tests.mjs"], [0, 2]);
+      if (exitCode === 2) blockedEntries.push(entry.id);
     } else fail("invalid_entry");
   }
   return Object.freeze({ gameId: "stardew", status: "deterministic-ci", entries: entries.map((entry) => entry.id), ...(blockedEntries.length ? { blockedEntries: Object.freeze(blockedEntries) } : {}) });
