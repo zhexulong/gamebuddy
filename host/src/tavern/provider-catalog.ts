@@ -77,6 +77,66 @@ export const TAVERN_ENVIRONMENT_VARIABLE = "CPA_OAI_API_KEY" as const;
 export const TAVERN_OPERATOR_GATEWAY_ENV = "GAMEBUDDY_OPERATOR_GATEWAY";
 
 /**
+ * The default address of the operator's own gateway, and only a default.
+ *
+ * The gateway is OURS - a cliproxyapi instance on the operator's own machine - so where it listens is
+ * configuration, not a fact this source tree may freeze: a second spelling of it elsewhere is how the probe and
+ * the Agent runtime end up talking to two different gateways. `TAVERN_OPERATOR_GATEWAY_ENV` decides WHO may be
+ * offered the entry; `TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV` decides WHERE it points.
+ */
+export const DEFAULT_OPERATOR_GATEWAY_BASE_URL = "http://127.0.0.1:8317/v1";
+
+/**
+ * The one switch that moves the operator's gateway off its default address.
+ *
+ * It is read once, when this module is loaded, so the probe, the catalog's own entry and every runtime that writes
+ * Pi's provider entry cannot disagree about which gateway this process talks to. An empty value falls back to the
+ * default; a value that is not a plain http(s) URL is refused rather than guessed at.
+ */
+export const TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV = "GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL";
+
+/**
+ * The endpoint a configured gateway base URL resolves to: the override, or the default when none is configured.
+ *
+ * A trailing slash is trimmed because every request path is appended to this value and the catalog's own pinned
+ * endpoints carry none. Credentials, a query and a fragment are refused: this is an endpoint, and a URL that
+ * smuggles one of those into it is a configuration error, not a variant spelling.
+ */
+export function resolveOperatorGatewayBaseUrl(environment: Readonly<Record<string, string | undefined>>): string {
+  const configured = environment[TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV]?.trim() ?? "";
+  if (configured === "") return DEFAULT_OPERATOR_GATEWAY_BASE_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(configured);
+  } catch {
+    throw new Error(
+      `operator_gateway_base_url_invalid: ${TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV} is not an absolute URL`,
+    );
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new Error(
+      `operator_gateway_base_url_invalid: ${TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV} must be a plain http(s) base URL ` +
+        "with no credentials, query or fragment",
+    );
+  }
+  return configured.replace(/\/+$/u, "");
+}
+
+/**
+ * The endpoint the operator's gateway entry resolves to in this process.
+ *
+ * Resolved exactly once, at module load. The catalog entry below is the single authority for the address; this is
+ * the fail-closed read every other module uses instead of spelling it again.
+ */
+const OPERATOR_GATEWAY_BASE_URL = resolveOperatorGatewayBaseUrl(process.env);
+
+/**
  * The complete set of player-fillable setup fields. It is a closed allowlist:
  * no script, header, provider payload or free-form configuration field exists.
  */
@@ -170,13 +230,15 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
   // The operator's own gateway. It is NOT a player's default and is not offered as a normal choice:
   // this product ships no model endpoint, so a player who has configured nothing has nowhere to
   // send. It stays in the catalogue because `catalogProvider()` must keep resolving it for the
-  // records and the frozen runtime provider block the operator's own machine already holds.
+  // records and the runtime provider block the operator's own machine already holds.
+  // Its address is configuration (`TAVERN_OPERATOR_GATEWAY_BASE_URL_ENV`), resolved once above;
+  // `operatorGatewayBaseUrl()` is how the rest of the Host reads it back.
   defineProvider({
     providerId: TAVERN_ENVIRONMENT_PROVIDER_ID,
     label: "Operator gateway (developer only)",
     piProviderId: TAVERN_ENVIRONMENT_PROVIDER_ID,
     piApi: "openai-completions",
-    baseUrl: "http://127.0.0.1:8317/v1",
+    baseUrl: OPERATOR_GATEWAY_BASE_URL,
     environmentVariable: TAVERN_ENVIRONMENT_VARIABLE,
     setupFields: [],
     allowedPlayerModels: [
@@ -241,13 +303,26 @@ export function catalogProvider(providerId: string): TavernCatalogProvider | nul
 }
 
 /**
+ * The operator's gateway endpoint, read from the one entry that declares it.
+ *
+ * This exists so no other module has to spell the address: the probe, Pi's provider entry and the gameplay
+ * sub-agent's own provider block all read this instead, and a configuration change moves all three at once. A
+ * catalog that has lost the entry is a broken catalog, not a reason to fall back to a guess.
+ */
+export function operatorGatewayBaseUrl(): string {
+  const provider = catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID);
+  if (provider === null || provider.baseUrl === null) throw new Error("operator_gateway_endpoint_missing");
+  return provider.baseUrl;
+}
+
+/**
  * The entries a BROWSER may offer as a choice: bring-your-own-key only.
  *
  * This product ships no model endpoint, so the operator's gateway (whose endpoint and credential
  * both live on the operator's own machine) is not a channel a player could land on: one who has
  * configured nothing must be told to bring a connection, not handed one that does not exist on
  * their disk. The entry stays in `TAVERN_PROVIDER_CATALOG` so that `catalogProvider()` still
- * resolves the operator's own stored records and the frozen runtime provider block, and so that a
+ * resolves the operator's own stored records and the runtime provider block, and so that a
  * developer can reach it at all - but reaching it is an explicit act (`GAMEBUDDY_OPERATOR_GATEWAY=1`)
  * and it is labelled as one, never a default.
  *

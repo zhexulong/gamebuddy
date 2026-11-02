@@ -22,7 +22,7 @@ import type {
   IntegrationExecutionReceipt,
 } from "./game-integration-adapter.js";
 import type { GameConnection } from "./game-connection.js";
-import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
+import { operatorGatewayBaseUrl, TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import type { CompanionModelConfig, RuntimePaths } from "./runtime.js";
 
 /**
@@ -705,7 +705,7 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
         providers: {
           [TAVERN_ENVIRONMENT_PROVIDER_ID]: {
             name: "CPA OpenAI-compatible Agent",
-            baseUrl: "http://127.0.0.1:8317/v1",
+            baseUrl: operatorGatewayBaseUrl(),
             api: "openai-completions",
             apiKey: "$CPA_OAI_API_KEY",
             // No `authHeader`: the OpenAI-compatible adapter installs `Authorization: Bearer`

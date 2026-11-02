@@ -6,6 +6,7 @@ import {
   catalogModelById,
   catalogProvider,
   isTavernPiApi,
+  operatorGatewayBaseUrl,
   type TavernCatalogProvider,
   type TavernModelReasoningDialect,
   type TavernPiApi,
@@ -24,9 +25,9 @@ import {
  *
  * Three cases, in order of precedence:
  *
- * - the operator environment selection (`cpa-oai`) keeps the frozen entry this
- *   Host has always written, byte for byte, so a root with no player
- *   connection produces exactly the previous document;
+ * - the operator environment selection (`cpa-oai`) keeps the entry this Host has always
+ *   written, byte for byte at a given gateway address, so a root with no player connection
+ *   produces exactly the previous document;
  * - another catalog provider pins its Host-owned endpoint and API shape, and
  *   deliberately contributes no `models` list: the model middleware already
  *   ships full metadata for those model ids, and replacing that with a minimal
@@ -113,14 +114,21 @@ export function declaredContextWindow(modelId?: string, catalog?: readonly Taver
 function reasoningDialectOf(modelId: string, catalog?: readonly TavernCatalogProvider[]): TavernModelReasoningDialect {
   return catalogModelById(modelId, catalog)?.reasoningDialect ?? "native";
 }
-/** The frozen operator-managed Agent provider entry (zero-configuration default). */
+/**
+ * The operator-managed Agent provider entry (zero-configuration default).
+ *
+ * Its address is read from the catalog rather than restated here: `models.json` is what the Agent actually talks
+ * to, so a second copy of the gateway URL would let the Host's probe check one gateway while the runtime used
+ * another. Byte-identical output is still the contract for a given gateway address - `pi-provider-store.test.ts`
+ * pins the whole document a root with no player connection produces.
+ */
 export function environmentProviderEntry(modelId: string, catalog?: readonly TavernCatalogProvider[]): PiProviderEntry {
   const reasoningDialect = reasoningDialectOf(modelId, catalog);
   // Read once: the window and the output cap have to describe the same model, and two reads could straddle a change.
   const contextWindow = declaredContextWindow(modelId, catalog);
   return {
     name: "CPA OpenAI-compatible Agent",
-    baseUrl: "http://127.0.0.1:8317/v1",
+    baseUrl: operatorGatewayBaseUrl(),
     api: "openai-completions",
     apiKey: "$CPA_OAI_API_KEY",
     // No `authHeader`: the OpenAI-compatible adapter installs `Authorization: Bearer`
