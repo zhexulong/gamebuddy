@@ -35,6 +35,7 @@ import {
   FAKE_API_KEY,
   judgeProviderFailureClassification,
   PROBE_STATES,
+  reachedARefusal,
   readEndpointEvidence,
 } from "./run-provider-failure-classification-live.mjs";
 
@@ -60,7 +61,8 @@ const UNREACHABLE = Object.freeze({
 });
 
 const CREDENTIAL_SENTENCE = "The endpoint refused your API key: it is missing, wrong, or has been revoked.";
-const FIVE_CAUSE_SENTENCE = "The reply never reached a model: the endpoint refused it - the key, the model, or the endpoint itself.";
+const FIVE_CAUSE_SENTENCE =
+  "The reply never reached a model: the endpoint refused it - the key, the model, or the endpoint itself.";
 const UNREACHABLE_SENTENCE = "The endpoint could not be reached at all.";
 
 function judge(overrides = {}) {
@@ -81,7 +83,12 @@ test("a 401 the Host classified as a credential refusal is verified, and that is
 });
 
 test("an endpoint that never answered is INCONCLUSIVE, not our defect, and exits 0", () => {
-  const verdict = judge({ evidence: UNREACHABLE, expectedClass: null, observedClass: null, sentence: FIVE_CAUSE_SENTENCE });
+  const verdict = judge({
+    evidence: UNREACHABLE,
+    expectedClass: null,
+    observedClass: null,
+    sentence: FIVE_CAUSE_SENTENCE,
+  });
   assert.equal(verdict.state, PROBE_STATES.externalEndpointUnreachable);
   assert.match(verdict.reason, /network_did_not_reach_endpoint:dns/);
   assert.equal(exitCodeFor(verdict.state), 0, "a red run for a reason that is not ours is how a gate stops being read");
@@ -102,7 +109,13 @@ test("a reply this gate cannot read is its own case, neither unreachable nor a m
   assert.equal(exitCodeFor(accepted.state), 1);
 
   const html = judge({
-    evidence: { ...REFUSED, status: 403, jsonBody: false, contentType: "text/html", redactedBody: "<html>portal</html>" },
+    evidence: {
+      ...REFUSED,
+      status: 403,
+      jsonBody: false,
+      contentType: "text/html",
+      redactedBody: "<html>portal</html>",
+    },
   });
   assert.equal(html.state, PROBE_STATES.externalEndpointUnexpected);
   assert.equal(html.reason, "endpoint_replied_without_a_json_error");
@@ -201,6 +214,27 @@ test("a transport failure is classified by the layer it failed at, and never car
   });
   assert.equal(timeout.failure, "timeout");
   assert.equal(JSON.stringify(timeout).includes("api.deepseek.com"), false, "an evidence line never carries the URL");
+});
+
+test("the runner's skip-a-turn predicate and the judgement's readable-reply branch are one answer", () => {
+  // The two must never disagree: the predicate decides whether a turn is driven, and the judgement
+  // decides whether that turn's answer is consulted. A gap between them is a run that either spends a
+  // runtime on nothing or judges a turn it never drove.
+  const cases = [REFUSED, UNREACHABLE, { ...REFUSED, status: 200 }, { ...REFUSED, status: 503, jsonBody: false }];
+  const readsTheTurn = new Set([
+    PROBE_STATES.verified,
+    PROBE_STATES.classificationMappingChanged,
+    PROBE_STATES.classificationWrong,
+    PROBE_STATES.sentenceCollapsed,
+  ]);
+  for (const evidence of cases) {
+    const judged = judge({ evidence, expectedClass: null, observedClass: null, sentence: FIVE_CAUSE_SENTENCE });
+    assert.equal(
+      reachedARefusal(evidence),
+      readsTheTurn.has(judged.state),
+      `${judged.state} for ${JSON.stringify(evidence)}`,
+    );
+  }
 });
 
 test("the probe's credential is an obviously fake literal and a real one in the environment is refused", () => {

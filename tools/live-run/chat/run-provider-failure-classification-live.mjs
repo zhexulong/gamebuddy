@@ -39,7 +39,18 @@
  *
  * The judgement itself is the pure `judgeProviderFailureClassification` export, so
  * every one of those branches is exercised offline by the sibling test rather than
- * only argued for in this comment.
+ * only argued for in this comment. Two of them can also be driven LIVE, because a
+ * branch that has never been seen to fire is a branch nobody has seen fire:
+ *
+ *   node tools/live-run/chat/run-provider-failure-classification-live.mjs
+ *     the real endpoint -> `verified`, exit 0
+ *   node ... --endpoint http://127.0.0.1:1/v1
+ *     a real connection refusal -> `external_endpoint_unreachable`, exit 0
+ *   node ... --endpoint <any endpoint that answers 200 to /models>
+ *     -> `external_endpoint_unexpected`, exit 1
+ *
+ * When the reply is not a refusal no turn is driven at all, so the report can never
+ * imply a measurement nothing was measured for.
  *
  * ## The credential
  *
@@ -47,14 +58,13 @@
  * `DEEPSEEK_API_KEY` in the operator's environment is refused by name before any
  * request is made, so running this locally with a real key exported cannot cost
  * anyone money. The value is asserted back out of the product's own store before the
- * turn, and the run root - which is where `auth.json` holds it - is deleted when the
- * run ends.
+ * turn, and the run root's credential files - `auth.json` and the per-connection key
+ * file - are deleted when the run ends (see `removeRunRoot` for why the tree itself
+ * is only best-effort).
  *
  * The response body is kept only as a bounded (`EVIDENCE_BODY_MAX_CHARS`), redacted
  * slice: a provider body is third-party bytes and this is an evidence line, not a
  * transcript. Request headers are never printed.
- *
- *   node tools/live-run/chat/run-provider-failure-classification-live.mjs
  *
  * Requirements: `host/dist-test` (the compiled artifact the live harness family runs
  * against) and a built Magic Context package, and network access to
@@ -138,6 +148,17 @@ export function exitCodeFor(state) {
 }
 
 /**
+ * Whether this observation is the reply this gate knows how to read: a refusal, in JSON.
+ *
+ * Exported because the runner needs the same answer for a different reason: when there is nothing to
+ * classify, no turn is driven at all, so the report cannot imply one was. One predicate, two callers -
+ * a second spelling of this condition is how a runner starts measuring a turn its judgement will ignore.
+ */
+export function reachedARefusal(evidence) {
+  return evidence.reachability === "reached" && evidence.status >= 400 && evidence.jsonBody === true;
+}
+
+/**
  * Judge one observation of a real endpoint's refusal.
  *
  * Order is the whole argument, and each branch answers a different question:
@@ -168,7 +189,7 @@ export function judgeProviderFailureClassification(reading) {
   // accepted, which contradicts the premise), or a body that is not JSON (a captive
   // portal, a proxy's HTML error page, an interstitial). Neither is a credential
   // refusal and neither is "unreachable"; saying so is the point.
-  if (evidence.status < 400 || evidence.jsonBody !== true)
+  if (!reachedARefusal(evidence))
     return Object.freeze({
       state: PROBE_STATES.externalEndpointUnexpected,
       reason: evidence.status < 400 ? "endpoint_accepted_the_invalid_key" : "endpoint_replied_without_a_json_error",
@@ -463,9 +484,17 @@ async function removeRunRoot({ root, agentDir, log }) {
  *
  * Kept separate from `main` so a caller can take the reading without the printing,
  * and so the runner's own module can be imported (by the sibling test) without any
- * network in reach.
+ * network in reach. `endpoint` is a parameter because the three branches must be
+ * demonstrable, not merely argued: the default is the real service this gate is about,
+ * and a caller that points it at a closed port (`http://127.0.0.1:1/v1`) sees the
+ * INCONCLUSIVE branch on a real transport failure rather than an injected one.
  */
-export async function runLiveRun({ environment = process.env, transport = fetch, log = () => {} } = {}) {
+export async function runLiveRun({
+  endpoint = ENDPOINT,
+  environment = process.env,
+  transport = fetch,
+  log = () => {},
+} = {}) {
   assertFakeCredentialOnly(environment);
   const product = await loadProduct();
   // The escape hatch is the only entry whose endpoint, API shape and credential the player
@@ -502,9 +531,9 @@ export async function runLiveRun({ environment = process.env, transport = fetch,
     const manifest = await product.loadHostDeploymentManifest(manifestPath);
 
     // [1] The endpoint's own reply, and the product's own Test path against the same record.
-    const evidence = await readEndpointEvidence({ baseUrl: ENDPOINT, apiKey: FAKE_API_KEY, transport });
+    const evidence = await readEndpointEvidence({ baseUrl: endpoint, apiKey: FAKE_API_KEY, transport });
     log(
-      `endpoint    : GET ${ENDPOINT}/models -> ${evidence.reachability === "reached" ? `HTTP ${evidence.status}` : `UNREACHABLE (${evidence.failure})`}`,
+      `endpoint    : GET ${endpoint}/models -> ${evidence.reachability === "reached" ? `HTTP ${evidence.status}` : `UNREACHABLE (${evidence.failure})`}`,
     );
 
     const service = product.createTavernConnectionService({ agentDir: paths.agentDir });
@@ -515,7 +544,7 @@ export async function runLiveRun({ environment = process.env, transport = fetch,
         apiVersion: 1,
         providerId: product.providerId,
         apiKey: FAKE_API_KEY,
-        baseUrl: ENDPOINT,
+        baseUrl: endpoint,
         apiShape: "openai-completions",
         modelId: MODEL_ID,
       });
@@ -542,35 +571,50 @@ export async function runLiveRun({ environment = process.env, transport = fetch,
         `the product resolves ${resolvedCredential === null ? "no credential" : "a value this probe did not supply"}; refusing before a request is made`,
       );
 
-    // [2] One real turn. The endpoint refuses the placeholder, the Host classifies the
-    // refusal, and the durable turn is read back through the browser contract.
-    const profile = await new product.ModelProfileStore(join(root, "settings", "model-profiles.json")).update(
-      "chat",
-      0,
-      { thinkingLevel: "off", modelId: MODEL_ID, providerId: product.providerId },
-    );
-    log(`chat profile: ${profile.providerId}/${profile.modelId} @ ${profile.thinkingLevel}`);
-
-    authority = await product.createFreshChatAuthority(manifest);
-    const lease = await authority.startMountedChatRuntime();
-    const started = await runOneTurn({ product, manifest, lease });
-    const chatProfile = product.composeTavernProfile({
-      profileId: "gamebuddy.chat-core.reference-pipeline",
-      releaseTier: "chat_core",
-      routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status"],
-      operationIds: ["chat.submit", "chat.cancel"],
-      navigationItemIds: ["chat"],
-    });
-    facade = await product.createReferencePipelineStateFacade(manifest, lease, chatProfile);
-    const state = await facade.read();
-    const turn = state.turn;
-
-    const observedClass = started.providerFailure ?? turn?.providerFailure ?? null;
-    const problemCode = turn?.problemCode ?? started.reasonCode ?? null;
+    // [2] One real turn, and ONLY when there is something for it to classify. When the
+    // endpoint never answered, or answered with something that is not a refusal, the
+    // judgement is already decided by the reply itself - driving a turn there would cost a
+    // runtime and let the report imply a measurement nothing was measured for. One
+    // predicate decides this here and in the judgement, so the two cannot disagree.
+    const measurable = reachedARefusal(evidence);
     const labels = product.messages("en");
-    const sentence = product.turnFailureText(problemCode ?? undefined, labels, observedClass ?? undefined);
     const runtimeUnavailableSentence = product.turnFailureText(RUNTIME_UNAVAILABLE, labels);
     const endpointUnreachableSentence = product.turnFailureText(RUNTIME_UNAVAILABLE, labels, ENDPOINT_UNREACHABLE);
+    let started;
+    let turn = null;
+    let observedClass = null;
+    let problemCode = null;
+    if (measurable) {
+      const profile = await new product.ModelProfileStore(join(root, "settings", "model-profiles.json")).update(
+        "chat",
+        0,
+        { thinkingLevel: "off", modelId: MODEL_ID, providerId: product.providerId },
+      );
+      log(`chat profile: ${profile.providerId}/${profile.modelId} @ ${profile.thinkingLevel}`);
+
+      authority = await product.createFreshChatAuthority(manifest);
+      const lease = await authority.startMountedChatRuntime();
+      started = await runOneTurn({ product, manifest, lease });
+      const chatProfile = product.composeTavernProfile({
+        profileId: "gamebuddy.chat-core.reference-pipeline",
+        releaseTier: "chat_core",
+        routeIds: ["bootstrap", "state.read", "draft.read", "chat.submit", "chat.cancel", "chat.submission_status"],
+        operationIds: ["chat.submit", "chat.cancel"],
+        navigationItemIds: ["chat"],
+      });
+      facade = await product.createReferencePipelineStateFacade(manifest, lease, chatProfile);
+      const state = await facade.read();
+      turn = state.turn;
+      observedClass = started.providerFailure ?? turn?.providerFailure ?? null;
+      problemCode = turn?.problemCode ?? started.reasonCode ?? null;
+      log(
+        `durable     : ${started.status}/${started.reasonCode ?? "none"} providerFailure=${observedClass ?? "ABSENT"}`,
+      );
+      log(`browser     : ${turn?.state ?? "no turn"} problemCode=${problemCode ?? "none"}`);
+    } else {
+      log("no turn     : the reply was not a refusal, so there is nothing to classify");
+    }
+    const sentence = product.turnFailureText(problemCode ?? undefined, labels, observedClass ?? undefined);
     // The classifier applied to the status the endpoint actually returned: the gate's other
     // end. A mapping that moved moves this with it, which is how
     // `classification_mapping_changed` can be told apart from our turn getting it wrong.
@@ -578,9 +622,6 @@ export async function runLiveRun({ environment = process.env, transport = fetch,
       evidence.reachability === "reached"
         ? (product.classifyProviderFailure(`${evidence.status}: ${evidence.redactedBody}`) ?? null)
         : null;
-
-    log(`durable     : ${started.status}/${started.reasonCode ?? "none"} providerFailure=${observedClass ?? "ABSENT"}`);
-    log(`browser     : ${turn?.state ?? "no turn"} problemCode=${problemCode ?? "none"}`);
 
     const judgement = judgeProviderFailureClassification({
       evidence,
@@ -596,7 +637,7 @@ export async function runLiveRun({ environment = process.env, transport = fetch,
       exitCode: exitCodeFor(judgement.state),
       evidence,
       probeOutcome,
-      endpoint: ENDPOINT,
+      endpoint,
       modelId: MODEL_ID,
       providerId: product.providerId,
       credential: FAKE_API_KEY,
@@ -649,20 +690,33 @@ function narrate(run) {
 }
 
 async function main(argv) {
-  if (argv.includes("--help")) {
-    process.stdout.write(
-      "usage: node tools/live-run/chat/run-provider-failure-classification-live.mjs [--help]\n" +
-        "  Points the product's escape-hatch connection at https://api.deepseek.com/v1 with a\n" +
-        "  deliberately invalid key and asserts ONLY the failure classification:\n" +
-        "    exit 0  verified, or the endpoint was unreachable (inconclusive)\n" +
-        "    exit 1  reached it and classified the refusal wrongly, or it answered unexpectedly\n" +
-        "    exit 2  an artifact this runner needs is missing, or a real key is exported\n",
-    );
-    return 0;
+  let endpoint = ENDPOINT;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--help") {
+      process.stdout.write(
+        "usage: node tools/live-run/chat/run-provider-failure-classification-live.mjs [--endpoint <base-url>] [--help]\n" +
+          `  Points the product's escape-hatch connection at ${ENDPOINT} with a deliberately\n` +
+          "  invalid key and asserts ONLY the failure classification:\n" +
+          "    exit 0  verified, or the endpoint was unreachable (inconclusive)\n" +
+          "    exit 1  reached it and classified the refusal wrongly, or it answered unexpectedly\n" +
+          "    exit 2  an artifact this runner needs is missing, or a real key is exported\n\n" +
+          "  --endpoint <base-url>  judge another endpoint. Point it at a closed port\n" +
+          "                         (http://127.0.0.1:1/v1) to see the INCONCLUSIVE branch on a\n" +
+          "                         real transport failure, and at any served endpoint that answers\n" +
+          "                         2xx to see the UNEXPECTED branch.\n",
+      );
+      return 0;
+    }
+    if (argument === "--endpoint" && index + 1 < argv.length) {
+      endpoint = argv[(index += 1)];
+      continue;
+    }
+    throw new Error(`unknown argument: ${argument}`);
   }
   let run;
   try {
-    run = await runLiveRun({ log: (line) => process.stdout.write(`  ${line}\n`) });
+    run = await runLiveRun({ endpoint, log: (line) => process.stdout.write(`  ${line}\n`) });
   } catch (error) {
     if (error instanceof RunnerBlocked) {
       process.stderr.write(`BLOCKED ${error.message}: ${error.detail}\n`);
