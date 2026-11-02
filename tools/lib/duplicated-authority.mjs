@@ -274,8 +274,12 @@ export const DECLARED = Object.freeze([
           "of the published surface",
       },
       {
-        path: "integrations/stardew/action-development/tests/stardew-action-seam-terminals-audit.test.mjs",
-        reason: "the audit test asserts the suspect seam ids it derives, so it has to name the set it expects",
+        path: "integrations/stardew/action-development/tests/stardew-branch-writeset.test.mjs",
+        reason:
+          "names five actions historically bound to one native seam (Object.placementAction) and asserts each is " +
+          "STILL bound to it. It is not a copy of the published surface: nothing here would become wrong if the Mod " +
+          "added or promoted an action, which is the drift this rule exists to catch. Removing an id from this list " +
+          "is a real regression, and the assertion says so by name",
       },
       {
         path: "tools/lib/stardew-native-local-player-fixture.mjs",
