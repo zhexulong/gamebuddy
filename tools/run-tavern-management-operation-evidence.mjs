@@ -39,6 +39,7 @@ const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
 
 import { launchDesktopCompositionGateChild } from "./desktop-composition-launch.mjs";
 import { readMountedTavernManagementProfile } from "./lib/tavern-mounted-operation-vocabulary.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "./lib/operator-gateway.mjs";
 
 const HOST_ROOT = resolve(fileURLToPath(new URL("../host/", import.meta.url)));
 const OUTPUT_ROOT = process.env.GAMEBUDDY_TAVERN_GATE_OUTPUT_ROOT
@@ -627,7 +628,7 @@ async function exerciseOperations(origin, client) {
   await attempt("settings.connection.create", async () => {
     const state = await sendJson(origin, client, "POST", "/api/tavern/v1/settings/connections", {
       apiVersion: 1,
-      providerId: "cpa-oai",
+      providerId: OPERATOR_GATEWAY_PROVIDER_ID,
     });
     // Creating a record must advance the revision and put the record in the
     // list. Accepting the reply because it parsed would pass even if nothing
@@ -718,7 +719,7 @@ async function exerciseOperations(origin, client) {
     // then delete it. The first (activated) record stays.
     const created = await sendJson(origin, client, "POST", "/api/tavern/v1/settings/connections", {
       apiVersion: 1,
-      providerId: "cpa-oai",
+      providerId: OPERATOR_GATEWAY_PROVIDER_ID,
     });
     const entry = Array.isArray(created?.connections) ? created.connections.at(-1) : undefined;
     const freshId = entry?.connectionId;

@@ -27,10 +27,13 @@ test("a modelConfig punctuation regression fails the syntax gate", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-smoke-syntax-"));
   try {
     const source = await readFile(script, "utf8");
-    const valid = 'provider: "cpa-oai", modelId, thinkingLevel: "high"';
+    const valid = 'provider: OPERATOR_GATEWAY_PROVIDER_ID, modelId, thinkingLevel: "high"';
     assert.ok(source.includes(valid), "expected owned syntax-gate mutation anchor");
     const fixture = join(directory, "run-stardew-agent-game-smoke.mjs");
-    await writeFile(fixture, source.replace(valid, 'provider: "cpa-oai" modelId, thinkingLevel: "high"'));
+    await writeFile(
+      fixture,
+      source.replace(valid, 'provider: OPERATOR_GATEWAY_PROVIDER_ID modelId, thinkingLevel: "high"'),
+    );
     const result = await check(fixture);
     assert.notEqual(result.code, 0);
     assert.match(result.output, /SyntaxError/);

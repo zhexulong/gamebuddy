@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { loadSelectedHostProductionModule, selectHostProductionArtifact } from "./lib/host-production-module.mjs";
 import { hasMatchingEquipToolEvidence } from "./lib/stardew-receipt-evidence.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "./lib/operator-gateway.mjs";
 
 const selectedProductionArtifact = await selectHostProductionArtifact();
 const [{ connectLocalCompanion }, { loadKnowledgeBundle }] = await Promise.all([
@@ -72,7 +73,7 @@ try {
     pipeName: config.PipeName,
     bridgeToken: config.BridgeToken,
     runtimeRoot,
-    modelConfig: { provider: "cpa-oai", modelId, thinkingLevel: "high" },
+    modelConfig: { provider: OPERATOR_GATEWAY_PROVIDER_ID, modelId, thinkingLevel: "high" },
     gameplaySubagent: process.argv.includes("--enable-gameplay-subagent"),
     knowledge,
     gameVersion,
@@ -189,11 +190,11 @@ try {
   const summary = {
     state: passed ? "passed" : tracePassed ? "trace_passed" : "blocked",
     traceOnly,
-    provider: "cpa-oai",
+    provider: OPERATOR_GATEWAY_PROVIDER_ID,
     model: modelId,
     thinkingLevel: "high",
     gameplaySubagent: process.argv.includes("--enable-gameplay-subagent")
-      ? { provider: "cpa-oai", model: "gpt-5.6-luna", thinkingLevel: "medium" }
+      ? { provider: OPERATOR_GATEWAY_PROVIDER_ID, model: "gpt-5.6-luna", thinkingLevel: "medium" }
       : null,
     identity: {
       saveId: identity.saveId,
@@ -234,11 +235,11 @@ try {
     JSON.stringify({
       state: "blocked",
       reasonCode: reason.replace(/\s+/g, " ").slice(0, 256),
-      provider: "cpa-oai",
+      provider: OPERATOR_GATEWAY_PROVIDER_ID,
       model: modelId,
       thinkingLevel: "high",
       gameplaySubagent: process.argv.includes("--enable-gameplay-subagent")
-        ? { provider: "cpa-oai", model: "gpt-5.6-luna", thinkingLevel: "medium" }
+        ? { provider: OPERATOR_GATEWAY_PROVIDER_ID, model: "gpt-5.6-luna", thinkingLevel: "medium" }
         : null,
       eventCount,
       settledCount,

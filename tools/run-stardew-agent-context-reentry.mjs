@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadHostProductionModule } from "./lib/host-production-module.mjs";
+import { OPERATOR_GATEWAY_PROVIDER_ID } from "./lib/operator-gateway.mjs";
 
 const { connectLocalCompanion } = await loadHostProductionModule("local-bootstrap.js");
 
@@ -48,7 +49,7 @@ try {
     pipeName: config.PipeName,
     bridgeToken: config.BridgeToken,
     runtimeRoot,
-    modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+    modelConfig: { provider: OPERATOR_GATEWAY_PROVIDER_ID, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
   });
   await waitForBootstrap(connected.runtime.session, 120_000);
   phases.push(await runTurn(connected, firstPrompt, "initial"));
@@ -61,7 +62,7 @@ try {
       pipeName: config.PipeName,
       bridgeToken: config.BridgeToken,
       runtimeRoot,
-      modelConfig: { provider: "cpa-oai", modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
+      modelConfig: { provider: OPERATOR_GATEWAY_PROVIDER_ID, modelId: "deepseek-v4.1-flash", thinkingLevel: "high" },
     },
     30_000,
   );
@@ -78,7 +79,7 @@ try {
   console.log(
     JSON.stringify({
       state: passed ? "passed" : "blocked",
-      provider: "cpa-oai",
+      provider: OPERATOR_GATEWAY_PROVIDER_ID,
       model: "deepseek-v4.1-flash",
       thinkingLevel: "high",
       identity: {
@@ -101,7 +102,7 @@ try {
     JSON.stringify({
       state: "blocked",
       reasonCode: redact(error instanceof Error ? error.message : String(error)),
-      provider: "cpa-oai",
+      provider: OPERATOR_GATEWAY_PROVIDER_ID,
       model: "deepseek-v4.1-flash",
       thinkingLevel: "high",
       phases,
