@@ -94,7 +94,7 @@ const MAX_SCANNED_BYTES = 2 * 1024 * 1024;
  * Groups: 1 = field, 2 = number.
  */
 const REGEX_FACT_PATTERN =
-  /\/(?:[^\/\n\\]|\\.)*?"?(contextWindow|maxTokens|reasoning|cost)"?\\?"?\s*:\s*(-?\d[\d_]*(?:\.\d+)?)(?:[^\/\n]|\\.)*\/[a-z]*/gu;
+  /\/(?:[^/\n\\]|\\.)*?"?(contextWindow|maxTokens|reasoning|cost)"?\\?"?\s*:\s*(-?\d[\d_]*(?:\.\d+)?)(?:[^/\n]|\\.)*\/[a-z]*/gu;
 
 /** The gate spells fact names, model ids and the owner path on purpose. */
 const SELF = "tools/lib/catalog-fact-ownership.mjs";
@@ -106,7 +106,7 @@ const GATE_TESTS = "tools/check-catalog-fact-ownership.test.mjs";
  * Files this gate does not scan: its own two, their tests, and the OWNER itself.
  *
  * The catalog is exempt because its declarations ARE the authority - a gate that
- * reported the owner.s own numbers as copies of themselves would be comparing a fact
+ * reported the owner's own numbers as copies of themselves would be comparing a fact
  * against itself and calling the agreement a defect. The gate files are exempt because
  * they have to spell the fact names and the owner path to look for them.
  */
@@ -217,7 +217,6 @@ function sameFact(left, right) {
 
 /** A number literal, underscores and sign included. */
 const NUMBER_PATTERN = "-?\\d[\\d_]*(?:\\.\\d+)?";
-const NUMBER = new RegExp(NUMBER_PATTERN);
 
 function toPosix(path) {
   return path.split(sep).join("/");
@@ -431,10 +430,131 @@ function describe(value) {
 }
 
 /**
+ * The spellings of a fact found in CODE: a `field: <number>` or a `cost: { ... }`
+ * block that is not inside a string or a comment, each carrying the brace region it
+ * sits in so its model id can be resolved afterwards.
+ */
+function codeSpellings(text, { strings, comments, regions }) {
+  const spellings = [];
+  const live = (index, length) =>
+    !(coveredBy(strings, index, length) || comments.some(([start, end]) => index >= start && index < end));
+  for (const field of FACT_FIELDS) {
+    if (field === "cost") {
+      for (const match of text.matchAll(/(?<![\w$."])"?cost"?\s*:\s*\{/gu)) {
+        if (!live(match.index, match[0].length)) continue;
+        const record = innermost(regions, match.index);
+        if (record === null) continue;
+        const rates = spelledCost(text.slice(record[0], record[1]));
+        if (rates !== null) spellings.push({ field, position: match.index, record, spelled: rates });
+      }
+      continue;
+    }
+    for (const match of text.matchAll(
+      new RegExp(`(?<![\\w$."])"?${field}"?\\s*:\\s*(${NUMBER_PATTERN})(?![\\w$.])`, "gu"),
+    )) {
+      if (!live(match.index, match[0].length)) continue;
+      const record = innermost(regions, match.index);
+      if (record === null) continue;
+      spellings.push({ field, position: match.index, record, spelled: numberOf(match[1]) });
+    }
+  }
+  return spellings;
+}
+
+/** The value one fact field spells inside a text, or null when it spells none. */
+function spelledField(content, field) {
+  if (field === "cost") return spelledCost(content);
+  const match = new RegExp(`(?<![\\w$."])"?${field}"?\\s*:\\s*(${NUMBER_PATTERN})(?![\\w$.])`, "u").exec(content);
+  return match === null ? null : numberOf(match[1]);
+}
+
+/**
+ * The spellings pinned inside a STRING LITERAL whose content names a shipped model:
+ * an embedded `models.json` document is exactly that.
+ */
+function pinnedDocumentSpellings(text, strings, models) {
+  const spellings = [];
+  for (const [start, end] of strings) {
+    const content = text.slice(start, end);
+    if (![...models.keys()].some((modelId) => content.includes(`"${modelId}"`))) continue;
+    for (const field of FACT_FIELDS) {
+      const spelled = spelledField(content, field);
+      if (spelled === null) continue;
+      const offset = content.search(new RegExp(`(?<![\\w$."])"?${field}"?\\s*:`, "u"));
+      spellings.push({ field, position: start + Math.max(offset, 0), record: [start, end], spelled });
+    }
+  }
+  return spellings;
+}
+
+/**
+ * The spellings asserted inside a REGEX LITERAL (see REGEX_FACT_PATTERN) - the only
+ * way a test can pin a fact in a serialized document. Each is associated with the
+ * shipped model whose id string sits in the same enclosing block, which is the
+ * "next to that model id" rule.
+ */
+function regexAssertionSpellings(text, { strings, comments, regions }, models) {
+  const spellings = [];
+  for (const match of text.matchAll(REGEX_FACT_PATTERN)) {
+    if (coveredBy(strings, match.index, match[0].length)) continue;
+    if (comments.some(([start, end]) => match.index >= start && match.index < end)) continue;
+    const record = innermost(regions, match.index);
+    if (record === null) continue;
+    const regionText = text.slice(record[0], record[1]);
+    for (const modelId of models.keys()) {
+      if (!regionText.includes(`"${modelId}"`)) continue;
+      spellings.push({ field: match[1], position: match.index, record, spelled: numberOf(match[2]), modelId });
+    }
+  }
+  return spellings;
+}
+
+/** The owner's declared value for one field, or undefined when it declares none. */
+function declaredValue(models, modelId, field) {
+  return modelId === null ? undefined : models.get(modelId)?.facts[field];
+}
+
+/**
+ * The finding one resolved spelling contributes, or null when it is not a finding:
+ * an id the catalog does not describe, a record with no id at all, or an exemption.
+ */
+function findingFor(text, path, spelling, models, exemptions) {
+  // The regex pass already resolved its model from the enclosing block; the other
+  // passes resolve it from the record the fact itself sits in.
+  let modelId = spelling.modelId ?? null;
+  let computedId = false;
+  if (spelling.modelId === undefined) {
+    const id = idIn(text.slice(spelling.record[0], spelling.record[1]));
+    if (id === null) return null;
+    if (id.kind === "literal") {
+      // A literal id this catalog does not describe belongs to an endpoint the catalog
+      // is not the owner of, so there is nothing to compare a copy against.
+      if (!models.has(id.value)) return null;
+      modelId = id.value;
+    } else {
+      computedId = true;
+    }
+  }
+  if (exemptionFor(exemptions, path, modelId, spelling.field, computedId) !== null) return null;
+  const declared = declaredValue(models, modelId, spelling.field);
+  return {
+    modelId,
+    computedId,
+    field: spelling.field,
+    path,
+    line: lineAt(text, spelling.position),
+    text: lineTextAt(text, spelling.position),
+    declared: declared === undefined ? null : declared,
+    spelled: spelling.spelled,
+    matches: declared === undefined ? false : sameFact(declared, spelling.spelled),
+  };
+}
+
+/**
  * Every second spelling of a declared fact in the scanned trees.
  *
- * A finding is `{ modelId, field, path, line, text, declared, spelled }`, where
- * `declared` is the owner's value and `spelled` the copy's. `modelId` is null when
+ * A finding is `{ modelId, field, path, line, text, declared, spelled, matches }`,
+ * where `declared` is the owner's value and `spelled` the copy's. `modelId` is null when
  * the record names its model through a computed expression, which is the generic
  * writer shape rather than one model's own entry.
  */
@@ -446,125 +566,14 @@ export function findCatalogFactCopies({ root, models, exemptions = DECLARED_EXEM
     const text = readFileSync(file, "utf8");
     const { strings, comments } = lexicalRanges(text);
     const blanked = blankRanges(text, [...strings, ...comments]);
-    const regions = braceRegions(blanked);
-
-    // A fact spelling is looked for outside strings and comments...
-    const spellings = [];
-    for (const field of FACT_FIELDS) {
-      if (field === "cost") {
-        for (const match of text.matchAll(/(?<![\w$."])"?cost"?\s*:\s*\{/gu)) {
-          const covered = coveredBy(strings, match.index, match[0].length);
-          const commented = comments.some(([start, end]) => match.index >= start && match.index < end);
-          if (covered || commented) continue;
-          const record = innermost(regions, match.index);
-          if (record === null) continue;
-          const rates = spelledCost(text.slice(record[0], record[1]));
-          if (rates !== null) spellings.push({ field, position: match.index, record, spelled: rates });
-        }
-        continue;
-      }
-      for (const match of text.matchAll(
-        new RegExp(`(?<![\\w$."])"?${field}"?\\s*:\\s*(${NUMBER_PATTERN})(?![\\w$.])`, "gu"),
-      )) {
-        const covered = coveredBy(strings, match.index, match[0].length);
-        const commented = comments.some(([start, end]) => match.index >= start && match.index < end);
-        if (covered || commented) continue;
-        const record = innermost(regions, match.index);
-        if (record === null) continue;
-        spellings.push({ field, position: match.index, record, spelled: numberOf(match[1]) });
-      }
-    }
-
-    // ...and inside a string literal whose content is an embedded document that
-    // names a shipped model, because a pinned models.json is exactly that.
-    for (const [start, end] of strings) {
-      const content = text.slice(start, end);
-      if (![...models.keys()].some((modelId) => content.includes(`"${modelId}"`))) continue;
-      for (const field of FACT_FIELDS) {
-        const spelled =
-          field === "cost"
-            ? spelledCost(content)
-            : (() => {
-                const match = new RegExp(`(?<![\\w$."])"?${field}"?\\s*:\\s*(${NUMBER_PATTERN})(?![\\w$.])`, "u").exec(
-                  content,
-                );
-                return match === null ? null : numberOf(match[1]);
-              })();
-        if (spelled === null) continue;
-        const position = content.search(new RegExp(`(?<![\\w$."])"?${field}"?\\s*:`, "u"));
-        spellings.push({ field, position: start + Math.max(position, 0), record: [start, end], spelled });
-      }
-    }
-
-    // ...and inside a REGEX LITERAL asserting a serialized document (see REGEX_FACT_PATTERN):
-    // the one way a test can pin a fact in a models.json string. Associated with the shipped
-    // model whose id string sits in the same enclosing block.
-    for (const match of text.matchAll(REGEX_FACT_PATTERN)) {
-      // No "is this really division?" heuristic here. The pattern already requires a
-      // quoted fact NAME, a colon and a number between two slashes, which no arithmetic
-      // expression can produce; a guard on the preceding character only refused the
-      // shapes that actually occur (`return /"contextWindow": 131072/.test(x)`).
-      const covered = coveredBy(strings, match.index, match[0].length);
-      const commented = comments.some(([start, end]) => match.index >= start && match.index < end);
-      if (covered || commented) continue;
-      const record = innermost(regions, match.index);
-      if (record === null) continue;
-      const regionText = text.slice(record[0], record[1]);
-      for (const modelId of models.keys()) {
-        if (!regionText.includes('"' + modelId + '"')) continue;
-        spellings.push({ field: match[1], position: match.index, record, spelled: numberOf(match[2]), modelId });
-      }
-    }
-
-    for (const spelling of spellings) {
-      // A regex-literal spelling already resolved its model from the enclosing block;
-      // the other passes resolve it from the record the fact sits in.
-      if (spelling.modelId !== undefined) {
-        const declaredFact = models.get(spelling.modelId)?.facts[spelling.field];
-        const matchesFact = declaredFact === undefined ? false : sameFact(declaredFact, spelling.spelled);
-        if (exemptionFor(exemptions, path, spelling.modelId, spelling.field, false) !== null) continue;
-        findings.push({
-          modelId: spelling.modelId,
-          computedId: false,
-          field: spelling.field,
-          path,
-          line: lineAt(text, spelling.position),
-          text: lineTextAt(text, spelling.position),
-          declared: declaredFact === undefined ? null : declaredFact,
-          spelled: spelling.spelled,
-          matches: matchesFact,
-        });
-        continue;
-      }
-      const recordText = text.slice(spelling.record[0], spelling.record[1]);
-      const id = idIn(recordText);
-      if (id === null) continue;
-      let modelId = null;
-      let computedId = false;
-      if (id.kind === "literal") {
-        // A literal id this catalog does not describe belongs to an endpoint the
-        // catalog is not the owner of, so there is nothing to compare it against.
-        if (!models.has(id.value)) continue;
-        modelId = id.value;
-      } else {
-        computedId = true;
-      }
-      const declared = modelId === null ? undefined : models.get(modelId)?.facts[spelling.field];
-      const spelled = spelling.spelled;
-      const matches = declared === undefined ? false : sameFact(declared, spelled);
-      const exemption = exemptionFor(exemptions, path, modelId, spelling.field, computedId);
-      if (exemption !== null) continue;
-      findings.push({
-        modelId,
-        computedId,
-        field: spelling.field,
-        path,
-        line: lineAt(text, spelling.position),
-        text: lineTextAt(text, spelling.position),
-        declared: declared === undefined ? null : declared,
-        spelled,
-        matches,
-      });
+    const ranges = { strings, comments, regions: braceRegions(blanked) };
+    for (const spelling of [
+      ...codeSpellings(text, ranges),
+      ...pinnedDocumentSpellings(text, strings, models),
+      ...regexAssertionSpellings(text, ranges, models),
+    ]) {
+      const finding = findingFor(text, path, spelling, models, exemptions);
+      if (finding !== null) findings.push(finding);
     }
   }
   findings.sort(
@@ -589,7 +598,9 @@ export function findCatalogFactCopies({ root, models, exemptions = DECLARED_EXEM
  */
 export function formatFinding(finding) {
   const owner = finding.modelId === null ? "computed-id" : finding.modelId;
-  const name = finding.computedId ? "unowned_literal" : finding.matches ? "second_spelling" : "fact_mismatch";
+  let name = "fact_mismatch";
+  if (finding.computedId) name = "unowned_literal";
+  else if (finding.matches) name = "second_spelling";
   return (
     `catalog_fact_ownership:${name}:${owner}:${finding.field}:${finding.path}:${finding.line}: ` +
     `catalog=${describe(finding.declared)} spelled=${describe(finding.spelled)}`
