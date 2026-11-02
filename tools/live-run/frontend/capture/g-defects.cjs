@@ -100,11 +100,20 @@ const sweep = (testid) => {
     .sort((left, right) => left.contrast - right.contrast)
     .slice(0, 6);
 
-  const emptyBlocks = inside.filter((el) => {
-    const r = el.getBoundingClientRect();
-    const text = (el.innerText ?? "").replace(/\s+/g, " ").trim();
-    return r.width * r.height > 40000 && text.length <= 24 && el.children.length <= 2;
-  }).slice(0, 8).map((el) => {
+ 	const emptyBlocks = inside.filter((el) => {
+		const r = el.getBoundingClientRect();
+		const text = (el.innerText ?? "").replace(/\s+/g, " ").trim();
+		/*
+		 * An editable control is blank because it is waiting for the player, not wasting space. The
+		 * Characters panel's 433x101 "empty block" is its user-definition textarea, and the Game panel's
+		 * 693x320 is a label/value list whose rows are children rather than text - two screenshots showed
+		 * both, and both were reported as defects by the first version of this filter.
+		 */
+		if (el.matches("textarea, input, select, [contenteditable='true'], [contenteditable='']")) return false;
+		/* A container whose own text is short but which holds list rows is a list, not a gap. */
+		if (el.querySelector("li, tr, [role='listitem'], [role='row']") !== null) return false;
+		return r.width * r.height > 40000 && text.length <= 24 && el.children.length <= 2;
+	}).slice(0, 8).map((el) => {
     const r = el.getBoundingClientRect();
     return { tag: el.tagName.toLowerCase(), w: Math.round(r.width), h: Math.round(r.height), text: (el.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 24) };
   });

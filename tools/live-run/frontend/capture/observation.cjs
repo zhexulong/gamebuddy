@@ -74,22 +74,31 @@ async function readRuntimeFacts(page) {
 	});
 }
 
-/** First-paint facts. Every field is null when that entry never arrived, which is itself a reading. */
+/**
+ * First-paint facts. Every field is null when that entry never arrived, which is itself a reading.
+ *
+ * `largestContentfulPaintMs` is NOT read here, and that is deliberate. LCP entries only exist when a
+ * `PerformanceObserver` was subscribed with `type: "largest-contentful-paint"` BEFORE the content
+ * painted; `getEntriesByType("largest-contentful-paint")` returns an empty list on a page where nobody
+ * subscribed, even though the page has content. The first version of this reader did exactly that, so
+ * every driver reported `lcp=unobserved` across a full run - a field that could never produce a number,
+ * listed as if it were measured.
+ *
+ * Measuring LCP properly means the launch phase installing the observer before navigation, which is a
+ * different change in a different file. Until then the field is absent rather than permanently empty:
+ * a reader who wants LCP must run Lighthouse (which installs its own observer) rather than trust a
+ * mark this kit does not take.
+ */
 async function readPaintFacts(page) {
 	return page.evaluate(() => {
 		if (typeof performance === "undefined" || typeof performance.getEntriesByType !== "function") {
-			return { firstPaintMs: null, firstContentfulPaintMs: null, largestContentfulPaintMs: null };
+			return { firstPaintMs: null, firstContentfulPaintMs: null };
 		}
 		const at = (name) => {
 			const entry = performance.getEntriesByType("paint").find((candidate) => candidate.name === name);
 			return entry === undefined ? null : Math.round(entry.startTime);
 		};
-		const lcp = performance.getEntriesByType("largest-contentful-paint");
-		return {
-			firstPaintMs: at("first-paint"),
-			firstContentfulPaintMs: at("first-contentful-paint"),
-			largestContentfulPaintMs: lcp.length === 0 ? null : Math.round(lcp[lcp.length - 1].startTime),
-		};
+		return { firstPaintMs: at("first-paint"), firstContentfulPaintMs: at("first-contentful-paint") };
 	});
 }
 
@@ -124,8 +133,7 @@ async function observe(page, say, label = "run") {
 	const paint = await readPaintFacts(page);
 	say(
 		`PAINT ${label}: firstPaint=${paint.firstPaintMs === null ? "unobserved" : `${paint.firstPaintMs}ms`} ` +
-			`fcp=${paint.firstContentfulPaintMs === null ? "unobserved" : `${paint.firstContentfulPaintMs}ms`} ` +
-			`lcp=${paint.largestContentfulPaintMs === null ? "unobserved" : `${paint.largestContentfulPaintMs}ms`}`,
+			`fcp=${paint.firstContentfulPaintMs === null ? "unobserved" : `${paint.firstContentfulPaintMs}ms`}`,
 	);
 
 	return { durations, runtime, paint };
