@@ -295,6 +295,65 @@ export const DECLARED = Object.freeze([
       SELF_TESTS_EXEMPTION,
     ]),
   }),
+  Object.freeze({
+    id: "operator-gateway-endpoint",
+    description:
+      "The operator's own gateway address has one owner, `DEFAULT_OPERATOR_GATEWAY_BASE_URL` in " +
+      "host/src/tavern/provider-catalog.ts. Three modules used to spell `http://127.0.0.1:8317/v1` independently - the " +
+      "catalog entry the probe reads, the `models.json` block the Agent runtime is handed and the gameplay sub-agent's own " +
+      "copy of that block - so a drift stayed invisible until a probe said `ready` against one gateway while the Agent's " +
+      "first turn dialled another (collapsed in eff0a523). Everything else reads `operatorGatewayBaseUrl()`.",
+    ownerPath: "host/src/tavern/provider-catalog.ts",
+    valuePattern: "127\\.0\\.0\\.1:8317",
+    allowedOtherPaths: Object.freeze([
+      {
+        path: "host/src/tavern/operator-gateway-endpoint.test.ts",
+        reason:
+          "pins the default against the literal existing developer roots hold, and the near-miss shapes the " +
+          "resolver has to refuse",
+      },
+      {
+        path: "host/src/tavern/pi-provider-store.test.ts",
+        reason: "a golden `models.json` document asserted byte-for-byte has to name the address it pins",
+      },
+      // The four developer harnesses below keep the same address as their unset-environment fallback. They are a
+      // second spelling, not a second owner of the product's endpoint: no Host path reads them, they are run by a
+      // human on the operator's own machine, and a standalone `node tools/....mjs` cannot import the Host module.
+      // Replacing those fallbacks with one tools-level default is the better answer and is recorded as a follow-up.
+      {
+        path: "tools/grade-historian-voice.mjs",
+        reason:
+          "a standalone model-grader harness whose unset-environment fallback is the operator's own gateway; " +
+          "run by a developer, read by no product path",
+      },
+      {
+        path: "tools/run-cognitive-companion-test.mjs",
+        reason:
+          "a standalone benchmark probe whose unset-environment fallback is the operator's own gateway; run by a " +
+          "developer, read by no product path",
+      },
+      {
+        path: "tools/run-live-chat-card-e2e.mjs",
+        reason:
+          "a standalone live-run probe whose unset-environment fallback is the operator's own gateway; run by a " +
+          "developer, read by no product path",
+      },
+      {
+        path: "tools/run-live-swipe-and-tree-e2e.mjs",
+        reason:
+          "a standalone live-run probe whose unset-environment fallback is the operator's own gateway; run by a " +
+          "developer, read by no product path",
+      },
+      {
+        path: "tools/lib/live-run-preflight.test.mjs",
+        reason:
+          "a test fixture claiming a provider root and asserting the URL the preflight dials, so it has to name " +
+          "the address it expects",
+      },
+      SELF_EXEMPTION,
+      SELF_TESTS_EXEMPTION,
+    ]),
+  }),
 ]);
 
 function toPosix(path) {
