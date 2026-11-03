@@ -11,6 +11,15 @@ const en = {
   readOnlyChat: "Read-only chat",
   online: "Online",
   generating: "Thinking…",
+  // The bar's other two words, and the reason there are three states instead of two. `online` used
+  // to be the whole of "not generating", so a conversation with no model behind it - the fresh
+  // install - claimed to be online. The subject of both new words is THIS conversation, never the
+  // cause: a player with a configured connection whose model id is wrong must not be sent to the
+  // connection panel by a word that blames their configuration. `statusUnknown` exists because the
+  // badge cannot be omitted (`AppBar.statusLabel` is required and the accessible name is read from
+  // it), and an unanswered route read is not evidence that a reply can reach a model.
+  statusNotReady: "Not ready to send",
+  statusUnknown: "Status unknown",
   voiceUnavailable: "Voice unavailable",
   voiceReady: "Voice ready — press to talk",
   voiceSpeaking: "Companion speaking…",
@@ -1120,6 +1129,8 @@ const zh: Messages = {
   readOnlyChat: "只读会话",
   online: "在线",
   generating: "思考中…",
+  statusNotReady: "还不能发送",
+  statusUnknown: "状态未知",
   voiceUnavailable: "语音不可用",
   voiceReady: "语音就绪 — 可按键说话",
   voiceSpeaking: "角色正在说话…",

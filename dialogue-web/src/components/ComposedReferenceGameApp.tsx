@@ -1288,10 +1288,10 @@ export function ComposedReferenceGameApp() {
             view.session.snapshot.chat.turn.providerFailure,
           )
         : null;
-  // The app-bar indicator is the Chat surface's own connection/turn fact: a turn
-  // is in flight from the moment a submission is admitted until the authoritative
-  // turn reaches a terminal state. The Game connection has its own drawer
-  // (design/26 §4.1, design/104 §2); it is not announced from here.
+  // Whether a turn is in flight: from the moment a submission is admitted until the authoritative
+  // turn reaches a terminal state. It is the bar's first word (`statusLabel` below) and the composer's
+  // busy state. The Game connection has its own drawer (design/26 §4.1, design/104 §2); it is not
+  // announced from here.
   const turnInFlight =
     view.kind === "ready" &&
     (view.session.pending !== null ||
@@ -1311,6 +1311,32 @@ export function ComposedReferenceGameApp() {
   const mountedTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
 
   const arrivalReads = useArrivalReread(shownSurface, bootstrap, localeRef, rereadChat, managementPipelineApiRef);
+
+  /**
+   * The app bar's status word, from the only facts this shell actually holds.
+   *
+   * A turn in flight is the one state that was ever honest on its own. Beyond it, the bar used to say
+   * `online` for everything that was not generating - so a conversation with no model behind it, the
+   * fresh install, claimed to be online - and the shell cannot do better by looking at the operation
+   * list: `chat.submit` is projected `available` exactly when no turn exists (`host/src/tavern/
+   * reference-pipeline-state.ts`, `projectOperations`), which is a fact about the turn, not about the
+   * configuration. The one fact about whether a reply can reach a model is `chatModelRoute`, read
+   * from the two settings projections by `chat-model-route.ts`, and it is what these two words say.
+   *
+   * `online` therefore means what this shell can know - a saved connection is active, so the next
+   * turn is sent through it - and not "the Host is reachable": there is no health fact here at all,
+   * and a mount that is `ready` got that snapshot from the Host moments ago. `unknown` is the route
+   * read that did not answer, and an answer that did not arrive is not evidence that one would; the
+   * badge cannot be omitted (`AppBar.statusLabel` is required and its accessible name is read from
+   * it), so it says so instead of guessing.
+   */
+  const statusLabel = turnInFlight
+    ? labels().generating
+    : arrivalReads.chatModelRoute.kind === "connection"
+      ? labels().online
+      : arrivalReads.chatModelRoute.kind === "none"
+        ? labels().statusNotReady
+        : labels().statusUnknown;
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -1340,7 +1366,7 @@ export function ComposedReferenceGameApp() {
               companionName={view.session.snapshot.chat.companion.name}
               companionHandle={view.session.snapshot.chat.companion.handle}
               companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-              statusLabel={turnInFlight ? labels().generating : labels().online}
+              statusLabel={statusLabel}
               statusTone={turnInFlight ? "progress" : "idle"}
               entries={[
                 // The surfaces are peers: each entry selects the region's content and
