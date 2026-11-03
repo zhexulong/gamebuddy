@@ -143,10 +143,45 @@ export async function launchStardewLiveRun({
   }
 
   const launchedPid = pid;
+  // HOW the process ended, captured from the handle that owns it.
+  //
+  // Three runs (`round21`, `round27`, and every night of `round26`) ended with the process gone and no channel able to
+  // say why: SMAPI writes no shutdown, no `SMAPI-crash.txt` appears, Windows records no Application or System event in
+  // the whole window (verified against a log that holds 40 events in 24 h, so the empty window is real), the Mod has no
+  // `Exit` path, and no Stardew live-run path calls `kill`. The instrumented heartbeat then ruled out memory as well -
+  // `managedMB` and `wsMB` are FLAT over the second half of the run.
+  //
+  // The one channel that was never opened is the child handle itself. Node reports `(code, signal)` on `exit`, and that
+  // pair separates the possibilities that everything else collapsed: a **code** means the process ended itself, a
+  // **signal** means something else terminated it, and both being null means the handle went away without the runtime
+  // being told. No log can distinguish those; this can.
+  //
+  // Recorded rather than acted on: nothing here changes what the launcher does, and `close()` still reclaims the tree.
+  const exitRecord = { code: null, signal: null, atMs: null, uptimeMs: null };
+  const exitObserved = new Promise((resolveExit) => {
+    child.once("exit", (code, signal) => {
+      exitRecord.code = code;
+      exitRecord.signal = signal;
+      exitRecord.atMs = Date.now();
+      exitRecord.uptimeMs = typeof child.connected === "boolean" ? Date.now() - exitRecord.atMs : null;
+      resolveExit(Object.freeze({ ...exitRecord }));
+    });
+  });
   return Object.freeze({
     pid,
     pipeName,
     windowMode: mode,
+    /**
+     * HOW the game process ended: `{ code, signal, atMs }`, or nulls while it is still running.
+     *
+     * Read it after a run to tell “the game exited” from “the game was terminated”: a code is the first, a signal is the
+     * second, and both null means the exit was never reported to the runtime.
+     */
+    get exit() {
+      return Object.freeze({ ...exitRecord });
+    },
+    /** Resolves when the child reports its exit; never resolves while the process lives. */
+    exitObserved,
     /**
      * Reclaim the launch AND its tree.
      *

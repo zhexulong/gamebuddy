@@ -60,6 +60,15 @@ try {
     timeoutMs: 150_000,
   });
   console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid, windowMode: game.windowMode }));
+  // Log the moment the game process ends, as it happens, with the pair that separates the two possibilities.
+  //
+  // A **code** means the process ended itself; a **signal** means something else terminated it; both null means the exit
+  // was never reported to the runtime. Three runs ended with no channel able to say which, so this is the one that can -
+  // and it is logged EAGERLY rather than after the runner completes, because the interesting case is precisely the one
+  // where the process disappears while the harness is still waiting.
+  void game.exitObserved.then((exit) => {
+    console.error("SMAPI_EXIT", JSON.stringify(exit));
+  });
 
   // 2. Now run the ladder runner against the live bridge.
   const runner = spawn(process.execPath, ["tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"], {
@@ -78,6 +87,8 @@ try {
 
   const exitCode = await new Promise((resolvePromise) => runner.once("close", resolvePromise));
   console.error("RUNNER_EXIT", exitCode);
+  // Also reported at the end, because the eager line above only fires while this process is still alive to print it.
+  console.error("SMAPI_EXIT_AT_END", JSON.stringify(game?.exit ?? null));
   const resultLine = runnerStdout
     .trim()
     .split("\n")
