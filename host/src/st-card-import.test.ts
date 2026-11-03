@@ -844,6 +844,18 @@ const IMPORT_LOSS_FIXTURES: Readonly<Record<StCardImportLossReason, ImportLossFi
       post_history_instructions: "x".repeat(ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes + 1),
     },
   },
+  unrenderable_post_history_instructions: {
+    field: "post_history_instructions",
+    // The same field, a different loss: the record is stored verbatim, and the catalog
+    // omits it whole when it carries a macro this product deliberately leaves literal.
+    // The review therefore names the field and the macro now, not after a chat fails.
+    count: 1,
+    data: {
+      name: "Rin",
+      description: "calm",
+      post_history_instructions: "Close as {{time}} says.",
+    },
+  },
 });
 
 /**
@@ -903,6 +915,42 @@ test("rule: every declared import loss is produced by its own card and reported 
       report.losses,
     );
   }
+});
+
+/**
+ * The field-level loss, which is a different fact from an entry-level one: `omitted` names one dropped
+ * world-book entry per row, while this row names the macros in the ONE field the catalog will omit.
+ * Two shapes, because a field name in an entry title slot would give one member two meanings.
+ */
+test("rule: a closing direction the catalog will omit names its macros, not only a count", () => {
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: IMPORT_LOSS_FIXTURES.unrenderable_post_history_instructions.data,
+    }),
+  );
+  const loss = report.losses.find((entry) => entry.reason === "unrenderable_post_history_instructions");
+  assert.equal(loss?.field, "post_history_instructions");
+  assert.equal(loss?.count, 1);
+  assert.deepEqual(loss?.macros, [{ token: "{{time}}", standard: true }]);
+  assert.equal(Object.hasOwn(loss ?? {}, "omitted"), false, "a field-level loss carries no entry title");
+
+  // The macros that ARE filled are never a loss: `{{char}}` and `{{user}}` render under every table
+  // this product builds, so naming either would be false about the card the player wrote.
+  const filled = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        post_history_instructions: "Close by raking {{char}}'s coals, then look at {{user}}.",
+      },
+    }),
+  );
+  assert.deepEqual(
+    filled.losses.filter((entry) => entry.field === "post_history_instructions"),
+    [],
+    "a macro the render fills is not a loss",
+  );
 });
 
 test("rule: a card that loses material three ways names all three losses", () => {
