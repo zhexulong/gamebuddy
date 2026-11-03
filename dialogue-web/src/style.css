@@ -2211,6 +2211,9 @@
     border-color: rgba(217, 101, 101, 0.45);
   }
 
+  /* The row stays a wrapping row at every width: it was turned into a column at <=560 px, and
+   measured at 400x800 that column put the row's own "Save and activate" control at y 844,
+   bottom 888 - 88 px below the window, in a strip 310 px tall that the row fits in 200. */
   .connection-row .composer-actions {
     flex-wrap: wrap;
   }
@@ -2219,11 +2222,21 @@
     color: var(--danger);
   }
 
-  @media (max-width: 560px) {
-    .connection-row .composer-actions {
-      flex-direction: column;
-      align-items: stretch;
-    }
+  /* The two selects below carry labels whose class names them visually hidden, and no rule
+   implemented it: measured at 400x800 they laid out in the strip as two lines of body text,
+   58 px of the row's height, and pushed the row's next action to bottom 836. The recipe keeps
+   them in the accessibility tree, which is what names their selects; it only takes them out of
+   the flow and out of the paint. */
+  .connection-row .visually-hidden-input-label {
+    position: absolute;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   /* --- Model profiles (design/28 §2.3) --- */

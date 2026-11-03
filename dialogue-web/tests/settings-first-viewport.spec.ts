@@ -125,16 +125,14 @@ const OPERATOR = {
 };
 
 /** Every route the composed shell and the Settings panels read. */
-async function stubSettingsRoutes(page: Page): Promise<void> {
+async function stubSettingsRoutes(page: Page, connections: readonly unknown[] = []): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
-    route.fulfill(
-      json200({ apiVersion: 1, revision: 3, active: null, connections: [], providers: [ESCAPE_HATCH, OPERATOR] }),
-    ),
+    route.fulfill(json200({ apiVersion: 1, revision: 3, active: null, connections, providers: [ESCAPE_HATCH, OPERATOR] })),
   );
   await page.route("**/api/tavern/v1/settings/language", (route) =>
     route.fulfill(json200({ revision: 1, locale: "en-US" })),
@@ -279,6 +277,138 @@ test.describe("the primary save control of every settings surface is inside the 
     // clipped or overlaid.
     expect(reading.bottom, "the save control sits below the 400x800 fold, as measured").toBeGreaterThan(reading.viewportHeight);
     expect(reading.scrollsIn, "the region scrolls, so the control below the fold is reachable").toBe(true);
+  });
+});
+
+/**
+ * One saved connection that has been tested - the only state in which the row offers its own
+ * next action, "Save and activate". `readiness: "ready"` is what the panel derives that from
+ * (`management-panels.tsx:856`), so the control measured below is found by wearing `.primary`:
+ * the row's own answer to "what do I press next", not a word hardcoded in one catalogue.
+ */
+const SAVED_MODEL_ID = "deepseek-v4.1-flash";
+const SAVED_CONNECTION = {
+  connectionId: "F".repeat(42) + "A",
+  label: `DeepSeek · ${SAVED_MODEL_ID}`,
+  providerId: "deepseek",
+  providerLabel: "DeepSeek",
+  configured: true,
+  readiness: "ready",
+  active: false,
+  modelId: SAVED_MODEL_ID,
+  modelLabel: "DeepSeek V4.1 Flash",
+  thinkingLevel: "high",
+  allowedThinkingLevels: ["low", "high"],
+  modelIds: [SAVED_MODEL_ID, "deepseek-v4.1-pro"],
+  baseUrl: null,
+  failure: null,
+  lastCheckedAtMs: null,
+};
+
+/** Settings with one saved connection, at one viewport, with its region scrolled to the top. */
+async function mountSavedConnection(
+  page: Page,
+  viewport: Readonly<{ width: number; height: number }>,
+): Promise<void> {
+  await page.setViewportSize(viewport);
+  await stubSettingsRoutes(page, [SAVED_CONNECTION]);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
+  const surface = page.getByTestId("settings-surface");
+  await expect(surface.locator("[data-connection-row]")).toBeVisible();
+  await surface.locator(".surface-content").evaluate((content) => {
+    content.scrollTop = 0;
+  });
+}
+
+/**
+ * The saved row's own next action, and the strip it sits in.
+ *
+ * The defect this measures: the sheet turned `.connection-row .composer-actions` into a
+ * column at <=560 px, stacking the row's two selects and three buttons on top of each other.
+ * Measured on that sheet at 400x800 with the region at `scrollTop` 0 and a 682 px scroller,
+ * the row's primary control - "Save and activate", the one control that resolves the row -
+ * read `y 844, bottom 888` in a strip 310 px tall: 88 px below the window, in a strip the
+ * row layout fits in 200 px.
+ *
+ * Read as a rect, not as a class: what the player meets is where the control lands.
+ */
+async function readSavedRowAction(page: Page) {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
+    if (surface === null) throw new Error("the Settings surface is not mounted");
+    const row = surface.querySelector<HTMLElement>("[data-connection-row]");
+    if (row === null) throw new Error("the saved connection row is not rendered");
+    const strip = row.querySelector<HTMLElement>(".composer-actions");
+    if (strip === null) throw new Error("the saved connection row has no action strip");
+    const control = strip.querySelector<HTMLButtonElement>("button.primary");
+    if (control === null) throw new Error("the saved connection row points at no next action");
+    const rect = control.getBoundingClientRect();
+    const content = surface.querySelector<HTMLElement>(".surface-content");
+    return {
+      label: (control.textContent ?? "").trim(),
+      top: Math.round(rect.top),
+      bottom: Math.round(rect.bottom),
+      height: Math.round(rect.height),
+      viewportHeight: window.innerHeight,
+      // The whole control, not a visible sliver: a control 16 of whose 44 px are on
+      // screen is one the player cannot aim at.
+      fullyInside: rect.top >= 0 && rect.bottom <= window.innerHeight,
+      stripHeight: Math.round(strip.getBoundingClientRect().height),
+      rowHeight: Math.round(row.getBoundingClientRect().height),
+      // The row layout must not buy the space by overflowing its own card sideways.
+      stripOverflows: strip.scrollWidth > strip.clientWidth,
+      scrollerClientHeight: content === null ? null : content.clientHeight,
+      scrollerScrollTop: content === null ? null : content.scrollTop,
+      scrollsIn: content !== null && content.scrollHeight > content.clientHeight,
+    };
+  });
+}
+
+test.describe("the saved connection row's own next action is inside the first viewport", () => {
+  test("at 400x800, above the fold rather than 88 px below it", async ({ page }) => {
+    await mountSavedConnection(page, { width: 400, height: 800 });
+    const reading = await readSavedRowAction(page);
+    console.log(`[settings-row-action-400] ${JSON.stringify(reading)}`);
+
+    // The selector's own identity, read in the same run: `.primary` is the row's next
+    // action, and the row's next action in this state is activation.
+    expect(reading.label, "the row's next action is the activate control").toBe("Save and activate");
+    // The first viewport, not a scrolled-to position.
+    expect(reading.scrollerScrollTop, "the region is at its top when this is measured").toBe(0);
+    expect(
+      reading.fullyInside,
+      'Settings: "Save and activate" must be fully inside the 400x800 window - ' +
+        `it reads top ${reading.top}, bottom ${reading.bottom}, viewport height ${reading.viewportHeight}`,
+    ).toBe(true);
+    // The 44 px touch floor, asserted beside the fit: recovering space by shrinking the
+    // control would satisfy the rect check and be the wrong fix.
+    expect(reading.height, "the row's next action keeps the 44 px touch floor").toBeGreaterThanOrEqual(44);
+    expect(reading.stripOverflows, "the row layout does not overflow its own card sideways").toBe(false);
+
+    // The two labels taken out of the flow are what names the row's two selects: hiding them
+    // must not cost either control its accessible name.
+    const selects = page.getByTestId("settings-surface").locator("[data-connection-row] select");
+    await expect(selects, "the row's two selects are both mounted").toHaveCount(2);
+    await expect(selects.nth(0), "the served-model select is still named").toHaveAccessibleName("Model");
+    await expect(
+      selects.nth(1),
+      "the thinking-level select is still named by the label that names its record",
+    ).toHaveAccessibleName(`${SAVED_CONNECTION.label} thinking level`);
+  });
+
+  test("at 360x640 the same control is reachable by scrolling rather than inside the fold", async ({ page }) => {
+    await mountSavedConnection(page, { width: 360, height: 640 });
+    const reading = await readSavedRowAction(page);
+    console.log(`[settings-row-action-360] ${JSON.stringify(reading)}`);
+
+    expect(reading.label, "the row's next action is the activate control").toBe("Save and activate");
+    // A 360x640 window is 160 px shorter than the one the row was fixed for, and the row's own
+    // facts above the strip are most of that difference: measured after the fix, the control
+    // reads top 755, bottom 799 against a 640 px window. That is a design question, not a
+    // property of this sheet, so the assertion here is what the narrow view still owes: the
+    // region scrolls, so the control below the fold is reachable rather than clipped.
+    expect(reading.scrollsIn, "the region scrolls, so the control below the fold is reachable").toBe(true);
+    expect(reading.scrollerScrollTop, "and it starts at its top").toBe(0);
   });
 });
 
