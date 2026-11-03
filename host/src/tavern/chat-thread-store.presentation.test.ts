@@ -995,6 +995,215 @@ test("the ordinary acceptance behind today's regenerate appends a second player 
 });
 
 /**
+ * Drives the CURRENT accepted turn to a durable `failed` through the same transitions the provider path
+ * runs, so the state under test is the one the product really reaches: the player row, and no reply.
+ */
+async function failCurrentTurn(root: string, store: ReturnType<typeof createChatThreadStore>): Promise<void> {
+  const binding = bindingFor(root);
+  const read = async () => (await store.resumeThread("thread_01", "surface_01")).turnLedger;
+  let ledger = await read();
+  if (ledger !== null && ledger.status === "accepted_queued") {
+    await claimMountedAttempt(binding);
+    ledger = await read();
+  }
+  if (ledger === null || !("attempt" in ledger)) throw new Error("no_attempt_to_fail");
+  const attemptId = ledger.attempt.attemptId;
+  const durable = async () => (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
+  if (ledger.status === "attempt_starting") {
+    await transitionMountedProviderStart(
+      { ...bindingFor(root), attemptId },
+      { operation: "arm", observedAtMs: (await durable()) + 1 },
+    );
+    await transitionMountedProviderStart(
+      { ...bindingFor(root), attemptId },
+      { operation: "running", statusClass: "success", observedAtMs: (await durable()) + 2 },
+    );
+  }
+  await transitionMountedPresentation(
+    { ...bindingFor(root), attemptId },
+    { operation: "fail", reasonCode: "runtime_unavailable", failedAtMs: (await durable()) + 3 },
+  );
+}
+
+/**
+ * The dead end a failed turn leaves, and the one target that answers it.
+ *
+ * Acceptance writes the player's row durably BEFORE the provider runs and the `failed` transition keeps
+ * it, so a turn that never produced a reply leaves a player row nothing answered - by construction, not
+ * by accident. A reply-target acceptance answers exactly that row: it mints no second player row, its
+ * prompt is that row's own words, and the reply appends behind it.
+ *
+ * Counted rather than merely present: ONE player row and ONE reply after the retry, because the duplicate
+ * player line a fresh send would append is the defect this shape exists to avoid.
+ */
+test("a reply-target turn answers the player row a failed turn left unanswered, minting no second row", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-reply-target-");
+  try {
+    const { store } = await prepareRunning(root);
+    await failCurrentTurn(root, store);
+    const failedState = await store.resumeThread("thread_01", "surface_01");
+    assert.equal(failedState.turnLedger?.status, "failed");
+    const playerRow = failedState.messages[0]!;
+    assert.equal(playerRow.role, "player");
+
+    const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+    const accepted = await acceptMountedPlayerMessage(bindingFor(root), {
+      text: playerRow.text,
+      locale: "en-US",
+      idempotencyKey: "bcdefghijklmnopqrstuvw",
+      expectedDraftRevision: failedState.draft.revision,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      replyToPlayerMessageId: playerRow.messageId,
+    });
+    // The turn owns no player message of its own: its identity is opaque and names no row, and the row it
+    // answers is the durable fact beside it.
+    assert.match(accepted.messageId, /^reply_turn_/);
+    assert.equal(accepted.replyToPlayerMessageId, playerRow.messageId);
+    const acceptedState = await store.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      acceptedState.messages.map((message) => message.messageId),
+      [playerRow.messageId],
+    );
+    assert.equal(acceptedState.turnLedger?.replyToPlayerMessageId, playerRow.messageId);
+
+    // A live turn over that line refuses a second answer: the ledger is not terminal yet.
+    await assert.rejects(
+      () =>
+        acceptMountedPlayerMessage(bindingFor(root), {
+          text: playerRow.text,
+          locale: "en-US",
+          idempotencyKey: "cdefghijklmnopqrstuvwx",
+          expectedDraftRevision: acceptedState.draft.revision,
+          authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+          replyToPlayerMessageId: playerRow.messageId,
+        }),
+      /turn_busy/,
+    );
+
+    // The provider path this acceptance starts: arm, running, one committed reply, complete.
+    const claimed = await claimMountedAttempt(bindingFor(root));
+    const attemptId = claimed.attempt.attemptId;
+    const durable = async () => (await store.resumeThread("thread_01", "surface_01")).thread.updatedAtMs;
+    await transitionMountedProviderStart(
+      { ...bindingFor(root), attemptId },
+      { operation: "arm", observedAtMs: (await durable()) + 1 },
+    );
+    await transitionMountedProviderStart(
+      { ...bindingFor(root), attemptId },
+      { operation: "running", statusClass: "success", observedAtMs: (await durable()) + 2 },
+    );
+    const committedAt = (await durable()) + 3;
+    const reply = "I am here.";
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      {
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId: "response_reply_01", text: reply, occurredAtMs: committedAt },
+        committedAtMs: committedAt,
+      },
+    );
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_completion", claimedAtMs: (await durable()) + 4 },
+    );
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "complete", completedAtMs: (await durable()) + 5 },
+    );
+
+    const retried = await store.resumeThread("thread_01", "surface_01");
+    assert.equal(retried.messages.filter((message) => message.kind === "player").length, 1);
+    assert.equal(retried.messages.filter((message) => message.kind === "response").length, 1);
+    assert.deepEqual(
+      retried.messages.map((message) => message.role),
+      ["player", "companion"],
+    );
+    assert.equal(retried.turnLedger?.status, "completed");
+    assert.equal(retried.turnLedger?.replyToPlayerMessageId, playerRow.messageId);
+    // Durable, not in memory: a fresh store on the same root reads the same pair back.
+    const reopened = await openStore(root).resumeThread("thread_01", "surface_01");
+    assert.deepEqual(reopened.messages, retried.messages);
+    assert.equal(reopened.turnLedger?.replyToPlayerMessageId, playerRow.messageId);
+
+    // The line has been answered, so it is no longer a target: it is not the transcript's last row.
+    await assert.rejects(
+      () =>
+        acceptMountedPlayerMessage(bindingFor(root), {
+          text: playerRow.text,
+          locale: "en-US",
+          idempotencyKey: "defghijklmnopqrstuvwxy",
+          expectedDraftRevision: retried.draft.revision,
+          authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+          replyToPlayerMessageId: playerRow.messageId,
+        }),
+      /chat_reply_target_unavailable/,
+    );
+    // Her own reply is the tail and it is not a player line: the other refusal of the same rule.
+    await assert.rejects(
+      () =>
+        acceptMountedPlayerMessage(bindingFor(root), {
+          text: reply,
+          locale: "en-US",
+          idempotencyKey: "efghijklmnopqrstuvwxyz",
+          expectedDraftRevision: retried.draft.revision,
+          authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+          replyToPlayerMessageId: retried.messages[1]!.messageId,
+        }),
+      /chat_reply_target_not_player/,
+    );
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
+ * A player row a reply-target turn answers is not droppable behind its back.
+ *
+ * The turn's own `message_id` names no message, so its ONLY durable reference to the player line is the
+ * reply target. Without that reference in the delete's doomed-turn query, deleting the line left a turn
+ * and an idempotency record naming a message the transcript no longer carried - and every later read
+ * then failed `validateTurnIntegrity`, which is a transcript the player cannot open again.
+ */
+test("deleting the player row a reply-target turn answers takes that turn with it", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-reply-target-delete-");
+  try {
+    const { store } = await prepareRunning(root);
+    await failCurrentTurn(root, store);
+    const failedState = await store.resumeThread("thread_01", "surface_01");
+    const playerRow = failedState.messages[0]!;
+    const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+    await acceptMountedPlayerMessage(bindingFor(root), {
+      text: playerRow.text,
+      locale: "en-US",
+      idempotencyKey: "bcdefghijklmnopqrstuvw",
+      expectedDraftRevision: failedState.draft.revision,
+      authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      replyToPlayerMessageId: playerRow.messageId,
+    });
+    await failCurrentTurn(root, store);
+    const before = await store.resumeThread("thread_01", "surface_01");
+    assert.equal(before.turnLedger?.status, "failed");
+    assert.equal(before.turnLedger?.replyToPlayerMessageId, playerRow.messageId);
+
+    const remove = store.deleteTranscriptMessage;
+    if (remove === undefined) throw new Error("delete_unavailable");
+    await remove(testTransitionAuthority.authority, "thread_01", {
+      messageId: playerRow.messageId,
+      expectedOrder: 0,
+    });
+
+    const after = await openStore(root).resumeThread("thread_01", "surface_01");
+    assert.deepEqual(after.messages, []);
+    // Nothing survives that names the row that is gone.
+    assert.equal(after.turnLedger, null);
+    assert.equal(after.idempotency.length, 0);
+  } finally {
+    await removeTestRoot(root);
+  }
+});
+
+/**
  * Creates a thread whose reply is already durably committed, then a running
  * variant turn that targets that reply. The variant turn mints no player row;
  * its attempt is the only turn state.

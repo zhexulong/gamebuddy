@@ -15,7 +15,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 8 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 9 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -147,6 +147,19 @@ export type AcceptedQueuedTurn = Readonly<{
    * prompt/position facts live in `variant`.
    */
   variant?: TurnVariantTarget;
+  /**
+   * Present only on a turn that answers a player row the transcript ALREADY carries instead of
+   * minting one. `messageId` is then the turn's own opaque `reply_<turnId>` identity and names no
+   * message row; this is the player line its prompt re-asks.
+   *
+   * The case exists by construction, not by accident: acceptance inserts the player's message row
+   * durably BEFORE the provider runs (`acceptMounted`), and the `failed` and `cancelled` transitions
+   * keep that row, so a turn that never produced a reply leaves a player row nothing answered. The
+   * alternatives are both worse: a fresh player row repeats the player's own words in their
+   * transcript, and reopening the terminal turn would falsify the record that says the product will
+   * not act on it again.
+   */
+  replyToPlayerMessageId?: string;
 }>;
 
 export type AuthoredContextSourceRef = Readonly<{
@@ -451,6 +464,7 @@ export type AttemptStartingTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
   variant?: TurnVariantTarget;
+  replyToPlayerMessageId?: string;
   attempt: AttemptClaimV1;
   /** P4c bounded observation: durable `armed` before invocation, or durable local `not_started`. */
   observation?: AttemptObservationV1;
@@ -463,6 +477,7 @@ export type RunningTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
   variant?: TurnVariantTarget;
+  replyToPlayerMessageId?: string;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1 & { phase: "running" };
 }>;
@@ -518,6 +533,7 @@ export type CancelledTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
   variant?: TurnVariantTarget;
+  replyToPlayerMessageId?: string;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1 & { phase: "armed" | "not_started" | "running" };
   presentation: PresentationCommitV1 | null;
@@ -540,6 +556,7 @@ export type FailedTurn = Readonly<{
   messageId: string;
   acceptedAtMs: number;
   variant?: TurnVariantTarget;
+  replyToPlayerMessageId?: string;
   attempt: AttemptClaimV1;
   observation: AttemptObservationV1;
   presentation: PresentationCommitV1 | null;
@@ -582,6 +599,12 @@ type MountedAcceptanceInput = Readonly<{
    * per-turn volatility selection, never persisted or read back as the prompt.
    */
   variantTargetMessageId?: string;
+  /**
+   * When present, this acceptance answers a player row the transcript already carries: no player
+   * message is minted, and the row must be the transcript's last one, matched by text. `text` is the
+   * prompt. See `AcceptedQueuedTurn.replyToPlayerMessageId` for why the case exists.
+   */
+  replyToPlayerMessageId?: string;
 }>;
 
 /** Player-controlled fields only. Binding facts come solely from a consumed mounted admission. */
@@ -592,6 +615,7 @@ type MountedAcceptanceCommand = Readonly<{
   expectedDraftRevision: number;
   boundedVisibleTail?: string;
   variantTargetMessageId?: string;
+  replyToPlayerMessageId?: string;
   authoredContextPreparation?: Readonly<{
     sourceRefs: readonly Readonly<Record<string, string>>[];
     stableTokenCount: number;
@@ -1492,6 +1516,20 @@ const TURN_TERMINALIZATION_PROVIDER_FAILURE_V8 = `
       ADD COLUMN provider_failure TEXT;
 `;
 
+/**
+ * v9 records the one turn shape that answers a player line the transcript already carries: the row it
+ * answers has to survive a reopen beside the turn that chose it, and no existing table can hold it (a
+ * variant target names her reply, a presentation names the reply this turn wrote). It is a real
+ * in-place upgrade, not a version bump that abandons old data: a v8 root keeps every thread, message,
+ * swipe, turn and binding, and gains one empty table.
+ */
+const TURN_REPLY_TARGETS_TABLE_V9 = `
+    CREATE TABLE tavern_turn_reply_targets (
+      turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
+      player_message_id TEXT NOT NULL
+    );
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1502,11 +1540,14 @@ function initSchema(db: DatabaseSync): void {
   // v5 recorded no message -> Pi entry binding at all, so a single mid-transcript
   // delete had no way to name the session entry the row it removes was carried by
   // and could only guess from a position. v6 adds the binding; v7 adds the
-  // generation's own stop fact to the presentation record. Nothing else changes.
+  // generation's own stop fact to the presentation record; v8 adds the classified
+  // provider cause to the terminalization record; v9 adds the row a reply-target
+  // turn answers. Nothing else changes.
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
+    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1514,12 +1555,20 @@ function initSchema(db: DatabaseSync): void {
   if (version === 6) {
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
+    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
   if (version === 7) {
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
+    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 8) {
+    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1532,6 +1581,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
+    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     assertNormalizedSchema(db);
     return;
   }
@@ -1667,6 +1717,8 @@ ${WORLD_INFO_BINDINGS_TABLE_V5}
       target_message_id TEXT NOT NULL,
       anchor_message_id TEXT NOT NULL
     );
+
+    ${TURN_REPLY_TARGETS_TABLE_V9}
 
     CREATE TABLE tavern_turn_attempts (
       turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
@@ -1822,6 +1874,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_thread_world_info_bindings",
     "tavern_turns",
     "tavern_turn_variants",
+    "tavern_turn_reply_targets",
     "tavern_turn_attempts",
     "tavern_turn_observations",
     "tavern_turn_presentations",
@@ -1862,6 +1915,11 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     (db.prepare("PRAGMA table_info(tavern_turn_variants)").all() as any[]).map((column) => column.name),
   );
   if (["turn_id", "target_message_id", "anchor_message_id"].some((column) => !variantColumns.has(column)))
+    throw new Error("chat_thread_schema_mismatch");
+  const replyTargetColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_turn_reply_targets)").all() as any[]).map((column) => column.name),
+  );
+  if (["turn_id", "player_message_id"].some((column) => !replyTargetColumns.has(column)))
     throw new Error("chat_thread_schema_mismatch");
   const presentationColumns = new Set(
     (db.prepare("PRAGMA table_info(tavern_turn_presentations)").all() as any[]).map((column) => column.name),
@@ -2465,15 +2523,18 @@ export function createChatThreadStore(
         // A turn survives only while every row it names survives. Its own `message_id` is the
         // accepted player row - or, for a same-position variant turn, an opaque identity that names
         // no row - so a variant turn is judged by the reply it re-generated and the player line it
-        // answered.
+        // answered, and a reply-target turn by the player line it re-asked. Dropping the row either
+        // kind of turn answers would leave a turn naming a message the transcript no longer has.
         const doomedTurnIds = (
           db
             .prepare(
               `SELECT t.turn_id AS turn_id, t.message_id AS message_id,
                       v.target_message_id AS variant_target_id, v.anchor_message_id AS variant_anchor_id,
+                      r.player_message_id AS reply_target_id,
                       p.message_id AS presentation_id
                  FROM tavern_turns t
                  LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id
+                 LEFT JOIN tavern_turn_reply_targets r ON r.turn_id = t.turn_id
                  LEFT JOIN tavern_turn_presentations p ON p.turn_id = t.turn_id
                 WHERE t.thread_id = ?`,
             )
@@ -2484,6 +2545,7 @@ export function createChatThreadStore(
               droppedIds.has(row.message_id) ||
               droppedIds.has(row.variant_target_id) ||
               droppedIds.has(row.variant_anchor_id) ||
+              droppedIds.has(row.reply_target_id) ||
               droppedIds.has(row.presentation_id),
           )
           .map((row) => row.turn_id as string);
@@ -2598,16 +2660,19 @@ export function createChatThreadStore(
         // A turn survives only while every row it names survives, exactly as it does for a rewind:
         // its own `message_id` is the accepted player row - or, for a same-position variant turn, an
         // opaque identity that names no row - so a variant turn is judged by the reply it re-generated
-        // and the player line it answered. Here the doomed set is the turns naming THIS one row, not a
-        // suffix: the rows on either side of the hole are untouched, and so is every other turn.
+        // and the player line it answered, and a reply-target turn by the player line it re-asked.
+        // Here the doomed set is the turns naming THIS one row, not a suffix: the rows on either side
+        // of the hole are untouched, and so is every other turn.
         const doomedTurnIds = (
           db
             .prepare(
               `SELECT t.turn_id AS turn_id, t.message_id AS message_id,
                       v.target_message_id AS variant_target_id, v.anchor_message_id AS variant_anchor_id,
+                      r.player_message_id AS reply_target_id,
                       p.message_id AS presentation_id
                  FROM tavern_turns t
                  LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id
+                 LEFT JOIN tavern_turn_reply_targets r ON r.turn_id = t.turn_id
                  LEFT JOIN tavern_turn_presentations p ON p.turn_id = t.turn_id
                 WHERE t.thread_id = ?`,
             )
@@ -2618,6 +2683,7 @@ export function createChatThreadStore(
               row.message_id === input.messageId ||
               row.variant_target_id === input.messageId ||
               row.variant_anchor_id === input.messageId ||
+              row.reply_target_id === input.messageId ||
               row.presentation_id === input.messageId,
           )
           .map((row) => row.turn_id as string);
@@ -2964,7 +3030,19 @@ export function createChatThreadStore(
         input.variantTargetMessageId === undefined
           ? undefined
           : resolveTurnVariantTarget(current.messages, input.variantTargetMessageId);
-      const messageId = variant === undefined ? `player_${randomUUID().replace(/-/gu, "")}` : `variant_${turnId}`;
+      const replyToPlayerMessageId =
+        input.replyToPlayerMessageId === undefined
+          ? undefined
+          : resolvePlayerReplyTarget(current.messages, input.replyToPlayerMessageId, input.text);
+      // Only an ordinary send mints a player row. Both other shapes re-ask a row the transcript
+      // already carries, so the turn's own identity is opaque and names no message.
+      const mintsPlayerRow = variant === undefined && replyToPlayerMessageId === undefined;
+      const messageId =
+        variant !== undefined
+          ? `variant_${turnId}`
+          : replyToPlayerMessageId !== undefined
+            ? `reply_${turnId}`
+            : `player_${randomUUID().replace(/-/gu, "")}`;
       const result = freezeAcceptedTurn({
         turnId,
         status: "accepted_queued",
@@ -2972,10 +3050,11 @@ export function createChatThreadStore(
         messageId,
         acceptedAtMs,
         ...(variant === undefined ? {} : { variant }),
+        ...(replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId }),
       });
 
-      const lockedAt = thread.openingLockedAtEventId ?? variant?.anchorMessageId ?? messageId;
-      if (variant === undefined)
+      const lockedAt = thread.openingLockedAtEventId ?? variant?.anchorMessageId ?? replyToPlayerMessageId ?? messageId;
+      if (mintsPlayerRow)
         insertMessage(
           db,
           input.chatThreadId,
@@ -2999,10 +3078,10 @@ export function createChatThreadStore(
       );
       persistContextPlan(db, createAcceptedContextPlan(thread, input, turnId), turnId);
 
-      // A same-position variant turn is not the player sending the draft: the
-      // reply position is re-generated, and the text they are still typing must
-      // survive it. Only an ordinary acceptance consumes the draft.
-      if (variant === undefined)
+      // Neither re-asking an existing reply position nor answering an existing player line is the
+      // player sending the draft: the text they are still typing must survive it. Only an ordinary
+      // acceptance consumes the draft.
+      if (mintsPlayerRow)
         db.prepare(
           "UPDATE tavern_drafts SET revision = ?, draft_content = NULL, updated_at_ms = ? WHERE thread_id = ?",
         ).run(current.draft.revision + 1, acceptedAtMs, input.chatThreadId);
@@ -3365,13 +3444,12 @@ export function createChatThreadStore(
           if (ledger.status === "attempt_starting" || ledger.status === "cancel_claimed" || isTerminalLedger(ledger))
             throw new Error("p5_presentation_terminal_immutable");
           nextLedger = freezeFailedTurn({
-            turnId: ledger.turnId,
+            // The ledger's own position facts travel with it: a failure is a terminal state of the SAME
+            // turn, never a new turn shape. Listing the fields by hand dropped them - the reply-target row
+            // this turn answers, and (before this form) a variant turn's target - and a dropped target
+            // reads back as a turn naming a message the transcript no longer carries.
+            ...ledger,
             status: "failed",
-            idempotencyKey: ledger.idempotencyKey,
-            messageId: ledger.messageId,
-            acceptedAtMs: ledger.acceptedAtMs,
-            attempt: ledger.attempt,
-            observation: ledger.observation,
             presentation: presentedCommit(ledger),
             reasonCode: command.reasonCode,
             ...(command.providerFailure === undefined ? {} : { providerFailure: command.providerFailure }),
@@ -3620,6 +3698,12 @@ function persistTurn(db: DatabaseSync, threadId: string, ledger: ChatTurnLedger)
       ledger.variant.targetMessageId,
       ledger.variant.anchorMessageId,
     );
+  db.prepare("DELETE FROM tavern_turn_reply_targets WHERE turn_id = ?").run(ledger.turnId);
+  if (ledger.replyToPlayerMessageId !== undefined)
+    db.prepare("INSERT INTO tavern_turn_reply_targets (turn_id, player_message_id) VALUES (?, ?)").run(
+      ledger.turnId,
+      ledger.replyToPlayerMessageId,
+    );
   if (!isTurnWithAttempt(ledger)) return;
   db.prepare("DELETE FROM tavern_turn_attempts WHERE turn_id = ?").run(ledger.turnId);
   const attempt = ledger.attempt;
@@ -3677,6 +3761,9 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
     variantRow === undefined
       ? undefined
       : { targetMessageId: variantRow.target_message_id, anchorMessageId: variantRow.anchor_message_id };
+  const replyTargetRow = db
+    .prepare("SELECT player_message_id FROM tavern_turn_reply_targets WHERE turn_id = ?")
+    .get(row.turn_id) as any;
   const base = {
     turnId: row.turn_id,
     status: row.status,
@@ -3684,6 +3771,7 @@ function readTurnLedger(db: DatabaseSync, row: any): ChatTurnLedger {
     messageId: row.message_id,
     acceptedAtMs: row.accepted_at_ms,
     ...(variant === undefined ? {} : { variant }),
+    ...(replyTargetRow === undefined ? {} : { replyToPlayerMessageId: replyTargetRow.player_message_id }),
   };
   if (row.status === "accepted_queued") return validateTurnLedger(base);
 
@@ -3998,7 +4086,7 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
   const idempotency = (
     db
       .prepare(
-        "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms, v.target_message_id AS variant_target_message_id, v.anchor_message_id AS variant_anchor_message_id FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
+        "SELECT i.idempotency_key, i.fingerprint, t.turn_id, t.idempotency_key AS turn_idempotency_key, t.message_id, t.accepted_at_ms, v.target_message_id AS variant_target_message_id, v.anchor_message_id AS variant_anchor_message_id, r.player_message_id AS reply_to_player_message_id FROM tavern_chat_submit_idempotency i JOIN tavern_turns t ON t.turn_id = i.turn_id LEFT JOIN tavern_turn_variants v ON v.turn_id = t.turn_id LEFT JOIN tavern_turn_reply_targets r ON r.turn_id = t.turn_id WHERE i.thread_id = ? ORDER BY i.idempotency_key",
       )
       .all(chatThreadId) as any[]
   ).map((entry) =>
@@ -4019,6 +4107,9 @@ function readStateFromDb(db: DatabaseSync, chatThreadId: string): ChatThreadStat
                 anchorMessageId: entry.variant_anchor_message_id,
               },
             }),
+        ...(entry.reply_to_player_message_id === null || entry.reply_to_player_message_id === undefined
+          ? {}
+          : { replyToPlayerMessageId: entry.reply_to_player_message_id }),
       },
     }),
   );
@@ -4286,12 +4377,25 @@ function freezeDraft(value: ChatDraft): ChatDraft {
 
 function validateAcceptedTurn(value: unknown): AcceptedQueuedTurn {
   if (!isRecord(value) || value.status !== "accepted_queued") throw new Error("invalid_chat_thread_turn_ledger");
-  if (!onlyKeys(value, ["turnId", "status", "idempotencyKey", "messageId", "acceptedAtMs", "variant"]))
+  if (
+    !onlyKeys(value, [
+      "turnId",
+      "status",
+      "idempotencyKey",
+      "messageId",
+      "acceptedAtMs",
+      "variant",
+      "replyToPlayerMessageId",
+    ])
+  )
     throw new Error("invalid_chat_thread_turn_ledger");
   assertId("turnId", value.turnId);
   assertId("messageId", value.messageId);
   assertIdempotencyKey(value.idempotencyKey);
   assertTimestamp(value.acceptedAtMs);
+  // A turn re-asks one thing: an existing reply position, or a player line nothing answered.
+  if (value.variant !== undefined && value.replyToPlayerMessageId !== undefined)
+    throw new Error("invalid_chat_thread_turn_ledger");
   return Object.freeze({
     turnId: value.turnId,
     status: "accepted_queued",
@@ -4299,7 +4403,15 @@ function validateAcceptedTurn(value: unknown): AcceptedQueuedTurn {
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
     ...(value.variant === undefined ? {} : { variant: validateTurnVariantTarget(value.variant) }),
+    ...(value.replyToPlayerMessageId === undefined
+      ? {}
+      : { replyToPlayerMessageId: validateReplyTargetId(value.replyToPlayerMessageId) }),
   });
+}
+
+function validateReplyTargetId(value: unknown): string {
+  assertId("replyToPlayerMessageId", value);
+  return value;
 }
 
 function validateTurnVariantTarget(value: unknown): TurnVariantTarget {
@@ -4415,6 +4527,27 @@ function resolveTurnVariantTarget(messages: readonly ChatThreadMessage[], target
   return Object.freeze({ targetMessageId, anchorMessageId: anchor.messageId });
 }
 
+/**
+ * Resolves the player row a reply-target acceptance answers, from the transcript alone.
+ *
+ * The mode exists for exactly one shape: a player line nothing answered. So it fails closed on an
+ * unknown target, on a row that is not the player's own message, on a row that is not the
+ * transcript's LAST one (something already replied to it, or the exchange moved on), and on words
+ * that are not that row's own - the prompt is the line the transcript shows, never a caller's
+ * paraphrase of it.
+ */
+function resolvePlayerReplyTarget(
+  messages: readonly ChatThreadMessage[],
+  playerMessageId: string,
+  text: string,
+): string {
+  const target = messages[messages.length - 1];
+  if (target === undefined || target.messageId !== playerMessageId) throw new Error("chat_reply_target_unavailable");
+  if (target.role !== "player" || target.kind !== "player") throw new Error("chat_reply_target_not_player");
+  if (target.text !== text) throw new Error("chat_reply_target_text_mismatch");
+  return target.messageId;
+}
+
 function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn {
   return validateAcceptedTurn(value);
 }
@@ -4422,6 +4555,10 @@ function freezeAcceptedTurn(value: AcceptedQueuedTurn): AcceptedQueuedTurn {
 function validateTurnLedger(value: unknown): ChatTurnLedger {
   if (!isRecord(value)) throw new Error("invalid_chat_thread_turn_ledger");
   const variantFields = value.variant === undefined ? {} : { variant: validateTurnVariantTarget(value.variant) };
+  const replyTargetFields =
+    value.replyToPlayerMessageId === undefined
+      ? {}
+      : { replyToPlayerMessageId: validateReplyTargetId(value.replyToPlayerMessageId) };
   if (value.status === "accepted_queued") return validateAcceptedTurn(value);
   if (value.status === "attempt_starting") {
     if (
@@ -4432,6 +4569,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         "messageId",
         "acceptedAtMs",
         "variant",
+        "replyToPlayerMessageId",
         "attempt",
         "observation",
       ])
@@ -4447,6 +4585,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
       ...variantFields,
+      ...replyTargetFields,
       attempt: value.attempt as AttemptClaimV1,
       ...(observation === undefined ? {} : { observation }),
     });
@@ -4460,6 +4599,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         "messageId",
         "acceptedAtMs",
         "variant",
+        "replyToPlayerMessageId",
         "attempt",
         "observation",
       ])
@@ -4474,6 +4614,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
       ...variantFields,
+      ...replyTargetFields,
       attempt: value.attempt as AttemptClaimV1,
       observation,
     });
@@ -4495,6 +4636,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         messageId: value.messageId as string,
         acceptedAtMs: value.acceptedAtMs as number,
         ...variantFields,
+        ...replyTargetFields,
         attempt: value.attempt as AttemptClaimV1,
         observation: common.observation,
         presentation: common.presentation ?? null,
@@ -4510,6 +4652,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
         messageId: value.messageId as string,
         acceptedAtMs: value.acceptedAtMs as number,
         ...variantFields,
+        ...replyTargetFields,
         attempt: value.attempt as AttemptClaimV1,
         observation: common.observation as AttemptObservationV1 & { phase: "armed" | "not_started" | "running" },
         presentation: common.presentation ?? null,
@@ -4524,6 +4667,7 @@ function validateTurnLedger(value: unknown): ChatTurnLedger {
       messageId: value.messageId as string,
       acceptedAtMs: value.acceptedAtMs as number,
       ...variantFields,
+      ...replyTargetFields,
       attempt: value.attempt as AttemptClaimV1,
       observation: common.observation,
     });
@@ -4579,6 +4723,7 @@ function validateP5TerminalishCommon(value: Record<string, unknown>): Readonly<{
     "messageId",
     "acceptedAtMs",
     "variant",
+    "replyToPlayerMessageId",
     "attempt",
     "observation",
     "presentation",
@@ -4672,6 +4817,7 @@ function freezeAttemptStartingTurn(value: AttemptStartingTurn): AttemptStartingT
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
     ...(value.variant === undefined ? {} : { variant: value.variant }),
+    ...(value.replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId: value.replyToPlayerMessageId }),
   });
   const observation = value.observation === undefined ? undefined : validateAttemptObservation(value.observation);
   if (observation !== undefined && observation.phase === "running") throw new Error("invalid_chat_thread_turn_ledger");
@@ -4728,6 +4874,7 @@ function freezeRunningTurn(value: RunningTurn): RunningTurn {
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
     ...(value.variant === undefined ? {} : { variant: value.variant }),
+    ...(value.replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId: value.replyToPlayerMessageId }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "running") throw new Error("invalid_chat_thread_turn_ledger");
@@ -4776,6 +4923,7 @@ function freezeCancelledTurn(value: CancelledTurn): CancelledTurn {
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
     ...(value.variant === undefined ? {} : { variant: value.variant }),
+    ...(value.replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId: value.replyToPlayerMessageId }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "armed" && observation.phase !== "not_started" && observation.phase !== "running")
@@ -4805,6 +4953,7 @@ function freezeFailedTurn(value: FailedTurn): FailedTurn {
     messageId: value.messageId,
     acceptedAtMs: value.acceptedAtMs,
     ...(value.variant === undefined ? {} : { variant: value.variant }),
+    ...(value.replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId: value.replyToPlayerMessageId }),
   });
   const observation = validateAttemptObservation(value.observation);
   if (observation.phase !== "armed" && observation.phase !== "running")
@@ -4897,6 +5046,11 @@ function validateAcceptanceInput(value: MountedAcceptanceInput): void {
   if (!isText(value.text)) throw new Error("invalid_chat_message_text");
   assertIdempotencyKey(value.idempotencyKey);
   if (value.variantTargetMessageId !== undefined) assertId("variantTargetMessageId", value.variantTargetMessageId);
+  if (value.replyToPlayerMessageId !== undefined) {
+    assertId("replyToPlayerMessageId", value.replyToPlayerMessageId);
+    // A turn re-asks one thing: either an existing reply position, or a player line nothing answered.
+    if (value.variantTargetMessageId !== undefined) throw new Error("invalid_chat_message_acceptance");
+  }
 }
 
 function validateAuthoredContextPreparation(value: MountedAcceptanceInput["authoredContextPreparation"]): void {
@@ -5370,6 +5524,7 @@ function acceptanceFingerprint(input: MountedAcceptanceInput): string {
     input.locale,
     String(input.expectedDraftRevision),
     input.variantTargetMessageId ?? "",
+    input.replyToPlayerMessageId ?? "",
   ];
   const canonical = fields.map((field) => `${Buffer.byteLength(field, "utf8")}:${field}`).join("");
   return createHash("sha256").update(canonical, "utf8").digest("hex");
@@ -5397,6 +5552,15 @@ function validateTurnIntegrity(
       );
       continue;
     }
+    if (record.result.replyToPlayerMessageId !== undefined) {
+      assertTurnReplyTargetPosition(
+        messages,
+        record.result.messageId,
+        record.result.replyToPlayerMessageId,
+        "invalid_chat_thread_idempotency",
+      );
+      continue;
+    }
     if (
       !messages.some(
         (message) =>
@@ -5411,6 +5575,21 @@ function validateTurnIntegrity(
   }
   if (turnLedger.variant !== undefined) {
     assertTurnVariantPosition(messages, turnLedger.messageId, turnLedger.variant, "invalid_chat_thread_turn_ledger");
+  } else if (turnLedger.replyToPlayerMessageId !== undefined) {
+    assertTurnReplyTargetPosition(
+      messages,
+      turnLedger.messageId,
+      turnLedger.replyToPlayerMessageId,
+      "invalid_chat_thread_turn_ledger",
+    );
+    // A reply this turn wrote follows the line it answered. There is no narrower durable fact to
+    // compare: the player row must still be in the transcript, and the reply must sit after it.
+    const presentation = isTurnWithAttempt(turnLedger) ? presentedCommit(turnLedger) : null;
+    if (presentation !== null) {
+      const answeredIndex = messages.findIndex((message) => message.messageId === turnLedger.replyToPlayerMessageId);
+      const replyIndex = messages.findIndex((message) => message.messageId === presentation.messageId);
+      if (answeredIndex < 0 || replyIndex <= answeredIndex) throw new Error("invalid_chat_thread_turn_ledger");
+    }
   } else if (
     !messages.some(
       (message) => message.messageId === turnLedger.messageId && message.role === "player" && message.kind === "player",
@@ -5423,7 +5602,8 @@ function validateTurnIntegrity(
       record.result.turnId === turnLedger.turnId &&
       record.result.messageId === turnLedger.messageId &&
       record.result.acceptedAtMs === turnLedger.acceptedAtMs &&
-      sameTurnVariant(record.result.variant, turnLedger.variant),
+      sameTurnVariant(record.result.variant, turnLedger.variant) &&
+      record.result.replyToPlayerMessageId === turnLedger.replyToPlayerMessageId,
   );
   if (matching.length !== 1) throw new Error("invalid_chat_thread_turn_ledger");
   if (isTurnWithAttempt(turnLedger)) {
@@ -5462,6 +5642,27 @@ function assertTurnVariantPosition(
     messages[targetIndex]!.role !== "companion" ||
     messages[anchorIndex]!.role !== "player" ||
     messages[anchorIndex]!.kind !== "player"
+  )
+    throw new Error(errorCode);
+}
+
+/**
+ * A reply-target turn owns no player message either: its `messageId` is the turn's own opaque
+ * identity, and the durable position fact must resolve to a player row the transcript still carries.
+ * Ordering is not asserted here - while the turn runs, the row it answers is still the tail - the
+ * caller that reads a committed presentation checks that the reply follows its player line.
+ */
+function assertTurnReplyTargetPosition(
+  messages: readonly ChatThreadMessage[],
+  messageId: string,
+  playerMessageId: string,
+  errorCode: string,
+): void {
+  if (messages.some((message) => message.messageId === messageId)) throw new Error(errorCode);
+  if (
+    !messages.some(
+      (message) => message.messageId === playerMessageId && message.role === "player" && message.kind === "player",
+    )
   )
     throw new Error(errorCode);
 }
