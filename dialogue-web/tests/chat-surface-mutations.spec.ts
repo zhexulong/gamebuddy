@@ -62,6 +62,11 @@ type ChatProbe = {
   setTranscript(texts: readonly string[]): void;
   setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
   setPreview(text: string | null): void;
+  /** The shell's `isGenerating`, exactly as ChatSurface hands it to the timeline. */
+  setTurnInFlight(value: boolean): void;
+  /** Every regeneration this probe asked the shell for, in order. */
+  regenerateCalls(): readonly string[];
+  resetRegenerateCalls(): void;
   setVoice(state: { state: "unavailable" | "ready" | "speaking" } | null): void;
   setPending(pending: { kind: "swipe" | "regenerate" | "opening"; handle: string } | null): void;
   withSwipes(handle: string, text: string): void;
@@ -205,7 +210,8 @@ test("renders the busy state, not just the busy attribute", async ({ page }) => 
  * The failure each direction catches: an opening (or any earlier row) carrying a
  * control whose click appends a *new* tail turn - on the opening the literal
  * "\u8bf7\u7ee7\u7eed", on a middle reply a pair answering an old prompt, attached to
- * the bottom of a conversation that never asked for it.
+ * the bottom of a conversation that never asked for it - and, at the other end, a
+ * player left with no way forward at all after a turn that produced no reply.
  */
 test("offers regeneration on the transcript's last companion row, and nowhere else", async ({ page }) => {
   await openProbe(page);
@@ -217,18 +223,23 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
     );
 
   // A chat that opened on its greeting: the opening is the whole transcript, and
-  // there is no player turn for the control to repeat.
+  // there is no player turn for the control to repeat. It stays that way once the
+  // turn has settled - the greeting is not a line anybody can be answered for.
   await page.evaluate(() => window.chatProbe.setConversation([
     { role: "companion", text: "The morning light comes over the ridge." },
   ]));
   expect(await offered()).toEqual([]);
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(false));
+  expect(await offered(), "a settled greeting carries no control either").toEqual([]);
 
   // A settled turn: exactly the companion row at the tail carries it.
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(true));
   await page.evaluate((entries) => window.chatProbe.setConversation(entries), CONVERSATION);
   expect(await offered()).toEqual(["h1"]);
 
   // A turn in flight: the transcript ends on the player's own line, and nothing
-  // is offered - the previous reply's control would be a second, refused command.
+  // is offered - the previous reply's control would be a second, refused command,
+  // and the live turn may still answer this line itself.
   await page.evaluate(() => window.chatProbe.setConversation([
     { role: "player", text: "Where are we?" },
     { role: "companion", text: "A varianted reply." },
@@ -254,6 +265,61 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
     { role: "companion", text: "A reply with no player line before it." },
   ]));
   expect(await offered()).toEqual([]);
+});
+
+/**
+ * The dead end a turn that produced no reply leaves.
+ *
+ * The player's own line is the transcript's tail - acceptance wrote it before the provider ran, and
+ * a failed or stopped turn keeps it - so the only way forward used to be retyping the message, which
+ * appends the same words a second time. The Host accepts that line as a regeneration target once the
+ * turn is terminal, and refuses it while one may still answer it; the surface has to say the same
+ * two things. `setTurnInFlight` is the shell's `isGenerating`, handed to the timeline exactly as
+ * ChatSurface hands it over.
+ */
+test("a turn that settled without a reply offers regeneration on the player's own line", async ({ page }) => {
+  await openProbe(page);
+  await page.evaluate(() => window.chatProbe.resetRegenerateCalls());
+  const offered = async (): Promise<string[]> =>
+    await page.evaluate(() =>
+      [...document.querySelectorAll("li[data-handle]")]
+        .filter((row) => row.querySelector(".regenerate-btn") !== null)
+        .map((row) => row.getAttribute("data-handle") ?? ""),
+    );
+
+  // The shape a failed turn leaves: her opening, then the player's line, then nothing.
+  const FAILED = [
+    { role: "companion" as const, text: "An opening greet." },
+    { role: "player" as const, text: "Where are we?" },
+  ];
+  await page.evaluate((entries) => window.chatProbe.setConversation(entries), FAILED);
+  // While the turn runs, her reply may still answer that line: no control.
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(true));
+  expect(await offered(), "a live turn is not a target").toEqual([]);
+
+  // The turn settles without a reply: the player's own line is now the target.
+  await page.evaluate(() => window.chatProbe.setTurnInFlight(false));
+  expect(await offered()).toEqual(["h1"]);
+
+  // Pressing it asks the shell to regenerate THAT row - not a neighbour, not the opening.
+  await page.locator('li[data-handle="h1"] .regenerate-btn').click();
+  expect(await page.evaluate(() => window.chatProbe.regenerateCalls())).toEqual(["h1"]);
+
+  // It narrates the same operation the reply row does, so it wears the same word and sits in the row's
+  // own strip rather than in a second row of buttons under it.
+  await expect(page.locator('li[data-handle="h1"] .regenerate-btn .action-word')).toHaveText("Regenerate");
+  await expect(page.locator('li[data-handle="h1"] .message-actions .regenerate-btn')).toHaveCount(1);
+
+  // A turn settles and her reply lands: the line is answered, so the control moves to her reply and
+  // the player's row offers it no longer.
+  await page.evaluate(() =>
+    window.chatProbe.setConversation([
+      { role: "companion", text: "An opening greet." },
+      { role: "player", text: "Where are we?" },
+      { role: "companion", text: "On the pier." },
+    ]),
+  );
+  expect(await offered()).toEqual(["h2"]);
 });
 
 /**

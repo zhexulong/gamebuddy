@@ -74,6 +74,12 @@ type Model = Readonly<{
    * length ceiling. The probe never decides it from the text - a journey sets it.
    */
   replyTruncated: boolean;
+  /**
+   * The shell's `isGenerating` (a turn admitted and not yet terminal), as ChatSurface hands it to the
+   * timeline. Defaults to true, because a transcript that ends on the player's own line IS a turn in
+   * flight in the ordinary case - a journey that wants the settled failure says so.
+   */
+  turnInFlight: boolean;
 }>;
 
 let model: Model = {
@@ -85,6 +91,7 @@ let model: Model = {
   deleteArmedHandle: null,
   swipeRemoveArmed: null,
   replyTruncated: false,
+  turnInFlight: true,
 };
 let rerender: (() => void) | null = null;
 
@@ -93,6 +100,9 @@ const rewindCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: 
 
 /** Every delete control a journey pressed, in the same shape as the rewind's. */
 const deleteCalls: { kind: "arm" | "confirm" | "cancel"; handle: string; order: number }[] = [];
+
+/** Every regeneration the timeline asked for, so a journey sees the target it names. */
+const regenerateCalls: string[] = [];
 
   /** Every edit a journey saved, so a test can see the pair and the words the surface sent. */
   const editCalls: { handle: string; order: number; text: string }[] = [];
@@ -122,7 +132,9 @@ function Probe() {
         chatTitle="Probe"
         labels={LABELS}
         onSwipe={() => undefined}
-        onRegenerate={() => undefined}
+        onRegenerate={(handle) => {
+          regenerateCalls.push(handle);
+        }}
         /*
          * The rewind drives the shell's own two-step shape: the arm is local presentation state
          * here, exactly as the shell keeps it, and the confirm is what a journey observes on the
@@ -189,6 +201,7 @@ function Probe() {
         swipeRemoveArmedHandle={model.swipeRemoveArmed === null ? null : model.swipeRemoveArmed.handle}
         pending={model.pending}
         replyTruncated={model.replyTruncated}
+        turnInFlight={model.turnInFlight}
       />
       <Composer
         value={drafted}
@@ -237,6 +250,21 @@ const chatProbe = {
   setReplyTruncated(value: boolean): void {
     model = { ...model, replyTruncated: value };
     rerender?.();
+  },
+  /**
+   * The shell's own `isGenerating`, set exactly as ChatSurface hands it over: a transcript ending on
+   * the player's line is a turn in flight until a journey says the turn settled without a reply.
+   */
+  setTurnInFlight(value: boolean): void {
+    model = { ...model, turnInFlight: value };
+    rerender?.();
+  },
+  /** Every regeneration this probe asked the shell for, in order. */
+  regenerateCalls(): readonly string[] {
+    return [...regenerateCalls];
+  },
+  resetRegenerateCalls(): void {
+    regenerateCalls.length = 0;
   },
   /**
    * The reply row's own boxes, as painted: the bubble, the control strip under it, the Regenerate

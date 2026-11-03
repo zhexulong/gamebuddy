@@ -1033,6 +1033,7 @@ export const MessageBubble = memo(function MessageBubble({
           (rewindPoint !== undefined ||
             rewindArmed ||
             onEdit !== undefined ||
+            onRegenerate !== undefined ||
             deletePoint !== undefined ||
             copyPoint) && (
             <div className={editing ? "message-actions message-actions-editing" : "message-actions"}>
@@ -1043,6 +1044,28 @@ export const MessageBubble = memo(function MessageBubble({
                 the destructive Delete does, because a control that cuts the conversation away beside Save
                 and Cancel is a mis-click waiting to happen. */}
               {editor === null && rewindControl}
+              {/* Asking her again for THIS line, offered when nothing answered it (a turn that failed
+                or was stopped). It sits beside the rewind for the same reason the rewind is here at
+                all: both answer the player's own words. The words are the same operation the reply
+                row offers, so they are the same word rather than a second name for it. */}
+              {!rewindArmed && editor === null && onRegenerate && (
+                <button
+                  type="button"
+                  className="action-btn regenerate-btn"
+                  disabled={busy}
+                  {...(pending === "regenerate" ? { "data-busy": "true" as const } : {})}
+                  onClick={() => onRegenerate(message.handle)}
+                  title={labels.regenerateVariant}
+                  aria-label={labels.regenerateVariant}
+                >
+                  {pending === "regenerate" ? (
+                    <LoaderCircle className="message-spinner" size={14} aria-hidden="true" />
+                  ) : (
+                    <RefreshCw size={14} aria-hidden="true" />
+                  )}
+                  <span className="action-word">{labels.regenerateVariant}</span>
+                </button>
+              )}
               {!rewindArmed &&
                 onEdit !== undefined &&
                 (editor !== null ? (

@@ -174,6 +174,7 @@ export function ChatSurface({
         deleteArmedHandle={deleteArmedHandle}
         pendingPlayerMessage={pendingPlayerMessage}
         replyTruncated={replyTruncated}
+        turnInFlight={isGenerating}
       />
       {modelRoute.kind === "none" && (
         // The standing fact, above the one line that reports the last outcome: the Host could not

@@ -40,6 +40,7 @@ export function Timeline({
   pending = null,
   pendingPlayerMessage = null,
   replyTruncated = false,
+  turnInFlight = false,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -188,6 +189,13 @@ export function Timeline({
    * different variant of it, so nothing here has to decide which text the fact describes.
    */
   replyTruncated?: boolean;
+  /**
+   * True while a turn is admitted and not yet terminal - the same fact the app bar's own status
+   * reads. The transcript's tail is then the player's line while she is still writing, so the
+   * Regenerate control that answers THEIR line must wait for the turn to settle: the Host refuses
+   * that target until the ledger is terminal.
+   */
+  turnInFlight?: boolean;
 }) {
   // The anchor names the companion the way the transcript will: the profile's
   // own name, or the catalog's word for an unnamed one, so the invitation's own
@@ -311,27 +319,33 @@ export function Timeline({
   const deleteHandler = onDelete === undefined ? undefined : handleDelete;
   const deleteConfirmHandler = onDeleteConfirm === undefined ? undefined : handleDeleteConfirm;
   /**
-   * Regeneration re-asks the last thing the player said, so exactly one row can
-   * offer it: the transcript's own last message, when that message is a companion
-   * reply with a player row before it. The opening is message zero - the only
-   * companion message a transcript can begin with - and it has no player turn to
-   * repeat, so it never carries the control. The rule is the Host's own
-   * precondition (`regenerate` in `chat-pipeline-service.ts` finds the player turn
-   * it re-asks by searching the transcript for one), stated here so the surface
-   * never offers an affordance the Host would have to reject.
+   * Regeneration re-asks the last thing the player said, so exactly one row can offer it: the
+   * transcript's own last message. Two shapes of that row are legal, and the Host refuses every
+   * other one (`regenerate` in `chat-pipeline-service.ts`):
    *
-   * That a player row EXISTS is the precondition, and counting rows is not: a
-   * transcript whose player line was deleted still has more than one row and still
-   * ends on her reply, and the Host refuses it for want of a player turn. The two
-   * readings agree only while every conversation keeps its player rows.
+   *  - her reply, with a player row before it. The turn re-asks that player turn at her reply's own
+   *    position, so the reply the player reads changes in place.
+   *  - the player's own line, when nothing answered it. A turn that fails or is stopped commits no
+   *    reply, and acceptance wrote their row before the provider ran, so their line is the tail - by
+   *    construction, not by accident. Regenerating it re-asks that line and the reply appends behind
+   *    it. It is offered only while no turn is in flight: a live turn may still answer the line, and
+   *    the Host refuses the target until the ledger is terminal.
+   *
+   * The opening is message zero - the only companion message a transcript can begin with - and it
+   * has no player turn to repeat, so it never carries the control. "A player row exists" is the
+   * Host's precondition for the first shape and counting rows is not: a transcript whose player line
+   * was deleted still ends on her reply with more than one row, and the Host refuses it for want of a
+   * player turn.
    */
-  const lastMessage = transcript[transcript.length - 1];
+  const tailMessage = transcript[transcript.length - 1];
+  const tailOffersRegenerate =
+    tailMessage === undefined
+      ? false
+      : tailMessage.role === "companion"
+        ? transcript.some((message) => message.role === "player")
+        : !turnInFlight;
   const regenerateHandle =
-    regenerateHandler !== undefined &&
-    lastMessage?.role === "companion" &&
-    transcript.some((message) => message.role === "player")
-      ? lastMessage.handle
-      : null;
+    regenerateHandler !== undefined && tailMessage !== undefined && tailOffersRegenerate ? tailMessage.handle : null;
   /**
    * The row the mounted turn's generation wrote. A turn commits exactly one reply, and that reply
    * is the transcript's last message when it is a companion's - the tail row `regenerateHandle`
