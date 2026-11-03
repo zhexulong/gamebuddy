@@ -3,7 +3,7 @@ import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFile, readdir } from "node:fs/promises";
 import { PassThrough } from "node:stream";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -305,6 +305,9 @@ test("production source exposes no owner launch helper or raw launch input callb
 
 test("neutral admission core is imported only by the public facade, the private composer core, and the admission test", async () => {
   const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+  // The admission test is one of the three allowed importers; naming itself from the running module keeps that fact
+  // true across a rename without loosening what the assertion forbids.
+  const thisTestLeaf = basename(fileURLToPath(import.meta.url)).replace(/\.js$/u, ".ts");
   const leaves = (await readdir(sourceRoot, { recursive: true }))
     .map((leaf) => leaf.replaceAll("\\", "/"))
     .filter((leaf) => leaf.endsWith(".ts"));
@@ -319,19 +322,25 @@ test("neutral admission core is imported only by the public facade, the private 
       controlledUseInFiles.push(leaf);
     }
   }
-  assert.deepEqual(coreImporters.sort(), [
-    "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
-    "stardew-installation-admission.test.ts",
-    "stardew-installation-admission.ts",
-  ]);
+  assert.deepEqual(
+    coreImporters.sort(),
+    [
+      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      thisTestLeaf,
+      "stardew-installation-admission.ts",
+    ].sort(),
+  );
   // The callback/raw-root/executable controlled use is declared only in the
   // neutral core and imported only by the private composer core and the
   // dedicated admission test adapter; no general production caller reaches it.
-  assert.deepEqual(controlledUseInFiles.sort(), [
-    "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
-    "stardew-installation-admission.core.ts",
-    "stardew-installation-admission.test.ts",
-  ]);
+  assert.deepEqual(
+    controlledUseInFiles.sort(),
+    [
+      "games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts",
+      "stardew-installation-admission.core.ts",
+      thisTestLeaf,
+    ].sort(),
+  );
 });
 
 function chainInspector(

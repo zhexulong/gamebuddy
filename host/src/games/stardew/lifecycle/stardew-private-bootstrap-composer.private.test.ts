@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -1851,6 +1851,10 @@ test("only the production internal and dedicated test-only adapter import the co
     "stardew",
     "lifecycle",
   );
+  // This test is one of the three files allowed to import the core, so it names itself from the running module
+  // rather than from a literal path: a rename of this file must not weaken the assertion, and any fourth importer
+  // still fails it.
+  const thisTestLeaf = basename(fileURLToPath(import.meta.url)).replace(/\.js$/u, ".ts");
   const leaves = (await readdir(sourceRoot, { recursive: true }))
     .map((leaf) => leaf.replaceAll("\\", "/"))
     .filter((leaf) => leaf.endsWith(".ts"));
@@ -1878,16 +1882,22 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.equal(publicComposerSource.includes("as StardewPrivateBootstrapComposition"), false);
   assert.equal(publicComposerSource.includes("launchStagedPlayerHost"), false);
 
-  assert.deepEqual(coreImporters.sort(), [
-    "stardew-private-bootstrap-composer.internal.ts",
-    "stardew-private-bootstrap-composer.test-support-internal.ts",
-    "stardew-private-bootstrap-composer.test.ts",
-  ]);
-  assert.deepEqual(testInternalImporters.sort(), [
-    "stardew-private-bootstrap-composer.test-fixtures.ts",
-    "stardew-private-bootstrap-composer.test-support.ts",
-    "stardew-private-bootstrap-composer.test.ts",
-  ]);
+  assert.deepEqual(
+    coreImporters.sort(),
+    [
+      "stardew-private-bootstrap-composer.internal.ts",
+      "stardew-private-bootstrap-composer.test-support-internal.ts",
+      thisTestLeaf,
+    ].sort(),
+  );
+  assert.deepEqual(
+    testInternalImporters.sort(),
+    [
+      "stardew-private-bootstrap-composer.test-fixtures.ts",
+      "stardew-private-bootstrap-composer.test-support.ts",
+      thisTestLeaf,
+    ].sort(),
+  );
   const productionCoreSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.core.ts"), "utf8");
   const productionInternal = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.internal.ts"), "utf8");
   assert.doesNotMatch(productionCoreSource, /from\s+["'][^"']*stardew-bootstrap-guardian\.private\.js["']/);
