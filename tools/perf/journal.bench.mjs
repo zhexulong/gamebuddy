@@ -185,7 +185,7 @@ if (scalingRequested()) {
     const after = recoveryJournalWriteProfile();
     const bytesAfter = await Promise.all(points.map((point) => logBytes(point.directory)));
     const counters = {
-      executed: ratio.points.reduce((sum, point, index) => sum + point.ops, 0),
+      executed: ratio.points.reduce((sum, point) => sum + point.ops, 0),
       appends: after.appends - before.appends,
       compactions: after.compactions - before.compactions,
       bytesPerOp: ratio.points.map((point, index) => Math.round((bytesAfter[index] - bytesBefore[index]) / point.ops)),
