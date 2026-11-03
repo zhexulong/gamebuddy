@@ -41,6 +41,14 @@ import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./prot
  * only the `real` families: an absent one proves nothing about what the Host accepts, and must never be read as
  * agreement.
  * </p>
+ *
+ * red-proof: history  `a2373de3` built the rock id inline as `$"rock:{location}:{x},{y}"`, outside `opaqueId`'s
+ *                   `^[A-Za-z0-9_-]{1,128}$`; the gate was red on main for it until `79cf97d1`, and replaying it
+ *                   reports `rockSourceTargets: invalid_snapshot:rockSourceTargets`
+ *                   (host/src/snapshot-loopback.test.ts)
+ * red-proof: fixture  a `treeChopSourceTargets` entry with an unexpected key, or `health` at 0, must be refused with
+ *                   its family named; dropping the name makes this gate say `a treeChopSourceTargets entry the Host
+ *                   refuses must name treeChopSourceTargets; got invalid_snapshot` (host/src/snapshot-loopback.test.ts)
  */
 
 const ARTIFACT_URL = new URL(
