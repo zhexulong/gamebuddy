@@ -13,11 +13,38 @@ Four observations, all written into each driver's own facts file:
 |---|---|
 | (unprefixed) | what is on screen and where — rectangles, visibility, counts |
 | `TIMINGS` | how long each phase of a turn took, from the product's own marks |
+| `SWITCHES` | how long moving between surfaces took, from the product's own marks |
+| `CAPABILITY` | the durable transcript's shape, and its growth across turns |
+| `INJECTION` | which authored-context blocks and entries reached the request |
 | `RUNTIME` | DOM nodes, heap, mark count at the end of the driver |
-| `PAINT` | first paint, first contentful paint, largest contentful paint |
+| `PAINT` | first paint, first contentful paint |
 
 Absence is reported as `null` or `unobserved:<reason>`, never as `0`: a heap that the browser does not
-expose and a page that never painted are not measurements of zero.
+expose and a page that never painted are not measurements of zero. The same rule is why `INJECTION`
+says `unobserved:no_provider_request_capture` rather than "0 entries" — a run that recorded no
+provider request did not observe an empty request, it observed nothing. The frontend run dials the
+operator's gateway, so that is the reading a normal run produces; the reader takes a capture written
+where `GB_SHOTS_WIRE_REQUESTS` points (which is what `tools/live-run/core/stub-provider.mjs` records)
+as soon as a run supplies one.
+
+Two marks families are READ, never re-measured: a driver that timed its own click would be a second
+opinion about where the time went. `gamebuddy:turn:*` lives in `dialogue-web/src/components/turn-timings.ts`,
+`gamebuddy:switch:<surface>:start|done` in `dialogue-web/src/composed-surface-route.ts` — the module every
+surface selection goes through. A switch's `done` is the commit and its paint, NOT the surface's own
+data: `done` with no `start` is Back or Escape (the browser moved the history entry, nobody pressed an
+entry), and it carries no duration because no selection was ever made.
+
+## Which drivers observe, and which do not
+
+Every driver that changes surface or sends a turn now calls `observe()`: a, b, c, d, e, f, g, h, i, j,
+k, l, m, n, o, p, q, r, s, t. Each records `observationStart(page)` at its start and passes it as
+`sinceMs`, because the mark buffer belongs to the PAGE and the drivers share one page: without a
+baseline the last driver to read would report every earlier driver's turn and switch as its own — the
+same misattribution that made `PAINT` report one firstPaint on every driver.
+
+No driver is left out. A driver whose scenario takes an early named skip writes its skip and exits
+before reaching `observe()`, so its facts file carries no `SWITCHES` line at all; the README's section
+says nothing about it rather than inventing a zero.
 
 ## One command
 
