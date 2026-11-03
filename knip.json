@@ -66,6 +66,8 @@
         "scripts/production-artifact-esm-resolution-probe.mjs",
         "scripts/start-test-artifact.mjs",
         "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.ts",
+        "src/wire-declaration.test-support.ts!",
+        "src/test-support/deterministic-bridge.ts!",
         "src/test-fixtures/semantic-initial-chat-process-worker.ts",
         "src/test-fixtures/semantic-known-game-process-worker.ts",
         "src/test-fixtures/windows-named-mutex-safety-seal-worker.ts",
