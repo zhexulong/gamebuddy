@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDeterministicBridgePair } from "./deterministic-bridge.js";
-import { type BridgeMessage, type Envelope, MAX_EVENTS_PER_WINDOW, newEnvelope, type Scope } from "../protocol.js";
+import { createDeterministicBridgePair, MAX_EVENTS_PER_WINDOW } from "./deterministic-bridge.js";
+import { type BridgeMessage, type Envelope, newEnvelope, type Scope } from "../protocol.js";
 
 const scope: Scope = {
   integrationId: "stardew",

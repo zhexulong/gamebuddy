@@ -105,8 +105,6 @@ const PROTOCOL_VERSION = 1;
 export const MAX_MESSAGE_BYTES = 128 * 1024;
 /** World-fact JSON is bounded below the frame limit so conversion never accepts an unbounded raw blob. */
 export const MAX_WORLD_FACT_PAYLOAD_JSON_BYTES = 8 * 1024;
-export const MAX_EVENTS_PER_WINDOW = 32;
-export const EVENT_WINDOW_MS = 1_000;
 
 export type Scope = Readonly<{
   integrationId: string;

@@ -1,15 +1,12 @@
 import { EventEmitter } from "node:events";
 
-import {
-  type BridgeMessage,
-  EVENT_WINDOW_MS,
-  MAX_EVENTS_PER_WINDOW,
-  type Scope,
-  serializeBounded,
-  validateBridgeMessage,
-} from "../protocol.js";
+import { type BridgeMessage, type Scope, serializeBounded, validateBridgeMessage } from "../protocol.js";
 
 export type BridgeFault = "disconnected" | "invalid_message" | "message_too_large" | "rate_limited";
+
+/** The double's own semantic-event rate policy; nothing in the product rate-limits per window. */
+export const MAX_EVENTS_PER_WINDOW = 32;
+export const EVENT_WINDOW_MS = 1_000;
 
 /**
  * In-memory transport double. It models delivery, ordering, bounded payloads,
