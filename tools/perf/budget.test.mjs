@@ -13,7 +13,14 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { BUDGET_TOLERANCE, budgetMicros, compare, machineIdentity, machineSkipLine } from "../check-perf-budget.mjs";
+import {
+  BUDGET_TOLERANCE,
+  budgetMicros,
+  compare,
+  machineIdentity,
+  machineSkipLine,
+  revisionLine,
+} from "../check-perf-budget.mjs";
 
 const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "check-perf-budget.mjs");
 
@@ -82,6 +89,95 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
     assert.equal(failure?.status, 1, "a case past its budget must fail the gate");
     assert.match(failure.stdout, /perf_budget_failed slow=1/u);
     assert.match(failure.stdout, /journal\.write\/large measured 200 ops\/s 5 µs\/op, budget 3\.00 µs\/op/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a baseline whose revision sits ahead of HEAD, or beside it, says which it is", () => {
+  assert.match(
+    revisionLine("abc1234", { ahead: 3, behind: 0 }),
+    /^perf_budget_baseline_ahead: baseline revision abc1234 is 3 commits ahead of HEAD; /u,
+  );
+  assert.match(
+    revisionLine("abc1234", { ahead: 2, behind: 5 }),
+    /^perf_budget_baseline_diverged: baseline revision abc1234 is 5 commits behind and 2 commits ahead of HEAD; /u,
+  );
+});
+
+test("the gate names how far the baseline is from HEAD, and that distance never decides the verdict", async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-perf-revision-"));
+  const git = (...args) =>
+    execFileSync("git", ["-c", "user.name=perf gate", "-c", "user.email=perf@example.invalid", ...args], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  try {
+    git("init", "-q");
+    git("commit", "-q", "--allow-empty", "-m", "the revision the numbers were recorded at");
+    const recordedRevision = git("rev-parse", "HEAD");
+    git("commit", "-q", "--allow-empty", "-m", "a commit since");
+    const headRevision = git("rev-parse", "HEAD");
+
+    await mkdir(join(root, "tools", "perf"), { recursive: true });
+    const resultsPath = join(root, "results.txt");
+    await writeFile(
+      resultsPath,
+      `PERF_RESULT ${JSON.stringify({ id: "journal.write", size: "large", opsPerSecond: 500, perOpMicros: 2 })}\n`,
+    );
+    const writeBaseline = (revision) =>
+      writeFile(
+        join(root, "tools", "perf", "baseline.json"),
+        `${JSON.stringify(
+          {
+            note: "fixture",
+            revision,
+            machine: machineIdentity(),
+            tolerance: BUDGET_TOLERANCE,
+            cases: { "journal.write/large": recorded },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    const run = () =>
+      execFileSync(process.execPath, [gatePath, "--root", root, "--results", resultsPath], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+    // In budget on every reading: the verdict below is about the revision line, not a regression.
+    await writeBaseline(recordedRevision);
+    const behind = run();
+    assert.match(
+      behind,
+      new RegExp(
+        `^perf_budget_baseline_behind: baseline revision ${recordedRevision} is 1 commit behind HEAD; ` +
+          "the numbers below describe that older code",
+        "mu",
+      ),
+    );
+    assert.match(behind, /^perf_budget_ok /mu, "a lagging baseline is a report, not a failure");
+
+    await writeBaseline(headRevision);
+    const current = run();
+    assert.match(
+      current,
+      new RegExp(
+        `^perf_budget_baseline_current: baseline revision ${headRevision} is HEAD; ` +
+          "the numbers below were recorded at this revision$",
+        "mu",
+      ),
+    );
+    assert.match(current, /^perf_budget_ok /mu);
+
+    await writeBaseline("0000000");
+    const unknown = run();
+    assert.match(unknown, /^perf_budget_baseline_unknown: baseline revision 0000000 is not a commit in this clone,/mu);
+    assert.match(unknown, /^perf_budget_ok /mu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

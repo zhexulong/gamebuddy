@@ -28,6 +28,14 @@
  * deleted or renamed benchmark cannot silently leave the gate). Both fail loudly instead of
  * passing a gate that checked less than it claims.
  *
+ * THE BASELINE LAGS BY DESIGN, AND THE GATE SAYS BY HOW MUCH: the recorded numbers belong to the
+ * revision they were recorded at, and no commit that makes a path faster re-records them - which is
+ * exactly why they drift. A run states the distance from that revision to HEAD and what it means: the
+ * headroom printed in front of each case belongs to that older code, not to this revision. It is a
+ * report and not a verdict - a lagging baseline is the normal state of a ratchet, so the distance
+ * never changes the exit code - and a revision this clone does not know (a shallow checkout, a
+ * baseline from a branch since squashed away) is a named line rather than a crash or silence.
+ *
  * Usage:
  *   node tools/check-perf-budget.mjs                        # re-measure the suite and ratchet
  *   node tools/check-perf-budget.mjs --update                # re-record, in its own commit
@@ -89,6 +97,55 @@ export function machineSkipLine(recorded, current) {
     recorded.cpuModel === current.cpuModel;
   if (same) return undefined;
   return `perf_budget_skipped: baseline recorded on ${machineLabel(recorded)}, measured on ${machineLabel(current)}`;
+}
+
+/** One `git` call's trimmed stdout, or undefined when git cannot answer (unknown revision, no repo). */
+function gitOutput(args, cwd) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
+const commits = (count) => `${count} commit${count === 1 ? "" : "s"}`;
+
+/**
+ * How far the baseline's revision sits from HEAD: `behind` are HEAD's commits the baseline does not
+ * have, `ahead` are the baseline's that HEAD does not have. Undefined when this clone does not know
+ * the revision - a fact about the clone, not a defect in the baseline, so it is reported not raised.
+ */
+export function revisionDistance(revision, root) {
+  const output = gitOutput(["rev-list", "--count", "--left-right", `${revision}...HEAD`], root);
+  if (output === undefined) return undefined;
+  const [ahead, behind] = output.split(/\s+/u).map(Number);
+  return { ahead, behind };
+}
+
+/**
+ * The line placing the baseline's revision against HEAD, and what a reader should conclude from the
+ * numbers under it: a case's headroom is measured from the revision its budget was recorded at.
+ */
+export function revisionLine(revision, distance) {
+  if (distance === undefined) {
+    return `perf_budget_baseline_unknown: baseline revision ${revision} is not a commit in this clone, so the numbers below cannot be placed against HEAD; the headroom in front of each case is that baseline's, not this revision's`;
+  }
+  const { ahead, behind } = distance;
+  if (ahead === 0 && behind === 0) {
+    return `perf_budget_baseline_current: baseline revision ${revision} is HEAD; the numbers below were recorded at this revision`;
+  }
+  if (ahead === 0) {
+    return `perf_budget_baseline_behind: baseline revision ${revision} is ${commits(behind)} behind HEAD; the numbers below describe that older code, so the headroom in front of each case is not this revision's headroom`;
+  }
+  if (behind === 0) {
+    return `perf_budget_baseline_ahead: baseline revision ${revision} is ${commits(ahead)} ahead of HEAD; the numbers below describe code this checkout does not contain, so the headroom in front of each case is not this revision's headroom`;
+  }
+  return `perf_budget_baseline_diverged: baseline revision ${revision} is ${commits(behind)} behind and ${commits(ahead)} ahead of HEAD; the numbers below describe other code, so the headroom in front of each case is not this revision's headroom`;
 }
 
 /**
@@ -154,6 +211,8 @@ function main(argv) {
       process.stdout.write(`${skip}\n`);
       return 0;
     }
+    // Before the measurement, because it describes the numbers that follow rather than the verdict.
+    process.stdout.write(`${revisionLine(baseline.revision, revisionDistance(baseline.revision, root))}\n`);
   }
   const results = measureCases(argv).sort((left, right) =>
     `${left.id}/${left.size}`.localeCompare(`${right.id}/${right.size}`, "en"),
