@@ -3,6 +3,7 @@ import { Brain, Gamepad2, MessagesSquare, Settings, SlidersHorizontal, Users } f
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import type { BrowserDraftV1, BrowserEventV1 } from "../reference-pipeline-api";
+import { TavernProblemError, TavernProtocolError } from "../reference-pipeline-api";
 import {
   createReferencePipelineSession,
   type PendingSubmission,
@@ -10,6 +11,10 @@ import {
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
+import {
+  ComposedReferenceGameProblemError,
+  ComposedReferenceGameProtocolError,
+} from "../composed-reference-game-browser-api";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import { composedProblemView as problemView, declaredProblemSentence } from "../composed-problem-view";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
@@ -44,6 +49,36 @@ import {
   useSurfaceRoute,
 } from "../composed-surface-route";
 import { markTurn, observeTurnEvent } from "./turn-timings";
+
+/** The recovery read's first retry delay, and the ceiling its doubling stops at. */
+const RETRY_FIRST_MS = 1_000;
+const RETRY_CEILING_MS = 5_000;
+
+/**
+ * True when a failed read says something about the conversation rather than about the link.
+ *
+ * The same four classes the bootstrap's fallback poll treats as terminal (`use-composed-bootstrap`,
+ * the catch inside its poll tick): a reducer rejection, a protocol fault, or a Host refusal the Host
+ * itself says is not retryable. Those are what the problem page is for - a state that cannot be
+ * reconciled, a build that does not speak this contract, a command that will be refused the same way
+ * again. Everything else - an offline read, a 5xx, a retryable refusal - is a link that comes back,
+ * and replacing the whole shell for one of those is what ended reconnection for a session.
+ *
+ * The list is spelled twice because the poll that owns the other copy is in another module; a shared
+ * predicate is where this belongs the next time that module is opened.
+ */
+function terminalReadFailure(error: unknown): boolean {
+  // A fetch that never landed arrives as a protocol error, and it is the most transient failure there
+  // is - the client's own `network_error` reason names the link, not the contract.
+  if (error instanceof ComposedReferenceGameProtocolError && error.reason === "network_error") return false;
+  return (
+    error instanceof ReferencePipelineSessionError ||
+    error instanceof TavernProtocolError ||
+    (error instanceof TavernProblemError && !error.retryable) ||
+    error instanceof ComposedReferenceGameProtocolError ||
+    (error instanceof ComposedReferenceGameProblemError && !error.retryable)
+  );
+}
 
 /**
  * Same-origin composed reference-game shell. The composed root is the only
@@ -112,6 +147,16 @@ export function ComposedReferenceGameApp() {
   // player is landed in it either way, so this is the one fact left to state: it opens on the
   // default opening. It clears when another switch lands.
   const [openingNotice, setOpeningNotice] = useState<string | null>(null);
+  /**
+   * The live cursor's reconnect read that could not be taken, in the surface's own sync sentence.
+   *
+   * A stream that dies and a read that fails in the same breath is one transient outage, and the
+   * projection on screen is still the last one the Host confirmed - so the shell keeps it and says
+   * which read it could not make, the same rule the arrival read follows (`use-arrival-reread.ts`).
+   * Spent by the recovery read that lands; a failure the Host describes as terminal never sets it,
+   * because that class replaces the surface with its problem view instead.
+   */
+  const [streamNotice, setStreamNotice] = useState<string | null>(null);
   /**
    * The optimistic player message: the text the player just sent, keyed by the idempotency key
    * the send already minted, plus the number of rows the authoritative transcript held when the
@@ -225,6 +270,12 @@ export function ComposedReferenceGameApp() {
     let work = Promise.resolve();
     let cursor = view.session.snapshot.eventStream.cursor;
     let pendingResetCursor = false;
+    // The recovery read's own retry: one timer and the attempt count that shapes its delay.
+    let retryTimer: number | null = null;
+    let retries = 0;
+    // A new epoch or Chat starts from no stated failure: the sentence below describes a read this
+    // cursor could not take, and this is a different cursor.
+    setStreamNotice(null);
     // The stream's own position, advanced by every frame this effect validates. A
     // frame is validated against the position the frame before it left, and the
     // reads below no longer commit between frames - so the checkpoint is carried
@@ -242,6 +293,7 @@ export function ComposedReferenceGameApp() {
       if (disposed || recovering) return;
       recovering = true;
       closeSource();
+      let retry = false;
       try {
         const doReset = pendingResetCursor;
         pendingResetCursor = false;
@@ -284,13 +336,42 @@ export function ComposedReferenceGameApp() {
           : session.withPending(current.session.pending);
         checkpoint = settled;
         commit({ kind: "ready", root, session: settled, draft, locale: current.locale });
+        setStreamNotice(null);
+        retries = 0;
       } catch (error) {
-        if (!disposed) commit(problemView(error, messages(localeRef.current)));
+        if (disposed) return;
+        if (terminalReadFailure(error)) {
+          commit(problemView(error, messages(localeRef.current)));
+          return;
+        }
+        // The projection stands. A refresh that failed is not a conversation that stopped existing
+        // - the rule the arrival read follows - and the shell says which read it could not take
+        // instead of unmounting the surface that was about to reconnect.
+        setStreamNotice(messages(localeRef.current).chatArrivalNotice);
+        retry = true;
       } finally {
         recovering = false;
-        if (pendingResetCursor && !disposed) void recover(true);
+        if (retry) scheduleRecovery();
+        else if (pendingResetCursor && !disposed) void recover(true);
         else if (!disposed && viewRef.current.kind === "ready") connect();
       }
+    };
+    /**
+     * The next attempt after a recovery read the link refused.
+     *
+     * The backoff is the fallback poll's own shape: one second doubling to a five-second ceiling,
+     * because a Host that is down is not made alive by hammering it and a link that dropped does
+     * come back. The timer belongs to this effect, so an epoch switch, a Chat switch or an unmount
+     * disposes it with the socket, and one attempt is ever outstanding.
+     */
+    const scheduleRecovery = (): void => {
+      if (disposed || retryTimer !== null) return;
+      const delay = Math.min(RETRY_FIRST_MS * 2 ** retries, RETRY_CEILING_MS);
+      retries += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        void recover(true);
+      }, delay);
     };
     /**
      * The authoritative half of a committed frame, coalesced to one pass at a time.
@@ -395,13 +476,19 @@ export function ComposedReferenceGameApp() {
         streamLiveRef.current = true;
       } catch (error) {
         streamLiveRef.current = false;
-        commit(problemView(error, messages(localeRef.current)));
+        if (terminalReadFailure(error)) commit(problemView(error, messages(localeRef.current)));
+        else {
+          streamFailedRef.current = true;
+          setStreamNotice(messages(localeRef.current).chatArrivalNotice);
+          scheduleRecovery();
+        }
       }
     }
     connect();
     return () => {
       disposed = true;
       closeSource();
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, [view.kind, commit, eventStreamEpoch]);
 
@@ -1332,7 +1419,7 @@ export function ComposedReferenceGameApp() {
                   notice={
                     pollFailure
                       ? labels().chatFailed
-                      : (sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
+                      : (streamNotice ?? sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
                   }
                   arrivalNotice={arrivalReads.chatArrivalNotice}
                   replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
