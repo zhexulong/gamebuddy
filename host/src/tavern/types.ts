@@ -131,6 +131,12 @@ export type StCardImportRecord = ArtifactRevision &
       count: number;
       /** Which items were lost, where the player can act on them. */
       omitted?: readonly StCardImportOmittedEntry[];
+      /**
+       * The macros behind a FIELD-level loss - one field the catalog omits as a whole, as a closing
+       * direction carrying `{{time}}` is. Its own member rather than `omitted`: a field has no title,
+       * and `field` already names it.
+       */
+      macros?: readonly StCardImportOmittedMacro[];
     }>[];
   }>;
 /** Durable, field-level confirmation for an inert import candidate. */
@@ -467,29 +473,48 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
       ? undefined
       : array(v.losses, 64).map((x) => {
           if (!record(x)) fail();
+          /** One named macro: the token as the card wrote it, and whether SillyTavern defines it. */
+          const readMacro = (macro: unknown) => {
+            if (!record(macro) || !only(macro, ["token", "standard"])) fail();
+            return freeze({
+              token: requiredText(macro.token, 64),
+              standard: requiredConstant(macro.standard),
+            });
+          };
           // The named half is optional and capped: a card that lost more entries than the cap still records the true
           // `count`, and an artifact written before it existed reads back unchanged.
+          //
+          // Two naming members, because they name different things: `omitted` is one dropped world-book entry per row
+          // (with that entry's own `title`), while `macros` is the macros in ONE field the catalog will omit whole - a
+          // closing direction carrying `{{time}}`. Both are optional, so a record written before either existed still
+          // reads back unchanged.
           const omitted =
             x.omitted === undefined
               ? undefined
               : array(x.omitted, 32).map((entry) => {
                   if (!record(entry) || !only(entry, ["title", "macros"])) fail();
-                  const macros = array(entry.macros, 8).map((macro) => {
-                    if (!record(macro) || !only(macro, ["token", "standard"])) fail();
-                    return freeze({
-                      token: requiredText(macro.token, 64),
-                      standard: requiredConstant(macro.standard),
-                    });
+                  return freeze({
+                    title: requiredText(entry.title, 256),
+                    macros: freeze(array(entry.macros, 8).map(readMacro)),
                   });
-                  return freeze({ title: requiredText(entry.title, 256), macros: freeze(macros) });
                 });
-          if (!only(x, omitted === undefined ? ["field", "reason", "count"] : ["field", "reason", "count", "omitted"]))
+          const macros = x.macros === undefined ? undefined : array(x.macros, 8).map(readMacro);
+          if (
+            !only(x, [
+              "field",
+              "reason",
+              "count",
+              ...(omitted === undefined ? [] : ["omitted"]),
+              ...(macros === undefined ? [] : ["macros"]),
+            ])
+          )
             fail();
           return freeze({
             field: requiredId(x.field),
             reason: requiredText(x.reason, 128),
             count: requiredRevision(x.count),
             ...(omitted === undefined ? {} : { omitted: freeze(omitted) }),
+            ...(macros === undefined ? {} : { macros: freeze(macros) }),
           });
         });
   const importId = requiredId(v.importId);
