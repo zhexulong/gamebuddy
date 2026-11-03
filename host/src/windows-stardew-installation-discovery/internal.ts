@@ -20,6 +20,13 @@ export const INSTALLATION_LOCATION_MAX_LENGTH = 64;
  * would publish that profile's folder name, which is an identity leak in a screenshot,
  * so such a library is named by its drive alone. No executable name is ever part of
  * the label.
+ *
+ * A non-Steam installation (GOG, an offline copy, a standalone mod instance) has no
+ * `steamapps` component, and naming it by its drive alone made every such install on one
+ * drive read identically - two GOG copies both said `D:`, which is the same "nothing to
+ * choose by" fault this label exists to fix. The folder that CONTAINS the install root is
+ * the same fact the Steam branch reads (a library's own folder name), so both branches now
+ * follow one rule.
  */
 export function installationLocationLabel(installRoot: string): string | null {
   const normalized = normalizeWindowsPath(installRoot);
@@ -27,11 +34,13 @@ export function installationLocationLabel(installRoot: string): string | null {
   const drive = normalized.slice(0, 2);
   const components = normalized.slice(3).split("\\");
   const steamApps = components.findIndex((component) => component.toLowerCase() === "steamapps");
-  if (steamApps < 1) return drive;
-  const library = components[steamApps - 1];
-  if (library === undefined) return drive;
-  if (components.slice(0, steamApps - 1).some((component) => component.toLowerCase() === "users")) return drive;
-  const label = `${drive} · ${library}`;
+  /* The folder that holds the install root: a Steam library's own name, or a plain parent. */
+  const holder = steamApps < 1 ? components[components.length - 2] : components[steamApps - 1];
+  if (holder === undefined || holder.length === 0) return drive;
+  /* Above the holder, never including it: a profile folder in the ancestry is the leak. */
+  const ancestry = steamApps < 1 ? components.slice(0, -2) : components.slice(0, steamApps - 1);
+  if (ancestry.some((component) => component.toLowerCase() === "users")) return drive;
+  const label = `${drive} · ${holder}`;
   return label.length <= INSTALLATION_LOCATION_MAX_LENGTH ? label : drive;
 }
 export type StardewInstallationCandidate = Readonly<{

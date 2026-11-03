@@ -92,8 +92,23 @@ test("a library under a user's own folder is named by its drive alone", () => {
   assert.equal(installationLocationLabel("C:\\Users\\long\\steamapps\\common\\Stardew Valley"), "C:");
 });
 
+test("two non-Steam installations on one drive are told apart by the folder that holds each", () => {
+  // A GOG copy, an offline copy and a standalone mod instance all lack `steamapps`, so the
+  // Steam branch never ran for them and every such install on one drive read `D:` - the same
+  // "nothing to choose by" fault this label exists to fix, on the other half of the installs.
+  assert.equal(installationLocationLabel("D:\\GOG Games\\Stardew Valley"), "D: · GOG Games");
+  assert.equal(installationLocationLabel("D:\\Games\\Stardew Valley"), "D: · Games");
+  assert.notEqual(
+    installationLocationLabel("D:\\GOG Games\\Stardew Valley"),
+    installationLocationLabel("D:\\Games\\Stardew Valley"),
+  );
+  // The profile carve-out holds on this branch too: a copy under a user's folder says the drive.
+  assert.equal(installationLocationLabel("C:\\Users\\long\\Games\\Stardew Valley"), "C:");
+});
+
 test("a root the label cannot locate falls back to the drive, never to a path", () => {
-  assert.equal(installationLocationLabel("E:\\Games\\Stardew Valley"), "E:");
+  // A root directly on a drive has no holding folder to name.
+  assert.equal(installationLocationLabel("E:\\Stardew Valley"), "E:");
   assert.equal(installationLocationLabel("not-windows"), null);
 });
 
