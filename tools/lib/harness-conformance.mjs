@@ -416,6 +416,12 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "a renamed owner through a synthetic tree, and its own red-proof marker names both",
   },
   { gate: "check-error-identity-classification.mjs", reason: "static source gate; falsifier in its test" },
+  {
+    gate: "check-parser-agreement.mjs",
+    reason:
+      "static source gate; its falsifier suite (tools/lib/parser-agreement.test.mjs) rebuilds one reader's pattern on a " +
+      "copy of the file and requires the disagreement to be named, and the gate's own red-proof marker names the token",
+  },
   { gate: "check-gameplay-capability-catalog.mjs", reason: "static catalog gate; falsifier in its test" },
   {
     gate: "check-harness-conformance.mjs",
@@ -464,6 +470,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   // the suite runs; this entry exists so the conformance gate sees them at all.
   { gate: "check-silent-failure.mjs", reason: "static source scan; falsifiers in tools/lib/silent-failure.test.mjs" },
   { gate: "check-perf-budget.mjs", reason: "re-measures budgets; falsifier needs a slower implementation" },
+  {
+    gate: "check-perf-scaling.mjs",
+    reason:
+      "re-measures the bench suite as size pairs in child processes, which needs a built `host/dist-test`; its " +
+      "falsifier is tools/check-perf-scaling.test.mjs, which drives the band decider over every rejected reading " +
+      "shape and measures a linear closure against an injected quadratic one on the same axis",
+  },
   { gate: "check-refusal-informativeness.mjs", reason: "static source scan; falsifier in its test" },
   { gate: "check-stardew-mod-folder-name.mjs", reason: "static three-file scan; falsifier in its test" },
   {
