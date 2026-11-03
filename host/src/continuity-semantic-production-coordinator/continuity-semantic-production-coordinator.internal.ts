@@ -399,6 +399,12 @@ export type ProviderInvocationScope = Readonly<{
      * instead of a `commit_presentation` insert.
      */
     variant: Readonly<{ targetMessageId: string; anchorMessageId: string }> | null;
+    /**
+     * Present only for a reply-target turn: the player row the transcript already carried and this
+     * turn answers, whose text is its prompt. Such a turn commits a `commit_presentation` insert
+     * like an ordinary one; only the row it takes its prompt from differs.
+     */
+    replyToPlayerMessageId: string | null;
   }>;
   /** Coordinator-minted fixed start-admission deadline, struck exactly once per execution scope. */
   deadlineAtMs: number;
@@ -869,6 +875,7 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
       runtimeBindingDigest: attempt.runtimeBindingDigest,
       runtimeOwner: attempt.runtimeOwner,
       variant: record.turn.variant ?? null,
+      replyToPlayerMessageId: record.turn.replyToPlayerMessageId ?? null,
     });
     operationAuthority = mounted.transitionAuthority.mintOperation();
     const scopedOperationAuthority = operationAuthority;
@@ -962,11 +969,12 @@ export async function consumeMountedAttemptInvocationAdmission<T>(
     const readAcceptedMessageText = async (): Promise<string> => {
       const store = mounted.store();
       const state = await store.resumeThread(mounted.chatThreadId, mounted.chatSurfaceSessionId);
-      // A same-position variant turn owns no player message: its prompt is the
-      // anchor player row the targeted reply answered. A missing anchor or a
-      // prompt that no longer resolves to a player row fails closed on the same
-      // bounded code rather than falling back to any other text.
-      const promptMessageId = record.turn.variant?.anchorMessageId ?? record.turn.messageId;
+      // A turn that answers a row the transcript already carries owns no player message either: its
+      // prompt is that row. A same-position variant turn's prompt is the anchor player row the
+      // targeted reply answered. A missing row or a prompt that no longer resolves to a player row
+      // fails closed on the same bounded code rather than falling back to any other text.
+      const promptMessageId =
+        record.turn.variant?.anchorMessageId ?? record.turn.replyToPlayerMessageId ?? record.turn.messageId;
       const message = state.messages.find(
         (candidate) =>
           candidate.messageId === promptMessageId && candidate.role === "player" && candidate.kind === "player",
