@@ -10,7 +10,8 @@
 // leaving the rest of the conversation in place. So the driver first makes sure the open conversation
 // is long enough to carry both (two exchanges), gated on the provider credential exactly as driver F
 // gates its own turn (`GB_SHOTS_CREDENTIAL_PRESENT`).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart } = require("./common.cjs");
+const { continuityLine } = require("./capability.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -110,6 +111,7 @@ const durableRows = async (page) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("p-rewind-delete.txt");
+  const observationFrom = await observationStart(page);
   // Both mutations are refused-or-applied silently: the shell re-reads on a refusal and only commits
   // a problem view when that re-read ALSO fails, so the wire is where the reason lives. Every refused
   // API call the page makes, with the status and the Host's own bounded code.
@@ -158,6 +160,14 @@ const durableRows = async (page) => {
   say(JSON.stringify(rows, null, 1));
   const durableBefore = await durableRows(page);
   say(`durable rows before: ${JSON.stringify(durableBefore.rows.map((row) => ({ order: row.order, role: row.role, text: row.text.slice(0, 14) })))}`);
+  /*
+   * The transcript these two destructive controls act on, as a sequence of durable snapshots.
+   *
+   * Each step declares what it is SUPPOSED to remove, so `continuityLine` can tell a removal the player
+   * asked for from a row that simply went missing - which is the only way this driver's "every other row
+   * is still there, in the same order" line can be a finding instead of a sentence it prints either way.
+   */
+  const durableSteps = [{ label: "before either control", rows: durableBefore.rows }];
   await shot(page, "87-controls-in-the-strip-1440x900.png");
 
   const deletable = rows.find((row) => row.delete !== null) ?? null;
@@ -215,6 +225,11 @@ const durableRows = async (page) => {
     say(`the deleted handle is gone from the Host's own rows: ${durableBefore.rows.some((row) => row.handle === targetRow.handle) && !durableAfterDelete.rows.some((row) => row.handle === targetRow.handle)}`);
     say(`every other row is still there, in the same order: ${JSON.stringify(durableAfterDelete.rows.map((row) => ({ order: row.order, role: row.role, text: row.text.slice(0, 14) })))}`);
     say(`durable rows after: [${durableAfterDelete.rows.map((row) => `${row.order}:${row.role}`).join(", ")}]`);
+    durableSteps.push({
+      label: "after the delete",
+      rows: durableAfterDelete.rows,
+      removedHandles: [targetRow.handle],
+    });
     await shot(page, "87-after-delete-1440x900.png");
     await page.setViewportSize({ width: 400, height: 800 });
     await page.waitForTimeout(1200);
@@ -271,6 +286,13 @@ const durableRows = async (page) => {
     say(`rows before=${rows.length} after=${afterRewind.length}`);
     say(`durable rows after: ${JSON.stringify(durableAfterRewind.rows.map((row) => ({ order: row.order, role: row.role, text: row.text.slice(0, 14) })))}`);
     say(`the reply the rewind was taken on survives, and everything after it is gone: ${afterRewind.some((row) => row.handle === rewindableNow.handle)}`);
+    const beforeTheRewind = durableSteps[durableSteps.length - 1].rows;
+    const rewindTargetIndex = beforeTheRewind.findIndex((row) => row.handle === rewindableNow.handle);
+    durableSteps.push({
+      label: "after the rewind",
+      rows: durableAfterRewind.rows,
+      removedHandles: rewindTargetIndex < 0 ? [] : beforeTheRewind.slice(rewindTargetIndex + 1).map((row) => row.handle),
+    });
     await shot(page, "87-after-rewind-1440x900.png");
     await page.setViewportSize({ width: 400, height: 800 });
     await page.waitForTimeout(1200);
@@ -279,7 +301,10 @@ const durableRows = async (page) => {
   }
   say(`rewind: ${rewindOutcome}`);
 
-  await observe(page, say, "p");
+  say(
+    `CAPABILITY continuity: ${continuityLine("the rows these two controls left", durableSteps)}`,
+  );
+  await observe(page, say, "p", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-P");
