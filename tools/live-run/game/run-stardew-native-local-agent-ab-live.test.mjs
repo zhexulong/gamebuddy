@@ -281,7 +281,18 @@ test("the run asks the companion questions and publishes the verdict", () => {
   // A gate module nobody calls is a document. This asserts the three links that make it a measurement: the import, the
   // delivery of the prompt through the same admission path as a task, and the verdict in the run's own result.
   assert.match(RUNNER_SOURCE, /from "\.\.\/dialogue-gates\.mjs"/);
-  assert.match(RUNNER_SOURCE, /await runAgentTurn\(gate\.prompt, tools\)/);
+  // Delivery must NOT be sequenced behind the day's turn.
+  //
+  // It was, and it never fired: `round28` ran seventeen minutes and all four gate prompts appear ZERO times in its
+  // session, because `await runAgentTurn(...)` does not return until the turn settles and a turn can last the whole day.
+  // Player text already steers into a running turn, so the assertion is about WHERE the submit happens, not about the
+  // transport.
+  assert.match(RUNNER_SOURCE, /deliverDialogueGatesForDay\(day\)/);
+  assert.doesNotMatch(
+    RUNNER_SOURCE,
+    /await runAgentTurn\(gate\.prompt/,
+    "a gate must not wait for the turn it is interrupting",
+  );
   assert.match(RUNNER_SOURCE, /const dialogueGates = assessDialogueGates\(/);
   assert.match(RUNNER_SOURCE, /^\s+dialogueGates,$/mu, "the verdict must reach result.json");
 });

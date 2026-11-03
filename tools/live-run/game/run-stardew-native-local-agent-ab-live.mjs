@@ -714,6 +714,8 @@ const presentationPieces = [];
 // What the companion said to each scripted player line, keyed by gate id. A gate with no entry is `not_exercised` -
 // the run never reached that moment - which is a different finding from a bad answer.
 const dialogueReplies = new Map();
+// Why a scripted player line was NOT admitted, when that happened. Silence and refusal are different findings.
+const dialogueGateRefusals = new Map();
 const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 /**
@@ -1431,6 +1433,52 @@ async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_00
   }
   return turn;
 }
+/**
+ * How long after a scripted player line its reply is read out of the presentation stream.
+ *
+ * A steer is queued behind the assistant turn already in flight, so the answer cannot be read immediately; it also
+ * cannot be read "when the turn ends", because that is the dependency this path exists to remove. 45 s is long enough
+ * for one steering message to be picked up and answered.
+ */
+const DIALOGUE_REPLY_WINDOW_MS = Number(process.env.GAMEBUDDY_DIALOGUE_REPLY_WINDOW_MS ?? 45_000);
+
+/**
+ * Submit the gates due on one game day, without waiting for that day's turn to settle.
+ *
+ * Delivery and capture are separated on purpose: delivery goes through the same admission path a player uses, so it is a
+ * real player turn and steers into the running work; capture reads the presentation pieces produced during the reply
+ * window, sliced by index so one gate's answer cannot be attributed to another's turn.
+ */
+async function deliverDialogueGatesForDay(day) {
+  for (const gate of SCHEDULED_DIALOGUE_GATES) {
+    if (gate.trigger.kind === "recent_refusal") continue;
+    if (gate.trigger.day !== day) continue;
+    if (dialogueReplies.has(gate.id)) continue;
+    const piecesBefore = presentationPieces.length;
+    const admission = await submitPlayerPrompt({
+      accept: (promptText, locale) => tools.acceptPlayerText(promptText, locale),
+      text: gate.prompt,
+      locale: "zh-CN",
+      timeoutMs: Number(process.env.GAMEBUDDY_PLAYER_INPUT_ADMISSION_MS ?? 90_000),
+    }).catch((error) => ({ accepted: false, lastRefusal: String(error?.message ?? error) }));
+    if (admission.accepted !== true) {
+      // A refused line is recorded as an absent answer WITH its reason: an admission that never happened must not read
+      // as silence from the companion.
+      dialogueReplies.set(gate.id, "");
+      dialogueGateRefusals.set(gate.id, admission.lastRefusal ?? "unknown");
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, DIALOGUE_REPLY_WINDOW_MS));
+    const spoken = presentationPieces
+      .slice(piecesBefore)
+      .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
+      .join("")
+      .replace(/\s+/gu, " ")
+      .trim();
+    dialogueReplies.set(gate.id, spoken);
+  }
+}
+
 async function runAgentTurn(text, tools) {
   turnStartedAtMs = Date.now();
   sampleAdvertisedActions();
@@ -3482,37 +3530,23 @@ try {
             );
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
             if (walked.settled !== true) break;
-            // The player drops in. A companion that is only ever narrated AT the fields has nobody to answer, and a
-            // progress log is the honest output of having no listener - measured 2026-11-03 (round26): five spoken
-            // lines, every one of them "已完成 A，正在执行 B". These are real player turns, delivered through the same
-            // admission path as the day's task, and judged by `dialogue-gates.mjs`.
+            // The player drops in - and this must NOT wait for the turn to end.
+            //
+            // Written the other way first, and it never fired: `round28` ran seventeen minutes with 119 assistant
+            // messages and 17 fact batches, and all four gate prompts appear ZERO times in its session - because the
+            // gate was submitted after `await runAgentTurn(...)`, and that call does not return until the turn settles.
+            // A turn lasting the whole day therefore silences the player for the whole day, which is the very
+            // complaint the gates exist to answer.
+            //
+            // Player text already has the right transport: `acceptPlayerInput` hands it to the pump, the pump's
+            // disposition is `steer` whenever a batch carries player input, and `steer` enters after the current
+            // assistant turn and its tool calls without pre-empting a token stream. So the only thing needed is to
+            // submit it WHILE the turn runs and read the reply afterwards, instead of sequencing it behind the turn.
             //
             // Scheduled by DAY rather than by game clock: the runner cannot pre-empt a turn mid-action, so a gate that
             // fired at exactly 12:00 would often be admitted after she had moved on. "Somewhere in day 1" is the
             // interval the runner can honour; the gate's own `atGameTime` stays in the record as intent.
-            for (const gate of SCHEDULED_DIALOGUE_GATES) {
-              if (gate.trigger.kind === "recent_refusal") continue;
-              if (gate.trigger.day !== day) continue;
-              if (dialogueReplies.has(gate.id)) continue;
-              const piecesBefore = presentationPieces.length;
-              const answered = await runAgentTurn(gate.prompt, tools);
-              const spoken = presentationPieces
-                .slice(piecesBefore)
-                .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-                .join("")
-                .trim();
-              dialogueReplies.set(gate.id, spoken);
-              sessionTurns.push(
-                Object.freeze({
-                  goalIndex: day - 1,
-                  goal: gate.prompt,
-                  turn: answered.turn,
-                  day,
-                  dialogueGate: gate.id,
-                }),
-              );
-              if (answered.settled !== true) break;
-            }
+            void deliverDialogueGatesForDay(day).catch(() => undefined);
             if (turns >= MAX_TURNS_PER_DAY) {
               process.stderr.write(`[multiday] day ${String(day)}: turn budget reached (${String(turns)})\n`);
               break;
