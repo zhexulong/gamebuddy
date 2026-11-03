@@ -305,7 +305,8 @@
     "test:frontend-create-chat": "node --test tools/live-run/frontend/capture/create-chat.test.mjs",
     "test:frontend-turn-gate": "node --test tools/live-run/frontend/capture/can-start-turn.test.mjs",
     "test:frontend-capability": "node --test tools/live-run/frontend/capture/capability.test.mjs",
-    "test:frontend-observation": "node --test tools/live-run/frontend/capture/observation.test.mjs"
+    "test:frontend-observation": "node --test tools/live-run/frontend/capture/observation.test.mjs",
+    "test:frontend-panel-wait": "node --test tools/live-run/frontend/capture/wait-for-panel.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
