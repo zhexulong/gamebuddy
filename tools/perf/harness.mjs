@@ -55,6 +55,11 @@ async function runWindow(run, deadlineMs, limit) {
  * round trip, a durable append). The caller attaches what the op's input was to the reported
  * result, so a number carries the size it was measured at instead of being a number about nothing.
  *
+ * CALL IT OUTSIDE A `test()` BODY. `node:test` enables async_hooks to track the resources a test
+ * awaits, and a promise-heavy op then pays for that tracking: the same admission op read 21.11 and
+ * 21.39 µs/op inside a test body against 11.43 and 13.11 µs/op at module scope, in one process. A
+ * test may still assert on the returned result and print it; what it must not do is run the windows.
+ *
  * `maxOps` bounds a case that grows a bounded resource, so it measures that resource's cost rather
  * than running into its cap: the windows then end by op count instead of by the clock. It is the
  * budget for the WHOLE case, split evenly across `rounds`, so a bounded case still runs every round

@@ -13,10 +13,10 @@
  * argument and no claims, against 32 bound arguments of 512 bytes and 16 claims, which is the
  * largest challenge `validateBodyNodeAdmissionChallenge` accepts.
  *
- * The challenge is built once per test, outside the measured window: its 32 bound arguments and 16
+ * The challenge is built once per case, outside the measured window: its 32 bound arguments and 16
  * claims are the same values on every op, so rebuilding them inside the window made this case read
- * V8's allocation and scavenge cost instead of `admit`'s - the same code measured 125 µs/op in one
- * process and 189 in the next.
+ * V8's allocation and scavenge cost instead of `admit`'s - without changing what the case reads
+ * (125.82 against 129.32 µs/op at the large size, and the spread did not move either).
  */
 import test from "node:test";
 
@@ -62,34 +62,52 @@ function challengeTemplateFor(size) {
   });
 }
 
+/**
+ * One case's measurement. It runs at module scope, not inside the `test()` that reports it:
+ * `node:test` instruments the async work a test body awaits, and `admit` awaits several promises per
+ * op, so the same op read 21.11 µs/op inside a test body against 11.43 µs/op outside one, in one
+ * process. A budget half of which is the framework cannot see a regression in the other half.
+ */
+async function measureCase(size) {
+  const journal = new StardewLogicalActionRecoveryJournal({ write: (record) => record });
+  const service = new HostNodeAdmissionService(journal, () => ({
+    result: "granted",
+    attachmentGeneration: "attachment-generation-1",
+    policyRevision: "policy-revision-1",
+  }));
+  const template = challengeTemplateFor(size);
+  let next = 1;
+  return await measure({
+    id: CASE,
+    size: size.size,
+    maxOps: MAX_OPS,
+    run: async () => {
+      // Only what must differ per op: `nodeAttempt` is the tuple (program, node, nodeAttempt,
+      // admissionAttempt) that makes one record unique, and the deadline is kept fresh so a long
+      // run cannot start measuring `deadline_expired` rejections. Both are numbers.
+      const admitted = await service.admit({ ...template, nodeAttempt: next++, deadlineMs: Date.now() + 60_000 });
+      if (admitted.result !== "granted") throw new Error(`perf_case_admission_refused:${admitted.result}`);
+    },
+  });
+}
+
+const outcomes = new Map();
 for (const size of SIZES) {
-  test(`${CASE} ${size.size}`, async () => {
-    const journal = new StardewLogicalActionRecoveryJournal({ write: (record) => record });
-    const service = new HostNodeAdmissionService(journal, () => ({
-      result: "granted",
-      attachmentGeneration: "attachment-generation-1",
-      policyRevision: "policy-revision-1",
-    }));
-    const template = challengeTemplateFor(size);
-    let next = 1;
-    const result = await measure({
-      id: CASE,
-      size: size.size,
-      maxOps: MAX_OPS,
-      run: async () => {
-        // Only what must differ per op: `nodeAttempt` is the tuple (program, node, nodeAttempt,
-        // admissionAttempt) that makes one record unique, and the deadline is kept fresh so a long
-        // run cannot start measuring `deadline_expired` rejections. Both are numbers.
-        const admitted = await service.admit({
-          ...template,
-          nodeAttempt: next++,
-          deadlineMs: Date.now() + 60_000,
-        });
-        if (admitted.result !== "granted") throw new Error(`perf_case_admission_refused:${admitted.result}`);
-      },
-    });
+  try {
+    outcomes.set(size.size, { measured: await measureCase(size) });
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the other
+    // size's finished measurement down with the file's module load.
+    outcomes.set(size.size, { error });
+  }
+}
+
+for (const size of SIZES) {
+  test(`${CASE} ${size.size}`, () => {
+    const outcome = outcomes.get(size.size);
+    if (outcome.error !== undefined) throw outcome.error;
     report({
-      ...result,
+      ...outcome.measured,
       detail: { boundArgs: size.boundArgs, claims: size.claims, boundValueBytes: size.valueBytes },
     });
   });
