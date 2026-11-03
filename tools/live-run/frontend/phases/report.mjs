@@ -351,6 +351,9 @@ function observationsFor(L, driverTexts) {
   const timings = pick("TIMINGS");
   const runtime = pick("RUNTIME");
   const paint = pick("PAINT");
+  const switches = pick("SWITCHES");
+  const injection = pick("INJECTION");
+  const capability = pick("CAPABILITY");
 
   L.push("");
   L.push("=== TIMINGS — the turn marks the product recorded ===");
@@ -366,9 +369,34 @@ function observationsFor(L, driverTexts) {
   else for (const line of runtime) L.push(`  ${line}`);
 
   L.push("");
-  L.push("=== PAINT — first paint, first contentful paint, largest contentful paint ===");
+  L.push("=== PAINT — first paint and first contentful paint ===");
   if (paint.length === 0) L.push("  unobserved: no driver wrote a PAINT line");
   else for (const line of paint) L.push(`  ${line}`);
+
+  L.push("");
+  L.push("=== SWITCHES — what moving between surfaces cost, from the product's own marks ===");
+  L.push("  A switch is `gamebuddy:switch:<surface>:start` (the player selected a surface) and `:done` (the");
+  L.push("  new region was committed and painted). `done` with no `start` is Back or Escape: the browser");
+  L.push("  moved the history entry, so there is no duration to report and none is invented.");
+  if (switches.length === 0) L.push("  unobserved: no driver wrote a SWITCHES line");
+  else for (const line of switches) L.push(`  ${line}`);
+
+  L.push("");
+  L.push("=== CAPABILITY — the durable transcript's shape, read from the Host's own rows ===");
+  L.push("  Driver f's three lines describe ONE exchange (its row counts and its balance). The cross-turn");
+  L.push("  lines are invariants rather than counts: they start `ok` or `FAIL` and assert that rows are");
+  L.push("  append-only, that their order strictly increases, that none is lost without a declared removal");
+  L.push("  and that none is duplicated.");
+  if (capability.length === 0) L.push("  unobserved: no driver wrote a CAPABILITY line");
+  else for (const line of capability) L.push(`  ${line}`);
+
+  L.push("");
+  L.push("=== INJECTION — what authored context reached the request ===");
+  L.push("  `unobserved:no_provider_request_capture` does NOT mean the request carried no memory: it means");
+  L.push("  no provider request body was captured, so nothing looked. A run that mounts the local stub");
+  L.push("  provider records one, and then these lines carry the block's size and the entries it named.");
+  if (injection.length === 0) L.push("  unobserved: no driver wrote an INJECTION line (no driver ran a turn)");
+  else for (const line of injection) L.push(`  ${line}`);
 }
 
 /* ---------- measurements: read each driver's facts ---------- */
@@ -748,9 +776,10 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
   R.push("");
   R.push("缺陷清单 (defect list), by surface + width, ordered by how much I would mind shipping it:");
   R.push("");
-  R.push("READINGS (turn timings, runtime facts, paint) are in README.txt, beside the geometry they belong");
-  R.push("with. This file is the defect list; that one is the numbers. Searching here for TIMINGS will find");
-  R.push("nothing, and that is by design rather than a missing section.");
+  R.push("READINGS (turn timings, surface switches, what reached the request, the transcript's growth,");
+  R.push("runtime facts, paint) are in README.txt, beside the geometry they belong with. This file is the");
+  R.push("defect list; that one is the numbers. Searching here for TIMINGS or SWITCHES will find nothing,");
+  R.push("and that is by design rather than a missing section.");
   R.push("");
 
   const g = driver(paths, "g-defects") ?? "";
