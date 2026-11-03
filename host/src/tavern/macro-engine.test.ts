@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   hasUnrenderedMacro,
+  isLeftLiteralStandardMacro,
   isStandardSillyTavernMacro,
   LEFT_LITERAL_STANDARD_MACROS,
   macroTable,
@@ -101,6 +102,29 @@ test("bucket 1: a standard macro with a fixed value renders, so its entry is not
   assert.equal(hasUnrenderedMacro(renderMacros("line{{newline}}", vars)), false);
   assert.equal(isStandardSillyTavernMacro("{{newline}}"), true);
   assert.equal(isStandardSillyTavernMacro("{{noop}}"), true);
+});
+
+/**
+ * The narrower question the import ledger asks, and the boundary that makes it necessary: bucket 1's `{{char}}` and
+ * `{{user}}` are standard SillyTavern macros too, and they ARE filled at render. Calling one of them a loss would be a
+ * false statement about the player's own card, so "deliberately left literal" is its own question with its own answer -
+ * derived from the same table, never from a second handwritten list.
+ */
+test("only bucket 2 is deliberately left literal: a macro the render fills is never a loss", () => {
+  for (const key of Object.keys(LEFT_LITERAL_STANDARD_MACROS)) {
+    const token = `{{${key}}}`;
+    assert.equal(isLeftLiteralStandardMacro(token), true, `${token} is left literal by its own table`);
+    assert.equal(isStandardSillyTavernMacro(token), true, `${token} is also standard, which is the narrower case`);
+  }
+  // Bucket 1 renders under every table this product builds, so it can never be the reason a field is dropped.
+  for (const key of ["char", "bot", "user", "scenario", "personality", "description", "newline", "noop"])
+    assert.equal(isLeftLiteralStandardMacro(`{{${key}}}`), false, `{{${key}}} is filled at render`);
+  // Bucket 3 is unrecognised, which is not the same claim: it is not a macro this product knows at all.
+  for (const token of ["{{unknown_macro}}", "{{...}}", "{{// note}}", "<USER>"])
+    assert.equal(isLeftLiteralStandardMacro(token), false, `${token} is not a left-literal macro`);
+  // The spellings a card actually writes still read their own bucket-2 key.
+  for (const token of ["{{random::a::b}}", "{{lastMessage}}", "{{TIME}}", "{{idle_duration}}"])
+    assert.equal(isLeftLiteralStandardMacro(token), true, `${token} must classify as left literal`);
 });
 
 /**

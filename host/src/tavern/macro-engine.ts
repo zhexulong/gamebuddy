@@ -109,7 +109,24 @@ export function unrenderedMacros(text: string): readonly string[] {
  */
 export function isStandardSillyTavernMacro(token: string): boolean {
   const key = macroKey(token);
-  return key !== undefined && (RESOLVED_MACROS.has(key) || Object.hasOwn(LEFT_LITERAL_STANDARD_MACROS, key));
+  return key !== undefined && (RESOLVED_MACROS.has(key) || isLeftLiteralStandardMacro(token));
+}
+
+/**
+ * Whether `token` is a standard SillyTavern macro this engine DELIBERATELY leaves literal - bucket 2 only.
+ *
+ * Narrower than `isStandardSillyTavernMacro` on purpose, and the difference is the whole reason this exists: that one is
+ * also true for `{{char}}` and `{{user}}`, which ARE filled at render. Telling the player "your card lost {{user}}" would
+ * be false about their own card, so "will this text survive every render this product performs" is its own question with
+ * its own answer.
+ *
+ * That makes it usable where no macro table exists yet. The import seam decodes a card before any run decides its player
+ * reference or its companion name, and this predicate still answers exactly, because a bucket-2 token survives rendering
+ * under EVERY table - which is what its table's own reasons amount to. No second copy of the tables is written for it.
+ */
+export function isLeftLiteralStandardMacro(token: string): boolean {
+  const key = macroKey(token);
+  return key !== undefined && Object.hasOwn(LEFT_LITERAL_STANDARD_MACROS, key);
 }
 
 /** The macro table one rendered companion text is produced with. */
