@@ -11,7 +11,9 @@
  * and `members=` says how many tokens met.
  *
  * One drift names many members (a grammar that loses its `\s*` disagrees about every spaced spelling),
- * so the report prints the first `MAX_PRINTED_FINDINGS` and the total; `--all` prints every finding.
+ * so the report prints the first `MAX_PRINTED_FINDINGS` and the total; `--all` prints every finding. The
+ * member corpus is interleaved by macro name, so that sample names every macro the comparison saw - it used
+ * to spend all twenty lines on one name's spellings and never show the token the drift was about.
  *
  * The macro entry's own grammar is shared, so removing `\s*` from `BRACED_MACRO` moves BOTH readers and
  * reaches no finding (that is what `e6b09cc7` bought). The red case therefore replays the split the fix
@@ -23,14 +25,11 @@
  * red-proof: inject  a declared reader whose file is not on disk -> `parser_agreement_reader_missing`
  *                    names that vocabulary, that reader and the path instead of comparing one reader
  *                    fewer (tools/lib/parser-agreement.test.mjs)
- * red-proof: inject  a reader needing an undeclared const, or a `const` after another statement on
- *                    its line -> `reader_unreadable` saying the reader was not read and no comparison
- *                    was made (tools/lib/parser-agreement.test.mjs)
+ * red-proof: inject  a reader needing a const its declarations do not name, and a reader whose `const`
+ *                    its line cannot be read -> `declaration_dependency` / `declaration_not_found`, each
+ *                    saying no comparison was made (tools/lib/parser-agreement.test.mjs)
  */
-import { auditParserAgreement, formatFinding } from "./lib/parser-agreement.mjs";
-
-/** How many findings one run prints. A drift that renames a grammar names hundreds of members. */
-const MAX_PRINTED_FINDINGS = 20;
+import { auditParserAgreement, formatFinding, MAX_PRINTED_FINDINGS } from "./lib/parser-agreement.mjs";
 
 const { readings, findings } = auditParserAgreement();
 const printAll = process.argv.includes("--all");

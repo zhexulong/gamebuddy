@@ -52,6 +52,13 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "
 export const MACRO_ENGINE_PATH = "host/src/tavern/macro-engine.ts";
 
 /**
+ * How many findings one run prints. A drift that costs a grammar its tolerance disagrees about hundreds of
+ * members, and the corpus is interleaved so this many lines still name every macro the comparison saw.
+ * Exported because the falsifier asserts the property that keeps that true.
+ */
+export const MAX_PRINTED_FINDINGS = 20;
+
+/**
  * The grammar both macro readers are built from, in declaration order - `MACRO_NAME` first because the
  * others interpolate it. Each reader lists only the declarations IT reads: a constant renamed out from
  * under one reader is then a finding about that reader, not about both.
@@ -117,8 +124,15 @@ function macroSpellings(name) {
 export function macroMembers(source) {
   const names = new Set();
   for (const pattern of MACRO_NAME_IN_SOURCE) for (const match of source.matchAll(pattern)) names.add(match[1]);
+  const spellingsOf = [...names].sort().map(macroSpellings);
   const members = new Set(MACRO_JUNK);
-  for (const name of [...names].sort()) for (const spelling of macroSpellings(name)) members.add(spelling);
+  // INTERLEAVED - one spelling index at a time across all names, never one name's full list after another.
+  // The report prints findings in this order and stops at `MAX_PRINTED_FINDINGS`, so a name-major corpus
+  // spent the whole sample on one name's forty-eight spellings and the token that names the defect
+  // (`{{ char }}`, the third name) never appeared. Consecutive members naming different macros is what
+  // makes the sample show every name that was compared.
+  for (let index = 0; index < (spellingsOf[0]?.length ?? 0); index += 1)
+    for (const spellings of spellingsOf) if (index < spellings.length) members.add(spellings[index]);
   return Object.freeze([...members]);
 }
 
@@ -172,10 +186,12 @@ function expressionMatchesWhole(expression, token) {
  * One `const NAME = ...;` statement as the file writes it, or `null` when the file does not declare it.
  *
  * The statement's extent is found by scanning rather than by taking the line: a declaration may wrap,
- * and a `;` inside a template literal (`String.raw`...``) is not the end of the statement.
+ * and a `;` inside a template literal (`String.raw`...``) is not the end of the statement. Leading
+ * whitespace is allowed, because a hand edit that indents the line still declares a top-level `const` -
+ * and reading it as absent would make the message assert something false about the file.
  */
 function declarationStatement(source, name) {
-  const anchor = new RegExp(`^(?:export\\s+)?const\\s+${name}\\s*=`, "mu").exec(source);
+  const anchor = new RegExp(`^\\s*(?:export\\s+)?const\\s+${name}\\s*=`, "mu").exec(source);
   if (anchor === null) return null;
   let depth = 0;
   let quote = null;
@@ -225,6 +241,34 @@ const readerFinding = (vocabulary, reader, code, detail) => ({
   detail,
 });
 
+/** Which of a reader's declarations needs `name`, or `undefined` when none of them mentions it. */
+function declarationNeeding(source, declarations, name) {
+  const reference = new RegExp(`\\b${name}\\b`, "u");
+  return declarations.find((declaration) => reference.test(declarationStatement(source, declaration) ?? ""));
+}
+
+/** The finding for a reader whose declarations do not evaluate: the dependency case first, since it is the real one. */
+function evaluationFailure({ vocabulary, reader, source, error }) {
+  const needed = UNDEFINED_NAME.exec(error.message)?.[1];
+  const needing = needed === undefined ? undefined : declarationNeeding(source, reader.declarations, needed);
+  if (needed === undefined || needing === undefined)
+    return readerFinding(
+      vocabulary,
+      reader,
+      "declaration_unevaluable",
+      `its declarations do not evaluate in ${reader.path} (${error.message})${COMPARISON_SKIPPED}`,
+    );
+  const declaredHere = declarationStatement(source, needed) !== null;
+  return readerFinding(
+    vocabulary,
+    reader,
+    "declaration_dependency",
+    declaredHere
+      ? `\`${needing}\` needs \`${needed}\`, which ${reader.path} declares as a top-level \`const\` but this reader's declarations do not name${COMPARISON_SKIPPED}`
+      : `\`${needing}\` needs \`${needed}\`, which ${reader.path} does not declare at all${COMPARISON_SKIPPED}`,
+  );
+}
+
 const RULES = new Set(["equal", "subset", "superset"]);
 
 /**
@@ -237,6 +281,18 @@ const RULES = new Set(["equal", "subset", "superset"]);
  * hides would never be looked for, which is the exact silence this whole gate exists to remove.
  */
 const COMPARISON_SKIPPED = ", so this reader was not read and no comparison was made";
+
+/**
+ * What an initialiser that does not evaluate is reported as.
+ *
+ * Three diagnoses, kept apart because they send the next reader to three different places: the `const` the
+ * reader names is not on disk; its initialiser needs a name the reader's own `declarations` list does not
+ * carry (the shape a real drift arrives in - measured: one reader's pattern rewritten over a sibling
+ * `const`); or the declarations simply do not evaluate. Collapsing the middle one into the first reads as
+ * "a declaration is missing", which sends someone looking for a rename that never happened - the file has
+ * the `const`, and what the reader lacked was its name.
+ */
+const UNDEFINED_NAME = /^([\w$]+) is not defined$/u;
 
 /**
  * Read every declared vocabulary from source, compare its readers per the declared rule, and report
@@ -329,14 +385,7 @@ function readReaders(vocabulary, members, readSource, findings) {
     try {
       evaluated = evaluateDeclarations(source, reader.declarations);
     } catch (error) {
-      findings.push(
-        readerFinding(
-          vocabulary,
-          reader,
-          "reader_unreadable",
-          `its declarations do not evaluate in ${reader.path} (${error.message})${COMPARISON_SKIPPED}`,
-        ),
-      );
+      findings.push(evaluationFailure({ vocabulary, reader, source, error }));
       continue;
     }
     const { values, missing } = evaluated;
@@ -345,7 +394,7 @@ function readReaders(vocabulary, members, readSource, findings) {
         readerFinding(
           vocabulary,
           reader,
-          "reader_unreadable",
+          "declaration_not_found",
           `it declares ${missing.map((name) => `\`${name}\``).join(", ")}, which this gate could not read as a top-level \`const\` in ${reader.path}${COMPARISON_SKIPPED}`,
         ),
       );

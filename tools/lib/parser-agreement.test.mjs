@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { auditParserAgreement, MACRO_ENGINE_PATH, VOCABULARIES } from "./parser-agreement.mjs";
+import { auditParserAgreement, MACRO_ENGINE_PATH, MAX_PRINTED_FINDINGS, VOCABULARIES } from "./parser-agreement.mjs";
 
 // The repository the declarations were read from. Every drift below is injected into a COPY of the
 // authority, taken from this file, so the red cases exercise the shipped grammar rather than a
@@ -37,6 +37,9 @@ function drift(literal, replacement) {
 }
 
 const macroVocabulary = VOCABULARIES[0];
+
+/** The macro a member token names, stripped of its braces or angle brackets and its parameters. */
+const macroNameOf = (token) => /^[<{]{1,2}\s*([a-z][a-z0-9_]*)/u.exec(token)?.[1];
 
 /**
  * The two spellings of the recognition line: the one the file carries today (built from the shared
@@ -115,14 +118,14 @@ test("a grammar constant the file no longer declares is a finding, not one compa
   const root = treeWith(drift("const WHOLE_MACRO =", "const WHOLE_MACRO_RENAMED ="));
   const { findings } = auditParserAgreement({ root });
   assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "reader_unreadable");
+  assert.equal(findings[0].code, "declaration_not_found");
   assert.equal(findings[0].reader, "macroKey");
   assert.match(findings[0].detail, /`WHOLE_MACRO`/u);
 });
 
 test("a reader that cannot be read says the comparison did not happen, never that it agreed", () => {
-  // The masking case, measured: `WHOLE_MACRO` rebuilt on a constant its reader's grammar list does not
-  // name. The extractor cannot resolve it, so the comparison never runs - and a gate that reported this
+  // The masking case, measured: `WHOLE_MACRO` rebuilt over a sibling constant its reader's grammar list does
+  // not name. The extractor cannot resolve it, so the comparison never runs - and a gate that reported this
   // as anything but "not compared" would leave the disagreement it hides unlooked-for.
   const root = treeWith(
     drift(WHOLE_MACRO_TODAY, `new RegExp(\`^(?:\${NARROW_BRACED}|\${ANGLE_MACRO})$\`, "iu")`).replace(
@@ -132,9 +135,13 @@ test("a reader that cannot be read says the comparison did not happen, never tha
   );
   const { readings, findings } = auditParserAgreement({ root });
   assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "reader_unreadable");
+  assert.equal(findings[0].code, "declaration_dependency");
   assert.equal(findings[0].reader, "macroKey");
-  assert.match(findings[0].detail, /NARROW_BRACED/u);
+  // The diagnosis names the real situation: the const is there, the reader's declarations are what lack it.
+  assert.match(
+    findings[0].detail,
+    /`WHOLE_MACRO` needs `NARROW_BRACED`, which .* declares as a top-level `const` but this reader's declarations do not name/u,
+  );
   assert.match(findings[0].detail, /this reader was not read and no comparison was made/u);
   assert.equal(
     findings.some((finding) => finding.code === "member_disagreement"),
@@ -142,6 +149,31 @@ test("a reader that cannot be read says the comparison did not happen, never tha
   );
   assert.equal(readings[0].compared, false);
   assert.deepEqual({ read: readings[0].readers.length, declared: readings[0].declared }, { read: 1, declared: 2 });
+});
+
+test("a dependency the file does not declare at all is a different diagnosis from one it does", () => {
+  // Same throw, different fact about the file - and the message has to say which one happened.
+  const root = treeWith(drift(WHOLE_MACRO_TODAY, `new RegExp(\`^(?:\${NARROW_BRACED}|\${ANGLE_MACRO})$\`, "iu")`));
+  const { findings } = auditParserAgreement({ root });
+  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
+  assert.equal(findings[0].code, "declaration_dependency");
+  assert.match(findings[0].detail, /which .* does not declare at all/u);
+  assert.match(findings[0].detail, /no comparison was made/u);
+});
+
+test("an indented const is still found, so the diagnosis stays 'outside this reader's grammar'", () => {
+  // Leading whitespace does not make a top-level `const` absent. Reading it as absent would make the message
+  // assert something false about a file that carries the declaration on the very next line.
+  const root = treeWith(
+    drift(WHOLE_MACRO_TODAY, `new RegExp(\`^(?:\${NARROW_BRACED}|\${ANGLE_MACRO})$\`, "iu")`).replace(
+      "const WHOLE_MACRO =",
+      "  const NARROW_BRACED = `[{][{]([a-z_][a-z0-9_]*)[^{}]*[}][}]`;\nconst WHOLE_MACRO =",
+    ),
+  );
+  const { findings } = auditParserAgreement({ root });
+  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
+  assert.equal(findings[0].code, "declaration_dependency");
+  assert.match(findings[0].detail, /declares as a top-level `const` but this reader's declarations do not name/u);
 });
 
 test("a const preceded by another statement on its line is unreadable, not silently absent", () => {
@@ -156,10 +188,24 @@ test("a const preceded by another statement on its line is unreadable, not silen
   );
   const { readings, findings } = auditParserAgreement({ root });
   assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "reader_unreadable");
+  assert.equal(findings[0].code, "declaration_not_found");
   assert.match(findings[0].detail, /could not read as a top-level `const`/u);
   assert.match(findings[0].detail, /no comparison was made/u);
   assert.equal(readings[0].compared, false);
+});
+
+test("the printed sample names every macro the two readers disagreed about", () => {
+  // The historical drift disagrees about ~486 members. A name-major corpus spent the whole twenty-line
+  // sample on `bot` spellings, so `char` - the token this gate exists for, finding #30 - never appeared,
+  // and a report that hides the decisive member reads as green to the person looking at it.
+  const root = treeWith(drift(SHARED_RECOGNITION, FLUSH_RECOGNITION));
+  const { findings } = auditParserAgreement({ root });
+  const allNames = new Set(findings.map((finding) => macroNameOf(finding.member)));
+  const printed = new Set(findings.slice(0, MAX_PRINTED_FINDINGS).map((finding) => macroNameOf(finding.member)));
+  assert.ok(findings.length > MAX_PRINTED_FINDINGS * 4, `the drift produced only ${findings.length} findings`);
+  assert.ok(allNames.size >= 10, `the corpus disagreed about ${allNames.size} macros`);
+  assert.deepEqual([...printed].sort(), [...allNames].sort(), `the sample named ${JSON.stringify([...printed])}`);
+  assert.ok(printed.has("char"), `the sample named ${JSON.stringify([...printed])}`);
 });
 
 test("a vocabulary with fewer than two readers cannot compare, and says so", () => {
