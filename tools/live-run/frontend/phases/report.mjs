@@ -3,9 +3,9 @@
 // per-item facts file (<out>/<driver>.txt). Every item is a MEASURED NUMBER or a QUOTED STRING taken
 // from the live page through the browser's own layout engine — never a class name and never a pixel
 // reading. When a lane could not run, the driver writes a named skip and this generator repeats it.
-import { readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runPaths, loadRunConfig } from "../lib/config.mjs";
+import { loadRunConfig, runPaths } from "../lib/config.mjs";
 
 const DRIVER_OUTS = [
   "a-surfaces",
@@ -329,13 +329,20 @@ function existsSync(p) {
 /* ---------- observations: what the run cost, what it held, what it painted ---------- */
 
 /**
- * The three sections that answer questions the geometry sections cannot: how long a turn took, how big
+ * The sections that answer questions the geometry sections cannot: how long a turn took, how long a
+ * surface switch took, what the durable transcript did across turns, what reached the request, how big
  * the runtime got, and when the first screen painted.
  *
- * These read the lines the drivers' own `observe()` wrote, prefixed `TIMINGS` / `RUNTIME` / `PAINT`.
- * The prefix is the contract between the two modules: a section that stops being emitted shows up here
- * as a named absence rather than as an empty list, because an instrument that reports nothing and an
- * instrument that measured nothing must not look the same.
+ * These read the lines the drivers' own `observe()` wrote, prefixed `TIMINGS` / `SWITCHES` /
+ * `CAPABILITY` / `INJECTION` / `RUNTIME` / `PAINT`. The prefix is the contract between the two modules:
+ * a section that stops being emitted shows up here as a named absence rather than as an empty list,
+ * because an instrument that reports nothing and an instrument that measured nothing must not look the
+ * same.
+ *
+ * Every section also names the drivers that wrote no line of it. A driver that skipped before observing
+ * and a driver whose `observe()` call was dropped look identical in the list of lines - and only one of
+ * them is a defect - so the reader has to say which drivers are silent instead of counting the ones
+ * that spoke.
  */
 function observationsFor(L, driverTexts) {
   const pick = (prefix) =>
@@ -348,55 +355,70 @@ function observationsFor(L, driverTexts) {
         .map((line) => `${key}: ${line.slice(prefix.length + 1)}`);
     });
 
-  const timings = pick("TIMINGS");
-  const runtime = pick("RUNTIME");
-  const paint = pick("PAINT");
-  const switches = pick("SWITCHES");
-  const injection = pick("INJECTION");
-  const capability = pick("CAPABILITY");
+  const silent = (prefix) => ({
+    noFactsFile: DRIVER_OUTS.filter((key) => driverTexts[key] === null),
+    noLine: DRIVER_OUTS.filter(
+      (key) => driverTexts[key] !== null && !driverTexts[key].split("\n").some((line) => line.startsWith(`${prefix} `)),
+    ),
+  });
 
-  L.push("");
-  L.push("=== TIMINGS — the turn marks the product recorded ===");
-  if (timings.length === 0) {
-    L.push("  unobserved: no driver wrote a TIMINGS line (no turn ran, or the marks never reached the page)");
-  } else {
-    for (const line of timings) L.push(`  ${line}`);
-  }
+  const section = (prefix, title, header, emptyWords) => {
+    const lines = pick(prefix);
+    L.push("");
+    L.push(title);
+    for (const line of header) L.push(`  ${line}`);
+    if (lines.length === 0) L.push(`  unobserved: no driver wrote a ${prefix} line (${emptyWords})`);
+    else for (const line of lines) L.push(`  ${line}`);
+    const quiet = silent(prefix);
+    if (quiet.noLine.length > 0) L.push(`  (wrote no ${prefix} line, having a facts file: ${quiet.noLine.join(", ")})`);
+    if (quiet.noFactsFile.length > 0) L.push(`  (wrote no facts file at all: ${quiet.noFactsFile.join(", ")})`);
+  };
 
-  L.push("");
-  L.push("=== RUNTIME — DOM size, heap and mark counts at the end of each driver ===");
-  if (runtime.length === 0) L.push("  unobserved: no driver wrote a RUNTIME line");
-  else for (const line of runtime) L.push(`  ${line}`);
-
-  L.push("");
-  L.push("=== PAINT — first paint and first contentful paint ===");
-  if (paint.length === 0) L.push("  unobserved: no driver wrote a PAINT line");
-  else for (const line of paint) L.push(`  ${line}`);
-
-  L.push("");
-  L.push("=== SWITCHES — what moving between surfaces cost, from the product's own marks ===");
-  L.push("  A switch is `gamebuddy:switch:<surface>:start` (the player selected a surface) and `:done` (the");
-  L.push("  new region was committed and painted). `done` with no `start` is Back or Escape: the browser");
-  L.push("  moved the history entry, so there is no duration to report and none is invented.");
-  if (switches.length === 0) L.push("  unobserved: no driver wrote a SWITCHES line");
-  else for (const line of switches) L.push(`  ${line}`);
-
-  L.push("");
-  L.push("=== CAPABILITY — the durable transcript's shape, read from the Host's own rows ===");
-  L.push("  Driver f's three lines describe ONE exchange (its row counts and its balance). The cross-turn");
-  L.push("  lines are invariants rather than counts: they start `ok` or `FAIL` and assert that rows are");
-  L.push("  append-only, that their order strictly increases, that none is lost without a declared removal");
-  L.push("  and that none is duplicated.");
-  if (capability.length === 0) L.push("  unobserved: no driver wrote a CAPABILITY line");
-  else for (const line of capability) L.push(`  ${line}`);
-
-  L.push("");
-  L.push("=== INJECTION — what authored context reached the request ===");
-  L.push("  `unobserved:no_provider_request_capture` does NOT mean the request carried no memory: it means");
-  L.push("  no provider request body was captured, so nothing looked. A run that mounts the local stub");
-  L.push("  provider records one, and then these lines carry the block's size and the entries it named.");
-  if (injection.length === 0) L.push("  unobserved: no driver wrote an INJECTION line (no driver ran a turn)");
-  else for (const line of injection) L.push(`  ${line}`);
+  section(
+    "TIMINGS",
+    "=== TIMINGS — the turn marks the product recorded ===",
+    [],
+    "no turn ran, or the marks never reached the page",
+  );
+  section(
+    "SWITCHES",
+    "=== SWITCHES — what moving between surfaces cost, from the product's own marks ===",
+    [
+      "A switch is `gamebuddy:switch:<surface>:start` (the player selected a surface) and `:done` (the",
+      "new region was committed and painted). `done` with no `start` is Back or Escape: the browser",
+      "moved the history entry, so there is no duration to report and none is invented.",
+    ],
+    "no driver selected a surface, or the marks never reached the page",
+  );
+  section(
+    "CAPABILITY",
+    "=== CAPABILITY — the durable transcript's shape, read from the Host's own rows ===",
+    [
+      "Driver f's three lines describe ONE exchange (its row counts and its balance). The cross-turn",
+      "lines are invariants rather than counts: they start `ok` or `FAIL` and assert that rows are",
+      "append-only, that their order strictly increases, that none is lost without a declared removal",
+      "and that none is duplicated.",
+    ],
+    "no driver read the durable transcript",
+  );
+  section(
+    "INJECTION",
+    "=== INJECTION — what authored context reached the request ===",
+    [
+      "`unobserved:no_provider_request_capture` does NOT mean the request carried no memory: it means",
+      "no provider request body was captured, so nothing looked. A run that mounts the local stub",
+      "provider records one, and then these lines carry the block's size and the entries it named.",
+      "A driver that ran no turn writes no line here at all: it asked the request nothing.",
+    ],
+    "no driver captured a provider request",
+  );
+  section(
+    "RUNTIME",
+    "=== RUNTIME — DOM size, heap and mark counts at the end of each driver ===",
+    [],
+    "no driver read the runtime",
+  );
+  section("PAINT", "=== PAINT — first paint and first contentful paint ===", [], "no driver read the paint entries");
 }
 
 /* ---------- measurements: read each driver's facts ---------- */
