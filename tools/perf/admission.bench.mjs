@@ -12,6 +12,11 @@
  * admission decision itself, measured at the protocol's own size floor and ceiling - 1 bound
  * argument and no claims, against 32 bound arguments of 512 bytes and 16 claims, which is the
  * largest challenge `validateBodyNodeAdmissionChallenge` accepts.
+ *
+ * The challenge is built once per test, outside the measured window: its 32 bound arguments and 16
+ * claims are the same values on every op, so rebuilding them inside the window made this case read
+ * V8's allocation and scavenge cost instead of `admit`'s - the same code measured 125 µs/op in one
+ * process and 189 in the next.
  */
 import test from "node:test";
 
@@ -43,12 +48,10 @@ function claimsFor({ claims }) {
   return derived;
 }
 
-function challengeFor(index, size) {
-  return {
+function challengeTemplateFor(size) {
+  return Object.freeze({
     programId: "program-1",
     nodeId: "node-1",
-    // The tuple (program, node, nodeAttempt, admissionAttempt) is what makes one record unique.
-    nodeAttempt: index,
     admissionAttempt: 1,
     stopEpoch: 0,
     catalogRevision: 3,
@@ -56,8 +59,7 @@ function challengeFor(index, size) {
     actionId: "move_to_tile",
     canonicalBoundArgs: boundArgsFor(size),
     derivedResourceClaims: claimsFor(size),
-    deadlineMs: Date.now() + 60_000,
-  };
+  });
 }
 
 for (const size of SIZES) {
@@ -68,13 +70,21 @@ for (const size of SIZES) {
       attachmentGeneration: "attachment-generation-1",
       policyRevision: "policy-revision-1",
     }));
+    const template = challengeTemplateFor(size);
     let next = 1;
     const result = await measure({
       id: CASE,
       size: size.size,
       maxOps: MAX_OPS,
       run: async () => {
-        const admitted = await service.admit(challengeFor(next++, size));
+        // Only what must differ per op: `nodeAttempt` is the tuple (program, node, nodeAttempt,
+        // admissionAttempt) that makes one record unique, and the deadline is kept fresh so a long
+        // run cannot start measuring `deadline_expired` rejections. Both are numbers.
+        const admitted = await service.admit({
+          ...template,
+          nodeAttempt: next++,
+          deadlineMs: Date.now() + 60_000,
+        });
         if (admitted.result !== "granted") throw new Error(`perf_case_admission_refused:${admitted.result}`);
       },
     });
