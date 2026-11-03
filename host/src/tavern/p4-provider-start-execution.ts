@@ -293,7 +293,7 @@ export async function runMountedProviderStart(
   const recordSettledPromptEntries = async (): Promise<void> => {
     if (entriesBefore === undefined || promptText === undefined) return;
     const variant = scope.facts.variant;
-    const playerMessageId = variant?.anchorMessageId ?? scope.facts.messageId;
+    const playerMessageId = variant?.anchorMessageId ?? scope.facts.replyToPlayerMessageId ?? scope.facts.messageId;
     const replyMessageId = variant === null ? responseMessageId : variant.targetMessageId;
     const bindings = bindSettledPromptEntries(runtimeSession.sessionManager, entriesBefore, {
       playerText: promptText,
