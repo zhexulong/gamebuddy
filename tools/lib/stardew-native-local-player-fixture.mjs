@@ -99,6 +99,19 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
     const metadata = await lstat(source);
     if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("native_local_fixture_template_invalid");
   }
+  // The template's calendar must agree with itself before a run is allowed to use it.
+  //
+  // Measured 2026-11-03 (`round28`): the template said `dayOfMonth=1, daysPlayed=1`, SMAPI logged `loaded save ...
+  // starting spring 1 Y1`, the Mod logged `initialized multi-day precondition: day=5` - and after ONE night the save
+  // read `dayOfMonth=6, daysPlayed=2`. A single NewDay moved the calendar five days, which means the world the run
+  // played was never the world its calendar claimed: `landslide` opens at `DaysPlayed >= 5`, the mine is reachable on
+  // "day 1", and every day-based verdict (`crossings`, `morning_clock_frozen:day=`, `night_mechanism_unobserved`) was
+  // counting a calendar that disagrees with the engine's own.
+  //
+  // Two spellings of one fact, at the fixture level. Stardew derives the date from `daysPlayed` (`dayOfMonth =
+  // daysPlayed % 28 + 1`), so a save whose two fields disagree is a save that will jump on its first night - and the
+  // jump is invisible unless someone compares them, which nothing did.
+  assertSaveCalendarConsistent(await readFile(join(template, options.saveName), "utf8"));
   const workingSave = join(options.stardewSaveRoot, options.saveName);
   if (await exists(workingSave)) {
     // A previous run left this behind. Its own restore removes the managed files but not the save the
@@ -389,6 +402,35 @@ function logicalNameForObservedSlot(value) {
 function assertBackupName(value) {
   if (typeof value !== "string" || !/^[a-z0-9][a-z0-9-]{0,95}-fixture-backup$/.test(value))
     throw new Error("invalid_fixture_backup_name");
+}
+
+/**
+ * Whether a save's own calendar fields describe the same day.
+ *
+ * Stardew keeps the date twice - `<dayOfMonth>` in the world and `daysPlayed` in the player's stats - and the stat counts
+ * days INCLUDING today, so `dayOfMonth == ((daysPlayed - 1) % 28) + 1`. The off-by-one matters: with the `daysPlayed %
+ * 28` form a fresh save `(dayOfMonth 1, daysPlayed 1)` looks inconsistent and a real one looks fine. Every fixture on
+ * this machine that was saved at the start of a day reads `(n, n)` - `(1,1)`, `(2,2)` - which is the evidence for the
+ * `- 1`.
+ *
+ * The numbers are in the refusal on purpose: the off-by-one question (does a fresh save start at `daysPlayed` 0 or 1?)
+ * is one a reader can settle in a second from the pair, while `native_local_fixture_calendar_inconsistent` alone would
+ * send the next agent to reproduce the whole run.
+ */
+export function assertSaveCalendarConsistent(saveXml) {
+  const dayOfMonth = Number(/<dayOfMonth>(\d+)<\/dayOfMonth>/u.exec(saveXml)?.[1]);
+  const daysPlayed = Number(
+    /<string>daysPlayed<\/string>\s*<\/key>\s*<value>\s*<unsignedInt>(\d+)<\/unsignedInt>/u.exec(saveXml)?.[1],
+  );
+  const season = /<currentSeason>([A-Za-z]+)<\/currentSeason>/u.exec(saveXml)?.[1];
+  if (!Number.isInteger(dayOfMonth) || !Number.isInteger(daysPlayed) || typeof season !== "string")
+    throw new Error("native_local_fixture_calendar_unreadable");
+  const expectedDayOfMonth = ((daysPlayed - 1) % 28) + 1;
+  if (dayOfMonth !== expectedDayOfMonth)
+    throw new Error(
+      `native_local_fixture_calendar_inconsistent:dayOfMonth=${String(dayOfMonth)};daysPlayed=${String(daysPlayed)};expected_dayOfMonth=${String(expectedDayOfMonth)};season=${season}`,
+    );
+  return Object.freeze({ dayOfMonth, daysPlayed, season });
 }
 export function fixtureActions(action) {
   // The scene-reachable probe is a direct observation read: the fixture only
