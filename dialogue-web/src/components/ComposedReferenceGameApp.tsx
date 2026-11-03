@@ -114,11 +114,19 @@ export function ComposedReferenceGameApp() {
   const [openingNotice, setOpeningNotice] = useState<string | null>(null);
   /**
    * The optimistic player message: the text the player just sent, keyed by the idempotency key
-   * the send already minted. It is shown until the Host's authoritative transcript for that key
-   * lands and is never replayed on a reconnect or re-read (a fresh mount starts with none), so a
-   * settled turn leaves no ghost and the pair collapses to the one authoritative message.
+   * the send already minted, plus the number of rows the authoritative transcript held when the
+   * send was accepted. It is shown until the Host's transcript carries the row this turn produces
+   * - the first row past `submittedAfterRows`, because that is the only positional fact tying a
+   * committed message to the submission: `BrowserMessageV1` has no idempotency key on it and the
+   * pending record carries no text or handle by contract. It is never replayed on a reconnect or
+   * a re-read (a fresh mount starts with none), so a settled turn leaves no ghost and the pair
+   * collapses to the one authoritative message.
    */
-  const [optimistic, setOptimistic] = useState<Readonly<{ idempotencyKey: string; text: string }> | null>(null);
+  const [optimistic, setOptimistic] = useState<Readonly<{
+    idempotencyKey: string;
+    text: string;
+    submittedAfterRows: number;
+  }> | null>(null);
   // The durable revision the editor was last seeded from, and the chat that seed
   // belongs to: the revision lets a later authoritative read replace the editor
   // without discarding text the player typed past the seed, and the chat identity
@@ -442,7 +450,13 @@ export function ComposedReferenceGameApp() {
     if (pending === null) return;
     turnKeyRef.current = idempotencyKey;
     markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
-    setOptimistic(Object.freeze({ idempotencyKey: pending.idempotencyKey, text }));
+    setOptimistic(
+      Object.freeze({
+        idempotencyKey: pending.idempotencyKey,
+        text,
+        submittedAfterRows: current.session.snapshot.chat?.transcript.length ?? 0,
+      }),
+    );
     setPollFailure(false);
     setInputText("");
     inputTextRef.current = "";
@@ -1146,16 +1160,16 @@ export function ComposedReferenceGameApp() {
     view.session.pending === null &&
     view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
   // The optimistic entry is visible only while the pending record carries its exact key and the
-  // authoritative transcript has not yet carried the same player line. A settled/failed turn
-  // clears the pending record, so the pair collapses to one message and no ghost survives a
+  // authoritative transcript has not yet grown past the point the send was accepted at. It is NOT
+  // keyed on text: a player who answers "好的" a second time sends a phrase the transcript already
+  // carries, and matching on it suppressed the pending line for the whole turn. A settled/failed
+  // turn clears the pending record, so the pair collapses to one message and no ghost survives a
   // re-read or a reload.
   const pendingOptimisticMessage =
     view.kind === "ready" &&
     optimistic !== null &&
     view.session.pending?.idempotencyKey === optimistic.idempotencyKey &&
-    !(view.session.snapshot.chat?.transcript ?? []).some(
-      (message) => message.role === "player" && message.text === optimistic.text,
-    )
+    (view.session.snapshot.chat?.transcript.length ?? 0) <= optimistic.submittedAfterRows
       ? optimistic
       : null;
   const stopAvailable =
