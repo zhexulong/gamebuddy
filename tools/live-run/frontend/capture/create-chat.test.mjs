@@ -12,14 +12,20 @@
 // was created - read from the surface the shell lands on, never from a click that returned.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { createChat } from "./common.cjs";
+import { createChat, REPO_ROOT } from "./common.cjs";
 
-const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const PANEL = readFileSync(join(REPO, "dialogue-web", "src", "components", "management-surface-panels.tsx"), "utf8");
+/*
+ * Resolved by walking up to the directory that owns `.git` (`common.cjs`), not by counting `..`: the kit
+ * used to sit at `tools/shots`, and the three `..` that were right there name `tools/` once the kit moved -
+ * which is how this premise read stopped finding the panel it guards.
+ */
+const PANEL = readFileSync(
+  join(REPO_ROOT, "dialogue-web", "src", "components", "management-surface-panels.tsx"),
+  "utf8",
+);
 
 test("the opening picker publishes the control this kit presses", () => {
   assert.match(
