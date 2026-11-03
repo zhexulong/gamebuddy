@@ -649,7 +649,7 @@ test("event pump delivers an npc_dialogue_presented world fact to the Agent's co
   assert.deepEqual(event?.payload.pages, ["早安，今天也要加油哦。", "你这阵子都没来看我。"]);
 });
 
-test("a time milestone steers into a running turn instead of waiting for it to end", async () => {
+test("a time milestone steers into a running turn while flush is blocked by it", async () => {
   const pump = new CompanionEventPump();
   const milestone = (minute: string) => ({
     source: "stardew_mod" as const,
@@ -663,10 +663,7 @@ test("a time milestone steers into a running turn instead of waiting for it to e
     payload: Object.freeze({ milestone: minute }),
   });
 
-  // The FIRST delivery is a running turn: it never resolves until released, which is what a real
-  // 766-second model turn with 97 tool calls looks like from the pump's side.
-  // A running turn must EXIST before the milestone can steer into it: with an empty pump `flush` returns
-  // before it can own one, and the test would then be asserting on a turn that never started.
+  // A turn is genuinely running: the first delivery does not resolve until released.
   pump.enqueueFact({
     source: "stardew_mod",
     kind: "execution_receipt",
@@ -680,7 +677,7 @@ test("a time milestone steers into a running turn instead of waiting for it to e
 
   const delivered: Array<{ disposition: string; kinds: string[] }> = [];
   let releaseFirst: () => void = () => undefined;
-  const firstTurn = pump.flush({
+  const runningTurn = pump.flush({
     async deliver(text, disposition) {
       const parsed = JSON.parse(text) as { worldFacts: Array<{ semanticKind?: string }> };
       delivered.push({ disposition, kinds: parsed.worldFacts.map((fact) => fact.semanticKind ?? "?") });
@@ -689,63 +686,72 @@ test("a time milestone steers into a running turn instead of waiting for it to e
       });
     },
   });
-  // Let the first delivery start before the milestone arrives.
   await Promise.resolve();
   await Promise.resolve();
 
-  // A milestone arrives while that turn is still working.
+  // The milestone arrives mid-turn. `flush` cannot carry it - it is already delivering - so `steer` does.
   pump.enqueueFact(milestone("1200"));
-  await pump.flush({
+  const steered = await pump.steer({
     async deliver(text, disposition) {
       const parsed = JSON.parse(text) as { worldFacts: Array<{ semanticKind?: string }> };
       delivered.push({ disposition, kinds: parsed.worldFacts.map((fact) => fact.semanticKind ?? "?") });
     },
   });
 
-  // The steer went in DURING the turn: the second delivery happened while the first is still unresolved.
-  // The old code returned undefined here because `#delivering` was true, and the milestone then sat until
-  // nightfall - measured 2026-11-01 (`round23`), 16 milestones existed and the model received two.
-  assert.equal(delivered.length, 2, "the milestone must be delivered while the first turn is still running");
+  assert.equal(steered, true, "the milestone must be handed to the running turn");
+  assert.equal(delivered.length, 2, "and it must arrive while that turn is still running");
   assert.equal(delivered[1]?.disposition, "steer");
   assert.deepEqual(delivered[1]?.kinds, ["time_milestone"]);
 
   releaseFirst();
-  await firstTurn;
+  await runningTurn;
 });
 
-test("an ordinary fact still waits for the running turn, because a receipt does not expire", async () => {
+test("flush never steers, whatever is pending: a steer is not a turn", async () => {
   const pump = new CompanionEventPump();
-  const delivered: string[] = [];
-  let releaseFirst: () => void = () => undefined;
-  const firstTurn = pump.flush({
-    async deliver(text) {
-      delivered.push(text);
-      await new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "time_milestone_day_5_1800",
+    sourceEventId: "time_milestone_day_5_1800",
+    correlationId: "time_milestone_day_5_1800",
+    revision: 1,
+    observedTick: 901,
+    semanticKind: "time_milestone",
+    payload: Object.freeze({ milestone: "1800" }),
+  });
+
+  const dispositions: string[] = [];
+  await pump.flush({
+    async deliver(_text, disposition) {
+      dispositions.push(disposition);
     },
   });
 
-  // A terminal receipt arriving mid-turn is the shape that must NOT interrupt: the result is the result,
-  // and a plan interrupted to announce a finished action trades one for a half-finished thought.
+  // The batch's disposition may be `steer` (the caller asked for it), but it is delivered as a TURN by `flush`.
+  // What must not happen is `flush` injecting into a turn it does not own, which is why the running-turn test above
+  // uses `steer()` and this one asserts the ordinary path is untouched.
+  assert.equal(dispositions.length, 1, "a pending milestone still forms one ordinary delivery");
+});
+
+test("an ordinary fact is never steered, because a receipt does not expire", async () => {
+  const pump = new CompanionEventPump();
   pump.enqueueFact({
     source: "stardew_mod",
     kind: "execution_receipt",
-    eventId: "receipt_mid_turn",
-    sourceEventId: "receipt_mid_turn",
-    correlationId: "receipt_mid_turn",
+    eventId: "receipt_alone",
+    sourceEventId: "receipt_alone",
+    correlationId: "receipt_alone",
     revision: 2,
-    observedTick: 901,
+    observedTick: 902,
     payload: Object.freeze({ state: "succeeded" }),
   } as never);
 
-  await pump.flush({
-    async deliver(text) {
-      delivered.push(text);
+  assert.equal(pump.hasExpiringFact, false, "a terminal receipt must not be treated as expiring");
+  const steered = await pump.steer({
+    async deliver() {
+      throw new Error("nothing should be steered");
     },
   });
-
-  assert.equal(delivered.length, 1, "a non-expiring fact must not be steered into a running turn");
-  releaseFirst();
-  await firstTurn;
+  assert.equal(steered, false, "there was nothing expiring to hand over");
 });

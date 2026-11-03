@@ -167,6 +167,31 @@ export class CompanionLoop {
     });
   }
 
+  /**
+   * Inject the expiring facts into the turn that is ALREADY running.
+   *
+   * <p>
+   * Deliberately not routed through `flush`: that method means "start or continue a turn" and it establishes
+   * `#inFlight`, which belongs to the turn the running `deliver` call owns. A steer joins that turn rather than
+   * starting another, so it must not take ownership of `#inFlight` and must not open a presentation lineage - the line
+   * the model speaks in response belongs to the same turn, and attributing it to a second one is the arithmetic
+   * `round23`'s audit already caught (`pieceAtMs` off by 12.4 minutes).
+   * </p>
+   * <p>
+   * `deliverAs: "steer"` is Pi's own queueing ("A steering message enters after the current assistant turn and its
+   * tool calls"), so it does not preempt a token stream in flight.
+   * </p>
+   */
+  public async steer(): Promise<boolean> {
+    return await this.#pump.steer({
+      deliver: async (batch, disposition) => {
+        await this.session.sendUserMessage(batch, {
+          deliverAs: disposition === "steer" ? "steer" : "followUp",
+        });
+      },
+    });
+  }
+
   async #deliverAndObserve(
     batch: string,
     disposition: Exclude<DeliveryDisposition, "hold">,

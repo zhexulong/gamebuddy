@@ -369,39 +369,7 @@ export class CompanionEventPump {
   }
 
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
-    if (!this.hasPendingDelivery) return undefined;
-
-    // A batch that expires while a turn is running is delivered INTO that turn rather than after it.
-    //
-    // `steer` enters after the current assistant turn and its tool calls (Pi's own semantics, sdk.md: "A steering
-    // message enters after the current assistant turn and its tool calls"), so it does not preempt a running token
-    // stream. `follow_up` waits for the whole run - and a run here is one model turn that measured 97 tool calls over
-    // 766 seconds, so a milestone delivered that way arrived once the thing it described had ceased to be true.
-    //
-    // Measured 2026-11-01 (`round23`): 16 `time_milestone` facts existed and the model received two, because four
-    // stacked up behind one turn and landed together when it finally stopped - which was nightfall. Four spoken lines
-    // in 27 minutes was the player-visible consequence.
-    //
-    // What stays guarded: a STEER that is still waiting for Pi to consume it must not be taken twice, so this path
-    // waits for Pi's own settlement of it. Everything else is untouched, so `#delivering` still serializes full batches.
-    const steering = this.#steerInFlight;
-    if (steering !== undefined) {
-      const settled = await steering;
-      this.#steerInFlight = undefined;
-      if (!settled) return undefined;
-    }
-
-    if (this.#delivering) {
-      if (!this.#hasExpiringFact()) return undefined;
-      const expiring = this.takeExpiringOnly();
-      if (expiring === undefined) return undefined;
-      this.#steerInFlight = sink.deliver(expiring.serialized, "steer").then(
-        () => true,
-        () => false,
-      );
-      return undefined;
-    }
-
+    if (this.#delivering || !this.hasPendingDelivery) return undefined;
     this.#delivering = true;
     const generation = this.#generation;
     const pending = this.#retryBatch ?? this.takeBatch();
@@ -416,6 +384,54 @@ export class CompanionEventPump {
     } finally {
       this.#delivering = false;
     }
+  }
+
+  /**
+   * Hand the expiring facts to the RUNNING turn, without composing a turn of its own.
+   *
+   * <p>
+   * This is a separate method from `flush` because the two answer different questions and live on different clocks.
+   * `flush` means "there is pending work, start or continue a turn", and its caller (`HostService.#flushSoon`) holds
+   * a `#flushScheduled` flag for the entire duration of that turn - so anything routed through `flush` cannot run
+   * while a turn is in flight, which is the only time a steer is useful. `steer` means "inject into the turn that is
+   * already running"; putting it inside the turn-scoped method made it dead code.
+   * </p>
+   * <p>
+   * Measured 2026-11-02 (`round25`): 8 milestones, 2 answered. The two that landed were the day-start ones, where
+   * the turn happened to be ending anyway; 1200 / 1800 / 2200 all arrived mid-turn and none reached the model.
+   * </p>
+   *
+   * @returns true when a steer was handed to the sink, false when there was nothing expiring to send.
+   */
+  public async steer(sink: CompanionTurnSink): Promise<boolean> {
+    const steering = this.#steerInFlight;
+    if (steering !== undefined) {
+      const settled = await steering;
+      this.#steerInFlight = undefined;
+      if (!settled) return false;
+    }
+    const expiring = this.takeExpiringOnly();
+    if (expiring === undefined) return false;
+    this.#steerInFlight = sink.deliver(expiring.serialized, "steer").then(
+      () => true,
+      () => false,
+    );
+    await this.#steerInFlight;
+    this.#steerInFlight = undefined;
+    return true;
+  }
+
+  /**
+   * Whether anything waiting describes a moment that will have passed by the time a run ends.
+   *
+   * <p>
+   * Read by `HostService` to decide whether an arriving fact warrants a steer at all, so the narrowness here is what
+   * keeps a receipt from interrupting a running plan: an `execution_receipt` terminal state does not expire - the
+   * result is the result - and only the world's own clock does.
+   * </p>
+   */
+  public get hasExpiringFact(): boolean {
+    return this.#hasExpiringFact();
   }
 
   /**

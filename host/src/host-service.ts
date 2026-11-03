@@ -954,8 +954,30 @@ export class CompanionHostService {
     if (callbackError !== undefined) throw callbackError;
   }
 
+  /**
+   * Deliver the expiring facts into the running turn.
+   *
+   * Kept out of `flushSoon`'s body so the two never share a guard: a steer must not set `#flushScheduled`
+   * (nothing about a steer schedules a turn) and must not touch `#retryBatch` (a batch that could not be steered is
+   * still owed to the next turn, and `EventPump` only removes expiring facts once it has handed them over).
+   */
+  async #steer(): Promise<void> {
+    await this.loop.steer();
+  }
+
   private async flushSoon(): Promise<void> {
-    if (this.#closed || !this.#integrationAdmissionOpen || this.#flushScheduled) return;
+    if (this.#closed || !this.#integrationAdmissionOpen) return;
+    // A steer runs exactly when a flush cannot: it injects into the turn that is ALREADY running, so
+    // `#flushScheduled` being true is the condition it wants, not the condition it must wait out.
+    //
+    // Measured 2026-11-02 (`round25`, after the disposition change alone): 8 milestones, 2 answered, and the two were
+    // the day-start ones where the turn happened to be ending. 1200 / 1800 / 2200 arrived mid-turn and never reached
+    // the model, because `flushSoon` returned on `#flushScheduled` and the steer branch inside `flush` was never
+    // reached - a turn-scoped lock guarding a turn-internal event.
+    if (this.#flushScheduled) {
+      if (this.loop.pump.hasExpiringFact) void this.#steer().catch(() => undefined);
+      return;
+    }
     this.#flushScheduled = true;
     try {
       // A microtask coalesces bursts of Mod receipts/snapshots without adding
