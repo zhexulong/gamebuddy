@@ -15,7 +15,7 @@ import {
  * append-only messages, swipe variants, and turn lifecycle; it neither reads
  * Pi/Magic Context state nor implements message edit/branch or any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 9 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 10 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -730,6 +730,12 @@ export type ChatThreadStore = Readonly<{
   selectActiveThread(chatThreadId: string, chatSurfaceSessionId: string): Promise<ActiveChatThreadSelection>;
   /** Opens precisely one persisted thread; there is deliberately no "latest" fallback. */
   resumeThread(chatThreadId: string, chatSurfaceSessionId: string): Promise<ChatThreadState>;
+  /**
+   * Chooses the Chat's opening. Legal exactly while the transcript is still that opening: the choice
+   * is sealed by the first row that is not it, so a Chat whose exchange was cut away is choosable
+   * again - the seal is read off the rows rather than remembered beside them (see
+   * `openingLockedAtEventIdOf`).
+   */
   commitOpening(chatThreadId: string, opening: CreateChatThreadRequest["opening"]): Promise<ChatThreadState>;
   appendPlayer(
     chatThreadId: string,
@@ -1555,6 +1561,20 @@ const TURN_REPLY_TARGETS_TABLE_V9 = `
     );
 `;
 
+/**
+ * v10 removes `opening_locked_at_event_id`, which was the opening's seal stored beside the rows
+ * that make it.
+ *
+ * "The player has spoken" is a fact about the transcript - the first row that is not the greeting -
+ * and a column of its own could only disagree with it. It did: a player who deleted back to the
+ * greeting was left with a seal over a conversation that no longer had anything in it, so the
+ * picker's arrows never came back and the Host refused a choice it should have allowed. Nothing is
+ * lost by dropping it: every value it held is the message id this code derives from the rows.
+ */
+const DROP_OPENING_SEAL_COLUMN_V10 = `
+    ALTER TABLE tavern_threads DROP COLUMN opening_locked_at_event_id;
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1567,12 +1587,13 @@ function initSchema(db: DatabaseSync): void {
   // and could only guess from a position. v6 adds the binding; v7 adds the
   // generation's own stop fact to the presentation record; v8 adds the classified
   // provider cause to the terminalization record; v9 adds the row a reply-target
-  // turn answers. Nothing else changes.
+  // turn answers; v10 drops the opening's seal, which the transcript derives.
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1581,6 +1602,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1588,12 +1610,20 @@ function initSchema(db: DatabaseSync): void {
   if (version === 7) {
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
   if (version === 8) {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 9) {
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1607,6 +1637,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
+    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
     assertNormalizedSchema(db);
     return;
   }
@@ -1643,7 +1674,6 @@ function initSchema(db: DatabaseSync): void {
       greeting_variant_id TEXT,
       greeting_profile_revision INTEGER,
       greeting_scenario_revision INTEGER,
-      opening_locked_at_event_id TEXT,
       trash_restore_status TEXT
         CHECK(trash_restore_status IS NULL OR trash_restore_status IN ('active', 'archived')),
       CHECK(
@@ -1927,13 +1957,13 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "chat_surface_session_id",
     "opening_kind",
     "opening_message_id",
-    "opening_locked_at_event_id",
   ];
   if (
     requiredThreadColumns.some((column) => !threadColumns.has(column)) ||
     threadColumns.has("metadata_json") ||
     threadColumns.has("opening_selection_json") ||
-    threadColumns.has("session_file")
+    threadColumns.has("session_file") ||
+    threadColumns.has("opening_locked_at_event_id")
   )
     throw new Error("chat_thread_schema_mismatch");
   const variantColumns = new Set(
@@ -2100,8 +2130,8 @@ export function createChatThreadStore(
             chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
             lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
-            greeting_variant_id, greeting_profile_revision, greeting_scenario_revision, opening_locked_at_event_id
-          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+            greeting_variant_id, greeting_profile_revision, greeting_scenario_revision
+          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         profileAwareRequest.chatThreadId,
         profileAwareRequest.companionId,
@@ -2329,10 +2359,7 @@ export function createChatThreadStore(
       const opening = normalizeOpening(requestedOpening);
       return withDb((db) => {
         const current = readStateFromDb(db, chatThreadId);
-        if (
-          current.thread.openingLockedAtEventId !== null ||
-          current.messages.some((message) => message.kind !== "opening")
-        )
+        if (current.messages.some((message) => message.kind !== "opening"))
           throw new Error("chat_thread_opening_locked");
 
         const updatedAt = now();
@@ -2377,11 +2404,8 @@ export function createChatThreadStore(
             throw new Error("chat_thread_message_id_conflict");
           return current;
         }
-        const lockedAt = current.thread.openingLockedAtEventId ?? message.messageId;
         const updatedAt = now();
-        db.prepare(
-          "UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?",
-        ).run(updatedAt, lockedAt, chatThreadId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, chatThreadId);
         insertMessage(
           db,
           chatThreadId,
@@ -2408,11 +2432,8 @@ export function createChatThreadStore(
             throw new Error("chat_thread_message_id_conflict");
           return current;
         }
-        const lockedAt = current.thread.openingLockedAtEventId ?? response.messageId;
         const updatedAt = now();
-        db.prepare(
-          "UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?",
-        ).run(updatedAt, lockedAt, chatThreadId);
+        db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, chatThreadId);
         insertMessage(
           db,
           chatThreadId,
@@ -3078,7 +3099,6 @@ export function createChatThreadStore(
         ...(replyToPlayerMessageId === undefined ? {} : { replyToPlayerMessageId }),
       });
 
-      const lockedAt = thread.openingLockedAtEventId ?? variant?.anchorMessageId ?? replyToPlayerMessageId ?? messageId;
       if (mintsPlayerRow)
         insertMessage(
           db,
@@ -3096,9 +3116,8 @@ export function createChatThreadStore(
       db.prepare(
         "INSERT INTO tavern_chat_submit_idempotency (thread_id, idempotency_key, fingerprint, turn_id) VALUES (?, ?, ?, ?)",
       ).run(input.chatThreadId, input.idempotencyKey, fingerprint, turnId);
-      db.prepare("UPDATE tavern_threads SET updated_at_ms = ?, opening_locked_at_event_id = ? WHERE thread_id = ?").run(
+      db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(
         acceptedAtMs,
-        lockedAt,
         input.chatThreadId,
       );
       persistContextPlan(db, createAcceptedContextPlan(thread, input, turnId), turnId);
@@ -3507,6 +3526,26 @@ function greetingSourceFromRow(row: any): GreetingSource | null {
   });
 }
 
+/**
+ * Which row closed the greeting's own choice - derived from the transcript, because that is where it
+ * is.
+ *
+ * The seal is one fact - "the player has spoken" - and the row that says so is already in the
+ * transcript: the first one that is not the greeting. A column of its own was the same fact spelled
+ * twice, and it could only disagree with the rows. It did: deleting back to the greeting left the
+ * seal set, so the picker's arrows never came back and `commitOpening` refused a choice whose rows no
+ * longer existed. Deriving it means no rewind, delete or edit has to remember to clear it, and a Chat
+ * nobody has spoken in is exactly a Chat whose transcript is the greeting.
+ */
+function openingLockedAtEventIdOf(db: DatabaseSync, threadId: string): string | null {
+  const row = db
+    .prepare(
+      "SELECT message_id FROM tavern_messages WHERE thread_id = ? AND kind <> 'opening' ORDER BY append_ordinal LIMIT 1",
+    )
+    .get(threadId) as { message_id: string } | undefined;
+  return row === undefined ? null : row.message_id;
+}
+
 function rowToThread(db: DatabaseSync, row: any): ChatThread {
   const greeting = greetingSourceFromRow(row);
   const openingSelection: OpeningSelection =
@@ -3563,7 +3602,7 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     lifecycleStatus: validateLifecycleStatus(row.lifecycle_status),
     managementRevision: validateManagementRevision(row.management_revision),
     ...(row.trash_restore_status ? { trashRestoreStatus: validateTrashRestoreStatus(row.trash_restore_status) } : {}),
-    openingLockedAtEventId: row.opening_locked_at_event_id ?? null,
+    openingLockedAtEventId: openingLockedAtEventIdOf(db, row.thread_id),
   });
 }
 

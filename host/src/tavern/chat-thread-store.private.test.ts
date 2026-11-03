@@ -123,7 +123,7 @@ test("SQLite schema and WAL pragmas are initialized on first access", async () =
         (
           db
             .prepare(
-              "SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json')",
+              "SELECT COUNT(*) AS count FROM pragma_table_info('tavern_threads') WHERE name IN ('metadata_json', 'opening_selection_json', 'opening_locked_at_event_id')",
             )
             .get() as any
         ).count,
@@ -237,6 +237,57 @@ test("first player message or response locks the opening", async () => {
       response.messages.map((m) => m.messageId),
       ["opening_01", "player_01", "response_01"],
     );
+  } finally {
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the opening's seal is the transcript's own fact, so deleting back to the greeting reopens the choice", async () => {
+  const { root, store: s, creation } = await store();
+  try {
+    await creation.createExplicit(request());
+    const spoken = await s.appendPlayer("thread_01", { messageId: "player_01", text: "Hello", occurredAtMs: 101 });
+    assert.equal(spoken.thread.openingLockedAtEventId, "player_01");
+    const replied = await s.commitResponse("thread_01", {
+      messageId: "response_01",
+      text: "Hello back",
+      occurredAtMs: 102,
+    });
+    // The seal names the first row of the exchange, and a later row does not move it.
+    assert.equal(replied.thread.openingLockedAtEventId, "player_01");
+    const afterReply = await s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "response_01",
+      expectedOrder: 2,
+    });
+    assert.equal(afterReply.thread.openingLockedAtEventId, "player_01");
+    // Deleting the player's own line leaves nothing but the greeting - the state a Chat nobody has
+    // spoken in has - and the seal goes with the rows it was made of.
+    const emptied = await s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: "player_01",
+      expectedOrder: 1,
+    });
+    assert.deepEqual(
+      emptied.messages.map((message) => message.messageId),
+      ["opening_01"],
+    );
+    assert.equal(emptied.thread.openingLockedAtEventId, null);
+    // A Chat whose transcript is this one answers the same way, which is what makes the seal a fact
+    // about the rows rather than about what the thread once held.
+    const fresh = await creation.createExplicit({
+      ...request(),
+      chatThreadId: "thread_02",
+      chatSurfaceSessionId: "surface_02",
+    });
+    assert.equal(emptied.thread.openingLockedAtEventId, fresh.thread.openingLockedAtEventId);
+    // And the choice it sealed is legal again: the picker's arrows come back.
+    const chosen = await s.commitOpening("thread_01", "blank");
+    assert.deepEqual(chosen.thread.openingSelection, { kind: "blank" });
+    assert.deepEqual(chosen.messages, []);
+    // Speaking again seals it again.
+    const again = await s.appendPlayer("thread_01", { messageId: "player_02", text: "Hello again", occurredAtMs: 103 });
+    assert.equal(again.thread.openingLockedAtEventId, "player_02");
+    await assert.rejects(() => s.commitOpening("thread_01", opening), /chat_thread_opening_locked/);
   } finally {
     s.close?.();
     await rm(root, { recursive: true, force: true });
@@ -797,6 +848,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- goes back to being absent as well. The fixture is a v4 file, not a current one with a lower
       -- version stamp.
       ALTER TABLE tavern_turn_terminalizations DROP COLUMN provider_failure;
+      -- Unlike those, the opening's seal is a column a v4 root HAS: schema v10 drops it because the
+      -- transcript derives the same fact, so putting it back is what makes this a real old shape.
+      ALTER TABLE tavern_threads ADD COLUMN opening_locked_at_event_id TEXT;
       PRAGMA user_version = 4;
     `);
     } finally {
