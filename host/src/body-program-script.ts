@@ -231,6 +231,20 @@ const EQUIP_TOOL_ACTION_ID = "equip_tool";
  */
 const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["sleep"]);
 
+/**
+ * Actions that SUCCEED and leave the body unable to act, so nothing may follow them in the same plan.
+ *
+ * `talk_to_npc` raises a native dialogue: `drawDialogue` sets `player.CanMove = false` and mounts a `DialogueBox`, and the
+ * Mod reports the node `Succeeded` while that box is still up (`farmhandexecutioncontroller.npcactions.cs:255`, whose own
+ * evidence records `player_can_move_after`). Every following body-owning node is then refused, so a plan that says "talk,
+ * then walk away" is a plan whose second half cannot run.
+ *
+ * The dialogue must NOT be auto-dismissed - it is the line the player is reading - so the refusal belongs here, at the
+ * plan shape, exactly where `sleep` is refused as a mid-plan step: no argument can fix it, and answering at run time would
+ * spend a whole submission to learn something the compiler already knew.
+ */
+const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to_npc"]);
+
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
 const MAX_THROWN_MESSAGE_CHARS = 300;
@@ -478,7 +492,7 @@ function declaredSceneBindingRequirementOf(registration: ActionRegistration): Pu
 /**
  * The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
  *
- * `null` is the surface's own statement that the action addresses no published family (`advance_day`, `dismiss_modal`,
+ * `null` is the surface's own statement that the action addresses no published family (`sleep`, `dismiss_modal`,
  * `express_emote`), which is a different answer from a family nobody filled - and the reason this is a plain value and
  * not a `{ declared: false }` wrapper: there is no third state to distinguish.
  */
@@ -1231,6 +1245,8 @@ function emitPlanNode(
   const previousNode = state.nodes.length === 0 ? undefined : state.nodes[state.nodes.length - 1]!;
   if (previousNode !== undefined && WORLD_RESETTING_PLAN_ACTION_IDS.includes(previousNode.actionId))
     refusePlan(`plan_script_action_after_world_reset:${action.actionId}:${previousNode.actionId}`, state, requirement);
+  if (previousNode !== undefined && BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId))
+    refusePlan(`plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}`, state, requirement);
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))

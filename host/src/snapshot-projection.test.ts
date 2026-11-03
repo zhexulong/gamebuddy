@@ -475,24 +475,28 @@ test("a snapshot with no modal in the way renders no modal line at all", () => {
   assert.equal(held.movement.holdingModal, "ShippingMenu");
 });
 
-test("projectGameSnapshotContext surfaces Bed sleep affordance in FarmHouse at night", () => {
-  const dayFarmhouse = projectGameSnapshotContext(
-    { ...modalSource, location: "FarmHouse", timeOfDay: 1200 },
-    1_000,
-    1_250,
-  );
-  if (!dayFarmhouse.available) throw new Error("projection_unavailable");
-  assert.doesNotMatch(dayFarmhouse.text, /Bed: in FarmHouse/);
+test("the sleep hint states what the executor enforces, and claims no location", () => {
+  // Rewritten because the first version asserted the WRONG thing as normal: it required "in FarmHouse", while
+  // `RequestLocalAdvanceDay` (the handler behind `sleep`) checks the bound actor, world readiness and admission and
+  // nothing about where the actor stands. The old line therefore hid a working affordance from a companion on the farm
+  // and claimed a bed it never consulted.
+  const daytime = projectGameSnapshotContext({ ...modalSource, location: "FarmHouse", timeOfDay: 1200 }, 1_000, 1_250);
+  if (!daytime.available) throw new Error("projection_unavailable");
+  assert.doesNotMatch(daytime.text, /Sleep:/, "no hint in the middle of the day");
 
-  const nightFarmhouse = projectGameSnapshotContext(
-    { ...modalSource, location: "FarmHouse", timeOfDay: 2200 },
-    1_000,
-    1_250,
-  );
-  if (!nightFarmhouse.available) throw new Error("projection_unavailable");
-  assert.match(nightFarmhouse.text, /Bed: in FarmHouse, ready to sleep \(builder\.sleep\(\) ends the day\)/);
+  const evening = projectGameSnapshotContext({ ...modalSource, location: "FarmHouse", timeOfDay: 2200 }, 1_000, 1_250);
+  if (!evening.available) throw new Error("projection_unavailable");
+  // Scoped to the HINT LINE: the projection prints `- Location: FarmHouse` as an ordinary fact, so a whole-text
+  // negative assertion would fail for the right reason and tell us nothing.
+  const hintLine = evening.text.split("\n").find((line) => line.startsWith("- Sleep:")) ?? "";
+  assert.match(hintLine, /\bsleep\(\)/u, "it names the action the surface publishes");
+  assert.doesNotMatch(hintLine, /FarmHouse|Bed:/u, "and claims neither a location nor a bed it did not consult");
 
-  const nightOutside = projectGameSnapshotContext({ ...modalSource, location: "Farm", timeOfDay: 2200 }, 1_000, 1_250);
-  if (!nightOutside.available) throw new Error("projection_unavailable");
-  assert.doesNotMatch(nightOutside.text, /Bed: in FarmHouse/);
+  const elsewhere = projectGameSnapshotContext({ ...modalSource, location: "Farm", timeOfDay: 2200 }, 1_000, 1_250);
+  if (!elsewhere.available) throw new Error("projection_unavailable");
+  assert.match(
+    elsewhere.text,
+    /Sleep:/u,
+    "the hint is published on the farm too, because the executor does not care where the actor stands",
+  );
 });

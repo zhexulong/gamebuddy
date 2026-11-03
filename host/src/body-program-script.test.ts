@@ -265,6 +265,31 @@ builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
   assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
 });
 
+test("a node compiled after talk_to_npc is refused, because the dialogue leaves the body unable to act", () => {
+  // `talk_to_npc` SUCCEEDS and leaves a native `DialogueBox` up with `player.CanMove = false`
+  // (`farmhandexecutioncontroller.npcactions.cs:255`). Every following body-owning node is then refused at run time, so the
+  // plan shape is where the refusal belongs - the same place, and for the same reason, that `sleep` is refused mid-plan.
+  const result = compile(`
+  builder.move_to_tile({ x: 12, y: 8 });
+  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
+  builder.move_to_tile({ x: 12, y: 8 });
+  `);
+  assert.equal(refusalOf(result), "plan_script_action_after_body_yield:move_to_tile:talk_to_npc");
+});
+
+test("talk_to_npc as the last node still compiles", () => {
+  const ending = nodesOf(
+    compile(`
+  builder.move_to_tile({ x: 12, y: 8 });
+  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
+  `),
+  );
+  assert.deepEqual(
+    ending.map((node) => node.actionId),
+    ["move_to_tile", "talk_to_npc"],
+  );
+});
+
 test("sleep as the last node still compiles, and a menu-closing step is not terminal", () => {
   const ending = nodesOf(
     compile(`
@@ -967,12 +992,12 @@ test("plan_shape reports the tool the surface declares, and tool_requirement_und
       { key: "embodied_actor", value: "ScopePlayer" },
       { key: "tool:scythe", value: "AnyUpgrade" },
     ]),
-    withClaims("break_rock_source", [
+    withClaims("break_rock", [
       { key: "embodied_actor", value: "ScopePlayer" },
       { key: "tool:pickaxe", value: "BasicOnly" },
     ]),
     // Declares its embodied actor and nothing about a tool: the surface is silent, and the answer says so by name.
-    withClaims("chop_tree_source", [{ key: "embodied_actor", value: "ScopePlayer" }]),
+    withClaims("chop_tree", [{ key: "embodied_actor", value: "ScopePlayer" }]),
     // A word the Host cannot translate is passed through as declared rather than dropped or guessed at.
     withClaims("dig_artifact_spot", [{ key: "tool:hoe", value: "SomeFutureWord" }]),
   ]);
@@ -990,14 +1015,14 @@ test("plan_shape reports the tool the surface declares, and tool_requirement_und
     maximumUpgradeLevel: null,
   });
   // "the basic one": the Mod refuses an upgraded pickaxe by name, so a bare `minimumUpgradeLevel` would be a lie.
-  assert.deepEqual(shapeOf("break_rock_source"), {
+  assert.deepEqual(shapeOf("break_rock"), {
     declared: true,
     category: "pickaxe",
     upgradeRequirement: "BasicOnly",
     minimumUpgradeLevel: 0,
     maximumUpgradeLevel: 0,
   });
-  assert.deepEqual(shapeOf("chop_tree_source"), { declared: false, reasonCode: "tool_requirement_undeclared" });
+  assert.deepEqual(shapeOf("chop_tree"), { declared: false, reasonCode: "tool_requirement_undeclared" });
   assert.deepEqual(shapeOf("dig_artifact_spot"), {
     declared: true,
     category: "hoe",

@@ -220,6 +220,16 @@ export function projectPetContext(snapshot: Snapshot): readonly PetContextProjec
  * and bounded counts cross this boundary; capabilities, action IDs, execution
  * state, receipts, and request identity are deliberately not represented.
  */
+/**
+ * When the sleep hint starts appearing. 18:00 is where a farm day stops being worth starting another task, and the
+ * number exists only so the hint is not printed all morning.
+ *
+ * It is deliberately NOT an engine rule: the executor ends the day on request, at any hour. If a real precondition is
+ * ever added to `sleep`, this errs in the harmless direction - a hint that is too eager - and the executor's refusal is
+ * what tells the caller.
+ */
+const SLEEP_HINT_FROM_TIME_OF_DAY = 1800;
+
 export function projectGameSnapshotContext(
   snapshot: Snapshot | null | undefined,
   sampledAtMs: number,
@@ -264,8 +274,13 @@ export function projectGameSnapshotContext(
             // `Actionable: true` is not the promise it looks like.
             `- Modal: ${movement.holdingModal} - owns the screen${openedBy(movement.holdingModalActionOwned)}: the game clock does not advance and no other action can run until it is cleared; dismiss_modal closes an informational menu, answer_dialogue a question`,
           ]),
-      ...(location === "FarmHouse" && (clock.timeOfDay >= 1800 || clock.timeOfDay < 600)
-        ? ["- Bed: in FarmHouse, ready to sleep (builder.sleep() ends the day)"]
+      // `sleep` has no location precondition and no clock precondition: `RequestLocalAdvanceDay` checks the bound actor,
+      // world readiness and admission, then runs the lifecycle from wherever the actor stands. So this line must claim
+      // neither, and it says exactly what the executor enforces.
+      //
+      // The threshold below is a PRESENTATION choice - a hint nobody needs at 09:00 - and must never be read as a gate.
+      ...(clock.timeOfDay >= SLEEP_HINT_FROM_TIME_OF_DAY
+        ? ["- Sleep: `sleep()` ends the day from wherever you are - the actor goes to bed and the save advances"]
         : []),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,

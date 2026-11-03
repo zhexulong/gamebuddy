@@ -26,7 +26,7 @@ import { readStrictJsonFile } from "../../strict-json-reader.js";
  *    a 120-tick throttle (`FarmhandPolicyRefreshThrottle`, 2 s at 60 Hz), so a
  *    change reaches a RUNNING game without a restart.
  *  - `advanceDayMinimumOnlineFarmers` is the co-op night floor: how many farmers
- *    must be connected before a dispatched `advance_day` may start a night. The
+ *    must be connected before a dispatched `sleep` may start a night. The
  *    Mod reads it once, at embodiment initialisation
  *    (`ModEntry.cs` `ConfigureLifecycleMinimumFarmers`), so a change takes effect
  *    the next time the world loads - not while a world is running.
