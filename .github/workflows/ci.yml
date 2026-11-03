@@ -444,6 +444,17 @@ jobs:
       - name: Stardew action-development gates
         id: stardew_action_development_gates
         if: ${{ !cancelled() }}
+        # A step with no budget does not fail when it stops making progress; it stops the whole run.
+        # This one did exactly that on 2026-11-03: it sat in `in_progress` for five hours after the
+        # step above it had already failed, which also withheld every other job's log for the run.
+        #
+        # The long pole is `package-deterministic-tests`, the whole 52-file package suite run
+        # sequentially through src/run-tests.mjs - not the five artefact checkers, which finish in
+        # seconds. Measured on the development machine it exceeds 30 minutes, so 45 is not generous,
+        # it is the smallest number that does not turn a slow suite into a false red. If this step
+        # starts hitting the limit, the suite needs its own budget and possibly its own job; raising
+        # this number is not the fix.
+        timeout-minutes: 45
         run: pnpm --dir integrations/stardew/action-development action:ci
       # The integration suite's own source says no game, Host receiver or schema is involved, but its
       # project references the mod project, so the Stardew mod build package runs and requires a licensed
