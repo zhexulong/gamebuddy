@@ -17,7 +17,11 @@ import {
   readAuthoredContextRegistry,
 } from "../test-support/authored-context-catalog.test-support.js";
 import { createChatEventStream } from "./chat-event-stream.js";
-import { runMountedProviderStart, type NativeChatPreviewPublisher } from "./p4-provider-start-execution.js";
+import {
+  runMountedProviderStart,
+  type NativeChatPreviewPublisher,
+  type NativeChatSpeechSink,
+} from "./p4-provider-start-execution.js";
 
 function nativeText(text: string) {
   return Object.freeze({ type: "text" as const, text });
@@ -649,6 +653,87 @@ test("P4c runs when native assistant output settles before the provider observer
     presentationTransitions.map(({ operation }) => operation),
     ["commit_presentation", "claim_completion", "complete"],
   );
+});
+
+test("Chat's preview and voice never receive reasoning, and the answer arrives in order", async () => {
+  // Both sinks read the one delta lane, and `removeModelScaffolding` cleans only
+  // the committed row. A reply that opens with an inline reasoning frame therefore
+  // printed the model's scratchpad in the live bubble AND spoke it aloud, then
+  // settled as a different, clean message. Withholding the frame in the lane is
+  // what keeps the bubble and the voice describing the reply that gets committed.
+  let observer: Observer | undefined;
+  const previews: string[] = [];
+  const spoken: string[] = [];
+  const previewPublisher: NativeChatPreviewPublisher = Object.freeze({
+    publish: async (preview) => {
+      previews.push(preview.delta);
+    },
+    clear: async () => undefined,
+  });
+  const speechSink: NativeChatSpeechSink = Object.freeze({
+    begin: async () => undefined,
+    append: async (delta) => {
+      spoken.push(delta);
+    },
+    finalize: async () => undefined,
+    cancel: async () => undefined,
+  });
+  const deltas = ["<thinking>", "玩家刚醒，先接一句话。", "</thinking>", "早安。", "今天有雨。"];
+  const { scope, presentationTransitions } = createScope({
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            emit({
+              type: "message_update",
+              message: partial,
+              assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+            });
+            for (const delta of deltas)
+              emit({
+                type: "message_update",
+                message: partial,
+                assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial },
+              });
+            emit({ type: "message_end", message: nativeAssistant([nativeText(deltas.join(""))]) });
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedProviderStart(scope, previewPublisher, speechSink);
+
+  assert.equal(result.outcome, "completed");
+  // The answer is unbroken and in arrival order...
+  assert.deepEqual(previews, ["早安。", "今天有雨。"]);
+  // ...and the voice is fed exactly what the bubble was, never the reasoning.
+  assert.equal(spoken.join(""), previews.join(""));
+  for (const piece of [...previews, ...spoken]) {
+    assert.equal(piece.includes("玩家"), false, piece);
+    assert.equal(piece.includes("<thinking>"), false, piece);
+  }
+  // The committed row is untouched: the final path still owns the whole message.
+  const commit = presentationTransitions[0];
+  assert.equal(commit?.operation, "commit_presentation");
+  assert.equal(commit?.operation === "commit_presentation" && commit.message.text, "早安。今天有雨。");
 });
 
 test("P5 commits final native assistant content once after durable running and clears its preview", async () => {
