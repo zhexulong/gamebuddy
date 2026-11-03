@@ -23,6 +23,11 @@ export type AcceptPlayerTurnCommand = Readonly<{
    * message the target answered, never from a newly accepted row.
    */
   variantTargetMessageId?: string;
+  /**
+   * Reply-target acceptance: answer a player row the transcript already carries and mint no player
+   * message. The prompt text is that row's own words; the row must be the transcript's last.
+   */
+  replyToPlayerMessageId?: string;
 }>;
 export type PlayerTurnAcceptor = Readonly<{
   accept(command: AcceptPlayerTurnCommand): Promise<AcceptedQueuedTurn>;
@@ -52,6 +57,9 @@ export function createPlayerTurnAcceptor(
             ...(command.variantTargetMessageId === undefined
               ? {}
               : { variantTargetMessageId: command.variantTargetMessageId }),
+            ...(command.replyToPlayerMessageId === undefined
+              ? {}
+              : { replyToPlayerMessageId: command.replyToPlayerMessageId }),
           }),
         );
       } catch (error) {

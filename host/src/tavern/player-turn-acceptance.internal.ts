@@ -13,6 +13,7 @@ type MountedAcceptanceCommand = Readonly<{
   expectedDraftRevision: number;
   boundedVisibleTail?: string;
   variantTargetMessageId?: string;
+  replyToPlayerMessageId?: string;
 }>;
 
 /**

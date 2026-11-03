@@ -582,33 +582,46 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (!validIdempotencyKey(idempotencyKey)) throw unavailable();
       if (command.selectionGeneration !== lease.browserProjection.selectionGeneration) throw selectionConflict();
       const state = await resumeState();
-      // Regeneration re-asks the last thing the player said, so exactly one target
-      // can honour it: the transcript's own last message, when that message is a
-      // companion reply. A middle reply has no turn of its own to re-run, and the
-      // opening - the only companion message a transcript can begin with - has no
-      // player turn before it at all. Both were previously accepted: the middle
-      // one appended an unrelated pair at the tail, and the opening appended the
-      // literal "请继续". They are refused here as well as hidden by the surface,
-      // because the browser is not the authority on what this Chat can do.
+      // Regeneration re-asks the last thing the player said, so exactly one target can honour it:
+      // the transcript's own last message. Two shapes of that row are legal, and neither mints a
+      // player row:
       //
-      // The turn this accepts is a same-position variant: it names that reply and
-      // mints no player row, so its prompt is the anchor player message the reply
-      // answered - the store resolves both from the transcript and refuses a target
-      // with no anchor. The reply the player reads changes only when the provider's
-      // commit appends the new variant at this exact position, and only after the
-      // model's context already carries it; a turn that cannot do both leaves the
-      // position exactly as it was.
+      //  - her reply, when a player turn stands before it. The turn is a same-position variant: it
+      //    names that reply and re-runs the prompt from the player message the reply answered. A
+      //    middle reply has no turn of its own to re-run, and the opening - the only companion
+      //    message a transcript can begin with - has no player turn before it at all. Both were
+      //    previously accepted: the middle one appended an unrelated pair at the tail, and the
+      //    opening appended the literal "请继续". They are refused here as well as hidden by the
+      //    surface, because the browser is not the authority on what this Chat can do.
+      //
+      //  - the player's own line, when nothing answered it. Acceptance writes that row durably
+      //    BEFORE the provider runs and the `failed` and `cancelled` transitions keep it, so a turn
+      //    that never produced a reply leaves exactly this shape - by construction, not by accident.
+      //    The alternatives are both worse: a fresh player row repeats the player's own words in the
+      //    transcript, and reopening the terminal turn would falsify the record that says the product
+      //    will not act on that turn again. The reply appends at the tail behind the line it answers.
+      //
+      //    This target is refused while anything can still answer the line: a non-terminal ledger
+      //    means a live turn, and answering it here would mint a second reply to a prompt the model
+      //    is already writing.
+      //
+      // The reply a variant turn writes changes only when the provider's commit appends the new
+      // variant at that exact position; the reply-target turn's commit inserts an ordinary reply row
+      // after the line it answered. A turn that can do neither leaves the transcript as it was.
       const targetMessage = state.messages[state.messages.length - 1];
       if (
         targetMessage === undefined ||
-        targetMessage.role !== "companion" ||
         lease.browserProjection.projectMessageHandle(targetMessage.messageId) !== command.messageHandle
       )
         throw unavailable();
-      const parentPlayerMessage = [...state.messages.slice(0, state.messages.length - 1)]
-        .reverse()
-        .find((m: ChatThreadState["messages"][number]) => m.role === "player");
+      const answersPlayerLine = targetMessage.role === "player";
+      const parentPlayerMessage = answersPlayerLine
+        ? targetMessage
+        : [...state.messages.slice(0, state.messages.length - 1)]
+            .reverse()
+            .find((m: ChatThreadState["messages"][number]) => m.role === "player");
       if (parentPlayerMessage === undefined) throw unavailable();
+      if (answersPlayerLine && state.turnLedger !== null && !isTerminalLedger(state.turnLedger)) throw unavailable();
       const promptText = parentPlayerMessage.text;
       // A replayed key answers `duplicate` with the same durable turn, exactly as
       // an ordinary submit does: acceptance alone is idempotent here too.
@@ -622,16 +635,25 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
             locale: "und",
             idempotencyKey,
             expectedDraftRevision: state.draft.revision,
-            variantTargetMessageId: targetMessage.messageId,
+            ...(answersPlayerLine
+              ? { replyToPlayerMessageId: targetMessage.messageId }
+              : { variantTargetMessageId: targetMessage.messageId }),
           }),
         );
         const acceptedState = await resumeState();
-        const result = await projectVariantAcceptedResult(
-          accepted,
-          acceptedState,
-          targetMessage.messageId,
-          duplicate ? "duplicate" : "accepted",
-        );
+        const result = answersPlayerLine
+          ? await projectReplyAcceptedResult(
+              accepted,
+              acceptedState,
+              targetMessage.messageId,
+              duplicate ? "duplicate" : "accepted",
+            )
+          : await projectVariantAcceptedResult(
+              accepted,
+              acceptedState,
+              targetMessage.messageId,
+              duplicate ? "duplicate" : "accepted",
+            );
         // Deliberately no `message.committed`: this acceptance commits nothing the
         // player can see. The variant reaches the surface when the provider's commit
         // appends it to this position and that read-back is projected.
@@ -827,6 +849,34 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
     const order = state.messages.findIndex((message) => message.messageId === targetMessageId);
     const message = order < 0 ? undefined : state.messages[order];
     if (message === undefined || message.role !== "companion" || message.kind !== "response") throw unavailable();
+    const result = Object.freeze({
+      apiVersion: TAVERN_BROWSER_API_VERSION,
+      disposition,
+      message: projectMessage(lease, message, order),
+      turn: projectTurn(lease, state.messages, state.turnLedger),
+    });
+    // Fail closed unless the committed representation satisfies its frozen
+    // contract schema; a partial or invalid projection never escapes.
+    if (!TavernBrowserValidatorsV1.SubmitResultV1Schema.Check(result)) throw unavailable();
+    return result;
+  }
+
+  /**
+   * The browser-safe result of a reply-target acceptance. Nothing new was minted, so the committed
+   * representation is the player row the transcript already carried and this turn answers - read back
+   * from durable state, never from the caller's command echo - plus the ledger the acceptance created.
+   */
+  async function projectReplyAcceptedResult(
+    accepted: AcceptedQueuedTurn,
+    state: ChatThreadState,
+    playerMessageId: string,
+    disposition: "accepted" | "duplicate",
+  ): Promise<SubmitResultV1> {
+    if (accepted.replyToPlayerMessageId !== playerMessageId) throw unavailable();
+    if (state.turnLedger === null || state.turnLedger.turnId !== accepted.turnId) throw unavailable();
+    const order = state.messages.findIndex((message) => message.messageId === playerMessageId);
+    const message = order < 0 ? undefined : state.messages[order];
+    if (message === undefined || message.role !== "player" || message.kind !== "player") throw unavailable();
     const result = Object.freeze({
       apiVersion: TAVERN_BROWSER_API_VERSION,
       disposition,

@@ -1021,6 +1021,169 @@ test(
 );
 
 test(
+  "regenerate answers the player row a failed turn left unanswered, and refuses a live one",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const target = async (messageHandle, idempotencyKey) =>
+    run(async () => service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle }, idempotencyKey));
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "stuvwxyzabcdefghijklmn", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  const liveState = await resume();
+  const playerRow = liveState.messages[liveState.messages.length - 1];
+  // The turn is admitted and not yet terminal: a live turn may still answer this line, so the target is refused.
+  const whileLive = await target(handleOf(playerRow.messageId), "ttttttttttttttttttttta");
+  await driveToTerminal(fx, "failed");
+  const failedState = await resume();
+  // A turn that never produced a reply leaves the player's own line as the tail - by construction, because
+  // acceptance writes that row before the provider runs and the failure keeps it.
+  const failed = {
+    status: failedState.turnLedger === null ? null : failedState.turnLedger.status,
+    roles: failedState.messages.map((m) => m.role),
+    replies: failedState.messages.filter((m) => m.kind === "response").length,
+  };
+  const accepted = await target(handleOf(playerRow.messageId), "uuuuuuuuuuuuuuuuuuuuua");
+  await ticks();
+  const acceptedState = await resume();
+  const acceptedShape = {
+    messages: acceptedState.messages.length,
+    playerRows: acceptedState.messages.filter((m) => m.role === "player").length,
+    replies: acceptedState.messages.filter((m) => m.kind === "response").length,
+    turnMessageId: acceptedState.turnLedger === null ? null : acceptedState.turnLedger.messageId,
+    replyTarget: acceptedState.turnLedger === null ? null : (acceptedState.turnLedger.replyToPlayerMessageId ?? null),
+  };
+  // The provider path the injected start stands in for: one committed reply behind the line it answered.
+  const driven = await driveToTerminal(fx, "completed", "response_retry_01");
+  const retried = await resume();
+  const retriedShape = {
+    roles: retried.messages.map((m) => m.role),
+    playerRows: retried.messages.filter((m) => m.role === "player").length,
+    replies: retried.messages.filter((m) => m.kind === "response").length,
+    replyTarget: retried.turnLedger === null ? null : (retried.turnLedger.replyToPlayerMessageId ?? null),
+  };
+  const tail = retried.messages[retried.messages.length - 1];
+  // The ordinary shape is untouched: her tail reply is still a same-position variant target.
+  const ordinary = await target(handleOf(tail.messageId), "vvvvvvvvvvvvvvvvvvvvva");
+  // And the line that has been answered is no longer a target at all.
+  const answeredAgain = await target(handleOf(playerRow.messageId), "wwwwwwwwwwwwwwwwwwwwwa");
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    whileLive, failed, accepted, acceptedShape, driven: driven.status, retriedShape, ordinary, answeredAgain, startCalls,
+  }));
+`);
+    // A turn that may still answer the line is not a target.
+    const whileLive = output.whileLive as { ok: boolean; error?: string };
+    assert.equal(whileLive.ok, false);
+    assert.match(whileLive.error ?? "", /chat_pipeline_service_unavailable/);
+
+    // The state the acceptance must answer, really reached: her opening, the player line, no reply.
+    const failed = output.failed as { status: string; roles: string[]; replies: number };
+    assert.equal(failed.status, "failed");
+    assert.deepEqual(failed.roles, ["companion", "player"]);
+    assert.equal(failed.replies, 0);
+
+    // The acceptance names the player's own row and mints nothing: the transcript does not grow.
+    const accepted = output.accepted as { ok: boolean; value?: SubmitResultV1; error?: string };
+    assert.equal(accepted.ok, true, accepted.error);
+    assert.equal(accepted.value?.disposition, "accepted");
+    assert.equal(accepted.value?.message.role, "player");
+    const acceptedShape = output.acceptedShape as {
+      messages: number;
+      playerRows: number;
+      replies: number;
+      turnMessageId: string;
+      replyTarget: string;
+    };
+    assert.equal(acceptedShape.messages, 2);
+    assert.equal(acceptedShape.playerRows, 1);
+    assert.equal(acceptedShape.replies, 0);
+    assert.match(acceptedShape.turnMessageId, /^reply_turn_/);
+    assert.equal(acceptedShape.replyTarget.length > 0, true);
+
+    // The reply lands behind the line it answered, and the transcript gains exactly one row.
+    assert.equal(output.driven, "completed");
+    const retriedShape = output.retriedShape as {
+      roles: string[];
+      playerRows: number;
+      replies: number;
+      replyTarget: string;
+    };
+    assert.deepEqual(retriedShape.roles, ["companion", "player", "companion"]);
+    assert.equal(retriedShape.playerRows, 1);
+    assert.equal(retriedShape.replies, 1);
+    assert.equal(retriedShape.replyTarget, acceptedShape.replyTarget);
+
+    // The ordinary target is unchanged: her tail reply is still a same-position variant.
+    const ordinary = output.ordinary as { ok: boolean; value?: SubmitResultV1; error?: string };
+    assert.equal(ordinary.ok, true, ordinary.error);
+    assert.equal(ordinary.value?.message.role, "companion");
+    // The line it answered is not a target any more.
+    const answeredAgain = output.answeredAgain as { ok: boolean; error?: string };
+    assert.equal(answeredAgain.ok, false);
+    assert.match(answeredAgain.error ?? "", /chat_pipeline_service_unavailable/);
+  },
+);
+
+test(
+  "regenerate answers the player row a stopped turn left unanswered",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  await service.submitAfterResponseCommit(commandFor(fx, {}), "xyzabcdefghijklmnopqrs", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  // The Stop path: the exact prompt reached the provider, and the turn is terminalized as stopped with no reply.
+  await internal.startMountedAttempt(fx.manifest, fx.lease, (invocation) =>
+    internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+      const times = [await nextTime(), await nextTime(), await nextTime()];
+      await scope.transitionStore({ operation: "arm", observedAtMs: times[0] });
+      await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: times[1] });
+      await scope.transitionPresentation({ operation: "claim_cancel", claimedAtMs: times[2] });
+      return scope.transitionPresentation({ operation: "cancel", cancelledAtMs: times[2] });
+    }),
+  );
+  const stoppedState = await resume();
+  const playerRow = stoppedState.messages[stoppedState.messages.length - 1];
+  const stopped = await run(async () =>
+    service.regenerate(
+      { apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(playerRow.messageId) },
+      "yyyyyyyyyyyyyyyyyyyyya",
+    ));
+  const stoppedLedger = await resume();
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({
+    stoppedStatus: stoppedState.turnLedger === null ? null : stoppedState.turnLedger.status,
+    stoppedRoles: stoppedState.messages.map((m) => m.role),
+    stopped, playerRowId: playerRow.messageId,
+    stoppedTurnTarget: stoppedLedger.turnLedger === null ? null : (stoppedLedger.turnLedger.replyToPlayerMessageId ?? null),
+    stoppedPlayerRows: stoppedLedger.messages.filter((m) => m.role === "player").length,
+  }));
+`);
+    // A stopped turn is the same dead end by the same construction, and takes the same answer.
+    assert.equal(output.stoppedStatus, "cancelled");
+    assert.deepEqual(output.stoppedRoles, ["companion", "player"]);
+    const stopped = output.stopped as { ok: boolean; value?: SubmitResultV1; error?: string };
+    assert.equal(stopped.ok, true, stopped.error);
+    assert.equal(stopped.value?.message.role, "player");
+    assert.equal(output.stoppedTurnTarget, output.playerRowId);
+    assert.equal(output.stoppedPlayerRows, 1);
+  },
+);
+
+test(
   "a swipe selection moves the model's leaf to the variant the player chose, not just the store's row",
   { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
   async () => {
