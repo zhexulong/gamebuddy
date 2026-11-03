@@ -3435,10 +3435,25 @@ try {
                 : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
                   ? promptForLateDay(day)
                   : promptForDayContinuation(day);
+            const spokenBefore = presentationPieces.length;
             const walked = await runAgentTurn(prompt, tools);
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
-            sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
+            // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
+            const spokenThisTurn = presentationPieces
+              .slice(spokenBefore)
+              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
+              .join("")
+              .trim();
+            sessionTurns.push(
+              Object.freeze({
+                goalIndex: day - 1,
+                goal: promptForDay(day),
+                turn: walked.turn,
+                day,
+                spokenText: spokenThisTurn,
+              }),
+            );
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
             if (walked.settled !== true) break;
             // The player drops in. A companion that is only ever narrated AT the fields has nobody to answer, and a
@@ -3514,18 +3529,42 @@ try {
     // Time origin for chunked-presentation TTFB: the moment the agent turn is
     // admitted, so the first companion bubble's elapsed time is measured from the
     // real turn boundary, not from process start.
+    const firstSpokenBefore = presentationPieces.length;
     const firstTurn = await runAgentTurn(prompt, tools);
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
-    sessionTurns.push(Object.freeze({ goalIndex: 0, goal: prompt, turn: agentTurnResult }));
+    sessionTurns.push(
+      Object.freeze({
+        goalIndex: 0,
+        goal: prompt,
+        turn: agentTurnResult,
+        spokenText: presentationPieces
+          .slice(firstSpokenBefore)
+          .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
+          .join("")
+          .trim(),
+      }),
+    );
     // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
     // only after the previous one settled, so the session measures a companion
     // making its own choices across several intents rather than one scripted chain.
     if (SCENARIO === "morning_routine") {
       for (const [index, goal] of SESSION_GOALS.entries()) {
+        const spokenBefore = presentationPieces.length;
         const next = await runAgentTurn(goal, tools);
         if (next.status !== null) status = next.status;
-        sessionTurns.push(Object.freeze({ goalIndex: index + 1, goal, turn: next.turn }));
+        sessionTurns.push(
+          Object.freeze({
+            goalIndex: index + 1,
+            goal,
+            turn: next.turn,
+            spokenText: presentationPieces
+              .slice(spokenBefore)
+              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
+              .join("")
+              .trim(),
+          }),
+        );
       }
     }
   }
@@ -3843,10 +3882,23 @@ try {
   // Every scenario that SPOKE is assessed: the companion's speech is part of what every scenario promises
   // (morning_routine included - it reports its day to the player), so gating it on particular rungs was how
   // dialogue went unassessed on the others.
+  // Judged PER TURN, because the gate's limits are per utterance.
+  //
+  // The single call used to hand it `presentedSummary`, which accumulates every line of every turn: a three-day run
+  // produced one 285-character "summary" out of nine short lines and then failed its own 120-character limit -
+  // `summary_too_long` about a companion that had spoken exactly as asked, once per turn. Measured 2026-11-03: the
+  // speech was 9 lines of 2-45 characters each.
+  //
+  // A run fails when ANY turn's own speech fails, and passes when they all pass - the failing turn is reported, because
+  // "one turn broke the rule" and "the run broke it" are not the same finding.
+  const spokenTurnTexts = sessionTurns
+    .map((entry) => entry?.spokenText)
+    .filter((text) => typeof text === "string" && text.trim().length > 0);
+  const interactionAssessments = spokenTurnTexts.map((text) => assessCompanionInteraction(text, observedEvents));
   const interactionAssessment =
-    typeof presentedSummary === "string" && presentedSummary.trim().length > 0
-      ? assessCompanionInteraction(presentedSummary, observedEvents)
-      : null;
+    interactionAssessments.length === 0
+      ? null
+      : (interactionAssessments.find((assessment) => !assessment.passed) ?? interactionAssessments[0]);
   // The interaction gate assesses what the companion SAID. `unobserved` means nobody could assess it, which a
   // reader must be able to tell apart from "assessed and fine" — the previous boolean could not.
   const interactionOutcome =

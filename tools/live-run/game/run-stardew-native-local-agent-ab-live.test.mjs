@@ -249,11 +249,18 @@ test("the runner emits system findings as a first-class health signal", () => {
     RUNNER_SOURCE,
     /const onCompanionTextPresented = \(text, locale\) => \{\n  if \(SCENARIO !== "npc_social_and_presence"\) return;/,
   );
-  // Ladder 5 dialogue is covered by the interaction gate too (its reply is the
-  // covenant answer to the player); before this it was never assessed at all.
-  assert.match(
+  // Ladder 5 dialogue is covered by the interaction gate too (its reply is the covenant answer to the player);
+  // before this it was never assessed at all.
+  //
+  // The gate is now fed PER TURN, not with the session's concatenation: the limits it enforces are per utterance, and
+  // a three-day run built one 285-character "summary" out of nine short lines and then failed its own 120-character
+  // limit - `summary_too_long` about a companion that had spoken exactly as asked. Measured 2026-11-03.
+  assert.match(RUNNER_SOURCE, /interactionAssessments\.length === 0/);
+  assert.match(RUNNER_SOURCE, /assessCompanionInteraction\(text, observedEvents\)/);
+  assert.doesNotMatch(
     RUNNER_SOURCE,
-    /typeof presentedSummary === "string" && presentedSummary\.trim\(\)\.length > 0\n      \? assessCompanionInteraction/,
+    /presentedSummary\.trim\(\)\.length > 0\n\s+\? assessCompanionInteraction\(presentedSummary, observedEvents\)/,
+    "the whole-session summary is not a per-utterance unit",
   );
   assert.match(
     RUNNER_SOURCE,
