@@ -137,7 +137,10 @@ let connection: TavernConnectionService;
 
 test.beforeAll(async () => {
   // The connection store takes a durable path lock; this is the same test-only reclaimer binding the
-  // Host's own connection-route test uses (`host/src/tavern-management-connection-routes.test.ts`).
+  // Host's own connection-route test uses (`host/src/tavern-management-connection-routes.test.ts`),
+  // and the same native helper the `host` CI job builds before any zone runs. It is deliberately not
+  // unbound afterwards: the binding is process-wide, and disabling it would hand the next journey in
+  // this worker a store that fails closed.
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
 });
 
@@ -151,10 +154,6 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await connection.close();
   await rm(agentDir, { recursive: true, force: true });
-});
-
-test.afterAll(() => {
-  bindWindowsStaleLockReclaimer(undefined);
 });
 
 /** Every route the composed shell and the settings panels read, with one connection state supplied. */
