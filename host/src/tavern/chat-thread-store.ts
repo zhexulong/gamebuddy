@@ -191,6 +191,35 @@ export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSour
   }>;
 
 /**
+ * Whether one of a world book's trigger words fires on the scanned text.
+ *
+ * A key is a trigger WORD - the card says "this entry is about rain, so put it in the turn
+ * that mentions rain" - not a substring. `corpus.includes(key)` fired on `concatenate` for
+ * the key `cat`, which dropped an entry about a pet into every turn that happened to spell
+ * those three letters inside another word.
+ *
+ * The match stays literal (a key may be a phrase, or carry punctuation such as `mood:quiet`)
+ * and the one rule added is that the characters on either side of it are not ASCII word
+ * characters. That boundary is deliberately ASCII-only: `\b` refuses every CJK key, because a
+ * han character is not a word character in a JS regex and `绿茶` inside `今天喝绿茶` never forms
+ * a boundary at all, so a `\b`-based rule would silently stop selecting the product's own
+ * Chinese books.
+ */
+function triggerKeyMatches(corpus: string, key: string): boolean {
+  const needle = key.normalize("NFC").trim().toLowerCase();
+  if (needle.length === 0) return false;
+  for (let at = corpus.indexOf(needle); at !== -1; at = corpus.indexOf(needle, at + 1)) {
+    if (!isAsciiWordCharacter(corpus.charAt(at - 1)) && !isAsciiWordCharacter(corpus.charAt(at + needle.length)))
+      return true;
+  }
+  return false;
+}
+
+function isAsciiWordCharacter(character: string): boolean {
+  return /^[0-9A-Za-z_]$/u.test(character);
+}
+
+/**
  * Selects World Info entries using only the accepted player text and a bounded
  * visible transcript tail. The result intentionally contains references only.
  */
@@ -234,15 +263,11 @@ export function selectAuthoredContextVolatileSourceRefs(
       seen.has(candidate.sourceId)
     )
       throw new Error("invalid_chat_turn_context_volatile_candidate");
-    const primaryMatch = candidate.selectionKeys.some((key) =>
-      corpus.includes(key.normalize("NFC").trim().toLowerCase()),
-    );
+    const primaryMatch = candidate.selectionKeys.some((key) => triggerKeyMatches(corpus, key));
     if (!primaryMatch) continue;
 
     if (candidate.secondaryKeys !== undefined && candidate.secondaryKeys.length > 0) {
-      const secondaryMatches = candidate.secondaryKeys.map((key) =>
-        corpus.includes(key.normalize("NFC").trim().toLowerCase()),
-      );
+      const secondaryMatches = candidate.secondaryKeys.map((key) => triggerKeyMatches(corpus, key));
       const anySecondary = secondaryMatches.some(Boolean);
       const allSecondary = secondaryMatches.every(Boolean);
       const logic = candidate.selectiveLogic ?? 0;
