@@ -3,7 +3,7 @@
 //   (a) 聊天 @400x800: elements whose top is above the app bar — painted over it, or clipped?
 //   (b) the Chats row clamp: which declaration wins, and how much of the preview is inside the box?
 //   (c) the Game surface's large empty <pre>/<code> blocks — what are they, and are they rendered?
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe, observationStart } = require("./common.cjs");
 
 const barProbe = () => {
   const bar = document.querySelector(".app-bar");
@@ -132,6 +132,7 @@ const gameEmptyProbe = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("h-probe.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   say("=== (a) 聊天 @400x800: is anything actually painted over the app bar? ===");
@@ -163,7 +164,7 @@ const gameEmptyProbe = () => {
     say(JSON.stringify(await page.evaluate(gameEmptyProbe), null, 1));
   }
 
-  await observe(page, say, "h");
+  await observe(page, say, "h", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-H");
