@@ -6,8 +6,9 @@
  *
  * Default output is one line per finding in `parser_agreement_<code>:<vocabulary>[:<reader>]: ...`
  * form and exit 1; a clean tree prints the reading and exits 0. The reading is printed on a pass as
- * well, because a comparison that measured nothing is not a comparison that agreed - the counts say
- * how many readers and how many members actually met.
+ * well, because a comparison that measured nothing is not a comparison that agreed: `readers=2/2` is how
+ * many were actually read against how many were declared, `compared=false` says the comparison did not run,
+ * and `members=` says how many tokens met.
  *
  * One drift names many members (a grammar that loses its `\s*` disagrees about every spaced spelling),
  * so the report prints the first `MAX_PRINTED_FINDINGS` and the total; `--all` prints every finding.
@@ -22,6 +23,9 @@
  * red-proof: inject  a declared reader whose file is not on disk -> `parser_agreement_reader_missing`
  *                    names that vocabulary, that reader and the path instead of comparing one reader
  *                    fewer (tools/lib/parser-agreement.test.mjs)
+ * red-proof: inject  a reader needing an undeclared const, or a `const` after another statement on
+ *                    its line -> `reader_unreadable` saying the reader was not read and no comparison
+ *                    was made (tools/lib/parser-agreement.test.mjs)
  */
 import { auditParserAgreement, formatFinding } from "./lib/parser-agreement.mjs";
 
@@ -32,7 +36,11 @@ const { readings, findings } = auditParserAgreement();
 const printAll = process.argv.includes("--all");
 const printed = printAll ? findings : findings.slice(0, MAX_PRINTED_FINDINGS);
 const summary = readings
-  .map((reading) => `${reading.vocabulary}(readers=${reading.readers.length},members=${reading.members})`)
+  .map(
+    (reading) =>
+      `${reading.vocabulary}(readers=${reading.readers.length}/${reading.declared},members=${reading.members}` +
+      `${reading.compared ? "" : ",compared=false"})`,
+  )
   .join(" ");
 
 for (const finding of printed) process.stdout.write(`${formatFinding(finding)}\n`);

@@ -46,6 +46,8 @@ const macroVocabulary = VOCABULARIES[0];
  */
 const SHARED_RECOGNITION = 'new RegExp(`${BRACED_MACRO}|${ANGLE_MACRO}`, "giu")';
 const FLUSH_RECOGNITION = 'new RegExp(`[{][{](${MACRO_NAME})[^{}]*[}][}]|${ANGLE_MACRO}`, "giu")';
+/** `WHOLE_MACRO`'s initialiser today: the classification reader both metadata checks are written against. */
+const WHOLE_MACRO_TODAY = 'new RegExp(`^(?:${BRACED_MACRO}|${ANGLE_MACRO})$`, "iu")';
 
 test.after(() => {
   for (const root of roots) rmSync(root, { recursive: true, force: true });
@@ -96,7 +98,10 @@ test("a drift in the shared grammar moves both readers with it, so it is not a d
 test("a declared reader whose file is gone fails the gate naming that entry", () => {
   const renamed = {
     ...macroVocabulary,
-    readers: [{ ...macroVocabulary.readers[1], path: "host/src/tavern/renamed-macro-engine.ts" }],
+    readers: [
+      macroVocabulary.readers[0],
+      { ...macroVocabulary.readers[1], path: "host/src/tavern/renamed-macro-engine.ts" },
+    ],
   };
   const { findings } = auditParserAgreement({ root: treeWith(macroEngineSource), vocabularies: [renamed] });
   assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
@@ -115,13 +120,68 @@ test("a grammar constant the file no longer declares is a finding, not one compa
   assert.match(findings[0].detail, /`WHOLE_MACRO`/u);
 });
 
+test("a reader that cannot be read says the comparison did not happen, never that it agreed", () => {
+  // The masking case, measured: `WHOLE_MACRO` rebuilt on a constant its reader's grammar list does not
+  // name. The extractor cannot resolve it, so the comparison never runs - and a gate that reported this
+  // as anything but "not compared" would leave the disagreement it hides unlooked-for.
+  const root = treeWith(
+    drift(WHOLE_MACRO_TODAY, `new RegExp(\`^(?:\${NARROW_BRACED}|\${ANGLE_MACRO})$\`, "iu")`).replace(
+      "const WHOLE_MACRO =",
+      "const NARROW_BRACED = `[{][{]([a-z_][a-z0-9_]*)[^{}]*[}][}]`;\nconst WHOLE_MACRO =",
+    ),
+  );
+  const { readings, findings } = auditParserAgreement({ root });
+  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
+  assert.equal(findings[0].code, "reader_unreadable");
+  assert.equal(findings[0].reader, "macroKey");
+  assert.match(findings[0].detail, /NARROW_BRACED/u);
+  assert.match(findings[0].detail, /this reader was not read and no comparison was made/u);
+  assert.equal(
+    findings.some((finding) => finding.code === "member_disagreement"),
+    false,
+  );
+  assert.equal(readings[0].compared, false);
+  assert.deepEqual({ read: readings[0].readers.length, declared: readings[0].declared }, { read: 1, declared: 2 });
+});
+
+test("a const preceded by another statement on its line is unreadable, not silently absent", () => {
+  // A hand edit that merges two statements into one line is a well-formed file this extractor cannot
+  // read. The message has to say so: claiming the file "does not define" a const that is right there
+  // sends the next reader looking for a rename that never happened.
+  const root = treeWith(
+    drift(WHOLE_MACRO_TODAY, `new RegExp(\`^(?:\${NARROW_BRACED}|\${ANGLE_MACRO})$\`, "iu")`).replace(
+      "const WHOLE_MACRO =",
+      "const NARROW_BRACED = `[{][{]([a-z_][a-z0-9_]*)[^{}]*[}][}]`; const WHOLE_MACRO =",
+    ),
+  );
+  const { readings, findings } = auditParserAgreement({ root });
+  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
+  assert.equal(findings[0].code, "reader_unreadable");
+  assert.match(findings[0].detail, /could not read as a top-level `const`/u);
+  assert.match(findings[0].detail, /no comparison was made/u);
+  assert.equal(readings[0].compared, false);
+});
+
+test("a vocabulary with fewer than two readers cannot compare, and says so", () => {
+  const single = { ...macroVocabulary, readers: [macroVocabulary.readers[1]] };
+  const { readings, findings } = auditParserAgreement({ root: treeWith(macroEngineSource), vocabularies: [single] });
+  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
+  assert.equal(findings[0].code, "readers_unpaired");
+  assert.match(findings[0].detail, /no comparison was made/u);
+  assert.equal(readings[0].compared, false);
+});
+
 test("a reader that accepts nothing is reported instead of agreeing with an empty set", () => {
   const silent = {
     ...macroVocabulary,
-    readers: [{ ...macroVocabulary.readers[0], name: "silent", function: undefined, match: () => false }],
+    readers: [
+      macroVocabulary.readers[0],
+      { ...macroVocabulary.readers[1], name: "silent", function: undefined, match: () => false },
+    ],
   };
   const { findings } = auditParserAgreement({ root: treeWith(macroEngineSource), vocabularies: [silent] });
-  assert.equal(findings.length, 1, `findings were ${JSON.stringify(findings)}`);
-  assert.equal(findings[0].code, "reader_empty");
-  assert.equal(findings[0].reader, "silent");
+  const empty = findings.find((finding) => finding.code === "reader_empty");
+  assert.ok(empty !== undefined, `findings were ${JSON.stringify(findings).slice(0, 400)}`);
+  assert.equal(empty.reader, "silent");
+  assert.match(empty.detail, /one-sided/u);
 });

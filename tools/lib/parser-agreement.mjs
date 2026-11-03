@@ -228,6 +228,17 @@ const readerFinding = (vocabulary, reader, code, detail) => ({
 const RULES = new Set(["equal", "subset", "superset"]);
 
 /**
+ * What every non-comparison finding ends with.
+ *
+ * `reader_missing`, `reader_unreadable` and `reader_not_derived` are statements about the GATE's ability to
+ * read a reader, never about the two readers agreeing. "Could not read this reader" and "this reader
+ * disagrees" must not read alike: a hand edit that factors one grammar out into a second constant, or that
+ * puts a second statement on the same line, would otherwise be filed as a note - and the disagreement it
+ * hides would never be looked for, which is the exact silence this whole gate exists to remove.
+ */
+const COMPARISON_SKIPPED = ", so this reader was not read and no comparison was made";
+
+/**
  * Read every declared vocabulary from source, compare its readers per the declared rule, and report
  * every member they disagree about plus every declaration that can no longer be read.
  *
@@ -250,13 +261,26 @@ export function auditParserAgreement({ root = REPOSITORY_ROOT, vocabularies = VO
   const findings = [];
   const readings = [];
   for (const vocabulary of vocabularies) {
+    const declared = vocabulary.readers.length;
+    if (declared < 2) {
+      findings.push({
+        code: "readers_unpaired",
+        vocabulary: vocabulary.name,
+        reader: null,
+        detail: `the \`${vocabulary.rule.hold}\` rule compares readers and ${declared} was declared, so no comparison was made`,
+      });
+      readings.push({ vocabulary: vocabulary.name, members: 0, declared, compared: false, readers: [] });
+      continue;
+    }
     const members = readMembers(vocabulary, readSource, findings);
     const readers = readReaders(vocabulary, members, readSource, findings);
-    if (members.length > 0 && readers.length === vocabulary.readers.length)
-      findings.push(...compareReaders(vocabulary, readers));
+    const compared = members.length > 0 && readers.length === declared;
+    if (compared) findings.push(...compareReaders(vocabulary, readers));
     readings.push({
       vocabulary: vocabulary.name,
       members: members.length,
+      declared,
+      compared,
       readers: readers.map((reader) => ({ name: reader.name, accepted: reader.accepted.size })),
     });
   }
@@ -270,7 +294,7 @@ function readMembers(vocabulary, readSource, findings) {
       code: "authority_missing",
       vocabulary: vocabulary.name,
       reader: null,
-      detail: `${vocabulary.authority} is not on disk, so the member population could not be derived`,
+      detail: `${vocabulary.authority} is not on disk, so no member was read and no comparison was made`,
     });
     return [];
   }
@@ -280,7 +304,7 @@ function readMembers(vocabulary, readSource, findings) {
       code: "members_empty",
       vocabulary: vocabulary.name,
       reader: null,
-      detail: `${vocabulary.authority} yields no members, so nothing would be compared`,
+      detail: `${vocabulary.authority} yields no members, so no comparison was made`,
     });
   return members;
 }
@@ -292,7 +316,12 @@ function readReaders(vocabulary, members, readSource, findings) {
     const source = readSource(reader.path);
     if (source === null) {
       findings.push(
-        readerFinding(vocabulary, reader, "reader_missing", `it declares ${reader.path}, which is not on disk`),
+        readerFinding(
+          vocabulary,
+          reader,
+          "reader_missing",
+          `it declares ${reader.path}, which is not on disk${COMPARISON_SKIPPED}`,
+        ),
       );
       continue;
     }
@@ -305,7 +334,7 @@ function readReaders(vocabulary, members, readSource, findings) {
           vocabulary,
           reader,
           "reader_unreadable",
-          `its declarations do not evaluate in ${reader.path}: ${error.message}`,
+          `its declarations do not evaluate in ${reader.path} (${error.message})${COMPARISON_SKIPPED}`,
         ),
       );
       continue;
@@ -317,7 +346,7 @@ function readReaders(vocabulary, members, readSource, findings) {
           vocabulary,
           reader,
           "reader_unreadable",
-          `it declares ${missing.map((name) => `\`${name}\``).join(", ")}, which ${reader.path} does not define as a \`const\``,
+          `it declares ${missing.map((name) => `\`${name}\``).join(", ")}, which this gate could not read as a top-level \`const\` in ${reader.path}${COMPARISON_SKIPPED}`,
         ),
       );
       continue;
@@ -330,7 +359,7 @@ function readReaders(vocabulary, members, readSource, findings) {
             vocabulary,
             reader,
             "reader_not_derived",
-            `it speaks for \`${reader.function}\`, which ${reader.path} does not define`,
+            `it speaks for \`${reader.function}\`, which ${reader.path} does not define${COMPARISON_SKIPPED}`,
           ),
         );
         continue;
@@ -342,7 +371,7 @@ function readReaders(vocabulary, members, readSource, findings) {
             vocabulary,
             reader,
             "reader_not_derived",
-            `it reads ${absent.join(", ")}, but \`${reader.function}\` in ${reader.path} no longer names them`,
+            `it reads ${absent.join(", ")}, but \`${reader.function}\` in ${reader.path} no longer names them${COMPARISON_SKIPPED}`,
           ),
         );
         continue;
@@ -355,7 +384,7 @@ function readReaders(vocabulary, members, readSource, findings) {
           vocabulary,
           reader,
           "reader_empty",
-          `it accepted none of the ${members.length} members, so nothing was compared`,
+          `it accepted none of the ${members.length} members, so the comparison is one-sided`,
         ),
       );
     }
