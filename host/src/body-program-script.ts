@@ -245,6 +245,19 @@ const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["sleep
  */
 const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to_npc"]);
 
+/**
+ * The actions that RESTORE actionability after a body-yielding one, so a plan can carry on instead of stopping.
+ *
+ * `dismiss_modal` already closes an informational dialogue - `farmhandexecutioncontroller.modalactions.cs:129-131` takes the
+ * `DialogueBox` branch and runs `closeDialogue` (`exitActiveMenu` + `dialogueUp = false`) - and `answer_dialogue` is the
+ * seam for the question branch that `dismiss_modal` refuses on purpose. Nothing needed inventing; the plan simply had to
+ * be allowed to say it.
+ *
+ * Without this the refusal above would be wrong in the other direction: "talk, then carry on" HAS a correct shape, and a
+ * companion that was told only "nothing may follow" would finish the conversation by standing still.
+ */
+const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["dismiss_modal", "answer_dialogue"]);
+
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
 const MAX_THROWN_MESSAGE_CHARS = 300;
@@ -1245,8 +1258,18 @@ function emitPlanNode(
   const previousNode = state.nodes.length === 0 ? undefined : state.nodes[state.nodes.length - 1]!;
   if (previousNode !== undefined && WORLD_RESETTING_PLAN_ACTION_IDS.includes(previousNode.actionId))
     refusePlan(`plan_script_action_after_world_reset:${action.actionId}:${previousNode.actionId}`, state, requirement);
-  if (previousNode !== undefined && BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId))
-    refusePlan(`plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}`, state, requirement);
+  if (
+    previousNode !== undefined &&
+    BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId) &&
+    !MODAL_CLEARING_PLAN_ACTION_IDS.includes(action.actionId)
+  )
+    // The reason names the step that would make it legal, because the author's next move is to add it - not to guess why
+    // the dialogue they just opened is in the way.
+    refusePlan(
+      `plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
+      state,
+      requirement,
+    );
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))

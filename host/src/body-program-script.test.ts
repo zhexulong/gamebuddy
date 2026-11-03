@@ -274,7 +274,28 @@ test("a node compiled after talk_to_npc is refused, because the dialogue leaves 
   builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
   builder.move_to_tile({ x: 12, y: 8 });
   `);
-  assert.equal(refusalOf(result), "plan_script_action_after_body_yield:move_to_tile:talk_to_npc");
+  assert.equal(
+    refusalOf(result),
+    "plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=dismiss_modal",
+  );
+});
+
+test("a modal-clearing step is what makes a continuation legal after talk_to_npc", () => {
+  // The primitive was never missing: `dismiss_modal` closes an informational DialogueBox
+  // (`farmhandexecutioncontroller.modalactions.cs:129-131`). So "talk, then carry on" has a correct shape, and the plan rule
+  // must admit it while still refusing a plan that would silently fail.
+  const ending = nodesOf(
+    compile(`
+  builder.move_to_tile({ x: 12, y: 8 });
+  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
+  builder.dismiss_modal();
+  builder.move_to_tile({ x: 14, y: 8 });
+  `),
+  );
+  assert.deepEqual(
+    ending.map((node) => node.actionId),
+    ["move_to_tile", "talk_to_npc", "dismiss_modal", "move_to_tile"],
+  );
 });
 
 test("talk_to_npc as the last node still compiles", () => {
