@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,7 +20,9 @@ import {
   compare,
   machineIdentity,
   machineSkipLine,
+  recordingLine,
   revisionLine,
+  worstOfProcesses,
 } from "../check-perf-budget.mjs";
 
 const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "check-perf-budget.mjs");
@@ -67,6 +70,7 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
       revision: "fixture",
       machine: machineIdentity(),
       tolerance: BUDGET_TOLERANCE,
+      recording: { statistic: "worst", processes: 3 },
       cases: { "journal.write/large": recorded },
     };
     await writeFile(join(root, "tools", "perf", "baseline.json"), `${JSON.stringify(baseline, null, 2)}\n`);
@@ -89,6 +93,11 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
     assert.equal(failure?.status, 1, "a case past its budget must fail the gate");
     assert.match(failure.stdout, /perf_budget_failed slow=1/u);
     assert.match(failure.stdout, /journal\.write\/large measured 200 ops\/s 5 µs\/op, budget 3\.00 µs\/op/u);
+    // The budget in front of the case is a worst-of-3 one, and the run says so before it measures.
+    assert.match(
+      failure.stdout,
+      /^perf_budget_baseline_recording: each budget is 1\.5x the worst of 3 independent benchmark processes$/mu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -161,6 +170,8 @@ test("the gate names how far the baseline is from HEAD, and that distance never 
       ),
     );
     assert.match(behind, /^perf_budget_ok /mu, "a lagging baseline is a report, not a failure");
+    // A baseline written before recordings existed is one best-of-5 reading, and the run says so.
+    assert.match(behind, /^perf_budget_baseline_recording: none, /mu);
 
     await writeBaseline(headRevision);
     const current = run();
@@ -229,6 +240,105 @@ test("the CLI skips with both identities instead of failing on another machine's
       /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on /mu,
     );
     assert.doesNotMatch(stdout, /perf_budget_(failed|ok)/u);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+const oneReading = (id, size, perOpMicros, detail) => ({
+  id,
+  size,
+  // Per-op cost is what a budget moves, so ops/sec is derived the way a bench derives it.
+  opsPerSecond: Math.round(100000 / perOpMicros) / 100,
+  perOpMicros,
+  detail,
+});
+
+test("a recording keeps each case's worst reading, never its best", () => {
+  const worst = oneReading("case", "small", 3, { from: "the third process" });
+  const cases = worstOfProcesses([
+    new Map([
+      ["case/small", oneReading("case", "small", 2, { from: "the first process" })],
+      ["other/large", oneReading("other", "large", 11, { from: "the first process" })],
+    ]),
+    new Map([
+      ["case/small", worst],
+      ["other/large", oneReading("other", "large", 9, { from: "the second process" })],
+    ]),
+    new Map([
+      ["case/small", oneReading("case", "small", 2.5, { from: "the third process" })],
+      ["other/large", oneReading("other", "large", 10, { from: "the third process" })],
+    ]),
+  ]);
+
+  assert.deepEqual(Object.keys(cases), ["case/small", "other/large"]);
+  // ops/sec and detail belong to the worst reading too: a number is one measurement, not a mixture.
+  assert.deepEqual(cases["case/small"], {
+    opsPerSecond: worst.opsPerSecond,
+    perOpMicros: 3,
+    detail: { from: "the third process" },
+  });
+  assert.equal(cases["other/large"].perOpMicros, 11);
+});
+
+test("processes that measured different cases are refused, naming the case", () => {
+  const both = new Map([
+    ["a/small", oneReading("a", "small", 2)],
+    ["b/large", oneReading("b", "large", 5)],
+  ]);
+  assert.throws(
+    () => worstOfProcesses([both, new Map([["a/small", oneReading("a", "small", 3)]])]),
+    /perf_suite_inconsistent_cases:b\/large/u,
+  );
+  assert.throws(
+    () =>
+      worstOfProcesses([
+        both,
+        new Map([
+          ["a/small", oneReading("a", "small", 3)],
+          ["b/large", oneReading("b", "large", 6)],
+          ["c/small", oneReading("c", "small", 1)],
+        ]),
+      ]),
+    /perf_suite_inconsistent_cases:c\/small/u,
+  );
+});
+
+test("the gate says whether its budgets are a worst of K processes or one best-of-5", () => {
+  assert.equal(
+    recordingLine({ statistic: "worst", processes: 3 }),
+    "perf_budget_baseline_recording: each budget is 1.5x the worst of 3 independent benchmark processes",
+  );
+  assert.match(
+    recordingLine(undefined),
+    /^perf_budget_baseline_recording: none, so each budget is 1\.5x a single best-of-5 reading/u,
+  );
+});
+
+test("a recording is measured, never copied from a saved output", async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-perf-record-"));
+  try {
+    await mkdir(join(root, "tools", "perf"), { recursive: true });
+    const resultsPath = join(root, "results.txt");
+    await writeFile(
+      resultsPath,
+      `PERF_RESULT ${JSON.stringify({ id: "journal.write", size: "large", opsPerSecond: 500, perOpMicros: 2 })}\n`,
+    );
+
+    let failure;
+    try {
+      execFileSync(process.execPath, [gatePath, "--root", root, "--update", "--results", resultsPath], {
+        encoding: "utf8",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      failure = error;
+    }
+    // One saved output is one process's readings; a baseline that claims three processes cannot copy it.
+    assert.equal(failure?.status, 2);
+    assert.match(failure.stderr, /perf_update_reads_no_saved_results/u);
+    assert.equal(statSync(join(root, "tools", "perf", "baseline.json"), { throwIfNoEntry: false }), undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

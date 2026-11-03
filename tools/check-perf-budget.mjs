@@ -14,6 +14,15 @@
  * per-transition append becoming a whole-journal rewrite is 2 orders of magnitude, and an O(n)
  * serialisation on a 2000-span trace is tens of times).
  *
+ * WHAT `--update` RECORDS: each case's worst reading across `RECORDING_PROCESSES` independent
+ * benchmark processes, not the best window of one. The jitter that flips a case red is BETWEEN
+ * processes, not inside one - two runs of the same code differed by up to +86.9% on a single case,
+ * while sustained CPU load moved one run's own best by only ±10% on 12 of 14 cases - so a number
+ * recorded from one process leaves the budget to whichever process a later run happens to get. A
+ * worst-of-K recording is what makes the relationship `best <= 1.5 x worst`: a later run has to beat
+ * the worst of K readings by half again before it fails, so the noise must be large AND land outside
+ * the recorded sample, while a real regression (an O(n) change, an order of magnitude) still crosses it.
+ *
  * THE BASELINE BELONGS TO THE MACHINE THAT RECORDED IT: the tolerance is 50%, and two boxes differ
  * by more than that on the same code (measured 2026-10-22: every large case 57-126% over a baseline
  * recorded elsewhere, with nothing changed). So the baseline records `os.platform()`, `os.arch()`,
@@ -38,7 +47,7 @@
  *
  * Usage:
  *   node tools/check-perf-budget.mjs                        # re-measure the suite and ratchet
- *   node tools/check-perf-budget.mjs --update                # re-record, in its own commit
+ *   node tools/check-perf-budget.mjs --update                # re-record the worst of K processes
  *   node tools/check-perf-budget.mjs --results <file>        # compare a saved suite output
  *   node tools/check-perf-budget.mjs --root <dir>            # the gate's own fixture
  */
@@ -54,6 +63,16 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** How much more a path may cost than it recorded, before the difference is a regression. */
 export const BUDGET_TOLERANCE = 0.5;
+
+/**
+ * How many independent benchmark processes `--update` takes the worst of.
+ *
+ * One is not enough: a best-of-5 inside one process still carries that process's own scheduling
+ * luck, and that is the luck a later run cannot reproduce. Three bounds the cost of a re-record
+ * (one suite run is about 5 seconds here) while making the recorded number a worst rather than a
+ * best; see the header for why the spread lives between processes.
+ */
+const RECORDING_PROCESSES = 3;
 
 const baselineFor = (root) => join(root, "tools", "perf", "baseline.json");
 
@@ -97,6 +116,18 @@ export function machineSkipLine(recorded, current) {
     recorded.cpuModel === current.cpuModel;
   if (same) return undefined;
   return `perf_budget_skipped: baseline recorded on ${machineLabel(recorded)}, measured on ${machineLabel(current)}`;
+}
+
+/**
+ * The line that says what produced the numbers a budget is measured from: a worst-of-K recording is
+ * a different statistic from the single best-of-5 an older baseline holds, and a reader comparing a
+ * budget against a measurement needs to know which one is in front of them.
+ */
+export function recordingLine(recording) {
+  if (recording === undefined) {
+    return "perf_budget_baseline_recording: none, so each budget is 1.5x a single best-of-5 reading rather than a worst";
+  }
+  return `perf_budget_baseline_recording: each budget is 1.5x the ${recording.statistic} of ${recording.processes} independent benchmark processes`;
 }
 
 /** One `git` call's trimmed stdout, or undefined when git cannot answer (unknown revision, no repo). */
@@ -198,6 +229,83 @@ function measureCases(argv) {
   return caseResults(stdout);
 }
 
+/** The cases one suite run measured, keyed the way a baseline keys them. */
+function byKey(results) {
+  return new Map(results.map((result) => [`${result.id}/${result.size}`, result]));
+}
+
+const sortedKeys = (cases) => [...cases.keys()].sort((left, right) => left.localeCompare(right, "en"));
+
+/**
+ * What a recording holds: per case, the reading with the highest per-op cost across `readings`, one
+ * entry per process. `opsPerSecond` and `detail` come from that same reading, so a recorded number
+ * stays one measurement rather than a mixture of K.
+ *
+ * The processes must have measured the same cases. A bench file that only one of them loaded would
+ * otherwise record a number for a case the others never ran, and the gate would compare a later run
+ * against it.
+ */
+export function worstOfProcesses(readings) {
+  const keys = sortedKeys(readings[0]);
+  for (const reading of readings.slice(1)) {
+    const seen = sortedKeys(reading);
+    if (seen.join("\n") === keys.join("\n")) continue;
+    const drift = seen.find((key) => !keys.includes(key)) ?? keys.find((key) => !seen.includes(key));
+    throw new Error(`perf_suite_inconsistent_cases:${drift}`);
+  }
+  const cases = {};
+  for (const key of keys) {
+    const worst = readings
+      .map((reading) => reading.get(key))
+      .reduce((left, right) => (right.perOpMicros > left.perOpMicros ? right : left));
+    cases[key] = {
+      opsPerSecond: worst.opsPerSecond,
+      perOpMicros: worst.perOpMicros,
+      ...(worst.detail === undefined ? {} : { detail: worst.detail }),
+    };
+  }
+  return cases;
+}
+
+/**
+ * Records what `RECORDING_PROCESSES` independent benchmark processes measured, keeping each case's
+ * worst reading, and prints every reading - so the number can be argued with later rather than
+ * trusted, and so a worst-of-K is visibly not a single best-of-5.
+ */
+function recordWorst({ root, machine, argv }) {
+  if (valueOf(argv, "--results") !== undefined) {
+    // A recording states how many processes produced it; a saved output is one process's readings.
+    throw new Error("perf_update_reads_no_saved_results: a recording is measured, never copied");
+  }
+  const readings = [];
+  for (let process = 1; process <= RECORDING_PROCESSES; process += 1) readings.push(byKey(measureCases(argv)));
+  if (readings[0].size === 0) throw new Error("perf_suite_measured_no_cases");
+  const cases = worstOfProcesses(readings);
+  const recorded = {
+    note: `Per-case perf measurements recorded from this machine, in ops/sec and microseconds per op, at the revision below. Each case is the worst reading across the ${RECORDING_PROCESSES} independent benchmark processes named under \`recording\`, because the spread a budget has to absorb lives between processes rather than inside one. tools/check-perf-budget.mjs re-measures and fails when a case costs more than its recorded per-op cost plus BUDGET_TOLERANCE, or when the set of measured cases no longer matches this file. Re-record deliberately, in its own commit, when a change makes a path faster; never to silence a regression. These are the numbers of the machine under \`machine\`: a run on another machine states perf_budget_skipped instead of comparing, because per-op cost describes the box as much as the code.`,
+    revision: execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+    }).trim(),
+    machine,
+    tolerance: BUDGET_TOLERANCE,
+    recording: { statistic: "worst", processes: RECORDING_PROCESSES },
+    cases,
+  };
+  writeFileSync(baselineFor(root), `${JSON.stringify(recorded, null, 2)}\n`);
+  process.stdout.write(
+    `perf_budget_recorded cases=${Object.keys(cases).length} statistic=worst processes=${RECORDING_PROCESSES} ` +
+      `revision=${recorded.revision} machine=${machineLabel(machine)}\n`,
+  );
+  for (const [key, value] of Object.entries(cases)) {
+    const each = readings.map((reading) => reading.get(key).perOpMicros).join(" ");
+    process.stdout.write(
+      `  ${key} worst ${value.perOpMicros} µs/op ${value.opsPerSecond} ops/s readings ${each} µs/op\n`,
+    );
+  }
+}
+
 function main(argv) {
   const root = resolve(valueOf(argv, "--root") ?? repositoryRoot);
   const update = argv.includes("--update");
@@ -213,43 +321,17 @@ function main(argv) {
     }
     // Before the measurement, because it describes the numbers that follow rather than the verdict.
     process.stdout.write(`${revisionLine(baseline.revision, revisionDistance(baseline.revision, root))}\n`);
+    process.stdout.write(`${recordingLine(baseline.recording)}\n`);
   }
+  if (update) {
+    recordWorst({ root, machine, argv });
+    return 0;
+  }
+
   const results = measureCases(argv).sort((left, right) =>
     `${left.id}/${left.size}`.localeCompare(`${right.id}/${right.size}`, "en"),
   );
   if (results.length === 0) throw new Error("perf_suite_measured_no_cases");
-
-  if (update) {
-    const cases = Object.fromEntries(
-      results.map((result) => [
-        `${result.id}/${result.size}`,
-        {
-          opsPerSecond: result.opsPerSecond,
-          perOpMicros: result.perOpMicros,
-          ...(result.detail === undefined ? {} : { detail: result.detail }),
-        },
-      ]),
-    );
-    const recorded = {
-      note: "Per-case perf measurements recorded from this machine, in ops/sec and microseconds per op, at the revision below. tools/check-perf-budget.mjs re-measures and fails when a case costs more than its recorded per-op cost plus BUDGET_TOLERANCE, or when the set of measured cases no longer matches this file. Re-record deliberately, in its own commit, when a change makes a path faster; never to silence a regression. These are the numbers of the machine under `machine`: a run on another machine states perf_budget_skipped instead of comparing, because per-op cost describes the box as much as the code.",
-      revision: execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-        cwd: root,
-        encoding: "utf8",
-        windowsHide: true,
-      }).trim(),
-      machine,
-      tolerance: BUDGET_TOLERANCE,
-      cases,
-    };
-    writeFileSync(baselineFor(root), `${JSON.stringify(recorded, null, 2)}\n`);
-    process.stdout.write(
-      `perf_budget_recorded cases=${results.length} revision=${recorded.revision} machine=${machineLabel(machine)}\n`,
-    );
-    for (const [key, value] of Object.entries(cases)) {
-      process.stdout.write(`  ${key} ${value.opsPerSecond} ops/s ${value.perOpMicros} µs/op\n`);
-    }
-    return 0;
-  }
 
   const { slow, unrecorded, duplicates, missing } = compare({ baselineCases: baseline.cases, results });
   const measuredByKey = new Map(results.map((result) => [`${result.id}/${result.size}`, result]));
