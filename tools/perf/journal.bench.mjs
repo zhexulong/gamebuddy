@@ -117,12 +117,16 @@ async function measureCase({ size, settledHistory }) {
       });
       const after = recoveryJournalWriteProfile();
       const bytesAfter = await logBytes(directory);
+      // The counters straddle the warmup as well as the windows, so the count they are compared
+      // against is both named numbers the harness reports.
+      const executed = measured.ops + measured.warmupOps;
       return {
         measured,
         settledHistory,
+        executed,
         appends: after.appends - before.appends,
         compactions: after.compactions - before.compactions,
-        bytesPerOp: Math.round((bytesAfter - bytesBefore) / measured.ops),
+        bytesPerOp: Math.round((bytesAfter - bytesBefore) / executed),
       };
     } finally {
       await journal.close();
@@ -149,8 +153,8 @@ for (const { size, settledHistory } of SIZES) {
     if (outcome.error !== undefined) throw outcome.error;
     assert.equal(
       outcome.appends,
-      outcome.measured.ops,
-      "every measured transition must still cost exactly one durable append",
+      outcome.executed,
+      "every transition the case ran must cost exactly one durable append, warmup included",
     );
     assert.equal(
       outcome.compactions,

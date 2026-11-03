@@ -7,10 +7,12 @@
  * for the flamegraph - so this file adds no dependency and no runner of its own.
  *
  * What a case is: one repeatable unit of work, measured as best-of-N fixed-duration windows.
- * `ops` counts EVERY op the case ran, warmup included, so a case can read one invariant counter
- * (journal appends, compactions, frames) around the whole call and compare it against what was
- * actually executed; `opsPerSecond` and `perOpMicros` come from the fastest window, which is the
- * least noisy reading of the same code.
+ * `opsPerSecond` and `perOpMicros` come from the fastest window, which is the least noisy reading of the
+ * same code; `durationMs` is how long that window actually took, against the `windowMs` it was allowed,
+ * and `ops` is what the measured windows ran, so both numbers in front of a reader are measured. A case
+ * that reads one invariant counter (journal appends, compactions, frames) around the whole call compares
+ * it against `ops + warmupOps`: warmup runs the same op and is reported apart from `ops` because it is a
+ * cost the case paid and not a window the case timed.
  *
  * What a case is not: a threshold. Nothing here decides "too slow". The budgets live in
  * `tools/perf/baseline.json` and are enforced by `tools/check-perf-budget.mjs`.
@@ -30,7 +32,7 @@ export async function loadHostModule(module) {
 }
 
 /** The window a single round measures, and how many rounds a case runs. */
-const DEFAULT_DURATION_MS = 200;
+const DEFAULT_WINDOW_MS = 200;
 /** Best of five: this machine is shared with other lanes' builds, and the fastest window is the one
  * least contaminated by them. Measured spread across two consecutive three-round runs was up to
  * 31% (pipe.frame/large), which is why the gate's own tolerance is 50%. */
@@ -67,31 +69,38 @@ async function runWindow(run, deadlineMs, limit) {
  * total instead, which truncated the last round and stopped the loop: `admission.action/small` spent
  * its 4000 ops inside ONE 200 ms window and still reported `rounds: 5`, so the number was a
  * best-of-one presented as a best-of-five.
+ *
+ * `windowMs` is what the case ASKS a round for, and `durationMs` is what the reported round took. The two
+ * differ whenever the op cap binds: `admission.action` at both sizes never reaches its 200 ms (800 ops a
+ * round took 8.4 ms at `small` and 79.9 ms at `large` on the run this was measured on), and `journal.write`
+ * binds too on a box fast enough to reach its 300-op rounds inside the window (113.6 of 200 ms there).
+ * Without the measured value, every one of those cases reported the 200 it asked for.
  */
 export async function measure({
   id,
   size,
   run,
-  durationMs = DEFAULT_DURATION_MS,
+  windowMs = DEFAULT_WINDOW_MS,
   rounds = DEFAULT_ROUNDS,
   warmupMs = DEFAULT_WARMUP_MS,
   maxOps = Number.POSITIVE_INFINITY,
 }) {
   // Warmup is bounded by the clock only: it exists to reach steady state, not to be counted against
   // the budget, and a case whose op is fast would otherwise spend its whole op cap before measuring.
-  let ops = await runWindow(run, performance.now() + warmupMs, Number.POSITIVE_INFINITY);
+  const warmupOps = await runWindow(run, performance.now() + warmupMs, Number.POSITIVE_INFINITY);
   const perRoundLimit = maxOps === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : Math.floor(maxOps / rounds);
   // A cap that cannot give every round an op would measure fewer windows than it reports; that is a
   // case whose budget is wrong, and it fails here rather than in a number nobody can reproduce.
   if (perRoundLimit < 1) throw new Error(`perf_case_op_cap_below_rounds:${id}:${size}:${maxOps}<${rounds}`);
   let best;
-  let executed = 0;
+  let windows = 0;
+  let ops = 0;
   for (let round = 1; round <= rounds; round += 1) {
     const startedAt = performance.now();
-    const roundOps = await runWindow(run, startedAt + durationMs, perRoundLimit);
+    const roundOps = await runWindow(run, startedAt + windowMs, perRoundLimit);
     const elapsedMs = performance.now() - startedAt;
     ops += roundOps;
-    executed += 1;
+    windows += 1;
     const opsPerSecond = (roundOps / elapsedMs) * 1000;
     if (best === undefined || opsPerSecond > best.opsPerSecond) best = { roundOps, elapsedMs, opsPerSecond };
   }
@@ -99,14 +108,22 @@ export async function measure({
   return Object.freeze({
     id,
     size,
+    // What the MEASURED windows ran - the count the two rates below are about. Warmup is a separate,
+    // named number: a case whose invariant counter wraps the whole call sums the two.
     ops,
+    warmupOps,
     // Two decimals: a bench reports a measurement, not precision it does not have.
     opsPerSecond: round(best.opsPerSecond),
     perOpMicros: round((best.elapsedMs * 1000) / best.roundOps),
     // The windows that actually ran, never the configured count: a reader who sees 5 must have a
     // best-of-five in front of them.
-    rounds: executed,
-    durationMs,
+    rounds: windows,
+    // The window the round behind `opsPerSecond` and `perOpMicros` actually took, and the one it was
+    // allowed. A round ends at `windowMs` or at its op cap, whichever comes first: a case whose cap
+    // binds reports the milliseconds it ran rather than the 200 it asked for, and a round that ended on
+    // the clock reports `windowMs` plus the one op that overran it.
+    durationMs: round(best.elapsedMs),
+    windowMs,
   });
 }
 

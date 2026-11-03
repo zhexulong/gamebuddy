@@ -174,6 +174,9 @@ async function measureOpenReplay({ size, records }) {
     return {
       measured,
       records,
+      // The counters straddle the warmup as well as the windows, so the count they are compared
+      // against is both named numbers the harness reports.
+      executed: measured.ops + measured.warmupOps,
       logBytes: logBytesBefore,
       parses: after.documentParses - before.documentParses,
       appends: after.appends - before.appends,
@@ -200,17 +203,19 @@ async function measureCompaction({ size, records, foldOps, foldWindowMs }) {
         id: COMPACTION_CASE,
         size,
         maxOps: foldOps,
-        durationMs: foldWindowMs,
+        windowMs: foldWindowMs,
         warmupMs: 0,
         run: () => journal.prepare(dispatchMaterial(next++)),
       });
       const after = recoveryJournalWriteProfile();
+      const executed = measured.ops + measured.warmupOps;
       return {
         measured,
         records,
+        executed,
         compactions: after.compactions - before.compactions,
         appends: after.appends - before.appends,
-        bytesPerFold: Math.round((after.writtenBytes - before.writtenBytes) / measured.ops),
+        bytesPerFold: Math.round((after.writtenBytes - before.writtenBytes) / executed),
         liveRecords: journal.records().length,
       };
     } finally {
@@ -243,7 +248,7 @@ for (const { size, records } of SIZES) {
     if (outcome.error !== undefined) throw outcome.error;
     assert.equal(
       outcome.parses,
-      outcome.measured.ops,
+      outcome.executed,
       "an open must read and fold the log exactly once, however long it is",
     );
     assert.equal(outcome.appends, 0, "a replay appends nothing: the op must be read-only");
@@ -263,8 +268,8 @@ for (const { size, records } of SIZES) {
     if (outcome.error !== undefined) throw outcome.error;
     assert.equal(
       outcome.compactions,
-      outcome.measured.ops,
-      "every op must fold the log exactly once, so the number is the fold's",
+      outcome.executed,
+      "every op the case ran must fold the log exactly once, so the number is the fold's",
     );
     assert.equal(outcome.appends, 0, "the budget fold appends nothing: its whole write is the fold");
     assert.equal(
