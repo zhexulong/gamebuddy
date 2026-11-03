@@ -13,9 +13,7 @@ import {
 } from "./stardew-compatibility.js";
 
 /** This is the exact verified environment: game 1.6.15, build 24356, SMAPI 4.5.2. */
-function exactFacts(
-  overrides: Partial<StardewCompatibilityFacts> = {},
-): StardewCompatibilityFacts {
+function exactFacts(overrides: Partial<StardewCompatibilityFacts> = {}): StardewCompatibilityFacts {
   return Object.freeze({
     gameVersion: VERIFIED_GAME_VERSION,
     gameBuildNumber: VERIFIED_GAME_BUILD_NUMBER,
@@ -38,34 +36,26 @@ test("exact verified tuple with all named checks confirmed classifies verified a
 });
 
 test("an absent native multiplayer session (peer not_applicable) still permits verified", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ nativeMultiplayerPeer: "not_applicable" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ nativeMultiplayerPeer: "not_applicable" }));
   assert.equal(result.status, "verified");
   assert.equal(result.reasonCode, "tuple_verified");
   assert.equal(result.attachmentAllowed, true);
 });
 
 test("a newer tuple downgrades to compatible_unverified but stays attachable", () => {
-  const newerGame = classifyStardewCompatibility(
-    exactFacts({ gameVersion: "1.6.16", gameBuildNumber: 24357 }),
-  );
+  const newerGame = classifyStardewCompatibility(exactFacts({ gameVersion: "1.6.16", gameBuildNumber: 24357 }));
   assert.equal(newerGame.status, "compatible_unverified");
   assert.equal(newerGame.reasonCode, "tuple_not_verified");
   assert.equal(newerGame.attachmentAllowed, true);
 
-  const newerSmapi = classifyStardewCompatibility(
-    exactFacts({ smapiVersion: "4.6.0" }),
-  );
+  const newerSmapi = classifyStardewCompatibility(exactFacts({ smapiVersion: "4.6.0" }));
   assert.equal(newerSmapi.status, "compatible_unverified");
   assert.equal(newerSmapi.reasonCode, "tuple_not_verified");
   assert.equal(newerSmapi.attachmentAllowed, true);
 });
 
 test("a valid parseable SMAPI below the advisory minimum is a warning, not a failure", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ smapiVersion: "3.14.6" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ smapiVersion: "3.14.6" }));
   assert.deepEqual(result, {
     status: "below_minimum_warning",
     reasonCode: "smapi_below_minimum",
@@ -74,9 +64,7 @@ test("a valid parseable SMAPI below the advisory minimum is a warning, not a fai
 });
 
 test("a confirmed missing runtime is hard and not attachable", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ runtime: "confirmed_failure" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ runtime: "confirmed_failure" }));
   assert.deepEqual(result, {
     status: "hard_incompatible",
     reasonCode: "runtime_missing",
@@ -85,9 +73,7 @@ test("a confirmed missing runtime is hard and not attachable", () => {
 });
 
 test("a confirmed loader failure is hard and not attachable", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ loader: "confirmed_failure" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ loader: "confirmed_failure" }));
   assert.deepEqual(result, {
     status: "hard_incompatible",
     reasonCode: "loader_failure",
@@ -96,9 +82,7 @@ test("a confirmed loader failure is hard and not attachable", () => {
 });
 
 test("a confirmed bridge protocol-major mismatch is hard and not attachable", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ bridgeProtocolMajor: "confirmed_mismatch" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ bridgeProtocolMajor: "confirmed_mismatch" }));
   assert.deepEqual(result, {
     status: "hard_incompatible",
     reasonCode: "bridge_protocol_major_mismatch",
@@ -107,9 +91,7 @@ test("a confirmed bridge protocol-major mismatch is hard and not attachable", ()
 });
 
 test("a confirmed applicable native multiplayer peer mismatch is hard and not attachable", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ nativeMultiplayerPeer: "confirmed_mismatch" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ nativeMultiplayerPeer: "confirmed_mismatch" }));
   assert.deepEqual(result, {
     status: "hard_incompatible",
     reasonCode: "native_multiplayer_protocol_mismatch",
@@ -131,32 +113,22 @@ test("the exact tuple with a required check unknown is compatible_unverified, no
 });
 
 test("an unknown native multiplayer peer on the exact tuple is compatible_unverified", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ nativeMultiplayerPeer: "unknown" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ nativeMultiplayerPeer: "unknown" }));
   assert.equal(result.status, "compatible_unverified");
   assert.equal(result.reasonCode, "compatibility_evidence_incomplete");
   assert.equal(result.attachmentAllowed, true);
 });
 
 test("a peer-check failure is unverified; only a confirmed peer protocol mismatch is hard", () => {
-  const result = classifyStardewCompatibility(
-    exactFacts({ nativeMultiplayerPeer: "confirmed_failure" }),
-  );
+  const result = classifyStardewCompatibility(exactFacts({ nativeMultiplayerPeer: "confirmed_failure" }));
   assert.equal(result.status, "compatible_unverified");
   assert.equal(result.reasonCode, "compatibility_evidence_incomplete");
   assert.equal(result.attachmentAllowed, true);
 });
 
 test("malformed and null SMAPI produce compatible_unverified, never warning or hard", () => {
-  for (const smapiVersion of [
-    "4",
-    "bogus",
-    null,
-  ] as (string | null)[]) {
-    const result = classifyStardewCompatibility(
-      exactFacts({ smapiVersion }),
-    );
+  for (const smapiVersion of ["4", "bogus", null] as (string | null)[]) {
+    const result = classifyStardewCompatibility(exactFacts({ smapiVersion }));
     assert.equal(result.status, "compatible_unverified");
     assert.notEqual(result.status, "below_minimum_warning");
     assert.notEqual(result.status, "hard_incompatible");
@@ -165,9 +137,7 @@ test("malformed and null SMAPI produce compatible_unverified, never warning or h
 });
 
 test("malformed SMAPI keeps the missing identity facts reason only when an identity fact is absent", () => {
-  const malformed = classifyStardewCompatibility(
-    exactFacts({ smapiVersion: "bogus" }),
-  );
+  const malformed = classifyStardewCompatibility(exactFacts({ smapiVersion: "bogus" }));
   assert.equal(malformed.reasonCode, "tuple_not_verified");
 
   const nulled = classifyStardewCompatibility(exactFacts({ smapiVersion: null }));
@@ -241,53 +211,36 @@ test("the validator rejects wrong keys, wrong reasons, and broken attachmentAllo
     null,
   );
   assert.equal(validateStardewCompatibilityOutcome(null), null);
-  assert.equal(
-    validateStardewCompatibilityOutcome({ status: "verified" }),
-    null,
-  );
+  assert.equal(validateStardewCompatibilityOutcome({ status: "verified" }), null);
 });
 
 test("every status and reason documented in the frozen contract resolves through the classifier", () => {
-  assert.deepEqual(
-    STARDEW_COMPATIBILITY_STATUSES,
-    [
-      "verified",
-      "compatible_unverified",
-      "below_minimum_warning",
-      "hard_incompatible",
-    ],
-  );
-  assert.deepEqual(
-    STARDEW_COMPATIBILITY_REASONS,
-    [
-      "runtime_missing",
-      "loader_failure",
-      "bridge_protocol_major_mismatch",
-      "native_multiplayer_protocol_mismatch",
-      "smapi_below_minimum",
-      "tuple_not_verified",
-      "compatibility_evidence_incomplete",
-      "tuple_verified",
-    ],
-  );
-  assert.deepEqual(Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.verified), [
+  assert.deepEqual(STARDEW_COMPATIBILITY_STATUSES, [
+    "verified",
+    "compatible_unverified",
+    "below_minimum_warning",
+    "hard_incompatible",
+  ]);
+  assert.deepEqual(STARDEW_COMPATIBILITY_REASONS, [
+    "runtime_missing",
+    "loader_failure",
+    "bridge_protocol_major_mismatch",
+    "native_multiplayer_protocol_mismatch",
+    "smapi_below_minimum",
+    "tuple_not_verified",
+    "compatibility_evidence_incomplete",
     "tuple_verified",
   ]);
-  assert.deepEqual(
-    Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.compatible_unverified),
-    ["tuple_not_verified", "compatibility_evidence_incomplete"],
-  );
-  assert.deepEqual(
-    Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.below_minimum_warning),
-    ["smapi_below_minimum"],
-  );
-  assert.deepEqual(
-    Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.hard_incompatible),
-    [
-      "runtime_missing",
-      "loader_failure",
-      "bridge_protocol_major_mismatch",
-      "native_multiplayer_protocol_mismatch",
-    ],
-  );
+  assert.deepEqual(Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.verified), ["tuple_verified"]);
+  assert.deepEqual(Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.compatible_unverified), [
+    "tuple_not_verified",
+    "compatibility_evidence_incomplete",
+  ]);
+  assert.deepEqual(Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.below_minimum_warning), ["smapi_below_minimum"]);
+  assert.deepEqual(Array.from(STARDEW_COMPATIBILITY_REASONS_BY_STATUS.hard_incompatible), [
+    "runtime_missing",
+    "loader_failure",
+    "bridge_protocol_major_mismatch",
+    "native_multiplayer_protocol_mismatch",
+  ]);
 });

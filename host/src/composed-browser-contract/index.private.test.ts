@@ -26,7 +26,14 @@ const referenceTavernProfile = composeTavernProfile({
 const gameProfileWithStateRead = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
-  operationIds: ["game.prerequisites.read", "game.state.read", "game.launch", "game.attach", "game.stop", "game.disconnect"],
+  operationIds: [
+    "game.prerequisites.read",
+    "game.state.read",
+    "game.launch",
+    "game.attach",
+    "game.stop",
+    "game.disconnect",
+  ],
   navigationItemIds: ["game"],
 });
 
@@ -75,10 +82,7 @@ test("composeReferenceGameBrowserProfile accepts an exact Game profile alongside
 test("composeReferenceGameBrowserProfile rejects a structural clone of the Tavern profile", () => {
   const structuralClone = Object.freeze({ ...referenceTavernProfile });
   assert.equal(isComposedTavernProfile(structuralClone), false);
-  assert.throws(
-    () => composeReferenceGameBrowserProfile({ tavernProfile: structuralClone }),
-    /not a composed profile/,
-  );
+  assert.throws(() => composeReferenceGameBrowserProfile({ tavernProfile: structuralClone }), /not a composed profile/);
 });
 
 test("composeReferenceGameBrowserProfile rejects a structural clone of the Game profile", () => {
@@ -123,7 +127,10 @@ test("composeReferenceGameBrowserProfile rejects partial or malformed inputs", (
   assert.throws(() => composeReferenceGameBrowserProfile([]), /plain object/);
   assert.throws(() => composeReferenceGameBrowserProfile("reference"), /plain object/);
   assert.throws(() => composeReferenceGameBrowserProfile({}), /must have tavernProfile/);
-  assert.throws(() => composeReferenceGameBrowserProfile({ tavernProfile: referenceTavernProfile, extra: true }), /unexpected key/);
+  assert.throws(
+    () => composeReferenceGameBrowserProfile({ tavernProfile: referenceTavernProfile, extra: true }),
+    /unexpected key/,
+  );
   assert.throws(
     () => composeReferenceGameBrowserProfile({ tavernProfile: { ...referenceTavernProfile }, gameProfile: null }),
     /not a composed profile/,
@@ -200,7 +207,10 @@ test("ComposedReferenceGameBrowserRootV1 accepts every valid game connectionStat
   ] as const;
   const gameState = GameBrowserFixtureV1.state();
   for (const connectionStatus of validStatuses) {
-    const root = { ...ComposedReferenceGameBrowserFixtureV1.chatOnly(), game: { ...gameState, game: { ...gameState.game, connectionStatus } } };
+    const root = {
+      ...ComposedReferenceGameBrowserFixtureV1.chatOnly(),
+      game: { ...gameState, game: { ...gameState.game, connectionStatus } },
+    };
     assert.equal(validator.Check(root), true, `connectionStatus=${connectionStatus}`);
   }
 });
@@ -225,9 +235,18 @@ test("ComposedReferenceGameBrowserRootV1 rejects invalid nested Chat output", ()
 test("ComposedReferenceGameBrowserRootV1 rejects invalid nested Game output", () => {
   const validator = Compile(ComposedReferenceGameBrowserRootV1Schema);
   const root = ComposedReferenceGameBrowserFixtureV1.withGame();
-  assert.equal(validator.Check({ ...root, game: { ...root.game!, game: { ...root.game!.game, connectionStatus: "invented" } } }), false);
+  assert.equal(
+    validator.Check({ ...root, game: { ...root.game!, game: { ...root.game!.game, connectionStatus: "invented" } } }),
+    false,
+  );
   assert.equal(validator.Check({ ...root, game: { ...root.game!, pid: 1234 } }), false);
-  assert.equal(validator.Check({ ...ComposedReferenceGameBrowserFixtureV1.chatOnly(), game: { ...GameBrowserFixtureV1.state(), game: { ...GameBrowserFixtureV1.state().game, role: "farmhand" } } }), false);
+  assert.equal(
+    validator.Check({
+      ...ComposedReferenceGameBrowserFixtureV1.chatOnly(),
+      game: { ...GameBrowserFixtureV1.state(), game: { ...GameBrowserFixtureV1.state().game, role: "farmhand" } },
+    }),
+    false,
+  );
 });
 
 test("ComposedReferenceGameBrowserValidatorsV1 exposes the compiled root validator", () => {

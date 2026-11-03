@@ -45,7 +45,16 @@ test("build artifact boundary exports only the frozen adapter contract and keeps
 
 type Outcome = "regular" | "reparse" | "malformed" | "unavailable" | "timeout" | "nonzero" | "stderr" | "overflow";
 
-for (const outcome of ["regular", "reparse", "malformed", "unavailable", "timeout", "nonzero", "stderr", "overflow"] as const) {
+for (const outcome of [
+  "regular",
+  "reparse",
+  "malformed",
+  "unavailable",
+  "timeout",
+  "nonzero",
+  "stderr",
+  "overflow",
+] as const) {
   test(`legacy inspectWindowsReparse preserves ${outcome} child behavior`, async () => {
     const observed: unknown[] = [];
     const capability = createTestWindowsReparseInspector(() => legacyChild(outcome, observed));
@@ -107,9 +116,10 @@ test("a synchronous close emitted by kill settles after the kill result is known
     const inspected = inspectWindowsReparse(capability, resolve("absolute", "test-path"));
     child.emit("error", new Error("post-spawn failure"));
 
-    await assert.rejects(inspected, killResult
-      ? /windows_reparse_inspection_unavailable/
-      : /windows_reparse_inspection_cleanup_failed/);
+    await assert.rejects(
+      inspected,
+      killResult ? /windows_reparse_inspection_unavailable/ : /windows_reparse_inspection_cleanup_failed/,
+    );
     assert.equal(killCount, 1);
   }
 });
@@ -201,72 +211,122 @@ for (const source of ["stdout", "stderr"] as const) {
 
 test("assertNoWindowsReparse keeps the old exact reparse rejection", async () => {
   const capability = createTestWindowsReparseInspector(() => legacyChild("reparse", []));
-  await assert.rejects(assertNoWindowsReparse(capability, resolve("absolute", "test-path")), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(
+    assertNoWindowsReparse(capability, resolve("absolute", "test-path")),
+    /windows_reparse_inspection_unavailable/,
+  );
 });
 
 test("legacy operation rejects invalid capabilities and relative paths", async () => {
-  await assert.rejects(inspectWindowsReparse(undefined, resolve("absolute", "test-path")), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(
+    inspectWindowsReparse(undefined, resolve("absolute", "test-path")),
+    /windows_reparse_inspection_unavailable/,
+  );
   const capability = createTestWindowsReparseInspector(() => legacyChild("regular", []));
-  await assert.rejects(inspectWindowsReparse(capability, "relative/test-path"), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(
+    inspectWindowsReparse(capability, "relative/test-path"),
+    /windows_reparse_inspection_unavailable/,
+  );
 });
 
-test("strict identity parses exact frozen directory and file identities", { skip: process.platform !== "win32" }, async () => {
-  for (const expected of [directoryIdentity, fileIdentity]) {
+test(
+  "strict identity parses exact frozen directory and file identities",
+  { skip: process.platform !== "win32" },
+  async () => {
+    for (const expected of [directoryIdentity, fileIdentity]) {
+      const observed: unknown[] = [];
+      const capability = createTestWindowsReparseInspector(() => strictChild(identityResponse(expected), observed));
+      const actual = await inspectWindowsPathIdentity(capability, "C:\\trusted\\object");
+      assert.deepEqual(actual, expected);
+      assert.equal(Object.isFrozen(actual), true);
+      assert.deepEqual(observed, [{ schemaVersion: 2, operation: "inspect_identity_v2", path: "C:\\trusted\\object" }]);
+    }
+  },
+);
+
+test(
+  "strict identity reports a reparse object without following it",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const capability = createTestWindowsReparseInspector(() =>
+      strictChild(identityResponse({ ...directoryIdentity, isReparsePoint: true }), []),
+    );
+    const actual = await inspectWindowsPathIdentity(capability, "C:\\trusted\\junction");
+    assert.equal(actual.objectKind, "directory");
+    assert.equal(actual.isReparsePoint, true);
+  },
+);
+
+test(
+  "strict path security parses its exact owned-directory result and operation",
+  { skip: process.platform !== "win32" },
+  async () => {
     const observed: unknown[] = [];
-    const capability = createTestWindowsReparseInspector(() => strictChild(identityResponse(expected), observed));
-    const actual = await inspectWindowsPathIdentity(capability, "C:\\trusted\\object");
-    assert.deepEqual(actual, expected);
+    const capability = createTestWindowsReparseInspector(() =>
+      strictChild(securityResponse(ownedDirectorySecurity), observed),
+    );
+    const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
+    assert.deepEqual(actual, ownedDirectorySecurity);
     assert.equal(Object.isFrozen(actual), true);
-    assert.deepEqual(observed, [{ schemaVersion: 2, operation: "inspect_identity_v2", path: "C:\\trusted\\object" }]);
-  }
-});
+    assert.deepEqual(observed, [
+      { schemaVersion: 3, operation: "inspect_path_security_v3", path: "C:\\trusted\\object" },
+    ]);
+  },
+);
 
-test("strict identity reports a reparse object without following it", { skip: process.platform !== "win32" }, async () => {
-  const capability = createTestWindowsReparseInspector(() => strictChild(identityResponse({ ...directoryIdentity, isReparsePoint: true }), []));
-  const actual = await inspectWindowsPathIdentity(capability, "C:\\trusted\\junction");
-  assert.equal(actual.objectKind, "directory");
-  assert.equal(actual.isReparsePoint, true);
-});
+test(
+  "strict path security preserves an explicit foreign-owner verdict for its Host consumer",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const capability = createTestWindowsReparseInspector(() =>
+      strictChild(securityResponse({ ...ownedDirectorySecurity, currentUserOwner: false }), []),
+    );
+    const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
+    assert.equal(actual.currentUserOwner, false);
+  },
+);
 
-test("strict path security parses its exact owned-directory result and operation", { skip: process.platform !== "win32" }, async () => {
-  const observed: unknown[] = [];
-  const capability = createTestWindowsReparseInspector(() => strictChild(securityResponse(ownedDirectorySecurity), observed));
-  const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
-  assert.deepEqual(actual, ownedDirectorySecurity);
-  assert.equal(Object.isFrozen(actual), true);
-  assert.deepEqual(observed, [{ schemaVersion: 3, operation: "inspect_path_security_v3", path: "C:\\trusted\\object" }]);
-});
+test(
+  "strict path security rejects malformed or mismatched owner responses",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const invalid = [
+      '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+      '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":"true","volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+      '{"schemaVersion":2,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+      '{"schemaVersion":3,"operation":"inspect_identity_v2","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
+      '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"indeterminate"}\n',
+    ];
+    for (const response of invalid) {
+      const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
+      await assert.rejects(
+        inspectWindowsPathSecurity(capability, "C:\\trusted\\object"),
+        /windows_reparse_inspection_unavailable/,
+      );
+    }
+  },
+);
 
-test("strict path security preserves an explicit foreign-owner verdict for its Host consumer", { skip: process.platform !== "win32" }, async () => {
-  const capability = createTestWindowsReparseInspector(() => strictChild(securityResponse({ ...ownedDirectorySecurity, currentUserOwner: false }), []));
-  const actual = await inspectWindowsPathSecurity(capability, "C:\\trusted\\object");
-  assert.equal(actual.currentUserOwner, false);
-});
-
-test("strict path security rejects malformed or mismatched owner responses", { skip: process.platform !== "win32" }, async () => {
-  const invalid = [
-    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
-    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":"true","volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
-    '{"schemaVersion":2,"operation":"inspect_path_security_v3","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
-    '{"schemaVersion":3,"operation":"inspect_identity_v2","status":"ok","objectKind":"directory","isReparsePoint":false,"currentUserOwner":true,"volumeIdentity":"0123456789abcdef","fileId":"fedcba9876543210fedcba9876543210"}\n',
-    '{"schemaVersion":3,"operation":"inspect_path_security_v3","status":"indeterminate"}\n',
-  ];
-  for (const response of invalid) {
-    const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
-    await assert.rejects(inspectWindowsPathSecurity(capability, "C:\\trusted\\object"), /windows_reparse_inspection_unavailable/);
-  }
-});
-
-test("strict path-chain returns exact root-to-leaf frozen identities", { skip: process.platform !== "win32" }, async () => {
-  const observed: unknown[] = [];
-  const components = [directoryIdentity, { ...directoryIdentity, fileId: "11111111111111111111111111111111" }, fileIdentity];
-  const capability = createTestWindowsReparseInspector(() => strictChild(chainResponse(components), observed));
-  const actual = await inspectWindowsPathIdentityChain(capability, "C:\\trusted\\file.txt");
-  assert.deepEqual(actual, components);
-  assert.equal(Object.isFrozen(actual), true);
-  assert.ok(actual.every(Object.isFrozen));
-  assert.deepEqual(observed, [{ schemaVersion: 2, operation: "inspect_path_chain_v2", path: "C:\\trusted\\file.txt" }]);
-});
+test(
+  "strict path-chain returns exact root-to-leaf frozen identities",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const observed: unknown[] = [];
+    const components = [
+      directoryIdentity,
+      { ...directoryIdentity, fileId: "11111111111111111111111111111111" },
+      fileIdentity,
+    ];
+    const capability = createTestWindowsReparseInspector(() => strictChild(chainResponse(components), observed));
+    const actual = await inspectWindowsPathIdentityChain(capability, "C:\\trusted\\file.txt");
+    assert.deepEqual(actual, components);
+    assert.equal(Object.isFrozen(actual), true);
+    assert.ok(actual.every(Object.isFrozen));
+    assert.deepEqual(observed, [
+      { schemaVersion: 2, operation: "inspect_path_chain_v2", path: "C:\\trusted\\file.txt" },
+    ]);
+  },
+);
 
 test("strict path-chain exposes a reparse ancestor verdict", { skip: process.platform !== "win32" }, async () => {
   const components = [directoryIdentity, { ...directoryIdentity, isReparsePoint: true }, fileIdentity];
@@ -275,77 +335,126 @@ test("strict path-chain exposes a reparse ancestor verdict", { skip: process.pla
   assert.equal(actual[1]?.isReparsePoint, true);
 });
 
-test("strict identity fails closed on missing and unsupported helper verdicts", { skip: process.platform !== "win32" }, async () => {
-  for (const status of ["missing", "unsupported", "indeterminate"]) {
-    const response = `{"schemaVersion":2,"operation":"inspect_identity_v2","status":"${status}"}\n`;
-    const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
-    await assert.rejects(inspectWindowsPathIdentity(capability, "C:\\trusted\\missing"), /windows_reparse_inspection_unavailable/);
-  }
-});
+test(
+  "strict identity fails closed on missing and unsupported helper verdicts",
+  { skip: process.platform !== "win32" },
+  async () => {
+    for (const status of ["missing", "unsupported", "indeterminate"]) {
+      const response = `{"schemaVersion":2,"operation":"inspect_identity_v2","status":"${status}"}\n`;
+      const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
+      await assert.rejects(
+        inspectWindowsPathIdentity(capability, "C:\\trusted\\missing"),
+        /windows_reparse_inspection_unavailable/,
+      );
+    }
+  },
+);
 
-test("strict identity rejects malformed response and every extra or missing key", { skip: process.platform !== "win32" }, async () => {
-  const invalid = [
-    '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef","extra":true}\n',
-    '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef"}\n',
-    '{"schemaVersion":1,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
-    '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"other","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
-    '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"XYZ","fileId":"0123456789abcdef0123456789abcdef"}\n',
-    '{ "schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
-    '{"schemaVersion":2,"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
-    `\ufeff${identityResponse(fileIdentity)}`,
-    identityResponse(fileIdentity).trim(),
-    `${identityResponse(fileIdentity)}\n`,
-    "not-json\n",
-  ];
-  for (const response of invalid) {
-    const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
-    await assert.rejects(inspectWindowsPathIdentity(capability, "C:\\trusted\\file.txt"), /windows_reparse_inspection_unavailable/);
-  }
-});
+test(
+  "strict identity rejects malformed response and every extra or missing key",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const invalid = [
+      '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef","extra":true}\n',
+      '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef"}\n',
+      '{"schemaVersion":1,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
+      '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"other","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
+      '{"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"XYZ","fileId":"0123456789abcdef0123456789abcdef"}\n',
+      '{ "schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
+      '{"schemaVersion":2,"schemaVersion":2,"operation":"inspect_identity_v2","status":"ok","objectKind":"regular_file","isReparsePoint":false,"volumeIdentity":"0123456789abcdef","fileId":"0123456789abcdef0123456789abcdef"}\n',
+      `\ufeff${identityResponse(fileIdentity)}`,
+      identityResponse(fileIdentity).trim(),
+      `${identityResponse(fileIdentity)}\n`,
+      "not-json\n",
+    ];
+    for (const response of invalid) {
+      const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
+      await assert.rejects(
+        inspectWindowsPathIdentity(capability, "C:\\trusted\\file.txt"),
+        /windows_reparse_inspection_unavailable/,
+      );
+    }
+  },
+);
 
-test("strict chain rejects count mismatches, non-directory ancestors, and extra keys", { skip: process.platform !== "win32" }, async () => {
-  const invalid = [
-    chainResponse([directoryIdentity, fileIdentity]),
-    chainResponse([fileIdentity, directoryIdentity, fileIdentity]),
-    chainResponse([directoryIdentity, { ...directoryIdentity, volumeIdentity: "1111111111111111" }, fileIdentity]),
-    '{"schemaVersion":2,"operation":"inspect_path_chain_v2","status":"ok","components":[],"extra":true}\n',
-  ];
-  for (const response of invalid) {
-    const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
-    await assert.rejects(inspectWindowsPathIdentityChain(capability, "C:\\trusted\\file.txt"), /windows_reparse_inspection_unavailable/);
-  }
-});
+test(
+  "strict chain rejects count mismatches, non-directory ancestors, and extra keys",
+  { skip: process.platform !== "win32" },
+  async () => {
+    const invalid = [
+      chainResponse([directoryIdentity, fileIdentity]),
+      chainResponse([fileIdentity, directoryIdentity, fileIdentity]),
+      chainResponse([directoryIdentity, { ...directoryIdentity, volumeIdentity: "1111111111111111" }, fileIdentity]),
+      '{"schemaVersion":2,"operation":"inspect_path_chain_v2","status":"ok","components":[],"extra":true}\n',
+    ];
+    for (const response of invalid) {
+      const capability = createTestWindowsReparseInspector(() => strictChild(response, []));
+      await assert.rejects(
+        inspectWindowsPathIdentityChain(capability, "C:\\trusted\\file.txt"),
+        /windows_reparse_inspection_unavailable/,
+      );
+    }
+  },
+);
 
-test("strict path security rejects invalid Windows paths before helper invocation", { skip: process.platform !== "win32" }, async () => {
-  let invoked = false;
-  const capability = createTestWindowsReparseInspector(() => {
-    invoked = true;
-    return strictChild(securityResponse(ownedDirectorySecurity), []);
-  });
-  for (const path of ["\\\\server\\share\\directory", "\\\\?\\C:\\directory", "relative\\directory", "C:\\trusted\\..\\directory", "C:\\trusted\\\\directory"]) {
-    await assert.rejects(inspectWindowsPathSecurity(capability, path), /windows_reparse_inspection_unavailable/);
-  }
-  assert.equal(invoked, false);
-});
+test(
+  "strict path security rejects invalid Windows paths before helper invocation",
+  { skip: process.platform !== "win32" },
+  async () => {
+    let invoked = false;
+    const capability = createTestWindowsReparseInspector(() => {
+      invoked = true;
+      return strictChild(securityResponse(ownedDirectorySecurity), []);
+    });
+    for (const path of [
+      "\\\\server\\share\\directory",
+      "\\\\?\\C:\\directory",
+      "relative\\directory",
+      "C:\\trusted\\..\\directory",
+      "C:\\trusted\\\\directory",
+    ]) {
+      await assert.rejects(inspectWindowsPathSecurity(capability, path), /windows_reparse_inspection_unavailable/);
+    }
+    assert.equal(invoked, false);
+  },
+);
 
-test("strict identity rejects UNC, device, relative, dot-segment, and empty-component paths before helper invocation", { skip: process.platform !== "win32" }, async () => {
-  let invoked = false;
-  const capability = createTestWindowsReparseInspector(() => {
-    invoked = true;
-    return strictChild(identityResponse(fileIdentity), []);
-  });
-  for (const path of ["\\\\server\\share\\file", "\\\\?\\C:\\file", "\\\\.\\C:\\file", "relative\\file", "C:\\trusted\\..\\file", "C:\\trusted\\\\file"]) {
-    await assert.rejects(inspectWindowsPathIdentity(capability, path), /windows_reparse_inspection_unavailable/);
-  }
-  assert.equal(invoked, false);
-});
+test(
+  "strict identity rejects UNC, device, relative, dot-segment, and empty-component paths before helper invocation",
+  { skip: process.platform !== "win32" },
+  async () => {
+    let invoked = false;
+    const capability = createTestWindowsReparseInspector(() => {
+      invoked = true;
+      return strictChild(identityResponse(fileIdentity), []);
+    });
+    for (const path of [
+      "\\\\server\\share\\file",
+      "\\\\?\\C:\\file",
+      "\\\\.\\C:\\file",
+      "relative\\file",
+      "C:\\trusted\\..\\file",
+      "C:\\trusted\\\\file",
+    ]) {
+      await assert.rejects(inspectWindowsPathIdentity(capability, path), /windows_reparse_inspection_unavailable/);
+    }
+    assert.equal(invoked, false);
+  },
+);
 
-test("strict identity fails closed on unavailable, timeout, stderr, nonzero, and overflow helpers", { skip: process.platform !== "win32" }, async () => {
-  for (const outcome of ["unavailable", "timeout", "stderr", "nonzero", "overflow"] as const) {
-    const capability = createTestWindowsReparseInspector(() => legacyChild(outcome, []));
-    await assert.rejects(inspectWindowsPathIdentity(capability, "C:\\trusted\\file.txt"), /windows_reparse_inspection_unavailable/);
-  }
-});
+test(
+  "strict identity fails closed on unavailable, timeout, stderr, nonzero, and overflow helpers",
+  { skip: process.platform !== "win32" },
+  async () => {
+    for (const outcome of ["unavailable", "timeout", "stderr", "nonzero", "overflow"] as const) {
+      const capability = createTestWindowsReparseInspector(() => legacyChild(outcome, []));
+      await assert.rejects(
+        inspectWindowsPathIdentity(capability, "C:\\trusted\\file.txt"),
+        /windows_reparse_inspection_unavailable/,
+      );
+    }
+  },
+);
 
 test("strict identity is explicitly unavailable on non-Windows", { skip: process.platform === "win32" }, async () => {
   let invoked = false;
@@ -353,19 +462,37 @@ test("strict identity is explicitly unavailable on non-Windows", { skip: process
     invoked = true;
     return strictChild(identityResponse(fileIdentity), []);
   });
-  await assert.rejects(inspectWindowsPathIdentity(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
-  await assert.rejects(inspectWindowsPathSecurity(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
-  await assert.rejects(inspectWindowsPathIdentityChain(capability, "/absolute/path"), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(
+    inspectWindowsPathIdentity(capability, "/absolute/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
+  await assert.rejects(
+    inspectWindowsPathSecurity(capability, "/absolute/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
+  await assert.rejects(
+    inspectWindowsPathIdentityChain(capability, "/absolute/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
   assert.equal(invoked, false);
 });
 
 test("published constructor remains fixed and rejects unavailable roots without fallback", async () => {
-  await assert.rejects(createPublishedWindowsReparseInspector("relative/path"), /windows_reparse_inspection_unavailable/);
+  await assert.rejects(
+    createPublishedWindowsReparseInspector("relative/path"),
+    /windows_reparse_inspection_unavailable/,
+  );
   if (process.platform === "win32") {
-    await assert.rejects(createPublishedWindowsReparseInspector(resolve("missing-artifact-root")), /windows_reparse_inspection_unavailable/);
+    await assert.rejects(
+      createPublishedWindowsReparseInspector(resolve("missing-artifact-root")),
+      /windows_reparse_inspection_unavailable/,
+    );
   } else {
     const capability = await createPublishedWindowsReparseInspector(resolve("missing-artifact-root"));
-    await assert.rejects(inspectWindowsReparse(capability, resolve("any-path")), /windows_reparse_inspection_unavailable/);
+    await assert.rejects(
+      inspectWindowsReparse(capability, resolve("any-path")),
+      /windows_reparse_inspection_unavailable/,
+    );
   }
 });
 
@@ -436,13 +563,15 @@ function legacyChild(outcome: Outcome, observed: unknown[]): ChildProcess {
 
 async function remainsPending(promise: Promise<unknown>): Promise<boolean> {
   const marker = Symbol("pending");
-  return await Promise.race([
-    promise.then(
-      () => false,
-      () => false,
-    ),
-    new Promise<typeof marker>((resolvePending) => setTimeout(() => resolvePending(marker), 25)),
-  ]) === marker;
+  return (
+    (await Promise.race([
+      promise.then(
+        () => false,
+        () => false,
+      ),
+      new Promise<typeof marker>((resolvePending) => setTimeout(() => resolvePending(marker), 25)),
+    ])) === marker
+  );
 }
 
 function syntheticChildBase(onKill: () => boolean = () => true): EventEmitter & {

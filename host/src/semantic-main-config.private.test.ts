@@ -50,22 +50,25 @@ test("main is the operational-gate child and the CLI-only recovery tool, with no
 test("semantic main command accepts only exact operational-flag entry or explicit dead-owner recovery forms", () => {
   const manifestRef = "C:/runtime/deployment-manifest.json";
   const nonce = "a".repeat(64);
-  assert.deepEqual(parseSemanticMainCommand([
-    "--deployment-manifest-ref", manifestRef,
-    "--operational-nonce", nonce,
-  ]), {
+  assert.deepEqual(parseSemanticMainCommand(["--deployment-manifest-ref", manifestRef, "--operational-nonce", nonce]), {
     kind: "enter",
     deploymentManifestRef: manifestRef,
     operationalNonceSha256: nonce,
   });
-  assert.deepEqual(parseSemanticMainCommand([
-    "recover-dead-owner", "--deployment-manifest-ref", manifestRef,
-    "--operation-id", "operation_01",
-  ]), {
-    kind: "recover_dead_owner",
-    deploymentManifestRef: manifestRef,
-    operationId: "operation_01",
-  });
+  assert.deepEqual(
+    parseSemanticMainCommand([
+      "recover-dead-owner",
+      "--deployment-manifest-ref",
+      manifestRef,
+      "--operation-id",
+      "operation_01",
+    ]),
+    {
+      kind: "recover_dead_owner",
+      deploymentManifestRef: manifestRef,
+      operationId: "operation_01",
+    },
+  );
   for (const argv of [
     [],
     ["--deployment-manifest-ref"],
@@ -83,10 +86,7 @@ test("semantic main command accepts only exact operational-flag entry or explici
     ["recover-dead-owner", "--deployment-manifest-ref", manifestRef, "--operation-id", "operation_01", "extra"],
     ["--help"],
   ] as const) {
-    assert.throws(
-      () => parseSemanticMainCommand(argv),
-      /invalid_semantic_main_command/,
-    );
+    assert.throws(() => parseSemanticMainCommand(argv), /invalid_semantic_main_command/);
   }
 });
 

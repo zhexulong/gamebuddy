@@ -115,7 +115,8 @@ test("wrong correlation, malformed records, duplicate delivery, worker failure, 
   for (const invalid of [
     { ...readyFields, extra: true },
     { ...readyFields, __proto__: { forged: true } },
-  ]) assert.equal(parseProductionGameTaskReady(invalid), null);
+  ])
+    assert.equal(parseProductionGameTaskReady(invalid), null);
   assert.equal(parseProductionGameTaskDispatch({ ...dispatchFields("task"), extra: true }), null);
   assert.equal(parseProductionGameTaskDispatch({ ...dispatchFields("\ud800") }), null);
 
@@ -146,7 +147,9 @@ test("wrong correlation, malformed records, duplicate delivery, worker failure, 
   const foreignGameController = createProductionGameTaskIngressController({
     ...readyFields,
     transport: foreignGame.transport,
-    dispatchTask: async () => { calls += 1; },
+    dispatchTask: async () => {
+      calls += 1;
+    },
   });
   const foreignGameReady = foreignGameController.start();
   foreignGame.deliverReady();
@@ -159,7 +162,9 @@ test("wrong correlation, malformed records, duplicate delivery, worker failure, 
   const foreignPiController = createProductionGameTaskIngressController({
     ...readyFields,
     transport: foreignPi.transport,
-    dispatchTask: async () => { calls += 1; },
+    dispatchTask: async () => {
+      calls += 1;
+    },
   });
   const foreignPiReady = foreignPiController.start();
   foreignPi.deliverReady();
@@ -236,7 +241,6 @@ test("close races remove both listeners and reject an admitted task without repl
   assert.equal(h.removeMessageCalls, 1);
   assert.equal(h.removeDisconnectCalls, 1);
 });
-
 
 test("ready send failure never arms the one-shot ingress", async () => {
   const h = transportHarness();

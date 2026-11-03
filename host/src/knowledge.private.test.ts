@@ -20,7 +20,7 @@ const snapshot = {
   health: 100,
   actionable: true,
   capabilities: ["move_to_tile"],
-catalogRevision: 1,
+  catalogRevision: 1,
   enabledActionIds: ["move_to_tile"],
   presentationLocale: "en-US",
   weather: "sunny",
@@ -66,7 +66,8 @@ test("knowledge remains versioned advice and cannot override live capability fac
     "knowledge_bundle_not_applicable",
   );
   assert.deepEqual(
-    decideCapability(bundle, { ...snapshot, capabilities: [] }, "move_to_tile", "1.6.15", TEST_MOD_REGISTRATIONS).reasonCode,
+    decideCapability(bundle, { ...snapshot, capabilities: [] }, "move_to_tile", "1.6.15", TEST_MOD_REGISTRATIONS)
+      .reasonCode,
     "capability_not_declared",
   );
 });
@@ -90,7 +91,7 @@ test("mounted knowledge exposes advisory rules only for live, version-matched ca
       snapshot,
       latestReceipt: null,
       latestReasonCode: null,
-        catalogRegistrations: TEST_MOD_REGISTRATIONS,
+      catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
   };
   const tool = createStardewKnowledgeTool(integration);
@@ -139,7 +140,7 @@ test("unmounted knowledge remains unavailable rather than inventing guidance", a
       snapshot,
       latestReceipt: null,
       latestReasonCode: null,
-        catalogRegistrations: TEST_MOD_REGISTRATIONS,
+      catalogRegistrations: TEST_MOD_REGISTRATIONS,
     },
   };
   const result = await createStardewKnowledgeTool(integration).execute(

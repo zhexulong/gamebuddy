@@ -608,8 +608,14 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
   );
 });
 
-test("Stardew break-rock-source completion evidence requires exact source-only removal facts", () => {
-  const valid = {
+test("Stardew break-rock-source completion evidence is source transformation at any real durability", () => {
+  // WHAT COMPLETES, AND WHAT ONLY PROGRESSES. `Pickaxe.DoFunction` subtracts
+  // `Math.Max(1, upgradeLevel + 1) + additionalPower` (Pickaxe.cs:139-140) and returns early while the remainder is
+  // positive (Pickaxe.cs:142-146) - so on every mine node the ordinary swing DAMAGES, and the Mod reports that swing
+  // as a succeeded `rock_source_damaged`. This rule is the completion boundary, so it asks the question the tree rule
+  // asks: the source left the world. What it used to over-constrain was the DURABILITY - `durability_before === "1"`
+  // and `qualified_item_id === "(O)2"`, i.e. only the one-swing farm stone. Those are the fields this test moves.
+  const broken = {
     state: "succeeded",
     reasonCode: "rock_source_broken",
     evidence: {
@@ -617,10 +623,51 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
         "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     },
   } as const;
-  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", valid), true);
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", broken), true);
+  // A mine copper node (751) at durability 3, broken by the third of three swings: the same completion, from a rock this
+  // rule previously refused twice over - for its item id and for its durability.
+  const brokenMineNode = {
+    ...broken,
+    evidence: {
+      detail:
+        "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)751;durability_before=3;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+    },
+  } as const;
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", brokenMineNode),
+    true,
+    "a mine node's removal is the same completion as a farm stone's",
+  );
+  // A DAMAGING swing is not this transition. The Mod reports it as `rock_source_damaged` with the rock still present,
+  // and that terminal is deliberately not an arm of this rule - a completed task is recorded from source
+  // transformation, exactly as it is for the tree (`stump_after === \"true\"`).
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
+      ...brokenMineNode,
+      reasonCode: "rock_source_damaged",
+      evidence: {
+        detail:
+          "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)751;durability_before=3;durability_after=2;removed=false;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+      },
+    }),
+    false,
+    "a damaged rock is progress, not the completion boundary",
+  );
+  // And the claim cannot be forged: a `broken` code over damage facts is refused by the evidence, not the code.
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+      ...brokenMineNode,
+      evidence: {
+        detail:
+          "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)751;durability_before=3;durability_after=2;removed=false;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+      },
+    }),
+    false,
+    "accessibility of the terminal does not stand in for the world fact",
+  );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+      ...broken,
       evidence: {
         detail:
           "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;drop=(O)390",
@@ -630,7 +677,7 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
   );
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
+      ...broken,
       evidence: {
         detail:
           "target=rock source;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true",
@@ -640,13 +687,14 @@ test("Stardew break-rock-source completion evidence requires exact source-only r
   );
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
-      ...valid,
+      ...broken,
       evidence: {
         detail:
-          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=1;durability_after=1;removed=false",
+          "target=rock_source_1234;tool=pickaxe;slot=4;qualified_item_id=(O)2;durability_before=0;durability_after=removed;removed=true",
       },
     }),
     false,
+    "a rock with no durability left was not a rock this action swung at",
   );
 });
 
