@@ -7,7 +7,7 @@ import {
   typingDurationMs,
   type CompanionDeliveryPacing,
 } from "./companion-delivery-pacing.js";
-import { removeModelScaffolding } from "./companion-scaffolding.js";
+import { createScaffoldingStreamProjection, removeModelScaffolding } from "./companion-scaffolding.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
 import { IncrementalSpeechAccumulator } from "./companion-speech-incremental.js";
 import { classifyProviderFailure, type ProviderFailureClass } from "./provider-failure-classification.js";
@@ -90,7 +90,10 @@ export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "keep" as const;
  *
  * Scaffolding (`<thinking>...</thinking>`, `（思考：...）`, `【内心：...】`,
  * `**emphasis**`, `---` rules) is leakage and goes; action beats are performance
- * and stay. `"drop"` removes scaffolding from the text the surface receives.
+ * and stay. `"drop"` removes scaffolding from the text the surface receives, on
+ * every lane it receives it - the committed row and the preview fragments a live
+ * bubble or a streaming voice job reads while the reply is still arriving - so a
+ * surface cannot present one thing and commit another.
  * `"unchanged"` adds nothing of its own: the in-game bubble and the voice
  * already run `dehydrateCompanionSpeech`, whose frozen behaviour this axis must
  * not change.
@@ -252,6 +255,13 @@ export function attachNativeCompanionContent(
   };
   const presentIsEmpty = (text: string): boolean =>
     stripStageDirection ? isEmptyAfterDehydration(text) : text.trim().length === 0;
+  // The delta lane and the final lane must agree about what the player may read:
+  // a bubble that prints the model's reasoning while the committed row drops it
+  // is the same rule honoured on one path and broken on the other, and the voice
+  // job reads the delta lane too. So a `drop` surface projects its stream through
+  // the streaming half of the same rule, which withholds any fragment that could
+  // still become a marker. Stateful per assistant message, reset at its start.
+  const previewProjection = dropScaffolding ? createScaffoldingStreamProjection() : undefined;
   // Completed sentences held until this message's fate is known. A Pi turn's
   // intermediate tool-use messages also carry text (the model's running
   // commentary between actions), and presenting that commentary as companion
@@ -387,6 +397,7 @@ export function attachNativeCompanionContent(
         clearRemarkTimer();
         incrementalAccumulator = new IncrementalSpeechAccumulator();
         pendingSentences = [];
+        previewProjection?.reset();
       }
       return;
     }
@@ -425,11 +436,14 @@ export function attachNativeCompanionContent(
         assistantMessageEvent.delta.length > 0
       ) {
         const delta = assistantMessageEvent.delta as string;
-        // Preview semantics stay unchanged. Under incremental activation every
-        // delta additionally feeds this message's accumulator; each sentence
-        // completed in arrival order is dehydrated and emitted immediately, so
-        // the surface can present finished dialogue before message_end.
-        dispatch(async () => await sinks.onPreviewDelta(delta));
+        // A `drop` surface releases only what no reasoning frame can still
+        // claim, so the fragment may be shorter than the delta, or empty while a
+        // marker is being spelled out. Under incremental activation every delta
+        // additionally feeds this message's accumulator; each sentence completed
+        // in arrival order is dehydrated and emitted immediately, so the surface
+        // can present finished dialogue before message_end.
+        const released = previewProjection === undefined ? delta : previewProjection.push(delta);
+        if (released.length > 0) dispatch(async () => await sinks.onPreviewDelta(released));
         if (incrementalActive) {
           // Each sentence that completes inside this delta joins the message's
           // held paragraph; the silence timer decides whether the first one has
@@ -468,6 +482,14 @@ export function attachNativeCompanionContent(
       clearRemarkTimer();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
       pendingSentences = [];
+      // Release the tail this message's last fragment boundary held back. A
+      // marker that never completed turned out to be ordinary prose, so it is
+      // previewed with the rest; text inside a frame that never closed stays
+      // dropped, because this stream saw it open. A tool-use message presents
+      // nothing at all, so its tail is not previewed either.
+      const previewTail = previewProjection?.flush() ?? "";
+      if (previewTail.length > 0 && finalMessage.stopReason !== "toolUse")
+        dispatch(async () => await sinks.onPreviewDelta(previewTail));
       // A tool-use assistant message is an intermediate agent-loop result, not
       // the player-visible final response. It may be followed by a typed Game
       // action and another assistant message, so it must never terminalize this
