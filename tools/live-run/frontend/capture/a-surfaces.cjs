@@ -2,7 +2,7 @@
 // (must be 0), document horizontal overflow (must be 0), the product's own name in the bar, and
 // each surface heading's computed outline right after a route change.
 const path = require("node:path");
-const { connect, reporter, SHOTS, PAGE_HELPERS, shot } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, shot, observe, observationStart } = require("./common.cjs");
 
 const SURFACES = [
   { key: "chat", label: "聊天", testid: "chat-surface" },
@@ -178,6 +178,7 @@ async function activate(page, label) {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("a-surfaces.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   for (const size of [{ w: 1440, h: 900, tag: "1440x900" }, { w: 400, h: 800, tag: "400x800" }]) {
@@ -213,6 +214,7 @@ async function activate(page, label) {
     }
   }
 
+  await observe(page, say, "a", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-A");
