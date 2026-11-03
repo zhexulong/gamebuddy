@@ -57,7 +57,7 @@ import { pathToFileURL } from "node:url";
 export const CATALOG_MODULE_PATH = "host/src/tavern/provider-catalog.ts";
 
 /** Trees scanned for a second spelling. */
-export const SCAN_ROOTS = Object.freeze(["host/src"]);
+const SCAN_ROOTS = Object.freeze(["host/src"]);
 
 /**
  * The facts this gate owns.
@@ -69,7 +69,7 @@ export const SCAN_ROOTS = Object.freeze(["host/src"]);
  * a copy against, and a gate that compares against nothing is a gate that cannot
  * fail. They join this list when the catalog declares them.
  */
-export const FACT_FIELDS = Object.freeze(["contextWindow", "cost"]);
+const FACT_FIELDS = Object.freeze(["contextWindow", "cost"]);
 
 /** The four rates inside a `cost` block, in the order Pi reads them. */
 const COST_FIELDS = Object.freeze(["input", "output", "cacheRead", "cacheWrite"]);

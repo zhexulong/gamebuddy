@@ -76,9 +76,6 @@ export type StCardImportLoss = Readonly<{
   omitted?: readonly StCardImportOmittedEntry[];
 }>;
 
-/** One world-book entry this import could not carry, named the way the card names it. */
-export type { StCardImportOmittedEntry, StCardImportOmittedMacro } from "./tavern/types.js";
-
 /** The one channel an import reports a loss through. */
 type StCardImportLossLedger = Readonly<{
   record(

@@ -398,7 +398,7 @@ function isExcludedName(name) {
 const TEST_FILE_PATTERN = /(?:\.test|\.spec)\.[cm]?[jt]sx?$/u;
 
 /** Whether a repo-relative, POSIX-separated path is one of the repository's test files. */
-export function isTestFile(path) {
+function isTestFile(path) {
   return TEST_FILE_PATTERN.test(path);
 }
 
