@@ -35,8 +35,9 @@ public sealed class TransportApproachWiringTests
     // ---- the refusal became a walk -------------------------------------------
 
     [Theory]
-    [InlineData("mount_transport", "RequestLocalMountTransport", "ExecuteMountTransport", "\"horse_target_unavailable\"", "\"horse_target_out_of_range\"", 1)]
-    [InlineData("enter_mine", "RequestLocalEnterMine", "ExecuteEnterMineLadder", "\"mine_ladder_target_unavailable\"", "\"mine_ladder_out_of_range\"", 2)]
+    [InlineData("mount_transport", "RequestLocalMountTransport", "ExecuteMountTransport", "ResolveHorseTarget(location, expectedTargetId)", "\"horse_target_out_of_range\"", 1)]
+    [InlineData("enter_mine", "RequestLocalEnterMine", "ExecuteEnterMineLadder", "ResolveMineLadderTarget(", "\"mine_ladder_out_of_range\"", 2)]
+    [InlineData("use_mine_ladder", "RequestLocalUseMineLadder", "ExecuteUseMineLadder", "ResolveMineLadderTarget(", "\"mine_exit_ladder_out_of_range\"", 1)]
     [InlineData("use_raft", "RequestLocalUseRaft", "ExecuteUseRaft", "\"raft_target_not_water\"", "\"raft_target_out_of_range\"", 1)]
     public void AnOutOfRangeTransportTarget_AdmitsAnApproach_InsteadOfRefusing(
         string actionId,
@@ -49,7 +50,9 @@ public sealed class TransportApproachWiringTests
         string request = MethodBody(Source(), $"public LocalExecutionReceipt {requestName}(");
 
         // Position-independent preconditions come first, so the actor is never sent walking for a target
-        // that could not succeed on arrival. The identity check is the one every family reads first.
+        // that could not succeed on arrival. The identity check is the one every family reads first - a
+        // refusal code for the families that inline it, the shared target resolver for the two mine ladders
+        // and the horse, whose ids are re-derived from live state rather than compared as text here.
         int identity = request.IndexOf(identityRefusal, StringComparison.Ordinal);
         int geometry = request.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
         int approach = request.IndexOf("TryBeginToolApproach(", StringComparison.Ordinal);
@@ -118,7 +121,7 @@ public sealed class TransportApproachWiringTests
 
         foreach ((string body, string identity) in new[]
         {
-            ("private LocalExecutionReceipt ExecuteEnterMineLadder(", "\"mine_ladder_target_unavailable\""),
+            ("private LocalExecutionReceipt ExecuteEnterMineLadder(", "ResolveMineLadderTarget("),
             ("private LocalExecutionReceipt ExecuteEnterMineEntrance(", "\"mine_entrance_target_unavailable\""),
         })
         {
@@ -133,9 +136,15 @@ public sealed class TransportApproachWiringTests
 
         // The ladder is read from the live layer on both routes, never from the request's coordinate.
         MethodBody(source, "private LocalExecutionReceipt ExecuteEnterMineLadder(")
-            .Should().Contain("ResolveMineLadderTarget(");
+            .Should().Contain("MineLadderKind.Descend");
         MethodBody(source, "private LocalExecutionReceipt ExecuteEnterMineEntrance(")
             .Should().Contain("ResolveMineEntrance(");
+        // The exit ladder's body re-reads its own kind, so neither action can act on the other's tile.
+        string exitBody = MethodBody(source, "private LocalExecutionReceipt ExecuteUseMineLadder(");
+        exitBody.Should().Contain("MineLadderKind.Exit");
+        int exitIdentity = exitBody.IndexOf("ResolveMineLadderTarget(", StringComparison.Ordinal);
+        exitBody.IndexOf("shaft.checkAction(", StringComparison.Ordinal)
+            .Should().BeGreaterThan(exitIdentity, "the tile is proved to be this action's before the game is asked");
     }
 
     [Fact]
@@ -160,6 +169,7 @@ public sealed class TransportApproachWiringTests
     [Theory]
     [InlineData("mount_transport")]
     [InlineData("enter_mine")]
+    [InlineData("use_mine_ladder")]
     public void ASelfHealingActionPublishesNoApproachRequirement(string actionId)
     {
         // `approachRequirement` is published through `plan_shape`. Once the action walks in itself, "you

@@ -18,8 +18,8 @@ public sealed class NativeToolContractTests
             {
                 "equip_tool",
                 "clear_debris",
-                "chop_tree_source",
-                "break_rock_source",
+                "chop_tree",
+                "break_rock",
                 "dig_artifact_spot",
                 "refill_watering_can",
                 "place_wood_fence",
@@ -31,11 +31,11 @@ public sealed class NativeToolContractTests
     [Fact]
     public void ChopTreeSource_WhenWorldNotReady_ReturnsRejectedReceipt()
     {
-        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(new[] { "chop_tree_source" }));
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(new[] { "chop_tree" }));
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         var handler = new ResourceToolActionHandler(executions);
 
-        var request = new BridgeExecutionRequest("req_chop_1", "idemp_chop_1", "chop_tree_source", new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "target_1" }, 1, 5000);
+        var request = new BridgeExecutionRequest("req_chop_1", "idemp_chop_1", "chop_tree", new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "target_1" }, 1, 5000);
         var receipt = handler.Execute(request, executions);
 
         receipt.Should().NotBeNull();

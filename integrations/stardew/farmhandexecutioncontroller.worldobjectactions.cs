@@ -12,8 +12,8 @@ using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew;
 
-// The world-object lane: three actions that all act on an OBJECT occupying a
-// WORLD TILE and all take that tile plus the backpack slot that acts on it.
+// The world-object lane: four actions that all act on a PLACED THING occupying a
+// WORLD TILE and all take that tile plus the opaque target id discovery published.
 //
 //   place_owned_object      Object.placementAction, the bigCraftable/Furniture
 //                           branch, for ANY owned placeable object. This absorbs
@@ -23,6 +23,8 @@ namespace GameBuddy.Stardew;
 //                           the item's own data (Object.canBePlacedHere's tapper
 //                           branch), not by a second action.
 //   remove_placed_item      Axe/Pickaxe DoFunction plus Object.performRemoveAction.
+//   move_placed_furniture   GameLocation.removeQueuedFurniture: performRemoveAction,
+//                           removal from `location.furniture`, then addItemToInventoryBool.
 //   break_container_source  BreakableContainer.performToolAction.
 //
 // Every native line reference below is the target version's own decompiled source
@@ -100,19 +102,49 @@ namespace GameBuddy.Stardew;
 // `location.debris.Add(new Debris(id, ...))`, Game1.cs:10888-10892, whose
 // `Debris.itemId` is non-empty for item drops and empty for cosmetic chunks).
 //
+// THE FURNITURE-MOVE SEAM. Furniture does NOT live in `location.objects`: a house's bed,
+// sofa and rug are `Furniture` in `location.furniture`, a `NetCollection<Furniture>` on
+// the location (GameLocation.cs:452), and each piece carries its own `TileLocation`. That
+// is why the axe/pickaxe path above cannot reach one: `Axe.DoFunction`/`Pickaxe.DoFunction`
+// look up `location.Objects`, and `Furniture.performRemoveAction` (Furniture.cs:1129-1151)
+// does NOT take the piece out of any collection and does NOT put it in the backpack - it
+// only tears down the lights, the fireplace's on-state, the light glow and the sitting
+// farmers. The caller owns both of those steps.
+//
+// The caller is `GameLocation.removeQueuedFurniture` (GameLocation.cs:8074-8101), the game's
+// own furniture pickup, reached from `LowPriorityLeftClick` (:7999-8059) through the
+// `furnitureToRemove` NetMutexQueue. Its sequence is the seam this action reproduces, in its
+// own order: `furniture.TryGetValue(guid, out value)`, then `value.performRemoveAction()`
+// (:8081), then `furniture.Remove(guid)` (:8082), then the backpack. `removeQueuedFurniture`
+// is `protected` and the queue is driven by the click path, so the Mod cannot call it; it
+// calls the same three public steps on the same piece instead of inventing a new one.
+//
+// WHAT THE NATIVE METHOD DOES NOT DO, AND THIS ACTION DOES. `removeQueuedFurniture` refuses
+// up front (`!player.couldInventoryAcceptThisItem(value)` :8077) because it cannot undo the
+// two steps it has already taken - it writes the piece into the first null slot (:8084-8093)
+// and would otherwise drop it on the floor of a full pack. This action instead OBSERVES the
+// delivery and puts the piece back when it did not happen: `addItemToInventoryBool`
+// (Farmer.cs:4389-4421) answers false when nothing fit, and a piece silently lost is worse
+// than a refusal. The rollback is exact - the SAME instance, its own tile and its own
+// rotation, appended back to `location.furniture` - and the receipt is a REFUSAL, never a
+// success (see `move_placed_furniture_inventory_full`).
+//
 // POSTCONDITIONS, all OBSERVED after the call and none taken from a native return:
 //   place_owned_object      an object with the expected qualified item id occupies the
 //                           tile (and the inventory count dropped by exactly one).
 //   remove_placed_item      the object is GONE from the tile, and the removed object's
 //                           own identity is reported as debris when the native path
 //                           dropped it (Axe.cs:89-92, Pickaxe.cs:239-242).
+//   move_placed_furniture   the piece is no longer in `location.furniture` and the actor's
+//                           pack now holds one more of its qualified item id.
 //   break_container_source  the container is GONE from the tile, and the drops added
 //                           during the swing window are reported.
 //
-// LIFECYCLE. All three are registered as `FarmhandActionLifecycle.Experimental`
+// LIFECYCLE. All four are registered as `FarmhandActionLifecycle.Experimental`
 // (families `buildings_farm_management` / `buildings_farm_management` /
-// `resource_gathering`), so they stay off the Agent surface until each passes its own
-// native-local live gate; promotion is a separate catalog edit owned by the parent.
+// `buildings_farm_management` / `resource_gathering`), so they stay off the Agent surface
+// until each passes its own native-local live gate; promotion is a separate catalog edit
+// owned by the parent.
 internal sealed partial class ExecutionManager
 {
     /// <summary>
@@ -302,12 +334,28 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? target) || target is null)
+        {
+            // FURNITURE IS A DIFFERENT COLLECTION, AND SAYING "NOT FOUND" ABOUT IT WOULD BE A LIE.
+            //
+            // `location.furniture` (not `location.objects`) holds the bed, the sofa, the rug - and this lane has no tool that
+            // picks one up. A companion that can SEE the chair (published as `placed_furniture`) and is then told
+            // `target_not_found` learns the wrong lesson: that the chair is gone. Naming the real state is what lets it decide
+            // whether to ask the player or leave it alone.
+            Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
+            if (piece is not null)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "remove_placed_item_furniture_move_unsupported",
+                    $"target={targetX},{targetY};location={location.NameOrUniqueName};item={piece.QualifiedItemId};published={expectedTargetId};live={BuildPlacedFurnitureTargetId(location, targetX, targetY, piece)}");
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "remove_placed_item_target_not_found",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};slot={slot}");
+        }
         if (!string.Equals(BuildPlacedItemTargetId(location, targetX, targetY, target), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(
                 requestId,
@@ -456,6 +504,148 @@ internal sealed partial class ExecutionManager
         return removed
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "placed_item_removed", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "remove_placed_item_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
+    /// Picks up one ALREADY-PLACED piece of furniture from a world tile, through the game's own
+    /// furniture pickup sequence (<c>GameLocation.removeQueuedFurniture</c>). See the file header
+    /// for the seam, the delivery check and the rollback.
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalMovePlacedFurniture(
+        string requestId,
+        int targetX,
+        int targetY,
+        string expectedTargetId,
+        long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // General, not Physical: no tool is swung and no DoFunction runs. The piece is lifted by the
+        // native furniture pickup sequence itself, the same profile `place_owned_object` admits under.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
+
+        GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        // THE PIECE IS RE-RESOLVED FROM THE COLLECTION, not from the id. Furniture is a
+        // `NetCollection<Furniture>` with no key, so a tile is what selects a piece and the id is what
+        // proves it is still the piece the caller saw.
+        Furniture? piece = location.furniture.FirstOrDefault(candidate => candidate is not null && candidate.TileLocation == tile);
+        if (piece is null)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "move_placed_furniture_target_not_found",
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};furniture_in_location={location.furniture.Count}");
+        string liveTargetId = BuildPlacedFurnitureTargetId(location, targetX, targetY, piece);
+        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "move_placed_furniture_target_changed",
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={liveTargetId};item={piece.QualifiedItemId}");
+        // The game's own furniture reach, which is what `LowPriorityLeftClick` gates the pickup on
+        // (GameLocation.cs:8002): `Furniture.IsCloseEnoughToFarmer` (Furniture.cs:1295-1308) tests the
+        // piece's own footprint inflated by 96 px against the actor's standing pixel. The action therefore
+        // publishes no `approach` requirement - a tile distance would be a second, invented spelling of
+        // this predicate, and a whole-room decoration is reachable from a tile the eight-neighbour ring
+        // does not contain.
+        if (!piece.IsCloseEnoughToFarmer(Game1.player))
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "move_placed_furniture_out_of_range",
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};actor_tile={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};furniture_tile={FormatTile(tile)}");
+
+        string itemId = piece.QualifiedItemId;
+        Vector2 placedTile = piece.TileLocation;
+        int placedRotation = piece.currentRotation.Value;
+        bool placedFlipped = piece.Flipped;
+        int carriedBefore = CountQualifiedItem(Game1.player, itemId);
+        bool stored;
+        try
+        {
+            // The native sequence, in the native order (GameLocation.cs:8081-8093).
+            piece.performRemoveAction();
+            location.furniture.Remove(piece);
+            stored = Game1.player.addItemToInventoryBool(piece);
+        }
+        catch (Exception nativeException)
+        {
+            // The three steps are not atomic, so a throw can leave the piece in neither place. Putting it
+            // back before answering is the same rollback the inventory-full path uses; the receipt is
+            // Uncertain because the native call really did run and its effect is unknown.
+            bool restored = RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Uncertain,
+                "move_placed_furniture_native_exception",
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};native_exception={nativeException.GetType().Name};restored={restored.ToString().ToLowerInvariant()};native_call_ran_unknown=true");
+        }
+
+        int carriedAfter = CountQualifiedItem(Game1.player, itemId);
+        if (!stored)
+        {
+            // A PIECE THAT FIT NOWHERE GOES BACK WHERE IT STOOD. `addItemToInventoryBool` answers false
+            // when the pack had no room, and the piece has already left the collection at that point.
+            bool restored = RestoreFurniturePiece(location, piece, placedTile, placedRotation, placedFlipped);
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "move_placed_furniture_inventory_full",
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};stored=false;restored={restored.ToString().ToLowerInvariant()};restored_tile={FormatTile(piece.TileLocation)};restored_rotation={piece.currentRotation.Value};inventory_carried={carriedAfter};inventory_slots={Game1.player.Items.Count}");
+        }
+
+        // Re-read the world AFTER the call: the collection is the authority on whether the piece left, and
+        // the pack is the authority on whether it arrived. Neither answer is taken from the native return.
+        bool gone = !location.furniture.Contains(piece);
+        bool carried = carriedAfter == carriedBefore + 1 && CarriesPiece(Game1.player, piece);
+        string evidence =
+            $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};"
+            + $"native_stored={stored.ToString().ToLowerInvariant()};removed_from_furniture={gone.ToString().ToLowerInvariant()};"
+            + $"carried={carried.ToString().ToLowerInvariant()};inventory_before={carriedBefore};inventory_after={carriedAfter};"
+            + $"carried_tile={FormatTile(placedTile)};carried_rotation={placedRotation};carried_flipped={placedFlipped.ToString().ToLowerInvariant()};"
+            + $"furniture_in_location={location.furniture.Count}";
+        return gone && carried
+            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "placed_furniture_picked_up", evidence)
+            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "move_placed_furniture_postcondition_unavailable", evidence);
+    }
+
+    /// <summary>
+    /// Puts one piece of furniture back exactly where it stood: the same instance, its own tile and its own
+    /// rotation, appended back to the location's furniture collection.
+    ///
+    /// Only the collection membership is restored through the game's own `NetCollection.Add`; the piece's
+    /// own state was never moved by the pickup sequence, so re-writing the tile and the two rotation fields is
+    /// a no-op that makes the postcondition explicit rather than assumed. Answers whether the piece is in the
+    /// collection afterwards, because a rollback nobody checked is a claim rather than a fact.
+    /// </summary>
+    private static bool RestoreFurniturePiece(GameLocation location, Furniture piece, Vector2 tile, int rotation, bool flipped)
+    {
+        if (!location.furniture.Contains(piece))
+            location.furniture.Add(piece);
+        piece.TileLocation = tile;
+        piece.currentRotation.Value = rotation;
+        piece.Flipped = flipped;
+        return location.furniture.Contains(piece);
+    }
+
+    /// <summary>
+    /// Whether this actor's pack holds this exact instance. The native delivery stores the piece itself
+    /// (`Items[i] = item`, Farmer.cs:4318), so identity is the reference, not a second derived id.
+    /// </summary>
+    private static bool CarriesPiece(Farmer player, Item piece)
+    {
+        for (int slot = 0; slot < player.Items.Count; slot++)
+            if (ReferenceEquals(player.Items[slot], piece)) return true;
+        return false;
     }
 
     /// <summary>
@@ -908,7 +1098,57 @@ internal sealed partial class ExecutionManager
                 objectCount++;
             }
         }
+        // PLACED FURNITURE IS PART OF THE ROOM, and nothing published it.
+        //
+        // Furniture lives in `location.furniture`, not `location.objects`, and this Mod never read that collection - a grep
+        // for it finds one comment. So a house's bed, sofa, rug and paintings were literally invisible to the companion
+        // while `place_owned_object` could ADD to the same invisible collection (Game1.cs:7033-7043). Measured 2026-11-03
+        // (`round30`): it crafted a stone sign and planted it in front of the farmhouse door, and the frame it was reading
+        // carried one door, three placement candidates and one colour target - no furniture at all, so "there is nothing
+        // here yet" was the truthful reading of its own snapshot.
+        //
+        // Published as `placed_furniture` with `Slot: -1`: this lane has no tool that picks furniture up, and advertising a
+        // slot would promise one. The removal action refuses a furniture tile by name (see
+        // `remove_placed_item_furniture_move_unsupported`) rather than `target_not_found`, so the companion learns the
+        // difference between "not there" and "there, but I cannot move it".
+        int furnitureCount = 0;
+        foreach (Furniture piece in location.furniture)
+        {
+            if (furnitureCount >= WorldObjectTargetLimit)
+                break;
+            if (piece is null) continue;
+            Vector2 tile = piece.TileLocation;
+            if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+                continue;
+            string targetId = BuildPlacedFurnitureTargetId(location, (int)tile.X, (int)tile.Y, piece);
+            if (!publishedTargetIds.Add(targetId)) continue;
+            result.Add(new BridgeWorldObjectTarget(
+                targetId,
+                "placed_furniture",
+                location.NameOrUniqueName,
+                (int)tile.X,
+                (int)tile.Y,
+                -1,
+                piece.QualifiedItemId,
+                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName));
+            furnitureCount++;
+        }
         return result;
+    }
+
+    /// <summary>
+    /// The identity of one placed furniture piece: where it stands and what it is.
+    ///
+    /// <para>
+    /// Coordinates are part of it on purpose - moving a piece changes which piece is at a tile, and unlike an item stack there
+    /// is no slot or count to distinguish two identical chairs. What is NOT part of it is anything the piece's own use
+    /// changes (burning state, contents), so a fireplace that is lit keeps the identity it had while unlit.
+    /// </para>
+    /// </summary>
+    internal static string BuildPlacedFurnitureTargetId(GameLocation location, int x, int y, Furniture piece)
+    {
+        string raw = $"{location.NameOrUniqueName}:{x},{y}:{piece.QualifiedItemId}:placed-furniture";
+        return $"placed_furniture_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
     /// <summary>Per-kind cap on published world-object targets, matching the sibling families' bounded discovery.</summary>

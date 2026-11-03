@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Protocol;
 using Xunit;
@@ -23,7 +23,7 @@ public sealed class AdvanceDayLifecycleWiringTests
     public void AdvanceDayIsRegisteredAsAnExecutionActionWithNoArguments()
     {
         FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
-            .SingleOrDefault(candidate => candidate.ActionId == "advance_day");
+            .SingleOrDefault(candidate => candidate.ActionId == "sleep");
 
         registration.Should().NotBeNull();
         registration!.Kind.Should().Be(FarmhandOperationKind.Execution);
@@ -38,7 +38,7 @@ public sealed class AdvanceDayLifecycleWiringTests
     public void AdvanceDayDeclaresTheCrossDayWatchdogRatherThanTheOrdinaryOne()
     {
         FarmhandActionDescriptor descriptor = FarmhandActionCatalog.Registrations
-            .Single(candidate => candidate.ActionId == "advance_day").Descriptor!;
+            .Single(candidate => candidate.ActionId == "sleep").Descriptor!;
 
         // A co-op night waits on other players' native ready state, a save, and a
         // new-day transition, so it cannot fit the 60s ordinary-action ceiling.
@@ -49,7 +49,7 @@ public sealed class AdvanceDayLifecycleWiringTests
     [Fact]
     public void AdvanceDayIsReachableOverTheWireWithAnEmptyArgumentList()
     {
-        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("advance_day");
+        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("sleep");
 
         argumentProperties.Should().NotBeNull("a registered action the parser rejects can never be invoked");
         argumentProperties!.Should().BeEmpty();
@@ -60,7 +60,7 @@ public sealed class AdvanceDayLifecycleWiringTests
     {
         // The whole input is the actor's own bed and its native ready state, so
         // there is nothing a client may legitimately spoof or retarget.
-        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("advance_day");
+        string[]? argumentProperties = BridgeProtocol.ExecutionArgumentProperties("sleep");
 
         argumentProperties.Should().NotBeNull();
         argumentProperties!.Should().NotContain(

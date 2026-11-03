@@ -90,6 +90,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TransportApproachWiringTests.cs" Link="TransportApproachWiringTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\UseMineLadderExitTests.cs" Link="UseMineLadderExitTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\WorldObjectActionTests.cs" Link="WorldObjectActionTests.cs" />
   </ItemGroup>
 </Project>

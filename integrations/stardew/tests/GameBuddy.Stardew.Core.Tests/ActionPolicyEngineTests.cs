@@ -21,7 +21,7 @@ public sealed class ActionPolicyEngineTests
         // on the required topology IS the visibility gate).
         enabled.Should().Contain("pet_animal");
         enabled.Should().Contain("clear_debris");
-        enabled.Should().Contain("advance_day");
+        enabled.Should().Contain("sleep");
         // ride_minecart was promoted to live_verified with its native-local live
         // gate, so it is default-consent too.
         enabled.Should().Contain("ride_minecart");

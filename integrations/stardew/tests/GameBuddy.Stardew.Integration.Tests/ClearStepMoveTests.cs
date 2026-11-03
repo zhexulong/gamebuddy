@@ -145,7 +145,7 @@ public sealed class ClearStepMoveTests
     public void TheWalkNeverCallsAClearingAction()
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
-        foreach (string clearingAction in new[] { "clear_debris", "break_rock_source", "chop_stump", "cut_weeds", "cut_grass" })
+        foreach (string clearingAction in new[] { "clear_debris", "break_rock", "chop_tree", "chop_stump", "cut_weeds", "cut_grass" })
         {
             source.Should().NotContain(clearingAction,
                 $"{clearingAction} is destructive and belongs to the caller; clearing the way is never the walk's decision");

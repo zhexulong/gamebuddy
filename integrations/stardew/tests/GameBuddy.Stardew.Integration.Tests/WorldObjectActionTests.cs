@@ -44,7 +44,7 @@ public sealed class WorldObjectActionTests
             new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" }),
         ("remove_placed_item", "buildings_farm_management", "placed_item_removed", "Object.performRemoveAction",
             new[] { "x", "y", "slot", "expectedTargetId" }),
-        ("break_container_source", "resource_gathering", "container_source_broken", "BreakableContainer.performToolAction",
+        ("break_container", "resource_gathering", "container_source_broken", "BreakableContainer.performToolAction",
             new[] { "x", "y", "slot", "expectedTargetId" }),
     };
 
@@ -172,7 +172,12 @@ public sealed class WorldObjectActionTests
         // NEGATIVE: the action must never reach performToolAction/performRemoveAction itself
         // or delete the object by hand — those are the seam's own steps, owned by the game.
         code.Should().NotContain("performToolAction(");
-        code.Should().NotContain("performRemoveAction(");
+        // Scoped to THIS action's two bodies rather than the file: `move_placed_furniture` shares the file
+        // and performs the piece's own removal teardown as the FIRST step of the game's furniture pickup
+        // (GameLocation.removeQueuedFurniture, GameLocation.cs:8081), which is a different seam with a
+        // different owner. The force of the pin is unchanged for the action it names.
+        foreach (string removalBody in new[] { body, executed })
+            removalBody.Should().NotContain("performRemoveAction(");
         code.Should().NotContain("objects.Remove(");
 
         // The named slot must really hold the equipped seam tool, and the object must really

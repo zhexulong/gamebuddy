@@ -105,7 +105,7 @@ public sealed class BodyOwnerNamingTests
         LocalExecutionReceipt receipt = Refuse(("activeDayAdvance", null));
 
         receipt.ReasonCode.Should().Be("body_owned_by_day_advance");
-        receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=advance_day;interruptible=false;phase=committed;cancel_safe=false");
+        receipt.Evidence.Should().Be("owner_execution_id=unknown;owner_action=sleep;interruptible=false;phase=committed;cancel_safe=false");
     }
 
     [Fact]

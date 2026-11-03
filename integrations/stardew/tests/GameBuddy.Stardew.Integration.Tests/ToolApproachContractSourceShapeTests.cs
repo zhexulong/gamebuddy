@@ -167,8 +167,8 @@ public sealed class ToolApproachContractSourceShapeTests
         string source = Read("integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs");
         (string Action, string Signature)[] migrated =
         {
-            ("chop_tree_source", "private LocalExecutionReceipt ExecuteChopTreeSource("),
-            ("break_rock_source", "private LocalExecutionReceipt ExecuteBreakRockSource("),
+            ("chop_tree", "private LocalExecutionReceipt ExecuteChopTreeSource("),
+            ("break_rock", "private LocalExecutionReceipt ExecuteBreakRockSource("),
         };
 
         foreach ((string action, string signature) in migrated)

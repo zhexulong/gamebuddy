@@ -2055,7 +2055,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             // MineShaft.lowestLevelReached on the game thread.
             "select_mine_elevator_floor" => new[] { "expectedTargetId" },
             "use_raft" => new[] { "slot", "x", "y" },
-            "mount_transport" or "enter_mine" => new[] { "x", "y", "expectedTargetId" },
+            "mount_transport" or "enter_mine" or "use_mine_ladder" => new[] { "x", "y", "expectedTargetId" },
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
@@ -2151,6 +2151,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
         "place_owned_object" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "remove_placed_item" or "break_container" => new[] { "x", "y", "slot", "expectedTargetId" },
+        // The furniture pickup names the tile and the piece's own opaque id, and NO slot: which backpack slot
+        // receives the piece is the game's own decision (`GameLocation.removeQueuedFurniture`,
+        // GameLocation.cs:8084-8093, takes the first free one), so a caller-supplied slot would be a value
+        // nothing reads.
+        "move_placed_furniture" => new[] { "x", "y", "expectedTargetId" },
     "answer_dialogue" => new[] { "responseKey" },
 
         // The actor's own attachment state. dismount_transport carries NO arguments: its subject

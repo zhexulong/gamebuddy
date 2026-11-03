@@ -54,9 +54,14 @@ public sealed class AnswerDialogueNpcQuestionDispatchSourceShapeTests
     {
         string body = AnswerBody();
 
+        // The leaf that actually calls the location, and the branch that reaches it. Both are asserted together because the
+        // leaf is now shared: `use_mine_ladder` answers the mine's own `ExitMine` question through the same call, so a
+        // leaf that stopped reading `Game1.currentLocation` would break two actions while this file stayed green.
         body.Should().Contain(
-            "answered = Game1.currentLocation.answerDialogue(answer);",
+            "answered = TryAnswerLocationQuestion(answer);",
             "a plain location question still settles through the location, as the native box does (DialogueBox.cs:392)");
+        ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile))
+            .Should().Contain("Game1.currentLocation?.answerDialogue(answer) == true");
     }
 
     [Fact]

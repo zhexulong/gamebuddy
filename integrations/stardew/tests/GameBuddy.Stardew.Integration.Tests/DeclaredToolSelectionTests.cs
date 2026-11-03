@@ -44,8 +44,8 @@ public sealed class DeclaredToolSelectionTests
         // `break_rock_source` and `chop_tree_source` claim ANY upgrade level: `BasicOnly` demanded the level-0 tier the
         // game does not require and refused every tier it accepts, so the action would have stopped working the moment a
         // player upgraded (see `FarmhandResourceTemplateValue.BasicOnly` for the native lines that refute its docblock).
-        Claim("break_rock_source").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pickaxe", FarmhandResourceTemplateValue.AnyUpgrade));
-        Claim("chop_tree_source").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("break_rock").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pickaxe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("chop_tree").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("chop_stump").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_crop").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
@@ -102,7 +102,7 @@ public sealed class DeclaredToolSelectionTests
         // `Pickaxe` refuses `UpgradeLevel < 2` (Pickaxe.cs:186) - it demands MORE than the basic tier - and `Axe` refuses
         // no upgrade level at all. The old `BasicOnly` claim therefore admitted the one tier the game rejects and refused
         // every tier it accepts, so a player who upgraded an axe would have lost tree-felling permanently.
-        DeclaredToolResolution upgradedOnly = Resolve(new List<Item?> { Pickaxe(upgradeLevel: 1) }, "break_rock_source");
+        DeclaredToolResolution upgradedOnly = Resolve(new List<Item?> { Pickaxe(upgradeLevel: 1) }, "break_rock");
 
         upgradedOnly.RefusalCode.Should().BeNull("an upgraded pickaxe is the tool the game expects");
         upgradedOnly.Slot.Should().Be(0);
@@ -111,7 +111,7 @@ public sealed class DeclaredToolSelectionTests
         // rather than a pinned tier.
         DeclaredToolResolution both = Resolve(
             new List<Item?> { Axe(upgradeLevel: 0), Pickaxe(upgradeLevel: 2), Pickaxe(upgradeLevel: 0) },
-            "break_rock_source");
+            "break_rock");
 
         both.RefusalCode.Should().BeNull();
         both.Slot.Should().Be(1, "the level-2 pickaxe outranks the level-0 one");
@@ -125,7 +125,7 @@ public sealed class DeclaredToolSelectionTests
         Resolve(new List<Item?> { Axe(upgradeLevel: 0) }, "cut_weeds").RefusalCode.Should().Be("tool_not_owned:scythe");
         // An upgraded pickaxe now SATISFIES the claim, so a tier mismatch is only reachable through a claim that
         // declares a floor above the owned level - `ResolveDeclaredTool` still refuses by name when one does.
-        Resolve(new List<Item?> { Pickaxe(upgradeLevel: 3) }, "break_rock_source").RefusalCode.Should().BeNull();
+        Resolve(new List<Item?> { Pickaxe(upgradeLevel: 3) }, "break_rock").RefusalCode.Should().BeNull();
     }
 
     [Fact]
@@ -138,7 +138,7 @@ public sealed class DeclaredToolSelectionTests
         {
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds("),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass("),
-            ("break_rock_source", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource("),
+            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource("),
             ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop("),
         })
         {
@@ -257,7 +257,7 @@ public sealed class DeclaredToolSelectionTests
         {
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
             ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass(", "CutGrass"),
-            ("break_rock_source", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
+            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource(", "BreakRockSource"),
             ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop(", "WaterCrop"),
         })
         {

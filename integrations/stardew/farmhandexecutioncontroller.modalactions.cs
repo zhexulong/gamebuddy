@@ -353,7 +353,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             else
             {
                 // A plain location question settles through the location (DialogueBox.cs:392).
-                answered = Game1.currentLocation.answerDialogue(answer);
+                answered = TryAnswerLocationQuestion(answer);
             }
 
             if (!answered)
@@ -398,6 +398,20 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             $"modal_type=DialogueBox;question=true;response_key={responseKey};native_answered=true;outro_started=true;postcondition=dialogue_outro_started",
             this.TryCreateLocalObservation(actor));
     }
+
+    /// <summary>
+    /// Settles a plain LOCATION question - the leaf <c>answer_dialogue</c> uses for anything that is neither an NPC
+    /// face-to-face question nor a cutscene question (DialogueBox.cs:392).
+    ///
+    /// <para>
+    /// It is one method because two actions answer the same kind of question: this suite's <c>answer_dialogue</c>, and
+    /// <c>use_mine_ladder</c>, which drives the <c>ExitMine</c> question the mine level's own exit-ladder branch opens
+    /// (MineShaft.cs:3073-3081). The second must not re-implement the answer, or the two could disagree about which
+    /// leaf settles a location question at all.
+    /// </para>
+    /// </summary>
+    internal static bool TryAnswerLocationQuestion(Response answer) =>
+        Game1.currentLocation?.answerDialogue(answer) == true;
 
     /// <summary>
     /// The menu's own <c>(skill, level)</c> pair, or null when it cannot be read.

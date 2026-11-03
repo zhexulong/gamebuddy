@@ -53,6 +53,16 @@ internal sealed class MovementActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            // use_mine_ladder leaves through the level's own exit ladder. It is its own action rather
+            // than an `enter_mine` argument because the two ladder kinds have one owner each: a request
+            // naming the other kind is refused by name with this action.
+            "use_mine_ladder" => this.executions.RequestLocalUseMineLadder(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "ride_minecart" => this.executions.RequestLocalMinecartRide(
                 request.RequestId,
                 (int)(request.Args.X ?? 0),

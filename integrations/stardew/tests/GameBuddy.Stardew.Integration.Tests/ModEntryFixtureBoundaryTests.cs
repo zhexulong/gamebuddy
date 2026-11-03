@@ -48,6 +48,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalClaimMailAttachmentFixture",
         "InitializeNativeLocalEnterExitWarpActionFixture",
         "InstallNativeLocalEnterMineLadderFixture",
+        "InstallNativeLocalUseMineLadderFixture",
         "InitializeNativeLocalMoveLadderFixture",
         "InitializeNativeLocalMultiDayFixture",
     // The composed multi-day world's own two members: the door's standing spot (the tile the session's start must be

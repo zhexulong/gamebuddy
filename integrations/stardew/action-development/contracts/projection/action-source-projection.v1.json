@@ -393,6 +393,44 @@
         "handlerGroup": null
       },
       {
+        "actionId": "use_mine_ladder",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "use_mine_ladder",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "mine_left"
+          },
+          "targetFamily": "mineEntranceTargets"
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "enter_exit",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -1195,6 +1233,45 @@
           "effect": "write",
           "postcondition": {
             "name": "placed_item_removed"
+          },
+          "targetFamily": "worldObjectTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "move_placed_furniture",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "move_placed_furniture",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string",
+              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "placed_furniture_picked_up"
           },
           "targetFamily": "worldObjectTargets"
         },
@@ -3920,7 +3997,10 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [],
+    "experimentalActionIds": [
+      "use_mine_ladder",
+      "move_placed_furniture"
+    ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
       "snapshotCapabilitiesFromCapabilitySet": true,
@@ -3977,6 +4057,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4014,6 +4095,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4071,6 +4153,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4108,6 +4191,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4165,6 +4249,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4202,6 +4287,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4259,6 +4345,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4296,6 +4383,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4353,6 +4441,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4390,6 +4479,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4447,6 +4537,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4484,6 +4575,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",
@@ -4637,6 +4729,7 @@
       "machine_inspect",
       "machine_load",
       "mount_transport",
+      "move_placed_furniture",
       "move_to_tile",
       "name_entity",
       "navigate_to_destination",
@@ -4731,6 +4824,7 @@
       "ride_minecart",
       "select_mine_elevator_floor",
       "travel",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft"
     ],
@@ -4780,6 +4874,7 @@
       "equip_tool",
       "equip_wearable",
       "load_building_chest",
+      "move_placed_furniture",
       "pan_ore",
       "place_crab_pot",
       "place_owned_object",

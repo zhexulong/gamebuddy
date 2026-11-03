@@ -737,6 +737,10 @@ internal sealed partial class ExecutionManager
                 ? locationMatches
                 : Game1.player.currentLocation is StardewValley.Locations.MineShaft elevatorMine
                     && elevatorMine.mineLevel == int.Parse(specification.TargetLocation.Substring("UndergroundMine".Length)),
+            // `use_mine_ladder` leaves through the game's own `ExitMine_Leave` warp, so the exact landing tile is the
+            // game's business and only the destination map is a legal postcondition - the same rule `use_obelisk` and
+            // `use_warp_item` follow for a warp the game performs itself.
+            "use_mine_ladder" => locationMatches,
             // The obelisk's landing tile is NOT a legal postcondition: Route A's warpFarmer may
             // shift the actor to a passable neighbour of the requested tile, and Route B's landing
             // is chosen inside the game's own delayed callback (WarpTotemEntry, else the whichFarm
@@ -762,7 +766,9 @@ internal sealed partial class ExecutionManager
                                 ? "obelisk_arrived"
                                 : specification.Action == "use_warp_item"
                                     ? "warp_item_arrived"
-                                    : "travel_completed"
+                                    : specification.Action == "use_mine_ladder"
+                                        ? "mine_left"
+                                        : "travel_completed"
             : specification.Action == "enter_exit"
                 ? "enter_exit_postcondition_mismatch"
                 : specification.Action == "ride_minecart"
@@ -775,7 +781,9 @@ internal sealed partial class ExecutionManager
                                 ? "obelisk_postcondition_mismatch"
                                 : specification.Action == "use_warp_item"
                                     ? "warp_item_arrival_mismatch"
-                                    : "travel_postcondition_mismatch";
+                                    : specification.Action == "use_mine_ladder"
+                                        ? "mine_exit_postcondition_mismatch"
+                                        : "travel_postcondition_mismatch";
         // A minecart ride's native terminal is the same Warped postcondition, but
         // the expected/actual pair alone cannot say which objective was ridden.
         // The published identity is echoed so the receipt names the ride.

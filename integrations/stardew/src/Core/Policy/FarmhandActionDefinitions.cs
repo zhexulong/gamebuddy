@@ -260,6 +260,14 @@ public static class FarmhandActionCatalog
         // `FarmhandActionDescriptorWire` so `plan_shape` can answer with it.
         E("mount_transport", "animal_transport", FarmhandActionHandlerGroup.Movement, A(null, null, "horse_mounted", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified, "horseTargets"),
         E("enter_mine", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_entered", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.LiveVerified, "mineEntranceTargets"),
+        // The way OUT of a mine level, and its own action rather than an `enter_mine` argument: the level's exit ladder
+        // (Buildings tile 115) opens the game's `ExitMine` question, whose Leave response performs the warp itself
+        // (MineShaft.cs:3073-3081 -> GameLocation.cs:12388-12401). `enter_mine` owns the descent ladder (173) and
+        // refuses this tile by name with `use_action=use_mine_ladder`; this action owns 115 and refuses 173 the same
+        // way. Round30 measured the gap: a companion inside a freshly generated level was published no ladder at all
+        // and stayed in the mine until it passed out. Experimental: it has no live gate yet, and promotion to
+        // LiveVerified is a separate catalog edit owned by the parent.
+        E("use_mine_ladder", "world_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "mine_left", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), FarmhandActionLifecycle.Experimental, "mineEntranceTargets"),
         // `enter_exit` resolves a warp from (x,y) and refuses when the actor is more than one tile from it
 // (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
@@ -278,6 +286,19 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
 
         E("place_owned_object", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "owned_object_placed", "Object.placementAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
         E("remove_placed_item", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_item_removed", "Object.performRemoveAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
+        // PICKING FURNITURE UP IS NOT `remove_placed_item` WITH A DIFFERENT TOOL. Furniture is
+        // `Furniture` in `location.furniture` (GameLocation.cs:452), never in `location.objects`, it is
+        // addressed by its own tile rather than by a key, and the native pickup
+        // (`GameLocation.removeQueuedFurniture`, GameLocation.cs:8074-8101) does not swing a tool at all:
+        // it performs the piece's own removal teardown, takes it out of the collection and delivers it to
+        // the backpack. So the argument shape carries no `slot` either - which slot receives the piece is
+        // the game's own decision (first free slot), exactly as `ship_item` declines to name one.
+        //
+        // `placed_furniture_picked_up` is the observed postcondition (gone from the collection AND one
+        // more in the pack), and the action is registered `Experimental`: it stays off the Agent surface
+        // until it passes its own native-local live gate, and promotion is a separate catalog edit owned
+        // by the parent.
+        E("move_placed_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_furniture_picked_up", "GameLocation.removeQueuedFurniture"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
         E("break_container", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "container_source_broken", "BreakableContainer.performToolAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
         // Declares the axe its handler requires, like break_rock declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between

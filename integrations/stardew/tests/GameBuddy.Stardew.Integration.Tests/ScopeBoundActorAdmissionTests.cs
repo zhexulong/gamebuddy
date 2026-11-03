@@ -61,11 +61,11 @@ public sealed class ScopeBoundActorAdmissionTests
     };
 
     [Theory]
-    [InlineData("break_rock_source")]
+    [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
     [InlineData("chop_stump")]
-    [InlineData("chop_tree_source")]
+    [InlineData("chop_tree")]
     [InlineData("clear_hoedirt")]
     [InlineData("collect_crab_pot_output")]
     [InlineData("cook_recipe")]
@@ -126,11 +126,11 @@ public sealed class ScopeBoundActorAdmissionTests
 
     [Theory]
     [InlineData("bait_crab_pot")]
-    [InlineData("break_rock_source")]
+    [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
     [InlineData("chop_stump")]
-    [InlineData("chop_tree_source")]
+    [InlineData("chop_tree")]
     [InlineData("clear_debris")]
     [InlineData("clear_hoedirt")]
     [InlineData("collect_animal_product")]
@@ -173,11 +173,11 @@ public sealed class ScopeBoundActorAdmissionTests
 
     [Theory]
     [InlineData("bait_crab_pot")]
-    [InlineData("break_rock_source")]
+    [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
     [InlineData("chop_stump")]
-    [InlineData("chop_tree_source")]
+    [InlineData("chop_tree")]
     [InlineData("clear_debris")]
     [InlineData("clear_hoedirt")]
     [InlineData("collect_animal_product")]
@@ -372,8 +372,8 @@ public sealed class ScopeBoundActorAdmissionTests
         // slot, x, y, expectedTargetId.
         "refill_watering_can" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "refill_target_1" },
         "scythe_crop" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "scythe_target_1" },
-        "chop_tree_source" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "target_1" },
-        "break_rock_source" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "rock_target_1" },
+        "chop_tree" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "target_1" },
+        "break_rock" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "rock_target_1" },
         "dig_artifact_spot" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "artifact_target_1" },
         "clear_hoedirt" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "hoedirt_target_1" },
         "chop_stump" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "stump_target_1" },

@@ -265,6 +265,37 @@
         "targetFamily": "mineEntranceTargets"
       },
       {
+        "actionId": "use_mine_ladder",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "mine_left"
+        },
+        "targetFamily": "mineEntranceTargets"
+      },
+      {
         "actionId": "enter_exit",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -928,6 +959,38 @@
         "effect": "write",
         "postcondition": {
           "name": "placed_item_removed"
+        },
+        "targetFamily": "worldObjectTargets"
+      },
+      {
+        "actionId": "move_placed_furniture",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "placed_furniture_picked_up"
         },
         "targetFamily": "worldObjectTargets"
       },
@@ -3093,7 +3156,10 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": []
+    "experimentalActionIds": [
+      "use_mine_ladder",
+      "move_placed_furniture"
+    ]
   },
   "protocol": {
     "schemas": [

@@ -2291,7 +2291,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             PresentationLocale: string.Empty,
             RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
             HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
+            // Two actions address this one family: `enter_mine` reads the entrance tile and the descent ladder,
+            // `use_mine_ladder` reads the exit ladder. Publishing it for only one of them would withhold the rows the
+            // other action serves, so the gate is the OR of the two.
+            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
             // Last parameter, defaulted, so it can be named here without disturbing the
             // positional arguments above it (CS1744 if the declaration moves earlier).
             ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null,

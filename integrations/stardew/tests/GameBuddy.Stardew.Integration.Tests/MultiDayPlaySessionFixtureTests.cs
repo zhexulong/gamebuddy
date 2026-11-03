@@ -202,7 +202,7 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // The action set must carry BOTH halves: the lifecycle actions and the farm work.
         int start = runner.IndexOf("if (action === \"play_session_multi_day\")", StringComparison.Ordinal);
         string set = runner[start..runner.IndexOf("];", start, StringComparison.Ordinal)];
-        foreach (string action in new[] { "advance_day", "dismiss_modal", "harvest_crop", "cut_weeds", "plant_seed" })
+        foreach (string action in new[] { "sleep", "dismiss_modal", "harvest_crop", "cut_weeds", "plant_seed" })
             set.Should().Contain($"\"{action}\"", $"the Lane G0 action set must publish {action}");
     }
 

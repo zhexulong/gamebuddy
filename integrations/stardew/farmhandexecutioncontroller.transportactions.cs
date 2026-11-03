@@ -1,6 +1,7 @@
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
+using StardewValley.Menus;
 using StardewValley.Tools;
 using StardewValley.Characters;
 using StardewValley.Locations;
@@ -56,23 +57,51 @@ internal sealed partial class ExecutionManager
     internal const string MineEntranceSelector = "Mine";
     /// <summary>The ladder-down selector of this same opaque id family.</summary>
     internal const string MineLadderSelector = "MineLadder";
+    /// <summary>The ladder-up (exit) selector of this same opaque id family.</summary>
+    internal const string MineExitLadderSelector = "MineExitLadder";
     /// <summary>The descending ladder's Buildings-layer tile index in a mine level (MineShaft.cs:3083).</summary>
     private const int MineLadderTileIndex = 173;
+    /// <summary>The exit ladder's Buildings-layer tile index in a mine level (MineShaft.cs:3073).</summary>
+    private const int MineExitLadderTileIndex = 115;
+    /// <summary>The question key the 115 branch itself opens (MineShaft.cs:3080).</summary>
+    internal const string MineExitQuestionKey = "ExitMine";
+    /// <summary>The one response that leaves; the tile offers Leave and Do nothing (MineShaft.cs:3077-3078).</summary>
+    internal const string MineExitResponseKey = "Leave";
+    /// <summary>Skull Cavern's entrance map, where `ExitMine_Leave` sends an actor past level 120.</summary>
+    internal const string SkullCavernEntranceLocation = "SkullCave";
+    /// <summary>
+    /// The secret woods shaft's level number. `ExitMine_Leave` treats it as the exception it is and returns the actor to
+    /// the Mine entrance at 67,10 rather than 23,8 (GameLocation.cs:12390-12392).
+    /// </summary>
+    internal const int SecretWoodsMineLevel = 77377;
+    /// <summary>Where `ExitMine_Leave` lands an actor leaving an ordinary mine level.</summary>
+    internal const int MineExitTileX = 23;
+    internal const int MineExitTileY = 8;
 
     private static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
         if (location?.map is null) return Array.Empty<BridgeMineEntranceTarget>();
 
-        // Inside a mine level the way down is that level's own ladder tile, whose
-        // native terminal is the same public `Game1.enterMine` this action already
-        // owns (MineShaft.checkAction case 173, MineShaft.cs:3083-3086). A shaft has
-        // no `Mine` Action tile, so reporting the entrance scan here would report
-        // nothing at all.
+        // Inside a mine level this family publishes that level's own LADDER tiles, in both directions:
+        //
+        //  - the way OUT is tile 115, which the level's shipped Buildings layer carries at its stairs, so it
+        //    exists whether or not anything has been cleared. Measured 2026-11-03 (round30): a companion that
+        //    entered level 1 was published `warps: 0`, `doorTargets: 0` and no descent ladder, so every way out
+        //    was unnamable and it stayed in the mine until it passed out at 02:00;
+        //  - the way DOWN is tile 173, which exists only after a stone is broken or a level is cleared
+        //    (`createLadderDown`, MineShaft.cs:3587-3612).
+        //
+        // A shaft has no `Mine` Action tile, so reporting the entrance scan here would report nothing at all.
         if (location is MineShaft shaft)
-            return TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)
-                ? new[] { new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), ladderX, ladderY) }
-                : Array.Empty<BridgeMineEntranceTarget>();
+        {
+            List<BridgeMineEntranceTarget> ladders = new();
+            if (TryFindMineExitLadderTile(shaft, out int exitX, out int exitY))
+                ladders.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, MineExitLadderSelector), exitX, exitY));
+            if (TryFindMineLadderTile(shaft, out int ladderX, out int ladderY))
+                ladders.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), ladderX, ladderY));
+            return ladders;
+        }
 
         int width = location.map.Layers[0].LayerWidth;
         int height = location.map.Layers[0].LayerHeight;
@@ -93,7 +122,18 @@ internal sealed partial class ExecutionManager
     /// The descent tile of a mine level, found the same way the elevator tile is: a
     /// live scan of the level's own Buildings layer, never a client coordinate.
     /// </summary>
-    internal static bool TryFindMineLadderTile(GameLocation? location, out int tileX, out int tileY)
+    internal static bool TryFindMineLadderTile(GameLocation? location, out int tileX, out int tileY) =>
+        TryFindMineTileWithIndex(location, MineLadderTileIndex, out tileX, out tileY);
+
+    /// <summary>
+    /// The EXIT tile of a mine level: the same live scan on the ladder-up index. A location that is not a mine level has
+    /// neither ladder, so it answers false and the caller turns that into a refusal rather than a coordinate.
+    /// </summary>
+    internal static bool TryFindMineExitLadderTile(GameLocation? location, out int tileX, out int tileY) =>
+        TryFindMineTileWithIndex(location, MineExitLadderTileIndex, out tileX, out tileY);
+
+    /// <summary>One mine tile by its Buildings-layer index, scanned from the live layer and never from the request.</summary>
+    private static bool TryFindMineTileWithIndex(GameLocation? location, int tileIndex, out int tileX, out int tileY)
     {
         tileX = 0;
         tileY = 0;
@@ -106,7 +146,7 @@ internal sealed partial class ExecutionManager
         {
             for (int x = 0; x < buildings.LayerWidth; x++)
             {
-                if (buildings.Tiles[x, y]?.TileIndex == MineLadderTileIndex)
+                if (buildings.Tiles[x, y]?.TileIndex == tileIndex)
                 {
                     tileX = x;
                     tileY = y;
@@ -118,11 +158,11 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The opaque id of one live mine-entry object. Two kinds share the family: a
-    /// <c>Mine</c> Action tile on the mine entrance map, and the descending ladder
-    /// tile inside a mine level. Both keep the published <c>mine_entrance_&lt;16 hex&gt;</c>
-    /// wire shape (the Host validates exactly that prefix and length), and the hash
-    /// input names the kind, so the two can never collide.
+    /// The opaque id of one live mine-entry object. Three kinds share the family: a
+    /// <c>Mine</c> Action tile on the mine entrance map, the descending ladder tile
+    /// inside a mine level, and the exit ladder tile there. All keep the published
+    /// <c>mine_entrance_&lt;16 hex&gt;</c> wire shape (the Host validates exactly that
+    /// prefix and length), and the hash input names the kind, so they can never collide.
     /// </summary>
     internal static string BuildMineEntryTargetId(string locationName, int x, int y, string selector) =>
         $"mine_entrance_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{locationName}:{x},{y}:{selector}"))).ToLowerInvariant()[..16]}";
@@ -218,9 +258,9 @@ internal sealed partial class ExecutionManager
         // the actor is already on, plus one) and never a client-supplied value.
         if (location is MineShaft)
         {
-            MineLadderTargetResolution ladder = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId);
+            MineLadderTargetResolution ladder = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Descend);
             if (!ladder.Accepted)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_ladder_target_unavailable", ladder.Evidence);
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ladder.RefusalCode, ladder.Evidence);
             // 5.2: the ladder is a tile of the level the actor is standing on, so out of the native radius means walk
             // in, not refuse. Identity and reach are re-read on arrival from the live layer.
             if (!IsTileWithinChebyshevRadius(Game1.player, ladder.TileX, ladder.TileY, 1))
@@ -248,9 +288,9 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteEnterMineLadder(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         GameLocation location = Game1.player.currentLocation;
-        MineLadderTargetResolution ladder = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId);
+        MineLadderTargetResolution ladder = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Descend);
         if (!ladder.Accepted)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_ladder_target_unavailable", ladder.Evidence);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ladder.RefusalCode, ladder.Evidence);
         if (!IsTileWithinChebyshevRadius(Game1.player, ladder.TileX, ladder.TileY, 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_ladder_out_of_range",
                 $"ladder={ladder.TileX},{ladder.TileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=did_not_arrive");
@@ -301,20 +341,187 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// Leaves the mine level through its own exit ladder.
+    ///
+    /// <para>
+    /// Boundary: the native seam is the LEVEL's own <c>checkAction</c>, not a warp this body invents.
+    /// <c>MineShaft.checkAction</c> switches on the Buildings-layer tile index (:3057) and case 115 opens the
+    /// <c>ExitMine</c> question with the game's own two responses, Leave and Do nothing (:3073-3081). This body drives
+    /// exactly that: the tile is re-read from the live layer, the game opens its question, and the answer is
+    /// "Leave", settled through the same location leaf <c>answer_dialogue</c> uses. The warp is performed by the game
+    /// inside <c>answerDialogueAction</c> (case <c>ExitMine_Leave</c>, GameLocation.cs:12388-12401), so no coordinate of
+    /// ours becomes the destination.
+    /// </para>
+    /// <para>
+    /// Why it exists: measured 2026-11-03 (round30) a companion that had taken <c>enter_mine</c> was published no
+    /// ladder at all on a freshly generated level and stayed there until it passed out at 02:00, losing the next day.
+    /// The way OUT is the one tile every mine level carries.
+    /// </para>
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalUseMineLadder(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = this.NewExecutionId(requestId);
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
+
+        GameLocation location = Game1.player.currentLocation;
+        MineLadderTargetResolution exit = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit);
+        if (!exit.Accepted)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, exit.RefusalCode, exit.Evidence);
+        // 5.2: the ladder is a tile of the level the actor is already on, so out of the native radius means walk in,
+        // not refuse. Identity and reach are re-read on arrival from the live layer.
+        if (!IsTileWithinChebyshevRadius(Game1.player, exit.TileX, exit.TileY, 1))
+            return this.TryBeginToolApproach(requestId, executionId, "use_mine_ladder", location, exit.TileX, exit.TileY, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteUseMineLadder(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+
+        return this.ExecuteUseMineLadder(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+    }
+
+    /// <summary>
+    /// Drives the exit ladder the request names. Reached both in range and on arrival, so the tile, the level and the
+    /// question are re-read from live state: the walk takes ticks and the level can be left by something else first.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteUseMineLadder(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        GameLocation location = Game1.player.currentLocation;
+        MineLadderTargetResolution exit = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit);
+        if (!exit.Accepted)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, exit.RefusalCode, exit.Evidence);
+        if (!IsTileWithinChebyshevRadius(Game1.player, exit.TileX, exit.TileY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_ladder_out_of_range",
+                $"ladder={exit.TileX},{exit.TileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=did_not_arrive");
+
+        MineShaft shaft = (MineShaft)location;
+        string origin = shaft.NameOrUniqueName;
+        int originLevel = shaft.mineLevel;
+        (string destinationLocation, int destinationX, int destinationY) = MineExitDestination(originLevel);
+
+        bool handled;
+        try
+        {
+            handled = shaft.checkAction(new xTile.Dimensions.Location(exit.TileX, exit.TileY), Game1.viewport, Game1.player);
+        }
+        catch (Exception nativeException)
+        {
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "mine_exit_native_exception",
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_dispatched=false;native_exception={nativeException.GetType().Name}");
+        }
+        if (!handled)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_ladder_not_handled",
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_handled=false");
+
+        // The question the GAME asked: its key and the responses it offered are read from the box it opened, never
+        // assumed, so a level whose 115 branch changes shape is a refusal rather than a guessed answer.
+        DialogueBox? question = Game1.activeClickableMenu as DialogueBox;
+        string questionKey = shaft.lastQuestionKey ?? string.Empty;
+        string offeredKeys = question?.responses is { Length: > 0 } offeredResponses
+            ? string.Join(",", offeredResponses.Select(response => response.responseKey))
+            : string.Join(",", (Game1.questionChoices ?? new List<Response>()).Select(response => response.responseKey));
+        bool answerOffered = question is not null
+            && question.isQuestion
+            && string.Equals(questionKey, MineExitQuestionKey, StringComparison.Ordinal)
+            && offeredKeys.Split(',').Contains(MineExitResponseKey, StringComparer.Ordinal);
+        if (!answerOffered)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_question_not_offered",
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};modal_type={(Game1.activeClickableMenu?.GetType().Name ?? "none")};question={(question?.isQuestion ?? false).ToString().ToLowerInvariant()};question_key={(questionKey.Length == 0 ? "none" : questionKey)};response_keys={(offeredKeys.Length == 0 ? "none" : offeredKeys)}");
+
+        bool answered;
+        try
+        {
+            answered = TryAnswerLocationQuestion(new Response(MineExitResponseKey, MineExitResponseKey));
+            // The same outro `answer_dialogue` performs: the box is the game's, and leaving it up would hold the
+            // body behind a modal after the world already moved.
+            question!.beginOutro();
+        }
+        catch (Exception nativeException)
+        {
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "mine_exit_native_exception",
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_dispatched=true;native_exception={nativeException.GetType().Name}");
+        }
+
+        if (!answered)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Failed, "mine_exit_answer_not_accepted",
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_answered=false");
+
+        // The answer itself performs the warp, so an immediate terminal is only available when the actor is already
+        // out of every mine level; otherwise the travel record owns the body until the game's own Warped edge.
+        if (Game1.player.currentLocation is not MineShaft stillInside)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_left",
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};actual={Game1.player.currentLocation?.NameOrUniqueName ?? "none"}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
+
+        LocalTravelSpec exitSpecification = new(executionId, requestId, "use_mine_ladder", origin, exit.TileX, exit.TileY, destinationLocation, destinationX, destinationY, this.revision, requestedDeadlineMs);
+        this.activeTravel = exitSpecification;
+        LocalExecutionReceipt pending = new(executionId, requestId, ExecutionState.Accepted, "mine_exit_pending", this.revision,
+            $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};target={destinationLocation}:{destinationX},{destinationY};still_in={stillInside.NameOrUniqueName}");
+        this.Remember(pending);
+        this.AddTrace(pending);
+        return pending;
+    }
+
+    /// <summary>
+    /// Where the game's own <c>ExitMine_Leave</c> response sends the actor, as the three-branch rule it applies to the
+    /// CURRENT mine level (GameLocation.cs:12388-12401): the secret woods shaft returns to the Mine entrance at 67,10,
+    /// anything past level 120 to the Skull Cavern entrance, and every other level to the Mine entrance at 23,8.
+    ///
+    /// <para>
+    /// The destination has to be restated here because the response performs the warp INSIDE the game, and the travel
+    /// record needs a destination to judge arrival - the same shape <c>select_mine_elevator_floor</c> already uses for
+    /// the entrance map (MineElevatorMenu.cs:86). A value that drifts from the game's rule cannot produce a false
+    /// success: it produces <c>mine_exit_postcondition_mismatch</c>.
+    /// </para>
+    /// </summary>
+    internal static (string Location, int X, int Y) MineExitDestination(int mineLevel) => mineLevel switch
+    {
+        SecretWoodsMineLevel => (MineEntranceLocation, 67, 10),
+        > HighestElevatorMineLevel => (SkullCavernEntranceLocation, 3, 4),
+        _ => (MineEntranceLocation, MineExitTileX, MineExitTileY),
+    };
+
+    /// <summary>
     /// The live ladder the request names on the mine level the actor is on, or a refusal. The tile is re-read from the
     /// level's own Buildings layer and compared with the requested coordinate, so a stale coordinate or an old target
     /// id cannot pick a level.
+    ///
+    /// <para>
+    /// EACH LADDER KIND HAS EXACTLY ONE OWNER: <c>use_mine_ladder</c> leaves through tile 115 and <c>enter_mine</c>
+    /// descends tile 173, and neither serves the other's tile. A request that names the other kind is refused BY NAME
+    /// with the action that does own it, because the two rows share one opaque id family and a caller cannot otherwise
+    /// tell them apart: `mine_entrance_&lt;16 hex&gt;` for an exit ladder and for a descent ladder look identical.
+    /// </para>
     /// </summary>
-    private static MineLadderTargetResolution ResolveMineLadderTarget(GameLocation location, int targetX, int targetY, string expectedTargetId)
+    private static MineLadderTargetResolution ResolveMineLadderTarget(GameLocation? location, int targetX, int targetY, string expectedTargetId, MineLadderKind wanted)
     {
-        if (location is not MineShaft shaft
-            || !TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)
-            || ladderX != targetX || ladderY != targetY
-            || !string.Equals(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), expectedTargetId, StringComparison.Ordinal))
-            return new MineLadderTargetResolution(false, targetX, targetY,
-                $"target={expectedTargetId};tile={targetX},{targetY}");
+        if (location is not MineShaft shaft)
+            return new MineLadderTargetResolution(false, wanted, targetX, targetY, "not_in_mine",
+                $"expected=MineShaft;actual={location?.NameOrUniqueName ?? "none"};tile={targetX},{targetY}");
 
-        return new MineLadderTargetResolution(true, ladderX, ladderY, string.Empty);
+        bool namesDescend = TryFindMineLadderTile(shaft, out int descendX, out int descendY)
+            && descendX == targetX && descendY == targetY
+            && string.Equals(BuildMineEntryTargetId(shaft.NameOrUniqueName, descendX, descendY, MineLadderSelector), expectedTargetId, StringComparison.Ordinal);
+        bool namesExit = TryFindMineExitLadderTile(shaft, out int exitX, out int exitY)
+            && exitX == targetX && exitY == targetY
+            && string.Equals(BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, MineExitLadderSelector), expectedTargetId, StringComparison.Ordinal);
+
+        if (wanted == MineLadderKind.Descend)
+        {
+            if (namesDescend)
+                return new MineLadderTargetResolution(true, wanted, descendX, descendY, string.Empty, string.Empty);
+            if (namesExit)
+                return new MineLadderTargetResolution(false, wanted, exitX, exitY, "mine_ladder_is_exit",
+                    $"target={expectedTargetId};tile={exitX},{exitY};mine_level={shaft.mineLevel};use_action=use_mine_ladder");
+            return new MineLadderTargetResolution(false, wanted, targetX, targetY, "mine_ladder_target_unavailable",
+                $"target={expectedTargetId};tile={targetX},{targetY};mine_level={shaft.mineLevel}");
+        }
+
+        if (namesExit)
+            return new MineLadderTargetResolution(true, wanted, exitX, exitY, string.Empty, string.Empty);
+        if (namesDescend)
+            return new MineLadderTargetResolution(false, wanted, descendX, descendY, "mine_ladder_descends",
+                $"target={expectedTargetId};tile={descendX},{descendY};mine_level={shaft.mineLevel};use_action=enter_mine");
+        return new MineLadderTargetResolution(false, wanted, targetX, targetY, "mine_exit_ladder_target_unavailable",
+            $"target={expectedTargetId};tile={targetX},{targetY};expected=MineShaft+Buildings:{MineExitLadderTileIndex};mine_level={shaft.mineLevel};use_action=enter_mine");
     }
 
     /// <summary>
@@ -395,8 +602,15 @@ internal sealed partial class ExecutionManager
             $"tile={targetX},{targetY};is_rafting={player.isRafting.ToString().ToLowerInvariant()};stamina_before={staminaBefore:0.####};stamina_after={player.Stamina:0.####}");
     }
 
-    /// <summary>One live ladder tile, or <c>Accepted=false</c> with the request's own tiles and the id it named.</summary>
-    private sealed record MineLadderTargetResolution(bool Accepted, int TileX, int TileY, string Evidence);
+    /// <summary>Which of the two ladder kinds a request may name; each kind has exactly one owner action.</summary>
+    internal enum MineLadderKind
+    {
+        Descend,
+        Exit,
+    }
+
+    /// <summary>One live ladder tile of the kind the request named, or a refusal code and its evidence.</summary>
+    private sealed record MineLadderTargetResolution(bool Accepted, MineLadderKind Kind, int TileX, int TileY, string RefusalCode, string Evidence);
 
     /// <summary>One live mine entrance, with the level its own Action string declares.</summary>
     private sealed record MineEntranceTargetResolution(bool Accepted, int TileX, int TileY, int DeclaredLevel, string Evidence);

@@ -853,7 +853,7 @@ public sealed class BridgeProtocolSerializationTests
             "outdoor",
             new[]
             {
-                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", kind, kind == "tree" ? "Tree" : "Cluck", 2, "East", kind == "tree" ? "chop_tree_source" : "collect_animal_product"),
+                new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", kind, kind == "tree" ? "Tree" : "Cluck", 2, "East", kind == "tree" ? "chop_tree" : "collect_animal_product"),
             },
             "A dense discovery affordance is nearby.",
             false,
@@ -905,7 +905,7 @@ public sealed class BridgeProtocolSerializationTests
         // last two as `false` would tell the Agent it cannot go somewhere that was never checked.
         var undecided = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null);
         var reachable = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "crop", "Crop", 1, "East", null, true);
-        var blocked = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "tree", "Tree", 2, "West", "chop_tree_source", false);
+        var blocked = new ObserveSceneAffordancePayload("sr1_AAAAAAAAAAAAAAAA", "tree", "Tree", 2, "West", "chop_tree", false);
 
         RoundTrip(undecided).Reachable.Should().BeNull();
         RoundTrip(reachable).Reachable.Should().BeTrue();

@@ -175,7 +175,7 @@ public sealed class FarmhandActionSurfaceExportTests
         {
             ["cut_weeds"] = ("scythe", DeclaredUpgrade("cut_weeds")),
             ["cut_grass"] = ("scythe", DeclaredUpgrade("cut_grass")),
-            ["break_rock_source"] = ("pickaxe", DeclaredUpgrade("break_rock_source")),
+            ["break_rock"] = ("pickaxe", DeclaredUpgrade("break_rock")),
             ["water_crop"] = ("watering_can", DeclaredUpgrade("water_crop")),
         };
 

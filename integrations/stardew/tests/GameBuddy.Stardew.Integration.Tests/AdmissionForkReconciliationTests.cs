@@ -60,9 +60,9 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
         ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,
-        ["farmhandexecutioncontroller.transportactions.cs"] = 3,
+        ["farmhandexecutioncontroller.transportactions.cs"] = 4,
         ["farmhandexecutioncontroller.treebushactions.cs"] = 3,
-        ["farmhandexecutioncontroller.worldobjectactions.cs"] = 3,
+        ["farmhandexecutioncontroller.worldobjectactions.cs"] = 4,
         ["farmhandexecutioncontroller.buildfarmbuildingactions.cs"] = 1,
         ["farmhandexecutioncontroller.nameentityactions.cs"] = 1,
         // The four handlers a killed lane left behind; each calls the shared admission, so the table must name it.
