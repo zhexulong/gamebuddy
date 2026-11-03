@@ -2127,7 +2127,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chest_store,
         label: "Store Item in Chest",
         description:
-          "Move one carried inventory stack into a live adjacent chest. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from one chestStoreTargets entry of the MOST RECENT observe result for the current location (never invent or guess coordinates). No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
+          "Move one carried inventory stack into a live adjacent chest. x, y and expectedTargetId must be copied exactly from one `chests` entry of the MOST RECENT observe result for the current location (that entry's chestId is the expectedTargetId; never invent or guess coordinates), and slot plus expectedQualifiedItemId from the carried stack itself. No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -2158,7 +2158,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
         label: "Take Item From Chest",
         description:
-          "Move one observed chest slot's item into the Farmhand inventory. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the chestRetrieveTargets entries of the MOST RECENT observe result (never invent or guess coordinates). expectedQualifiedItemId pins the observed slot item so a changed slot is rejected rather than taken. No ItemGrabMenu is opened. Returns chest_retrieved.",
+          "Move one item out of an observed chest into the Farmhand inventory. x, y and expectedTargetId must be copied exactly from one `chests` entry of the MOST RECENT observe result (that entry's chestId is the expectedTargetId), and expectedQualifiedItemId from one item in that entry's `items` list, which carries every item the container holds. expectedQualifiedItemId pins the observed item so an item that is gone is refused (chest_empty) rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
