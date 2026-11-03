@@ -671,7 +671,9 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
   assert.doesNotMatch(content, /unknown_macro/);
   assert.doesNotMatch(content, /\{\{/u);
 
-  // Plant an unresolved macro in the premise: the published-source assertion fails.
+  // Plant an unresolved macro in the premise: the published-source assertion fails. The
+  // token is one this product does not recognise at all - a typo or an extension, not a
+  // standard macro it merely cannot fill - so the catalog still fails closed and now names it.
   const poisoned = validateWorldBook({
     schemaVersion: 1,
     worldBookId: "macro-worldbook",
@@ -686,7 +688,11 @@ test("buildGameSurfaceAuthoredCatalog renders worldbook macros, drops an unrende
         { metadata: worldBookMetadata(poisoned), book: poisoned },
         { char: "Kohaku" },
       ),
-    /game_authored_context_unrendered_macro/,
+    (error: unknown) => {
+      assert.match(String(error), /game_authored_context_unrecognised_macro/);
+      assert.match(String(error), /\{\{unrendered\}\}/u);
+      return true;
+    },
   );
 });
 test("a Game keyword entry is PUBLISHED as a live per-turn candidate, and the vendor's own selector binds it to the turn whose world state names it", async () => {
@@ -1271,8 +1277,60 @@ test("the Game catalog refuses a scenario macro the run cannot render", () => {
           text: "A {{unknown_macro}} reference.",
         },
       ),
-    /game_authored_context_unrendered_macro/,
+    (error: unknown) => {
+      assert.match(String(error), /game_authored_context_unrecognised_macro/);
+      assert.match(String(error), /\{\{unknown_macro\}\}/u);
+      return true;
+    },
   );
+});
+
+test("a standard macro in a Game authored-context source omits that source, names it, and keeps the rest", () => {
+  const scope = {
+    continuityId: "continuity",
+    sessionId: "pi-session-game-scenario-standard-macro",
+    surface: "game" as const,
+    threadId: "game-session",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const worldBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "standard-macro-worldbook",
+    revision: 1,
+    alwaysOnPremise: "The reviewed companion backdrop.",
+    entries: [],
+  });
+  const stderrWrite = process.stderr.write;
+  let diagnostics = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const catalog = buildGameSurfaceAuthoredCatalog(
+      scope,
+      { metadata: worldBookMetadata(worldBook), book: worldBook },
+      { char: "Kohaku" },
+      {
+        scenarioId: "player-scenario-dated",
+        revision: 1,
+        canonicalHash: "f".repeat(64),
+        text: "It is {{date}} on the farm.",
+      },
+    );
+    // The source that carries a standard macro is dropped...
+    assert.deepEqual(
+      catalog.stableSources.map((source) => source.kind),
+      ["lorebook_constant"],
+    );
+    // ...and the invariant the refusal protected survives: nothing literal is published.
+    assert.doesNotMatch(JSON.stringify(catalog), /\{\{/u);
+    // ...and the loss is named, so the player can go and edit the card.
+    assert.match(diagnostics, /omitting authored context source player-scenario-dated \(scenario\)/u);
+    assert.match(diagnostics, /\{\{date\}\}/u);
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
 });
 
 test("the vendor publishes the Game catalog carrying the companion's scenario as a stable kind", async () => {
@@ -1432,8 +1490,46 @@ test("the closing direction refuses a macro the run cannot render and a rendered
     await assert.rejects(() => fixture.catalog(), /tavern_stable_context_post_history_too_long/);
 
     await rewriteClosingDirection(fixture.artifacts, companionRoot, "Close as {{unknown_macro}} says.");
-    await assert.rejects(() => fixture.catalog(), /tavern_stable_context_unrendered_post_history_macro/);
+    await assert.rejects(
+      () => fixture.catalog(),
+      (error: unknown) => {
+        // A token this product does not recognise is still refused - it is not a card doing the
+        // normal thing - and the refusal names the token so the player can fix it.
+        assert.match(String(error), /tavern_stable_context_unrecognised_post_history_macro/);
+        assert.match(String(error), /\{\{unknown_macro\}\}/u);
+        return true;
+      },
+    );
   } finally {
+    fixture.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+test("a standard macro costs her the closing direction, named, instead of the whole catalogue", async () => {
+  // The asymmetry this replaces: the same `{{time}}` in a world-book entry only dropped that
+  // entry, while here it refused every assembly of the companion's entire context.
+  const root = await canonicalTestRoot("gamebuddy-catalog-post-history-standard-macro-");
+  const fixture = await closingDirectionFixture(root);
+  const stderrWrite = process.stderr.write;
+  let diagnostics = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await rewriteClosingDirection(fixture.artifacts, fixture.paths.companionRoot, "Close as {{time}} says.");
+    const catalog = await fixture.catalog();
+    // Optional field, dropped whole - not emptied into a literal placeholder.
+    assert.equal(Object.hasOwn(catalog, "postHistoryInstructions"), false);
+    assert.doesNotMatch(JSON.stringify(catalog), /\{\{/u);
+    // The catalog still publishes, which is the whole point of the change.
+    assert.equal(catalog.version, "gamebuddy-authored-context-catalog/v2");
+    // ...and the player is told which field and which macro, not a count.
+    assert.match(diagnostics, /omitting post_history_instructions/u);
+    assert.match(diagnostics, /\{\{time\}\}/u);
+  } finally {
+    process.stderr.write = stderrWrite;
     fixture.close();
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
