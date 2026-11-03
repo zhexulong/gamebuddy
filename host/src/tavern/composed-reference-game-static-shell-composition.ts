@@ -20,6 +20,7 @@ import {
   TavernBrowserValidatorsV1,
   type ComposedTavernProfile,
   type WorldInfoStateV1,
+  projectSnapshotDraftV1,
 } from "./browser-contract/index.js";
 import type { ChatEventStream } from "./chat-event-stream.js";
 import type { ChatPipelineService } from "./chat-pipeline-service.js";
@@ -449,10 +450,7 @@ async function projectComposedChatSnapshot(
       companion: { name: state.companionDisplayName, handle: state.companionHandle },
       title: state.title,
       transcript: [...state.transcript],
-      draft: {
-        revision: state.draft.revision,
-        present: state.draft.text !== null,
-      },
+      draft: projectSnapshotDraftV1(state.draft),
       turn: state.turn,
       worldInfo,
     },

@@ -356,6 +356,23 @@ export const BrowserDraftV1Schema = strictObject({
   text: Type.Union([BoundedText, Type.Null()]),
 });
 /**
+ * The draft a Chat snapshot publishes: its revision, whether a body exists, and - additive optional
+ * v1 - the body itself (see `TavernStateSnapshotV1Schema.chat.draft`).
+ *
+ * Every projection of that snapshot reads this one facade field, and the shape it produces is the
+ * same in all of them. Hand-written at each call site, a producer that omitted `text` would still
+ * validate - the field is optional - while the surface it feeds lost the player's draft body and the
+ * shell's one read could not tell a draft from no draft. One function is what keeps the three
+ * fields one fact.
+ */
+export function projectSnapshotDraftV1(draft: Readonly<{ revision: number; text: string | null }>): {
+  revision: number;
+  present: boolean;
+  text: string | null;
+} {
+  return { revision: draft.revision, present: draft.text !== null, text: draft.text };
+}
+/**
  * One safe bounded Memory row the browser may see. The handle is an opaque
  * projected handle (never the vendor CAS `stateToken`, which exceeds the
  * frozen handle bound); the title is a fixed category label and never derives
@@ -1927,7 +1944,20 @@ export const TavernStateSnapshotV1Schema = strictObject({
       }),
       title: Type.Union([Type.String({ maxLength: 256 }), Type.Null()]),
       transcript: Type.Array(BrowserMessageV1Schema),
-      draft: strictObject({ revision: Revision, present: Type.Boolean() }),
+      draft: strictObject({
+        revision: Revision,
+        present: Type.Boolean(),
+        /**
+         * The draft body, from the same read that produced `revision` and `present` beside it.
+         *
+         * Additive optional v1 fact, and the reason a client needs no second route: `present` alone
+         * says only *whether* there is a body, so a reader that had nothing else had to read the
+         * draft route too - and a turn landing between the two reads consumed the draft between
+         * them, so the pair disagreed while each read was individually correct. `null` is "no
+         * draft", never an empty one; absent means a Host that predates the field.
+         */
+        text: Type.Optional(Type.Union([BoundedText, Type.Null()])),
+      }),
       turn: Type.Union([BrowserTurnV1Schema, Type.Null()]),
       worldInfo: Type.Union([Type.Null(), WorldInfoStateV1Schema]),
     }),

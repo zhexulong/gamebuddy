@@ -237,7 +237,7 @@ export function ComposedReferenceGameApp() {
       try {
         const doReset = pendingResetCursor;
         pendingResetCursor = false;
-        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+        const pair = await readChatSnapshotPair(composedApiRef.current);
         const root = pair.root;
         const draft = pair.draft;
         if (disposed) return;
@@ -311,7 +311,7 @@ export function ComposedReferenceGameApp() {
           const current = viewRef.current;
           if (current.kind !== "ready") return;
           try {
-            const { root, draft } = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+            const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
             const latest = viewRef.current;
             // A recovery that started under these reads is reading the same
             // authority with a cursor of its own; its answer supersedes this one.
@@ -524,7 +524,7 @@ export function ComposedReferenceGameApp() {
   const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
-    const { root, draft } = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+    const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
     const runningTurn =
       root.chat.chat.turn === null || terminalTurn(root.chat.chat.turn) ? null : root.chat.chat.turn.handle;
     setPreview((existing) =>
@@ -997,7 +997,7 @@ export function ComposedReferenceGameApp() {
         setOpeningNotice(null);
         let root = await composedApiRef.current.readState();
         if (openingTargetIndex !== undefined) root = await commitChosenOpening(root, openingTargetIndex);
-        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, null, root);
+        const pair = await readChatSnapshotPair(composedApiRef.current, root);
         adoptMountedChat(pair.root, pair.draft);
         openPanelOf(CHAT_PANEL, chatEntryRef)();
       } catch (error) {
@@ -1067,7 +1067,7 @@ export function ComposedReferenceGameApp() {
           { apiVersion: 1, selectionGeneration: selection.generation, chatHandle: next.handle },
           csrfToken,
         );
-        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current);
+        const pair = await readChatSnapshotPair(composedApiRef.current);
         if (pair.root.chat.selection?.chatHandle === removedHandle) {
           // The runtime could not leave the archived Chat, so nothing may keep
           // reading its stream.

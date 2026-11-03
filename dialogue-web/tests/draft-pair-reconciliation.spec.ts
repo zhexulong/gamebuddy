@@ -1,24 +1,22 @@
 import { expect, test, type Page } from "./frontend-coverage";
 
 /**
- * The shell reads the composed root and the durable draft as ONE snapshot, but they are two routes.
+ * The shell reads the composed root and the durable draft it carries as ONE snapshot.
  *
- * `use-composed-bootstrap` (and the poll, the stream recovery, the reconcile pass and every Chat
- * reread) reads `/composed-reference-game/v1/state`, then `/api/tavern/v1/draft`, and fails closed
- * with `state_reconciliation_required` when `draft.revision` disagrees with `chat.draft.revision`.
- * The two reads are not atomic: the Host commits a player message between them during a turn, and
- * that commit consumes the draft (`chat-thread-store` bumps `tavern_drafts.revision` on acceptance).
- * So a surface watching a turn can meet a pair that disagrees while both routes are individually
- * correct - and the whole shell is replaced by the problem view.
+ * The defect this file used to pin: the root published `chat.draft` as `{revision, present}` only,
+ * so the shell read `/api/tavern/v1/draft` for the body and compared the two answers - while the
+ * Host commits between them. Accepting a player message consumes the draft (`chat-thread-store`:
+ * `UPDATE tavern_drafts SET revision = revision + 1, draft_content = NULL` inside the acceptance
+ * transaction), so a pair read during a turn disagreed while each route was individually correct,
+ * and the whole shell became the problem view. Measured in `shots-final64`: driver P sent its second
+ * turn and read zero `li.message` rows while `/state` still served five; drivers Q/R/S/T then could
+ * not find `.app-bar-actions` at all.
  *
- * shots-final64 measured the consequence: driver P sent its second turn, waited its whole 180 s
- * budget (`turn settled: false null`), the DOM then had zero `li.message` rows while the Host's own
- * `/state` still served five, and drivers Q/R/S/T could not find `.app-bar-actions` at all - the
- * shell was no longer the shell.
- *
- * These tests pin the invariant at the layer that decides: ONE read pair that disagrees is a
- * transient ordering fact about two routes, not a state fault the player has to see. A pair that
- * still disagrees after the re-read is a real conflict and still fails closed.
+ * The root now carries the body in the read that already carried the revision, so there is no
+ * second route left to disagree with: the first test is that the body arrives, from that one read,
+ * while a `/draft` route is wired to answer a different revision - the exact input that used to end
+ * the shell. The second is the one failure this path still owns: a root with no Chat half is not a
+ * shell it can build.
  */
 
 const token = "A".repeat(43);
@@ -28,7 +26,10 @@ const expiresAtMs = 1_900_000_000_000;
 const playerMessageHandle = "X".repeat(42) + "A";
 const openedMessageHandle = "W".repeat(42) + "A";
 
-function composedRoot(options: Readonly<{ draftRevision: number; draftPresent: boolean; transcript: readonly { role: "player" | "companion"; text: string }[] }>) {
+function composedRoot(options: Readonly<{
+  draft: Readonly<{ revision: number; present: boolean; text?: string | null }> | null;
+  transcript: readonly { role: "player" | "companion"; text: string }[];
+}>) {
   return {
     apiVersion: 1,
     build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
@@ -40,21 +41,24 @@ function composedRoot(options: Readonly<{ draftRevision: number; draftPresent: b
       operations: [{ operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" }],
       navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
       selection: { chatHandle: handle, generation: 1, stateRevision: handle },
-      chat: {
-        companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
-        title: null,
-        transcript: options.transcript.map((message, index) => ({
-          handle: (message.role === "player" ? playerMessageHandle : openedMessageHandle) + String(index),
-          role: message.role,
-          text: message.text,
-          locale: "und",
-          order: index,
-          revision: 1,
-        })),
-        draft: { revision: options.draftRevision, present: options.draftPresent },
-        turn: null,
-        worldInfo: null,
-      },
+      chat:
+        options.draft === null
+          ? null
+          : {
+              companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
+              title: null,
+              transcript: options.transcript.map((message, index) => ({
+                handle: (message.role === "player" ? playerMessageHandle : openedMessageHandle) + String(index),
+                role: message.role,
+                text: message.text,
+                locale: "und",
+                order: index,
+                revision: 1,
+              })),
+              draft: options.draft,
+              turn: null,
+              worldInfo: null,
+            },
       memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
       eventStream: null,
     },
@@ -82,34 +86,32 @@ function composedRoot(options: Readonly<{ draftRevision: number; draftPresent: b
 }
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-const problem = (status: number, code: string) => ({
-  status,
-  contentType: "application/json",
-  body: JSON.stringify({ type: `urn:gamebuddy:tavern:${code}`, title: code, status, code, requestId: csrfToken, retryable: false }),
-});
 
 const TRANSCRIPT = [
   { role: "companion" as const, text: "The lantern over the porch is still lit." },
   { role: "player" as const, text: "Are you there?" },
 ];
+const DRAFT_TEXT = "A half-written line the player left behind.";
 
 /**
- * Mount the shell where `chat.draft` moved between the two reads, which is exactly what a Host
- * committing the player's message mid-turn looks like from two separate routes.
- *
- * `draftRouteRevisions` is served one entry per `/draft` read: the first read is the stale pair the
- * shell used to die on, the second is the same authority caught up.
+ * Mount the shell with the Host's root serving `draft` and a `/draft` route wired to answer a
+ * DIFFERENT revision - the input a Host committing the player's message mid-turn really produces.
+ * The route is counted, because "the shell needed a second read to get the body" is the defect.
  */
-async function mountShell(page: Page, options: Readonly<{ stateRevision: number; draftRouteRevisions: readonly number[] }>): Promise<void> {
-  const root = composedRoot({ draftRevision: options.stateRevision, draftPresent: false, transcript: TRANSCRIPT });
+async function mountShell(
+  page: Page,
+  options: Readonly<{
+    draft: Readonly<{ revision: number; present: boolean; text?: string | null }> | null;
+    draftRoute?: Readonly<{ revision: number; text: string | null }>;
+  }>,
+): Promise<{ draftReads: () => number }> {
+  const root = composedRoot({ draft: options.draft, transcript: TRANSCRIPT });
   let draftReads = 0;
-  await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/tavern/v1/draft", (route) => {
-    const revision = options.draftRouteRevisions[Math.min(draftReads, options.draftRouteRevisions.length - 1)];
     draftReads += 1;
-    route.fulfill(jsonOk({ apiVersion: 1, revision, text: null }));
+    route.fulfill(jsonOk({ apiVersion: 1, revision: options.draftRoute?.revision ?? 0, text: options.draftRoute?.text ?? null }));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) => route.fulfill(jsonOk({ apiVersion: 1, choices: [] })));
   await page.route("**/api/composed-reference-game/v1/game/installation/discovery", (route) => route.fulfill(jsonOk({ apiVersion: 1, candidates: [], diagnostics: [] })));
@@ -120,12 +122,12 @@ async function mountShell(page: Page, options: Readonly<{ stateRevision: number;
     route.fulfill(jsonOk({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null })),
   );
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) => route.fulfill(jsonOk({ devices: [], defaultSelectable: true })));
-  await page.route("**/api/tavern/v1/settings/language", (route) => route.fulfill(jsonOk({ revision: 1, locale: "zh-CN" })));
+  await page.route("**/api/tavern/v1/settings/language", (route) => route.fulfill(jsonOk({ revision: 1, locale: "en-US" })));
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 1, active: null, connections: [], providers: [] })),
   );
   await page.route("**/api/tavern/v1/settings/profiles", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, chat: { revision: 1, thinkingLevel: "medium" }, game: { revision: 1, thinkingLevel: "medium" }, recommendedModels: [] })),
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 1, chat: { revision: 1, thinkingLevel: "medium" }, game: { revision: 1, thinkingLevel: "medium" }, recommendedModels: [] })),
   );
   await page.route("**/api/tavern/v1/companions", (route) => route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle, name: "Mira", isCurrent: true }] })));
   await page.route("**/api/tavern/v1/persona", (route) => route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, name: null, description: null })));
@@ -133,34 +135,41 @@ async function mountShell(page: Page, options: Readonly<{ stateRevision: number;
   await page.route("**/api/tavern/v1/greeting", (route) => route.fulfill(jsonOk({ apiVersion: 1, present: false, revision: null, label: null, variants: [] })));
   await page.route("**/api/tavern/v1/import-history", (route) => route.fulfill(jsonOk({ apiVersion: 1, entries: [] })));
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  return { draftReads: () => draftReads };
 }
 
 const shellReading = (page: Page) =>
   page.evaluate(() => ({
     appBar: document.querySelector(".app-bar") !== null,
     rows: document.querySelectorAll(".message-list > li.message").length,
+    composer: (document.querySelector(".composer-section textarea") as HTMLTextAreaElement | null)?.value ?? null,
     problem: (document.querySelector(".problem-view")?.innerText ?? "").trim().slice(0, 120),
   }));
 
-test("a draft pair that moved between the two reads does not replace the shell with a problem view", async ({ page }) => {
-  // `/state` says revision 1 (the Host committed the player's message and consumed the draft); the
-  // first `/draft` read still answers revision 0 because it was issued into the same commit.
-  await mountShell(page, { stateRevision: 1, draftRouteRevisions: [0, 1] });
+test("the draft body arrives in the snapshot's own read, so no second route can disagree with it", async ({ page }) => {
+  // The root says revision 5 with the body; the draft route beside it answers revision 6 with none -
+  // exactly what a Host that consumed the draft between two reads looks like from two routes.
+  const host = await mountShell(page, {
+    draft: { revision: 5, present: true, text: DRAFT_TEXT },
+    draftRoute: { revision: 6, text: null },
+  });
   await page.waitForTimeout(2500);
   const reading = await shellReading(page);
-  console.log(`[draft-pair] after a one-read disagreement: ${JSON.stringify(reading)}`);
+  console.log(`[draft-pair] one read carrying the body: ${JSON.stringify(reading)} draftReads=${host.draftReads()}`);
 
-  expect(reading.problem, "a disagreement that is gone on the re-read is not a state fault").toBe("");
-  expect(reading.appBar, "the app bar stays: the shell was never in an unreconcilable state").toBe(true);
+  expect(reading.problem, "a pair that cannot disagree never becomes a state fault").toBe("");
+  expect(reading.appBar, "the shell stays the shell").toBe(true);
   expect(reading.rows, "and the durable transcript is what the surface renders").toBe(TRANSCRIPT.length);
+  expect(reading.composer, "the player's unsent draft is what the Host confirmed, from the same read").toBe(DRAFT_TEXT);
+  expect(host.draftReads(), "no second request for a fact the root already carried").toBe(0);
 });
 
-test("a draft pair that keeps disagreeing still fails closed with its own sentence", async ({ page }) => {
-  await mountShell(page, { stateRevision: 1, draftRouteRevisions: [0] });
+test("a root with no Chat half is a shell it cannot build, and still says so", async ({ page }) => {
+  await mountShell(page, { draft: null });
   await page.waitForTimeout(3000);
   const reading = await shellReading(page);
-  console.log(`[draft-pair] after a persistent disagreement: ${JSON.stringify(reading)}`);
+  console.log(`[draft-pair] no Chat half: ${JSON.stringify(reading)}`);
 
-  expect(reading.appBar, "a pair that never reconciles is a real conflict and the surface must not pretend").toBe(false);
-  expect(reading.problem, "the player reads the reconciliation sentence").toContain("聊天状态未能安全对齐");
+  expect(reading.appBar, "there is no shell to keep: the root carries no conversation").toBe(false);
+  expect(reading.problem, "the player reads the reconciliation sentence").toContain("The chat state could not be safely reconciled.");
 });

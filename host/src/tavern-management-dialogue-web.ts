@@ -80,6 +80,7 @@ import {
   type WorldInfoItemCommandV1,
   type WorldInfoStateV1,
   type WorldInfoUpdateCommandV1,
+  projectSnapshotDraftV1,
 } from "./tavern/browser-contract/index.js";
 import type { CompanionCardFormat } from "./tavern/companion-card-export.js";
 import type { CompanionCardExportResult } from "./tavern/companion-card-export-service.js";
@@ -2537,10 +2538,7 @@ async function sendProjectedSnapshot(
       companion: { name: state.companionDisplayName, handle: state.companionHandle },
       title: state.title,
       transcript: [...state.transcript],
-      draft: {
-        revision: state.draft.revision,
-        present: state.draft.text !== null,
-      },
+      draft: projectSnapshotDraftV1(state.draft),
       turn: state.turn,
       worldInfo,
     },

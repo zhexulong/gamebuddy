@@ -207,7 +207,7 @@ export type TavernStateSnapshotV1 = Readonly<{
     companion: Readonly<{ name: string; handle: string }>;
     title: string | null;
     transcript: readonly BrowserMessageV1[];
-    draft: Readonly<{ revision: number; present: boolean }>;
+    draft: Readonly<{ revision: number; present: boolean; text?: string | null }>;
     turn: BrowserTurnV1 | null;
     worldInfo: WorldInfoStateV1 | null;
   }> | null;
@@ -328,7 +328,7 @@ const PROVIDER_FAILURES = [
   "context_overflow",
   "endpoint_unreachable",
 ] as const;
-export type ProviderFailureV1 = (typeof PROVIDER_FAILURES)[number];
+type ProviderFailureV1 = (typeof PROVIDER_FAILURES)[number];
 const SUBMIT_DISPOSITIONS = ["accepted", "duplicate"] as const;
 const CANCEL_DISPOSITIONS = ["cancelled", "completion_won", "already_terminal"] as const;
 const STATUS_DISPOSITIONS = ["unknown", "pending", "accepted", "terminal", "expired"] as const;
@@ -523,6 +523,11 @@ const SNAPSHOT_SELECTION_KEYS = ["chatHandle", "generation", "stateRevision"] as
 const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn", "worldInfo"] as const;
 const CHAT_COMPANION_KEYS = ["name", "handle"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
+/**
+ * The same shape carrying the additive optional `text` the Host now publishes with it: the body of
+ * the draft this read already holds, so the shell needs no second route to fetch it.
+ */
+const CHAT_DRAFT_KEYS_WITH_TEXT = ["revision", "present", "text"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
 const SUBMIT_COMMAND_KEYS = ["apiVersion", "selectionGeneration", "text", "locale"] as const;
 const SUBMIT_COMMAND_KEYS_DRAFT = [
@@ -752,6 +757,21 @@ function isSelection(value: unknown): boolean {
   );
 }
 
+/**
+ * A draft projection: the snapshot's `chat.draft`, or the `draft.changed` event's payload.
+ *
+ * One rule for both because they carry one fact. The snapshot may additionally carry the body
+ * (`text`, additive optional v1); the event never does, since a change notification that shipped up
+ * to 16 KiB of draft text on every edit would be a different event. `null` is "no draft", never an
+ * empty one - the same meaning `BrowserDraftV1.text` has on the draft route.
+ */
+function isDraftProjection(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (!hasExactKeys(value, CHAT_DRAFT_KEYS) && !hasExactKeys(value, CHAT_DRAFT_KEYS_WITH_TEXT)) return false;
+  if (!isNonNegativeSafeInteger(value.revision) || typeof value.present !== "boolean") return false;
+  return value.text === undefined || value.text === null || isNfcUtf8Text(value.text);
+}
+
 function isChat(value: unknown): boolean {
   if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_CHAT_KEYS)) return false;
   if (
@@ -763,13 +783,7 @@ function isChat(value: unknown): boolean {
     return false;
   if (value.title !== null && !isLengthBoundedString(value.title, 0, 256)) return false;
   if (!Array.isArray(value.transcript) || !value.transcript.every(isBrowserMessage)) return false;
-  if (
-    !isRecord(value.draft) ||
-    !hasExactKeys(value.draft, CHAT_DRAFT_KEYS) ||
-    !isNonNegativeSafeInteger(value.draft.revision) ||
-    typeof value.draft.present !== "boolean"
-  )
-    return false;
+  if (!isDraftProjection(value.draft)) return false;
   if (value.turn !== null && !isBrowserTurn(value.turn)) return false;
   if (value.worldInfo !== null && !isWorldInfo(value.worldInfo)) return false;
   return true;
@@ -801,13 +815,7 @@ function isBrowserEvent(value: unknown): value is BrowserEventV1 {
       isNfcUtf8Text(value.payload.delta)
     );
   if (value.eventType === "message.committed") return isBrowserMessage(value.payload);
-  if (value.eventType === "draft.changed")
-    return (
-      isRecord(value.payload) &&
-      hasExactKeys(value.payload, ["revision", "present"]) &&
-      isNonNegativeSafeInteger(value.payload.revision) &&
-      typeof value.payload.present === "boolean"
-    );
+  if (value.eventType === "draft.changed") return isDraftProjection(value.payload);
   if (value.eventType === "turn.state_changed") return isBrowserTurn(value.payload);
   if (value.eventType === "stream.resync_required")
     return (

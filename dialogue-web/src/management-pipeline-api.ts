@@ -726,7 +726,7 @@ export type TavernStateSnapshotV1 = Readonly<{
     companion: Readonly<{ name: string; handle: string }>;
     title: string | null;
     transcript: readonly BrowserMessageV1[];
-    draft: Readonly<{ revision: number; present: boolean }>;
+    draft: Readonly<{ revision: number; present: boolean; text?: string | null }>;
     turn: BrowserTurnV1 | null;
     worldInfo: WorldInfoStateV1 | null;
   }> | null;
@@ -1402,6 +1402,11 @@ const SNAPSHOT_SELECTION_KEYS = ["chatHandle", "generation", "stateRevision"] as
 const SNAPSHOT_CHAT_KEYS = ["companion", "title", "transcript", "draft", "turn", "worldInfo"] as const;
 const CHAT_COMPANION_KEYS = ["name", "handle"] as const;
 const CHAT_DRAFT_KEYS = ["revision", "present"] as const;
+/**
+ * The same shape carrying the additive optional `text` the Host publishes with it: the body of the
+ * draft the snapshot's own read already holds, so a client needs no second route to fetch it.
+ */
+const CHAT_DRAFT_KEYS_WITH_TEXT = ["revision", "present", "text"] as const;
 const MEMORY_KEYS = ["readAvailable", "mutationAvailable", "projectionRevision"] as const;
 const MEMORY_ITEM_KEYS = ["handle", "title", "content", "category", "status", "origin", "pinned"] as const;
 const MEMORY_READ_KEYS = ["apiVersion", "projectionRevision", "memories", "chapters"] as const;
@@ -2416,9 +2421,10 @@ function isChat(value: unknown): boolean {
   if (!Array.isArray(value.transcript) || !value.transcript.every(isBrowserMessage)) return false;
   if (
     !isRecord(value.draft) ||
-    !hasExactKeys(value.draft, CHAT_DRAFT_KEYS) ||
+    !(hasExactKeys(value.draft, CHAT_DRAFT_KEYS) || hasExactKeys(value.draft, CHAT_DRAFT_KEYS_WITH_TEXT)) ||
     !isNonNegativeSafeInteger(value.draft.revision) ||
-    typeof value.draft.present !== "boolean"
+    typeof value.draft.present !== "boolean" ||
+    (value.draft.text !== undefined && value.draft.text !== null && !isNfcUtf8Text(value.draft.text))
   )
     return false;
   if (value.turn !== null && !isBrowserTurn(value.turn)) return false;

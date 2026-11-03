@@ -1,7 +1,6 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages, messages } from "../i18n";
 import {
-  type BrowserDraftV1,
   type BrowserTurnV1,
   type ReferencePipelineApi,
   TavernProblemError,
@@ -118,7 +117,9 @@ export function useComposedBootstrap(
         const bootToken = params.get("boot");
         const restoredPanel = params.get(PANEL_PARAM);
         const root =
-          bootToken === null ? await composedApiRef.current.readState() : await composedApiRef.current.bootstrap(bootToken);
+          bootToken === null
+            ? await composedApiRef.current.readState()
+            : await composedApiRef.current.bootstrap(bootToken);
         if (bootToken !== null) {
           const url = new URL(window.location.href);
           // The one-time boot token is stripped from the fragment; a panel the
@@ -129,7 +130,7 @@ export function useComposedBootstrap(
               : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
-        const pair = await readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, null, root);
+        const pair = await readChatSnapshotPair(composedApiRef.current, root);
         if (!active) return;
         const session = createReferencePipelineSession(pair.root.chat);
         setPreview(null);
@@ -145,13 +146,10 @@ export function useComposedBootstrap(
   }, [commit]);
 
   /**
-   * The pair a poll hop projects: the loop's own read of both routes, reconciled. `/state` carries
-   * the durable draft's revision and presence, so a hop that agrees with the draft this surface
-   * already holds costs no `/draft` read at all; `readChatSnapshotPair` owns that rule, so a hop and
-   * a mount cannot disagree about what a pair means.
+   * The pair a poll hop projects: the root's own read, which carries the draft's revision *and* its
+   * body, so a hop costs one request and every hop learns the draft as it stands.
    */
-  const resolvePollDraft = (held: BrowserDraftV1) =>
-    readChatSnapshotPair(composedApiRef.current, tavernApiRef.current, held);
+  const resolvePollDraft = () => readChatSnapshotPair(composedApiRef.current);
 
   const startPolling = (): void => {
     if (pollActiveRef.current) return;
@@ -200,7 +198,7 @@ export function useComposedBootstrap(
       }
       const pending = current.session.pending;
       try {
-        const { root, draft } = await resolvePollDraft(current.draft);
+        const { root, draft } = await resolvePollDraft();
         let session = current.session.applySnapshot(root.chat);
         if (session.pending !== null) {
           const status = await tavernApiRef.current.readSubmissionStatus({
