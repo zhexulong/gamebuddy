@@ -339,16 +339,12 @@ await assertLiveRunArtifactFresh();
 // route. The opening task's unit is ONE piece of work carried out in a single pass, not a list of chores: a
 // measured session that answered it chore-by-chore paid a full model round-trip between steps (settle -> dispatch
 // p50 3.3 s, p90 37 s, none of 28 gaps under 500 ms), while a submitted plan's own node-to-node step is ~10 ms.
-// The bracketed-emotion paragraph and the "not a task announcer" rule are part of every prompt: the
-// companion's speech is what the interaction gate assesses, and the emote actions are the game-side half.
-const PRESENCE_PARAGRAPH_ZH =
-  "（台词之外可以用括号写角色的情绪或内心，例如（想了想）（有点得意）——同伴会把它演成语气而不是念出来；但身体动作不要写进括号，需要做动作时请调用 express_emote / face_direction 等游戏内动作，不要用星号动作）";
-const PRESENCE_PARAGRAPH_EN =
-  "(besides spoken lines you may put the character's feelings or inner reaction in brackets, e.g. (thinking it over) / (a bit proud) — the companion renders it as tone rather than reading it aloud; do not put body actions in brackets, and perform actions through the in-game express_emote / face_direction actions instead of asterisk stage directions)";
-const COMPANION_VOICE_RULE_ZH =
-  "**说话方式：你是陪玩家一起玩的伙伴，不是任务播报员——不要每一步都插一句旁白，也不要列项目清单式地汇报。**";
-const COMPANION_VOICE_RULE_EN =
-  "**How to talk: you are the player's companion playing along, not a task announcer — do not narrate every step, and do not recite a checklist.**";
+// The runner states the TASK and the world's state. It does not state how the companion talks: that is the system
+// prompt's job (identity-profile + the character card), and it already says it at length - no bracketed stage
+// direction, no walkie-talkie dispatch, no step-by-step inventory. Two authorities for one rule is how a rule starts
+// disagreeing with itself, and every live run since paid for the duplication in prompt bytes and in a voice that read
+// like a progress log. Measured 2026-11-03 (round26): the injected rules sat beside a system prompt that already
+// forbidden the same behaviours, and the companion still spoke as "已完成 A，正在执行 B".
 /**
  * What the player asks for on a given day, one entry per rotation id.
  *
@@ -366,6 +362,8 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   // The size is deliberately the companion's call: a number picked here would be a quota, and the point of the
   // task is to observe how it decides where a clearing should be and how much is enough.
   clear_and_cultivate: "林子东边太挤了，清一片空地出来，顺手种点东西浇上水。多大你自己定。",
+  home_and_hearth: "屋里太空了，收拾一下、摆点东西，让它像个家。",
+  home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
   till_and_sow: "把空地翻一翻，种上种子，浇上水。",
   tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
@@ -373,6 +371,8 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   dress_and_display: "给自己换身衣裳，把屋里摆出点样子来。",
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
+  home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
+  home_upgrade: "the house is cramped - go ask the carpenter about extending it.",
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
   water_and_harvest: "bring in what is ripe, then plant the empty ground. ",
   forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
@@ -390,19 +390,19 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
 
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
-    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟玩家说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
-    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and take today's work as one whole job (field work, odds and ends on the farm, the chests and machines indoors — all fair game): say what the whole job should end up as; how it gets laid out is up to the system. When you are done, tell the player in two or three sentences: how far the whole job got, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟玩家说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。`,
+    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and take today's work as one whole job (field work, odds and ends on the farm, the chests and machines indoors — all fair game): say what the whole job should end up as; how it gets laid out is up to the system. When you are done, tell the player in two or three sentences: how far the whole job got, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). `,
   }),
   memory_covenant: Object.freeze({
     // The standing rule is NOT in this prompt: it is planted as a memory through the real management surface,
     // so the probe measures whether a memory-driven covenant changes behaviour. Naming it here would make the
     // test pass by coaching.
-    zh: `今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
-    en: `Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+    zh: `今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。别的事按你平时在这院子里的习惯安排。`,
+    en: `Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. `,
   }),
   npc_social_and_presence: Object.freeze({
-    zh: `今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
-    en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. ${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+    zh: `今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。`,
+    en: `Today is Spring day 19 in Stardew Valley. You received a letter from Jodi: she needs a fresh cauliflower for a recipe and asks you to bring her one. There happens to be a fully grown cauliflower in your farm soil, and she is nearby on the farm today. `,
   }),
   multiday_routine: Object.freeze({
     // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
@@ -419,14 +419,12 @@ const SCENARIO_PROMPTS = Object.freeze({
     // day, because they are what this scenario exists to observe and a task change must not rewrite them.
     zh: (day, task) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家今天一整天都不在家，也不会回来叫你；这院子里的作息你自己安排。）` +
-      `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。` +
-      `${PRESENCE_PARAGRAPH_ZH}${COMPANION_VOICE_RULE_ZH}`,
+      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家白天在镇上忙，晚上回来；院子里这会儿的事你自己拿主意。）` +
+      `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。`,
     en: (day, task) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
       `The player has gone into town, and on the way out left you today's one thing: ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; go inside and sleep when it gets dark, and tomorrow there will be something else. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ` +
-      `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. ` +
-      `${PRESENCE_PARAGRAPH_EN}${COMPANION_VOICE_RULE_EN}`,
+      `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. `,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")

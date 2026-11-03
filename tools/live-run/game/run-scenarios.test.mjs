@@ -107,10 +107,13 @@ test("every scenario has a prompt in both locales, and none of them is empty", (
       `${scenario} needs a real English prompt`,
     );
   }
-  // The companion-voice rule and the presence paragraph are shared constants: a prompt that stops asking for
-  // them would let the interaction gate fail for a scenario that was never told how to speak.
-  assert.match(prompts, /\$\{PRESENCE_PARAGRAPH_ZH\}\$\{COMPANION_VOICE_RULE_ZH\}/u);
-  assert.match(prompts, /\$\{PRESENCE_PARAGRAPH_EN\}\$\{COMPANION_VOICE_RULE_EN\}/u);
+  // The runner states the TASK; how the companion talks belongs to the system prompt alone
+  // (`host/src/identity-profile.ts` plus the character card), which already forbids bracketed stage direction, walkie-talkie
+  // dispatch and step-by-step inventories. The duplication that used to live here meant two authorities for one rule -
+  // and every run since paid for it: measured 2026-11-03 (`round26`), the companion still spoke as "已完成 A，正在执行 B"
+  // with the words "不是任务播报员" sitting in its own prompt.
+  assert.doesNotMatch(prompts, /PRESENCE_PARAGRAPH|COMPANION_VOICE_RULE/u, "the runner must not coach the voice");
+  assert.doesNotMatch(prompts, /不是任务播报员|not a task announcer/u, "voice rules belong to the system prompt");
 });
 
 test("the run budget is a harness bound that fits the scenario, not one fixed number", () => {
@@ -282,7 +285,18 @@ test("the multi-day prompt states the day as the companion's own, without coachi
     RUNNER.indexOf("async function startVoiceLane"),
   );
   assert.doesNotMatch(watcher, /action: "advance_day"/u, "the watcher must not dispatch a night");
-  assert.match(watcher, /entry\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
+  // BOTH channels, because `advance_day` reaches the game either way: as a flat request frame the runner sent
+  // (`actionTrace`) or as a Body Program node the Mod ran natively. A program execution has no request frame at all,
+  // but its receipt names its own `actionId`, which is what the watcher reads instead. Measured 2026-10-31
+  // (`round18`): every dispatch went through a program, `actionTrace.jsonl` held 1 byte, and a watcher that looked
+  // only at the flat trace published two `entered_via=native_sleep_prompt` nights as `terminal: null, cause:
+  // "engine"`.
+  assert.match(watcher, /entry\?*\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
+  assert.match(
+    watcher,
+    /receipt\.actionId !== "advance_day"/u,
+    "and the receipt a program node minted, which names the action it ran",
+  );
 });
 
 test("the harness does not nudge a companion that ended its day without sleeping", () => {

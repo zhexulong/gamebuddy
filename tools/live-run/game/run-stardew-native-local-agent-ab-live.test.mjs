@@ -270,13 +270,17 @@ test("the runner emits system findings as a first-class health signal", () => {
   );
 });
 
-test("prompts teach companionship instead of checklist recitals (ladder-3)", () => {
-  // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" —
-  // that phrasing is what produced the recital the interaction gate rejects.
+test("prompts state the errand and leave the voice to the system prompt (ladder-3)", () => {
+  // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" — that phrasing is what produced the
+  // recital the interaction gate rejects.
   assert.doesNotMatch(RUNNER_SOURCE, /总结你为乔迪做了哪些准备/);
   assert.doesNotMatch(RUNNER_SOURCE, /summarize in one sentence what you prepared for Jodi/);
-  assert.match(RUNNER_SOURCE, /不是任务播报员/);
-  assert.match(RUNNER_SOURCE, /not a task announcer/);
+  // And the runner must not try to fix that recital by writing voice rules of its own. It did, for months: a paragraph
+  // about bracketed emotion and a "not a task announcer" rule rode on every prompt beside a system prompt that already
+  // said the same thing at greater length. Two authorities for one rule, and the companion still narrated its steps.
+  assert.doesNotMatch(RUNNER_SOURCE, /不是任务播报员/);
+  assert.doesNotMatch(RUNNER_SOURCE, /not a task announcer/);
+  assert.doesNotMatch(RUNNER_SOURCE, /PRESENCE_PARAGRAPH|COMPANION_VOICE_RULE/);
 });
 
 test("prompts state the errand, not the route (no step-by-step coaching)", () => {

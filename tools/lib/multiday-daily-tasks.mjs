@@ -25,6 +25,16 @@ import { readdirSync } from "node:fs";
 
 /** The published action ids each task expects the companion to reach for. Used by the run's own audit. */
 export const DAILY_TASK_ACTION_HINTS = Object.freeze({
+  // Home is not scenery. A companion that only ever works the fields is a farmhand; these are what make the house
+  // somewhere a person lives - arranging it, then making it bigger.
+  home_and_hearth: Object.freeze([
+    "place_owned_object",
+    "remove_placed_item",
+    "dress_mannequin",
+    "set_sign_display",
+    "craft_item",
+  ]),
+  home_upgrade: Object.freeze(["travel", "shop_purchase"]),
   clear_east_patch: Object.freeze(["cut_weeds", "cut_grass", "break_rock_source", "chop_stump"]),
   water_and_harvest: Object.freeze(["harvest_crop", "scythe_crop", "plant_seed", "water_crop"]),
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree_source"]),
@@ -88,6 +98,8 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "tend_the_animals",
   "dress_and_display",
   "clear_and_cultivate",
+  "home_and_hearth",
+  "home_upgrade",
 ]);
 
 /**
