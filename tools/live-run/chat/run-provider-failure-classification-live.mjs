@@ -72,7 +72,7 @@
  * reporting a verdict it did not measure.
  */
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -453,6 +453,38 @@ async function runOneTurn({ product, manifest, lease }) {
  * the attempt gets `RUN_ROOT_REMOVE_TIMEOUT_MS`, and a root that survived is named in
  * the report instead of hidden.
  */
+/**
+ * Remove run roots left behind by earlier invocations of this probe.
+ *
+ * `removeRunRoot` below explains why the current run's root cannot be unlinked in-process: the mounted
+ * runtime leaves the embedded Magic Context SQLite file open in THIS process, and the package exports
+ * no close for it. So the fix cannot be a better `finally` here, and it must not be a close we do not
+ * have - that would be a wrapper over an owning layer.
+ *
+ * Sweeping at the next start bounds the accumulation at one root, costs nothing, and prints the count so
+ * a root that will not go away is visible rather than swallowed.
+ */
+async function sweepStaleRunRoots({ base, log }) {
+  let entries;
+  try {
+    entries = await readdir(base, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const stale = entries.filter((entry) => entry.isDirectory() && entry.name.startsWith("gb-provider-failure-probe-"));
+  if (stale.length === 0) return;
+  let swept = 0;
+  for (const entry of stale) {
+    try {
+      await rm(join(base, entry.name), { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      swept += 1;
+    } catch {
+      // Still held by whatever holds it; the next run tries again.
+    }
+  }
+  log(`stale roots : swept ${swept} of ${stale.length} left by earlier runs`);
+}
+
 async function removeRunRoot({ root, agentDir, log }) {
   const credentialFiles = ["auth.json", "tavern-connection-keys.json", "tavern-connections.json"];
   const wiped = [];
@@ -505,6 +537,7 @@ export async function runLiveRun({
       throw new RunnerBlocked("escape_hatch_field_missing", `${product.providerId} no longer declares ${field}`);
 
   const base = process.platform === "win32" ? (process.env.LOCALAPPDATA ?? tmpdir()) : tmpdir();
+  await sweepStaleRunRoots({ base, log });
   const root = await mkdtemp(join(await realpath(base), "gb-provider-failure-probe-"));
   const principal = Object.freeze({
     playerId: "player_provider_failure_probe",
