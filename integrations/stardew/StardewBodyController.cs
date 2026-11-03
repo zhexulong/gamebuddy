@@ -270,7 +270,6 @@ internal sealed class StardewBodyController
     internal bool TryStartClearApproach(LocalMoveSpec requested, Farmer localPlayer, int tick, out string? evidence)
     {
         evidence = null;
-        this.reachabilityHint = null;
         if (this.active is not null)
             return false;
         if (this.PlanClearApproachWalk(requested, localPlayer, out evidence) is not { } planned)
@@ -393,6 +392,9 @@ internal sealed class StardewBodyController
         // otherwise attach to a refusal that computed nothing - a `closest=` pointing at a tile from an unrelated walk.
         this.reachabilityHint = null;
         evidence = null;
+        // Asked once and shared by the evidence and the hint, in both branches that can refuse. It is a pure read of the
+        // map and the entity lists, so a second call would only risk a second answer.
+        string blockedBy = DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer);
         if (this.active is not null)
         {
             // The body controller can hold exactly one ownership: an in-flight local move. It names it through the
@@ -452,7 +454,7 @@ internal sealed class StardewBodyController
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
                 + $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
-                + $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer)}"
+                + $";blocked_by={blockedBy}"
                 // The staging hint belongs on THIS path too, and its absence here was the whole reason the model could not act.
                 //
                 // Measured 2026-11-01 (`round21`): nine `move_to_tile` refusals in Mountain, each carrying 284 bytes of evidence
@@ -462,7 +464,7 @@ internal sealed class StardewBodyController
                 // the escape. The hint is now on both branches, from the same `ClosestToTarget` the flood already filled.
                 + $";{FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}"
                 + DescribeClearToReach(localPlayer, specification);
-            this.reachabilityHint = FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
+            this.reachabilityHint = RefusalHint(unreachable.ClosestToTarget, specification.TargetTile, blockedBy);
             return false;
         }
 
@@ -478,7 +480,7 @@ internal sealed class StardewBodyController
             // reading — plus, below, the two facts the native null path conflates.
             evidence += $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
             evidence += $";target_walkable={(IsWalkableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}";
-            evidence += $";blocked_by={DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer)}";
+            evidence += $";blocked_by={blockedBy}";
             // The native finder returned null. That is TWO different facts, and the receipt
             // must not collapse them:
             //   * the planner's own (cardinal) component does not contain the target's
@@ -578,7 +580,7 @@ internal sealed class StardewBodyController
             // closer, and `FormatReachableHint` already renders that as the empty string rather than a false claim.
             if (verdict is ReachabilityVerdict hintSource)
             {
-                this.reachabilityHint = FormatReachableHint(hintSource.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y));
+                this.reachabilityHint = RefusalHint(hintSource.ClosestToTarget, specification.TargetTile, blockedBy);
             }
             return false;
         }
@@ -1013,6 +1015,28 @@ internal sealed class StardewBodyController
     /// have ended the loop (a tile it could actually reach, closer to what it wanted) was computed and thrown away.
     /// `closest=none` is honest: it means the flood found no visited tile closer than where the actor already is.
     /// </summary>
+    /// <summary>
+    /// The one line a refused move carries to the model.
+    ///
+    /// <para>
+    /// A refusal always says SOMETHING. `FormatReachableHint` returns the empty string when the flood found no closer
+    /// tile, and an empty hint is indistinguishable from "there is nothing to say" - the model then receives
+    /// `{"failureCode":"no_native_path"}` and nothing else, which is what produced nine blind re-aims in `round21` and
+    /// twenty-nine refusals with an empty hint in `round26`.
+    /// </para>
+    /// <para>
+    /// When there IS a closer tile, its coordinates are the most useful thing that can be said. When there is not - an
+    /// enclosed target, where the flood never reaches the neighbourhood - the useful fact is WHAT blocks, which is the
+    /// layer `DescribeTargetOccupant` named. `Mountain.landslide` is the canonical case: a `NetBool(DaysPlayed < 5)`
+    /// over (50,4)-(52,8) that no entity query can see and that reports as `location_constraint`.
+    /// </para>
+    /// </summary>
+    internal static string RefusalHint(Point? closest, Vector2 targetTile, string blockedBy)
+    {
+        string reachable = FormatReachableHint(closest, new Point((int)targetTile.X, (int)targetTile.Y));
+        return reachable.Length > 0 ? reachable : $"no_route;blocked_by={blockedBy}";
+    }
+
     internal static string FormatReachableHint(Point? closest, Point target)
     {
         if (closest is not Point tile)
