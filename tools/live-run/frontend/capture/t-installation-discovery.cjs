@@ -23,7 +23,7 @@
 // 选择游戏文件夹 opens the OS folder picker: the control is read (name, box, disabled), and the driver
 // says plainly that the native dialog is out of its reach. 确认 registers an installation into this run's
 // durable state, which the task scopes this driver out of; it too is read, not clicked.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 const WIDTHS = [
   { w: 1440, h: 900, tag: "1440x900" },
@@ -190,6 +190,7 @@ const scrollPanelIntoView = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("t-installation-discovery.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   // The wire, so "the Host answered the cancel" is a fact about the product's own route rather than an
@@ -440,6 +441,7 @@ const scrollPanelIntoView = () => {
 
   say(`RECONCILIATION: ${checks} assertion(s), ${failed} failed`);
   say(`observed data-states: ${JSON.stringify([...observed].sort())}`);
+  await observe(page, say, "t", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-T");
