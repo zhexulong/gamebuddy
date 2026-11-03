@@ -106,6 +106,26 @@ would have been reading a broken instrument.
 When a run cannot answer, say so in those words. A `NOT EXERCISED` that is honestly labelled is worth more than a `PASS`
 that was never at risk of failing.
 
+## Measure the run, not its description of itself
+
+Every number below was wrong at least once today, and each time in the same way: the tool read a *description* of the
+thing instead of the thing.
+
+- **Plan size comes from `result.json`'s `programSubmissions[].nodes`**, never from counting `builder.` in the script
+  text. A `for` loop over twelve targets is ONE `builder.` occurrence and twelve nodes. Measured 2026-11-03: script-text
+  counting said `round30` averaged 1.59 nodes and was "mostly single-step"; the submissions say **88 programs / 212 nodes
+  / mean 2.41**, with real 16- and 27-node programs.
+- **Coverage comes from canonical action ids.** `0ed75c19` renamed `break_rock_source` → `break_rock` and friends, so a
+  tool that reads history literally reported 177 real successes as "never succeeded". `check-action-coverage.mjs` now
+  carries `RENAMED_ACTION_IDS` and validates it in both directions.
+- **Context size is `input + cacheRead`, not `input`.** `input` alone is the uncached remainder; a run with 74% cache
+  hits looks tiny and is not. Read the `usage` object of the assistant entries.
+- **A summary field's name is not its meaning.** `tokensBefore` on a compaction record is that compartment's token
+  estimate, not "how much the fold removed".
+
+When a number is going to decide a design, print where it came from (`file`, JSON path) next to it. That one habit
+caught a wrong-session analysis, a wrong-plan-size analysis, and a renamed-action false negative in a single day.
+
 ## Replay a real defect, not an imagined one
 
 Injecting the defect you had in mind proves you can turn your own gate red. The stronger test, and the one to prefer: check
