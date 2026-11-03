@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { canonicalJson, type TavernArtifactStore } from "./artifact-store.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
-import { hasUnrenderedMacro, renderMacros, renderWorldBookText, type MacroTable } from "./macro-engine.js";
+import {
+  hasUnrenderedMacro,
+  isStandardSillyTavernMacro,
+  renderMacros,
+  renderWorldBookText,
+  unrenderedMacros,
+  type MacroTable,
+} from "./macro-engine.js";
 import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
 import type {
   ChatThread,
@@ -245,6 +252,48 @@ export async function materializeTavernAuthoredContextCatalog(
     volatileSources: Object.freeze(volatileSources),
   });
 }
+/** How many macros one drop names. A field may carry more; the line stays bounded and says how many it did not name. */
+const MAX_NAMED_MACROS = 8;
+/**
+ * The most characters of one macro token a message carries.
+ *
+ * `unrenderedMacros` returns whatever the text wrote between its braces, so a card can author a token far longer than any
+ * real macro. One pathological field must not turn a log line or a refusal into a page.
+ */
+const MAX_NAMED_MACRO_CHARS = 64;
+/**
+ * The macros a rendered authored text still carries, told apart by what this product knows about them.
+ *
+ * `undefined` is the ordinary answer: nothing survived the render, so the text publishes as it stands. When something did,
+ * the two groups are different facts and both callers decide between them the same way:
+ *
+ *  - `standard` are the SillyTavern macros this engine deliberately leaves literal - `{{time}}`, `{{date}}`, `{{random}}`,
+ *    `{{lastmessage}}`, `{{idle_duration}}`, `{{original}}`, `{{model}}`; `LEFT_LITERAL_STANDARD_MACROS` holds the reason
+ *    for each. A card that wrote one is doing the normal thing at a seam that has no clock, no dice and no conversation
+ *    yet, so the field that carries it is DROPPED and named. Refusing the whole assembly over it made one optional field
+ *    able to take the companion's entire context down, while the same macro in a world-book entry only cost that entry.
+ *  - `unrecognised` are tokens in neither table, so they are a typo or an extension this product cannot render. Dropping
+ *    on a guess would hide which token it was and publishing it would put a literal `{{...}}` in the companion's context,
+ *    so that case still fails closed and names the token.
+ */
+function survivingMacros(
+  rendered: string,
+): Readonly<{ standard: readonly string[]; unrecognised: readonly string[] }> | undefined {
+  const tokens = unrenderedMacros(rendered);
+  if (tokens.length === 0) return undefined;
+  return Object.freeze({
+    standard: Object.freeze(tokens.filter((token) => isStandardSillyTavernMacro(token))),
+    unrecognised: Object.freeze(tokens.filter((token) => !isStandardSillyTavernMacro(token))),
+  });
+}
+/** The macros one message names, bounded in count and in token length so it stays one readable line. */
+function nameMacros(tokens: readonly string[]): string {
+  const named = tokens
+    .slice(0, MAX_NAMED_MACROS)
+    .map((token) => (token.length <= MAX_NAMED_MACRO_CHARS ? token : `${token.slice(0, MAX_NAMED_MACRO_CHARS)}…`));
+  const rest = tokens.length - named.length;
+  return rest > 0 ? `${named.join(", ")} (+${rest} more)` : named.join(", ");
+}
 /**
  * Her card's closing direction, or `undefined` when the card declared none.
  *
@@ -258,6 +307,10 @@ export async function materializeTavernAuthoredContextCatalog(
  * name rather than sent truncated (a shortened closing direction would read as the
  * author's own words). The fork applies the same 4 KB bound to what it accepts, so a
  * value that passes here cannot be refused there.
+ *
+ * A macro the table cannot fill is decided by `survivingMacros`: a standard SillyTavern one
+ * (`{{time}}`) costs her the closing direction, named, because that is a card doing the
+ * normal thing; a token this product does not recognise still fails closed.
  */
 async function authoredPostHistoryInstructions(
   store: TavernArtifactStore,
@@ -267,7 +320,22 @@ async function authoredPostHistoryInstructions(
   const authored = await readCompanionPostHistoryInstructions(store, companionRoot);
   if (authored === null) return undefined;
   const rendered = renderMacros(authored, macros);
-  if (hasUnrenderedMacro(rendered)) throw new Error("tavern_stable_context_unrendered_post_history_macro");
+  const surviving = survivingMacros(rendered);
+  if (surviving !== undefined && surviving.unrecognised.length > 0)
+    throw new Error(
+      `tavern_stable_context_unrecognised_post_history_macro: post_history_instructions carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+    );
+  if (surviving !== undefined) {
+    // A standard macro this engine deliberately leaves literal (`{{time}}` - see
+    // `LEFT_LITERAL_STANDARD_MACROS` for the reason it cannot be filled here) is a card doing
+    // the normal thing, and this field is optional: her closing direction is dropped and the
+    // loss is named instead of the whole catalogue becoming unbuildable over it. The rule the
+    // refusal protected still holds - no literal `{{...}}` is published as her own words.
+    process.stderr.write(
+      `[authored-context] omitting post_history_instructions: it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
+    );
+    return undefined;
+  }
   if (Buffer.byteLength(rendered, "utf8") > ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes)
     throw new Error("tavern_stable_context_post_history_too_long");
   return rendered;
@@ -592,8 +660,8 @@ function hash(value: string): string {
  * does on the Chat surface: her card's farm-opening background is the Stardew
  * premise and the pair's bond, not tavern fiction leaking into the game's
  * physical world. It is authored context for the Game exactly as it is for
- * Chat, rendered through the run's macro table and refused if a macro survives,
- * exactly like a book entry.
+ * Chat, rendered through the run's macro table, and a macro the run cannot fill is
+ * decided the way a book entry's is (dropped and named), never published raw.
  *
  * The catalog reuses the tavern hashing and budget rules so the vendor
  * `gamebuddy-authored-context-catalog/v2` validator accepts it unchanged, and
@@ -679,9 +747,9 @@ export function buildGameSurfaceAuthoredCatalog(
   // The scenario is Tier 2 stable background like the book's always-on entries.
   // It is added AFTER the book source and its per-turn candidates so the book and
   // the volatile layer keep their exact bytes and total order keys; the
-  // scenario's own key continues the one increasing sequence. A scenario is one
-  // bound source and cannot be dropped, so an unresolved macro is refused below
-  // rather than silently losing her card's premise.
+  // scenario's own key continues the one increasing sequence. A scenario is ONE
+  // bound source, so it cannot be dropped entry by entry the way a book can: a macro
+  // it carries is decided once, for the source as a whole (see the pass below).
   if (scenario !== undefined)
     sources.push(
       source(
@@ -713,19 +781,35 @@ export function buildGameSurfaceAuthoredCatalog(
   // Rendering upstream is not enough discipline for this invariant: a hand-placed
   // or hand-edited worldbook reaches this function unchanged, and an unresolved
   // macro must never be published as the companion's authored context.
+  const publishable: typeof sources = [];
   for (const item of sources) {
-    if (hasUnrenderedMacro(item.content)) throw new Error("game_authored_context_unrendered_macro");
+    const surviving = survivingMacros(item.content);
+    if (surviving === undefined) {
+      publishable.push(item);
+      continue;
+    }
+    if (surviving.unrecognised.length > 0)
+      throw new Error(
+        `game_authored_context_unrecognised_macro: source ${item.sourceId} (${item.kind}) carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+      );
+    // A standard macro this engine deliberately leaves literal (`{{date}}`) is the card doing
+    // the normal thing at a seam with no clock, so this source is omitted and NAMED rather
+    // than taking the whole Game catalogue down with it. The invariant the refusal protected
+    // still holds: nothing carrying a literal `{{...}}` is published as her authored context.
+    process.stderr.write(
+      `[authored-context] omitting authored context source ${item.sourceId} (${item.kind}): it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
+    );
   }
   const body = {
     version: "gamebuddy-authored-context-catalog/v2" as const,
     scope: binding,
-    stableSources: sources,
+    stableSources: publishable,
     volatileSources,
   };
   return Object.freeze({
     ...body,
     canonicalHash: hash(canonicalJson(body)),
-    stableSources: Object.freeze(sources),
+    stableSources: Object.freeze(publishable),
     volatileSources: Object.freeze(volatileSources),
   });
 }
