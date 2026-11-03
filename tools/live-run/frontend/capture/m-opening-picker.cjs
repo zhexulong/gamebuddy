@@ -7,7 +7,7 @@
 // editor (`data-opening-editor`). The chat the picker creates is NOT the mounted one, so the choice
 // is proven twice: the panel's own card for the created Chat, and the transcript's first row after
 // switching to that Chat — read from the row the panel itself previews with the chosen text.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 const NEW_CHAT = '[data-testid="new-chat"]';
 
@@ -134,6 +134,7 @@ const clickOption = (index) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("m-opening-picker.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
@@ -263,6 +264,7 @@ const clickOption = (index) => {
   say(`chat rows before=${rowsBeforeSingle.rows.length} after=${rowsAfterSingle.rows.length} (a Chat was created without a step in between)`);
   say(`the panel's card for the created Chat: ${JSON.stringify(createdSingle)}`);
 
+  await observe(page, say, "m", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-M");
