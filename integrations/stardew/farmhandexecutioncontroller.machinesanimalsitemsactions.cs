@@ -24,13 +24,15 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (expectedQualifiedItemId != "(O)433" || slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != "(O)433" || input.Stack != 5)
+        if (expectedQualifiedItemId != SupportedMachineInputItemId)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_unsupported_input", $"expected={expectedQualifiedItemId};supported={SupportedMachineInputItemId}");
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != SupportedMachineInputItemId || input.Stack != SupportedMachineInputStack)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
 
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != "(BC)12"
+            || machine.QualifiedItemId != SupportedMachineItemId
             || machine.GetMachineData() is null
             || machine.heldObject.Value is not null
             || machine.readyForHarvest.Value
@@ -60,6 +62,18 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// The one machine and one input this surface loads, named once.
+    ///
+    /// A Keg `(BC)12` taking five coffee beans `(O)433`: a frozen contract, because the other thirty-eight machine rules
+    /// are content data with no live evidence behind them and expanding the surface would publish promises nobody
+    /// tested. Naming the pair here keeps the four call sites from each spelling it out, and lets a refusal say WHICH of
+    /// the two was wrong.
+    /// </summary>
+    internal const string SupportedMachineItemId = "(BC)12";
+    internal const string SupportedMachineInputItemId = "(O)433";
+    internal const int SupportedMachineInputStack = 5;
+    internal const string SupportedMachineOutputItemId = "(O)395";
+    /// <summary>
     /// Executes machine_load against the current world, re-validating the bean stack and
     /// the machine because an approach leg may have taken several ticks. Shared by the
     /// in-range path and the post-approach path.
@@ -72,7 +86,7 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != "(BC)12"
+            || machine.QualifiedItemId != SupportedMachineItemId
             || machine.GetMachineData() is null
             || machine.heldObject.Value is not null
             || machine.readyForHarvest.Value
@@ -161,12 +175,12 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != "(BC)12"
+            || machine.QualifiedItemId != SupportedMachineItemId
             || machine.GetMachineData() is null
             || !machine.readyForHarvest.Value
             || machine.MinutesUntilReady != 0
-            || machine.heldObject.Value?.QualifiedItemId != "(O)395"
-            || machine.lastInputItem.Value?.QualifiedItemId != "(O)433"
+            || machine.heldObject.Value?.QualifiedItemId != SupportedMachineOutputItemId
+            || machine.lastInputItem.Value?.QualifiedItemId != SupportedMachineInputItemId
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
         // 5.2: out of the native radius, walk in rather than refuse. The ready machine is
@@ -200,12 +214,12 @@ internal sealed partial class ExecutionManager
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != "(BC)12"
+            || machine.QualifiedItemId != SupportedMachineItemId
             || machine.GetMachineData() is null
             || !machine.readyForHarvest.Value
             || machine.MinutesUntilReady != 0
-            || machine.heldObject.Value?.QualifiedItemId != "(O)395"
-            || machine.lastInputItem.Value?.QualifiedItemId != "(O)433"
+            || machine.heldObject.Value?.QualifiedItemId != SupportedMachineOutputItemId
+            || machine.lastInputItem.Value?.QualifiedItemId != SupportedMachineInputItemId
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
 
