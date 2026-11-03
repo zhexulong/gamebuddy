@@ -181,6 +181,23 @@ public sealed partial class ModEntry
         if (Game1.currentSeason != "spring")
             Game1.currentSeason = "spring";
         Game1.dayOfMonth = 5;
+        // The calendar has TWO authorities, and pinning only one of them left the world in a state that contradicted
+        // itself: `Game1.dayOfMonth` said day 5 while `Game1.stats.DaysPlayed` still said 1 (that is what the save
+        // carried). Anything that reads the date sees day 5; anything that reads the STAT sees a farm that is still on
+        // its first day.
+        //
+        // `Mountain.landslide` is `NetBool(Game1.stats.DaysPlayed < 5)` (Mountain.cs:34) - so on a world pinned to day
+        // 5 the landslide was STILL UP, the north-west entrance stayed closed, and `mineEntranceTargets` stayed empty
+        // for reasons no prompt or refusal could explain. The same held for `railroadAreaBlocked` (`< 31`).
+        //
+        // Measured 2026-11-03 (`round28`): the Mod logged `day=5` at start-up while SMAPI logged `loaded save ...
+        // starting spring 1 Y1`, and one NewDay then moved the world to day 6 - which I first read as a five-day jump
+        // and reported as such. It was not a jump: the fixture pins day 5, and +1 is correct. What was wrong is that
+        // only one of the two authorities was pinned.
+        //
+        // The convention the save itself uses: a world saved at the start of spring day 1 carries `daysPlayed = 1`, so
+        // the stat counts days INCLUDING today and equals (year-1)*112 + season*28 + dayOfMonth.
+        Game1.stats.DaysPlayed = (uint)(((Game1.year - 1) * 112) + (Utility.getSeasonNumber(Game1.currentSeason) * 28) + Game1.dayOfMonth);
         Game1.timeOfDay = 600;
 
         // (2) The actor's own home. The engine's load placement is asserted rather
@@ -328,7 +345,7 @@ public sealed partial class ModEntry
             ? "guarantee=one_pending_level_up_is_a_profession_milestone;guarantee=the_milestone_skill_is_left_unchosen"
             : "guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions";
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;{pendingGuarantees};guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};days_played={Game1.stats.DaysPlayed};landslide={(Game1.stats.DaysPlayed < 5 ? "closed" : "open")};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;{pendingGuarantees};guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
             LogLevel.Info);
     }
 }
