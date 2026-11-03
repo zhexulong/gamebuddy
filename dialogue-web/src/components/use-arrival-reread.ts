@@ -41,10 +41,11 @@ import type { ComposedBootstrap } from "./use-composed-bootstrap";
  * read, none of them on arrival.
  *
  * It is deliberately NOT `GameSurface`'s own `rereadGame`: that is the authoritative path a Game
- * operation takes, and it ends by discarding the streaming preview. The discard is right for an
- * operation - it settles the turn the operation touched - and wrong for an arrival, which would
- * then erase a reply the player is watching on the conversation, measured as `previewAfter=0`
- * where the peer surfaces exist to preserve it. An arrival is a read and a commit; the preview is
+ * operation takes, and it is the operation's state machine the arrival must not touch - the surface
+ * keeps a resume the player is watching in flight across the switch, and an arrival read that went
+ * through its handlers could land in that attempt. The preview is not what separates them: both reads
+ * keep a reply that is still streaming, because the preview belongs to the turn it was built from and
+ * neither read may spend it while that turn runs. An arrival is a read and a commit; the preview is
  * left exactly where the stream put it.
  *
  * A failed arrival read keeps the projection the shell already holds and states the refusal

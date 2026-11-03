@@ -28,6 +28,7 @@ import {
   STARDEW_GAME_INTEGRATION_ID,
   type ViewState,
 } from "./composed-reference-game-view";
+import { terminalTurn } from "./use-composed-bootstrap";
 
 /**
  * The Game peer surface.
@@ -37,8 +38,9 @@ import {
  * resume/reopen/create commands, the bounded authoritative rereads that decide
  * when one of them is really done, and the panel that renders all of it. The
  * shell supplies only the session seam it cannot own - the live view, the commit
- * that publishes a new Game projection, the preview reset every authoritative
- * reread performs, the cancellation flag, the two clients and the labels.
+ * that publishes a new Game projection, the preview reset a reread performs when
+ * the read says the conversation's turn is over, the cancellation flag, the two
+ * clients and the labels.
  *
  * It is always mounted while the shell has a ready view and returns null when it
  * is not the selected surface, so its state survives a surface switch exactly as
@@ -72,6 +74,14 @@ export function GameSurface({
   labels: Messages;
   readView: () => ViewState;
   commit: (next: ViewState) => void;
+  /**
+   * Spends the conversation's streaming preview.
+   *
+   * It belongs to the turn the preview was built from, so a Game read calls it only when that same
+   * read publishes no running turn - the state `rereadChat` spends the preview in, where the
+   * authoritative transcript has taken the reply over. A read taken while the turn still runs is not
+   * a read that outlived the preview, and spending it there erased a reply the player was watching.
+   */
   clearPreview: () => void;
   isCancelled: () => boolean;
   composedApi: ComposedReferenceGameBrowserApi;
@@ -204,12 +214,24 @@ export function GameSurface({
    * that needs a "did the thing I acted on change" check uses the Game
    * projection's own attachment generation, which its handler compares against
    * the generation it acted on.
+   *
+   * The reply streaming into the conversation is not this read's to spend. The preview belongs to the
+   * turn it was built from, and the Chat channel owns it: `companion.delta` appends to it, a committed
+   * message or a turn transition spends it, and the shell's recovery read, `reconcile` and
+   * `rereadChat`'s own settle rule spend it too - all of which run while this surface is selected,
+   * because the stream, the poll and the mutations are gated on the mounted conversation and never on
+   * the surface. So a Game operation that rereads mid-reply keeps it; the unconditional reset left the
+   * conversation with no streaming row at all until the stream's next delta rebuilt it from that delta
+   * alone, which is the red reading `game-operation-reread.spec.ts` reproduces. What this read does
+   * settle is the turn the read says is over: a root publishing no running turn is the state
+   * `rereadChat` spends the preview in.
    */
   const rereadGame = async (): Promise<void> => {
     const current = readView();
     if (current.kind !== "ready") return;
     const root = await composedApi.readState();
-    clearPreview();
+    const runningTurn = root.chat.chat?.turn ?? null;
+    if (runningTurn === null || terminalTurn(runningTurn)) clearPreview();
     commit({ ...current, root, session: current.session.applySnapshot(root.chat) });
   };
 

@@ -11,12 +11,13 @@ import { expect, test, type Page } from "./frontend-coverage";
  * activity yet`, and paid one `/state` read for the whole trip - none of them on arrival.
  *
  * The fix re-reads the composed root on arrival at the Game surface too, and commits it. It is
- * deliberately NOT `GameSurface`'s own `rereadGame`: that is the authoritative path a Game
- * *operation* takes, and it ends by discarding the streaming preview. The discard is right for an
- * operation - it settles the turn the operation touched - and wrong for an arrival, which would then
- * erase a reply the player is watching on the conversation. Measured on the same journey: the full
- * `rereadGame` read left `previewAfterSwitch=0`, the read-and-commit left it at 1, exactly where the
- * unfixed shell left it. The second test is that invariant.
+ * deliberately NOT `GameSurface`'s own `rereadGame`: that is the state machine a Game *operation*
+ * runs, and an arrival must not land inside an attempt the player is watching (the third test is that
+ * invariant). The streaming preview is no longer what separates the two reads - both keep a reply
+ * whose turn is still running, and `game-operation-reread.spec.ts` asserts the operation's own half of
+ * that rule. What the arrival read must not do either way is erase the reply, which is what the full
+ * `rereadGame` read did on the journey below: `previewAfterSwitch=0`, where the read-and-commit left
+ * it at 1, exactly where the unfixed shell left it. The second test is that invariant.
  */
 
 const token = "A".repeat(43);
@@ -278,10 +279,10 @@ test("a Game arrival leaves a reply still streaming on the conversation untouche
  * watching is not forgotten by a surface switch.
  *
  * It is asserted through the progress line the player reads, not through the preview: a running
- * resume performs its own bounded authoritative rereads, and those deliberately settle the turn the
- * operation touched - the same discard an operation has always performed, which the arrival read
- * neither adds to nor removes. What must survive the switch is the attempt itself, which is local to
- * the always-mounted surface.
+ * resume performs its own bounded authoritative rereads, and those commit the Game projection the
+ * attempt acts on while leaving the conversation's streaming preview where the stream put it - a Game
+ * read spends that preview only when the read itself publishes no running turn. What must survive the
+ * switch is the attempt itself, which is local to the always-mounted surface.
  */
 test("an in-flight Game resume survives a surface switch and stays beside the Host's projection", async ({
   page,
