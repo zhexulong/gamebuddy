@@ -47,7 +47,7 @@
       },
       {
         "name": "gamebuddy:generator-input-lockfile-sha256",
-        "value": "a90139bcbad748481176efa8875c39869dfb55720927dd46320b6daa8e954cc9"
+        "value": "4337739ec6cde03e8581696c5394646b0a6b85d71775ebac7cbe3506b9f2eab0"
       }
     ]
   },
@@ -1178,6 +1178,19 @@
     },
     {
       "type": "library",
+      "name": "@isaacs/nonrecursive-glob-match",
+      "version": "1.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "BlueOak-1.0.0"
+          }
+        }
+      ],
+      "externalReferences": []
+    },
+    {
+      "type": "library",
       "name": "@jitl/quickjs-ffi-types",
       "version": "0.32.0",
       "licenses": [
@@ -1281,6 +1294,60 @@
         {
           "type": "website",
           "url": "https://github.com/justjake/quickjs-emscripten#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/resolve-uri",
+      "version": "3.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jridgewell/resolve-uri#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/sourcemap-codec",
+      "version": "1.6.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/sourcemap-codec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@jridgewell/trace-mapping",
+      "version": "0.3.31",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/jridgewell/sourcemaps/tree/main/packages/trace-mapping"
         }
       ]
     },
@@ -1839,6 +1906,24 @@
         {
           "type": "website",
           "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/estree"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@types/istanbul-lib-coverage",
+      "version": "2.0.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/istanbul-lib-coverage"
         }
       ]
     },
@@ -2950,6 +3035,24 @@
         {
           "type": "website",
           "url": "https://github.com/substack/node-concat-map#readme"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "convert-source-map",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/thlorenz/convert-source-map"
         }
       ]
     },
@@ -6286,7 +6389,7 @@
     {
       "type": "library",
       "name": "minimatch",
-      "version": "10.2.6",
+      "version": "10.2.6,11.0.3",
       "licenses": [
         {
           "license": {
@@ -8710,6 +8813,24 @@
         {
           "type": "website",
           "url": "https://github.com/TooTallNate/util-deprecate"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "v8-to-istanbul",
+      "version": "9.3.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://github.com/istanbuljs/v8-to-istanbul#readme"
         }
       ]
     },

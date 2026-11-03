@@ -30,6 +30,7 @@
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
     "check:architecture": "pnpm check:publint && pnpm report:clones && echo \"[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5\"",
     "check:build-artifact-producers": "node tools/check-build-artifact-producers.mjs",
+    "check:sbom": "node tools/generate-sbom.mjs --verify",
     "check:catalog-fact-ownership": "node tools/check-catalog-fact-ownership.mjs",
     "check:chat-card-voice": "node tools/live-run/chat/check-card-voice.mjs",
     "check:complexity-gate": "node tools/scripts/check-file-complexity-gate.mjs",

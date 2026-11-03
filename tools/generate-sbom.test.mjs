@@ -1,3 +1,7 @@
+// red-proof: inject - the committed third_party/sbom-node.json records a
+// `gamebuddy:generator-input-lockfile-sha256` and a full component inventory; changing either without
+// regenerating makes `verifySbom` throw `SBOM output drifted`, which is what `check:sbom` runs. Measured:
+// rewriting the recorded hash to 64 zeros gives exit 1 with that message; restoring gives exit 0.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
