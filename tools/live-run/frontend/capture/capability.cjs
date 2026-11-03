@@ -21,6 +21,10 @@
  * What this deliberately does NOT do is score the reply. "Is she in character" needs the judge work
  * that has not been built, and a number produced by a heuristic here would look like that work had
  * been done.
+ *
+ * `transcriptContinuityFindings` extends the shape half across turns, which is where a one-exchange
+ * snapshot cannot see anything: a row lost between turns, a message committed twice, or an order that
+ * goes backwards are all invisible to a reading taken once.
  */
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
@@ -161,6 +165,106 @@ function worldbookSummary(state) {
 	return `ok alwaysOn=${constant.length} of ${entries.length} first=${JSON.stringify(first.entryId)} keys=${JSON.stringify(first.keys ?? [])}`;
 }
 
+/**
+ * The durable transcript's growth across turns: append-only, in order, every row still there once.
+ *
+ * `transcriptShapeFindings` above judges ONE exchange, so it cannot see the defect that only appears
+ * on the second turn - a row lost between turns, a message committed twice by a re-read, or an order
+ * that goes backwards when a later turn is inserted before an earlier one. Those are the shapes a
+ * two-turn conversation produces and a one-turn snapshot cannot.
+ *
+ * The input is the sequence of durable snapshots a driver already takes (`/api/tavern/v1/state`),
+ * each with the order/role/handle the Host minted. Two invariants, both about rows rather than counts:
+ *
+ *   within a snapshot   order strictly increases (it is the transcript's own sequencing), and no handle
+ *                       appears twice (a handle is one message).
+ *   across snapshots    every handle the earlier snapshot held is still present later, keeps its
+ *                       relative order, and nothing new is inserted BEFORE an existing row.
+ *
+ * A step that is SUPPOSED to remove rows (a delete, a rewind) declares them in `removedHandles`; a row
+ * that vanishes without a declaration is the finding, which is what makes the declared list useful
+ * rather than a licence to lose rows.
+ */
+function transcriptContinuityFindings(snapshots) {
+	const findings = [];
+	const list = Array.isArray(snapshots) ? snapshots : [];
+	let previous = null;
+	for (const snapshot of list) {
+		const rows = Array.isArray(snapshot?.rows) ? snapshot.rows : [];
+		const label = typeof snapshot?.label === "string" ? snapshot.label : "snapshot";
+		const declared = new Set(Array.isArray(snapshot?.removedHandles) ? snapshot.removedHandles : []);
+
+		for (let index = 1; index < rows.length; index += 1) {
+			const before = rows[index - 1]?.order;
+			const after = rows[index]?.order;
+			if (typeof before !== "number" || typeof after !== "number") {
+				findings.push({
+					code: "order_unreadable",
+					message: `${label}: row ${index} carries order ${JSON.stringify(after)} after row ${index - 1}'s ${JSON.stringify(before)}`,
+				});
+				continue;
+			}
+			if (after <= before) {
+				findings.push({
+					code: "order_not_monotonic",
+					message: `${label}: row ${index} carries order ${after} after row ${index - 1}'s ${before}`,
+				});
+			}
+		}
+
+		const seen = new Set();
+		rows.forEach((row, index) => {
+			if (row?.handle === null || row?.handle === undefined) {
+				findings.push({ code: "row_without_handle", message: `${label}: row ${index} carries no handle` });
+				return;
+			}
+			if (seen.has(row.handle)) {
+				findings.push({
+					code: "row_duplicated",
+					message: `${label}: handle ${JSON.stringify(row.handle)} is carried twice, so one turn committed the same message twice`,
+				});
+			}
+			seen.add(row.handle);
+		});
+
+		if (previous !== null) {
+			const present = rows.map((row) => row?.handle).filter((handle) => handle !== null && handle !== undefined);
+			const presentSet = new Set(present);
+			for (const handle of previous.handles) {
+				if (presentSet.has(handle) || declared.has(handle)) continue;
+				findings.push({
+					code: "row_lost",
+					message: `${label}: handle ${JSON.stringify(handle)}, present in "${previous.label}", is gone and this step did not declare its removal`,
+				});
+			}
+			const survivors = present.filter((handle) => previous.handles.includes(handle));
+			const expectedOrder = previous.handles.filter((handle) => presentSet.has(handle));
+			if (survivors.join("\u0000") !== expectedOrder.join("\u0000")) {
+				findings.push({
+					code: "row_reordered",
+					message: `${label}: the rows "${previous.label}" already held are in a different relative order (${JSON.stringify(survivors)} against ${JSON.stringify(expectedOrder)})`,
+				});
+			}
+		}
+		previous = { label, handles: rows.map((row) => row?.handle).filter((handle) => handle !== null && handle !== undefined) };
+	}
+	return findings;
+}
+
+/**
+ * One facts-file line for the continuity invariants, so both callers spell them the same way.
+ *
+ * Named `ok` versus `FAIL` rather than a count: "3 snapshots, 7 rows" is a reading of how big the
+ * conversation got, which is not what this checks.
+ */
+function continuityLine(label, snapshots) {
+	const findings = transcriptContinuityFindings(snapshots);
+	if (findings.length === 0) {
+		return `ok ${label}: ${snapshots.length} snapshot(s) append-only, order strictly increasing, no row lost and none duplicated`;
+	}
+	return `FAIL ${label}: ${findings.map((finding) => `${finding.code} - ${finding.message}`).join(" | ")}`;
+}
+
 module.exports = {
 	loadChromium,
 	worldbookExpectation,
@@ -168,4 +272,6 @@ module.exports = {
 	probeLorebookTrigger,
 	readRenderedTranscript,
 	transcriptShapeFindings,
+	transcriptContinuityFindings,
+	continuityLine,
 };
