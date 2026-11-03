@@ -205,6 +205,31 @@ test.describe("the marks the product records reach a real page", () => {
     }
   });
 
+  /**
+   * The other end of that rule, on the surface the shell opens with: a press that selects the
+   * conversation while the conversation is already the region still commits, because there is no
+   * later commit to wait for. Its pair was left open at `start` forever, so a reader reporting what a
+   * surface switch cost read the app's first press as a switch that never finished.
+   *
+   * The first paint itself is deliberately NOT a pair: nobody pressed an entry, and `start` is the
+   * player's selection. That is the same reason Back and Escape arrive as `done` alone.
+   */
+  test("the first press on the conversation records both ends of its switch", async ({ page }) => {
+    await stubHost(page, { turnState: null });
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await expect(page.getByTestId("chat-surface")).toBeVisible();
+
+    // The app opened on the conversation without anyone selecting it.
+    expect((await readMarks(page)).filter((mark) => mark.name.startsWith("gamebuddy:switch:"))).toEqual([]);
+
+    // The player's own control for the surface already on screen. It pushes the entry that names the
+    // conversation, and with it the region is where it was: one switch, both ends.
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
+    await expect.poll(async () => (await readMarks(page)).map((mark) => mark.name)).toContain("gamebuddy:switch:chat:done");
+    const chatMarks = (await readMarks(page)).filter((mark) => mark.name.startsWith("gamebuddy:switch:chat:"));
+    expect(chatMarks.map((mark) => mark.name)).toEqual(["gamebuddy:switch:chat:start", "gamebuddy:switch:chat:done"]);
+  });
+
   test("a turn records its submit and its settlement", async ({ page }) => {
     test.setTimeout(60_000);
     const state: HostState = { turnState: null };

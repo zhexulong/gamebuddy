@@ -31,9 +31,16 @@ function readPanelFromUrl(): string | null {
  * unfinished would make a switch appear to last as long as the Host took to answer it. A reader that
  * wants content arrival is asking for a different mark that nobody takes yet.
  *
- * Back and Escape arrive here too, as `done` with no `start`: the browser moved the history entry, not
- * the player's press on an entry. A reader that needs both ends omits those, which is the truth about
- * them - inventing a start for them would describe a selection that never happened.
+ * Every `start` closes. A press that selects the surface already filling the region has no region
+ * change below it to wait for - the default conversation is the case, and it has no entry in the URL
+ * until a press writes one - so its commit is the press itself and its `done` is recorded there. Left
+ * to the effect above, the app's first press was a `start` that never closed: the observation reader
+ * pairs the ends and reports that shape as a switch with no duration. The first paint marks nothing on
+ * either end: nobody selected it.
+ *
+ * `done` may also arrive with no `start`: Back and Escape move the history entry, not the player's
+ * press on an entry. A reader that needs both ends omits those, which is the truth about them -
+ * inventing a start for them would describe a selection that never happened.
  */
 const SWITCH_MARK_PREFIX = "gamebuddy:switch:";
 
@@ -113,14 +120,17 @@ export function useSurfaceRoute(): Readonly<{
     (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>): (() => void) =>
     (): void => {
       void entryRef;
-      if (openPanel !== panel) {
-        const url = new URL(window.location.href);
-        const params = new URLSearchParams(url.hash.slice(1));
-        params.set(PANEL_PARAM, panel);
-        url.hash = params.toString();
-        window.history.pushState({ gbPanel: panel }, "", url.toString());
-        markSwitch(panel, "start");
-      }
+      if (openPanel === panel) return;
+      const url = new URL(window.location.href);
+      const params = new URLSearchParams(url.hash.slice(1));
+      params.set(PANEL_PARAM, panel);
+      url.hash = params.toString();
+      window.history.pushState({ gbPanel: panel }, "", url.toString());
+      markSwitch(panel, "start");
+      // A selection the region already shows commits with the press: the `[shownSurface]` effect
+      // cannot observe it, because nothing it depends on changes, and a `start` left waiting on it
+      // would stand unpaired forever.
+      if (shownSurface === panel) markSwitch(panel, "done");
       setOpenPanel(panel);
     };
 
