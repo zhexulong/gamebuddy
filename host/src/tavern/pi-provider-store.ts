@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readStrictJsonFile } from "../strict-json-reader.js";
 import { atomicWriteFile } from "../path-lock.js";
 import type { CompanionModelConfig } from "../runtime-identity.js";
@@ -65,6 +66,19 @@ const FIXTURE_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
  */
 export const CONSERVATIVE_CONTEXT_WINDOW = 32_768;
 /**
+ * The largest window this product will declare, whatever the model's own maximum is.
+ *
+ * The catalog states the model TRUTH - DeepSeek V4.1 Flash really does take 1,000,000 - and a working session is bounded
+ * well below it on purpose. The reason is measured rather than aesthetic: Magic Context folds at 65% of the DECLARED
+ * window, so declaring 1,000,000 puts the fold at 487,500 tokens, which a 25-minute embodied run never reaches.
+ * `round26` ended with 291,270 active tokens, ZERO compartments and ZERO long-term memories: the compaction and Memory
+ * pipeline never ran once, so the layer that makes a companion remember anything could not be exercised at all.
+ *
+ * 200,000 puts the fold at 130,000 - about where a long session should start summarising, and low enough that a real run
+ * reaches it.
+ */
+export const WORKING_CONTEXT_WINDOW_CEILING = 200_000;
+/**
  * Share of a model's context window that its output tokens may occupy.
  *
  * DeepSeek V4.1 Flash publishes 1,000,000 context and 384,000 max output, so the ratio is 0.384. It is stated once here as
@@ -102,7 +116,7 @@ export function declaredContextWindow(modelId?: string, catalog?: readonly Taver
     }
   }
   const catalogWindow = typeof modelId === "string" ? catalogModelById(modelId, catalog)?.contextWindow : undefined;
-  return catalogWindow ?? CONSERVATIVE_CONTEXT_WINDOW;
+  return Math.min(catalogWindow ?? CONSERVATIVE_CONTEXT_WINDOW, WORKING_CONTEXT_WINDOW_CEILING);
 }
 
 /**
@@ -139,7 +153,20 @@ function declaredCost(modelId: string, catalog?: readonly TavernCatalogProvider[
  * another. Byte-identical output is still the contract for a given gateway address - `pi-provider-store.test.ts`
  * pins the whole document a root with no player connection produces.
  */
-export function environmentProviderEntry(modelId: string, catalog?: readonly TavernCatalogProvider[]): PiProviderEntry {
+export function environmentProviderEntry(
+  modelId: string,
+  catalog: readonly TavernCatalogProvider[] | undefined,
+  /**
+   * The session-affinity id to declare.
+   *
+   * **Required.** An optional parameter with a random default was the defect: a caller that forgot it still produced a
+   * working document, so nothing failed - but that document contained a value no golden can pin and no two runs can
+   * compare, and the gateway's routing saw a new "session" on every process start. Required means the caller has to
+   * answer "which session is this", and a caller that cannot answer does not compile.
+   */
+  sessionAffinityId: string,
+): PiProviderEntry {
+  const affinityId = sessionAffinityId;
   const reasoningDialect = reasoningDialectOf(modelId, catalog);
   // Read once: the window and the output cap have to describe the same model, and two reads could straddle a change.
   const contextWindow = declaredContextWindow(modelId, catalog);
@@ -149,6 +176,20 @@ export function environmentProviderEntry(modelId: string, catalog?: readonly Tav
     baseUrl: operatorGatewayBaseUrl(),
     api: "openai-completions",
     apiKey: "$CPA_OAI_API_KEY",
+    // The gateway routes by session affinity and its opencode.ai upstream declares
+    // `headers: { X-Opencode-Session: "$X-Session-Affinity" }` - the upstream header is filled from the INCOMING
+    // request header of that name. With the header absent the gateway forwards an empty value and the upstream answers
+    // `400 MissingSessionID`.
+    //
+    // Measured 2026-11-03: every request from this runtime got that 400 while the developer's own Pi session on the
+    // same machine, same model, same key and same gateway answered 200 - and a direct request carrying
+    // `X-Session-Affinity` answered 200 in the same minute that the same request without it answered 400. Pi sends no
+    // such header on its own, so the value has to come from here.
+    //
+    // One id per Host process, not per request: affinity exists so a conversation's turns land on the same upstream
+    // credential, and a fresh id per request would defeat the routing it is asking for. A random UUID is accepted by
+    // the upstream (verified with a probe), so no format is imposed.
+    headers: { "X-Session-Affinity": affinityId },
     // No `authHeader`: the OpenAI-compatible adapter installs `Authorization: Bearer`
     // from the resolved key itself, so the flag would only duplicate that header.
     compat: {
@@ -212,6 +253,18 @@ export function environmentProviderEntry(modelId: string, catalog?: readonly Tav
   };
 }
 
+/**
+ * The affinity id for one runtime root.
+ *
+ * Derived from the root rather than generated: the gateway routes a conversation to the same upstream credential by this
+ * value, so it has to be the SAME across the turns of one session and DIFFERENT between sessions - which is exactly what
+ * a root's own identity is. A random UUID per process satisfied neither property: it changed on every restart of the same
+ * session, and no golden document could pin it.
+ */
+export function sessionAffinityIdFor(agentDir: string): string {
+  return createHash("sha256").update(agentDir).digest("hex").slice(0, 32);
+}
+
 export type ModelProviderEntry = Readonly<{ providerId: string; entry: PiProviderEntry }>;
 
 /**
@@ -226,7 +279,7 @@ export async function modelProviderEntry(
   if (config.provider === TAVERN_ENVIRONMENT_PROVIDER_ID)
     return Object.freeze({
       providerId: TAVERN_ENVIRONMENT_PROVIDER_ID,
-      entry: environmentProviderEntry(config.modelId),
+      entry: environmentProviderEntry(config.modelId, undefined, sessionAffinityIdFor(agentDir)),
     });
   const provider = catalogProvider(config.provider);
   if (provider === null) return null;

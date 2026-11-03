@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+/**
+ * The affinity id every fixture in this file declares.
+ *
+ * It is a fixture VALUE, not a fixture convenience: the production id is derived from the session, so a golden can pin
+ * it. A random id here is what made the first version of this fix unpinnable.
+ */
+const SESSION = "session-under-test";
+
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import {
@@ -12,6 +20,8 @@ import {
   environmentProviderEntry,
   mergeModelProviderEntry,
   modelProviderEntry,
+  WORKING_CONTEXT_WINDOW_CEILING,
+  sessionAffinityIdFor,
 } from "./pi-provider-store.js";
 import { connectionDocumentPath, TavernConnectionStore } from "./connection-store.js";
 import {
@@ -43,6 +53,9 @@ const ZERO_CONFIG_DEEPSEEK = `{
       "baseUrl": "http://127.0.0.1:8317/v1",
       "api": "openai-completions",
       "apiKey": "$CPA_OAI_API_KEY",
+      "headers": {
+        "X-Session-Affinity": "session-under-test"
+      },
       "compat": {
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true
@@ -64,8 +77,8 @@ const ZERO_CONFIG_DEEPSEEK = `{
           "input": [
             "text"
           ],
-          "contextWindow": 1000000,
-          "maxTokens": 384000,
+          "contextWindow": 200000,
+          "maxTokens": 76800,
           "cost": {
             "input": 0.3,
             "output": 1.2,
@@ -112,19 +125,27 @@ async function withRoot(run: (modelsPath: string) => Promise<void>): Promise<voi
 test("zero configuration writes exactly the previous single-provider document", async () => {
   await withRoot(async (modelsPath) => {
     // The frozen entry the pre-change code built for the default model.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
 
     // Re-running with the same entry is idempotent: a second runtime start for
     // the same model must not perturb the document.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
   });
 });
 
 test("a second model keeps the frozen entry shape while the environment entry stays byte-identical", async () => {
   await withRoot(async (modelsPath) => {
-    const entry = environmentProviderEntry("gpt-5.6-luna");
+    const entry = environmentProviderEntry("gpt-5.6-luna", undefined, SESSION);
     await mergeModelProviderEntry(modelsPath, "cpa-oai", entry);
     const written = JSON.parse(await readFile(modelsPath, "utf8"));
     // Same keys in the same order as the frozen DeepSeek document; only the
@@ -135,9 +156,13 @@ test("a second model keeps the frozen entry shape while the environment entry st
       "baseUrl",
       "api",
       "apiKey",
+      "headers",
       "compat",
       "models",
     ]);
+    // The affinity id is the SESSION's, so a golden can pin it. A random value here would make this document
+    // unreproducible and the assertion would have to be weakened to "some string".
+    assert.deepEqual(written.providers["cpa-oai"].headers, { "X-Session-Affinity": "session-under-test" });
     assert.equal(written.providers["cpa-oai"].models[0].thinkingLevelMap.medium, "medium");
     assert.equal(written.providers["cpa-oai"].models[0].compat.thinkingFormat, undefined);
     assert.equal(written.providers["cpa-oai"].models[0].id, "gpt-5.6-luna");
@@ -146,7 +171,11 @@ test("a second model keeps the frozen entry shape while the environment entry st
 
 test("merging keeps an unrelated provider entry instead of deleting it", async () => {
   await withRoot(async (modelsPath) => {
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     await mergeModelProviderEntry(modelsPath, TAVERN_ESCAPE_HATCH_PROVIDER_ID, {
       name: "OpenAI-compatible endpoint",
       baseUrl: "http://127.0.0.1:11434/v1",
@@ -160,7 +189,11 @@ test("merging keeps an unrelated provider entry instead of deleting it", async (
 
     // The previous behaviour replaced the whole document. Prove the frozen
     // entry survives a later start for a different selection.
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     const after = JSON.parse(await readFile(modelsPath, "utf8"));
     assert.equal(after.providers[TAVERN_ESCAPE_HATCH_PROVIDER_ID].models[0].id, "qwen2.5-coder:7b");
   });
@@ -169,11 +202,19 @@ test("merging keeps an unrelated provider entry instead of deleting it", async (
 test("a malformed document is replaced by the entry the runtime owns", async () => {
   await withRoot(async (modelsPath) => {
     await writeFile(modelsPath, "not json", "utf8");
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
 
     await writeFile(modelsPath, JSON.stringify({ providers: "invalid" }), "utf8");
-    await mergeModelProviderEntry(modelsPath, "cpa-oai", environmentProviderEntry("deepseek-v4.1-flash"));
+    await mergeModelProviderEntry(
+      modelsPath,
+      "cpa-oai",
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, SESSION),
+    );
     assert.equal(await readFile(modelsPath, "utf8"), ZERO_CONFIG_DEEPSEEK);
   });
 });
@@ -194,7 +235,12 @@ test("the runtime provider entry follows the selected connection and its own end
       thinkingLevel: "high",
     });
     assert.equal(environment?.providerId, "cpa-oai");
-    assert.deepEqual(environment?.entry, environmentProviderEntry("deepseek-v4.1-flash"));
+    // The affinity id is derived from the runtime root, so the expectation has to ask the same question rather than
+    // assume a fixture value: a fixed id here would compare two different documents and pass only by accident.
+    assert.deepEqual(
+      environment?.entry,
+      environmentProviderEntry("deepseek-v4.1-flash", undefined, sessionAffinityIdFor(root)),
+    );
 
     // A catalog provider pins the Host-owned endpoint and adds no model list,
     // so the model metadata Pi ships for that provider is preserved.
@@ -396,12 +442,16 @@ test("the declared window is the model's own, a conservative floor for an unknow
   try {
     delete process.env[key];
     // A model the catalog knows states its own window: no path invents one on top of it.
-    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), DEEPSEEK_CATALOG_WINDOW);
+    // The catalog states the model's own maximum; the declaration a session runs on is bounded below it, because
+    // Magic Context folds at 65% of the DECLARED window and a 1,000,000 declaration puts the fold at 487,500 tokens -
+    // further than any embodied run reaches. round26 ended with 291,270 active tokens, zero compartments and zero
+    // memories: the compaction and Memory layers never ran once.
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), WORKING_CONTEXT_WINDOW_CEILING);
     // A model it does not know gets the conservative floor, not a million: Pi refuses nothing at this size, and folding is
     // measured against something the endpoint will actually accept.
     assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
     assert.ok(
-      CONSERVATIVE_CONTEXT_WINDOW < DEEPSEEK_CATALOG_WINDOW,
+      CONSERVATIVE_CONTEXT_WINDOW < WORKING_CONTEXT_WINDOW_CEILING,
       "the floor is below the smallest catalogued window",
     );
     // The fixture still wins over both, because a measurement must be able to shrink it.
@@ -409,7 +459,7 @@ test("the declared window is the model's own, a conservative floor for an unknow
     assert.equal(declaredContextWindow("deepseek-v4.1-flash"), 80_000);
     // An unusable value is reported and ignored, never guessed at - and then the catalog's own number applies again.
     process.env[key] = "12";
-    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), DEEPSEEK_CATALOG_WINDOW);
+    assert.equal(declaredContextWindow("deepseek-v4.1-flash"), WORKING_CONTEXT_WINDOW_CEILING);
     process.env[key] = "not-a-number";
     assert.equal(declaredContextWindow("some-local-model"), CONSERVATIVE_CONTEXT_WINDOW);
   } finally {
@@ -473,7 +523,7 @@ test("a model another entry declares keeps its own window, its own dialects and 
 
     // The dialect is the same fact asked a second way, and it travels with the window: a `deepseek` model
     // gets the collapsed effort vocabulary wherever its entry lives, not only under the environment one.
-    const asCatalogued = environmentProviderEntry("byok-deepseek-chat", catalog);
+    const asCatalogued = environmentProviderEntry("byok-deepseek-chat", catalog, SESSION);
     const model = (asCatalogued["models"] as readonly Readonly<Record<string, unknown>>[])[0]!;
     assert.equal(model["contextWindow"], 163_840);
     assert.deepEqual(model["compat"], {
@@ -490,7 +540,7 @@ test("a model another entry declares keeps its own window, its own dialects and 
     // An id no entry in that same catalog declares is still the conservative floor, and still the neutral
     // dialect - widening the lookup must not turn an unknown model into a described one.
     assert.equal(declaredContextWindow("still-unlisted-model", catalog), CONSERVATIVE_CONTEXT_WINDOW);
-    const unknown = environmentProviderEntry("still-unlisted-model", catalog);
+    const unknown = environmentProviderEntry("still-unlisted-model", catalog, SESSION);
     const unknownModel = (unknown["models"] as readonly Readonly<Record<string, unknown>>[])[0]!;
     assert.equal(unknownModel["contextWindow"], CONSERVATIVE_CONTEXT_WINDOW);
     assert.equal((unknownModel["compat"] as Readonly<Record<string, unknown>>)["thinkingFormat"], undefined);

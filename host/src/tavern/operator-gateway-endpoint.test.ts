@@ -80,7 +80,10 @@ test("the probe and the Agent runtime read the same catalog entry, and nothing e
   assert.equal(provider.baseUrl, resolveOperatorGatewayBaseUrl(process.env));
   assert.equal(operatorGatewayBaseUrl(), provider.baseUrl);
   // The document Pi reads carries that same address: one authority, two readers.
-  assert.equal(environmentProviderEntry("deepseek-v4.1-flash").baseUrl, provider.baseUrl);
+  assert.equal(
+    environmentProviderEntry("deepseek-v4.1-flash", undefined, "session-under-test").baseUrl,
+    provider.baseUrl,
+  );
 });
 
 test("offering the entry and moving the entry are two different switches", () => {
