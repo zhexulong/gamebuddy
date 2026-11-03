@@ -75,8 +75,12 @@ export const TARGET_FIELD = Object.freeze({
   pet_animal: "PetTargets",
   water_pet_bowl: "PetBowlTargets",
   water_slime_hutch_trough: "SlimeHutchTroughTargets",
-  chest_store: "ChestStoreTargets",
-  chest_retrieve: "ChestRetrieveTargets",
+  // The container pair names a container ENTITY through the one `chests` family: each row is the container and
+  // its whole contents, and both actions take `chestId` + `expectedQualifiedItemId` straight out of it. The two
+  // rows here used to name `ChestStoreTargets` / `ChestRetrieveTargets`, which were collected because the
+  // actions could not yet name a container.
+  chest_store: "Chests",
+  chest_retrieve: "Chests",
   chop_stump: "TreeStumpTargets",
   plant_sapling: "TreeSaplingTargets",
   cut_weeds: "WeedTargets",
@@ -179,15 +183,9 @@ export function auditDiscoveryChannels({
   gameTools = read(TOOLS),
 } = {}) {
   const modFields = new Set(
-    [...models.matchAll(/IReadOnlyList<Bridge\w+>\??\s+(\w+)\b/g)].map((m) =>
-      m[1].toLowerCase(),
-    ),
+    [...models.matchAll(/IReadOnlyList<Bridge\w+>\??\s+(\w+)\b/g)].map((m) => m[1].toLowerCase()),
   );
-  const schemaProps = new Set(
-    Object.keys(schema.$defs?.snapshot?.properties ?? {}).map((k) =>
-      k.toLowerCase(),
-    ),
-  );
+  const schemaProps = new Set(Object.keys(schema.$defs?.snapshot?.properties ?? {}).map((k) => k.toLowerCase()));
 
   // Agent-facing tools: earlier the Host gated each tool with an `isVisible("<action>")`
   // marker, which this audit sliced on. Since 36608fa every Game Action tool is a
@@ -196,11 +194,9 @@ export function auditDiscoveryChannels({
   // mounted tool ids. A mount counts only when its `action` id is immediately
   // followed by its `toArgs` projector, matching the promotion checker.
   const toolVisible = new Set(
-    [
-      ...gameTools.matchAll(
-        /makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g,
-      ),
-    ].map((m) => m[1]),
+    [...gameTools.matchAll(/makeGameActionTool\(\{[\s\S]*?\n\s*action: "([a-z0-9_]+)",\s*(?:\n\s*)?toArgs:/g)].map(
+      (m) => m[1],
+    ),
   );
   // Loop-mounted families (e.g. the facility actions built with a
   // for (const action of [...] as const) header) repeat the id through the loop
@@ -225,9 +221,7 @@ export function auditDiscoveryChannels({
   for (const chunk of chunks) {
     const visible = chunk.match(/\n\s*action: "([a-z0-9_]+)",/);
     if (!visible) continue;
-    const desc = chunk.match(
-      /description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/,
-    );
+    const desc = chunk.match(/description:\s*\n?\s*"([\s\S]*?)",\s*\n\s*parameters:/);
     const text = desc ? desc[1] : "";
     // The field names a description may legitimately name. The shape set has to cover every form the Mod
     // publishes: most discovery arrays end in Targets or Slots, and the ore-pan channel is "PanSites" —
@@ -239,6 +233,11 @@ export function auditDiscoveryChannels({
       ...text.matchAll(/\b([a-zA-Z]+Slots)\b/g),
       ...text.matchAll(/\b([a-zA-Z]+Sites)\b/g),
       ...text.matchAll(/\b([a-zA-Z]+Facts)\b/g),
+      // Entity-shaped families name the THING rather than a list of addresses: `chests` is a container and its
+      // contents, because a container is perceived whole instead of being flattened into one row per
+      // (container, item) pair. The set is extended rather than the wire field renamed to end in `Targets`, for
+      // the same reason `PanSites` was: a name chosen to satisfy a checker is a second spelling of one fact.
+      ...text.matchAll(/\b(chests)\b/g),
     ].map((x) => x[1]);
     describedFields.set(visible[1], [...new Set(named)]);
   }
@@ -268,11 +267,7 @@ export function auditDiscoveryChannels({
     const needsTarget = args.includes("expectedTargetId");
     const field =
       TARGET_FIELD[action.actionId] ??
-      (NON_SNAPSHOT_TARGET_ACTIONS.includes(action.actionId)
-        ? null
-        : needsTarget
-          ? undefined
-          : null);
+      (NON_SNAPSHOT_TARGET_ACTIONS.includes(action.actionId) ? null : needsTarget ? undefined : null);
 
     rows.push({
       actionId: action.actionId,
@@ -282,42 +277,31 @@ export function auditDiscoveryChannels({
       field,
       toolVisible: toolVisible.has(action.actionId),
       inMod: field ? modFields.has(field.toLowerCase()) : null,
-      inProtocol: field
-        ? protocol.includes(lower(field)) || protocol.includes(field)
-        : null,
+      inProtocol: field ? protocol.includes(lower(field)) || protocol.includes(field) : null,
       inSchema: field ? schemaProps.has(field.toLowerCase()) : null,
       describedAs: describedFields.get(action.actionId) ?? [],
-      declared: action.actionId in TARGET_FIELD ||
-        NON_SNAPSHOT_TARGET_ACTIONS.includes(action.actionId),
+      declared: action.actionId in TARGET_FIELD || NON_SNAPSHOT_TARGET_ACTIONS.includes(action.actionId),
     });
   }
 
   const gaps = [];
   for (const row of rows) {
     if (row.kind === "read_only") continue;
-    if (!row.toolVisible)
-      gaps.push({ ...row, gap: "no_agent_tool" });
-    if (row.field === undefined)
-      gaps.push({ ...row, gap: "undeclared_target_field" });
+    if (!row.toolVisible) gaps.push({ ...row, gap: "no_agent_tool" });
+    if (row.field === undefined) gaps.push({ ...row, gap: "undeclared_target_field" });
     else if (row.field) {
       if (!row.inMod) gaps.push({ ...row, gap: "missing_mod_wire_field" });
       if (!row.inProtocol) gaps.push({ ...row, gap: "missing_host_protocol_field" });
-      if (!row.inSchema)
-        gaps.push({ ...row, gap: "missing_envelope_schema_field" });
-      const real = row.describedAs.filter(
-        (n) => n.toLowerCase() === row.field.toLowerCase(),
-      );
-      const wrong = row.describedAs.filter(
-        (n) => n.toLowerCase() !== row.field.toLowerCase(),
-      );
+      if (!row.inSchema) gaps.push({ ...row, gap: "missing_envelope_schema_field" });
+      const real = row.describedAs.filter((n) => n.toLowerCase() === row.field.toLowerCase());
+      const wrong = row.describedAs.filter((n) => n.toLowerCase() !== row.field.toLowerCase());
       // A description legitimately names several snapshot fields (e.g.
       // toolSlots AND the target list): only the absence of the target field
       // itself is a gap. Naming a different field instead of the target one
       // (real empty, wrong non-empty) is the real misdirection.
       if (real.length === 0 && wrong.length > 0)
         gaps.push({ ...row, gap: `tool_names_wrong_field:${wrong.join(",")}` });
-      else if (real.length === 0)
-        gaps.push({ ...row, gap: "tool_does_not_name_target_field" });
+      else if (real.length === 0) gaps.push({ ...row, gap: "tool_does_not_name_target_field" });
     }
   }
 
@@ -345,9 +329,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   for (const [gap, actions] of [...byGap].sort())
     process.stdout.write(`  [${gap}] ${actions.length}: ${actions.join(", ")}\n`);
   process.stdout.write(
-    report.ok
-      ? "  all target-bearing actions have a complete discovery chain\n"
-      : `  ${report.gaps.length} gap(s)\n`,
+    report.ok ? "  all target-bearing actions have a complete discovery chain\n" : `  ${report.gaps.length} gap(s)\n`,
   );
   process.exitCode = report.ok ? 0 : 1;
 }
