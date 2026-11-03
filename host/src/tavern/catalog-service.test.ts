@@ -1154,9 +1154,156 @@ test("the Chat catalog refuses a scenario macro the run cannot render", async ()
           },
           TEST_MACROS,
         ),
-      /tavern_stable_context_unrendered_scenario_macro/,
+      (error: unknown) => {
+        // A token this product does not recognise is not a card doing the normal thing, so it is
+        // still refused - and the refusal names it.
+        assert.match(String(error), /tavern_stable_context_unrecognised_scenario_macro/);
+        assert.match(String(error), /\{\{unknown_macro\}\}/u);
+        return true;
+      },
     );
   } finally {
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The persona half of the same family. A persona and its description are ONE bound stable source, so a
+ * `{{time}}` in the described player costs that source: the Chat then assembles without the player's own
+ * prose rather than refusing every turn of the companion's context. Both readings below are from the same
+ * catalog - the surviving one, and the absence inside it.
+ */
+test("a standard macro costs the Chat its persona source, named, instead of the whole catalog", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-persona-standard-macro-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const artifacts = new TavernArtifactStore(root);
+  const persona = await artifacts.write(
+    tavernRevisionPath(join(paths.playerRoot, "personas", "mira"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      personaId: "mira",
+      name: "Mira",
+      description: "Farms at {{time}} every morning.",
+    },
+    validateTavernArtifact,
+  );
+  const threads = createChatThreadStore(root, "continuity-key");
+  const stderrWrite = process.stderr.write;
+  let diagnostics = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      personaId: "mira",
+      stableArtifactBindings: [
+        { kind: "persona", sourceId: "mira", revision: 1, canonicalHash: persona.canonicalHash },
+      ],
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      artifacts,
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+    );
+    // The catalog publishes - which is what the old refusal made impossible...
+    assert.equal(catalog.version, "gamebuddy-authored-context-catalog/v2");
+    assert.deepEqual(catalog.stableSources, []);
+    // ...carrying no literal macro, and naming the source and the macro it lost.
+    assert.doesNotMatch(JSON.stringify(catalog), /\{\{/u);
+    assert.match(diagnostics, /omitting persona mira/u);
+    assert.match(diagnostics, /\{\{time\}\}/u);
+  } finally {
+    process.stderr.write = stderrWrite;
+    threads.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a standard macro costs the Chat its scenario source, named, instead of the whole catalog", async () => {
+  const root = await canonicalTestRoot("gamebuddy-catalog-scenario-standard-macro-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const artifacts = new TavernArtifactStore(root);
+  const scenario = await artifacts.write(
+    tavernRevisionPath(join(paths.companionRoot, "scenarios", "dated"), 1),
+    {
+      schemaVersion: 1 as const,
+      revision: 1,
+      scenarioId: "dated",
+      name: "Dated",
+      description: "Dated.",
+      text: "琥珀抵达的那天是{{date}}。",
+      provenance: "authored" as const,
+      owner: "chat_override" as const,
+    },
+    validateTavernArtifact,
+  );
+  const threads = createChatThreadStore(root, "continuity-key");
+  const stderrWrite = process.stderr.write;
+  let diagnostics = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      scenarioId: "dated",
+      stableArtifactBindings: [
+        { kind: "scenario", sourceId: "dated", revision: 1, canonicalHash: scenario.canonicalHash },
+      ],
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      artifacts,
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+    );
+    assert.equal(catalog.version, "gamebuddy-authored-context-catalog/v2");
+    assert.deepEqual(catalog.stableSources, []);
+    assert.doesNotMatch(JSON.stringify(catalog), /\{\{/u);
+    assert.match(diagnostics, /omitting scenario dated/u);
+    assert.match(diagnostics, /\{\{date\}\}/u);
+  } finally {
+    process.stderr.write = stderrWrite;
     threads.close?.();
     await rm(root, { recursive: true, force: true });
   }

@@ -189,18 +189,26 @@ export async function materializeTavernAuthoredContextCatalog(
         : selected.kind === "scenario"
           ? renderMacros((artifact as Scenario).text, macros)
           : dialogueExamplesProse(artifact as DialogueExamples);
-    // A scenario and a persona are each ONE bound stable source, so unlike a world book
-    // entry neither can be dropped. An authored macro the run's table cannot resolve still
-    // must not be published as the companion's context, exactly as the Game surface refuses
-    // one. The persona's fields arrive already bounded by the artifact contract at authoring
-    // time (`persona-management.ts`: 128 for the name, 4_096 for the description), so the
-    // render is bounded by the same discipline as every other authored field.
-    if (selected.kind !== "dialogue_examples" && hasUnrenderedMacro(content))
-      throw new Error(
-        selected.kind === "persona"
-          ? "tavern_stable_context_unrendered_persona_macro"
-          : "tavern_stable_context_unrendered_scenario_macro",
+    // A persona and a scenario are each ONE bound authored source, so a macro the run's table
+    // cannot fill costs that source as a whole. That is a real loss and it is the smaller of the
+    // two: the companion chats WITHOUT her persona's prose or her scenario rather than not at all.
+    // The bucket decides which, exactly as it does for her closing direction and for a Game source:
+    // a standard SillyTavern macro (`{{time}}`) is a card doing the normal thing and is dropped by
+    // name, while a token this product does not recognise still fails closed. The persona's fields
+    // arrive already bounded by the artifact contract at authoring time (`persona-management.ts`:
+    // 128 for the name, 4_096 for the description), so the render is bounded by the same discipline
+    // as every other authored field.
+    const surviving = selected.kind === "dialogue_examples" ? undefined : survivingMacros(content);
+    if (surviving !== undefined) {
+      if (surviving.unrecognised.length > 0)
+        throw new Error(
+          `tavern_stable_context_unrecognised_${selected.kind}_macro: ${selected.kind} ${selected.sourceId} carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+        );
+      process.stderr.write(
+        `[authored-context] omitting ${selected.kind} ${selected.sourceId}: it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
       );
+      continue;
+    }
     sources.push(
       source(
         selected.kind,
