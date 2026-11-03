@@ -2,6 +2,7 @@ import { inflateSync } from "node:zlib";
 import type { IdentityProfile } from "./identity-profile.js";
 import {
   hasUnrenderedMacro,
+  isLeftLiteralStandardMacro,
   isStandardSillyTavernMacro,
   renderWorldBookText,
   unrenderedMacros,
@@ -9,7 +10,7 @@ import {
 import { ST_CARD_DECODER_LIMITS_V1 } from "./tavern/compatibility-manifest.v1.js";
 import { isCompletePngFile } from "./tavern/companion-avatar/index.js";
 import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBookEntry } from "./worldbook.js";
-import type { StCardImportOmittedEntry } from "./tavern/types.js";
+import type { StCardImportOmittedEntry, StCardImportOmittedMacro } from "./tavern/types.js";
 
 const MAX_JSON_DEPTH = ST_CARD_DECODER_LIMITS_V1.jsonDepth;
 const MAX_JSON_NODES = ST_CARD_DECODER_LIMITS_V1.jsonNodes;
@@ -57,6 +58,7 @@ const ST_CARD_IMPORT_LOSS_REASONS = [
   "worldbook_entry_content_unreadable",
   "character_voice_too_long",
   "post_history_instructions_too_long",
+  "unrenderable_post_history_instructions",
 ] as const;
 export type StCardImportLossReason = (typeof ST_CARD_IMPORT_LOSS_REASONS)[number];
 export type StCardImportLoss = Readonly<{
@@ -74,34 +76,44 @@ export type StCardImportLoss = Readonly<{
    * shorter than `count` - the count is the truth, this is the sample the player is shown.
    */
   omitted?: readonly StCardImportOmittedEntry[];
+  /**
+   * The macros behind a FIELD-level loss: one field the catalogue will omit as a whole, as
+   * `post_history_instructions` is.
+   *
+   * A different fact from `omitted`, which is one dropped world-book entry per row. A field has no
+   * title of its own - `field` already names it - so putting the field name in `title` would give one
+   * slot two meanings. `count` is 1 here and always will be: one field is one loss.
+   */
+  macros?: readonly StCardImportOmittedMacro[];
+}>;
+
+/** What a loss row can name about the items it lost: one row per dropped entry, or one field's macros. */
+type StCardImportLossNamedItems = Readonly<{
+  omitted?: readonly StCardImportOmittedEntry[];
+  macros?: readonly StCardImportOmittedMacro[];
 }>;
 
 /** The one channel an import reports a loss through. */
 type StCardImportLossLedger = Readonly<{
-  record(
-    field: string,
-    reason: StCardImportLossReason,
-    count: number,
-    omitted?: readonly StCardImportOmittedEntry[],
-  ): void;
+  record(field: string, reason: StCardImportLossReason, count: number, named?: StCardImportLossNamedItems): void;
   entries(): readonly StCardImportLoss[];
 }>;
 function createLossLedger(): StCardImportLossLedger {
   const entries: StCardImportLoss[] = [];
   return Object.freeze({
-    record(
-      field: string,
-      reason: StCardImportLossReason,
-      count: number,
-      omitted?: readonly StCardImportOmittedEntry[],
-    ): void {
+    record(field: string, reason: StCardImportLossReason, count: number, named?: StCardImportLossNamedItems): void {
       if (count > 0)
         entries.push(
           Object.freeze({
             field,
             reason,
             count,
-            ...(omitted === undefined || omitted.length === 0 ? {} : { omitted: Object.freeze([...omitted]) }),
+            ...(named?.omitted === undefined || named.omitted.length === 0
+              ? {}
+              : { omitted: Object.freeze([...named.omitted]) }),
+            ...(named?.macros === undefined || named.macros.length === 0
+              ? {}
+              : { macros: Object.freeze([...named.macros]) }),
           }),
         );
     },
@@ -480,6 +492,29 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
       : rawPostHistoryInstructions;
   if (rawPostHistoryInstructions !== undefined && postHistoryInstructions === undefined)
     losses.record("post_history_instructions", "post_history_instructions_too_long", 1);
+  // A closing direction that carries a macro this product deliberately leaves literal (`{{time}}`) is
+  // omitted WHOLE at assembly (catalog-service's `survivingMacros`), so the review says so here, while
+  // the player can still edit the card: the record is stored verbatim and nothing else can report it.
+  //
+  // Classification, not a render. `isLeftLiteralStandardMacro` is exactly the bucket that survives
+  // EVERY table this product builds, so this seam needs no second copy of the macro table and cannot
+  // disagree with the catalogue's own answer; `{{char}}`/`{{user}}` ARE filled at render, and naming
+  // either as a loss would be a false statement about the card the player wrote.
+  if (postHistoryInstructions !== undefined) {
+    const leftLiteral = unrenderedMacros(postHistoryInstructions).filter(isLeftLiteralStandardMacro);
+    if (leftLiteral.length > 0)
+      losses.record("post_history_instructions", "unrenderable_post_history_instructions", 1, {
+        macros: Object.freeze(
+          leftLiteral.slice(0, MAX_REPORTED_OMITTED_MACROS).map((token) =>
+            Object.freeze({
+              token:
+                token.length <= MAX_REPORTED_MACRO_TOKEN_CHARS ? token : token.slice(0, MAX_REPORTED_MACRO_TOKEN_CHARS),
+              standard: true,
+            }),
+          ),
+        ),
+      });
+  }
   const extensions = readInertExtensions(data.extensions);
   const unsupportedFields = Object.keys(data).filter(isExecutableControlField).sort();
   // Product policy: limits only prevent physical blowup, never the player's
@@ -813,7 +848,9 @@ function extractCharacterBook(
     );
   });
   losses.record("character_book.entries", "worldbook_entry_content_unreadable", unreadableContent);
-  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent, omittedEntries);
+  losses.record("character_book.entries", "unrenderable_worldbook_entry", unrenderableContent, {
+    omitted: omittedEntries,
+  });
   losses.record("character_book.keys", "worldbook_keys_truncated", truncatedKeys);
   losses.record("character_book.secondary_keys", "worldbook_keys_truncated", truncatedSecondaryKeys);
   return Object.freeze({
