@@ -453,11 +453,11 @@ const SCENARIO_PROMPTS = Object.freeze({
     // day, because they are what this scenario exists to observe and a task change must not rewrite them.
     zh: (day, task) =>
       `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家白天在镇上忙，晚上回来；院子里这会儿的事你自己拿主意。）` +
+      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家白天在镇上忙，什么时候回来不一定，也可能不回来；他听得见你说话，但你不必等他——天黑了自己回屋睡。）` +
       `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。`,
     en: (day, task) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `The player has gone into town, and on the way out left you today's one thing: ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; go inside and sleep when it gets dark, and tomorrow there will be something else. (The player is away all day and will not come back to tell you; the day's rhythm is yours to keep.) ` +
+      `The player has gone into town, and on the way out left you today's one thing: ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; go inside and sleep when it gets dark, and tomorrow there will be something else. (The player is busy in town and may or may not come back; he can hear you, but you are not waiting on him - when it gets dark you go indoors and sleep.) ` +
       `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. `,
   }),
 });
