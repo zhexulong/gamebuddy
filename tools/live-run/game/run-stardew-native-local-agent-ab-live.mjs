@@ -21,6 +21,7 @@
  *    regression. Do not silence a finding to make a rung pass.
  */
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { freemem as freeMemory } from "node:os";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -630,6 +631,28 @@ markPhase("bridgeConnectedMs");
 const bridgeDisconnections = [];
 const ledger = createLedger({ now: () => Date.now() });
 
+// Free physical memory, sampled cheaply and continuously, because three runs ended with the process simply gone and no
+// log said why.
+//
+// Measured 2026-11-03 (`round28`): the Mod's own heartbeat showed a managed heap growing 32 -> 180 MB in 2.5 minutes and
+// a working set of 1.0 -> 1.25 GB, on a machine holding **2.3 GB free of 31** at the same moment. That is a real number
+// and an ambiguous one - Windows counts file cache as used and reclaims it on demand - so the honest response is to
+// record what free memory was doing when a run dies, beside the reason code, rather than argue about it later.
+//
+// `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
+// is a different finding from a death with gigabytes available, and only one of them is our bug.
+const hostMemory = { samples: 0, minFreeMb: null, maxHostRssMb: null };
+const sampleHostMemory = () => {
+  const freeMb = Math.round(freeMemory() / (1024 * 1024));
+  const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  hostMemory.samples += 1;
+  hostMemory.minFreeMb = hostMemory.minFreeMb === null ? freeMb : Math.min(hostMemory.minFreeMb, freeMb);
+  hostMemory.maxHostRssMb = hostMemory.maxHostRssMb === null ? rssMb : Math.max(hostMemory.maxHostRssMb, rssMb);
+};
+sampleHostMemory();
+const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
+hostMemoryTimer.unref?.();
+
 ledger.record("run.start");
 // The program half of "how far had this run got", updated as the journal reports it. A disconnect that says
 // only the flat count reads as "nothing had happened" on a run whose work all went through programs.
@@ -647,6 +670,9 @@ client.onConnectionFact((fact) => {
     // The total this run dispatched, whichever path carried it. A program-path run legitimately has
     // `flatDispatchesSoFar: 0` beside a large total; that is the truth rather than a contradiction.
     dispatchesSoFar: actionTrace.length + (lastKnownProgramDispatches ?? 0),
+    // What the machine looked like when this happened, so "the process vanished" can be read as memory pressure or not.
+    minFreeMb: hostMemory.minFreeMb,
+    hostRssMb: hostMemory.maxHostRssMb,
   });
   bridgeDisconnections.push(entry);
   console.error("BRIDGE_DISCONNECTED", JSON.stringify(entry));
@@ -3788,6 +3814,7 @@ try {
     unsettledTurns: unsettledSessionTurns,
     turnFailureReason,
     bridgeDisconnections,
+    hostMemory,
     sessionSpoken,
     accomplishedActionIds,
     // Present only for the multi-day scenario, where it is the run's own baseline judgement.
