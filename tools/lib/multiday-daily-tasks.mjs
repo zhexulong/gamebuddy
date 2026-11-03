@@ -41,7 +41,15 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
   // The rows below exist for COVERAGE, and that is a measured need rather than a preference: of the 95 published
   // actions, 78 were reachable by no task for ever, so a capability could be finished, gated, and still never exercised.
   // `enter_mine` is the proof - published, correct, and used in zero runs because nothing ever asked for a mine.
-  go_mining: Object.freeze(["navigate_to_destination", "enter_mine", "break_rock_source"]),
+  mine_delve: Object.freeze([
+    "navigate_to_destination",
+    "enter_mine",
+    "break_rock_source",
+    "break_container_source",
+    "use_item",
+    "select_mine_elevator_floor",
+    "ride_minecart",
+  ]),
   till_and_sow: Object.freeze(["till_soil", "plant_seed", "water_crop", "fertilize_tile"]),
   store_and_sort: Object.freeze(["chest_store", "chest_retrieve", "pickup_item"]),
   tend_the_animals: Object.freeze(["pet_animal", "feed_animal", "collect_animal_product", "water_pet_bowl"]),
@@ -73,7 +81,7 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "craft_and_place_machine",
   "town_market",
   "town_visit",
-  "go_mining",
+  "mine_delve",
   "store_and_sort",
   "till_and_sow",
   "tidy_and_repair",

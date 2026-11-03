@@ -362,7 +362,7 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   town_errand: "去一趟镇上，找个人说说话。",
-  go_mining: "下一趟矿，敲点矿石回来。",
+  mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
   // The size is deliberately the companion's call: a number picked here would be a quota, and the point of the
   // task is to observe how it decides where a clearing should be and how much is enough.
   clear_and_cultivate: "林子东边太挤了，清一片空地出来，顺手种点东西浇上水。多大你自己定。",
