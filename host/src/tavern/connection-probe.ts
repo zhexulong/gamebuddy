@@ -61,6 +61,11 @@ export async function probeTavernConnection(
     const listing = await readBoundedModelListing(response);
     if (response.status === 401 || response.status === 403) return failed("unauthorized");
     if (response.status === 404) return failed("not_found");
+    // A throttle and an endpoint's own failure are the two refusals with remedies of their own:
+    // waiting, and retrying later. Neither implicates the key or the model, so neither may read as
+    // the 4xx-about-our-request sentence `invalid_response` says.
+    if (response.status === 429) return failed("rate_limited");
+    if (response.status >= 500 && response.status < 600) return failed("endpoint_error");
     if (response.status < 200 || response.status >= 300) return failed("invalid_response");
     if (listing === undefined) return failed("invalid_response");
     // A 2xx listing is worth publishing even when this probe fails on content:

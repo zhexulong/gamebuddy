@@ -937,6 +937,8 @@ export type TavernConnectionFailureV1 =
   | "not_configured"
   | "unauthorized"
   | "not_found"
+  | "rate_limited"
+  | "endpoint_error"
   | "unreachable"
   | "timeout"
   | "invalid_response";
@@ -1534,6 +1536,8 @@ const CONNECTION_FAILURES = [
   "not_configured",
   "unauthorized",
   "not_found",
+  "rate_limited",
+  "endpoint_error",
   "unreachable",
   "timeout",
   "invalid_response",

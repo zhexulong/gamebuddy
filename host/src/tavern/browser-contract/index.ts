@@ -738,6 +738,8 @@ const ConnectionFailure = Type.Union([
   Type.Literal("not_configured"),
   Type.Literal("unauthorized"),
   Type.Literal("not_found"),
+  Type.Literal("rate_limited"),
+  Type.Literal("endpoint_error"),
   Type.Literal("unreachable"),
   Type.Literal("timeout"),
   Type.Literal("invalid_response"),

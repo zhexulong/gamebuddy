@@ -61,6 +61,8 @@ export type TavernConnectionProbeFailure =
   | "not_configured"
   | "unauthorized"
   | "not_found"
+  | "rate_limited"
+  | "endpoint_error"
   | "unreachable"
   | "timeout"
   | "invalid_response";
@@ -605,6 +607,8 @@ const PROBE_FAILURES: ReadonlySet<string> = new Set([
   "not_configured",
   "unauthorized",
   "not_found",
+  "rate_limited",
+  "endpoint_error",
   "unreachable",
   "timeout",
   "invalid_response",
