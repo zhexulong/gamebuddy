@@ -56,7 +56,7 @@ import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
  * threshold, the 15% history share — and its formula is stated beside it rather than hidden.
  * </p>
  */
-export type AuthoredContextBudgetRow = Readonly<{
+type AuthoredContextBudgetRow = Readonly<{
   /** A catalogue stable source's own kind. There is no `persona` row: see the module comment. */
   kind: TavernAuthoredContextCatalog["stableSources"][number]["kind"];
   sourceId: string;
@@ -145,8 +145,8 @@ export function authoredTokensFor(content: string): number {
 }
 
 /** The two knobs Magic Context's historian resolves the history budget from. */
-export const HISTORY_BUDGET_PERCENTAGE = 0.15;
-export const EXECUTE_THRESHOLD_PERCENTAGE = 65;
+const HISTORY_BUDGET_PERCENTAGE = 0.15;
+const EXECUTE_THRESHOLD_PERCENTAGE = 65;
 
 /**
  * The history budget `resolveHistoryBudgetTokensForPi` derives, in Magic Context's formula:

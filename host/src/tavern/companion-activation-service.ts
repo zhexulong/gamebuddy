@@ -32,7 +32,7 @@ import type { CompanionDeletionTarget } from "./companion-deletion-service.js";
  * session is a different operation this product does not have. Stopping the game first is a
  * step the player can actually take.
  */
-export type CompanionActivationOutcome = Readonly<{
+type CompanionActivationOutcome = Readonly<{
   /** The opaque handle the request recorded, so the surface can render exactly that row. */
   handle: string;
   /**

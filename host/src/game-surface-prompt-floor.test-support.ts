@@ -14,7 +14,7 @@
  * shape and tokenizer.
  * </p>
  */
-export type PromptFloorRow = Readonly<{
+type PromptFloorRow = Readonly<{
   name: string;
   descriptionChars: number;
   parametersChars: number;

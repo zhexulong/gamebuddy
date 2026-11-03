@@ -35,7 +35,7 @@ export const COMPANION_SWITCH_REQUEST_SCHEMA = "gamebuddy-companion-switch-reque
  * They are one fact with two readers, so a drift is a refusal on the launcher side rather than
  * a quiet degrade: `companion-switch-record-shape.test.ts` compares the two sources.
  */
-export const COMPANION_SWITCH_REQUEST_FILE_NAME = "companion-switch-request.json" as const;
+const COMPANION_SWITCH_REQUEST_FILE_NAME = "companion-switch-request.json" as const;
 
 /** The exact key set both sides require. One spelling, asserted by the cross-language test. */
 export const COMPANION_SWITCH_REQUEST_KEYS = [
@@ -48,7 +48,7 @@ export const COMPANION_SWITCH_REQUEST_KEYS = [
 ] as const;
 
 /** `requested` is the only status the Host writes; a settled request is the launcher's to clear. */
-export const COMPANION_SWITCH_REQUESTED_STATUS = "requested" as const;
+const COMPANION_SWITCH_REQUESTED_STATUS = "requested" as const;
 
 /**
  * The bounded identifier shape the deployment manifest, the semantic store and the authority

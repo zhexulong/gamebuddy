@@ -116,7 +116,7 @@ const NODE_STATES_SETTLED: ReadonlySet<string> = new Set([
  * `true` means no publication is owed, so an unchanged snapshot is the actionable "asking again will say the same"
  * fact. `false` means the Mod is holding an execution whose terminal receipt is still to come.
  */
-export function hasNothingInFlight(payload: unknown): boolean {
+function hasNothingInFlight(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) return true;
   const record = payload as Record<string, unknown>;
   const snapshot = record.snapshot;
