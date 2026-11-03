@@ -682,10 +682,16 @@ test("the escape hatch round-trips a player-chosen API shape and a query-string 
 });
 
 test("probe failures are reported as closed categories with no provider text", async () => {
+  // One case per member a status can produce. The pair that matters: a 400 is about OUR request
+  // (`invalid_response`), while a 429 and a 5xx are not - the first wants a wait, the second wants a
+  // retry later, and neither implicates the key or the model.
   const cases = [
     { status: 401, body: "unauthorized: bad key sk-live-abc", failure: "unauthorized" },
     { status: 404, body: "no such endpoint", failure: "not_found" },
-    { status: 500, body: "upstream exploded at 10.0.0.5", failure: "invalid_response" },
+    { status: 400, body: "model: field required", failure: "invalid_response" },
+    { status: 429, body: "too many requests: 60 requests/min for sk-live-abc", failure: "rate_limited" },
+    { status: 500, body: "upstream exploded at 10.0.0.5", failure: "endpoint_error" },
+    { status: 502, body: "bad gateway for sk-live-abc", failure: "endpoint_error" },
     { status: 200, body: "not json at all", failure: "invalid_response" },
     { status: 200, body: listModels("some-other-model"), failure: "not_found" },
   ] as const;
@@ -727,7 +733,7 @@ test("probe failures are reported as closed categories with no provider text", a
       // endpoint's ids are the one thing the probe publishes (they are the authority on what it
       // offers, and `not_found` is the failure a player needs them for). Every string the endpoint
       // wrote as an ERROR still never crosses.
-      assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json/);
+      assert.doesNotMatch(probe.raw, /sk-live-abc|10\.0\.0\.5|exploded|not json|bad gateway|60 requests/);
     });
   }
 });
