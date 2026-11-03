@@ -31,6 +31,15 @@
  * Step 1 is already covered: `settings-default-provider.spec.ts` pins that a fresh install lands on
  * no provider.
  *
+ *   6. A refused key and a throttle read differently, at both layers the player can meet them. The
+ *      Test button's two refusals - a 401 and a 429 from a local endpoint - are two sentences, and a
+ *      failed turn's classified cause words itself. What the probe cannot do is NAME a rate limit:
+ *      its closed vocabulary has no such member, so a 429 reads as "answered in an unexpected way".
+ *      That is stated as the product's current wording, not as an ideal; the distinction a throttled
+ *      player needs is carried by the turn's own cause, which the Host classifies from the endpoint's
+ *      reply (`tools/live-run/chat/run-provider-failure-classification-live.mjs` drives that against
+ *      a real endpoint).
+ *
  * Two defects this journey cannot catch, and does not pretend to: a wrong price constant
  * (`host/src/gameplay-task-subagent.ts`, `host/src/tavern/pi-provider-store.ts`). A stub provider
  * only answers what it is told, so a rate that is 5x off stays 5x off here. Those belong to the
@@ -47,6 +56,7 @@
  * this file has no second one.
  */
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -148,9 +158,16 @@ test.afterAll(() => {
 });
 
 /** Every route the composed shell and the settings panels read, with one connection state supplied. */
-async function mountProduct(page: Page, state: TavernConnectionStateV1): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot)));
+async function mountProduct(
+  page: Page,
+  state: TavernConnectionStateV1,
+  rootOf: () => typeof composedRoot = () => composedRoot,
+): Promise<void> {
+  // Read per request, so a caller can move the projection between two loads of the same page without
+  // registering a second set of routes: Playwright runs the most recently added matching route first,
+  // and a stacked pair would make "which projection did the page see" a question about the harness.
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(rootOf())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(rootOf())));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
@@ -216,6 +233,10 @@ async function mountProduct(page: Page, state: TavernConnectionStateV1): Promise
     ),
   );
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+}
+
+/** The Settings surface, and the connection form on it, open and settled. */
+async function openSettings(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.getByTestId("settings-surface").locator("[data-connection-form]")).toBeVisible();
 }
@@ -276,6 +297,7 @@ test.describe("2: choosing a provider fills what it can, and names nothing it ca
     expect(curated.length, "the catalog publishes at least one id, so the rule below is not vacuous").toBeGreaterThan(0);
 
     await mountProduct(page, state);
+    await openSettings(page);
     for (const providerId of ["deepseek", "openai"]) {
       const provider = state.providers.find((entry) => entry.providerId === providerId);
       expect(provider, `${providerId} is offered to a browser`).toBeDefined();
@@ -318,6 +340,7 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
     }
 
     await mountProduct(page, state);
+    await openSettings(page);
     for (const providerId of ["deepseek", "openai"]) {
       await form(page).locator("#connection-provider").selectOption(providerId);
       const reading = await readForm(page);
@@ -352,6 +375,7 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
       ),
     };
     await mountProduct(page, state);
+    await openSettings(page);
     await form(page).locator("#connection-provider").selectOption("deepseek");
     const reading = await readForm(page);
     console.log(`[first-run-suggestions-arrive] ${JSON.stringify(reading)}`);
@@ -382,6 +406,7 @@ test.describe("4: an unserved id saves, and the probe is what tells the truth", 
     const stub = await startLocalStubProvider({ modelId: SERVED, reply: "The kettle is on." });
     try {
       await mountProduct(page, await connection.read());
+      await openSettings(page);
       // The escape hatch is the one entry whose endpoint the player supplies, so it is the one that
       // can be pointed at an endpoint this test serves.
       await form(page).locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
@@ -426,6 +451,7 @@ test.describe("5: the id the player typed is the id the runtime is handed", () =
     const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-first-run-runtime-"));
     try {
       await mountProduct(page, await connection.read());
+      await openSettings(page);
       await form(page).locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
       await form(page).locator("#connection-base-url").fill(stub.baseUrl);
       await form(page).locator("#connection-api-key").fill(PLAYER_KEY);
@@ -498,3 +524,108 @@ async function curatedIdsFromCatalog(): Promise<TavernConnectionStateV1["provide
     else process.env.GAMEBUDDY_OPERATOR_GATEWAY = previous;
   }
 }
+
+/**
+ * An endpoint whose only fact is the status it answers `GET /models` with, in order, one per request.
+ *
+ * Not a second provider stub: it serves no completions and captures no request, because the question
+ * here is only what the product SAYS when an endpoint refuses. The credentials a real provider would
+ * check never enter this file.
+ */
+async function startRefusalEndpoint(statuses: readonly number[]) {
+  const pending = [...statuses];
+  const server = createServer((_request, response) => {
+    const status = pending.shift() ?? 500;
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "refused" } }));
+  });
+  await new Promise<void>((listening) => server.listen(0, "127.0.0.1", () => listening()));
+  const { port } = server.address() as { port: number };
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise((closed) => server.close(() => closed(undefined)));
+    },
+  };
+}
+
+/** The failed turn the Host publishes, with one classified provider cause beside it. */
+function failedTurn(providerFailure: string) {
+  return {
+    handle: `${'T'.repeat(42)}A`,
+    state: "failed",
+    projectionRevision: 1,
+    canCancel: false,
+    problemCode: "runtime_unavailable",
+    providerFailure,
+  };
+}
+
+/** The projection the shell mounts for a turn with that cause. */
+function rootForFailedTurn(providerFailure: string) {
+  return {
+    ...composedRoot,
+    chat: { ...composedChat, chat: { ...composedChat.chat, turn: failedTurn(providerFailure) } },
+  };
+}
+
+/** The Chat surface's own failure line, read from the mounted page. */
+async function failureNotice(page: Page): Promise<string> {
+  const notice = page.getByTestId("chat-surface").locator(".reference-turn-notice");
+  await expect(notice).toBeVisible();
+  return (await notice.textContent())?.trim() ?? "";
+}
+
+test.describe("6: a refused key and a throttle read differently", () => {
+  test("(a) the Test button's two refusals are two sentences", async ({ page }) => {
+    // The probe's closed vocabulary: a 401 is `unauthorized`, and a 429 is `invalid_response` - the
+    // probe has no rate-limit member. The sentence the player reads must still distinguish them, and
+    // this asserts the exact pair rather than only their difference.
+    const endpoint = await startRefusalEndpoint([401, 429]);
+    try {
+      await mountProduct(page, await connection.read());
+      await openSettings(page);
+      await form(page).locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+      await form(page).locator("#connection-base-url").fill(endpoint.baseUrl);
+      await form(page).locator("#connection-api-key").fill(PLAYER_KEY);
+      await form(page).locator("#connection-model-id").fill(SERVED);
+      await form(page).getByRole("button", { name: "Save connection", exact: true }).click();
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "configured");
+
+      await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
+      await expect(connectionRow(page).locator("[data-connection-failure]")).toHaveText(
+        "The endpoint rejected the credential.",
+      );
+      const refused = await connectionRow(page).locator("[data-connection-failure]").textContent();
+
+      await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
+      await expect(connectionRow(page).locator("[data-connection-failure]")).toHaveText(
+        "The endpoint answered in an unexpected way.",
+      );
+      const throttled = await connectionRow(page).locator("[data-connection-failure]").textContent();
+      console.log(`[first-run-refusals/probe] ${JSON.stringify({ refused, throttled })}`);
+      expect(refused).not.toBe(throttled);
+    } finally {
+      await endpoint.close();
+    }
+  });
+
+  test("(b) the Chat surface words the two causes as two sentences", async ({ page }) => {
+    // This is where a 401 and a 429 really part company: the Host classifies a turn's provider refusal
+    // and the surface words the class. A player holding a revoked key and a player being throttled
+    // must not read the same paragraph, which is exactly what they did before the classifier existed.
+    // One route set, read per request: the same page is loaded twice and only the projection moves.
+    let cause = "credential_rejected";
+    await mountProduct(page, await connection.read(), () => rootForFailedTurn(cause));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    const rejected = await failureNotice(page);
+    cause = "rate_limited";
+    await page.reload();
+    const throttled = await failureNotice(page);
+    console.log(`[first-run-refusals/turn] ${JSON.stringify({ rejected, throttled })}`);
+    expect(rejected.length, "an unclassified or missing sentence would be the empty string").toBeGreaterThan(0);
+    expect(throttled.length).toBeGreaterThan(0);
+    expect(rejected).not.toBe(throttled);
+  });
+});
