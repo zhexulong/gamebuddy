@@ -272,6 +272,74 @@ test("stable World Info excludes constants from volatile sources and matches vol
   }
 });
 
+test("the volatile total order follows the card's own order, not its entries' row order", async () => {
+  const root = await canonicalTestRoot("gamebuddy-managed-ordered-volatile-");
+  const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
+  const paths = resolveTavernPaths({ root } as never, identity);
+  const repository = createWorldInfoManagementRepository(root);
+  let closeStore: (() => void) | undefined;
+  try {
+    // A real SillyTavern world info export: `order` states each entry's place in the prompt, and
+    // the rows happen to be listed evening-first. Read through the library's one importer, so this
+    // reading spans the whole chain - importer, stored sequence, `totalOrderKey` - instead of
+    // pinning the catalog to a fixture it built itself.
+    const importLorebook = repository.import;
+    assert.ok(importLorebook, "the managed library exposes its one lorebook importer");
+    const imported = await importLorebook.call(repository, {
+      name: "Valley Hours",
+      description: "When things happen in the valley.",
+      entries: [
+        { comment: "Evening", content: "The valley goes quiet after dusk.", key: "dusk", order: 5 },
+        { comment: "Morning", content: "The valley wakes before the sun clears the ridge.", key: "dawn", order: 1 },
+      ],
+    });
+    const resolver = createManagedWorldInfoBindingResolver(repository);
+    const exact = await resolver.resolve(await resolver.bindExact(imported.publicTitle, imported.revision));
+    const threads = createChatThreadStore(root, "continuity-key");
+    closeStore = () => threads.close?.();
+    const creation = createProfileAwareChatThreadCreationCapability(threads, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    });
+    const thread = await creation.createExplicit({
+      chatThreadId: "thread",
+      chatSurfaceSessionId: "surface",
+      companionId: "companion",
+      continuityId: "continuity",
+      managedWorldInfoBinding: exact.binding,
+      opening: "blank",
+    });
+    const catalog = await materializeTavernAuthoredStableCatalog(
+      paths,
+      new TavernArtifactStore(root),
+      thread.thread,
+      {
+        continuityId: "continuity",
+        sessionId: "pi-session",
+        surface: "tavern",
+        threadId: "thread",
+        profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+      },
+      TEST_MACROS,
+      { managedWorldInfo: exact },
+    );
+    // `totalOrderKey` used to be the array index, so the row order decided what the prompt said
+    // first and the card's `order` never reached it at all.
+    assert.deepEqual(
+      catalog.volatileSources.map((source) => source.content),
+      ["The valley wakes before the sun clears the ridge.", "The valley goes quiet after dusk."],
+    );
+    assert.deepEqual(
+      catalog.volatileSources.map((source) => source.totalOrderKey),
+      ["0001", "0002"],
+    );
+  } finally {
+    closeStore?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("stable World Info publishes every constant in full when the authored content exceeds the old overview threshold", async (t) => {
   const root = await canonicalTestRoot("gamebuddy-catalog-overview-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
