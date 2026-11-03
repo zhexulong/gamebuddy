@@ -1509,6 +1509,16 @@ const MAX_NATIVE_NOTICE_CHARS = 512;
 export const MAX_BODY_PROGRAM_BINDINGS_PER_NODE = 4;
 export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
 export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
+
+/**
+ * A stop, fenced by the caller's STOP epoch.
+ *
+ * `stopEpoch` is not a timestamp and not a retry counter: the Mod refuses a stop whose epoch is not strictly greater than
+ * the one already recorded for that program, which is what makes a replayed or reordered stop harmless. It has to travel
+ * over the wire because only the Mod's journal can decide whether an intent is newer than the one that produced the
+ * program.
+ */
+export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: number }>;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 type BodyProgramDiagnostic = Readonly<{
   severity: string;
@@ -1559,6 +1569,32 @@ export type BodyProgramSubmitResult = Readonly<{
 }>;
 export type BodyProgramStatusResult = Readonly<{
   code: "found" | "not_found" | "invalid_input";
+  snapshot: BodyProgramStatusSnapshot | null;
+}>;
+/**
+ * What a stop answers: the controller's own vocabulary, verbatim.
+ *
+ * The three codes a caller must be able to tell apart are `program_not_active` (nothing to stop - retrying is pointless),
+ * `invalid_input` (the epoch was not newer than the one on record - retrying with the same epoch is wrong) and
+ * `persistence_write_failed` (the journal could not record the cancellation - retrying is dangerous until that resolves).
+ * Folding them into a boolean would collapse all three into "no".
+ */
+export type BodyProgramStopResult = Readonly<{
+  code:
+    | "succeeded"
+    | "not_found"
+    | "invalid_input"
+    | "program_not_active"
+    | "node_not_eligible"
+    | "policy_identity_stale"
+    | "grant_mismatch"
+    | "execution_binding_mismatch"
+    | "fact_provenance_mismatch"
+    | "invalid_fact"
+    | "terminal_proof_missing"
+    | "recovery_required"
+    | "persistence_write_failed"
+    | "deadline_expired";
   snapshot: BodyProgramStatusSnapshot | null;
 }>;
 type BodyProgramEvent = Readonly<{
@@ -1626,6 +1662,8 @@ export type BridgeMessage =
   | Envelope<"program_submit_result", BodyProgramSubmitResult>
   | Envelope<"program_status", BodyProgramStatusRequest>
   | Envelope<"program_status_result", BodyProgramStatusResult>
+  | Envelope<"program_stop", BodyProgramStopRequest>
+  | Envelope<"program_stop_result", BodyProgramStopResult>
   | Envelope<"program_events", BodyProgramEventsRequest>
   | Envelope<"program_events_result", BodyProgramEventsResult>
   | Envelope<"error", Readonly<{ reasonCode: string }>>
@@ -1659,6 +1697,8 @@ const BRIDGE_MESSAGE_TYPES = [
   "program_submit_result",
   "program_status",
   "program_status_result",
+  "program_stop",
+  "program_stop_result",
   "program_events",
   "program_events_result",
   "error",
@@ -2020,6 +2060,16 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
         : "invalid_body_program_request";
     case "program_status_result":
       return validateBodyProgramStatusResult(payload);
+    case "program_stop":
+      // Both fields required, and the epoch must be a non-negative safe integer: a stop without a fence would be a cancel
+      // any replay could re-issue.
+      return hasExactKeys(payload, ["programId", "stopEpoch"]) &&
+        isOpaqueId(payload.programId) &&
+        isNonNegativeSafeInteger(payload.stopEpoch)
+        ? null
+        : "invalid_body_program_stop_request";
+    case "program_stop_result":
+      return validateBodyProgramStopResult(payload);
     case "program_events":
       return hasExactKeys(payload, ["programId", "cursor", "pageSize"]) &&
         isOpaqueId(payload.programId) &&
@@ -4087,6 +4137,39 @@ export function validateBodyProgramSubmitResult(value: Record<string, unknown>):
   }
   return null;
 }
+const BODY_PROGRAM_STOP_CODES = new Set([
+  "succeeded",
+  "not_found",
+  "invalid_input",
+  "program_not_active",
+  "node_not_eligible",
+  "policy_identity_stale",
+  "grant_mismatch",
+  "execution_binding_mismatch",
+  "fact_provenance_mismatch",
+  "invalid_fact",
+  "terminal_proof_missing",
+  "recovery_required",
+  "persistence_write_failed",
+  "deadline_expired",
+]);
+
+/**
+ * A stop answers in the CONTROLLER vocabulary, so its validator cannot reuse the query result's three codes.
+ *
+ * The snapshot is accepted on success only: a refused stop has no state to report, and a payload that carried one would be
+ * claiming the program changed when the refusal says it did not.
+ */
+function validateBodyProgramStopResult(payload: Record<string, unknown>): string | null {
+  if (!hasExactKeys(payload, ["code", "snapshot"])) return "invalid_body_program_stop_result";
+  if (typeof payload.code !== "string" || !BODY_PROGRAM_STOP_CODES.has(payload.code))
+    return "invalid_body_program_stop_result";
+  if (payload.snapshot === null) return payload.code === "succeeded" ? "invalid_body_program_stop_result" : null;
+  const snapshotError = isBodyProgramStatusSnapshot(payload.snapshot) ? null : "invalid_body_program_stop_result";
+  if (snapshotError !== null) return snapshotError;
+  return payload.code === "succeeded" ? null : "invalid_body_program_stop_result";
+}
+
 export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
   if (!hasExactKeys(value, ["code", "snapshot"]) || !isBodyProgramQueryCode(value.code))
     return "invalid_body_program_result";

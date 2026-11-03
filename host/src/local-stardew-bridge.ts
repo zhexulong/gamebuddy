@@ -10,6 +10,8 @@ import {
   type BodyProgramEventsResult,
   type BodyProgramStatusRequest,
   type BodyProgramStatusResult,
+  type BodyProgramStopRequest,
+  type BodyProgramStopResult,
   type BodyProgramSubmitResult,
   type BodyNodeAdmissionChallenge,
   type BodyNodeAdmissionResult,
@@ -133,6 +135,7 @@ type OutboundRequestType =
   | "system_notice_request"
   | "program_submit"
   | "program_status"
+  | "program_stop"
   | "program_events";
 
 /**
@@ -582,6 +585,24 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (
       response.type !== "program_status_result" ||
+      (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
+    )
+      return this.rejectBodyProgramProtocol();
+    return response.payload;
+  }
+
+  /**
+   * Ask the Mod to cancel one program, fenced by the caller's STOP epoch.
+   *
+   * The Mod answers with the program's own snapshot on success, so the caller reads `cancelled` back from the same shape
+   * a status call returns - there is no second vocabulary for "it stopped".
+   */
+  public async programStop(request: BodyProgramStopRequest): Promise<BodyProgramStopResult> {
+    this.requireAuthenticated();
+    const response = await this.request("program_stop", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (
+      response.type !== "program_stop_result" ||
       (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
     )
       return this.rejectBodyProgramProtocol();
@@ -1064,6 +1085,8 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "program_submit_result";
     case "program_status":
       return responseType === "program_status_result";
+    case "program_stop":
+      return responseType === "program_stop_result";
     case "program_events":
       return responseType === "program_events_result";
   }

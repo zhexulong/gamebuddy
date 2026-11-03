@@ -358,6 +358,15 @@ export class CompanionHostService {
     private readonly bindIntegrationReceipt?: (receipt: ExecutionReceipt) => void,
     private readonly liveSourceEvidence?: CompanionLiveSourceEvidenceSink,
     private readonly arrivalHistory?: CompanionArrivalHistory,
+    /**
+     * Cancel the Body Program the companion is currently running, fenced by the STOP epoch.
+     *
+     * Injected for the same reason `cancelOldEpoch` and `abortWorker` are: the STOP path must not reach into the runtime
+     * to find the program port. Without it the player's interruption stopped the MODEL and left the companion's body
+     * walking - a program keeps executing in the game after the turn that submitted it was abandoned, because the Mod
+     * refuses NEW intents and nothing cancelled the old one.
+     */
+    private readonly stopBodyProgram?: (stopEpoch: number, reasonCode: string) => Promise<unknown>,
   ) {
     this.#unsubscribe = events.onFact((fact) => this.acceptIntegrationFact(fact));
     this.#unsubscribeConnection = events.onLifecycle((event) => this.acceptLifecycleEvent(event));
@@ -495,6 +504,9 @@ export class CompanionHostService {
             ? Promise.reject(new Error("stop_worker_cancellation_unavailable"))
             : this.abortWorker(input.reasonCode),
           stopVoice(input.reasonCode),
+          this.stopBodyProgram === undefined
+            ? Promise.resolve()
+            : this.stopBodyProgram(admission.epoch, input.reasonCode),
           this.loop.abortAndClear(),
         ]);
       } catch (error) {

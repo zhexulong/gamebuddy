@@ -87,6 +87,17 @@ type BodyProgramPort = ReturnType<typeof materializeAuthenticatedStardewLaunchPo
 type BodyProgramConsumer = object;
 type BodyProgramConsumerRecord = { port: BodyProgramPort; available: boolean; active: number; drained?: () => void };
 const bodyProgramConsumers = new WeakMap<BodyProgramConsumer, BodyProgramConsumerRecord>();
+
+/**
+ * What a STOP needs to name and cancel the program the companion is running: the mounted port, and the identity the Mod
+ * accepted most recently.
+ *
+ * Held here because the two facts live in different closures - the port is mounted inside the tool factory, and the STOP
+ * hook is built where the Host service is constructed - and neither can see the other. Both are per-process facts (one
+ * Game runtime per process), so this is not shared mutable state between runtimes.
+ */
+let mountedBodyProgramPort: BodyProgramPort | undefined;
+let lastAcceptedProgramId: string | null = null;
 /** The program's two readers: they answer only for a program a submission recorded. */
 const programReaderToolNames = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 
@@ -280,6 +291,9 @@ function createBodyProgramTools(
             // And the cap is deliberately NOT lowered: `program-status-wait.ts` records that answering instantly put the
             // model in an 84-call loop (round4, 459 s) because "it did not finish" is not something a caller can act on.
             if (!accepted) return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code });
+            // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
+            // Host knows which program is currently in the world.
+            lastAcceptedProgramId = programId;
             const readStatus = async () => {
               const result = await withPort(
                 { programId },
@@ -540,6 +554,18 @@ function isBodyProgramStatusRequest(value: unknown): value is BodyProgramStatusR
 
 function isBodyProgramEventsRequest(value: unknown): value is BodyProgramEventsRequest {
   return isRecord(value) && validateEventsRequest(value) === null;
+}
+
+/**
+ * Cancel the program the companion is running, through the port that is actually mounted.
+ *
+ * The tools reach the port through `bodyProgramConsumers`; the STOP path needs the same port from outside that closure,
+ * so it asks the same map rather than holding a second reference. At most one consumer is mounted per runtime, and a
+ * caller that finds none has nothing to cancel.
+ */
+async function stopMountedBodyProgram(programId: string, stopEpoch: number): Promise<void> {
+  if (mountedBodyProgramPort === undefined) return;
+  await mountedBodyProgramPort.stop({ programId, stopEpoch });
 }
 
 function bodyProgramToolParameters(name: string) {
@@ -946,6 +972,7 @@ export function createHostGameRuntimeMaterializer(
         );
         if (bodyProgramMounted)
           bodyProgramConsumers.set(bodyProgramConsumer, { port: ports.bodyProgram, available: true, active: 0 });
+        mountedBodyProgramPort = ports.bodyProgram;
         const closeFixedTools = bodyProgramMounted ? createBodyProgramToolCloser(bodyProgramConsumer) : async () => {};
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
@@ -1060,6 +1087,22 @@ export function createHostGameRuntimeMaterializer(
           Object.freeze({
             alreadySaid: () => companionArrivalAlreadySaid(runtime.sessionManager),
           }),
+          // The last mile of "the player speaks and the work stops". The Mod has been able to cancel a program since
+          // the journal was written, but nothing on this side ever asked: a STOP sealed the model and left the body
+          // walking, because a submitted program is immutable and the Mod only refuses NEW intents.
+          //
+          // `stopEpoch` is the STOP epoch this interruption just opened, which is exactly the monotonic fence the Mod
+          // checks against its own journal. A bridge that is already gone cannot cancel anything, so a refusal there is
+          // reported rather than thrown - the STOP itself has already succeeded by this point and must not be undone by
+          // a transport that no longer exists.
+          (stopEpoch: number) =>
+            lastAcceptedProgramId === null
+              ? Promise.resolve()
+              : stopMountedBodyProgram(lastAcceptedProgramId, stopEpoch).catch((error: unknown) => {
+                  throw new Error(
+                    `body_program_stop_refused:${String(error instanceof Error ? error.message : error)}`,
+                  );
+                }),
         );
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined

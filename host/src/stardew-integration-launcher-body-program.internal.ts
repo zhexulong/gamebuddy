@@ -29,6 +29,8 @@ import type {
   BodyProgramEventsRequest,
   BodyProgramEventsResult,
   BodyProgramStatusRequest,
+  BodyProgramStopRequest,
+  BodyProgramStopResult,
   BodyProgramStatusResult,
   BodyProgramSubmitResult,
   BodyNodeAdmissionChallenge,
@@ -85,6 +87,7 @@ export function assertAuthenticatedStardewConnection(connection: GameConnection)
 export type StardewAuthenticatedBodyProgramPort = Readonly<{
   submit(request: BodyProgramCandidateRequest): Promise<BodyProgramSubmitResult>;
   status(request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult>;
+  stop(request: BodyProgramStopRequest): Promise<BodyProgramStopResult>;
   events(request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult>;
 }>;
 
@@ -426,6 +429,10 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
           status: (request: BodyProgramStatusRequest): Promise<BodyProgramStatusResult> => {
             assertProgramPortsLive();
             return bridge.programStatus(request);
+          },
+          stop: (request: BodyProgramStopRequest): Promise<BodyProgramStopResult> => {
+            assertProgramPortsLive();
+            return bridge.programStop(request);
           },
           events: (request: BodyProgramEventsRequest): Promise<BodyProgramEventsResult> => {
             assertProgramPortsLive();
