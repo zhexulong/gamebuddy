@@ -10,7 +10,7 @@
 // matters - the byte identity is proven separately by `scratch/probe-avatar-e2e.mjs`.
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, REPO_ROOT } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, REPO_ROOT, observe, observationStart } = require("./common.cjs");
 
 /**
  * A real PNG character card: signature + IHDR + tEXt(`chara`) + IEND, CRC32s correct.
@@ -81,6 +81,7 @@ function pngCardFile(cardJson) {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("l-new-surfaces.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "角色");
@@ -396,6 +397,7 @@ function pngCardFile(cardJson) {
   say(`her picture decoded in the browser (naturalWidth > 0): ${(importedRow?.naturalWidth ?? 0) > 0}`);
   await shot(page, "76-imported-avatar-1440x900.png");
 
+  await observe(page, say, "l", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-L");
