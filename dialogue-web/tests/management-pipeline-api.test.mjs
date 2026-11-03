@@ -440,6 +440,56 @@ test("management import history validator and client use the exact session-read 
   });
 });
 
+test("a stage result that names a field-level loss validates; a member neither side declares does not", async () => {
+  // The executed half of the mirror-key gate. The Host's ledger carries TWO naming members and they
+  // mean different things: `omitted` is one dropped world-book entry (with that entry's title),
+  // `macros` is the macros in ONE field the companion's context will omit whole (a closing direction
+  // carrying `{{time}}`). A legal row the Host really sends must parse; a member neither side declares
+  // is a protocol error rather than something a card body could smuggle through.
+  const staged = {
+    apiVersion: 1,
+    importId: HANDLE,
+    name: "Rin",
+    candidateRevision: 1,
+    fields: [{ field: "persona_core", eligibility: "profile_eligible_after_explicit_review", chars: 4 }],
+    dispositions: [{ field: "post_history_instructions", classification: "accepted_typed", reason: "accepted" }],
+    losses: [
+      {
+        field: "post_history_instructions",
+        reason: "unrenderable_post_history_instructions",
+        count: 1,
+        macros: [{ token: "{{time}}", standard: true }],
+      },
+      {
+        field: "character_book.entries",
+        reason: "unrenderable_worldbook_entry",
+        count: 1,
+        omitted: [{ title: "Lore", macros: [{ token: "{{original}}", standard: true }] }],
+      },
+    ],
+  };
+  const calls = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    calls.push({ path, init });
+    return response(staged);
+  });
+  const command = { apiVersion: 1, cardSource: "json", card: "{}" };
+  assert.deepEqual(await api.stageStCardImport(command, HANDLE), staged);
+  assert.equal(calls[0].path, "/api/tavern/v1/imports");
+
+  const stage = (losses) =>
+    createManagementPipelineApi(async () => response({ ...staged, losses })).stageStCardImport(command, HANDLE);
+  await assert.rejects(() => stage([{ ...staged.losses[0], extra: true }]), TavernProtocolError);
+  await assert.rejects(
+    () => stage([{ field: "post_history_instructions", reason: "x", count: 1, macros: [{ token: "{{time}}" }] }]),
+    TavernProtocolError,
+  );
+  await assert.rejects(
+    () => stage([{ ...staged.losses[0], macros: Array.from({ length: 9 }, () => ({ token: "{{time}}", standard: true })) }]),
+    TavernProtocolError,
+  );
+});
+
 test("the hand-written client mirror covers the Host contract's whole operation, label and problem vocabulary", async () => {
   // The browser client mirrors `tavern_browser_api/v1` by hand and stays
   // dependency-free, so nothing at compile time forces the two to agree. The
