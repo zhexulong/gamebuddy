@@ -32,13 +32,16 @@
  * no provider.
  *
  *   6. A refused key and a throttle read differently, at both layers the player can meet them. The
- *      Test button's two refusals - a 401 and a 429 from a local endpoint - are two sentences, and a
- *      failed turn's classified cause words itself. What the probe cannot do is NAME a rate limit:
- *      its closed vocabulary has no such member, so a 429 reads as "answered in an unexpected way".
- *      That is stated as the product's current wording, not as an ideal; the distinction a throttled
- *      player needs is carried by the turn's own cause, which the Host classifies from the endpoint's
- *      reply (`tools/live-run/chat/run-provider-failure-classification-live.mjs` drives that against
- *      a real endpoint).
+ *      Test button's two refusals - a 401 and a 429 from a local endpoint - are two sentences, and
+ *      the throttle is the one that says to wait: the probe names it (`rate_limited`) instead of
+ *      folding it into `invalid_response`, whose sentence is about the player's own request. A
+ *      failed turn's classified cause words itself from the other vocabulary
+ *      (`PROVIDER_FAILURE_CLASSES`, `dialogue-web/src/components/turn-failure-text.ts`), which has
+ *      called the same reply `rate_limited` all along; the two vocabularies agree about a throttle
+ *      and not about a 5xx, and each answers a different question (see the note below).
+ *      What neither layer does is prove the endpoint said 429: both read the status line the
+ *      endpoint wrote (`tools/live-run/chat/run-provider-failure-classification-live.mjs` drives
+ *      the turn's classification against a real endpoint).
  *
  * Two defects this journey cannot catch, and does not pretend to: a wrong price constant
  * (`host/src/gameplay-task-subagent.ts`, `host/src/tavern/pi-provider-store.ts`). A stub provider
@@ -578,9 +581,9 @@ async function failureNotice(page: Page): Promise<string> {
 
 test.describe("6: a refused key and a throttle read differently", () => {
   test("(a) the Test button's two refusals are two sentences", async ({ page }) => {
-    // The probe's closed vocabulary: a 401 is `unauthorized`, and a 429 is `invalid_response` - the
-    // probe has no rate-limit member. The sentence the player reads must still distinguish them, and
-    // this asserts the exact pair rather than only their difference.
+    // The probe's closed vocabulary: a 401 is `unauthorized` and a 429 is `rate_limited`, so the two
+    // sentences are asserted exactly. The throttle must name the wait, because reading it as a
+    // config fault sends a throttled player to retype a key that was never the problem.
     const endpoint = await startRefusalEndpoint([401, 429]);
     try {
       await mountProduct(page, await connection.read());
@@ -600,11 +603,16 @@ test.describe("6: a refused key and a throttle read differently", () => {
 
       await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
       await expect(connectionRow(page).locator("[data-connection-failure]")).toHaveText(
-        "The endpoint answered in an unexpected way.",
+        "The endpoint is throttling requests right now. Your key and model are not the problem — wait a moment, then test again.",
       );
       const throttled = await connectionRow(page).locator("[data-connection-failure]").textContent();
       console.log(`[first-run-refusals/probe] ${JSON.stringify({ refused, throttled })}`);
       expect(refused).not.toBe(throttled);
+      // The property, not only the literal: the sentence names the action a throttle calls for…
+      expect(throttled, "a throttle names the wait it asks for").toMatch(/wait/iu);
+      // …and it is not the 4xx-about-our-request sentence, nor a fault placed on the key or the model.
+      expect(throttled, "a throttle does not read as an unexpected answer").not.toMatch(/unexpected/iu);
+      expect(throttled, "nor as a fault in the key or the model").not.toMatch(/wrong|revoked|does not serve/iu);
     } finally {
       await endpoint.close();
     }
