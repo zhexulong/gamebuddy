@@ -391,8 +391,10 @@ const UNREAD_INDIRECT_READS = [
     keys: [
       "connectionFailureInvalidEndpoint",
       "connectionFailureInvalidResponse",
+      "connectionFailureEndpointError",
       "connectionFailureNotConfigured",
       "connectionFailureNotFound",
+      "connectionFailureRateLimited",
       "connectionFailureTimeout",
       "connectionFailureUnauthorized",
       "connectionFailureUnreachable",

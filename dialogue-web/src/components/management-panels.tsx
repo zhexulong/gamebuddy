@@ -391,6 +391,8 @@ export function connectionFailureText(
     | "connectionFailureNotConfigured"
     | "connectionFailureUnauthorized"
     | "connectionFailureNotFound"
+    | "connectionFailureRateLimited"
+    | "connectionFailureEndpointError"
     | "connectionFailureUnreachable"
     | "connectionFailureTimeout"
     | "connectionFailureInvalidResponse";
@@ -878,9 +880,10 @@ export function ConnectionRow({
         </div>
         {/*
          * The test result, named where the endpoint and model fields it is about are. The
-         * sentence is one closed probe category (`unauthorized`, `not_found`, `invalid_response`,
-         * `not_configured`, `unreachable`, `timeout`, `invalid_endpoint`) and never provider text,
-         * because provider text never leaves the Host in the first place.
+         * sentence is one closed probe category (`unauthorized`, `not_found`, `rate_limited`,
+         * `endpoint_error`, `invalid_response`, `not_configured`, `unreachable`, `timeout`,
+         * `invalid_endpoint`) and never provider text, because provider text never leaves the Host
+         * in the first place.
          */}
         {failure !== null && (
           <div>

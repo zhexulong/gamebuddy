@@ -402,6 +402,13 @@ const en = {
   connectionFailureNotConfigured: "No credential is available for this endpoint.",
   connectionFailureUnauthorized: "The endpoint rejected the credential.",
   connectionFailureNotFound: "The endpoint did not offer the selected model.",
+  // The two refusals whose remedy is outside the request, and the reason they are not
+  // `connectionFailureInvalidResponse`: a throttle is a wait and a 5xx is the endpoint's own
+  // failure, so neither implicates the key or the model the player typed.
+  connectionFailureRateLimited:
+    "The endpoint is throttling requests right now. Your key and model are not the problem — wait a moment, then test again.",
+  connectionFailureEndpointError:
+    "The endpoint itself failed, so this test never reached your key or your model. Nothing here needs changing; test again later.",
   connectionFailureUnreachable: "The endpoint could not be reached.",
   connectionFailureTimeout: "The endpoint did not answer in time.",
   connectionFailureInvalidResponse: "The endpoint answered in an unexpected way.",
@@ -1390,6 +1397,8 @@ const zh: Messages = {
   connectionFailureNotConfigured: "该端点没有可用的凭据。",
   connectionFailureUnauthorized: "端点拒绝了该凭据。",
   connectionFailureNotFound: "端点没有提供所选模型。",
+  connectionFailureRateLimited: "端点正在限流。你的密钥和模型没有问题，请稍等片刻再测试。",
+  connectionFailureEndpointError: "端点自身出错，所以本次测试并未校验到你的密钥和模型。这里无需修改，请稍后再测试。",
   connectionFailureUnreachable: "无法连接到该端点。",
   connectionFailureTimeout: "端点未及时响应。",
   connectionFailureInvalidResponse: "端点的响应无法识别。",
