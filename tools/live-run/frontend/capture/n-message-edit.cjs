@@ -9,7 +9,8 @@
 // this driver first ensures the row it needs exists rather than assuming one is mounted. When the
 // open conversation carries no message of its own, it gets one real turn, gated exactly as driver F
 // gates its own (`GB_SHOTS_CREDENTIAL_PRESENT`, set by the orchestrator; the value never crosses in).
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart } = require("./common.cjs");
+const { continuityLine } = require("./capability.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 
@@ -156,6 +157,7 @@ const editorFacts = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("n-message-edit.txt");
+  const observationFrom = await observationStart(page);
   // A refused mutation is re-read and the refusal is only committed when that re-read ALSO fails, so a
   // refusal leaves the surface looking untouched. The driver therefore reads the wire: every refused
   // API call the page made, with the status and the Host's own bounded code.
@@ -186,7 +188,8 @@ const editorFacts = () => {
   let rows = await page.evaluate(domRows);
   say("=== ITEM: the open conversation before the edit ===");
   say(JSON.stringify(rows, null, 1));
-  say(`durable transcript before: ${JSON.stringify((await readDurableTranscript(page)).transcript?.map((message) => ({ order: message.order, role: message.role, text: message.text?.slice(0, 12) })))}`);
+  const durableBefore = await readDurableTranscript(page);
+  say(`durable transcript before: ${JSON.stringify(durableBefore.transcript?.map((message) => ({ order: message.order, role: message.role, text: message.text?.slice(0, 12) })))}`);
 
   if (rows.filter((row) => row.role === "player").length === 0) {
     const turnGate = await canStartTurn(page);
@@ -314,12 +317,24 @@ const editorFacts = () => {
   say(`durable transcript after: ${JSON.stringify(durableAfter.transcript?.map((message) => ({ order: message.order, role: message.role, revision: message.revision, text: message.text })))}`);
   say(`rows before=${rows.length} after=${domAfter.length} (an edit is not a second message)`);
   say(`the Host's own row carries the rewritten text too: ${durableAfter.transcript?.some((message) => message.text === edited) === true}`);
+  /*
+   * The invariant across the turn and the edit, on the Host's own rows: this driver sent a turn ON TOP
+   * of whatever conversation the earlier drivers left mounted, and then rewrote one of its rows. An edit
+   * keeps the row's identity, so nothing here may be lost, duplicated or reordered - the same property a
+   * second turn has to hold.
+   */
+  say(
+    `CAPABILITY continuity: ${continuityLine("before the turn -> after the edit", [
+      { label: "before", rows: durableBefore.transcript ?? [] },
+      { label: "after", rows: durableAfter.transcript ?? [] },
+    ])}`,
+  );
   await shot(page, "86-message-edited-1440x900.png");
   await page.setViewportSize({ width: 400, height: 800 });
   await page.waitForTimeout(1200);
   await shot(page, "86-message-edited-400x800.png");
 
-  await observe(page, say, "n");
+  await observe(page, say, "n", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-N");
