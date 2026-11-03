@@ -20,6 +20,7 @@ import {
   environmentProviderEntry,
   mergeModelProviderEntry,
   modelProviderEntry,
+  DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT,
   WORKING_CONTEXT_WINDOW_CEILING,
   sessionAffinityIdFor,
 } from "./pi-provider-store.js";
@@ -77,8 +78,8 @@ const ZERO_CONFIG_DEEPSEEK = `{
           "input": [
             "text"
           ],
-          "contextWindow": 200000,
-          "maxTokens": 76800,
+          "contextWindow": ${WORKING_CONTEXT_WINDOW_CEILING},
+          "maxTokens": ${Math.floor(WORKING_CONTEXT_WINDOW_CEILING * DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT)},
           "cost": {
             "input": 0.3,
             "output": 1.2,

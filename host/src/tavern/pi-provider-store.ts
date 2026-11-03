@@ -76,8 +76,24 @@ export const CONSERVATIVE_CONTEXT_WINDOW = 32_768;
  *
  * 200,000 puts the fold at 130,000 - about where a long session should start summarising, and low enough that a real run
  * reaches it.
+ *
+ * 240,000, and the number is now DERIVED rather than chosen. Measured 2026-11-03 (`round30`): prompts sat at 97-127k, so
+ * the 200k ceiling folded **15 times in one run** - and at a 2% `cacheRead` price a fold pays a full-price prefix
+ * re-break to remove something that was nearly free. Thirteen of those fifteen folds cost more than they saved, and two
+ * removed nothing at all.
+ *
+ * The arithmetic that sets the value: the ceiling becomes a usable window of `0.75 x ceiling`, and Magic Context folds at
+ * 65% of that, so the fold threshold is `0.4875 x ceiling`.
+ *
+ *     ceiling 200k -> folds at  97.5k -> 15 folds on a 127k peak
+ *     ceiling 240k -> folds at 117.0k -> 1-2 folds: still observed, ~10x cheaper
+ *     ceiling 400k -> folds at 195.0k -> zero folds, i.e. the memory pipeline goes unexercised again
+ *
+ * So the ceiling has to sit just under the measured peak: high enough that folds are rare and large, low enough that a real
+ * run still reaches one. If the peak moves (folding the observation payload is expected to move it down), this number is
+ * stale and must be re-derived - the constant is a measurement, not a policy.
  */
-export const WORKING_CONTEXT_WINDOW_CEILING = 200_000;
+export const WORKING_CONTEXT_WINDOW_CEILING = 240_000;
 /**
  * Share of a model's context window that its output tokens may occupy.
  *
@@ -85,7 +101,7 @@ export const WORKING_CONTEXT_WINDOW_CEILING = 200_000;
  * that ratio rather than as the pair of literals it produced: `min(384_000, window * 0.384)` was two constants expressing
  * one fact, and if either drifts from the model's own figures the smaller one silently wins.
  */
-const DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT = 0.384;
+export const DEEPSEEK_OUTPUT_SHARE_OF_CONTEXT = 0.384;
 
 /**
  * The window to declare for a model.
