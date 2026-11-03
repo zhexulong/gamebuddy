@@ -1,11 +1,12 @@
 // Driver B: the Characters surface — grid column count, per-row card heights, each row's largest
 // residual gap, the panel height, and the persona card label at both widths.
 const path = require("node:path");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("b-characters.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "角色");
@@ -105,6 +106,7 @@ const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot } = requir
       scroller: { scrollHeight: content.scrollHeight, clientHeight: content.clientHeight },
     };
   }), null, 1));
+  await observe(page, say, "b", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-B");
