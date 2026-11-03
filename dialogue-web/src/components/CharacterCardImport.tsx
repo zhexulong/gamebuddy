@@ -40,6 +40,14 @@ type StagedReport = Readonly<{
    * and the macro, and this row repeats both.
    */
   omittedWorldBookEntries: readonly StCardImportOmittedEntryV1[];
+  /**
+   * The macros behind the closing direction the companion's context will omit WHOLE.
+   *
+   * The card's `post_history_instructions` is stored verbatim, so the loss is decided at
+   * assembly, not at import - and the Host reports it here so the player can edit the card
+   * instead of wondering why she never closes a reply the way the card asked.
+   */
+  closingDirectionMacros: readonly StCardImportOmittedMacroV1[];
 }>;
 
 type ImportOutcome =
@@ -75,6 +83,9 @@ function reportOf(staged: StCardImportStageResultV1): StagedReport {
     omittedWorldBookEntries: (staged.losses ?? [])
       .filter((loss) => loss.reason === "unrenderable_worldbook_entry")
       .flatMap((loss) => loss.omitted ?? []),
+    closingDirectionMacros: (staged.losses ?? [])
+      .filter((loss) => loss.reason === "unrenderable_post_history_instructions")
+      .flatMap((loss) => loss.macros ?? []),
   };
 }
 
@@ -133,6 +144,23 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
           )}
       </li>
     )),
+    /*
+     * The card's closing direction is stored verbatim and omitted whole at assembly, so the loss
+     * happens far from here. Naming the macro now is what turns "her closing direction is missing"
+     * into an edit the player can make in the card they just imported.
+     */
+    ...(report.closingDirectionMacros.length === 0
+      ? []
+      : [
+          <li key="closingDirectionOmitted" data-card-import-closing-direction="omitted">
+            {labels.importClosingDirectionOmitted.replace(
+              "{{macros}}",
+              report.closingDirectionMacros
+                .map((macro) => omittedMacroLabel(macro, labels))
+                .join(labels.fieldSeparator),
+            )}
+          </li>,
+        ]),
   ];
 }
 
