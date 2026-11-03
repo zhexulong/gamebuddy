@@ -49,6 +49,13 @@ export function runPaths(run) {
     runConfigFile: join(stage, "state", "run.json"),
     portFile: join(stage, "state", "port.txt"),
     launchStateFile: join(stage, "state", "launch.json"),
+    /*
+     * Where a run's captured provider request bodies live, if it captured any. The frontend run dials
+     * the operator's gateway, whose wire this machine never sees, so the file is normally absent - and
+     * `observe()`'s INJECTION section then says so by name instead of reporting an empty injection.
+     * A run that mounts the local stub provider (`tools/live-run/core/stub-provider.mjs`) writes here.
+     */
+    wireRequestsFile: join(stage, "state", "wire-requests.jsonl"),
     stopFlag: join(stage, "state", "stop.flag"),
     launchLog: join(stage, "logs", "launch.log"),
     buildLog: join(stage, "logs", "build.log"),
