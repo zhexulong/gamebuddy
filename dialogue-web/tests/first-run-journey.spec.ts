@@ -4,28 +4,47 @@
  * This file grows one step at a time, each step committed on its own so a dropped transport cannot
  * take the whole journey with it. Steps present today:
  *
+ *   2. Choosing a provider fills what it can and is honest about what it cannot: a pinned provider
+ *      asks for the player's key and the player's model, never for an endpoint or an API shape it
+ *      owns, and its form names no model id other than what the projection published for it - the
+ *      measured defect was an Ollama id (`qwen2.5-coder:7b`) standing as the hint for providers that
+ *      never serve it, so a player following our own hint read the endpoint's honest `not_found` as
+ *      a broken key.
  *   3. The model suggestions come from the Host's projection. `allowedPlayerModels` is published at
  *      `host/src/tavern/browser-contract/index.ts:729`, parsed at
  *      `dialogue-web/src/management-pipeline-api.ts:955` - and until `01a809ed` nothing in
  *      `dialogue-web/src/components` read it, so the guidance existed and never arrived. Both halves
- *      are asserted here end to end, in the mounted product: a provider this product does not run
- *      names NO model (an id guessed for `api.deepseek.com` made the endpoint's honest `not_found`
- *      read as a broken key), and what the catalog does publish reaches the browser as a labelled
- *      suggestion without being typed in on the player's behalf.
+ *      are asserted here, in the mounted product: a provider this product does not run names NO
+ *      model, and what the catalog does publish reaches the browser as a labelled suggestion without
+ *      being typed in on the player's behalf.
+ *   4. A save with a syntactically valid id the endpoint does not serve succeeds, because the Host
+ *      checks the id's SHAPE; the Test button is what tells the truth, and it says what the endpoint
+ *      does serve, which is the fact that lets the player fix the id instead of doubting the key.
+ *   5. The id the player ends up with is the id the runtime is handed. The correction comes from the
+ *      probe's own listing, and the assertion reads the product's own answer: the surface selection
+ *      the runtime resolves, and the provider entry Pi is handed. What this step cannot reach is the
+ *      HTTP request itself - Pi's adapter turns that entry into `POST <baseUrl>/chat/completions`
+ *      with `model: <id>`, and that hop belongs to Pi, not to this package. It is measured by
+ *      `tools/live-run/chat/run-wire-contract-live.mjs`, which drives this same stub provider; the
+ *      two together cover the chain, neither alone does.
  *
- * Steps 1 and 2 are already covered: `settings-default-provider.spec.ts` pins that a fresh install
- * lands on no provider, and `settings-connection-untested.spec.ts` pins the untested row's sentence.
+ * Step 1 is already covered: `settings-default-provider.spec.ts` pins that a fresh install lands on
+ * no provider.
  *
  * Two defects this journey cannot catch, and does not pretend to: a wrong price constant
  * (`host/src/gameplay-task-subagent.ts`, `host/src/tavern/pi-provider-store.ts`). A stub provider
  * only answers what it is told, so a rate that is 5x off stays 5x off here. Those belong to the
  * catalog-fact gate (`tools/check-catalog-fact-ownership.mjs`), not to this file.
  *
- * What is real vs supplied: the provider projection is the Host's own
- * (`createTavernConnectionService().read()`), never a hand-written catalogue, so a curated id
- * added to or removed from `host/src/tavern/provider-catalog.ts` moves this journey with it. The
- * composed shell's bootstrap/draft/language/voice routes are supplied as projections, exactly as
- * `first-screen.spec.ts` mounts them - this journey is about the connection form, not about those.
+ * What is real vs supplied: the provider projection and every connection record are the Host's own
+ * (`createTavernConnectionService()`, with the real probe against a local stub), never a hand-written
+ * catalogue, so a curated id added to or removed from `host/src/tavern/provider-catalog.ts` moves this
+ * journey with it. The composed shell's bootstrap/draft/language/voice routes are supplied as
+ * projections, exactly as `first-screen.spec.ts` mounts them - this journey is about the connection
+ * form, not about those.
+ *
+ * The local endpoint is `tools/live-run/core/stub-provider.mjs`, the same one the live runs mount;
+ * this file has no second one.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,6 +57,8 @@ import type {
   TavernConnectionStateV1,
 } from "../../host/src/tavern/browser-contract/index.ts";
 import { createTavernConnectionService, type TavernConnectionService } from "../../host/src/tavern/connection-service.ts";
+import { modelProviderEntry } from "../../host/src/tavern/pi-provider-store.ts";
+import { resolveSurfaceModelSelection } from "../../host/src/settings/model-selection.ts";
 import { createBuildWindowsStaleLockReclaimer } from "../../host/src/windows-stale-lock-reclaimer/index.ts";
 import { type Page, expect, test } from "./frontend-coverage";
 
@@ -108,13 +129,21 @@ test.beforeAll(async () => {
   // The connection store takes a durable path lock; this is the same test-only reclaimer binding the
   // Host's own connection-route test uses (`host/src/tavern-management-connection-routes.test.ts`).
   bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+// A fresh player root per test: one record accumulating across steps would make each step's row
+// assertions depend on the order the file happens to run in.
+test.beforeEach(async () => {
   agentDir = await mkdtemp(join(tmpdir(), "gamebuddy-first-run-"));
   connection = createTavernConnectionService({ agentDir });
 });
 
-test.afterAll(async () => {
+test.afterEach(async () => {
   await connection.close();
   await rm(agentDir, { recursive: true, force: true });
+});
+
+test.afterAll(() => {
   bindWindowsStaleLockReclaimer(undefined);
 });
 
@@ -385,6 +414,71 @@ test.describe("4: an unserved id saves, and the probe is what tells the truth", 
       console.log(`[first-run-unserved-id] ${JSON.stringify(await connection.read())}`);
     } finally {
       await stub.close();
+    }
+  });
+});
+
+test.describe("5: the id the player typed is the id the runtime is handed", () => {
+  test("after the probe's listing corrects the id, activation hands the runtime that exact id and endpoint", async ({
+    page,
+  }) => {
+    const stub = await startLocalStubProvider({ modelId: SERVED, reply: "The kettle is on." });
+    const runtimeRoot = await mkdtemp(join(tmpdir(), "gamebuddy-first-run-runtime-"));
+    try {
+      await mountProduct(page, await connection.read());
+      await form(page).locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+      await form(page).locator("#connection-base-url").fill(stub.baseUrl);
+      await form(page).locator("#connection-api-key").fill(PLAYER_KEY);
+      await form(page).locator("#connection-model-id").fill(UNSERVED);
+      await form(page).getByRole("button", { name: "Save connection", exact: true }).click();
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "configured");
+      await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "failed");
+
+      // The fix the probe's own listing makes possible: the row offers what the endpoint served, and
+      // the player picks it rather than guessing. Nothing in this test types the served id into the
+      // product's records - it arrives from the endpoint's `/models` answer.
+      await connectionRow(page).locator("select").first().selectOption(SERVED);
+      await expect(connectionRow(page)).toContainText(SERVED);
+      await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "ready");
+      await connectionRow(page).getByRole("button", { name: "Save and activate", exact: true }).click();
+      // The row says so in its own words, and the store says so durably: the assertion is on both,
+      // because a button that reads as shut is also shut while a request is in flight.
+      await expect(page.getByTestId("settings-surface").locator("[data-connection-activated]")).toBeVisible();
+      await expect
+        .poll(async () => (await connection.read()).active?.modelId, { message: "the store's active record" })
+        .toBe(SERVED);
+      const active = (await connection.read()).active;
+      expect(active?.modelId, "the record the runtime resolves is the corrected id").toBe(SERVED);
+
+      // The product's own answer to "what model does this surface run": the surface profile and the
+      // ACTIVE connection, not an argument this test passes in.
+      const selection = await resolveSurfaceModelSelection({ runtimeRoot, agentDir, surface: "chat" });
+      expect(selection.status, "a player who activated a connection has a model").toBe("selected");
+      if (selection.status !== "selected") throw new Error("unreachable");
+      // The surface's model and provider are the ACTIVE connection's, not a default beside it.
+      expect(selection.modelConfig.modelId, "the surface runs the connection's model").toBe(SERVED);
+      expect(selection.modelConfig.provider).toBe("gamebuddy-openai-compatible");
+
+      // …and the entry Pi is handed: the model the product resolved, the endpoint the player typed,
+      // and the API shape that endpoint speaks. This is the last point the product's own code reaches.
+      const provided = await modelProviderEntry(agentDir, selection.modelConfig);
+      expect(provided?.providerId).toBe("gamebuddy-openai-compatible");
+      const entry = provided!.entry as Readonly<{
+        baseUrl: string;
+        api: string;
+        models: readonly Readonly<{ id: string }>[];
+      }>;
+      console.log(`[first-run-handed-to-runtime] ${JSON.stringify({ selection: selection.modelConfig, entry })}`);
+      expect(entry.models.map((model) => model.id), "the id the player ended up with is the id Pi is told").toEqual([
+        SERVED,
+      ]);
+      expect(entry.baseUrl, "and the endpoint the player typed").toBe(stub.baseUrl);
+      expect(entry.api, "speaking the shape the record states").toBe("openai-completions");
+    } finally {
+      await stub.close();
+      await rm(runtimeRoot, { recursive: true, force: true });
     }
   });
 });
