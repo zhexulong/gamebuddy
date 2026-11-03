@@ -133,6 +133,7 @@ function runDriver(driver, { port, cdpPort, run, paths, log }) {
         GB_SHOTS_REPO: REPO_ROOT,
         GB_SHOTS_CDP_PORT: String(cdpPort),
         GB_SHOTS_CREDENTIAL_PRESENT: run.credentialPresent === true ? "1" : "0",
+        GB_SHOTS_WIRE_REQUESTS: paths.wireRequestsFile,
         GB_SHOTS_TAG: run.tag,
       },
     });
