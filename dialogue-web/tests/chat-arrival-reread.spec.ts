@@ -23,8 +23,19 @@ const expiresAtMs = 1_900_000_000_000;
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
-/** The composed root over one committed Chat state; `voice` is the snapshot's own mic fact. */
-function composedRoot(voice: "unavailable" | "ready") {
+/**
+ * The Host's facts the shell renders: the snapshot's own mic state, the mounted conversation and the
+ * durable draft that same read carries.
+ */
+type HostState = Readonly<{
+  voice: "unavailable" | "ready";
+  draft: Readonly<{ revision: number; present: boolean; text: string | null }>;
+  transcript: readonly { role: "player" | "companion"; text: string }[];
+  /** False once the Host's own `/state` refuses, so the next arrival read cannot finish. */
+  stateHealthy: boolean;
+}>;
+
+function composedRoot(state: HostState) {
   return {
     apiVersion: 1,
     build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
@@ -41,14 +52,21 @@ function composedRoot(voice: "unavailable" | "ready") {
       chat: {
         companion: { name: "Mira", handle: companionHandle },
         title: null,
-        transcript: [],
-        draft: { revision: 4, present: true },
+        transcript: state.transcript.map((message, index) => ({
+          handle: `${(message.role === "player" ? "X" : "W").repeat(42)}A${index}`,
+          role: message.role,
+          text: message.text,
+          locale: "und",
+          order: index,
+          revision: 1,
+        })),
+        draft: state.draft,
         turn: null,
         worldInfo: null,
       },
       memory: { readAvailable: true, mutationAvailable: true, projectionRevision: `${"E".repeat(42)}A` },
       eventStream: null,
-      voice: { state: voice },
+      voice: { state: state.voice },
     },
     game: {
       apiVersion: 1,
@@ -78,13 +96,14 @@ function composedRoot(voice: "unavailable" | "ready") {
  * the Host move a fact and then assert what the surface shows afterwards. The voice preference
  * moves with `voice`: it is the player's own consent, which is what the Settings panel writes.
  */
-async function stubHost(page: Page, state: { voice: "unavailable" | "ready" }): Promise<void> {
-  const root = () => composedRoot(state.voice);
+async function stubHost(page: Page, state: HostState): Promise<void> {
+  const root = () => composedRoot(state);
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root())));
-  await page.route("**/api/tavern/v1/draft", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    state.stateHealthy
+      ? route.fulfill(jsonOk(root()))
+      : route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) }),
   );
   // A saved, ready connection, so Settings renders its real connection group beside the voice one.
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
@@ -177,7 +196,12 @@ async function stubHost(page: Page, state: { voice: "unavailable" | "ready" }): 
 test("granting voice consent in Settings reaches the conversation's mic on the way back, without a reload", async ({
   page,
 }) => {
-  const state = { voice: "unavailable" as "unavailable" | "ready" };
+  const state = {
+    voice: "unavailable" as "unavailable" | "ready",
+    draft: { revision: 4, present: true, text: "A durable delegated draft." },
+    transcript: [],
+    stateHealthy: true,
+  };
   await stubHost(page, state);
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
@@ -205,4 +229,62 @@ test("granting voice consent in Settings reaches the conversation's mic on the w
 
   // No reload happened: the one-shot boot token is spent for good, and a reload would need it.
   await expect(page).not.toHaveURL(/boot=/u);
+});
+
+/**
+ * The other half of the arrival rule, on the conversation: a read that cannot finish keeps what the
+ * player is looking at, and says so.
+ *
+ * Before this, a failed Chat arrival read committed the shell's problem view - the AppBar, the
+ * transcript and the composer all went away, taking the player's unsent text with them, because a
+ * background refresh had failed. The projection was valid when the player switched, so it stays; what
+ * must not happen is the surface quietly reading it as the Host's current answer.
+ */
+test("a failed Chat arrival read keeps the conversation and the unsent draft, and says why", async ({ page }) => {
+  test.setTimeout(60_000);
+  const state: HostState = {
+    voice: "unavailable",
+    draft: { revision: 4, present: true, text: "Half a line the Host already has." },
+    transcript: [
+      { role: "companion", text: "The lantern over the porch is still lit." },
+      { role: "player", text: "Are you there?" },
+    ],
+    stateHealthy: true,
+  };
+  await stubHost(page, state);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+  const chat = page.getByTestId("chat-surface");
+  await expect(chat).toBeVisible();
+  const composer = chat.getByRole("textbox", { name: /Type a message/u });
+  await expect(composer).toHaveValue("Half a line the Host already has.");
+
+  // The player is still writing; nothing has been sent, so this text exists only in the composer.
+  const unsent = "An unsent line I am still writing.";
+  await composer.fill(unsent);
+
+  // Leave for the Game surface, and let the Host's own read start refusing while they are away.
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-surface")).toBeVisible();
+  state.stateHealthy = false;
+
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  // The conversation the player left is still what they see: its rows, and the words they typed.
+  await expect(chat).toBeVisible();
+  await expect(chat.locator("li.message")).toHaveCount(2);
+  await expect(composer).toHaveValue(unsent);
+  // Not a problem page, and not silence either: the read that did not happen is stated.
+  await expect(page.locator(".problem-view")).toHaveCount(0);
+  const notice = page.getByTestId("chat-arrival-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("GameBuddy could not finish syncing this conversation just now.");
+  // It is a statement, not a retry: the next arrival takes the read again.
+  await expect(notice.getByRole("button")).toHaveCount(0);
+
+  // And arriving with a healthy Host spends the notice, leaving the conversation where it was.
+  state.stateHealthy = true;
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await expect(notice).toHaveCount(0);
+  await expect(composer).toHaveValue(unsent);
 });

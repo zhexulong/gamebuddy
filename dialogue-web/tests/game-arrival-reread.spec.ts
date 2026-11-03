@@ -384,9 +384,8 @@ test("a failed Game arrival read keeps the projection on screen and says why", a
   await expect(notice).toContainText("GameBuddy could not read or settle the game's own state just now.");
 
   // The next arrival refresh that succeeds spends the notice and carries the move. The Host has to
-  // answer again before the player leaves: the conversation's own arrival read is still the shell's
-  // problem view on failure, so a failing `/state` would end the journey at the AppBar instead of at
-  // the Game surface this test is about.
+  // answer again before the player leaves, because the conversation's own arrival read is the one
+  // that carries the Chat half of this same move.
   stateHealthy = true;
   await openChat(page);
   await openGame(page);

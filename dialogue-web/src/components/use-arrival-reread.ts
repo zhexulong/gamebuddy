@@ -16,13 +16,11 @@ import type { ComposedBootstrap } from "./use-composed-bootstrap";
  * the pre-consent `unavailable` mic, because nothing re-read the root and the stale projection
  * stood until a reload.
  *
- * The read is `rereadChat`, the mount's own authoritative path (the composed root plus the draft
- * that must still reconcile with it), taken once per arrival. The ref is what keeps the first
- * paint from paying for a second read: mount already read, so only a *change* of surface is an
- * arrival. The other surfaces read their own projections when they mount, so this one belongs to
- * the surface that renders the shell's committed projection; it is a read on an event, never a
- * timer. A read that fails commits the shell's problem view, so a conversation that cannot be
- * re-read says so instead of keeping the projection it had.
+ * The read is `rereadChat`, the mount's own authoritative path (the composed root, with the draft it
+ * carries), taken once per arrival. The ref is what keeps the first paint from paying for a second
+ * read: mount already read, so only a *change* of surface is an arrival. The other surfaces read their
+ * own projections when they mount, so this one belongs to the surface that renders the shell's
+ * committed projection; it is a read on an event, never a timer.
  *
  * The conversation has a second arrival read: the route a message the player sends from here would
  * actually reach a model through. It is derived, never guessed - `readChatModelRoute` is the one
@@ -50,12 +48,16 @@ import type { ComposedBootstrap } from "./use-composed-bootstrap";
  * left exactly where the stream put it.
  *
  * A failed arrival read keeps the projection the shell already holds and states the refusal
- * instead: the projection was valid when the player switched, so replacing the whole shell with a
- * problem page over a background refresh would throw away a conversation that is still the truth,
- * and the Game surface's own rule is the same (its operation handlers all "retain the current
- * authoritative projection"). Saying nothing would be that same defect pointing the other way - a
- * panel reading `Connected` after a read that never happened - so the sentence goes to the
- * surface, through the same catalogue sentence every other refusal on it uses.
+ * instead, on BOTH surfaces: the projection was valid when the player switched, so replacing the
+ * whole shell with a problem page over a background refresh would throw away a conversation that is
+ * still the truth - and would take the player's unsent draft with it - while the Game surface's own
+ * operation handlers all "retain the current authoritative projection". Saying nothing would be
+ * that same defect pointing the other way - a panel reading `Connected` after a read that never
+ * happened - so each surface states the read it could not make, in its own line.
+ *
+ * Neither notice is a retry affordance: the read that failed is a refresh of what the screen already
+ * shows, the next arrival takes it again, and a sentence asking the player to press something for a
+ * micro race is a worse answer than the truth about which read stood.
  */
 export function useArrivalReread(
   shownSurface: string,
@@ -63,7 +65,7 @@ export function useArrivalReread(
   localeRef: RefObject<Locale>,
   rereadChat: () => Promise<void>,
   managementApiRef: RefObject<ManagementPipelineApi>,
-): Readonly<{ gameArrivalNotice: string | null; chatModelRoute: ChatModelRoute }> {
+): Readonly<{ gameArrivalNotice: string | null; chatArrivalNotice: string | null; chatModelRoute: ChatModelRoute }> {
   const { view, viewRef, composedApiRef, commit } = bootstrap;
   // The ref is what keeps the first paint from paying for a second read: mount already read, so
   // only a *change* of surface is an arrival.
@@ -77,13 +79,22 @@ export function useArrivalReread(
    * that no longer stands.
    */
   const [gameArrivalNotice, setGameArrivalNotice] = useState<string | null>(null);
+  /**
+   * The last Chat arrival refresh the shell could not make, in the same shape as the Game one: the
+   * conversation on screen is the last projection the Host confirmed, so it stays, and this is what
+   * stops the surface reading it as the Host's current answer. Spent by the next arrival refresh
+   * that succeeds.
+   */
+  const [chatArrivalNotice, setChatArrivalNotice] = useState<string | null>(null);
   const [chatModelRoute, setChatModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
   const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
   useEffect(() => {
     if (lastArrivedSurfaceRef.current === shownSurface) return;
     lastArrivedSurfaceRef.current = shownSurface;
     if (shownSurface === CHAT_PANEL) {
-      void rereadChat().catch((error: unknown) => commit(problemView(error, messages(localeRef.current))));
+      void rereadChat()
+        .then(() => setChatArrivalNotice(null))
+        .catch(() => setChatArrivalNotice(messages(localeRef.current).chatArrivalNotice));
       return;
     }
     if (shownSurface !== GAME_PANEL) return;
@@ -107,5 +118,5 @@ export function useArrivalReread(
       active = false;
     };
   }, [conversationShown, shownSurface]);
-  return { gameArrivalNotice, chatModelRoute };
+  return { gameArrivalNotice, chatArrivalNotice, chatModelRoute };
 }

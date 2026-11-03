@@ -28,6 +28,7 @@ export function ChatSurface({
   pending,
   pendingPlayerMessage,
   notice,
+  arrivalNotice,
   replyTruncated,
   onSwipe,
   onSwipeRemove,
@@ -86,6 +87,11 @@ export function ChatSurface({
   pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
   /** The one turn-failure line the surface reports, or null for none. */
   notice: string | null;
+  /**
+   * The arrival read that could not finish, or null. It sits apart from `notice` because it is not
+   * about the turn: the conversation and the draft on screen are the last state the Host confirmed.
+   */
+  arrivalNotice?: string | null;
   /**
    * True while the Host says the mounted turn's own generation stopped at the model's length
    * ceiling: the reply it wrote is a prefix, and the sentence about that belongs on that reply's
@@ -180,6 +186,14 @@ export function ChatSurface({
             {labels.chatNoModelAction}
           </button>
         </div>
+      )}
+      {arrivalNotice != null && (
+        // The sync that would have shown the Host's current conversation did not finish. What the
+        // player is reading stays - it is the last state the Host confirmed, and it is also where
+        // their unsent draft lives - so the surface says which read stood instead of replacing it.
+        <p className="reference-turn-notice" role="status" data-testid="chat-arrival-notice">
+          {arrivalNotice}
+        </p>
       )}
       {notice !== null && (
         <p className="reference-turn-notice" role="status">

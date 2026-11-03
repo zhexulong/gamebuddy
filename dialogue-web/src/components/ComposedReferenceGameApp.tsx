@@ -1305,6 +1305,7 @@ export function ComposedReferenceGameApp() {
                       ? labels().chatFailed
                       : (sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
                   }
+                  arrivalNotice={arrivalReads.chatArrivalNotice}
                   replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
                   onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                   onSwipeRemove={handleSwipeRemoveArm}

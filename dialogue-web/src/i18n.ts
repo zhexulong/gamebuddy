@@ -209,6 +209,12 @@ const en = {
   stop: "Stop",
   chatStopped: "Reply stopped. You can send another message.",
   chatFailed: "The reply failed. You can try again.",
+  /**
+   * The Chat arrival read that could not finish. It says what the screen is (the last conversation
+   * the Host confirmed), never asks the player to retry: every arrival is another read.
+   */
+  chatArrivalNotice:
+    "GameBuddy could not finish syncing this conversation just now. The messages and the draft on this screen are the last ones it confirmed.",
   // The four ways a turn can fail, in the player's own words. The Host publishes
   // one of these codes on the failed turn (`BrowserTurnV1Schema.problemCode`,
   // `tavern_browser_api/v1`), and they mean four different things to the player:
@@ -1263,6 +1269,8 @@ const zh: Messages = {
   stop: "停止生成",
   chatStopped: "回复已停止。你可以发送另一条消息。",
   chatFailed: "回复失败。你可以重试。",
+  // 聊天页面到达时的读取未能完成。句子只说屏幕上是什么（宿主最后一次确认的对话），不请玩家重试：每次到达就是一次新的读取。
+  chatArrivalNotice: "GameBuddy 刚才未能完成这次对话同步。屏幕上显示的消息和草稿是它最后一次确认的内容。",
   // 回合失败的四种情况，见英文目录同名字段的说明。未知代码回退到 chatFailed。
   chatFailedInterrupted: "连接中断了，回复没有送达。你可以重试。",
   chatFailedNoVisiblePresentation: "她没能开口，回复没有显示出来。你可以重试。",
