@@ -43,8 +43,9 @@ baseline the last driver to read would report every earlier driver's turn and sw
 same misattribution that made `PAINT` report one firstPaint on every driver.
 
 No driver is left out. A driver whose scenario takes an early named skip writes its skip and exits
-before reaching `observe()`, so its facts file carries no `SWITCHES` line at all; the README's section
-says nothing about it rather than inventing a zero.
+before reaching `observe()`, so its facts file carries no `SWITCHES` line at all — and each section of
+`README.txt` names the drivers that wrote no line of it, so a silent driver is a listed absence rather
+than an empty space.
 
 ## One command
 
