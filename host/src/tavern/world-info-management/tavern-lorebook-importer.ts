@@ -54,8 +54,7 @@ const ELEMENT_DROP_NAMES = new Set(["script", "style"]);
  *    and stray `>` is inert on its own.
  */
 function stripMarkup(value: string): string {
-  const isTagStart = (char: string | undefined): boolean =>
-    char !== undefined && /[A-Za-z/!?]/.test(char);
+  const isTagStart = (char: string | undefined): boolean => char !== undefined && /[A-Za-z/!?]/.test(char);
 
   /** Normalizes a raw tag body (` div class=...`, `/p`, `script `) to its name + closer flag. */
   const tagName = (raw: string): { name: string; closing: boolean } => {
@@ -89,8 +88,9 @@ function stripMarkup(value: string): string {
     let close = at + 1;
     for (; close < value.length; close += 1) {
       const char = value[close];
-      if (quote !== null) { if (char === quote) quote = null; }
-      else if (char === '"' || char === "'") quote = char;
+      if (quote !== null) {
+        if (char === quote) quote = null;
+      } else if (char === '"' || char === "'") quote = char;
       else if (char === ">") break;
     }
     if (close >= value.length) {
@@ -155,6 +155,11 @@ export type RawLoreEntry = Readonly<{
   secondary_keys?: readonly string[] | string;
   secondaryKeys?: readonly string[] | string;
   selectiveLogic?: number;
+  /**
+   * The card's own ordering of this entry (SillyTavern's `order`). It decides the entry's place
+   * in the assembled prompt block, so it is a selection-independent fact, not a trigger word.
+   */
+  order?: number;
   constant?: boolean;
   disable?: boolean;
   enabled?: boolean;
@@ -221,10 +226,7 @@ export function isRawTavernLorebook(value: unknown): boolean {
  * Transforms external SillyTavern, Chub, or character_book lorebook payloads
  * into compliant GameBuddy CreateWorldInfoRequest objects.
  */
-export function importTavernLorebook(
-  raw: unknown,
-  options: TavernLorebookImportOptions = {},
-): CreateWorldInfoRequest {
+export function importTavernLorebook(raw: unknown, options: TavernLorebookImportOptions = {}): CreateWorldInfoRequest {
   if (!raw || typeof raw !== "object") {
     throw new Error("invalid_tavern_lorebook: root must be a non-null object");
   }
@@ -256,11 +258,14 @@ export function importTavernLorebook(
   if (Array.isArray(entriesField)) {
     rawList = entriesField.filter((item): item is RawLoreEntry => Boolean(item && typeof item === "object"));
   } else if (entriesField && typeof entriesField === "object") {
-    rawList = Object.values(entriesField).filter((item): item is RawLoreEntry => Boolean(item && typeof item === "object"));
+    rawList = Object.values(entriesField).filter((item): item is RawLoreEntry =>
+      Boolean(item && typeof item === "object"),
+    );
   }
 
   const maxEntries = options.maxEntries ?? Number.POSITIVE_INFINITY;
   const adaptedEntries: PublicWorldInfoEntry[] = [];
+  const declaredOrders: number[] = [];
 
   for (const rawEntry of rawList) {
     if (adaptedEntries.length >= maxEntries) break;
@@ -328,6 +333,7 @@ export function importTavernLorebook(
         ...(constant ? { constant: true } : {}),
       }),
     );
+    declaredOrders.push(declaredEntryOrder(rawEntry) ?? adaptedEntries.length - 1);
   }
 
   if (adaptedEntries.length === 0) {
@@ -343,6 +349,37 @@ export function importTavernLorebook(
   return Object.freeze({
     publicTitle,
     summary,
-    entries: Object.freeze(adaptedEntries),
+    entries: Object.freeze(inDeclaredOrder(adaptedEntries, declaredOrders)),
   });
+}
+
+/**
+ * The card's own `order`, when it states a usable one.
+ *
+ * SillyTavern writes `order` on every world-info entry and it - not the position of the row in
+ * the card's `entries` array - is what decides where the entry lands in the assembled prompt.
+ * Two exported books that hold the same entries in a different array order therefore mean the
+ * same prompt, and a book whose rows are re-ordered by an editor that renumbers nothing keeps
+ * its author's sequence.
+ */
+function declaredEntryOrder(rawEntry: RawLoreEntry): number | undefined {
+  return typeof rawEntry.order === "number" && Number.isFinite(rawEntry.order) ? rawEntry.order : undefined;
+}
+
+/**
+ * The entries in the card's declared order, so the sequence the library stores IS that order:
+ * the managed entry schema carries no `order` member of its own (an entry is
+ * `scope`/`publicTitle`/`summary`/`keys`/`secondaryKeys`/`selectiveLogic`/`constant`), and the
+ * per-turn `totalOrderKey` is derived from the stored sequence. An entry that states no order
+ * keeps the place the card's array already gave it, and equal orders keep their relative array
+ * position, so a card that states no order at all imports exactly as written.
+ */
+function inDeclaredOrder(
+  entries: readonly PublicWorldInfoEntry[],
+  declaredOrders: readonly number[],
+): readonly PublicWorldInfoEntry[] {
+  return entries
+    .map((entry, index) => ({ entry, order: declaredOrders[index] ?? index }))
+    .sort((left, right) => left.order - right.order)
+    .map(({ entry }) => entry);
 }
