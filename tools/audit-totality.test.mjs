@@ -612,6 +612,41 @@ test("hygiene: what production reads stays green, what only a test reads goes re
   }
 });
 
+test("hygiene: a module the tree names as test scaffolding has no production surface to report", (t) => {
+  const root = fixture();
+  const consumer = "host/src/scaffold.test.ts";
+  try {
+    write(root, "host/src/scaffold.test-fixtures.ts", "export function prepareThing(): number { return 1; }\n");
+    write(root, "host/src/scaffold.test-support-internal.ts", "export function hatchThing(): number { return 2; }\n");
+    write(root, "host/src/registrations-test-fixtures.ts", "export const TEST_REGISTRATIONS = [1];\n");
+    write(root, "host/src/live-module.ts", "export function pinnedOnlyByItsTest(): number { return 3; }\n");
+    write(
+      root,
+      consumer,
+      [
+        'import test from "node:test";',
+        'import { prepareThing } from "./scaffold.test-fixtures.js";',
+        'import { hatchThing } from "./scaffold.test-support-internal.js";',
+        'import { TEST_REGISTRATIONS } from "./registrations-test-fixtures.js";',
+        'import { pinnedOnlyByItsTest } from "./live-module.js";',
+        "void [prepareThing, hatchThing, TEST_REGISTRATIONS, pinnedOnlyByItsTest];",
+        'test("x", () => {});',
+        "",
+      ].join("\n"),
+    );
+
+    const result = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      result.violations.map((violation) => violation.where),
+      ["host/src/live-module.ts:1"],
+      `the three scaffolding modules are not production surface, and the ordinary module still is:\n${result.violations.map((v) => `${v.where} ${v.message}`).join("\n")}`,
+    );
+    t.diagnostic(result.notes.join(" | "));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("hygiene: a .private.test.ts declares the internal it pins, and a plain test does not", (t) => {
   const root = fixture();
   const plain = "host/src/pinned-plan.test.ts";

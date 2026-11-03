@@ -95,8 +95,17 @@ const WEB = ["dialogue-web", "src"];
 const TAVERN_CONTRACT = ["host", "src", "tavern", "browser-contract", "index.ts"];
 const GAME_CONTRACT = ["host", "src", "game-browser-contract", "index.ts"];
 
-/** Test-only source never produces, reads, or bounds a production fact. */
-const TEST_PATH = /(\.test\.(?:ts|tsx)$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]|\.test-support\.ts$)/u;
+/**
+ * Test-only source never produces, reads, or bounds a production fact.
+ *
+ * The suffixes are the ones this tree actually names its scaffolding with, not a guess: `x.test-fixtures.ts` and
+ * `x.test-support-internal.ts` sit beside `stardew-private-bootstrap-composer.test.ts` in the Stardew lifecycle, and
+ * `stardew-test-fixtures.ts` beside the tests that load mod registrations from it. Misspelling the population here
+ * does not hide a defect - it invents one, because a module named as scaffolding has no production surface to
+ * report.
+ */
+const TEST_PATH =
+  /(\.test\.(?:ts|tsx)$|[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/])/u;
 
 /**
  * A test that names itself `*.private.test.ts` declares that it pins a production module's internals on purpose.
