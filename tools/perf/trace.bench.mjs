@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { loadHostModule, measure, report } from "./harness.mjs";
+import { loadHostModule, measure, measureRatio, report, reportScaling, scalingRequested } from "./harness.mjs";
 
 const CASE = "trace.export";
 
@@ -23,6 +23,31 @@ const SIZES = Object.freeze([
   Object.freeze({ size: "small", spans: 25 }),
   Object.freeze({ size: "large", spans: 2000 }),
 ]);
+
+/**
+ * What an export's cost may do with the spans it carries, and why.
+ *
+ * The export walks every span once to build the document and stringifies the whole array, so 80x the
+ * spans must cost about 80x - this is the case where the input genuinely reaches the work. Measured on
+ * this machine the pair (25 -> 2 000 spans, 80x) read 530.32 -> 1 984.91 µs/op, ratio 3.74, and
+ * 538.79 -> 1 798.17, ratio 3.34, on a later run: the write's own fixed cost is ~511 µs, which the short
+ * trace pays in full and the long one amortises. A serialisation that walked every span for every span
+ * would grow the span part 80x over again and read ~220.
+ *
+ * WHY THIS BAND CLAIMS A CEILING ONLY: the small op is 95% file write, so a load that inflates that
+ * write on both sides damps the ratio TOWARD 1 - measured 1.24 under a machine that was rebuilding a
+ * neighbouring artifact while 40 processes competed. A floor would then red on contention while red-ing
+ * on no defect, and a floor low enough to survive that (~1.1) could not tell a damped measurement from
+ * an export that emitted no spans. So this case says what it can actually prove: the span cost must not
+ * grow super-linearly. The export's content is the budget gate's and the run-evidence gates' subject.
+ */
+const SCALING_BAND = Object.freeze({
+  min: 0,
+  max: 6,
+  reason:
+    "80x the spans measured 3.34-3.74 (every span serialised once, behind a ~511 µs file write); " +
+    "a serialisation that walked every span for every span reads ~220, so the ceiling is what this band claims",
+});
 
 /** `count` closed action spans on a monotonic fake clock, so an export is a pure function of them. */
 function spansFor(count) {
@@ -40,43 +65,72 @@ async function tempDirectory() {
 }
 
 /**
+ * One span count's op: the trace it exports, the file it writes, and the bytes that come out. Both
+ * branches of this file build the export here, so the ratio and the budget reading are the same work.
+ */
+async function caseFor({ spans }) {
+  const directory = await tempDirectory();
+  try {
+    const recorded = spansFor(spans);
+    const file = join(directory, "run-trace.json");
+    return {
+      exportBytes: Buffer.byteLength(`${JSON.stringify(toChromeTrace(recorded), null, 2)}\n`, "utf8"),
+      spans: recorded.length,
+      input: Object.freeze({ spans }),
+      run: () => writeRunTrace(file, recorded),
+      close: () => rm(directory, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
  * One case's measurement, at module scope rather than inside the `test()` that reports it:
  * `writeRunTrace` awaits its file handle per op, and `node:test` instruments the async work a test
  * body awaits, so a body that ran these windows would charge the runner to the export. See
  * `measure`'s contract.
  */
-async function measureCase({ size, spans }) {
-  const directory = await tempDirectory();
+async function measureCase(size) {
+  const point = await caseFor(size);
   try {
-    const recorded = spansFor(spans);
-    const file = join(directory, "run-trace.json");
-    const exportBytes = Buffer.byteLength(`${JSON.stringify(toChromeTrace(recorded), null, 2)}\n`, "utf8");
-    const measured = await measure({
-      id: CASE,
-      size,
-      run: () => writeRunTrace(file, recorded),
-    });
-    return { measured, spans: recorded.length, exportBytes };
+    return {
+      measured: await measure({ id: CASE, size: size.size, run: point.run }),
+      spans: point.spans,
+      exportBytes: point.exportBytes,
+    };
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await point.close();
   }
 }
 
-const outcomes = new Map();
-for (const size of SIZES) {
+if (scalingRequested()) {
+  const points = [];
   try {
-    outcomes.set(size.size, await measureCase(size));
-  } catch (error) {
-    // The case that could not be measured fails its own test below, instead of taking the other
-    // size's finished measurement down with the file's module load.
-    outcomes.set(size.size, { error });
+    for (const size of SIZES) points.push({ size: size.size, ...(await caseFor(size)) });
+    const ratio = await measureRatio({ id: CASE, axis: "spans", points });
+    test(`${CASE} scaling`, () => reportScaling(ratio, SCALING_BAND));
+  } finally {
+    for (const point of points) await point.close();
   }
-}
+} else {
+  const outcomes = new Map();
+  for (const size of SIZES) {
+    try {
+      outcomes.set(size.size, await measureCase(size));
+    } catch (error) {
+      // The case that could not be measured fails its own test below, instead of taking the other
+      // size's finished measurement down with the file's module load.
+      outcomes.set(size.size, { error });
+    }
+  }
 
-for (const { size } of SIZES) {
-  test(`${CASE} ${size}`, () => {
-    const outcome = outcomes.get(size);
-    if (outcome.error !== undefined) throw outcome.error;
-    report({ ...outcome.measured, detail: { spans: outcome.spans, exportBytes: outcome.exportBytes } });
-  });
+  for (const { size } of SIZES) {
+    test(`${CASE} ${size}`, () => {
+      const outcome = outcomes.get(size);
+      if (outcome.error !== undefined) throw outcome.error;
+      report({ ...outcome.measured, detail: { spans: outcome.spans, exportBytes: outcome.exportBytes } });
+    });
+  }
 }

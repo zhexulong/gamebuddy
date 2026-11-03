@@ -16,7 +16,7 @@
  */
 import test from "node:test";
 
-import { loadHostModule, measure, report } from "./harness.mjs";
+import { loadHostModule, measure, measureRatio, report, reportScaling, scalingRequested } from "./harness.mjs";
 
 const CASE = "presentation.commit";
 
@@ -34,11 +34,28 @@ const SIZES = Object.freeze([
 ]);
 
 /**
- * One case's measurement, at module scope rather than inside the `test()` that reports it: `present()`
- * awaits the bridge per op, and `node:test` instruments the async work a test body awaits, so a body
- * that ran these windows would charge the runner to the commit. See `measure`'s contract.
+ * What the commit's cost may do with the text, and why.
+ *
+ * The strip is two whole-string passes, so a commit that reads the text costs what the text costs plus
+ * a fixed admission/validation overhead that the short line is almost entirely made of. Measured on
+ * this machine the pair (46 bytes -> 7 412 bytes, 161x) read 0.58 -> 5.96 µs/op, ratio 10.3: linear in
+ * the text, damped by that ~0.55 µs fixed part. A quadratic strip would grow the text's part 161x over
+ * again and read ~1 500, and a strip that stopped reading the text at all would read ~1 - which is why
+ * the band has a floor and not only a ceiling. The ceiling of 26 is 2.5x the measured ratio.
  */
-async function measureCase({ size, text }) {
+const SCALING_BAND = Object.freeze({
+  min: 2,
+  max: 26,
+  reason:
+    "161x the text measured 10.3 (linear in the text, damped by a ~0.55 µs fixed admission); " +
+    "a quadratic strip reads ~1 500, a strip that stopped reading the text reads ~1",
+});
+
+/**
+ * The op for one text, plus the input field it scales with. Both branches of this file build their
+ * fixtures here, so a ratio and a budget reading describe the same work.
+ */
+function caseFor({ text }) {
   const epochAdmission = createFarmhandPresentationEpochAdmission(createCompanionInterruption());
   const hostBinding = Object.freeze({});
   const admission = Object.freeze({
@@ -61,28 +78,42 @@ async function measureCase({ size, text }) {
     text,
     locale: "zh-CN",
   });
-  return await measure({
-    id: CASE,
-    size,
+  return {
+    input: Object.freeze({ textBytes: Buffer.byteLength(text, "utf8") }),
     run: () => port.present(expression, admission),
-  });
+  };
 }
 
-const outcomes = new Map();
-for (const size of SIZES) {
-  try {
-    outcomes.set(size.size, { measured: await measureCase(size) });
-  } catch (error) {
-    // The case that could not be measured fails its own test below, instead of taking the other
-    // size's finished measurement down with the file's module load.
-    outcomes.set(size.size, { error });
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it: `present()`
+ * awaits the bridge per op, and `node:test` instruments the async work a test body awaits, so a body
+ * that ran these windows would charge the runner to the commit. See `measure`'s contract.
+ */
+async function measureCase(size) {
+  return await measure({ id: CASE, size: size.size, run: caseFor(size).run });
+}
+
+if (scalingRequested()) {
+  const points = SIZES.map((size) => ({ size: size.size, ...caseFor(size) }));
+  const ratio = await measureRatio({ id: CASE, axis: "textBytes", points });
+  test(`${CASE} scaling`, () => reportScaling(ratio, SCALING_BAND));
+} else {
+  const outcomes = new Map();
+  for (const size of SIZES) {
+    try {
+      outcomes.set(size.size, { measured: await measureCase(size) });
+    } catch (error) {
+      // The case that could not be measured fails its own test below, instead of taking the other
+      // size's finished measurement down with the file's module load.
+      outcomes.set(size.size, { error });
+    }
   }
-}
 
-for (const { size, text } of SIZES) {
-  test(`${CASE} ${size}`, () => {
-    const outcome = outcomes.get(size);
-    if (outcome.error !== undefined) throw outcome.error;
-    report({ ...outcome.measured, detail: { textBytes: Buffer.byteLength(text, "utf8") } });
-  });
+  for (const { size, text } of SIZES) {
+    test(`${CASE} ${size}`, () => {
+      const outcome = outcomes.get(size);
+      if (outcome.error !== undefined) throw outcome.error;
+      report({ ...outcome.measured, detail: { textBytes: Buffer.byteLength(text, "utf8") } });
+    });
+  }
 }

@@ -15,7 +15,7 @@
 import { createServer } from "node:net";
 import test from "node:test";
 
-import { loadHostModule, measure, report } from "./harness.mjs";
+import { loadHostModule, measure, measureRatio, report, reportScaling, scalingRequested } from "./harness.mjs";
 
 const CASE = "pipe.frame";
 
@@ -26,6 +26,25 @@ const SIZES = Object.freeze([
   Object.freeze({ size: "small", bodyBytes: 128 }),
   Object.freeze({ size: "large", bodyBytes: 32 * 1024 }),
 ]);
+
+/**
+ * What a frame's cost may do with its bytes, and why.
+ *
+ * A round trip is a syscall, a promise resolution and a JSON parse around a copy of the body, so the
+ * fixed part is large and the body's part is a memcpy: 256x the bytes must NOT cost anywhere near 256x.
+ * Measured on this machine the pair (128 -> 32 768 bytes, 256x) read 10.41 -> 111.63 µs/op, ratio 10.73,
+ * and a second run read 10.51 -> 88.71, ratio 8.44 - the spread is the large frame's write, not the pair.
+ * The body is ~0.4 µs of the small op and ~101 µs of the large one, so a per-byte quadratic would grow
+ * that part 256x over again and read ~2 500, while a frame that carried no body would read ~1. The
+ * ceiling of 22 is 2x the measured ratio.
+ */
+const SCALING_BAND = Object.freeze({
+  min: 1.1,
+  max: 22,
+  reason:
+    "256x the bytes measured 10.73 (a syscall and a JSON parse around one memcpy); " +
+    "a per-byte quadratic reads ~2 500, a frame that carried no body reads ~1",
+});
 
 /** A peer that echoes every frame it reads, framed exactly as the transport expects. */
 function echoServer() {
@@ -47,14 +66,11 @@ function echoServer() {
 }
 
 /**
- * One case's measurement, at module scope rather than inside the `test()` that reports it: each op
- * awaits the peer's echo, and `node:test` instruments the async work a test body awaits, so a body
- * that ran these windows would charge the runner to the frame. See `measure`'s contract.
- *
- * The pipe, the peer and the transport are all built and torn down here, so the test below only
- * asserts on what the case measured.
+ * One frame size's op, with the pipe, the peer and the transport it needs, so both branches of this
+ * file measure the same work. `close` is the caller's, because the case owns a socket and a server
+ * that must not outlive it.
  */
-async function measureCase({ size, bodyBytes }) {
+async function caseFor({ size, bodyBytes }) {
   const pipeName = `gamebuddy_perf_${process.pid}_${size}`;
   let peer;
   const server = echoServer();
@@ -63,49 +79,74 @@ async function measureCase({ size, bodyBytes }) {
   });
   await new Promise((resolve, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject));
   const transport = await NamedPipeTransport.connect(pipeName);
-  try {
-    const payload = { type: "snapshot", body: "x".repeat(bodyBytes) };
-    const frameJson = JSON.stringify(payload);
-    let settleEcho = () => {};
-    transport.onMessage((json) => {
-      if (json.length !== frameJson.length) throw new Error("perf_case_pipe_frame_mismatch");
-      JSON.parse(json);
-      settleEcho();
-    });
-    const measured = await measure({
-      id: CASE,
-      size,
-      run: () => {
-        const echo = new Promise((resolve) => {
-          settleEcho = resolve;
-        });
-        transport.send(payload);
-        return echo;
-      },
-    });
-    return { measured, frameBytes: Buffer.byteLength(frameJson, "utf8") };
-  } finally {
-    transport.close();
-    peer?.destroy();
-    await new Promise((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error))));
-  }
-}
-
-const outcomes = new Map();
-for (const size of SIZES) {
-  try {
-    outcomes.set(size.size, await measureCase(size));
-  } catch (error) {
-    // The case that could not be measured fails its own test below, instead of taking the other
-    // size's finished measurement down with the file's module load.
-    outcomes.set(size.size, { error });
-  }
-}
-
-for (const { size } of SIZES) {
-  test(`${CASE} ${size}`, () => {
-    const outcome = outcomes.get(size);
-    if (outcome.error !== undefined) throw outcome.error;
-    report({ ...outcome.measured, detail: { frameBytes: outcome.frameBytes } });
+  const payload = { type: "snapshot", body: "x".repeat(bodyBytes) };
+  const frameJson = JSON.stringify(payload);
+  let settleEcho = () => {};
+  transport.onMessage((json) => {
+    if (json.length !== frameJson.length) throw new Error("perf_case_pipe_frame_mismatch");
+    JSON.parse(json);
+    settleEcho();
   });
+  return {
+    input: Object.freeze({ bodyBytes }),
+    frameBytes: Buffer.byteLength(frameJson, "utf8"),
+    run: () => {
+      const echo = new Promise((resolve) => {
+        settleEcho = resolve;
+      });
+      transport.send(payload);
+      return echo;
+    },
+    close: async () => {
+      transport.close();
+      peer?.destroy();
+      await new Promise((resolve, reject) =>
+        server.close((error) => (error === undefined ? resolve() : reject(error))),
+      );
+    },
+  };
+}
+
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it: each op
+ * awaits the peer's echo, and `node:test` instruments the async work a test body awaits, so a body
+ * that ran these windows would charge the runner to the frame. See `measure`'s contract.
+ */
+async function measureCase(size) {
+  const frame = await caseFor(size);
+  try {
+    return { measured: await measure({ id: CASE, size: size.size, run: frame.run }), frameBytes: frame.frameBytes };
+  } finally {
+    await frame.close();
+  }
+}
+
+if (scalingRequested()) {
+  const frames = [];
+  try {
+    for (const size of SIZES) frames.push({ size: size.size, ...(await caseFor(size)) });
+    const ratio = await measureRatio({ id: CASE, axis: "bodyBytes", points: frames });
+    test(`${CASE} scaling`, () => reportScaling(ratio, SCALING_BAND));
+  } finally {
+    for (const frame of frames) await frame.close();
+  }
+} else {
+  const outcomes = new Map();
+  for (const size of SIZES) {
+    try {
+      outcomes.set(size.size, await measureCase(size));
+    } catch (error) {
+      // The case that could not be measured fails its own test below, instead of taking the other
+      // size's finished measurement down with the file's module load.
+      outcomes.set(size.size, { error });
+    }
+  }
+
+  for (const { size } of SIZES) {
+    test(`${CASE} ${size}`, () => {
+      const outcome = outcomes.get(size);
+      if (outcome.error !== undefined) throw outcome.error;
+      report({ ...outcome.measured, detail: { frameBytes: outcome.frameBytes } });
+    });
+  }
 }
