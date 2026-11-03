@@ -52,8 +52,8 @@ export const TARGET_FIELD = Object.freeze({
   place_wood_fence: "WoodFenceTargets",
   place_crab_pot: "CrabPotTargets",
   bait_crab_pot: "BaitCrabPotTargets",
-  chop_tree_source: "TreeChopSourceTargets",
-  break_rock_source: "RockSourceTargets",
+  chop_tree: "TreeChopSourceTargets",
+  break_rock: "RockSourceTargets",
   clear_hoedirt: "ClearHoeDirtTargets",
   dig_artifact_spot: "ArtifactSpotTargets",
   refill_watering_can: "RefillWateringCanTargets",
@@ -129,7 +129,7 @@ export const TARGET_FIELD = Object.freeze({
   // discover their target through `worldObjectTargets`.
   place_owned_object: "WorldObjectTargets",
   remove_placed_item: "WorldObjectTargets",
-  break_container_source: "WorldObjectTargets",
+  break_container: "WorldObjectTargets",
   shop_purchase: "ShopTargets",
   // The building-chest pair. Both name a chest a BUILDING declares in its own data
   // (Data/Buildings -> BuildingData.Chests), published as `buildingChestTargets`.

@@ -1879,23 +1879,19 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     args: { slot: 7, x: 10, y: 11, expectedTargetId: "feed_trough_deadbeef" },
   };
   const useItem = { ...valid, action: "use_item", args: { slot: 5, expectedQualifiedItemId: "(O)216" } };
-  const breakRockSource = {
+  const breakRock = {
     ...valid,
-    action: "break_rock_source",
+    action: "break_rock",
     args: { slot: 4, x: 10, y: 12, expectedTargetId: "rock_source_deadbeef" },
   };
   assert.equal(
-    validateExecutionRequest(
-      breakRockSource,
-      { ...snapshot, capabilities: [...snapshot.capabilities, "break_rock_source"] },
-      now,
-    ),
+    validateExecutionRequest(breakRock, { ...snapshot, capabilities: [...snapshot.capabilities, "break_rock"] }, now),
     null,
   );
   assert.equal(
     validateExecutionRequest(
-      { ...breakRockSource, args: { ...breakRockSource.args, unexpected: true } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "break_rock_source"] },
+      { ...breakRock, args: { ...breakRock.args, unexpected: true } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "break_rock"] },
       now,
     ),
     "invalid_args",
@@ -2108,34 +2104,30 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     action: "tree_first_hit",
     args: { slot: 4, x: 10, y: 12, expectedTargetId: "tree_deadbeef" },
   };
-  const chopTreeSource = {
+  const chopTree = {
     ...valid,
-    action: "chop_tree_source",
+    action: "chop_tree",
     args: { slot: 4, x: 10, y: 12, expectedTargetId: "tree_chop_deadbeef" },
   };
   assert.equal(
-    validateExecutionRequest(
-      chopTreeSource,
-      { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree_source"] },
-      now,
-    ),
+    validateExecutionRequest(chopTree, { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree"] }, now),
     null,
   );
   assert.equal(
     validateExecutionRequest(
-      { ...chopTreeSource, args: { ...chopTreeSource.args, unexpected: true } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree_source"] },
+      { ...chopTree, args: { ...chopTree.args, unexpected: true } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree"] },
       now,
     ),
     "invalid_args",
   );
   assert.equal(
     validateExecutionRequest(
-      { ...chopTreeSource, args: { ...chopTreeSource.args, slot: 37 } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree_source"] },
+      { ...chopTree, args: { ...chopTree.args, slot: 37 } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "chop_tree"] },
       now,
     ),
-    "invalid_chop_tree_source_target",
+    "invalid_chop_tree_target",
   );
   assert.equal(
     validateExecutionRequest(
@@ -3495,7 +3487,7 @@ test("observe_scene result admits tree and animal affordance kinds and still rej
       now,
     );
   // diagnoseBridgeMessage returns null on acceptance; a non-null string names the rejection.
-  assert.equal(diagnoseBridgeMessage(sceneFor("tree", "chop_tree_source"), scope, now), null);
+  assert.equal(diagnoseBridgeMessage(sceneFor("tree", "chop_tree"), scope, now), null);
   assert.equal(diagnoseBridgeMessage(sceneFor("animal", "collect_animal_product"), scope, now), null);
   assert.equal(diagnoseBridgeMessage(sceneFor("animal", null), scope, now), null);
   // A kind the Mod cannot emit must stay rejected even if it looks plausible.

@@ -4,15 +4,15 @@ import type { ActionRegistration } from "./protocol.js";
  * Test-only authenticated Mod catalog. This explicit fixture deliberately does
  * not derive from Host adapters: the Mod owns action membership and metadata.
  */
-export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
-  Object.freeze(
-    ([
+export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] = Object.freeze(
+  (
+    [
       ["move_to_tile", "movement_navigation"],
       ["equip_tool", "body_tools"],
       ["travel", "transport_warps"],
       ["enter_exit", "movement_navigation"],
       ["till_soil", "farming_crops"],
-       ["pickup_forage", "resource_gathering"],
+      ["pickup_forage", "resource_gathering"],
       ["pickup_item", "inventory_items"],
       ["water_crop", "farming_crops"],
       ["refill_watering_can", "farming_crops"],
@@ -28,29 +28,30 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] =
       ["feed_animal", "animals_pets"],
       ["use_item", "inventory_items"],
       ["harvest_crop", "farming_crops"],
-      ["break_rock_source", "resource_gathering"],
+      ["break_rock", "resource_gathering"],
       ["clear_hoedirt", "farming_crops"],
       ["dig_artifact_spot", "resource_gathering"],
-      ["chop_tree_source", "resource_gathering"],
-    ] as const).map(([actionId, familyId]) =>
-       Object.freeze({
-         actionId,
-         familyId,
-         identityVersion: 1,
-         lifecycle: "published" as const,
-         kind: "execution" as const,
-         ...(actionId === "pickup_forage"
-           ? {
-               descriptor: Object.freeze({
-                 sceneTarget: Object.freeze({
-                   type: "ObservationBinding",
-                   version: 1,
-                   required: true,
-                   requiredProperties: Object.freeze(["observationId", "ref"]),
-                 }),
-               }),
-             }
-           : {}),
-       }),
-    ),
-  );
+      ["chop_tree", "resource_gathering"],
+    ] as const
+  ).map(([actionId, familyId]) =>
+    Object.freeze({
+      actionId,
+      familyId,
+      identityVersion: 1,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
+      ...(actionId === "pickup_forage"
+        ? {
+            descriptor: Object.freeze({
+              sceneTarget: Object.freeze({
+                type: "ObservationBinding",
+                version: 1,
+                required: true,
+                requiredProperties: Object.freeze(["observationId", "ref"]),
+              }),
+            }),
+          }
+        : {}),
+    }),
+  ),
+);

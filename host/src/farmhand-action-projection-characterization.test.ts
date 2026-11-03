@@ -3,11 +3,7 @@ import test from "node:test";
 
 import { DEFAULT_ACTION_POLICY } from "./action-registry.js";
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
-import {
-  createStardewActionTools,
-  createStardewObservationTools,
-  type MoveCapableIntegration,
-} from "./game-tools.js";
+import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { ExecutionReceipt, ExecutionRequest, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
@@ -70,14 +66,17 @@ test("observe_scene ratified characterization does not enter the Mod membership 
     "partial",
     "truncatedReason",
   ]);
-    assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxAffordances, 20);
-    // The ratified-at-the-time byte ceiling. It is deliberately NOT updated when
-    // the live ceiling changes (it is now 4096; see
-    // SceneObservationProjection.MaximumPayloadUtf8Bytes): this fixture records
-    // what was ratified, and the Mod constant is the live authority. Pinning the
-    // historical value here is what keeps the two roles from being confused.
-    assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxUtf8Bytes, 2048);
-  assert.equal(TEST_MOD_REGISTRATIONS.some(({ actionId }) => actionId === "observe_scene"), false);
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxAffordances, 20);
+  // The ratified-at-the-time byte ceiling. It is deliberately NOT updated when
+  // the live ceiling changes (it is now 4096; see
+  // SceneObservationProjection.MaximumPayloadUtf8Bytes): this fixture records
+  // what was ratified, and the Mod constant is the live authority. Pinning the
+  // historical value here is what keeps the two roles from being confused.
+  assert.equal(OBSERVE_SCENE_RATIFIED_CHARACTERIZATION.result.maxUtf8Bytes, 2048);
+  assert.equal(
+    TEST_MOD_REGISTRATIONS.some(({ actionId }) => actionId === "observe_scene"),
+    false,
+  );
 });
 
 function integrationWithCapabilities(
@@ -192,13 +191,8 @@ function admission() {
   };
 }
 
-function actionToolNames(
-  integration: MoveCapableIntegration,
-  policy = DEFAULT_ACTION_POLICY,
-): string[] {
-  return createStardewActionTools(integration, policy, () => admission()).map(
-    (tool) => tool.name,
-  );
+function actionToolNames(integration: MoveCapableIntegration, policy = DEFAULT_ACTION_POLICY): string[] {
+  return createStardewActionTools(integration, policy, () => admission()).map((tool) => tool.name);
 }
 
 async function catalogActionIds(
@@ -207,26 +201,12 @@ async function catalogActionIds(
 ): Promise<string[]> {
   const [, , catalog] = createStardewObservationTools(integration, policy);
   assert.ok(catalog !== undefined, "the observation mount must include the catalog tool");
-  const result = await catalog.execute(
-    "projection",
-    {},
-    new AbortController().signal,
-    () => undefined,
-    {} as never,
-  );
-  return (
-    result.details as { actions: Array<{ actionId: string }> }
-  ).actions.map((entry) => entry.actionId);
+  const result = await catalog.execute("projection", {}, new AbortController().signal, () => undefined, {} as never);
+  return (result.details as { actions: Array<{ actionId: string }> }).actions.map((entry) => entry.actionId);
 }
 
-async function searchActionIds(
-  integration: MoveCapableIntegration,
-  query: string,
-): Promise<string[]> {
-  const [, , , search] = createStardewObservationTools(
-    integration,
-    DEFAULT_ACTION_POLICY,
-  );
+async function searchActionIds(integration: MoveCapableIntegration, query: string): Promise<string[]> {
+  const [, , , search] = createStardewObservationTools(integration, DEFAULT_ACTION_POLICY);
   assert.ok(search !== undefined, "the observation mount must include the search tool");
   const result = await search.execute(
     "projection",
@@ -235,9 +215,7 @@ async function searchActionIds(
     () => undefined,
     {} as never,
   );
-  return (
-    result.details as { actions: Array<{ actionId: string }> }
-  ).actions.map((entry) => entry.actionId);
+  return (result.details as { actions: Array<{ actionId: string }> }).actions.map((entry) => entry.actionId);
 }
 
 /**
@@ -254,11 +232,11 @@ async function searchActionIds(
  */
 const CONSTANT_MOUNTED_TOOL_NAMES: readonly string[] = Object.freeze([
   "stardew_bait_crab_pot",
-  "stardew_break_rock_source",
+  "stardew_break_rock",
   "stardew_chest_retrieve",
   "stardew_chest_store",
   "stardew_chop_stump",
-  "stardew_chop_tree_source",
+  "stardew_chop_tree",
   "stardew_clear_cask",
   "stardew_clear_debris",
   "stardew_clear_hoedirt",
@@ -311,16 +289,10 @@ const CONSTANT_MOUNTED_TOOL_NAMES: readonly string[] = Object.freeze([
 ]);
 
 test("every published Mod registration is mounted, and the catalog lists exactly the live published set", async () => {
-  const publishedActionIds = TEST_MOD_REGISTRATIONS.map(
-    (entry) => entry.actionId,
-  );
+  const publishedActionIds = TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId);
   const integration = integrationWithCapabilities(publishedActionIds);
 
-  assert.equal(
-    new Set(publishedActionIds).size,
-    publishedActionIds.length,
-    "published action IDs must be unique",
-  );
+  assert.equal(new Set(publishedActionIds).size, publishedActionIds.length, "published action IDs must be unique");
   assert.deepEqual(
     [...actionToolNames(integration)].sort(),
     [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
@@ -335,128 +307,127 @@ test("every published Mod registration is mounted, and the catalog lists exactly
 });
 
 test("every materialized published Farmhand tool routes its exact action-specific fixture through executeAction", async () => {
-  const fixtures: Readonly<Record<string, Readonly<Record<string, unknown>>>> =
-    {
-      move_to_tile: { x: 11, y: 12 },
-      equip_tool: { tool: "axe" },
-      travel: { x: 13, y: 14 },
-      enter_exit: { x: 15, y: 16 },
-      till_soil: { x: 17, y: 18 },
-      pickup_forage: {
-        x: 19,
-        y: 20,
-        expectedQualifiedItemId: "(O)16",
-        expectedTargetId: "forage_target_01",
-        sceneTarget: {
-          observationId: "observation_forage_01",
-          ref: "sr1_AAAAAAAAAAAAAAAA",
-        },
+  const fixtures: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
+    move_to_tile: { x: 11, y: 12 },
+    equip_tool: { tool: "axe" },
+    travel: { x: 13, y: 14 },
+    enter_exit: { x: 15, y: 16 },
+    till_soil: { x: 17, y: 18 },
+    pickup_forage: {
+      x: 19,
+      y: 20,
+      expectedQualifiedItemId: "(O)16",
+      expectedTargetId: "forage_target_01",
+      sceneTarget: {
+        observationId: "observation_forage_01",
+        ref: "sr1_AAAAAAAAAAAAAAAA",
       },
-      pickup_item: {
-        x: 21,
-        y: 22,
-        expectedQualifiedItemId: "(O)390",
-        expectedTargetId: "item_target_01",
-      },
-      refill_watering_can: {
-        slot: 2,
-        x: 23,
-        y: 24,
-        expectedTargetId: "water_source_01",
-      },
-      water_crop: { x: 25, y: 26, expectedTargetId: "crop_target_01" },
-      plant_seed: {
-        slot: 3,
-        x: 27,
-        y: 28,
-        expectedQualifiedItemId: "(O)472",
-        expectedTargetId: "seed_target_01",
-      },
-      fertilize_tile: {
-        slot: 4,
-        x: 29,
-        y: 30,
-        expectedQualifiedItemId: "(O)368",
-        expectedTargetId: "fertilizer_target_01",
-      },
-      place_wood_fence: {
-        slot: 5,
-        x: 31,
-        y: 32,
-        expectedQualifiedItemId: "(O)322",
-        expectedTargetId: "fence_target_01",
-      },
-      place_crab_pot: {
-        slot: 6,
-        x: 33,
-        y: 34,
-        expectedQualifiedItemId: "(O)710",
-        expectedTargetId: "crab_pot_target_01",
-      },
-      bait_crab_pot: {
-        slot: 7,
-        x: 35,
-        y: 36,
-        expectedQualifiedItemId: "(O)685",
-        expectedTargetId: "bait_crab_pot_target_01",
-      },
-      machine_inspect: { x: 37, y: 38, expectedTargetId: "machine_target_01" },
-      machine_load: {
-        slot: 8,
-        x: 39,
-        y: 40,
-        expectedQualifiedItemId: "(O)433",
-        expectedTargetId: "machine_load_target_01",
-      },
-      machine_collect_output: {
-        x: 41,
-        y: 42,
-        expectedTargetId: "machine_output_target_01",
-      },
-      collect_animal_product: {
-        slot: 9,
-        x: 43,
-        y: 44,
-        expectedTargetId: "animal_target_01",
-      },
-      feed_animal: {
-        slot: 10,
-        x: 45,
-        y: 46,
-        expectedTargetId: "trough_target_01",
-      },
-      use_item: { slot: 11, expectedQualifiedItemId: "(O)194" },
-      harvest_crop: {
-        x: 47,
-        y: 48,
-        expectedQualifiedItemId: "(O)24",
-        expectedTargetId: "harvest_target_01",
-      },
-      chop_tree_source: {
-        slot: 12,
-        x: 49,
-        y: 50,
-        expectedTargetId: "tree_target_01",
-      },
-      dig_artifact_spot: {
-        slot: 13,
-        x: 51,
-        y: 52,
-        expectedTargetId: "artifact_spot_target_01",
-      },
-      clear_hoedirt: {
-        slot: 14,
-        x: 53,
-        y: 54,
-        expectedTargetId: "hoedirt_target_01",
-      },
-      break_rock_source: {
-        slot: 15,
-        x: 55,
-        y: 56,
-        expectedTargetId: "rock_target_01",
-      },
-    };
+    },
+    pickup_item: {
+      x: 21,
+      y: 22,
+      expectedQualifiedItemId: "(O)390",
+      expectedTargetId: "item_target_01",
+    },
+    refill_watering_can: {
+      slot: 2,
+      x: 23,
+      y: 24,
+      expectedTargetId: "water_source_01",
+    },
+    water_crop: { x: 25, y: 26, expectedTargetId: "crop_target_01" },
+    plant_seed: {
+      slot: 3,
+      x: 27,
+      y: 28,
+      expectedQualifiedItemId: "(O)472",
+      expectedTargetId: "seed_target_01",
+    },
+    fertilize_tile: {
+      slot: 4,
+      x: 29,
+      y: 30,
+      expectedQualifiedItemId: "(O)368",
+      expectedTargetId: "fertilizer_target_01",
+    },
+    place_wood_fence: {
+      slot: 5,
+      x: 31,
+      y: 32,
+      expectedQualifiedItemId: "(O)322",
+      expectedTargetId: "fence_target_01",
+    },
+    place_crab_pot: {
+      slot: 6,
+      x: 33,
+      y: 34,
+      expectedQualifiedItemId: "(O)710",
+      expectedTargetId: "crab_pot_target_01",
+    },
+    bait_crab_pot: {
+      slot: 7,
+      x: 35,
+      y: 36,
+      expectedQualifiedItemId: "(O)685",
+      expectedTargetId: "bait_crab_pot_target_01",
+    },
+    machine_inspect: { x: 37, y: 38, expectedTargetId: "machine_target_01" },
+    machine_load: {
+      slot: 8,
+      x: 39,
+      y: 40,
+      expectedQualifiedItemId: "(O)433",
+      expectedTargetId: "machine_load_target_01",
+    },
+    machine_collect_output: {
+      x: 41,
+      y: 42,
+      expectedTargetId: "machine_output_target_01",
+    },
+    collect_animal_product: {
+      slot: 9,
+      x: 43,
+      y: 44,
+      expectedTargetId: "animal_target_01",
+    },
+    feed_animal: {
+      slot: 10,
+      x: 45,
+      y: 46,
+      expectedTargetId: "trough_target_01",
+    },
+    use_item: { slot: 11, expectedQualifiedItemId: "(O)194" },
+    harvest_crop: {
+      x: 47,
+      y: 48,
+      expectedQualifiedItemId: "(O)24",
+      expectedTargetId: "harvest_target_01",
+    },
+    chop_tree: {
+      slot: 12,
+      x: 49,
+      y: 50,
+      expectedTargetId: "tree_target_01",
+    },
+    dig_artifact_spot: {
+      slot: 13,
+      x: 51,
+      y: 52,
+      expectedTargetId: "artifact_spot_target_01",
+    },
+    clear_hoedirt: {
+      slot: 14,
+      x: 53,
+      y: 54,
+      expectedTargetId: "hoedirt_target_01",
+    },
+    break_rock: {
+      slot: 15,
+      x: 55,
+      y: 56,
+      expectedTargetId: "rock_target_01",
+    },
+  };
   const requests: ExecutionRequest[] = [];
   const integration = integrationWithCapabilities(
     TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId),
@@ -474,18 +445,11 @@ test("every materialized published Farmhand tool routes its exact action-specifi
     },
   );
   const tools = new Map(
-    createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () =>
-      admission(),
-    ).map((tool) => [tool.name, tool]),
+    createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()).map((tool) => [tool.name, tool]),
   );
-  const expectedToolNames = TEST_MOD_REGISTRATIONS.map(
-    (entry) => `stardew_${entry.actionId}`,
-  ).sort();
+  const expectedToolNames = TEST_MOD_REGISTRATIONS.map((entry) => `stardew_${entry.actionId}`).sort();
 
-  assert.deepEqual(
-    Object.keys(fixtures).sort(),
-    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).sort(),
-  );
+  assert.deepEqual(Object.keys(fixtures).sort(), TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).sort());
   assert.deepEqual(
     [...tools.keys()].sort(),
     [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
@@ -495,24 +459,10 @@ test("every materialized published Farmhand tool routes its exact action-specifi
     assert.ok(tools.has(toolName), `published action must be mounted: ${toolName}`);
   for (const [toolName, tool] of tools) {
     assert.ok(toolName.startsWith("stardew_"));
-    assert.ok(
-      tool.label.trim().length > 0,
-      `${toolName} must expose a nonempty label`,
-    );
-    assert.ok(
-      tool.description.trim().length > 0,
-      `${toolName} must expose a nonempty description`,
-    );
-    assert.equal(
-      typeof tool.parameters,
-      "object",
-      `${toolName} must expose an object parameter schema`,
-    );
-    assert.notEqual(
-      tool.parameters,
-      null,
-      `${toolName} must expose a parameter schema`,
-    );
+    assert.ok(tool.label.trim().length > 0, `${toolName} must expose a nonempty label`);
+    assert.ok(tool.description.trim().length > 0, `${toolName} must expose a nonempty description`);
+    assert.equal(typeof tool.parameters, "object", `${toolName} must expose an object parameter schema`);
+    assert.notEqual(tool.parameters, null, `${toolName} must expose a parameter schema`);
   }
   for (const { actionId } of TEST_MOD_REGISTRATIONS) {
     const args = fixtures[actionId];
@@ -534,14 +484,8 @@ test("every materialized published Farmhand tool routes its exact action-specifi
     assert.ok(request, `missing execute request for ${actionId}`);
     assert.equal(request.action, actionId);
     assert.deepEqual(request.args, args);
-    assert.equal(
-      (result.details as { reasonCode: string | null }).reasonCode,
-      null,
-    );
-    assert.equal(
-      JSON.parse((result.details as { receiptJson: string }).receiptJson).state,
-      "succeeded",
-    );
+    assert.equal((result.details as { reasonCode: string | null }).reasonCode, null);
+    assert.equal(JSON.parse((result.details as { receiptJson: string }).receiptJson).state, "succeeded");
   }
   assert.deepEqual(
     [...new Set(requests.map((request) => request.action))].sort(),
@@ -551,55 +495,30 @@ test("every materialized published Farmhand tool routes its exact action-specifi
 
 test("the mounted tool surface is constant while the catalog stays filtered to the live Mod capability set", async () => {
   const unknownOnly = integrationWithCapabilities(["unknown_mod_capability"]);
-  assert.deepEqual(
-    [...actionToolNames(unknownOnly)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  assert.deepEqual([...actionToolNames(unknownOnly)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
   assert.deepEqual(await catalogActionIds(unknownOnly), []);
 
   const stableButNotLive = integrationWithCapabilities(["move_to_tile"]);
-  assert.deepEqual(
-    [...actionToolNames(stableButNotLive)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  assert.deepEqual([...actionToolNames(stableButNotLive)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
   assert.deepEqual(await catalogActionIds(stableButNotLive), ["move_to_tile"]);
-  assert.equal(
-    (await catalogActionIds(stableButNotLive)).includes("till_soil"),
-    false,
-  );
+  assert.equal((await catalogActionIds(stableButNotLive)).includes("till_soil"), false);
 });
 
 test("hello-only capabilities absent from the fresh snapshot are not listed or searchable, while the mount stays constant", async () => {
-  const integration = integrationWithReadiness(
-    ["move_to_tile", "till_soil"],
-    ["move_to_tile"],
-    true,
-    async () => {
-      throw new Error("must_not_execute");
-    },
-  );
-  assert.deepEqual(
-    [...actionToolNames(integration)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  const integration = integrationWithReadiness(["move_to_tile", "till_soil"], ["move_to_tile"], true, async () => {
+    throw new Error("must_not_execute");
+  });
+  assert.deepEqual([...actionToolNames(integration)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
   assert.deepEqual(await catalogActionIds(integration), ["move_to_tile"]);
   assert.deepEqual(await searchActionIds(integration, "soil"), []);
 });
 
 test("Farmhand projection does not list legacy or experimental Mod capabilities, and retires their tool names", async () => {
-  const integration = integrationWithCapabilities([
-    "clear_debris",
-    "npc_relationship",
-    "end_day",
-    "collect_resource",
-  ]);
+  const integration = integrationWithCapabilities(["clear_debris", "npc_relationship", "end_day", "collect_resource"]);
 
   assert.deepEqual(await catalogActionIds(integration), []);
   assert.deepEqual(await searchActionIds(integration, "resource"), []);
-  assert.deepEqual(
-    [...actionToolNames(integration)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  assert.deepEqual([...actionToolNames(integration)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
   // `end_day` and `collect_resource` are retired policy identifiers: they have no Host adapter, so no
   // capability list can conjure a mounted tool for them.
   for (const retired of ["end_day", "collect_resource"])
@@ -611,18 +530,11 @@ test("Farmhand projection does not list legacy or experimental Mod capabilities,
 });
 
 test("one omitted live capability leaves its published registry action unlisted and unsearchable, while its mounted tool fails closed at execution", async () => {
-  const omitted = TEST_MOD_REGISTRATIONS.find(
-    (entry) => entry.actionId === "till_soil",
-  );
-  assert.ok(
-    omitted,
-    "characterization requires a Mod-published action when omitted live",
-  );
+  const omitted = TEST_MOD_REGISTRATIONS.find((entry) => entry.actionId === "till_soil");
+  assert.ok(omitted, "characterization requires a Mod-published action when omitted live");
   let executeCalls = 0;
   const integration = integrationWithCapabilities(
-    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).filter(
-      (actionId) => actionId !== omitted.actionId,
-    ),
+    TEST_MOD_REGISTRATIONS.map((entry) => entry.actionId).filter((actionId) => actionId !== omitted.actionId),
     async () => {
       executeCalls++;
       throw new Error("must_not_execute");
@@ -633,16 +545,11 @@ test("one omitted live capability leaves its published registry action unlisted 
     actionToolNames(integration).includes(`stardew_${omitted.actionId}`),
     "the mount surface is constant, so the tool stays mounted",
   );
-  assert.equal(
-    (await catalogActionIds(integration)).includes(omitted.actionId),
-    false,
-  );
+  assert.equal((await catalogActionIds(integration)).includes(omitted.actionId), false);
   assert.deepEqual(await searchActionIds(integration, "till"), []);
-  const tool = createStardewActionTools(
-    integration,
-    DEFAULT_ACTION_POLICY,
-    () => admission(),
-  ).find((candidate) => candidate.name === `stardew_${omitted.actionId}`);
+  const tool = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()).find(
+    (candidate) => candidate.name === `stardew_${omitted.actionId}`,
+  );
   assert.ok(tool, "the omitted action's tool must be mounted");
   const result = await tool.execute(
     "projection",
@@ -652,10 +559,7 @@ test("one omitted live capability leaves its published registry action unlisted 
     {} as never,
   );
   assert.equal(executeCalls, 0);
-  assert.equal(
-    (result.details as { reasonCode: string }).reasonCode,
-    "capability_not_declared",
-  );
+  assert.equal((result.details as { reasonCode: string }).reasonCode, "capability_not_declared");
   assert.ok(TEST_MOD_REGISTRATIONS.includes(omitted));
 });
 
@@ -667,17 +571,10 @@ test("Host v1 denied farming family narrows the catalog surface without withdraw
     deniedActions: [],
     deniedFamilies: ["farming_crops"],
   };
-  const deniedFarming = TEST_MOD_REGISTRATIONS.filter(
-    (entry) => entry.familyId === "farming_crops",
-  );
-  const remaining = TEST_MOD_REGISTRATIONS.filter(
-    (entry) => entry.familyId !== "farming_crops",
-  );
+  const deniedFarming = TEST_MOD_REGISTRATIONS.filter((entry) => entry.familyId === "farming_crops");
+  const remaining = TEST_MOD_REGISTRATIONS.filter((entry) => entry.familyId !== "farming_crops");
 
-  assert.ok(
-    deniedFarming.length > 1,
-    "farming characterization requires a multi-action family",
-  );
+  assert.ok(deniedFarming.length > 1, "farming characterization requires a multi-action family");
   assert.ok(
     remaining.some((entry) => entry.actionId === "move_to_tile"),
     "unrelated action must remain published",
@@ -693,27 +590,14 @@ test("Host v1 denied farming family narrows the catalog surface without withdraw
   );
   for (const action of deniedFarming) {
     assert.equal(
-      actionToolNames(integration, denyFarming).includes(
-        `stardew_${action.actionId}`,
-      ),
+      actionToolNames(integration, denyFarming).includes(`stardew_${action.actionId}`),
       true,
       "a policy-denied action stays mounted",
     );
-    assert.equal(
-      (await catalogActionIds(integration, denyFarming)).includes(
-        action.actionId,
-      ),
-      false,
-    );
+    assert.equal((await catalogActionIds(integration, denyFarming)).includes(action.actionId), false);
   }
-  assert.equal(
-    actionToolNames(integration, denyFarming).includes("stardew_move_to_tile"),
-    true,
-  );
-  assert.equal(
-    (await catalogActionIds(integration, denyFarming)).includes("move_to_tile"),
-    true,
-  );
+  assert.equal(actionToolNames(integration, denyFarming).includes("stardew_move_to_tile"), true);
+  assert.equal((await catalogActionIds(integration, denyFarming)).includes("move_to_tile"), true);
 });
 
 test("Farmhand materialization requires a connected fresh snapshot, not a nonempty capability list", () => {
@@ -721,35 +605,20 @@ test("Farmhand materialization requires a connected fresh snapshot, not a nonemp
     [false, ["move_to_tile"]],
     [true, null],
   ] as const) {
-    const integration = integrationWithReadiness(
-      ["move_to_tile"],
-      snapshotCapabilities,
-      connected,
-      async () => {
-        throw new Error("must_not_execute");
-      },
-    );
+    const integration = integrationWithReadiness(["move_to_tile"], snapshotCapabilities, connected, async () => {
+      throw new Error("must_not_execute");
+    });
     assert.deepEqual(
-      createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () =>
-        admission(),
-      ),
+      createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()),
       [],
     );
   }
   // An empty live capability list does NOT withdraw the mount: per-action admission, not the mount, is
   // what turns a capability change into a refusal.
-  const emptyCapabilities = integrationWithReadiness(
-    ["move_to_tile"],
-    [],
-    true,
-    async () => {
-      throw new Error("must_not_execute");
-    },
-  );
-  assert.deepEqual(
-    [...actionToolNames(emptyCapabilities)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  const emptyCapabilities = integrationWithReadiness(["move_to_tile"], [], true, async () => {
+    throw new Error("must_not_execute");
+  });
+  assert.deepEqual([...actionToolNames(emptyCapabilities)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
 });
 
 test("a materialized Farmhand tool rereads the latest live revision at invocation", async () => {
@@ -807,11 +676,9 @@ test("a materialized Farmhand tool rereads the latest live revision at invocatio
     },
   };
 
-  const move = createStardewActionTools(
-    integration,
-    DEFAULT_ACTION_POLICY,
-    () => admission(),
-  ).find((candidate) => candidate.name === "stardew_move_to_tile");
+  const move = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  );
   assert.ok(move);
   revision = 4;
   await move.execute(
@@ -884,11 +751,9 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
       throw new Error("must_not_cancel");
     },
   };
-  const oldMove = createStardewActionTools(
-    integration,
-    DEFAULT_ACTION_POLICY,
-    () => admission(),
-  ).find((candidate) => candidate.name === "stardew_move_to_tile");
+  const oldMove = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  );
   assert.ok(oldMove);
   session = "session_generation_b";
   revision = 4;
@@ -901,14 +766,8 @@ test("a materialized session A tool cannot pre-write after session B withdraws i
     {} as never,
   );
   assert.equal(executeCalls, 0);
-  assert.equal(
-    (result.details as { reasonCode: string }).reasonCode,
-    "capability_not_declared",
-  );
-  assert.deepEqual(
-    [...actionToolNames(integration)].sort(),
-    [...CONSTANT_MOUNTED_TOOL_NAMES].sort(),
-  );
+  assert.equal((result.details as { reasonCode: string }).reasonCode, "capability_not_declared");
+  assert.deepEqual([...actionToolNames(integration)].sort(), [...CONSTANT_MOUNTED_TOOL_NAMES].sort());
   assert.deepEqual(await catalogActionIds(integration), []);
   assert.deepEqual(await searchActionIds(integration, "move"), []);
 });
@@ -960,11 +819,9 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
     },
   };
 
-  const move = createStardewActionTools(
-    integration,
-    DEFAULT_ACTION_POLICY,
-    () => admission(),
-  ).find((candidate) => candidate.name === "stardew_move_to_tile");
+  const move = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, () => admission()).find(
+    (candidate) => candidate.name === "stardew_move_to_tile",
+  );
   assert.ok(move);
   enabled = false;
   const result = await move.execute(
@@ -976,8 +833,5 @@ test("a mounted Farmhand action fails closed when its live Mod capability is wit
   );
 
   assert.equal(executeCalls, 0);
-  assert.equal(
-    (result.details as { reasonCode: string }).reasonCode,
-    "capability_not_declared",
-  );
+  assert.equal((result.details as { reasonCode: string }).reasonCode, "capability_not_declared");
 });

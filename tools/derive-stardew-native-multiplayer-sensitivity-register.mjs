@@ -161,7 +161,7 @@ const TABLE = {
     "mp-observational",
     `Game1.multiplayer.broadcastSprites at ${cite("StardewValley.Tools/WateringCan.cs", "DoFunction")} mirrors an already-applied water sprite (Multiplayer.broadcastSprites adds to location.temporarySprites first, then returns when !Game1.IsMultiplayer); the refill/water mutation in the same method is mode-independent`,
   ],
-  chop_tree_source: [
+  chop_tree: [
     "StardewValley.Tools/Axe.cs",
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
     "mp-insensitive",
@@ -171,7 +171,7 @@ const TABLE = {
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
     "mp-insensitive",
   ],
-  break_rock_source: [
+  break_rock: [
     "StardewValley.Tools/Pickaxe.cs",
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
     "mp-observational",
@@ -530,7 +530,7 @@ const TABLE = {
     "StardewValley/GameLocation.cs",
     "private void startSleep()",
     "mp-semantic",
-    "Single player calls doSleep() directly, but a shared world instead sets Game1.netReady.SetLocalReady(\"sleep\") " +
+    'Single player calls doSleep() directly, but a shared world instead sets Game1.netReady.SetLocalReady("sleep") ' +
       "and installs a ReadyCheckDialog whose confirm callback is the only path to doSleep(); the day advances on a " +
       "different trigger, after the barrier every required player satisfies. A Farmhand client cannot roll the date itself " +
       "(dayOfMonth/stats.DaysPlayed advance only when Game1.IsMasterGame), so a single-player pass cannot stand in for it.",
@@ -634,12 +634,12 @@ const TABLE = {
     "mp-observational",
     "Game1.multiplayer.broadcastSprites mirrors an already-applied break sprite, and Game1.createObjectDebris(..., who.UniqueMultiplayerID, location) uses the id only for getFarmer(id).getStandingPosition() as the debris origin, while the object removal (performRemoveAction then Objects.Remove) is mode-independent; the action also drives Axe.DoFunction, whose body is mp-insensitive on its own, so this seam dominates",
   ],
-  break_container_source: [
+  break_container: [
     "StardewValley.Tools/Axe.cs",
     "public override void DoFunction(GameLocation location, int x, int y, int power, Farmer who)",
     "mp-insensitive",
     "Game1.multiplayer.broadcastSprites in the break branch mirrors chip sprites for a container the SAME method has already removed from location.objects, so the read is collateral; the removal and the releaseContents drop creation are mode-independent, and the method returns false in every path",
-"the handler calls the TOOL's DoFunction, which delegates: Axe.DoFunction reaches value2.performToolAction(this) then value2.performRemoveAction() (Axe.cs:88-94), and that is where the container is actually removed. The register cites the entry point the Mod calls; the delegation is recorded here so the terminal is still named.",
+    "the handler calls the TOOL's DoFunction, which delegates: Axe.DoFunction reaches value2.performToolAction(this) then value2.performRemoveAction() (Axe.cs:88-94), and that is where the container is actually removed. The register cites the entry point the Mod calls; the delegation is recorded here so the terminal is still named.",
     "the body reads no multiplayer token, which is this checker's own test for mp-insensitive. The removal itself happens one level deeper: Axe.DoFunction reaches value2.performToolAction(this) and then value2.performRemoveAction() (Axe.cs:88-94), which is where the container leaves the map.",
   ],
   use_warp_item: [
@@ -665,14 +665,14 @@ const TABLE = {
     "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
     "mp-insensitive",
     "writes only this actor's own NetRef body slots and calls this actor's onEquip/onUnequip; the body reads no multiplayer token",
-"the registered name is the method the handler calls (Farmer.Equip); the generic parameter is omitted from the citation because the checker matches on the identifier before the parameter list",
+    "the registered name is the method the handler calls (Farmer.Equip); the generic parameter is omitted from the citation because the checker matches on the identifier before the parameter list",
   ],
   unequip_wearable: [
     "StardewValley/Farmer.cs",
     "public TItem Equip<TItem>(TItem newItem, NetRef<TItem> slot) where TItem : Item",
     "mp-insensitive",
     "the null-item form of the same method: it moves the actor's own item out of its own NetRef slot; the body reads no multiplayer token",
-"the same seam as equip_wearable, called with a null item; the generic parameter is omitted for the same reason",
+    "the same seam as equip_wearable, called with a null item; the generic parameter is omitted for the same reason",
   ],
   dismount_transport: [
     "StardewValley.Characters/Horse.cs",
@@ -838,8 +838,7 @@ for (const entry of surface.actions) {
   // prevent. Measured: `TABLE[actionId]` returned `undefined` for the three actions
   // added after the table was last touched, the `=== null` guard was vacuous, and
   // the script died later at `seam[0]` instead of naming the missing entry.
-  if (seam === null || seam === undefined)
-    throw new Error(`action needs an explicit seam entry: ${actionId}`);
+  if (seam === null || seam === undefined) throw new Error(`action needs an explicit seam entry: ${actionId}`);
 
   // A seam entry is either one tuple or a list of tuples.
   const seamList = seam[0] === "mod_owned" || typeof seam[0] === "string" ? [seam] : seam;

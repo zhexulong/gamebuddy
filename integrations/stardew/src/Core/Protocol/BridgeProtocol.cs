@@ -2067,7 +2067,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "talk_to_npc" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
-        "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree_source" or "break_rock_source" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree" or "break_rock" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
             "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
                 "toggle_animal_door" => new[] { "x", "y", "expectedTargetId" },
@@ -2150,7 +2150,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     "shop_purchase" => new[] { "expectedTargetId", "expectedQualifiedItemId", "quantity" },
 
         "place_owned_object" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
-        "remove_placed_item" or "break_container_source" => new[] { "x", "y", "slot", "expectedTargetId" },
+        "remove_placed_item" or "break_container" => new[] { "x", "y", "slot", "expectedTargetId" },
     "answer_dialogue" => new[] { "responseKey" },
 
         // The actor's own attachment state. dismount_transport carries NO arguments: its subject

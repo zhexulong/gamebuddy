@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runBreakContainerSourceSmoke } from "./run-stardew-native-local-player-break-container-source-smoke.mjs";
 
-const ACTION = "break_container_source";
+const ACTION = "break_container";
 const CONTAINER_ITEM = "(BC)118";
 const NON_CONTAINER_ITEM = "(BC)12";
 const CONTAINER_TILE = { x: 21, y: 21 };
@@ -25,9 +25,29 @@ function snapshotWith({ revision, containerPresent = true, drops = [] }) {
     capabilities: ["cancel_active_execution", "inspect_self", "equip_tool", ACTION],
     worldObjectTargets: [
       ...(containerPresent
-        ? [{ targetId: containerTargetId, kind: "breakable_container", location: "Farm", x: CONTAINER_TILE.x, y: CONTAINER_TILE.y, slot: PICKAXE_SLOT, qualifiedItemId: CONTAINER_ITEM, displayName: "Barrel" }]
+        ? [
+            {
+              targetId: containerTargetId,
+              kind: "breakable_container",
+              location: "Farm",
+              x: CONTAINER_TILE.x,
+              y: CONTAINER_TILE.y,
+              slot: PICKAXE_SLOT,
+              qualifiedItemId: CONTAINER_ITEM,
+              displayName: "Barrel",
+            },
+          ]
         : []),
-      { targetId: nonContainerTargetId, kind: "removable_object", location: "Farm", x: KEG_TILE.x, y: KEG_TILE.y, slot: PICKAXE_SLOT, qualifiedItemId: NON_CONTAINER_ITEM, displayName: "Keg" },
+      {
+        targetId: nonContainerTargetId,
+        kind: "removable_object",
+        location: "Farm",
+        x: KEG_TILE.x,
+        y: KEG_TILE.y,
+        slot: PICKAXE_SLOT,
+        qualifiedItemId: NON_CONTAINER_ITEM,
+        displayName: "Keg",
+      },
     ].filter(Boolean),
     toolSlots: [{ slot: PICKAXE_SLOT, label: "(T)Pickaxe" }],
     lastDrops: drops,
@@ -99,7 +119,11 @@ function makeClient({ drops = [] } = {}) {
               `;drops=${state.lastDrops.join("|")};drop_count=${state.lastDrops.length};stamina_before=100;stamina_after=94`,
           },
         };
-        client.state.snapshot = snapshotWith({ revision: receipt.revision, containerPresent: false, drops: state.lastDrops });
+        client.state.snapshot = snapshotWith({
+          revision: receipt.revision,
+          containerPresent: false,
+          drops: state.lastDrops,
+        });
       }
       receipts.push(receipt);
       return receipt;
@@ -218,7 +242,9 @@ test("break_container_source: a stale-target refusal that moved the world fails 
       void request;
       session.client.state.snapshot = {
         ...session.client.state.snapshot,
-        worldObjectTargets: session.client.state.snapshot.worldObjectTargets.filter((entry) => entry.targetId !== nonContainerTargetId),
+        worldObjectTargets: session.client.state.snapshot.worldObjectTargets.filter(
+          (entry) => entry.targetId !== nonContainerTargetId,
+        ),
       };
     }
     return receipt;
@@ -245,5 +271,5 @@ test("break_container_source: a declared Given that is absent blocks the run", a
   session.client.state.snapshot = snapshotWith({ revision: 1, containerPresent: false });
   const result = await session.result();
   assert.equal(result.state, "blocked");
-  assert.match(result.reasonCode, /break_container_source_declared_given_absent/);
+  assert.match(result.reasonCode, /break_container_declared_given_absent/);
 });

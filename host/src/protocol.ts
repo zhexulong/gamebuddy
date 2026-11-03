@@ -1023,7 +1023,7 @@ export type ExecutionRequest = Readonly<{
     | "withdraw_silo_hay"
     | "place_owned_object"
     | "remove_placed_item"
-    | "break_container_source"
+    | "break_container"
     | "use_obelisk"
     | "toggle_animal_door"
     | "clear_fish_pond"
@@ -1070,8 +1070,8 @@ export type ExecutionRequest = Readonly<{
     | "collect_animal_product"
     | "feed_animal"
     | "use_item"
-    | "chop_tree_source"
-    | "break_rock_source"
+    | "chop_tree"
+    | "break_rock"
     | "clear_hoedirt"
     | "dig_artifact_spot"
     | "express_emote"
@@ -2637,7 +2637,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "name_entity" &&
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
-    value.action !== "break_container_source" &&
+    value.action !== "break_container" &&
     value.action !== "use_warp_item" &&
     value.action !== "pan_ore" &&
     value.action !== "claim_mail_attachment" &&
@@ -2678,8 +2678,8 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "collect_animal_product" &&
     value.action !== "feed_animal" &&
     value.action !== "use_item" &&
-    value.action !== "chop_tree_source" &&
-    value.action !== "break_rock_source" &&
+    value.action !== "chop_tree" &&
+    value.action !== "break_rock" &&
     value.action !== "clear_hoedirt" &&
     value.action !== "dig_artifact_spot" &&
     value.action !== "express_emote" &&
@@ -3206,7 +3206,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_feed_trough_target";
-  } else if (value.action === "break_rock_source") {
+  } else if (value.action === "break_rock") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
     if (
@@ -3217,7 +3217,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       typeof value.args.expectedTargetId !== "string" ||
       !isOpaqueId(value.args.expectedTargetId)
     )
-      return "invalid_break_rock_source_target";
+      return "invalid_break_rock_target";
   } else if (value.action === "dig_artifact_spot") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
@@ -3242,7 +3242,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_clear_hoedirt_target";
-  } else if (value.action === "chop_tree_source") {
+  } else if (value.action === "chop_tree") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
     if (
@@ -3253,7 +3253,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       typeof value.args.expectedTargetId !== "string" ||
       !isOpaqueId(value.args.expectedTargetId)
     )
-      return "invalid_chop_tree_source_target";
+      return "invalid_chop_tree_target";
   } else if (value.action === "use_item") {
     if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_args";
 
@@ -3767,7 +3767,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     value.action === "color_placed_object" ||
     value.action === "place_owned_object" ||
     value.action === "remove_placed_item" ||
-    value.action === "break_container_source" ||
+    value.action === "break_container" ||
     value.action === "equip_wearable" ||
     value.action === "unequip_wearable" ||
     value.action === "dismount_transport" ||
@@ -3817,8 +3817,8 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "collect_animal_product" ||
       value.action === "feed_animal" ||
       value.action === "use_item" ||
-      value.action === "chop_tree_source" ||
-      value.action === "break_rock_source" ||
+      value.action === "chop_tree" ||
+      value.action === "break_rock" ||
       value.action === "clear_hoedirt" ||
       value.action === "dig_artifact_spot" ||
       value.action === "express_emote" ||
@@ -3862,7 +3862,7 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
   if (
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
-    value.action !== "break_container_source"
+    value.action !== "break_container"
   )
     return null;
   const args = value.args;

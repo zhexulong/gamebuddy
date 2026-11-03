@@ -1368,11 +1368,11 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
         assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
           "companion_status",
           "stardew_bait_crab_pot",
-          "stardew_break_rock_source",
+          "stardew_break_rock",
           "stardew_chest_retrieve",
           "stardew_chest_store",
           "stardew_chop_stump",
-          "stardew_chop_tree_source",
+          "stardew_chop_tree",
           "stardew_clear_cask",
           "stardew_clear_debris",
           "stardew_clear_hoedirt",

@@ -4565,7 +4565,7 @@
         }
       }
     },
-    "breakRockSourceArgs": {
+    "breakRockArgs": {
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -5648,14 +5648,14 @@
             ],
             "properties": {
               "action": {
-                "const": "break_rock_source"
+                "const": "break_rock"
               }
             }
           },
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/breakRockSourceArgs"
+                "$ref": "#/$defs/breakRockArgs"
               }
             }
           }
@@ -5705,7 +5705,7 @@
             ],
             "properties": {
               "action": {
-                "const": "chop_tree_source"
+                "const": "chop_tree"
               }
             }
           },
@@ -6434,8 +6434,8 @@
             "collect_animal_product",
             "feed_animal",
             "use_item",
-            "chop_tree_source",
-            "break_rock_source",
+            "chop_tree",
+            "break_rock",
             "clear_hoedirt",
             "dig_artifact_spot",
             "refill_watering_can",
@@ -6474,7 +6474,7 @@
             "use_obelisk",
             "place_owned_object",
             "remove_placed_item",
-            "break_container_source",
+            "break_container",
             "toggle_animal_door",
             "load_building_chest",
             "collect_building_chest_output",

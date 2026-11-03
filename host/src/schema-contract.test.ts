@@ -349,9 +349,11 @@ test("language-neutral schema and Host share closed shapes for every published s
         location: "Farm",
         x: 10,
         y: 12,
-        qualifiedItemId: "(O)2",
-        displayName: "Stone",
-        health: 1,
+        qualifiedItemId: "(O)751",
+        displayName: "Copper Node",
+        // A mine node's real durability. The sample used to be `1` because the schema was `const 1`, which is what
+        // hid every multi-hit rock in the game.
+        health: 3,
       },
     ],
     ["clearHoeDirtTargets", { targetId: "dirt_deadbeef", location: "Farm", x: 10, y: 12, crop: false, ground: true }],
@@ -484,12 +486,15 @@ test("language-neutral schema and Host share closed shapes for every published s
       },
     ],
     [
-      "chestStoreTargets",
-      { targetId: "chest_deadbeef", x: 10, y: 12, slot: 2, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
-    ],
-    [
-      "chestRetrieveTargets",
-      { targetId: "chest_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 },
+      "chests",
+      {
+        chestId: "chest_deadbeef",
+        x: 10,
+        y: 12,
+        displayName: "Chest",
+        isFridge: false,
+        items: [{ slot: 0, qualifiedItemId: "(O)388", displayName: "Wood", stack: 1 }],
+      },
     ],
     [
       "shippingBinTargets",
@@ -564,6 +569,75 @@ test("language-neutral schema and Host share closed shapes for every published s
       field,
     );
   }
+});
+
+test("a chest reports every item it holds, and neither the schema nor the Host bounds its contents", async () => {
+  // The invariant, not an incidental: perception mirrors the world. A container that lost items on the way to the
+  // Host would answer "this chest is empty" for a chest the player is looking at, which is exactly the defect the
+  // flattened (container x item) families could not avoid - they truncated pairs and disclosed the loss with a
+  // separate count. So the population below is derived from the CONTAINER CAP and asserted against the more
+  // generous side: a chest may hold more than the cap allows containers, and still arrives whole.
+  const validate = await schemaValidator();
+  const { defs, families } = await snapshotSchema();
+  const containerCap = new Map<string, number>(SNAPSHOT_FAMILY_RULES.map((rule) => [rule.field, rule.maxItems])).get(
+    "chests",
+  );
+  assert.ok(containerCap !== undefined, "the Host caps the chests family, so the cap exists to read");
+  const chestDefinition = defs.chest as SchemaNode;
+  assert.ok(chestDefinition, "the schema declares the chest definition the snapshot family references");
+  const items = (chestDefinition.properties as Record<string, SchemaNode>).items as SchemaNode;
+  assert.equal(items.maxItems, undefined, "a container's contents carry no schema cap: the mirror is complete");
+
+  const itemsHeld = containerCap + 2;
+  const chest = {
+    chestId: "chest_0123456789abcdef",
+    x: 4,
+    y: 5,
+    displayName: "Chest",
+    isFridge: false,
+    items: Array.from({ length: itemsHeld }, (_, slot) => ({
+      slot,
+      qualifiedItemId: `(O)${100 + slot}`,
+      displayName: `Item ${slot}`,
+      stack: slot + 1,
+    })),
+  };
+  const message = {
+    protocolVersion: 1,
+    messageId: "schema_contract_chests",
+    correlationId: "schema_contract_chests",
+    timestampMs: Date.now(),
+    scope: schemaContractScope,
+    type: "snapshot",
+    payload: { ...schemaContractBase, chests: [chest] },
+  };
+  assert.equal(validate(message), true, JSON.stringify(validate.errors));
+  assert.equal(diagnoseBridgeMessage(message, schemaContractScope), "accepted");
+  assert.equal(validateBridgeMessage(message, schemaContractScope), null);
+  // The Host hands back what it admitted, item for item: a validator that accepted the frame but a downstream
+  // reader that shortened `items` would satisfy the two assertions above and still hide a container's contents.
+  const admitted = (message.payload as { chests: readonly { items: readonly { slot: number }[] }[] }).chests[0]!;
+  assert.equal(admitted.items.length, itemsHeld);
+  assert.deepEqual(
+    admitted.items.map((item) => item.slot),
+    chest.items.map((item) => item.slot),
+  );
+  // The bound that DOES apply is the number of containers, and it still refuses one past the cap by name.
+  const overCap = {
+    ...message,
+    payload: { ...message.payload, chests: Array.from({ length: containerCap + 1 }, () => chest) },
+  };
+  assert.equal(validateBridgeMessage(overCap, schemaContractScope), "invalid_snapshot");
+  const refused = diagnoseBridgeMessage(overCap, schemaContractScope);
+  assert.ok(
+    refused !== null && refused.startsWith("invalid_snapshot:chests"),
+    `an over-cap container family was not named: ${refused}`,
+  );
+  // `families` is the schema's own array list; it must carry the family this test is about.
+  assert.ok(
+    families.some(([field]) => field === "chests"),
+    "the chests family is an array family the schema declares",
+  );
 });
 
 test("the schema leaves native litter-category item ids open instead of pinning one id", async () => {
@@ -767,7 +841,7 @@ test("language-neutral schema validates exact refill_watering_can request argume
   );
 });
 
-test("language-neutral schema validates exact break_rock_source request arguments", async () => {
+test("language-neutral schema validates exact break_rock request arguments", async () => {
   const validate = await schemaValidator();
   const [message] = (await fixture("golden-sequence.json")).messages;
   const request = {
@@ -776,7 +850,7 @@ test("language-neutral schema validates exact break_rock_source request argument
     payload: {
       requestId: "request_01",
       idempotencyKey: "idempotency_01",
-      action: "break_rock_source",
+      action: "break_rock",
       args: { slot: 4, x: 10, y: 12, expectedTargetId: "rock_source_deadbeef" },
       expectedRevision: 1,
       deadlineMs: 1,
@@ -1040,7 +1114,7 @@ test("language-neutral schema validates exact clear_hoedirt request arguments an
   );
 });
 
-test("language-neutral schema validates exact chop_tree_source request arguments", async () => {
+test("language-neutral schema validates exact chop_tree request arguments", async () => {
   const validate = await schemaValidator();
   const [message] = (await fixture("golden-sequence.json")).messages;
   const request = {
@@ -1049,7 +1123,7 @@ test("language-neutral schema validates exact chop_tree_source request arguments
     payload: {
       requestId: "request_01",
       idempotencyKey: "idempotency_01",
-      action: "chop_tree_source",
+      action: "chop_tree",
       args: { slot: 4, x: 10, y: 12, expectedTargetId: "tree_chop_deadbeef" },
       expectedRevision: 1,
       deadlineMs: 1,
@@ -1082,7 +1156,7 @@ test("language-neutral schema validates strict chop-tree result snapshot facts",
       exhausted: false,
       health: 100,
       actionable: true,
-      capabilities: ["chop_tree_source"],
+      capabilities: ["chop_tree"],
       ...snapshotCatalogFacts,
       presentationLocale: "en-US",
       timeOfDay: 600,

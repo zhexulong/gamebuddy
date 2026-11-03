@@ -2,14 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runChopTreeSourceApproachSmoke } from "./run-stardew-native-local-player-chop-tree-approach-smoke.mjs";
 
-const CAPABILITIES = [
-  "cancel_active_execution",
-  "chop_tree_source",
-  "equip_tool",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-];
+const CAPABILITIES = ["cancel_active_execution", "chop_tree", "equip_tool", "inspect_self", "move_to_tile", "travel"];
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -45,7 +38,18 @@ function createFake({ withApproachProgress = true, chopFromAnywhere = false } = 
   let location = "FarmHouse";
   let tile = { x: 1, y: 1 };
   let chopped = false;
-  const tree = { targetId: "tree-1", x: 5, y: 6, location: "Farm", treeType: "Oak", growthStage: 5, health: 1, stump: false, moss: false, tapped: false };
+  const tree = {
+    targetId: "tree-1",
+    x: 5,
+    y: 6,
+    location: "Farm",
+    treeType: "Oak",
+    growthStage: 5,
+    health: 1,
+    stump: false,
+    moss: false,
+    tapped: false,
+  };
   const warps = [{ sourceX: 1, sourceY: 1, targetX: 5, targetY: 5, targetLocation: "Farm" }];
   const snapshotOf = () => ({
     revision,
@@ -107,7 +111,7 @@ function createFake({ withApproachProgress = true, chopFromAnywhere = false } = 
         revision += 1;
         return { requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision };
       }
-      if (action === "chop_tree_source") {
+      if (action === "chop_tree") {
         const outOfRange = distance() > 1;
         if (outOfRange && !chopFromAnywhere) {
           // Honest path: accept, walk to an adjacent tile, then chop. The approach
@@ -118,7 +122,13 @@ function createFake({ withApproachProgress = true, chopFromAnywhere = false } = 
           publish(receipt);
           tile = { x: tree.x - 1, y: tree.y };
           revision += 1;
-          const progress = { ...receipt, state: "running", reasonCode: "tool_approach_completed", revision, evidence: { detail: `approach=adjacent` } };
+          const progress = {
+            ...receipt,
+            state: "running",
+            reasonCode: "tool_approach_completed",
+            revision,
+            evidence: { detail: `approach=adjacent` },
+          };
           if (withApproachProgress) publish(progress);
           chopped = true;
           revision += 1;
@@ -185,7 +195,17 @@ test("approach runner proves the out-of-range chop walks first, then chops", asy
   );
   assert.equal(result.receipt.reasonCode, "tree_source_chopped");
   // The post-approach execution still carries the whole tool-family contract.
-  for (const key of ["health_before", "health_after", "stump_before", "stump_after", "source_transformed", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"]) {
+  for (const key of [
+    "health_before",
+    "health_after",
+    "stump_before",
+    "stump_after",
+    "source_transformed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
+  ]) {
     assert.ok(result.evidence[key] !== undefined, `evidence must include ${key}`);
   }
   assert.equal(result.evidence.source_transformed, "true");

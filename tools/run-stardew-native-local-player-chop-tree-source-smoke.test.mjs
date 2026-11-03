@@ -2,14 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runChopTreeSourceSmoke } from "./run-stardew-native-local-player-chop-tree-source-smoke.mjs";
 
-const CAPABILITIES = [
-  "cancel_active_execution",
-  "chop_tree_source",
-  "equip_tool",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-];
+const CAPABILITIES = ["cancel_active_execution", "chop_tree", "equip_tool", "inspect_self", "move_to_tile", "travel"];
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -102,7 +95,7 @@ function createFake({ startAtFarmHouse = true } = {}) {
         revision += 1;
         return { requestId, executionId, state: "succeeded", reasonCode: "tool_equipped", revision };
       }
-      if (action === "chop_tree_source") {
+      if (action === "chop_tree") {
         revision += 1;
         const receipt = { requestId, executionId, state: "accepted", reasonCode: "accepted", revision };
         publish(receipt);
@@ -153,9 +146,8 @@ test("chop-tree-source runner passes after FarmHouse travel, axe equip, and term
 
 test("chop-tree-source runner rejects a non-isolated action policy", async () => {
   const client = createFake();
-  await assert.rejects(
-    runChopTreeSourceSmoke(client, [], fixtureConfig({ DeniedActions: ["chop_tree_source"] })),
-    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
+  await assert.rejects(runChopTreeSourceSmoke(client, [], fixtureConfig({ DeniedActions: ["chop_tree"] })), (error) =>
+    error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });
 

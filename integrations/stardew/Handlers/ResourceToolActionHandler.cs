@@ -29,7 +29,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "chop_tree_source" => this.executions.RequestLocalChopTreeSource(
+            "chop_tree" => this.executions.RequestLocalChopTreeSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,
                 (int)(request.Args.X ?? 0),
@@ -89,7 +89,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "toggle_animal_door" => this.executions.RequestLocalToggleAnimalDoor(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "build_farm_building" => this.executions.RequestLocalBuildFarmBuilding(request.RequestId, request.Args.BuildingType ?? string.Empty, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
-            "break_container_source" => this.executions.RequestLocalBreakContainerSource(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+            "break_container" => this.executions.RequestLocalBreakContainerSource(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "remove_placed_item" => this.executions.RequestLocalRemovePlacedItem(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
@@ -104,7 +104,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "equip_wearable" => this.executions.RequestLocalEquipWearable(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "unequip_wearable" => this.executions.RequestLocalUnequipWearable(request.RequestId, request.Args.Slot ?? 0, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
-            "break_rock_source" => this.executions.RequestLocalBreakRockSource(
+            "break_rock" => this.executions.RequestLocalBreakRockSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,
                 (int)(request.Args.X ?? 0),

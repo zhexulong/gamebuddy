@@ -47,8 +47,8 @@ const DISPATCHER_METHODS = new Set([
 ]);
 
 const TOOL_RULES = Object.freeze({
-  "StardewValley.Tools.Axe": ["chop_tree_source", "clear_resource_clump", "break_container_source"],
-  "StardewValley.Tools.Pickaxe": ["break_rock_source", "clear_resource_clump", "break_container_source"],
+  "StardewValley.Tools.Axe": ["chop_tree", "clear_resource_clump", "break_container"],
+  "StardewValley.Tools.Pickaxe": ["break_rock", "clear_resource_clump", "break_container"],
   "StardewValley.Tools.Hoe": ["till_soil", "dig_artifact_spot", "clear_farm_tile"],
   "StardewValley.Tools.WateringCan": ["water_crop", "refill_watering_can"],
   "StardewValley.Tools.Pan": ["pan_ore"],
@@ -186,7 +186,7 @@ export function classifyGameplayMember(typeName, methodName) {
     typeName === "StardewValley.TerrainFeatures.Tree" &&
     ["performToolAction", "performTreeFall"].includes(methodName)
   ) {
-    return { mappingStatus: "mapped", basisPrimitiveIds: ["chop_tree_source"], semanticKind: "native_lifecycle" };
+    return { mappingStatus: "mapped", basisPrimitiveIds: ["chop_tree"], semanticKind: "native_lifecycle" };
   }
   if (typeName === "StardewValley.TerrainFeatures.ResourceClump" && methodName === "performToolAction") {
     return { mappingStatus: "mapped", basisPrimitiveIds: ["clear_resource_clump"], semanticKind: "native_lifecycle" };

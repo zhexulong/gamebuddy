@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runBreakRockSourceSmoke } from "./run-stardew-native-local-player-break-rock-source-smoke.mjs";
 
-const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "break_rock_source"];
+const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "break_rock"];
 
 const ROCK = {
   targetId: "rock-target",
@@ -80,7 +80,7 @@ function createFake({ capabilities = CAPABILITIES, removeRock = true } = {}) {
           revision,
         };
       }
-      if (action === "break_rock_source") {
+      if (action === "break_rock") {
         revision += 1;
         if (removeRock) rockRemoved = true;
         return {
@@ -113,7 +113,7 @@ test("break-rock runner passes with exact terminal identity and full postconditi
   });
   const result = await runBreakRockSourceSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "passed");
-  assert.equal(result.reasonCode, "break_rock_source");
+  assert.equal(result.reasonCode, "break_rock");
   assert.equal(result.receipt.reasonCode, "rock_source_broken");
   assert.equal(result.target.targetId, "rock-target");
   assert.equal(result.evidence.removed, "true");
@@ -123,7 +123,7 @@ test("break-rock runner passes with exact terminal identity and full postconditi
   assert.equal(result.after.rockSourceTargets, 0);
   assert.deepEqual(
     result.trace.map((entry) => entry.phase),
-    ["travel", "travel_terminal", "equip_pickaxe", "break_rock_source"],
+    ["travel", "travel_terminal", "equip_pickaxe", "break_rock"],
   );
 });
 
@@ -140,7 +140,7 @@ test("break-rock runner blocks when a required capability is absent", async () =
   // The fixture runs deny-by-exception, so the live surface is the whole derived
   // published base and an equality check would fail for a reason the action cannot
   // fix. The honest check is that the required capability is present.
-  assert.equal(result.reasonCode, "native_required_capability_missing:break_rock_source");
+  assert.equal(result.reasonCode, "native_required_capability_missing:break_rock");
   assert.equal(result.trace.length, 0);
 });
 
@@ -177,6 +177,6 @@ test("break-rock runner blocks when the rock survives the break postcondition", 
   });
   const result = await runBreakRockSourceSmoke(client, receipts, fixtureConfig());
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "break_rock_source_postcondition_mismatch");
+  assert.equal(result.reasonCode, "break_rock_postcondition_mismatch");
   assert.equal(result.after.rockSourceTargets, 1);
 });

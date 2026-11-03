@@ -565,9 +565,9 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
         "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
     },
   } as const;
-  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", valid), true);
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", valid), true);
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
       ...valid,
       evidence: {
         detail:
@@ -577,7 +577,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
       ...valid,
       evidence: {
         detail:
@@ -587,7 +587,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
       ...valid,
       evidence: {
         detail:
@@ -597,7 +597,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
       ...valid,
       evidence: {
         detail:
@@ -623,7 +623,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
         "target=rock_source_1234;tool=pickaxe;tool_selected=pickaxe;slot=4;tool_before=axe;slot_before=0;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
     },
   } as const;
-  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", broken), true);
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", broken), true);
   // A mine copper node (751) at durability 3, broken by the third of three swings: the same completion, from a rock this
   // rule previously refused twice over - for its item id and for its durability.
   const brokenMineNode = {
@@ -634,7 +634,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
     },
   } as const;
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", brokenMineNode),
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", brokenMineNode),
     true,
     "a mine node's removal is the same completion as a farm stone's",
   );
@@ -642,7 +642,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
   // and that terminal is deliberately not an arm of this rule - a completed task is recorded from source
   // transformation, exactly as it is for the tree (`stump_after === \"true\"`).
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", {
       ...brokenMineNode,
       reasonCode: "rock_source_damaged",
       evidence: {
@@ -655,7 +655,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
   );
   // And the claim cannot be forged: a `broken` code over damage facts is refused by the evidence, not the code.
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", {
       ...brokenMineNode,
       evidence: {
         detail:
@@ -666,7 +666,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
     "accessibility of the terminal does not stand in for the world fact",
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", {
       ...broken,
       evidence: {
         detail:
@@ -676,7 +676,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", {
       ...broken,
       evidence: {
         detail:
@@ -686,7 +686,7 @@ test("Stardew break-rock-source completion evidence is source transformation at 
     false,
   );
   assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock_source", {
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("break_rock", {
       ...broken,
       evidence: {
         detail:

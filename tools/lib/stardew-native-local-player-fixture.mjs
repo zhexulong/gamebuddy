@@ -607,12 +607,12 @@ export function fixtureActions(action) {
   // A bait fixture creates a current-player-owned unbaited pot and exactly one
   // Bait pre-attachment; production alone performs the native interaction.
   if (action === "bait_crab_pot") return ["bait_crab_pot"];
-  if (action === "chop_tree_source") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
+  if (action === "chop_tree") return ["move_to_tile", "travel", "equip_tool", "chop_tree"];
   // The approach harness (design 5.2) drives the SAME published action and the
   // same fixture tree; only the runner's geometry differs, so it reuses the
   // scenario rather than adding a fixture of its own.
-  if (action === "chop_tree_approach") return ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
-  if (action === "break_rock_source") return ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
+  if (action === "chop_tree_approach") return ["move_to_tile", "travel", "equip_tool", "chop_tree"];
+  if (action === "break_rock") return ["move_to_tile", "travel", "equip_tool", "break_rock"];
   if (action === "clear_hoedirt") return ["move_to_tile", "travel", "equip_tool", "clear_hoedirt"];
   if (action === "dig_artifact_spot") return ["move_to_tile", "travel", "equip_tool", "dig_artifact_spot"];
   if (action === "refill_watering_can") return ["move_to_tile", "equip_tool", "refill_watering_can"];
@@ -653,7 +653,7 @@ export function fixtureActions(action) {
       "observe_scene",
       "cut_weeds",
       "cut_grass",
-      "break_rock_source",
+      "break_rock",
       "harvest_crop",
       "plant_seed",
       "water_crop",
@@ -678,7 +678,7 @@ export function fixtureActions(action) {
       "observe_scene",
       "cut_weeds",
       "cut_grass",
-      "break_rock_source",
+      "break_rock",
       "harvest_crop",
       "plant_seed",
       "water_crop",
@@ -746,7 +746,7 @@ export function fixtureActions(action) {
   // action as a precondition.
   if (action === "place_owned_object") return ["place_owned_object"];
   if (action === "remove_placed_item") return ["remove_placed_item"];
-  if (action === "break_container_source") return ["break_container_source"];
+  if (action === "break_container") return ["break_container"];
   if (action === "enter_mine") return ["enter_mine"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
@@ -759,7 +759,7 @@ export function fixtureActions(action) {
   if (action === "wia_answer_question") return ["move_to_tile", "answer_dialogue"];
   // The three non-movement/non-navigation WIA slots each own a body-holding
   // execution whose interruption must be measured while the slot is live.
-  if (action === "wia_tool_approach_interrupt") return ["equip_tool", "chop_tree_source", "dismiss_modal"];
+  if (action === "wia_tool_approach_interrupt") return ["equip_tool", "chop_tree", "dismiss_modal"];
   if (action === "wia_animal_product_interrupt") return ["collect_animal_product", "dismiss_modal"];
   if (action === "wia_item_pickup_interrupt") return ["pickup_item", "dismiss_modal"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
@@ -947,8 +947,8 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("place_wood_fence")) return "native_place_wood_fence_v1";
   if (actions.includes("bait_crab_pot")) return "native_bait_crab_pot_v1";
   if (actions.includes("place_crab_pot")) return "native_place_crab_pot_v1";
-  if (actions.includes("chop_tree_source")) return "native_chop_tree_source_v1";
-  if (actions.includes("break_rock_source")) return "native_break_rock_source_v1";
+  if (actions.includes("chop_tree")) return "native_chop_tree_source_v1";
+  if (actions.includes("break_rock")) return "native_break_rock_source_v1";
   if (actions.includes("clear_hoedirt")) return "native_clear_hoedirt_v1";
   if (actions.includes("dig_artifact_spot")) return "native_dig_artifact_spot_v1";
   if (actions.includes("clear_debris")) return "native_clear_debris_resource_clump_v1";
@@ -1000,7 +1000,7 @@ export function fixtureScenario(actions, action) {
   if (
     actions.includes("place_owned_object") ||
     actions.includes("remove_placed_item") ||
-    actions.includes("break_container_source")
+    actions.includes("break_container")
   )
     return "native_world_object_v1";
 
@@ -1009,7 +1009,7 @@ export function fixtureScenario(actions, action) {
   if (
     actions.includes("place_owned_object") ||
     actions.includes("remove_placed_item") ||
-    actions.includes("break_container_source")
+    actions.includes("break_container")
   )
     return "native_world_object_v1";
   if (actions.includes("use_raft")) return "native_use_raft_v1";

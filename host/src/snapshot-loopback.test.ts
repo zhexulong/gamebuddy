@@ -102,7 +102,7 @@ const SNAPSHOT_SCALARS = Object.freeze({
   exhausted: false,
   health: 100,
   actionable: true,
-  capabilities: ["chop_tree_source"],
+  capabilities: ["chop_tree"],
   catalogRevision: 1,
   enabledActionIds: [] as readonly string[],
   presentationLocale: "en-US",

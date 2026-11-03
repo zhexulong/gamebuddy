@@ -27,18 +27,23 @@ test("the Mod-owned family and lifecycle constrain local typed adapters", () => 
       actionId: "move_to_tile",
       familyId: "Mod_declared_family",
       identityVersion: 1,
-      lifecycle: "published" as const, kind: "execution" as const,
+      lifecycle: "published" as const,
+      kind: "execution" as const,
     },
     {
       actionId: "equip_tool",
       familyId: "body_tools",
       identityVersion: 1,
-      lifecycle: "experimental" as const, kind: "execution" as const,
+      lifecycle: "experimental" as const,
+      kind: "execution" as const,
     },
   ];
 
   const visible = visibleActionsFromModCatalog(catalog, capabilities);
-  assert.deepEqual(visible.map((entry) => entry.actionId), ["move_to_tile"]);
+  assert.deepEqual(
+    visible.map((entry) => entry.actionId),
+    ["move_to_tile"],
+  );
   assert.equal(visible[0]?.familyId, "Mod_declared_family");
   assert.equal(visible[0]?.identityVersion, 1);
   assert.deepEqual(searchActionsFromModCatalog(catalog, capabilities, "body_tools"), []);
@@ -50,13 +55,15 @@ test("visible action adapters reject Mod registrations with an unsupported ident
     actionId: "move_to_tile",
     familyId: "movement_navigation",
     identityVersion: 1,
-    lifecycle: "published" as const, kind: "execution" as const,
+    lifecycle: "published" as const,
+    kind: "execution" as const,
   };
   const unsupported = {
     actionId: "move_to_tile",
     familyId: "movement_navigation",
     identityVersion: 2,
-    lifecycle: "published" as const, kind: "execution" as const,
+    lifecycle: "published" as const,
+    kind: "execution" as const,
   };
 
   // An unsupported identity version is dropped even when family/lifecycle/capability
@@ -66,14 +73,20 @@ test("visible action adapters reject Mod registrations with an unsupported ident
 
   // The same action at a supported identityVersion remains visible.
   const visible = visibleActionsFromModCatalog([supported, unsupported], capabilities);
-  assert.deepEqual(visible.map((entry) => entry.actionId), ["move_to_tile"]);
+  assert.deepEqual(
+    visible.map((entry) => entry.actionId),
+    ["move_to_tile"],
+  );
   assert.equal(visible[0]?.identityVersion, 1);
 });
 
 test("policy only subtracts from the current Mod catalog", () => {
   const policy = { ...DEFAULT_ACTION_POLICY, deniedActions: ["equip_tool"] } as const;
   const visible = visibleActionsFromModCatalog(TEST_MOD_REGISTRATIONS, ["move_to_tile", "equip_tool"], policy);
-  assert.deepEqual(visible.map((entry) => entry.actionId), ["move_to_tile"]);
+  assert.deepEqual(
+    visible.map((entry) => entry.actionId),
+    ["move_to_tile"],
+  );
 
   const unknownDeny = parseActionPolicy({ policyVersion: 1, deniedActions: ["future_action"], deniedFamilies: [] });
   assert.deepEqual(
@@ -155,7 +168,9 @@ test("live_verified actions are visible without being candidates", () => {
     },
   ];
   assert.deepEqual(
-    visibleActionsFromModCatalog(liveVerified, capabilities).map((entry) => entry.actionId).sort(),
+    visibleActionsFromModCatalog(liveVerified, capabilities)
+      .map((entry) => entry.actionId)
+      .sort(),
     ["equip_tool", "harvest_crop"],
   );
 
@@ -228,11 +243,7 @@ test("the descriptor completeness gate also holds at live_verified", () => {
 });
 
 test("retired action identifiers require an explicit fail-closed migration", () => {
-  assert.deepEqual(RETIRED_ACTION_POLICY_MIGRATIONS.collect_resource, [
-    "chop_tree_source",
-    "break_rock_source",
-    "pickup_item",
-  ]);
+  assert.deepEqual(RETIRED_ACTION_POLICY_MIGRATIONS.collect_resource, ["chop_tree", "break_rock", "pickup_item"]);
   assert.throws(
     () => parseActionPolicy({ policyVersion: 1, deniedActions: ["collect_resource"], deniedFamilies: [] }),
     /retired_action_policy_identifier_requires_explicit_migration/,

@@ -14,7 +14,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const ACTION = "break_container_source";
+const ACTION = "break_container";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "equip_tool", ACTION];
 /** The fixture's breakable container: `BreakableContainer.barrelId` is "118". */
 const CONTAINER_ITEM_ID = "(BC)118";
@@ -39,12 +39,7 @@ const NON_CONTAINER_ITEM_ID = "(BC)12";
  *      refused BY NAME rather than silently no-opping, and a stale target is refused
  *      after the container is gone.
  */
-export async function runBreakContainerSourceSmoke(
-  client,
-  receipts,
-  _config,
-  { terminalTimeoutMs = 5_000 } = {},
-) {
+export async function runBreakContainerSourceSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
   try {
     const snapshot = await observeFresh(client, { actionable: true });
@@ -64,8 +59,17 @@ export async function runBreakContainerSourceSmoke(
       timeoutMs: 30_000,
     });
     const emptySlotTerminal = await waitForTerminal(receipts, emptySlotAccepted, terminalTimeoutMs);
-    trace.push({ step: "break_empty_slot", action: ACTION, target: target.targetId, slot: emptySlot, receipt: summarizeReceipt(emptySlotTerminal) });
-    if (emptySlotTerminal.state !== "rejected" || emptySlotTerminal.reasonCode !== "break_container_source_tool_not_equipped_in_requested_slot")
+    trace.push({
+      step: "break_empty_slot",
+      action: ACTION,
+      target: target.targetId,
+      slot: emptySlot,
+      receipt: summarizeReceipt(emptySlotTerminal),
+    });
+    if (
+      emptySlotTerminal.state !== "rejected" ||
+      emptySlotTerminal.reasonCode !== "break_container_source_tool_not_equipped_in_requested_slot"
+    )
       throw new Error(
         `break_container_source_empty_slot_not_refused:${emptySlotTerminal.state}/${emptySlotTerminal.reasonCode};slot=${emptySlot};slot_item=${describeSlot(snapshot, emptySlot)}`,
       );
@@ -82,8 +86,16 @@ export async function runBreakContainerSourceSmoke(
       timeoutMs: 30_000,
     });
     const notContainerTerminal = await waitForTerminal(receipts, notContainerAccepted, terminalTimeoutMs);
-    trace.push({ step: "break_not_a_container", action: ACTION, target: nonContainer.targetId, receipt: summarizeReceipt(notContainerTerminal) });
-    if (notContainerTerminal.state !== "rejected" || notContainerTerminal.reasonCode !== "break_container_source_not_a_container")
+    trace.push({
+      step: "break_not_a_container",
+      action: ACTION,
+      target: nonContainer.targetId,
+      receipt: summarizeReceipt(notContainerTerminal),
+    });
+    if (
+      notContainerTerminal.state !== "rejected" ||
+      notContainerTerminal.reasonCode !== "break_container_source_not_a_container"
+    )
       throw new Error(
         `break_container_source_not_container_not_refused:${notContainerTerminal.state}/${notContainerTerminal.reasonCode};item=${nonContainer.qualifiedItemId};tile=${nonContainer.x},${nonContainer.y}`,
       );
@@ -93,7 +105,9 @@ export async function runBreakContainerSourceSmoke(
     assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const freshTarget = chooseProjectionEntry(before, "breakable_container", CONTAINER_ITEM_ID, ACTION);
     if (freshTarget.targetId !== target.targetId)
-      throw new Error(`break_container_source_target_changed_before_request:${target.targetId}:${freshTarget.targetId}`);
+      throw new Error(
+        `break_container_source_target_changed_before_request:${target.targetId}:${freshTarget.targetId}`,
+      );
     const requestId = `native_local_break_container_source_${Date.now()}`;
     const accepted = await executeFresh(client, {
       requestId,
@@ -125,7 +139,9 @@ export async function runBreakContainerSourceSmoke(
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const stillThere = projectionEntryAt(after, freshTarget.x, freshTarget.y);
     if (stillThere != null)
-      throw new Error(`break_container_source_world_unchanged:${stillThere.targetId};tile=${freshTarget.x},${freshTarget.y}`);
+      throw new Error(
+        `break_container_source_world_unchanged:${stillThere.targetId};tile=${freshTarget.x},${freshTarget.y}`,
+      );
 
     // Negative 3: the same target against a tile that no longer holds anything.
     const staleRequestId = `native_local_break_container_source_stale_${Date.now()}`;
@@ -138,7 +154,12 @@ export async function runBreakContainerSourceSmoke(
       timeoutMs: 30_000,
     });
     const staleTerminal = await waitForTerminal(receipts, staleAccepted, terminalTimeoutMs);
-    trace.push({ step: "break_stale_target", action: ACTION, target: freshTarget.targetId, receipt: summarizeReceipt(staleTerminal) });
+    trace.push({
+      step: "break_stale_target",
+      action: ACTION,
+      target: freshTarget.targetId,
+      receipt: summarizeReceipt(staleTerminal),
+    });
     if (staleTerminal.state !== "rejected" || staleTerminal.reasonCode !== "break_container_source_target_not_found")
       throw new Error(
         `break_container_source_stale_target_not_refused:${staleTerminal.state}/${staleTerminal.reasonCode};tile=${freshTarget.x},${freshTarget.y};slot=${pickaxeSlot}`,
@@ -192,12 +213,19 @@ async function equipTool(client, receipts, trace, tool, terminalTimeoutMs) {
   });
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   trace.push({ step: `equip_${tool}`, action: "equip_tool", receipt: summarizeReceipt(terminal) });
-  if (terminal.state !== "succeeded" || (terminal.reasonCode !== "tool_equipped" && terminal.reasonCode !== "already_equipped"))
+  if (
+    terminal.state !== "succeeded" ||
+    (terminal.reasonCode !== "tool_equipped" && terminal.reasonCode !== "already_equipped")
+  )
     throw new Error(`break_container_source_equip_failed:${tool}:${terminal.state}/${terminal.reasonCode}`);
   const after = await observeFresh(client, { actionable: true });
-  const slots = (after.toolSlots ?? []).filter((entry) => entry != null && entry.label === "(T)Pickaxe" && Number.isSafeInteger(entry.slot));
+  const slots = (after.toolSlots ?? []).filter(
+    (entry) => entry != null && entry.label === "(T)Pickaxe" && Number.isSafeInteger(entry.slot),
+  );
   if (slots.length !== 1)
-    throw new Error(`break_container_source_tool_slot_ambiguous:${tool}:${slots.length};toolSlots=${describeToolSlots(after)}`);
+    throw new Error(
+      `break_container_source_tool_slot_ambiguous:${tool}:${slots.length};toolSlots=${describeToolSlots(after)}`,
+    );
   return { slot: slots[0].slot };
 }
 
@@ -207,10 +235,16 @@ function chooseProjectionEntry(snapshot, kind, qualifiedItemId, action) {
   if (entries == null) throw new Error(`${action}_no_world_object_projection`);
   if (!Array.isArray(entries)) throw new Error(`${action}_world_object_projection_malformed`);
   const match = entries.find(
-    (entry) => isProjectionEntry(entry) && entry.kind !== "placement_candidate" && entry.qualifiedItemId === qualifiedItemId && (kind == null || entry.kind === kind),
+    (entry) =>
+      isProjectionEntry(entry) &&
+      entry.kind !== "placement_candidate" &&
+      entry.qualifiedItemId === qualifiedItemId &&
+      (kind == null || entry.kind === kind),
   );
   if (match == null)
-    throw new Error(`${action}_declared_given_absent:kind=${kind ?? "any"};item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`);
+    throw new Error(
+      `${action}_declared_given_absent:kind=${kind ?? "any"};item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`,
+    );
   return match;
 }
 
@@ -228,7 +262,9 @@ function firstNonToolSlot(snapshot) {
   const slots = Number.isSafeInteger(snapshot.inventorySlots) ? snapshot.inventorySlots : 0;
   const toolSlots = new Set((snapshot.toolSlots ?? []).map((entry) => entry?.slot));
   for (let slot = 0; slot < slots; slot += 1) if (!toolSlots.has(slot)) return slot;
-  throw new Error(`break_container_source_no_non_tool_slot:inventorySlots=${slots};toolSlots=${describeToolSlots(snapshot)}`);
+  throw new Error(
+    `break_container_source_no_non_tool_slot:inventorySlots=${slots};toolSlots=${describeToolSlots(snapshot)}`,
+  );
 }
 
 function describeSlot(snapshot, slot) {
@@ -258,7 +294,11 @@ function describeCandidates(snapshot) {
   const entries = snapshot.worldObjectTargets;
   if (entries == null) return "none";
   if (!Array.isArray(entries)) return "malformed";
-  return entries.map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`).join("|") || "empty";
+  return (
+    entries
+      .map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`)
+      .join("|") || "empty"
+  );
 }
 
 function parseDrops(evidence) {

@@ -20,14 +20,8 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_break_rock_source_v1";
-const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "break_rock_source"];
-const EXPECTED_CAPABILITIES = [
-  "cancel_active_execution",
-  "inspect_self",
-  "move_to_tile",
-  "travel",
-  "break_rock_source",
-];
+const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "break_rock"];
+const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "break_rock"];
 
 /** Execute the break-rock-source contract against an already-connected bridge session. */
 export async function runBreakRockSourceSmoke(
@@ -76,7 +70,10 @@ export async function runBreakRockSourceSmoke(
     // `equip_tool` takes a semantic tool selector; the Mod resolves the private
     // inventory slot, so sending one is now a malformed request.
     const equipped = await execute(client, trace, "equip_pickaxe", "equip_tool", { tool: "pickaxe" }, snapshot);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")) {
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    ) {
       throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
     }
     // `break_rock_source` itself still addresses the tool by owned slot.
@@ -88,8 +85,8 @@ export async function runBreakRockSourceSmoke(
     const accepted = await execute(
       client,
       trace,
-      "break_rock_source",
-      "break_rock_source",
+      "break_rock",
+      "break_rock",
       {
         slot: pickaxe.slot,
         x: freshTarget.x,
@@ -126,7 +123,7 @@ export async function runBreakRockSourceSmoke(
     return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
-      reasonCode: passed ? "break_rock_source" : "break_rock_source_postcondition_mismatch",
+      reasonCode: passed ? "break_rock" : "break_rock_postcondition_mismatch",
       target: summarizeRock(freshTarget),
       receipt: summarizeReceipt(terminal),
       evidence,

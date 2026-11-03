@@ -24,8 +24,8 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree_source"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree"))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -45,7 +45,7 @@ internal sealed partial class ExecutionManager
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
-                "chop_tree_source",
+                "chop_tree",
                 location,
                 targetX,
                 targetY,
@@ -66,8 +66,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree_source"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree_source"));
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree"))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree"));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -114,7 +114,7 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (ResolveDeclaredTool(Game1.player.Items, "break_rock_source").RefusalCode is { } toolRefusal)
+        if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
@@ -126,7 +126,7 @@ internal sealed partial class ExecutionManager
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
-                "break_rock_source",
+                "break_rock",
                 location,
                 targetX,
                 targetY,
@@ -147,7 +147,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteBreakRockSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (!TrySelectDeclaredTool(Game1.player, "break_rock_source", out DeclaredToolSelection selection, out string toolRefusalCode))
+        if (!TrySelectDeclaredTool(Game1.player, "break_rock", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
         Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
         ExecutionState state;

@@ -15,10 +15,10 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_chop_tree_source_v1";
-const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
+const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree"];
 const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
-  "chop_tree_source",
+  "chop_tree",
   "equip_tool",
   "inspect_self",
   "move_to_tile",
@@ -79,21 +79,27 @@ export async function runChopTreeSourceApproachSmoke(
 
     const axe = chooseAxe(snapshot);
     const equipped = await execute(client, trace, "equip_axe", "equip_tool", { tool: "axe" }, snapshot);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`axe_equip_failed:${equipped.reasonCode}`);
     snapshot = await observeFresh(client, { actionable: true });
     const freshTarget = findSameChopTree(snapshot, target);
     if (!freshTarget || freshTarget.health !== 1 || freshTarget.stump !== false)
       throw new Error("tree_chop_target_changed_after_equip");
-    const equippedDistance = Math.max(Math.abs(snapshot.tile.x - freshTarget.x), Math.abs(snapshot.tile.y - freshTarget.y));
+    const equippedDistance = Math.max(
+      Math.abs(snapshot.tile.x - freshTarget.x),
+      Math.abs(snapshot.tile.y - freshTarget.y),
+    );
     if (equippedDistance <= 1) throw new Error(`approach_precondition_lost_after_equip:distance=${equippedDistance}`);
 
     // 1. Out of range: the bridge must accept an approach, not refuse.
     const accepted = await execute(
       client,
       trace,
-      "chop_tree_source_out_of_range",
-      "chop_tree_source",
+      "chop_tree_out_of_range",
+      "chop_tree",
       { slot: axe.slot, x: freshTarget.x, y: freshTarget.y, expectedTargetId: freshTarget.targetId },
       snapshot,
     );
@@ -131,10 +137,10 @@ export async function runChopTreeSourceApproachSmoke(
       stumpAfter: evidence.stump_after === "true",
       sourceTransformed: evidence.source_transformed === "true",
       staminaReported:
-        evidence.stamina_before !== undefined
-        && evidence.stamina_after !== undefined
-        && evidence.stamina_delta !== undefined
-        && evidence.expected_stamina_cost !== undefined,
+        evidence.stamina_before !== undefined &&
+        evidence.stamina_after !== undefined &&
+        evidence.stamina_delta !== undefined &&
+        evidence.expected_stamina_cost !== undefined,
       resultReadback: reread?.health === 5 && reread.stump === true,
     };
     const passed = Object.values(clauses).every(Boolean);
@@ -146,7 +152,10 @@ export async function runChopTreeSourceApproachSmoke(
         ? "approach_progress_receipt_missing"
         : passed
           ? "tree_source_chopped_via_approach"
-          : `approach_postcondition_mismatch:${Object.entries(clauses).filter(([, ok]) => !ok).map(([name]) => name).join("+")}`,
+          : `approach_postcondition_mismatch:${Object.entries(clauses)
+              .filter(([, ok]) => !ok)
+              .map(([name]) => name)
+              .join("+")}`,
       clauses,
       approach: {
         distanceBeforeChop: equippedDistance,
@@ -207,7 +216,16 @@ async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutM
   let fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
   const warp = resolveFarmWarp(fresh);
   if (!adjacent(fresh.tile, { x: warp.sourceX, y: warp.sourceY }))
-    fresh = await moveToTile(client, receipts, fresh, { x: warp.sourceX, y: warp.sourceY }, "move_to_farm_warp", trace, stabilizeTimeoutMs, terminalTimeoutMs);
+    fresh = await moveToTile(
+      client,
+      receipts,
+      fresh,
+      { x: warp.sourceX, y: warp.sourceY },
+      "move_to_farm_warp",
+      trace,
+      stabilizeTimeoutMs,
+      terminalTimeoutMs,
+    );
   const accepted = await execute(client, trace, "travel", "travel", { x: warp.sourceX, y: warp.sourceY }, fresh);
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
@@ -237,9 +255,21 @@ async function standOutsideInteractionRange(client, receipts, snapshot, trace, s
         const candidate = { x: tree.x + dx, y: tree.y + dy };
         if (!validTile(candidate.x) || !validTile(candidate.y)) continue;
         try {
-          const settled = await moveToTile(client, receipts, snapshot, candidate, "move_out_of_interaction_range", trace, stabilizeTimeoutMs, moveTimeoutMs);
+          const settled = await moveToTile(
+            client,
+            receipts,
+            snapshot,
+            candidate,
+            "move_out_of_interaction_range",
+            trace,
+            stabilizeTimeoutMs,
+            moveTimeoutMs,
+          );
           const visible = chopTreeCandidates(settled);
-          if (visible.length === 1 && Math.max(Math.abs(settled.tile.x - visible[0].x), Math.abs(settled.tile.y - visible[0].y)) > 1)
+          if (
+            visible.length === 1 &&
+            Math.max(Math.abs(settled.tile.x - visible[0].x), Math.abs(settled.tile.y - visible[0].y)) > 1
+          )
             return settled;
         } catch (error) {
           const reason = String(error instanceof Error ? error.message : error);
@@ -267,16 +297,16 @@ function chooseChopTree(snapshot) {
 
 function validChopTree(entry) {
   return (
-    entry !== null
-    && typeof entry === "object"
-    && typeof entry.targetId === "string"
-    && entry.targetId.length > 0
-    && validTile(entry.x)
-    && validTile(entry.y)
-    && entry.health === 1
-    && entry.stump === false
-    && entry.moss === false
-    && entry.tapped === false
+    entry !== null &&
+    typeof entry === "object" &&
+    typeof entry.targetId === "string" &&
+    entry.targetId.length > 0 &&
+    validTile(entry.x) &&
+    validTile(entry.y) &&
+    entry.health === 1 &&
+    entry.stump === false &&
+    entry.moss === false &&
+    entry.tapped === false
   );
 }
 
@@ -290,7 +320,8 @@ function chooseAxe(snapshot) {
 
 function findSameChopTree(snapshot, target) {
   return (snapshot.treeChopSourceTargets ?? []).find(
-    (entry) => entry?.targetId === target.targetId && entry.x === target.x && entry.y === target.y && validChopTree(entry),
+    (entry) =>
+      entry?.targetId === target.targetId && entry.x === target.x && entry.y === target.y && validChopTree(entry),
   );
 }
 

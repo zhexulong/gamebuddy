@@ -1300,7 +1300,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.use_item,
         label: "Consume Held Stardew Food Item",
         description:
-          "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use stardew_clear_debris, stardew_chop_tree_source, stardew_break_rock_source, stardew_clear_hoedirt, stardew_refill_watering_can, stardew_scythe_crop, stardew_cut_weeds, stardew_cut_grass or stardew_till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
+          "Eat one ordinary edible Farmhand inventory item. This does NOT use a tool on a world object; for that use stardew_clear_debris, stardew_chop_tree, stardew_break_rock, stardew_clear_hoedirt, stardew_refill_watering_can, stardew_scythe_crop, stardew_cut_weeds, stardew_cut_grass or stardew_till_soil instead. slot and expectedQualifiedItemId must be copied exactly from the foodTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The item is consumed as the action is accepted, so a later interruption does not un-eat it. Native eating animation and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           expectedQualifiedItemId: Type.String({
@@ -1351,10 +1351,10 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.chop_tree_source,
-        label: "Chop Stardew Tree Source",
+        name: STARDEW_ACTION_TOOL_NAMES.chop_tree,
+        label: "Chop Stardew Tree",
         description:
-          "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree source. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only source transformation in the authoritative receipt determines completion.",
+          "Use one equipped Axe swing on a live ordinary mature tree. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only source transformation in the authoritative receipt determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1363,7 +1363,7 @@ export function createStardewActionTools(
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
-        action: "chop_tree_source",
+        action: "chop_tree",
         toArgs: (params) => ({
           slot: params.slot,
           x: params.x,
@@ -1429,10 +1429,10 @@ export function createStardewActionTools(
     // constant mount; per-action admission at execution
     tools.push(
       makeGameActionTool({
-        name: STARDEW_ACTION_TOOL_NAMES.break_rock_source,
-        label: "Break Stardew Rock Source",
+        name: STARDEW_ACTION_TOOL_NAMES.break_rock,
+        label: "Break Stardew Rock",
         description:
-          "Use one equipped basic Pickaxe hit on a live one-hit ordinary stone source. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
+          "Use one equipped basic Pickaxe swing on a live ordinary breakable stone. slot, x, y and expectedTargetId must be copied exactly from the rockSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Drops and pickup are separate actions.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1441,7 +1441,7 @@ export function createStardewActionTools(
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
-        action: "break_rock_source",
+        action: "break_rock",
         toArgs: (params) => ({
           slot: params.slot,
           x: params.x,
@@ -2189,7 +2189,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chop_stump,
         label: "Chop Tree Stump",
         description:
-          "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is stardew_chop_tree_source, not this action.",
+          "Chop one live ordinary tree that is already a stump with the equipped Axe. slot, x, y and expectedTargetId must be copied exactly from the treeStumpTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The Mod swings the native axe until the stump is cleared. Returns stump_cleared. A mature standing tree is stardew_chop_tree, not this action.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -2744,17 +2744,17 @@ export function createStardewActionTools(
   }
   {
     // constant mount; per-action admission at execution
-    const registration = modRegistrations.find((entry) => entry.actionId === "break_container_source");
-    if (registration?.descriptor && isModDescriptorComplete("break_container_source", registration.descriptor)) {
-      const schema = buildCandidateToolSchema("break_container_source", registration.descriptor);
+    const registration = modRegistrations.find((entry) => entry.actionId === "break_container");
+    if (registration?.descriptor && isModDescriptorComplete("break_container", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("break_container", registration.descriptor);
       tools.push(
         makeGameActionTool({
-          name: STARDEW_ACTION_TOOL_NAMES.break_container_source,
+          name: STARDEW_ACTION_TOOL_NAMES.break_container,
           label: "Break a container",
           description:
             "Break a breakable container on the map, such as a crate or barrel, with the tool in the named slot. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the container being GONE and its drops accounted for, not the tool's return value.",
           parameters: schema,
-          action: "break_container_source",
+          action: "break_container",
           toArgs: (params) => ({
             x: params.x,
             y: params.y,

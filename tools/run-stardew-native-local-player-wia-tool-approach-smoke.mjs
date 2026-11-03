@@ -13,7 +13,7 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_wia_tool_approach_interrupt_v1";
-const EXPECTED_ACTIONS = ["chop_tree_source", "dismiss_modal", "equip_tool"];
+const EXPECTED_ACTIONS = ["chop_tree", "dismiss_modal", "equip_tool"];
 const REQUIRED_CAPABILITIES = [...EXPECTED_ACTIONS].sort();
 // The tool-approach slot reports its own frozen disposition vocabulary
 // (farmhandexecutioncontroller.cs `reach=1;approach=<...>`), NOT the item-use
@@ -76,16 +76,17 @@ export async function runWiaToolApproachInterruptSmoke(
   try {
     const before = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
-    if (before.location !== "Farm")
-      throw new Error(`tool_approach_route_must_start_on_farm:${before.location}`);
+    if (before.location !== "Farm") throw new Error(`tool_approach_route_must_start_on_farm:${before.location}`);
     const target = chooseOnlyChopTreeTarget(before);
     const approachDistance = tileDistance(before.tile, target);
-    if (approachDistance <= 1)
-      throw new Error(`approach_precondition_not_established:distance=${approachDistance}`);
+    if (approachDistance <= 1) throw new Error(`approach_precondition_not_established:distance=${approachDistance}`);
 
     const axe = chooseAxe(before);
     const equipped = await executeAction("equip", "equip_tool", { tool: "axe" }, before, trace, client);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`axe_equip_failed:${equipped.reasonCode}`);
 
     // ---- phase 1: the approach walk is interrupted by a real native modal ----
@@ -121,15 +122,14 @@ export async function runWiaToolApproachInterruptSmoke(
     const released = await waitForFreshSnapshot(client, {
       minRevision: interrupted.revision,
       timeoutMs: postconditionTimeoutMs,
-      check: (candidate) =>
-        candidate.activeExecution == null && findSameChopTree(candidate, target) !== undefined,
+      check: (candidate) => candidate.activeExecution == null && findSameChopTree(candidate, target) !== undefined,
     });
     const releasedTarget = findSameChopTree(released, target);
     const releaseOk =
-      released.activeExecution == null
-      && releasedTarget !== undefined
-      && releasedTarget.health === 1
-      && releasedTarget.stump === false;
+      released.activeExecution == null &&
+      releasedTarget !== undefined &&
+      releasedTarget.health === 1 &&
+      releasedTarget.stump === false;
     if (!releaseOk) throw new Error("interrupt_slot_not_released");
 
     // ---- phase 3: dismiss the modal (instantaneous: the bridge response IS the terminal) ----
@@ -171,9 +171,9 @@ export async function runWiaToolApproachInterruptSmoke(
     const retryEvidence = parseStrictEvidence(retry.evidence);
     const retryApproachAnnounced = receipts.some(
       (entry) =>
-        entry?.requestId === retryAccepted.requestId
-        && entry?.executionId === retryAccepted.executionId
-        && entry?.reasonCode === "tool_approach_completed",
+        entry?.requestId === retryAccepted.requestId &&
+        entry?.executionId === retryAccepted.executionId &&
+        entry?.reasonCode === "tool_approach_completed",
     );
     const after = await waitForFreshSnapshot(client, {
       minRevision: retry.revision,
@@ -183,15 +183,15 @@ export async function runWiaToolApproachInterruptSmoke(
     });
     const reread = findSameChopResult(after, retryTarget);
     const retryPostcondition =
-      retryApproachAnnounced
-      && after.activeExecution == null
-      && retryEvidence.target === retryTarget.targetId
-      && retryEvidence.tool === "axe"
-      && retryEvidence.health_before === "1"
-      && retryEvidence.health_after === "5"
-      && retryEvidence.source_transformed === "true"
-      && reread?.health === 5
-      && reread.stump === true;
+      retryApproachAnnounced &&
+      after.activeExecution == null &&
+      retryEvidence.target === retryTarget.targetId &&
+      retryEvidence.tool === "axe" &&
+      retryEvidence.health_before === "1" &&
+      retryEvidence.health_after === "5" &&
+      retryEvidence.source_transformed === "true" &&
+      reread?.health === 5 &&
+      reread.stump === true;
     if (!retryPostcondition) throw new Error("retry_chop_postcondition_mismatch");
 
     return {
@@ -245,7 +245,7 @@ if (import.meta.main) {
 async function executeChop(target, slot, phase, snapshot, trace, client) {
   return executeAction(
     phase,
-    "chop_tree_source",
+    "chop_tree",
     { slot, x: target.x, y: target.y, expectedTargetId: target.targetId },
     snapshot,
     trace,
@@ -278,16 +278,16 @@ function validateNativeLocalToolApproachConfig(value) {
   // itself is staged by the fixture and observed through the receipt, never by the
   // bridge publication.
   if (
-    value.NativeLocalPlayerFixture?.Enable !== true
-    || value.NativeLocalPlayerFixture?.Bootstrap?.Enable === true
-    || value.NativeLocalPlayerFixture?.FixtureScenario !== SCENARIO
+    value.NativeLocalPlayerFixture?.Enable !== true ||
+    value.NativeLocalPlayerFixture?.Bootstrap?.Enable === true ||
+    value.NativeLocalPlayerFixture?.FixtureScenario !== SCENARIO
   )
     throw new Error("native_local_wia_tool_approach_fixture_config_invalid");
   if (
-    value.Portfolio?.Enable === true
-    || value.HostAutomation?.Enable === true
-    || value.HostFarmhandProvisioning?.Enable === true
-    || value.FarmhandProvisioner?.Enable === true
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
   )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
@@ -306,26 +306,27 @@ function chooseOnlyChopTreeTarget(snapshot) {
 
 function validChopTree(entry) {
   return (
-    entry !== null
-    && typeof entry === "object"
-    && typeof entry.targetId === "string"
-    && entry.targetId.length > 0
-    && typeof entry.location === "string"
-    && entry.location.length > 0
-    && Number.isInteger(entry.x)
-    && Number.isInteger(entry.y)
-    && typeof entry.treeType === "string"
-    && entry.treeType.length > 0
-    && entry.health === 1
-    && entry.stump === false
-    && entry.moss === false
-    && entry.tapped === false
+    entry !== null &&
+    typeof entry === "object" &&
+    typeof entry.targetId === "string" &&
+    entry.targetId.length > 0 &&
+    typeof entry.location === "string" &&
+    entry.location.length > 0 &&
+    Number.isInteger(entry.x) &&
+    Number.isInteger(entry.y) &&
+    typeof entry.treeType === "string" &&
+    entry.treeType.length > 0 &&
+    entry.health === 1 &&
+    entry.stump === false &&
+    entry.moss === false &&
+    entry.tapped === false
   );
 }
 
 function findSameChopTree(snapshot, target) {
   return (snapshot.treeChopSourceTargets ?? []).find(
-    (entry) => entry?.targetId === target.targetId && entry.x === target.x && entry.y === target.y && validChopTree(entry),
+    (entry) =>
+      entry?.targetId === target.targetId && entry.x === target.x && entry.y === target.y && validChopTree(entry),
   );
 }
 
@@ -335,11 +336,11 @@ function findSameChopResult(snapshot, target) {
   // identities, and the claim under test is that the same tile now holds a stump.
   return (snapshot.treeChopResultTargets ?? []).find(
     (entry) =>
-      entry?.location === target.location
-      && entry?.x === target.x
-      && entry?.y === target.y
-      && entry?.treeType === target.treeType
-      && entry?.stump === true,
+      entry?.location === target.location &&
+      entry?.x === target.x &&
+      entry?.y === target.y &&
+      entry?.treeType === target.treeType &&
+      entry?.stump === true,
   );
 }
 
@@ -350,7 +351,12 @@ function chooseAxe(snapshot) {
 }
 
 function tileDistance(left, right) {
-  if (!Number.isInteger(left?.x) || !Number.isInteger(left?.y) || !Number.isInteger(right?.x) || !Number.isInteger(right?.y))
+  if (
+    !Number.isInteger(left?.x) ||
+    !Number.isInteger(left?.y) ||
+    !Number.isInteger(right?.x) ||
+    !Number.isInteger(right?.y)
+  )
     throw new Error("invalid_live_tile");
   return Math.max(Math.abs(left.x - right.x), Math.abs(left.y - right.y));
 }

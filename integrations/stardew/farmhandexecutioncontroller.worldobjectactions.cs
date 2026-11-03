@@ -511,7 +511,7 @@ internal sealed partial class ExecutionManager
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
-                "break_container_source",
+                "break_container",
                 location,
                 targetX,
                 targetY,

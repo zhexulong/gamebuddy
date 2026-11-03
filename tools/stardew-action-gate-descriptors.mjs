@@ -99,7 +99,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_refill_watering_can_v1",
   ),
   gate(
-    "break_rock_source",
+    "break_rock",
     1,
     "run-stardew-native-local-player-break-rock-source-smoke.mjs",
     "rock_source_broken",
@@ -120,7 +120,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_dig_artifact_spot_v1",
   ),
   gate(
-    "chop_tree_source",
+    "chop_tree",
     1,
     "run-stardew-native-local-player-chop-tree-source-smoke.mjs",
     "tree_source_chopped",
@@ -475,7 +475,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "native_world_object_v1",
   ),
   gate(
-    "break_container_source",
+    "break_container",
     1,
     "run-stardew-native-local-player-break-container-source-smoke.mjs",
     "container_source_broken",

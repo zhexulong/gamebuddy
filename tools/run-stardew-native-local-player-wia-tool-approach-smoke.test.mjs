@@ -3,7 +3,7 @@ import test from "node:test";
 import { runWiaToolApproachInterruptSmoke } from "./run-stardew-native-local-player-wia-tool-approach-smoke.mjs";
 
 const SCENARIO = "native_wia_tool_approach_interrupt_v1";
-const CAPABILITIES = ["chop_tree_source", "dismiss_modal", "equip_tool"];
+const CAPABILITIES = ["chop_tree", "dismiss_modal", "equip_tool"];
 const TREE = {
   targetId: "tree_chop_source_0123456789abcdef",
   location: "Farm",
@@ -51,21 +51,21 @@ function snapshot(revision, extra = {}) {
   };
 }
 
-const APPROACH_ACCEPTED_EVIDENCE =
-  `location=Farm;target=${TREE.targetId};tile=14,12;distance=2;reach=1;approach=adjacent`;
+const APPROACH_ACCEPTED_EVIDENCE = `location=Farm;target=${TREE.targetId};tile=14,12;distance=2;reach=1;approach=adjacent`;
 // The live shape for this slot: `RecordControllerTransition` mints the terminal for
 // a non-progress controller transition, so the receipt carries the approach slot's
 // own vocabulary plus the WIA intent breakpoint forwarded through `body_evidence`
 // (farmhandexecutioncontroller.cs:3627-3634). `native_animation_pending` is the
 // ITEM-USE slot's field and must not appear here.
-const INTERRUPT_EVIDENCE =
-  `location=Farm;target=${TREE.targetId};tile=14,12;reach=1;approach=failed;body_evidence=interrupted_by=DialogueBox;target_tile=14,12;interrupted_at=12,12;remaining_distance=2;revision=6`;
-const INTERRUPT_EVIDENCE_WITHOUT_BREAKPOINT =
-  `location=Farm;target=${TREE.targetId};tile=14,12;reach=1;approach=failed;body_evidence=lifecycle_or_world_change`;
-const RETRY_SUCCESS_EVIDENCE =
-  `target=${TREE.targetId};tool=axe;slot=2;tree=1;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2`;
+const INTERRUPT_EVIDENCE = `location=Farm;target=${TREE.targetId};tile=14,12;reach=1;approach=failed;body_evidence=interrupted_by=DialogueBox;target_tile=14,12;interrupted_at=12,12;remaining_distance=2;revision=6`;
+const INTERRUPT_EVIDENCE_WITHOUT_BREAKPOINT = `location=Farm;target=${TREE.targetId};tile=14,12;reach=1;approach=failed;body_evidence=lifecycle_or_world_change`;
+const RETRY_SUCCESS_EVIDENCE = `target=${TREE.targetId};tool=axe;slot=2;tree=1;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2`;
 
-function makeClient({ interruptReason = "modal_interrupted", interruptDetail = INTERRUPT_EVIDENCE, retryFailure = false } = {}) {
+function makeClient({
+  interruptReason = "modal_interrupted",
+  interruptDetail = INTERRUPT_EVIDENCE,
+  retryFailure = false,
+} = {}) {
   let current = snapshot(5);
   let chopCalls = 0;
   const receipts = [];
@@ -74,7 +74,11 @@ function makeClient({ interruptReason = "modal_interrupted", interruptDetail = I
     observe: async () => current,
     execute: async (request) => {
       if (request.action === "equip_tool") {
-        assert.deepEqual(request.args, { tool: "axe" }, "equip_tool args must be exactly { tool } (exact-shape contract)");
+        assert.deepEqual(
+          request.args,
+          { tool: "axe" },
+          "equip_tool args must be exactly { tool } (exact-shape contract)",
+        );
         return {
           requestId: request.requestId,
           executionId: "equip-axe",
@@ -84,12 +88,12 @@ function makeClient({ interruptReason = "modal_interrupted", interruptDetail = I
           evidence: { detail: "tool=axe;slot=2" },
         };
       }
-      if (request.action === "chop_tree_source") {
+      if (request.action === "chop_tree") {
         chopCalls += 1;
         assert.deepEqual(
           request.args,
           { slot: 2, x: TREE.x, y: TREE.y, expectedTargetId: TREE.targetId },
-          "chop_tree_source args must carry exactly { slot, x, y, expectedTargetId }",
+          "chop_tree args must carry exactly { slot, x, y, expectedTargetId }",
         );
         if (chopCalls === 1) {
           // The approach is accepted across ticks; the fixture modal lands two
@@ -137,7 +141,18 @@ function makeClient({ interruptReason = "modal_interrupted", interruptDetail = I
         } else {
           current = snapshot(20, {
             treeChopSourceTargets: [],
-            treeChopResultTargets: [{ location: "Farm", x: TREE.x, y: TREE.y, treeType: TREE.treeType, health: 5, stump: true, moss: false, tapped: false }],
+            treeChopResultTargets: [
+              {
+                location: "Farm",
+                x: TREE.x,
+                y: TREE.y,
+                treeType: TREE.treeType,
+                health: 5,
+                stump: true,
+                moss: false,
+                tapped: false,
+              },
+            ],
           });
           client.state.snapshot = current;
           receipts.push({

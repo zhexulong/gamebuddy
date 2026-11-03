@@ -32,7 +32,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["world_object"],
   ),
   actionAdapter(
-    "break_container_source",
+    "break_container",
     "Break a container",
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
     ["world_object"],
@@ -205,8 +205,8 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "inventory",
   ]),
   actionAdapter(
-    "break_rock_source",
-    "Break a rock source",
+    "break_rock",
+    "Break a rock",
     "Use one equipped basic Pickaxe swing on a live ordinary breakable stone; a rock that loses durability is progress, and drops/pickup are separate.",
     ["rock_source", "tool"],
   ),
@@ -223,9 +223,9 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["artifact_spot", "tool"],
   ),
   actionAdapter(
-    "chop_tree_source",
-    "Chop a one-hit tree source",
-    "Use one equipped Axe terminal strike on a live ordinary mature one-hit tree; source transformation is the completion boundary.",
+    "chop_tree",
+    "Chop a tree",
+    "Use one equipped Axe swing on a live ordinary mature tree; source transformation is the completion boundary.",
     ["tree_source", "tool"],
   ),
   actionAdapter("express_emote", "Express an emote", "Express a character emote in the game world.", [
@@ -599,10 +599,10 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   feed_animal: "stardew_feed_animal",
   use_item: "stardew_use_item",
   harvest_crop: "stardew_harvest_crop",
-  break_rock_source: "stardew_break_rock_source",
+  break_rock: "stardew_break_rock",
   clear_hoedirt: "stardew_clear_hoedirt",
   dig_artifact_spot: "stardew_dig_artifact_spot",
-  chop_tree_source: "stardew_chop_tree_source",
+  chop_tree: "stardew_chop_tree",
   express_emote: "stardew_express_emote",
   face_direction: "stardew_face_direction",
   interact_npc_with_item: "stardew_interact_npc_with_item",
@@ -655,7 +655,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
 
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
-  break_container_source: "stardew_break_container_source",
+  break_container: "stardew_break_container",
   use_obelisk: "stardew_use_obelisk",
   accept_special_order: "stardew_accept_special_order",
   claim_museum_reward: "stardew_claim_museum_reward",
@@ -672,8 +672,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
  * therefore be explicit and fail closed instead of silently broadening a deny.
  */
 export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
-  collect_resource: Object.freeze(["chop_tree_source", "break_rock_source", "pickup_item"]),
-  use_tool: Object.freeze(["tool_transform_object", "chop_tree_source", "break_rock_source", "clear_hoedirt"]),
+  collect_resource: Object.freeze(["chop_tree", "break_rock", "pickup_item"]),
+  use_tool: Object.freeze(["tool_transform_object", "chop_tree", "break_rock", "clear_hoedirt"]),
   combat_attack: Object.freeze(["melee_attack", "ranged_attack", "weapon_special"]),
   place_item: Object.freeze([
     "place_decor_or_furniture",
@@ -761,7 +761,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "place_owned_object",
   "remove_placed_item",
-  "break_container_source",
+  "break_container",
   "equip_wearable",
   "unequip_wearable",
   "dismount_transport",
@@ -888,7 +888,7 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (publishedPostconditionName(descriptor) !== "placed_item_removed") return false;
     return true;
   }
-  if (actionId === "break_container_source") {
+  if (actionId === "break_container") {
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "container_source_broken") return false;

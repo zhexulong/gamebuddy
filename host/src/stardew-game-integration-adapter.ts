@@ -304,7 +304,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             Number(e.drop_count) === (e.drops === undefined || e.drops.length === 0 ? 0 : e.drops.split("|").length),
         )
       );
-    case "break_container_source":
+    case "break_container":
       // Evidence literal: ExecuteBreakContainerSource — target;location;tile;item;type;tool;slot;
       // swings;container_gone;tile_object_after;drops;drop_count;stamina_before;stamina_after.
       // The seam returns false even when it destroys the container, so the ONLY proof is the
@@ -1074,7 +1074,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       return receipt.reasonCode === "watering_can_refilled" && hasRefillWateringCanCompletionEvidence(detail);
     case "dig_artifact_spot":
       return receipt.reasonCode === "artifact_spot_dug" && hasDigArtifactSpotCompletionEvidence(detail);
-    case "break_rock_source":
+    case "break_rock":
       // `rock_source_broken` is the source TRANSFORMED, and that is this action's completion boundary - the same
       // line the tree path draws: one swing that only damages is a completed swing (the Mod reports
       // `rock_source_damaged` with `state: succeeded`), but it has not yet removed the source, so it is not the
@@ -1083,7 +1083,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       return receipt.reasonCode === "rock_source_broken" && hasBreakRockSourceCompletionEvidence(detail);
     case "clear_hoedirt":
       return receipt.reasonCode === "hoedirt_cleared" && hasClearHoeDirtCompletionEvidence(detail);
-    case "chop_tree_source":
+    case "chop_tree":
       return receipt.reasonCode === "tree_source_chopped" && hasChopTreeSourceCompletionEvidence(detail);
     case "place_wood_fence":
       return receipt.reasonCode === "wood_fence_placed" && hasWoodFenceCompletionEvidence(detail);

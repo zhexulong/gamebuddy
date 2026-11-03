@@ -2614,7 +2614,7 @@ public sealed partial class ModEntry : Mod
                 SceneAffordanceKind.Forage => "pickup_forage",
                 SceneAffordanceKind.ArtifactSpot => "dig_artifact_spot",
                 SceneAffordanceKind.Weed => "cut_weeds",
-                SceneAffordanceKind.Stone => "break_rock_source",
+                SceneAffordanceKind.Stone => "break_rock",
                 _ => null,
             };
             candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
@@ -2673,7 +2673,7 @@ public sealed partial class ModEntry : Mod
                 // The scene ref still says WHICH observation bound the target; the identity says WHAT the action calls it.
                 candidates.Add(new SceneAffordanceSource(SceneAffordanceKind.Tree, stump ? "Stump" : "Tree",
                     stump ? $"tree_stump:{location.NameOrUniqueName}:{(int)tile.X},{(int)tile.Y}" : ExecutionManager.BuildTreeChopSourceTargetId(location, (int)tile.X, (int)tile.Y, tree),
-                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, stump ? "chop_stump" : "chop_tree_source",
+                    location.NameOrUniqueName, (int)tile.X, (int)tile.Y, stump ? "chop_stump" : "chop_tree",
                     SceneAffordanceKindWire.DefaultPriority(SceneAffordanceKind.Tree)));
             }
         }

@@ -15,10 +15,10 @@ import {
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_chop_tree_source_v1";
-const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree_source"];
+const EXPECTED_ACTIONS = ["move_to_tile", "travel", "equip_tool", "chop_tree"];
 const REQUIRED_CAPABILITIES = [
   "cancel_active_execution",
-  "chop_tree_source",
+  "chop_tree",
   "equip_tool",
   "inspect_self",
   "move_to_tile",
@@ -50,7 +50,10 @@ export async function runChopTreeSourceSmoke(
     const target = chooseChopTree(snapshot);
     const axe = chooseAxe(snapshot);
     const equipped = await execute(client, trace, "equip_axe", "equip_tool", { tool: "axe" }, snapshot);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`axe_equip_failed:${equipped.reasonCode}`);
     snapshot = await observeFresh(client, { actionable: true });
     const freshTarget = findSameChopTree(snapshot, target);
@@ -59,8 +62,8 @@ export async function runChopTreeSourceSmoke(
     const accepted = await execute(
       client,
       trace,
-      "chop_tree_source",
-      "chop_tree_source",
+      "chop_tree",
+      "chop_tree",
       { slot: axe.slot, x: freshTarget.x, y: freshTarget.y, expectedTargetId: freshTarget.targetId },
       snapshot,
     );

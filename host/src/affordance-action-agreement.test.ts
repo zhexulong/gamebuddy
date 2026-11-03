@@ -211,8 +211,8 @@ test("Identity is never published for a kind whose action ignores it", () => {
 test("the hints were parsed, so neither assertion is vacuous", () => {
   const hints = [...modAffordanceHints().keys()];
   assert.ok(
-    hints.some((h) => h.includes("chop_tree_source")),
-    `chop_tree_source must be found among the hints; parsed [${hints.join(", ")}]`,
+    hints.some((h) => h.includes("chop_tree")),
+    `chop_tree must be found among the hints; parsed [${hints.join(", ")}]`,
   );
   // Not asserting size > 0: with a radar family for every kind, ZERO is a legal answer and the complement test above is
   // what checks it is the RIGHT answer. This only asserts the condition could be read at all.
