@@ -129,6 +129,10 @@ export const TARGET_FIELD = Object.freeze({
   // discover their target through `worldObjectTargets`.
   place_owned_object: "WorldObjectTargets",
   remove_placed_item: "WorldObjectTargets",
+  // The furniture pickup names a piece through the same lane projection: `DiscoverWorldObjectTargets`
+  // publishes `placed_furniture` rows with `slot: -1`, because no tool lifts one - the pickup is the
+  // action that does.
+  move_placed_furniture: "WorldObjectTargets",
   break_container: "WorldObjectTargets",
   shop_purchase: "ShopTargets",
   // The building-chest pair. Both name a chest a BUILDING declares in its own data

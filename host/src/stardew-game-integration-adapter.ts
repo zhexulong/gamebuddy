@@ -1242,6 +1242,13 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       //     arrival, where the native layout owns the tile: expected=<loc>:<x>,<y>;
       //     actual=<loc>:<x>,<y>;level=<level>
       return receipt.reasonCode === "mine_entered" && hasMineEntryCompletionEvidence(detail);
+    case "use_mine_ladder":
+      // Two producers, one meaning (`mine_left`, the actor is out of the mine):
+      //   farmhandexecutioncontroller.transportactions.cs — the answer performed the warp in the same call:
+      //     from=<loc>:<level>;question=ExitMine;response=Leave;ladder=<x>,<y>;actual=<loc>:<x>,<y>
+      //   farmhandexecutioncontroller.movementactions.cs — the asynchronous Warped arrival, where the
+      //     destination map is the assertion: expected=<loc>:<x>,<y>;actual=<loc>:<x>,<y>
+      return receipt.reasonCode === "mine_left" && hasMineExitCompletionEvidence(detail);
     case "express_emote":
       // farmhandexecutioncontroller.expressionactions.cs:82-90: Farmer.doEmote arms the
       // animation synchronously, so `native_dispatched=true` under this terminal is the
@@ -2434,6 +2441,44 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
  *     where the native MineShaft layout owns the landing tile.
  * All three prove the same declared/reached level; none is admitted with a foreign shape.
  */
+/**
+ * `use_mine_ladder`'s two real completions.
+ *
+ * <para>
+ * The synchronous one is the answer itself: the game's `ExitMine_Leave` response performs the warp inside
+ * `GameLocation.answerDialogueAction`, so the receipt states which question was asked and which response settled it
+ * beside where the actor ended up. The asynchronous one is the shared travel receipt, whose evidence is the
+ * expected/actual destination pair because the landing tile belongs to the game's own warp.
+ * </para>
+ */
+function hasMineExitCompletionEvidence(detail: string): boolean {
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const keys = Object.keys(evidence);
+  if (
+    keys.length === 5 &&
+    "from" in evidence &&
+    "question" in evidence &&
+    "response" in evidence &&
+    "ladder" in evidence &&
+    "actual" in evidence
+  )
+    return (
+      hasOpaqueEvidenceValue(evidence.from) &&
+      evidence.question === "ExitMine" &&
+      evidence.response === "Leave" &&
+      hasTileEvidenceValue(evidence.ladder) &&
+      hasOpaqueEvidenceValue(evidence.actual)
+    );
+  if (keys.length === 2 && "expected" in evidence && "actual" in evidence)
+    return (
+      hasOpaqueEvidenceValue(evidence.expected) &&
+      hasOpaqueEvidenceValue(evidence.actual) &&
+      evidence.expected.split(":")[0] === evidence.actual.split(":")[0]
+    );
+  return false;
+}
+
 function hasMineEntryCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;

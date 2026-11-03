@@ -63,52 +63,71 @@ export async function runEnterMineLadderSmoke(
     const before = await waitForSettledWorld(client, settleTimeoutMs);
     assertRequiredCapabilities(before, REQUIRED_CAPABILITIES);
     const beforeLevel = requireMineLevel(before.location);
-    const ladder = requireLadderTarget(before);
+    const candidates = requireLadderTargets(before);
     const actor = requireActorTile(before);
 
-    // (a) The actor must be settled inside the native interaction radius the handler
-    //     re-checks (`Utility.tileWithinRadiusOfPlayer(..., 1, ...)`). The fixture places
-    //     the ladder beside the tile the native lifecycle lands the actor on, so this is
-    //     normally an already-satisfied arrival; the Mod answers that with
-    //     `succeeded/target_reached` directly, which is a real receipt for the declared
-    //     position rather than an assumption about it.
-    const standing = chooseStandingTile(actor, ladder);
-    const move = await execute(client, trace, "reach_ladder", "move_to_tile", standing, before);
-    const moveTerminal = TERMINAL_STATES.has(move.state) ? move : await waitForTerminal(receipts, move, moveTimeoutMs);
-    if (moveTerminal.state !== "succeeded" || moveTerminal.reasonCode !== "target_reached")
-      throw new Error(`enter_mine_ladder_move_failed:${moveTerminal.state}/${moveTerminal.reasonCode}`);
+    // (a) Walk beside the row, then (b) descend it. A mine level publishes BOTH of its ladder tiles
+    //     through this one family - the way out at its stairs (tile 115) and the way down (tile 173) -
+    //     and the rows carry no kind, so this gate identifies its own row from the Mod's naming
+    //     refusal: `enter_mine` on the exit row answers `mine_ladder_is_exit` (pointing at
+    //     use_mine_ladder) and does no native work at all, while the descent row is served.
+    //     A >2-row family is still an ambiguity error above: a shaft has exactly these two tiles.
+    let ladder = null;
+    let settled = null;
+    let settledActor = null;
+    let terminal = null;
+    for (const candidate of candidates) {
+      // The actor must be settled inside the native interaction radius the handler re-checks
+      // (`Utility.tileWithinRadiusOfPlayer(..., 1, ...)`). The fixture places the ladder beside the
+      // tile the native lifecycle lands the actor on, so this is normally an already-satisfied
+      // arrival; the Mod answers that with `succeeded/target_reached` directly, which is a real
+      // receipt for the declared position rather than an assumption about it.
+      const standing = chooseStandingTile(actor, candidate);
+      const move = await execute(client, trace, "reach_ladder", "move_to_tile", standing, before);
+      const moveTerminal = TERMINAL_STATES.has(move.state)
+        ? move
+        : await waitForTerminal(receipts, move, moveTimeoutMs);
+      if (moveTerminal.state !== "succeeded" || moveTerminal.reasonCode !== "target_reached")
+        throw new Error(`enter_mine_ladder_move_failed:${moveTerminal.state}/${moveTerminal.reasonCode}`);
 
-    const settled = await observeFresh(client, { actionable: true });
-    assertRequiredCapabilities(settled, REQUIRED_CAPABILITIES);
-    const settledActor = requireActorTile(settled);
-    if (!withinInteractionRadius(settledActor, ladder))
-      throw new Error(
-        `enter_mine_ladder_actor_out_of_range:${settledActor.x},${settledActor.y}:${ladder.x},${ladder.y}`,
+      const observed = await observeFresh(client, { actionable: true });
+      assertRequiredCapabilities(observed, REQUIRED_CAPABILITIES);
+      const observedActor = requireActorTile(observed);
+      if (!withinInteractionRadius(observedActor, candidate))
+        throw new Error(
+          `enter_mine_ladder_actor_out_of_range:${observedActor.x},${observedActor.y}:${candidate.x},${candidate.y}`,
+        );
+      // The target must still be the SAME live ladder: a rebuilt level between the two observations
+      // would make the request name a tile the handler no longer reads.
+      const observedRows = requireLadderTargets(observed);
+      if (!observedRows.some((row) => row.targetId === candidate.targetId))
+        throw new Error(`enter_mine_ladder_target_drifted:${candidate.targetId}`);
+      if (requireMineLevel(observed.location) !== beforeLevel)
+        throw new Error(`enter_mine_ladder_level_drifted:${observed.location}`);
+
+      const dispatched = await execute(
+        client,
+        trace,
+        "enter_mine_ladder",
+        ACTION,
+        { x: candidate.x, y: candidate.y, expectedTargetId: candidate.targetId },
+        observed,
       );
-    // The target must still be the SAME live ladder: a rebuilt level (or a second
-    // ladder) between the two observations would make the request name a tile the
-    // handler no longer reads, and the run would prove nothing about the one it did.
-    const settledLadder = requireLadderTarget(settled);
-    if (settledLadder.targetId !== ladder.targetId || settledLadder.x !== ladder.x || settledLadder.y !== ladder.y)
-      throw new Error(`enter_mine_ladder_target_drifted:${ladder.targetId}:${settledLadder.targetId}`);
-    if (requireMineLevel(settled.location) !== beforeLevel)
-      throw new Error(`enter_mine_ladder_level_drifted:${settled.location}`);
+      const attempt = TERMINAL_STATES.has(dispatched.state)
+        ? dispatched
+        : await waitForTerminal(receipts, dispatched, ladderTimeoutMs);
+      // The other owner's row: named, no native work, so the next candidate is the descent ladder.
+      if (attempt.state === "rejected" && attempt.reasonCode === "mine_ladder_is_exit") continue;
 
-    // (b) The descent request on the ladder tile. x/y and the opaque id are the exact
-    //     published target: production re-reads the ladder from the live Buildings layer
-    //     and refuses any request the layer does not agree with, so a stale coordinate
-    //     cannot descend here.
-    const dispatched = await execute(
-      client,
-      trace,
-      "enter_mine_ladder",
-      ACTION,
-      { x: ladder.x, y: ladder.y, expectedTargetId: ladder.targetId },
-      settled,
-    );
-    const terminal = TERMINAL_STATES.has(dispatched.state)
-      ? dispatched
-      : await waitForTerminal(receipts, dispatched, ladderTimeoutMs);
+      ladder = candidate;
+      settled = observed;
+      settledActor = observedActor;
+      terminal = attempt;
+      break;
+    }
+
+    if (ladder === null || terminal === null || settled === null || settledActor === null)
+      throw new Error(`enter_mine_ladder_target_missing:${candidates.length}`);
 
     trace.push({
       phase: "terminal",
@@ -223,23 +242,27 @@ async function waitForSettledWorld(client, timeoutMs) {
 }
 
 /**
- * The one advertised ladder. A mine level advertises its own ladder through the
- * published `mineEntranceTargets` channel, and a shaft contributes exactly that one
- * target, so anything else means the fixture's ladder is not the one production reads.
+ * The advertised ladder rows of one mine level.
+ *
+ * A level publishes its exit row (tile 115, shipped map data at its stairs) and, when one exists, the descent
+ * row (tile 173). Both arrive in the one `mineEntranceTargets` family and the rows carry no kind, so a caller
+ * cannot read which is which from the row - which is why the runner below asks the Mod, whose refusal names the
+ * other owner. More than two rows is still a real ambiguity: a shaft has exactly these two tiles.
  */
-function requireLadderTarget(snapshot) {
+function requireLadderTargets(snapshot) {
   const targets = snapshot?.mineEntranceTargets;
   if (!Array.isArray(targets) || targets.length === 0) throw new Error("enter_mine_ladder_target_missing");
-  if (targets.length !== 1) throw new Error(`enter_mine_ladder_target_ambiguous:${targets.length}`);
-  const [target] = targets;
-  if (
-    typeof target?.targetId !== "string" ||
-    target.targetId.length === 0 ||
-    !Number.isInteger(target.x) ||
-    !Number.isInteger(target.y)
-  )
-    throw new Error("enter_mine_ladder_target_malformed");
-  return { targetId: target.targetId, x: target.x, y: target.y };
+  if (targets.length > 2) throw new Error(`enter_mine_ladder_target_ambiguous:${targets.length}`);
+  return targets.map((target) => {
+    if (
+      typeof target?.targetId !== "string" ||
+      target.targetId.length === 0 ||
+      !Number.isInteger(target.x) ||
+      !Number.isInteger(target.y)
+    )
+      throw new Error("enter_mine_ladder_target_malformed");
+    return { targetId: target.targetId, x: target.x, y: target.y };
+  });
 }
 
 function requireActorTile(snapshot) {

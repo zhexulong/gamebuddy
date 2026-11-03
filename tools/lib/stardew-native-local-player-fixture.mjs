@@ -455,8 +455,8 @@ export function fixtureActions(action) {
   if (action === "sleep_modal_probe") return ["move_to_tile"];
   // The M2 cross-day lifecycle is now a real execution action: the Mod owns the
   // route, the native answer and the Saving/Saved/DayStarted observation, and the
-  // Host dispatches advance_day exactly like any other action.
-  if (action === "sleep_lifecycle") return ["move_to_tile", "advance_day"];
+  // Host dispatches sleep exactly like any other action.
+  if (action === "sleep_lifecycle") return ["move_to_tile", "sleep"];
   // The pass-out variant establishes only a low-stamina live precondition and
   // lets the native gate (Game1.cs:6452) start the pass-out by itself.
   if (action === "sleep_pass_out_lifecycle") return ["move_to_tile"];
@@ -664,7 +664,7 @@ export function fixtureActions(action) {
   // so the multi-day branch below cannot claim it.
   if (action === "play_session_multi_day")
     return [
-      "advance_day",
+      "sleep",
       "dismiss_modal",
       // The night raises a `LevelUpMenu` in the same window as the settlement menu, and only a bridge request can
       // close it (closing it is what lets `DayStarted` run). Leaving the action out of the ENABLED set made the
@@ -721,6 +721,9 @@ export function fixtureActions(action) {
   if (action === "collect_building_chest_multistack") return ["collect_building_chest_output"];
   if (action === "enter_exit_warp_action") return ["move_to_tile", "enter_exit"];
   if (action === "enter_mine_ladder") return ["move_to_tile", "enter_mine"];
+  // The way OUT: the actor starts inside a shaft beside the level's own exit ladder, so the
+  // published surface is movement plus the exit action and nothing else.
+  if (action === "use_mine_ladder") return ["move_to_tile", "use_mine_ladder"];
   if (action === "talk_to_npc") return ["talk_to_npc"];
   // The dialogue-stream gate: the same conversation, read from the fact the Mod reports about it.
   if (action === "dialogue_stream") return ["talk_to_npc"];
@@ -783,23 +786,23 @@ export function fixtureActions(action) {
   if (action === "pan_ore") return ["pan_ore"];
   if (action === "claim_mail_attachment") return ["claim_mail_attachment"];
   // The cross-day lifecycle is a real wire action now: the fixture publishes
-  // advance_day and production dispatches it. Its own route, native sleep answer
+  // sleep and production dispatches it. Its own route, native sleep answer
   // and Saving/Saved/DayStarted observation are the action's business, so no
   // other capability is a prerequisite here.
-  // The multi-day crossing harness: the SAME published advance_day plus the product's own
+  // The multi-day crossing harness: the SAME published sleep plus the product's own
   // dismiss_modal. The rollover's morning-after menu is cleared by production, not by the
   // runner, so both are published; the scenario pins clock/season and seeds one shippable
   // object so the FIRST rollover raises that menu. Not a new action; it grants no capability.
-  if (action === "multi_day") return ["advance_day", "dismiss_modal"];
+  if (action === "multi_day") return ["sleep", "dismiss_modal"];
   // `respond_level_up` is a native-local action, NOT a farmhand one: its runner drives the
   // single-player night rollover's own LevelUpMenu over `connectNativeLocalClient`, and it is
   // registered in STARDEW_PUBLISHED_ACTION_GATES like every other gated action. So the fixture
   // owns it - the same action set its runner declares in EXPECTED_ACTIONS.
-  if (action === "respond_level_up") return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
+  if (action === "respond_level_up") return ["sleep", "respond_level_up", "move_to_tile", "observe_scene"];
   // The MILESTONE half runs the SAME action set over a different world (the milestone skill left below 10 with its
   // level-5 profession unchosen), so it is an action key of its own - exactly like the move-stall pair above.
-  if (action === "respond_level_up_branch") return ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
-  if (action === "advance_day") return ["advance_day"];
+  if (action === "respond_level_up_branch") return ["sleep", "respond_level_up", "move_to_tile", "observe_scene"];
+  if (action === "sleep") return ["sleep"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions, action) {
@@ -882,7 +885,7 @@ export function fixtureScenario(actions, action) {
   if (action === "respond_level_up") return "native_multi_day_v1";
   // The lifecycle action owns its own route and preconditions; it needs no
   // fixture scenario beyond the ordinary move-only world.
-  if (actions.includes("advance_day")) return "";
+  if (actions.includes("sleep")) return "";
   // The pass-out lifecycle supplies only a low-stamina precondition; the native
   // gate starts the pass-out itself. This is keyed off the action name rather
   // than a synthetic action so the fixture never has to widen the action set to
@@ -986,6 +989,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("claim_museum_reward")) return "native_claim_museum_reward_v1";
   if (action === "enter_exit_warp_action") return "native_enter_exit_warp_action_v1";
   if (action === "enter_mine_ladder") return "native_mine_enter_ladder_v1";
+  if (action === "use_mine_ladder") return "native_mine_use_ladder_exit_v1";
   if (action === "talk_to_npc") return "native_talk_to_npc_v1";
   if (action === "dialogue_stream") return "native_talk_to_npc_multi_page_v1";
   if (actions.includes("use_obelisk")) return "native_use_obelisk_v1";

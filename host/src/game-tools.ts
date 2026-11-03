@@ -2547,6 +2547,29 @@ export function createStardewActionTools(
     );
   }
   {
+    // The exit-ladder companion to stardew_enter_mine. Mounted only once the Mod publishes a complete descriptor,
+    // which is the candidate carve-out that lets an Experimental action out without pretending it proved itself.
+    const registration = modRegistrations.find((entry) => entry.actionId === "use_mine_ladder");
+    if (registration?.descriptor && isModDescriptorComplete("use_mine_ladder", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("use_mine_ladder", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.use_mine_ladder,
+          label: "Leave the mine by its ladder",
+          description:
+            "Leave the mine level you are inside through its own exit ladder, so you are not trapped when nothing can be mined. x, y and expectedTargetId must be copied exactly from the mineEntranceTargets entries of the most recent observe result: inside a mine level that family publishes the ladder tiles, and the exit ladder is the one this action owns. The game opens its own Leave question and performs the warp, so no destination is accepted here. A row that belongs to the DESCENDING ladder is refused by name and points at stardew_enter_mine; to choose a floor you have already reached, use stardew_select_mine_elevator_floor.",
+          parameters: schema,
+          action: "use_mine_ladder",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
     // constant mount; per-action admission at execution
     const registration = modRegistrations.find((entry) => entry.actionId === "load_building_chest");
     if (registration?.descriptor && isModDescriptorComplete("load_building_chest", registration.descriptor)) {
@@ -2736,6 +2759,28 @@ export function createStardewActionTools(
             x: params.x,
             y: params.y,
             slot: params.slot,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "move_placed_furniture");
+    if (registration?.descriptor && isModDescriptorComplete("move_placed_furniture", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("move_placed_furniture", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.move_placed_furniture,
+          label: "Pick up placed furniture",
+          description:
+            "Pick up a piece of furniture that is already placed in the room, so it can be put down somewhere else. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; a stale id is refused rather than lifting a different piece that now stands there. There is no slot to name: the game chooses which backpack slot receives it. If the pack is full the piece goes back exactly where it stood and the action is refused by name - it is never silently lost - and success is the piece gone from the room AND one more in the pack.",
+          parameters: schema,
+          action: "move_placed_furniture",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
             expectedTargetId: params.expectedTargetId,
           }),
         }),

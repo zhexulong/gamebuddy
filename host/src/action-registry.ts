@@ -32,6 +32,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["world_object"],
   ),
   actionAdapter(
+    "move_placed_furniture",
+    "Pick up placed furniture",
+    "Pick up one piece of already-placed furniture - a chair, a table, a rug you put there earlier - into the backpack, so it can be put down somewhere else. Read the `placed_furniture` target id and its tile from the `worldObjectTargets` entry of the most recent observation. Furniture is not an object on the tile: the Mod resolves the piece from the location's own furniture collection and re-validates the tile, the piece's id and the game's furniture reach on the game thread. Success is the piece gone from the room AND one more in the pack; if the pack has no room the piece is put back exactly where it stood and the action is refused by name (`move_placed_furniture_inventory_full`), never reported as a silent loss.",
+    ["world_object"],
+  ),
+  actionAdapter(
     "break_container",
     "Break a container",
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
@@ -106,6 +112,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "enter_mine",
     "Enter the mine",
     "Enter the live mine entrance. The destination level comes from the entrance tile's own declaration, exactly as it does for a real click, so no client level is accepted.",
+    ["mine_entrance"],
+  ),
+  actionAdapter(
+    "use_mine_ladder",
+    "Leave the mine by its ladder",
+    "Leave the mine level you are standing in through its own exit ladder. Read the ladder tile and its opaque target id from the mineEntranceTargets entries of the most recent observation: the game opens its own Leave question and the warp is the game's, so nothing about the destination is client-supplied. A tile that belongs to the descending ladder is refused by name and points at stardew_enter_mine.",
     ["mine_entrance"],
   ),
   actionAdapter(
@@ -581,6 +593,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   use_raft: "stardew_use_raft",
   mount_transport: "stardew_mount_transport",
   enter_mine: "stardew_enter_mine",
+  use_mine_ladder: "stardew_use_mine_ladder",
   enter_exit: "stardew_enter_exit",
   till_soil: "stardew_till_soil",
   pickup_forage: "stardew_pickup_forage",
@@ -655,6 +668,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
 
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
+  move_placed_furniture: "stardew_move_placed_furniture",
   break_container: "stardew_break_container",
   use_obelisk: "stardew_use_obelisk",
   accept_special_order: "stardew_accept_special_order",
@@ -761,6 +775,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "place_owned_object",
   "remove_placed_item",
+  "move_placed_furniture",
   "break_container",
   "equip_wearable",
   "unequip_wearable",
@@ -778,6 +793,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "shop_purchase",
   "ride_bus",
   "select_mine_elevator_floor",
+  "use_mine_ladder",
   "withdraw_silo_hay",
   "use_obelisk",
   "toggle_animal_door",
@@ -888,6 +904,14 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (publishedPostconditionName(descriptor) !== "placed_item_removed") return false;
     return true;
   }
+  if (actionId === "move_placed_furniture") {
+    // The furniture pickup shape: the tile and the piece's own opaque target - no slot, because which
+    // backpack slot receives the piece is the game's own decision.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "placed_furniture_picked_up") return false;
+    return true;
+  }
   if (actionId === "break_container") {
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
@@ -956,6 +980,15 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "bus_arrived") return false;
+    return true;
+  }
+  if (actionId === "use_mine_ladder") {
+    // The ladder tile plus the opaque id its published row carries: x/y is only which tile the walk leg aims at, and
+    // the ladder KIND is re-derived on the game thread from the level's own Buildings layer. A wrong id can therefore
+    // never select the other ladder - it is refused by name with the action that owns it.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "mine_left") return false;
     return true;
   }
   if (actionId === "select_mine_elevator_floor") {

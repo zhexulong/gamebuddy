@@ -698,6 +698,9 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // Second gate for an already-live-verified action: the LADDER path into a shaft, which the
   // published enter_mine gate (the Mine entrance map) does not cover.
   enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
+  // The way OUT of a shaft. Its own runner because its proof is the opposite fact from the
+  // ladder-down gate: the actor must be OUTSIDE every MineShaft afterwards.
+  use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under

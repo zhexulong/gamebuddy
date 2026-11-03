@@ -1023,6 +1023,7 @@ export type ExecutionRequest = Readonly<{
     | "withdraw_silo_hay"
     | "place_owned_object"
     | "remove_placed_item"
+    | "move_placed_furniture"
     | "break_container"
     | "use_obelisk"
     | "toggle_animal_door"
@@ -1045,6 +1046,7 @@ export type ExecutionRequest = Readonly<{
     | "use_raft"
     | "mount_transport"
     | "enter_mine"
+    | "use_mine_ladder"
     | "enter_exit"
     | "till_soil"
     | "pickup_forage"
@@ -2637,6 +2639,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "name_entity" &&
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
+    value.action !== "move_placed_furniture" &&
     value.action !== "break_container" &&
     value.action !== "use_warp_item" &&
     value.action !== "pan_ore" &&
@@ -2648,6 +2651,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "use_raft" &&
     value.action !== "mount_transport" &&
     value.action !== "enter_mine" &&
+    value.action !== "use_mine_ladder" &&
     value.action !== "enter_exit" &&
     value.action !== "till_soil" &&
     value.action !== "pickup_forage" &&
@@ -2788,6 +2792,22 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       )
     )
       return "invalid_mine_entrance";
+  } else if (value.action === "use_mine_ladder") {
+    // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id the
+    // `mineEntranceTargets` row published - because both are rows of that one family and the Mod is the side that
+    // can tell the kinds apart. The Host only proves the pair was published; which ladder it names is decided on
+    // the game thread, where a row of the other kind is refused by name with the action that owns it.
+    const ladderArgs = value.args;
+    if (!hasExactKeys(ladderArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(ladderArgs.x) || !isTileCoordinate(ladderArgs.y) || !isOpaqueId(ladderArgs.expectedTargetId))
+      return "invalid_mine_exit_ladder";
+    if (
+      !snapshot.mineEntranceTargets?.some(
+        (target) =>
+          target.targetId === ladderArgs.expectedTargetId && target.x === ladderArgs.x && target.y === ladderArgs.y,
+      )
+    )
+      return "invalid_mine_exit_ladder";
   } else if (value.action === "ride_minecart") {
     // The station tile plus one exact published ride. Both x/y and the opaque
     // selector are mandatory: unlike `travel`, there is no "plain" form, so a
@@ -3767,6 +3787,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     value.action === "color_placed_object" ||
     value.action === "place_owned_object" ||
     value.action === "remove_placed_item" ||
+    value.action === "move_placed_furniture" ||
     value.action === "break_container" ||
     value.action === "equip_wearable" ||
     value.action === "unequip_wearable" ||
@@ -3790,6 +3811,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "use_raft" ||
       value.action === "mount_transport" ||
       value.action === "enter_mine" ||
+      value.action === "use_mine_ladder" ||
       value.action === "enter_exit" ||
       value.action === "till_soil" ||
       value.action === "pickup_forage" ||
@@ -3857,11 +3879,12 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
 
 function validateWorldObjectActionArgs(value: unknown): string | null {
   if (!isRecord(value) || !isRecord(value.args)) return null;
-  // Only the three world-object actions are this helper's business; everything else is validated by
+  // Only the world-object actions are this helper's business; everything else is validated by
   // validateExecutionRequestEnvelope and the per-action chain.
   if (
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
+    value.action !== "move_placed_furniture" &&
     value.action !== "break_container"
   )
     return null;
@@ -3875,6 +3898,14 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     if (!isToolSlot(args.slot)) return "invalid_placement_slot";
     if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
       return "invalid_placement_item";
+  } else if (value.action === "move_placed_furniture") {
+    // The furniture pickup names the tile and the piece's own opaque id, and nothing else. There is no
+    // slot: which backpack slot receives the piece is the game's own decision
+    // (`GameLocation.removeQueuedFurniture`, GameLocation.cs:8084-8093), so a caller-supplied one would be
+    // a value nothing reads. The id itself is re-derived by the Mod on the game thread and a stale one is
+    // refused there by name (`move_placed_furniture_target_changed`), exactly as the sibling removal does.
+    if (!hasExactKeys(args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
   } else {
     // Removing a placed item and breaking a container both take the tile, the tool slot and the
     // opaque object target, and nothing else.

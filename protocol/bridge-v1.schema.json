@@ -6474,6 +6474,8 @@
             "use_obelisk",
             "place_owned_object",
             "remove_placed_item",
+            "move_placed_furniture",
+            "use_mine_ladder",
             "break_container",
             "toggle_animal_door",
             "load_building_chest",
