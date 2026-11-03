@@ -46,6 +46,8 @@ export type CharacterLabels = Readonly<{
   importWorldBookOmittedStandardMacro: string;
   /** A macro in that row this importer does not recognise at all. */
   importWorldBookOmittedUnknownMacro: string;
+  /** Her closing direction will be omitted as a whole, naming the macros that cost it. */
+  importClosingDirectionOmitted: string;
   importFailed: string;
   importFailedText: string;
   importFailedTooLarge: string;
@@ -426,6 +428,7 @@ const en: CharacterLabels = Object.freeze({
   importWorldBookOmittedStandardMacro:
     "{{macro}} (a standard SillyTavern macro this companion cannot fill in at import)",
   importWorldBookOmittedUnknownMacro: "{{macro}} (not recognised - possibly a typo)",
+  importClosingDirectionOmitted: "Her closing direction could not be used: it contains {{macros}}.",
   importFailed: "The card could not be imported.",
   importFailedText: "That file is not readable character card text.",
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
@@ -714,6 +717,7 @@ const zh: CharacterLabels = Object.freeze({
   importWorldBookOmitted: "词条「{{entry}}」未能导入：其中包含 {{macros}}。",
   importWorldBookOmittedStandardMacro: "{{macro}}（SillyTavern 标准宏，本伙伴在导入时无法取值）",
   importWorldBookOmittedUnknownMacro: "{{macro}}（无法识别，可能是拼写错误）",
+  importClosingDirectionOmitted: "她的收尾指令未能使用：其中包含 {{macros}}。",
   importFailed: "无法导入该角色卡。",
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
