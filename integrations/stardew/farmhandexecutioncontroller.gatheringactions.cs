@@ -97,6 +97,14 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// How far a published chunk may have drifted and still be the same chunk.
+    ///
+    /// Three tiles: far enough for a chunk sliding down to a magnet or settling out of a dropped stack, short enough that an
+    /// id which survived a `location.debris` reindex cannot quietly point at a different chunk a field away.
+    /// </summary>
+    private const int ChunkDriftTolerance = 3;
+
+    /// <summary>
     /// Requests pickup through target-version Debris lifecycle. Ordinary debris
     /// has no click action: its own GameLocation update magnetizes it to an
     /// eligible nearby Farmer and calls Debris.collect. The bridge only waits
@@ -152,7 +160,29 @@ internal sealed partial class ExecutionManager
         }
         Point liveTargetTile = GetChunkTile(target.Value.Chunk);
         if (liveTargetTile.X != targetX || liveTargetTile.Y != targetY)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTargetTile.X},{liveTargetTile.Y}");
+        {
+            // A chunk that DRIFTED is still the same chunk; a chunk that was REINDEXED is not.
+            //
+            // `BuildItemTargetId` names the entity by `debrisIndex`/`chunkIndex`/item/stack/quality - deliberately NOT by
+            // position, so a settling chunk keeps its identity. The coordinate was then checked as a second, EQUAL
+            // authority, and `location.debris` is a list: removing one debris shifts every later index, so a stale
+            // publication can resolve to a DIFFERENT chunk under the same id. Both facts are real, so neither
+            // "trust the id" nor "trust the coordinate" is right on its own.
+            //
+            // Measured 2026-11-03 (`round28`): one `item_target_moved` in 13,937 log lines, carrying
+            // `expected=x,y;actual=x,y` a couple of tiles apart - a chunk still settling, refused for a move that had
+            // not changed what it was.
+            //
+            // So the coordinate is corroboration with a tolerance: a chunk within `ChunkDriftTolerance` tiles of where
+            // the caller saw it is the same chunk that has moved; further away it may be an index that now points at
+            // something else, and that stays a refusal.
+            int driftX = Math.Abs(liveTargetTile.X - targetX);
+            int driftY = Math.Abs(liveTargetTile.Y - targetY);
+            if (Math.Max(driftX, driftY) > ChunkDriftTolerance)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTargetTile.X},{liveTargetTile.Y}");
+            targetX = liveTargetTile.X;
+            targetY = liveTargetTile.Y;
+        }
         if (!Game1.player.couldInventoryAcceptThisItem(target.Value.Debris.item ?? ItemRegistry.Create(expectedQualifiedItemId, target.Value.Stack)))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={expectedTargetId}");
 
