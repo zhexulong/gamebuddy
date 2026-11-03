@@ -2,7 +2,7 @@
 // claim is a computed fact: clipped/truncated text, elements crossing the viewport edge or the app
 // bar, controls under the 44 px touch floor, the lowest text contrasts, and blocks that are large
 // but carry almost no text. Runs for six surfaces at both widths.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot , observe, observationStart } = require("./common.cjs");
 
 const SURFACES = [
   { key: "chat", label: "聊天", testid: "chat-surface" },
@@ -136,6 +136,7 @@ const sweep = (testid) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("g-defects.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   for (const size of [{ w: 1440, h: 900, tag: "1440x900" }, { w: 400, h: 800, tag: "400x800" }]) {
@@ -150,7 +151,7 @@ const sweep = (testid) => {
     }
   }
 
-  await observe(page, say, "g");
+  await observe(page, say, "g", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-G");
