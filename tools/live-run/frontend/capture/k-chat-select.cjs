@@ -15,7 +15,7 @@
 // took a named skip and the run lost 55-chat-select-switched.png and the 41b/41c shots. A create that
 // does not land is reported as a driver failure rather than a skip: the scenario is runnable, and a
 // control that answers a click without making a Chat is the defect to say out loud.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, createChat } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, createChat, observe, observationStart } = require("./common.cjs");
 
 const rowsFact = () => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -61,6 +61,7 @@ const bandExpectedFromRow = (titleText) => titleText.replace(/\s*\d+$/u, "").tri
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("k-chat-select.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "会话");
@@ -123,6 +124,7 @@ const bandExpectedFromRow = (titleText) => titleText.replace(/\s*\d+$/u, "").tri
   say(`selected row flips: ${chosenNow !== null ? JSON.stringify({ index: chosenNow.index, titleText: chosenNow.titleText, selected: chosenNow.selected }) : "none"}`);
   say(`the clicked row is now the selected one: ${chosenNow !== null && chosenNow.selected === true}`);
 
+  await observe(page, say, "k", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-K");
