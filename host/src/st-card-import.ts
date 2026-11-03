@@ -455,12 +455,18 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
   // Chinese companion as a stiff English framework. The Host composes the
   // floor (buildCompanionSystemPrompt); a card's persona is only what the card
   // wrote.
+  // Each dimension carries the card field it came from and nothing else. A card that wrote
+  // only `personality` therefore keeps it as `personality` (the profile's `interactionStyle`)
+  // instead of having it moved into `core`: that merge read the same on the prompt, but the
+  // profile stopped recording which field the text came from, and the export writes `core`
+  // back as `description` - so her author's `personality` would leave her as a description
+  // nobody wrote.
   const persona: IdentityProfile["persona"] =
     description === undefined && personality === undefined
       ? undefined
       : Object.freeze({
-          core: description ?? personality!,
-          ...(description === undefined || personality === undefined ? {} : { interactionStyle: personality }),
+          ...(description === undefined ? {} : { core: description }),
+          ...(personality === undefined ? {} : { interactionStyle: personality }),
         });
   const worldBook = extractCharacterBook(data.character_book, format, name, losses);
   const worldBookCandidates = worldBook.entries;

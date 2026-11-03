@@ -244,6 +244,32 @@ test("a card that writes no interaction/expression material carries no persona d
   assert.doesNotMatch(renderIdentityProfile(DEFAULT_COMPANION_PRESET.profile), /Expression style:/u);
 });
 
+test("a card that wrote only `personality` keeps it as `personality`, in the profile and in the export", () => {
+  // The failure this catches: `description` is who she is and `personality` is how she treats the
+  // player, but a card with no `description` had its `personality` text moved into `core`. That
+  // reads the same on the prompt but it is a lossy merge at the import boundary: the profile no
+  // longer records which card field the text came from, and the export writes `description`
+  // (`companion-card-export.ts:169-170`) - so the text permanently becomes a description and the
+  // card she came from cannot be got back out of her.
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: { name: "琥珀", personality: "嘴硬心软，先做后说。" },
+  });
+  const profile = candidateToIdentityProfile(preview, 1);
+  const persona = profile.persona;
+  assert.ok(persona !== undefined);
+  // The dimension the card wrote is the dimension the profile records, and the one it did not
+  // write stays absent rather than being filled with the other's text.
+  assert.equal(persona.interactionStyle, "嘴硬心软，先做后说。");
+  assert.equal(persona.core, undefined);
+  // The export writes it back where its author put it: `personality`, never `description`.
+  const card = buildCompanionCard({ name: profile.identity.name, persona });
+  assert.equal(card.data.personality, "嘴硬心软，先做后说。");
+  assert.equal("description" in card.data, false);
+  // And the text still reaches the model, under the dimension it actually is.
+  assert.match(buildChatCompanionSystemPrompt(profile, "zh-CN"), /Interaction style: 嘴硬心软，先做后说。/u);
+});
+
 /**
  * The character book's own two rules, which are NOT the same rule and used to be one line apart.
  *
