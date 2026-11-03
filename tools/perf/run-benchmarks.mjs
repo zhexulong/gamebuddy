@@ -49,12 +49,24 @@ function runNode(args) {
 }
 
 /**
- * Runs the suite. `node --test` gives each bench file its own process, so no case can measure
- * another case's warmed heap or its leftover state.
+ * Runs the suite.
+ *
+ * `node --test` gives each bench file its own process, which keeps one file's warmed heap and its
+ * leftover state out of another file's numbers - but separate processes do not keep them out of each
+ * other's WAY. Six benches measuring at once contend for the same cores, and that contention lands
+ * inside the measurement, so the suite is run with `--test-concurrency=1`.
+ *
+ * Measured, not preferred: five interleaved rounds of the whole suite each way, on
+ * `admission.action/small` 19.57 µs/op median with the files concurrent against 13.26 serialised
+ * (-32%), and on `presentation.commit/small` 0.69 against 0.59 (-14%), with that case's spread falling
+ * from +34.4% to +6.9% (max/min over the five runs). Every case moved the same way. The price is the
+ * wall-clock sum of the files rather than the slowest one.
+ *
+ * The profile path already runs one file per process, one at a time, so it pays nothing for this.
  */
 export function runSuite({ files = benchFiles(), profile = false } = {}) {
   if (files.length === 0) throw new Error("perf_suite_empty:no_bench_files");
-  if (!profile) return [runNode(["--test", ...files])];
+  if (!profile) return [runNode(["--test", "--test-concurrency=1", ...files])];
   mkdirSync(profileDirectory, { recursive: true });
   return files.map((file) => {
     const name = `${basename(file, ".mjs")}.cpuprofile`;
