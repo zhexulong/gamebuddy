@@ -581,7 +581,13 @@ export function ComposedReferenceGameApp() {
     writeInput(durable);
   }, [view]);
 
-  /** Takes a validated durable draft read-back as the composer field's new truth. */
+  /**
+   * Takes the validated read-back of a save that LANDED as the composer field's new truth.
+   *
+   * Only a write the Host accepted earns this: the field then holds exactly what the Host kept. A
+   * refused write re-reads the same draft for its revision (`handleDraftMutation`) and deliberately
+   * does not call this, because the text in the field is the player's and not the Host's to replace.
+   */
   const seedDraft = (draft: BrowserDraftV1): void => {
     const current = viewRef.current;
     const chat = current.kind === "ready" ? (current.session.snapshot.selection?.chatHandle ?? null) : null;
@@ -603,9 +609,15 @@ export function ComposedReferenceGameApp() {
    *
    * Any rejection first re-reads the authoritative durable draft: a rejected
    * write means the durable draft may no longer match this mount's revision (a
-   * stale tab's 409 draft/selection conflict), so the composer field and the
-   * mounted draft both take the server read-back and the stale local value can
-   * never survive the conflict.
+   * stale tab's 409 draft/selection conflict), so the mounted draft takes the
+   * server read-back and the next save is the compare-and-swap the route asks
+   * for. The read-back is AUTHORITY, never text: it must not reach the composer,
+   * which holds whatever the player is writing. An earlier version seeded it
+   * there, so a 409 or a network blip replaced the sentence in flight with the
+   * Host's older copy - player input discarded by a failure the player did not
+   * cause. A read-back may only become the field's text on a success (`seedDraft`
+   * below) or through the seeding effect above, which leaves a locally edited field
+   * alone when the revision it was seeded at moves.
    */
   const handleDraftMutation = async (kind: "save" | "discard"): Promise<void> => {
     const current = viewRef.current;
@@ -631,14 +643,17 @@ export function ComposedReferenceGameApp() {
       // The refusal's own sentence, not a generic one: a stale draft and a forbidden draft read differently to the
       // player, and every other mutation on this surface already words itself through the catalogue.
       const sentence = declaredProblemSentence(error, labels()) ?? labels().failure;
+      setDraftNotice({ kind: "failure", text: sentence });
       try {
         const draft = await managementPipelineApiRef.current.readDraft();
-        seedDraft(draft);
-        setDraftNotice({ kind: "failure", text: sentence });
         const fresh = viewRef.current;
+        // `commit` only - never `seedDraft`: the revision is what the next save compares and swaps
+        // against, and the words stay the player's. The seeding effect leaves a locally edited field
+        // alone when the revision it was seeded at moves, so this cannot reach the composer either.
         if (fresh.kind === "ready") commit({ ...fresh, draft });
       } catch {
-        setDraftNotice({ kind: "failure", text: sentence });
+        // The read-back failed too, so this mount keeps the revision it had; the notice above is what
+        // the player reads, and the next save states the same conflict again rather than guessing.
       }
     }
   };
