@@ -2,14 +2,16 @@
  * red-proof: inject  the tests below were each run against a deliberately broken reader before they
  * were accepted, and the break each one catches is named in its own message:
  *
- *   switchDurations   returning `durationMs: 0` for a `done` with no `start` (the shape Back and
- *                     Escape produce) reddens "a done with no start is not a switch whose duration is
- *                     zero".
- *   injectionFacts    `{ present: false, bytes: 0 }` for a block that is not there reddens "an absent
- *                     block is absence, not a zero-byte block", and treating a missing capture as an
- *                     empty request list reddens "no capture is not an empty injection".
- *   prefixes          renaming the product's switch prefix reddens "the kit reads the marks the
- *                     product emits".
+ *   switchDurations     returning `durationMs: 0` for a `done` with no `start` (the shape Back and
+ *                       Escape produce) reddens "a done with no start is not a switch whose duration is
+ *                       zero".
+ *   injectionFacts      `{ present: false, bytes: 0 }` for a block that is not there reddens "an absent
+ *                       block is absence, not a zero-byte block", and treating a missing capture as an
+ *                       empty request list reddens "no capture is not an empty injection".
+ *                       Attributing bodies by their index in the file reddens "each body is read
+ *                       against its own turn id", which is the defect this reader was rebuilt for.
+ *   prefixes            renaming the product's switch prefix reddens "the kit reads the marks the
+ *                       product emits".
  *
  * The paint cases are the original red-proof and are unchanged: see the file's own history for why LCP
  * is a field this reader must not claim.
@@ -20,25 +22,33 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { injectionFacts, readCapturedRequests, readPaintFacts, switchDurations } from "./observation.cjs";
+import { injectionFacts, observe, readCapturedRequests, readPaintFacts, switchDurations } from "./observation.cjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..", "..");
 
-/** A page whose Performance API answers exactly the entries we hand it. */
+/**
+ * A page whose Performance API answers exactly the entries we hand it.
+ *
+ * `document` is stubbed too, because `observe` reads DOM size from the same page and a test that only
+ * wants the INJECTION lines should not have to pretend to be a browser for the other four sections.
+ */
 function fakePage(entries) {
   return {
-    evaluate(fn) {
-      const original = globalThis.performance;
+    evaluate(fn, ...args) {
+      const originalPerformance = globalThis.performance;
+      const originalDocument = globalThis.document;
       globalThis.performance = {
         getEntriesByType(type) {
           return entries.filter((entry) => entry.entryType === type);
         },
       };
+      globalThis.document = { getElementsByTagName: () => ({ length: 7 }) };
       try {
-        return Promise.resolve(fn());
+        return Promise.resolve(fn(...args));
       } finally {
-        globalThis.performance = original;
+        globalThis.performance = originalPerformance;
+        globalThis.document = originalDocument;
       }
     },
   };
@@ -147,15 +157,23 @@ const VOLATILE = [
   "</gamebuddy-volatile-context>",
 ];
 
-const capture = (bodies) => ({
-  ok: true,
-  requests: bodies.map((body) => ({ method: "POST", url: "/chat/completions", body })),
-});
+const capture = (requests, source = "local-stub-provider") => ({ ok: true, source, requests });
+
+/**
+ * One captured request as the writer must record it: the turn it answered, and the body it carried.
+ *
+ * The turn id is not decoration. A capture file holds every request one instance posted, so a body
+ * carries the only fact that can tie it back to the turn it belongs to.
+ */
+const request = (turnId, body) => ({ method: "POST", url: "/chat/completions", turnId, body });
+
+const BARE = [{ messages: [{ role: "user", content: "你好" }] }];
 
 test("an injected authored-context block is reported with its size and the kinds it carries", async () => {
-  const injection = await injectionFacts(capture([systemPrompt(AUTHORED)]));
+  const injection = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))]));
   assert.equal(injection.ok, true);
   const [turn] = injection.turns;
+  assert.equal(turn.turnId, "turn-1");
   assert.equal(turn.authoredContext.present, true);
   assert.equal(turn.authoredContext.block, "gamebuddy-authored-context");
   assert.equal(turn.authoredContext.sources, 2);
@@ -167,6 +185,45 @@ test("an injected authored-context block is reported with its size and the kinds
   );
 });
 
+test("each body is read against its own turn id, whatever order the file lists them in", async () => {
+  /*
+   * The file's order is arrival order, and arrival order is NOT turn order: a retried turn, a
+   * provider liveness probe or a second surface interleaves freely, and a body can land before the
+   * turn it belongs to is even known. Reading by index attributes turn A's prompt to turn B the
+   * moment one record is inserted ahead of it.
+   */
+  const outOfOrder = capture([request("turn-b", systemPrompt(BARE)), request("turn-a", systemPrompt(AUTHORED))]);
+  const injection = await injectionFacts(outOfOrder, ["turn-a", "turn-b"]);
+  assert.equal(injection.ok, true);
+  const byTurn = new Map(injection.turns.map((turn) => [turn.turnId, turn]));
+  assert.deepEqual(
+    [...byTurn.keys()].sort(),
+    ["turn-a", "turn-b"],
+    "both turns must be reported, each under its own id",
+  );
+  assert.equal(
+    byTurn.get("turn-a").authoredContext.present,
+    true,
+    "turn-a's body carries the authored block, so turn-a is the turn it belongs to - a reader indexing the file reports turn-b's bare prompt as turn-a",
+  );
+  assert.equal(byTurn.get("turn-b").authoredContext.present, false);
+});
+
+test("a body with no matching turn is unobserved, never guessed", async () => {
+  /* Two records, and this driver observed one of its turns plus one it has no capture for. */
+  const injection = await injectionFacts(
+    capture([request("turn-a", systemPrompt(AUTHORED)), request("turn-b", systemPrompt(BARE))]),
+    ["turn-a", "turn-c"],
+  );
+  assert.deepEqual(
+    injection.turns.map((turn) => turn.turnId),
+    ["turn-a"],
+    "turn-c has no captured body, and turn-b belongs to another turn: neither may be reported as turn-c",
+  );
+  assert.deepEqual(injection.missing, ["turn-c"], "the turn this driver ran and cannot read is named");
+  assert.equal(injection.foreign, 1, "one record belongs to a turn this driver did not observe");
+});
+
 test("the volatile block's entries are named, and a block naming itself is preferred over its first line", async () => {
   const named = [
     "<gamebuddy-volatile-context>",
@@ -175,11 +232,11 @@ test("the volatile block's entries are named, and a block naming itself is prefe
     "</gamebuddy-volatile-source>",
     "</gamebuddy-volatile-context>",
   ];
-  const read = await injectionFacts(capture([systemPrompt(named)]));
+  const read = await injectionFacts(capture([request("turn-1", systemPrompt(named))]));
   assert.deepEqual(read.turns[0].volatileContext.names, ["银行家的戒指"]);
   assert.equal(read.turns[0].volatileContext.namesFrom, "attribute");
 
-  const unnamed = await injectionFacts(capture([systemPrompt(VOLATILE)]));
+  const unnamed = await injectionFacts(capture([request("turn-1", systemPrompt(VOLATILE))]));
   assert.deepEqual(unnamed.turns[0].volatileContext.names, ["银行家的戒指在抽屉里。"]);
   assert.equal(
     unnamed.turns[0].volatileContext.namesFrom,
@@ -189,16 +246,57 @@ test("the volatile block's entries are named, and a block naming itself is prefe
 });
 
 test("an absent block is absence, not a zero-byte block", async () => {
-  const injection = await injectionFacts(capture([{ messages: [{ role: "user", content: "你好" }] }]));
+  const injection = await injectionFacts(capture([request("turn-1", systemPrompt(BARE))]));
   assert.deepEqual(injection.turns[0].authoredContext, { present: false });
   assert.deepEqual(injection.turns[0].volatileContext, { present: false });
   assert.equal("bytes" in injection.turns[0].authoredContext, false, "a block that is not there has no size");
 });
 
 test("a turn with no body still counts as a turn, and says what it carried", async () => {
-  const injection = await injectionFacts(capture([null, systemPrompt(AUTHORED)]));
-  assert.equal(injection.turns.length, 1, "a null body is not a turn; the surviving one is turn 1");
+  const injection = await injectionFacts(capture([request("turn-1", null), request("turn-2", systemPrompt(AUTHORED))]));
+  assert.equal(injection.turns.length, 1, "a null body is not a turn; the surviving one is reported");
+  assert.equal(injection.turns[0].turnId, "turn-2", "and it is reported as the turn it belongs to, not as turn 1");
   assert.equal(injection.turns[0].authoredContext.present, true);
+});
+
+test("a record with no turn id cannot be attributed, and says so rather than claiming a position", async () => {
+  const injection = await injectionFacts(
+    capture([{ method: "POST", url: "/chat/completions", body: systemPrompt(AUTHORED) }]),
+  );
+  assert.equal(injection.ok, false, "a body nobody labelled is a body that could belong to any turn");
+  assert.match(injection.reason, /capture_records_carry_no_turnId/u);
+
+  const mixed = await injectionFacts(
+    capture([
+      { method: "POST", url: "/chat/completions", body: systemPrompt(AUTHORED) },
+      request("turn-2", systemPrompt(BARE)),
+    ]),
+  );
+  assert.equal(mixed.unlabelled, 1, "the labelled record is readable; the unlabelled one is counted, not guessed");
+  assert.deepEqual(
+    mixed.turns.map((turn) => turn.turnId),
+    ["turn-2"],
+  );
+});
+
+test("the reading names the instance whose wire it describes, or refuses to describe one", async () => {
+  const stub = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))]));
+  assert.equal(stub.source, "local-stub-provider");
+
+  const remote = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))], "remote-gateway"));
+  assert.equal(remote.ok, false, "a gateway's traffic leaves the machine; the browser side cannot read it");
+  assert.equal(remote.reason, "no_provider_request_capture:remote_gateway_wire_unintercepted");
+
+  const undeclared = await injectionFacts({
+    ok: true,
+    requests: [request("turn-1", systemPrompt(AUTHORED))],
+  });
+  assert.equal(
+    undeclared.ok,
+    false,
+    "a capture that does not say which instance wrote it describes no instance, so its blocks are not a reading",
+  );
+  assert.match(undeclared.reason, /capture_source_undeclared/u);
 });
 
 test("no capture is not an empty injection", async () => {
@@ -217,6 +315,36 @@ test("an empty request list is still unobserved rather than a turn with nothing 
   const injection = await injectionFacts(capture([]));
   assert.equal(injection.ok, false);
   assert.match(injection.reason, /no_parsed_request_body/u);
+});
+
+test("the INJECTION line carries the turn id and the instance, and says which turn it could not read", async () => {
+  /*
+   * A driver shares the page with the other nineteen, so it must report only the turn it observed -
+   * by id - and must say `unobserved` for a turn it ran while the capture holds nothing for it.
+   */
+  const lines = [];
+  const page = fakePage([
+    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 10, detail: { turnKey: "turn-a" } },
+    { entryType: "mark", name: "gamebuddy:turn:settled", startTime: 60, detail: { turnKey: "turn-a" } },
+    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 70, detail: { turnKey: "turn-c" } },
+  ]);
+  await observe(page, (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: capture([request("turn-a", systemPrompt(AUTHORED)), request("turn-z", systemPrompt(BARE))]),
+  });
+  const injection = lines.filter((line) => line.startsWith("INJECTION f turn="));
+  assert.deepEqual(
+    injection.map((line) => line.slice(0, line.indexOf(":"))),
+    ["INJECTION f turn=turn-a source=local-stub-provider", "INJECTION f turn=turn-c"],
+    "one line per turn this driver observed, each naming its own id and the instance the wire describes",
+  );
+  assert.match(injection[0], /authoredContext=present block=gamebuddy-authored-context/u);
+  assert.match(injection[1], /unobserved:no_capture_for_turn/u);
+  assert.match(
+    lines.join("\n"),
+    /INJECTION f: unobserved:1_capture_record_for_a_turn_not_observed_here/u,
+    "a record belonging to another turn is reported as somebody else's, never shown as this driver's",
+  );
 });
 
 test("the capture reader names an unset path, an absent file and a file holding no request array", () => {
