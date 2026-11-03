@@ -268,6 +268,93 @@ test("the Chats rename editor saves on Enter and dismisses on Escape, and each g
 });
 
 /**
+ * D23: the row's destructive confirmation answers the keyboard, and Escape answers it rather than
+ * leaving the surface.
+ *
+ * Measured before this change: arming the confirmation moved focus nowhere, so the press that
+ * replaced the row's control strip with the confirmation dropped focus onto `<body>`; and Escape
+ * then reached the shell's window handler (`composed-surface-route.ts:73-93`), which leaves the
+ * whole Chats surface - so the player lost the list they were managing and the confirmation they
+ * were answering was never answered.
+ *
+ * The keyboard path is `armed-confirmation.ts`, the same pair the rename editor above and the
+ * world book removals take, so focus movement and Escape have one implementation and not three.
+ */
+test("the Chats archive confirmation takes focus, answers Escape, and leaves the surface standing", async ({ page }) => {
+  const archives: unknown[] = [];
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(json200({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: null } } })),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(json200({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: null } } })),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: null,
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "The parsnips took. All of them, by the look of it.",
+          },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chats/*/archive", async (route) => {
+    archives.push(route.request().postDataJSON());
+    await route.fulfill(json200({ apiVersion: 1, handle: chatHandle, status: "archived", managementRevision: 2 }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=chats`);
+  const surface = page.getByTestId("chats-surface");
+  await expect(surface).toBeVisible();
+
+  /** What the browser is holding after a key, named by the control a player would recognise. */
+  const focused = async (): Promise<Readonly<{ tag: string; testId: string | null; name: string | null }>> =>
+    await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return {
+        tag: active === null ? "none" : active.tagName.toLowerCase(),
+        testId: active?.getAttribute("data-testid") ?? null,
+        name: active?.getAttribute("aria-label") ?? null,
+      };
+    });
+  const log: Record<string, Readonly<{ tag: string; testId: string | null; name: string | null }>> = {};
+
+  // Armed from the keyboard, so the press itself is the same gesture a player makes.
+  await surface.getByRole("button", { name: "Archive", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  const confirm = surface.getByTestId("chat-retention-confirm");
+  await expect(confirm).toBeVisible();
+  log.armed = await focused();
+
+  // Escape answers the confirmation, and only the confirmation.
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  log.dismissed = await focused();
+  console.log(`[retention-keys] ${JSON.stringify(log)}`);
+
+  expect(log.armed.testId, "the confirmation's own cancel answer takes focus when it opens").toBe(
+    "chat-retention-confirm-no",
+  );
+  await expect(surface, "Escape answers the confirmation instead of leaving the surface").toBeVisible();
+  await expect(surface.getByTestId("chat-item"), "the list the player was managing is still there").toHaveCount(1);
+  expect(archives, "Escape sends nothing").toHaveLength(0);
+  expect(log.dismissed, "focus comes back to the control that armed it").toEqual({
+    tag: "button",
+    testId: null,
+    name: "Archive",
+  });
+});
+
+/**
  * The composed shell's Characters surface owns the character's world book: the
  * standalone World Info peer surface is gone, so the same bind state machine -
  * read, bind with the exact opaque revision, then re-read the authoritative

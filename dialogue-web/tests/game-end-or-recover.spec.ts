@@ -184,6 +184,69 @@ test("Keep playing is the way back out of the armed Endgame confirmation", async
 });
 
 /* ==========================================================================
+   1b. The armed confirmation's keyboard path (D23): focus moves into it, and
+       Escape answers it rather than leaving the surface.
+   ========================================================================== */
+
+/**
+ * Measured before this change: arming replaced the "End the game" control with the confirmation
+ * and moved focus nowhere, so the press that replaced it dropped focus onto `<body>`; and Escape
+ * then reached the shell's window handler (`composed-surface-route.ts:73-93`), which leaves the
+ * whole Game surface - the player lost the session they were looking at, and the confirmation they
+ * were answering was never answered.
+ *
+ * The keyboard path is `armed-confirmation.ts`, the same pair the Chats rows and the rename editor
+ * take, so focus movement and Escape have one implementation.
+ */
+test("the armed Endgame confirmation takes focus, answers Escape, and leaves the surface standing", async ({
+  page,
+}) => {
+  const endgameRequests: number[] = [];
+  await stubHost(page, ATTACHED_CONNECTED);
+  await page.route("**/api/composed-reference-game/v1/game/endgame", async (route) => {
+    endgameRequests.push(1);
+    await route.fulfill(jsonOk({ apiVersion: 1, status: "gameended" }));
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGame(page);
+  const panel = panelOf(page);
+
+  /** What the browser is holding after a key, named by the control a player would recognise. */
+  const focused = async (): Promise<Readonly<{ tag: string; testId: string | null }>> =>
+    await page.evaluate(() => {
+      const active = document.activeElement as HTMLElement | null;
+      return {
+        tag: active === null ? "none" : active.tagName.toLowerCase(),
+        testId: active?.getAttribute("data-testid") ?? null,
+      };
+    });
+  const log: Record<string, Readonly<{ tag: string; testId: string | null }>> = {};
+
+  await panel.getByTestId("game-endgame-open").focus();
+  await page.keyboard.press("Enter");
+  const confirm = panel.getByTestId("game-endgame-confirm");
+  await expect(confirm).toBeVisible();
+  log.armed = await focused();
+
+  await page.keyboard.press("Escape");
+  await expect(confirm).toHaveCount(0);
+  log.dismissed = await focused();
+  console.log(`[endgame-keys] ${JSON.stringify(log)}`);
+
+  expect(log.armed.testId, "the confirmation's own keep-playing answer takes focus when it opens").toBe(
+    "game-endgame-confirm-no",
+  );
+  await expect(page.getByTestId("game-surface"), "Escape answers the confirmation, not the surface").toBeVisible();
+  await expect(panel.getByTestId("game-endgame-open"), "the arm control is offered again").toBeVisible();
+  expect(endgameRequests, "Escape sends nothing").toEqual([]);
+  expect(log.dismissed, "focus comes back to the control that armed it").toEqual({
+    tag: "button",
+    testId: "game-endgame-open",
+  });
+});
+
+/* ==========================================================================
    2. Stop failure: what the player reads when stopping does not succeed, and
       what they can still press.
    ========================================================================== */

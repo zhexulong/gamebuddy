@@ -331,6 +331,15 @@ export function ChatsSurfacePanel({
   // editor - the pencils share the ref, and the editor's own mount is what re-attaches it, so
   // it can only ever hold the one row that is being renamed.
   const renamePair = useArmedConfirmation(editing !== null, () => setEditing(null));
+  // The row's archive/trash pair takes the same shape (`armed-confirmation.ts`): arming REPLACES
+  // the row's control strip with the confirmation, so without it the page drops focus onto
+  // `<body>` at both ends, and Escape reaches the shell's window handler - which leaves the whole
+  // surface instead of answering the confirmation. One pair per operation, because each one has
+  // to answer back to the control that was actually pressed.
+  const closeRetention = (): void => setConfirmation(null);
+  const archivePair = useArmedConfirmation(confirmation?.operation === "archive", closeRetention);
+  const trashPair = useArmedConfirmation(confirmation?.operation === "trash", closeRetention);
+  const armedPair = confirmation?.operation === "trash" ? trashPair : archivePair;
 
   useEffect(() => {
     let active = true;
@@ -977,6 +986,7 @@ export function ChatsSurfacePanel({
                           {retentionAvailable !== false && (
                             <>
                               <button
+                                ref={archivePair.triggerRef}
                                 type="button"
                                 className="icon-button-small"
                                 title={labels.chatRetentionArchive}
@@ -993,6 +1003,7 @@ export function ChatsSurfacePanel({
                                 <Archive size={14} aria-hidden="true" />
                               </button>
                               <button
+                                ref={trashPair.triggerRef}
                                 type="button"
                                 className="icon-button-small"
                                 title={labels.chatRetentionTrash}
@@ -1023,7 +1034,11 @@ export function ChatsSurfacePanel({
                     {/* The confirmation is its own row of the card, below the title row: it never
                         shares a line with the title or with the row's controls. */}
                     {armedHere && (
-                      <div className="chat-item-confirm" data-testid="chat-retention-confirm">
+                      <div
+                        className="chat-item-confirm"
+                        data-testid="chat-retention-confirm"
+                        onKeyDown={armedPair.onConfirmKeyDown}
+                      >
                         <p className="chat-item-confirm-prompt" role="status">
                           {confirmation.operation === "archive"
                             ? labels.chatRetentionArchiveConfirm
@@ -1045,10 +1060,11 @@ export function ChatsSurfacePanel({
                               : labels.chatRetentionTrashConfirmYes}
                           </button>
                           <button
+                            ref={armedPair.cancelRef}
                             type="button"
                             className="small-button"
                             data-testid="chat-retention-confirm-no"
-                            onClick={() => setConfirmation(null)}
+                            onClick={armedPair.cancel}
                           >
                             {labels.chatRetentionConfirmNo}
                           </button>

@@ -28,6 +28,7 @@ import {
   type CapabilityBoard,
   type CapabilityBoardCard,
 } from "../game-presentation";
+import { useArmedConfirmation } from "./armed-confirmation";
 
 /**
  * The Game panel: one presentation component for every state the composed Game
@@ -247,6 +248,11 @@ export function GameStatePanel({
   // lifecycle controls, presented inside the three-step guide's affordances
   // (never a second set of them).
   const companionInFarm = game !== null && game.game.attachment.status === "attached";
+  // The terminal operation's confirm step is the same arm-and-close pair the Chats rows take
+  // (`./armed-confirmation`): arming replaces the trigger with the confirmation, so without it the
+  // page drops focus onto `<body>` at both ends, and Escape reaches the shell's window handler -
+  // which leaves the Game surface instead of answering the confirmation.
+  const endgamePair = useArmedConfirmation(session.endgame.confirmArmed, handlers.cancelEndgame);
   // The board's own named state, derived by `deriveCapabilityBoard`:
   // `waiting` is present exactly while the session has published no capability
   // at all. That one fact decides both the board's shape and its place in the
@@ -532,6 +538,7 @@ export function GameStatePanel({
               <div className="game-endgame" data-testid="game-endgame">
                 {!session.endgame.confirmArmed ? (
                   <button
+                    ref={endgamePair.triggerRef}
                     type="button"
                     className="game-action danger"
                     data-testid="game-endgame-open"
@@ -541,7 +548,11 @@ export function GameStatePanel({
                     {labels.gameEndgame}
                   </button>
                 ) : (
-                  <div className="game-endgame-confirm" data-testid="game-endgame-confirm">
+                  <div
+                    className="game-endgame-confirm"
+                    data-testid="game-endgame-confirm"
+                    onKeyDown={endgamePair.onConfirmKeyDown}
+                  >
                     <p className="game-status" data-tone="danger" role="status">
                       {labels.gameEndgameConfirm}
                     </p>
@@ -557,11 +568,12 @@ export function GameStatePanel({
                         {labels.gameEndgameConfirmYes}
                       </button>
                       <button
+                        ref={endgamePair.cancelRef}
                         type="button"
                         className="game-action"
                         data-testid="game-endgame-confirm-no"
                         disabled={session.endgame.active}
-                        onClick={handlers.cancelEndgame}
+                        onClick={endgamePair.cancel}
                       >
                         <X size={16} aria-hidden="true" />
                         {labels.gameEndgameConfirmNo}
