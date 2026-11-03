@@ -444,7 +444,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // The receipt is minted by the one execution ledger, so a coordinated
         // terminal (requires_other_player) is traceable rather than a second
         // receipt authority.
-        E("advance_day", "world_lifecycle", FarmhandActionHandlerGroup.WorldLifecycle, Lifecycle(), FarmhandActionLifecycle.LiveVerified),
+        E("sleep", "world_lifecycle", FarmhandActionHandlerGroup.WorldLifecycle, Lifecycle(), FarmhandActionLifecycle.LiveVerified),
         // The one SOCIAL act that is not about an NPC in front of the actor: say a line to the whole lobby
         // through the game's own chat egress (`Multiplayer.sendChatMessage`, Multiplayer.cs:1127). No body, no
         // geometry, no target, no world write - it takes exactly one string and its terminal proves the SEND.

@@ -100,6 +100,15 @@ export type PublishedPlanAction = Readonly<{
    * pre-condition the authoring side cannot see is refused one round trip later.
    */
   sceneBindingRequirement: PublishedPlanSceneBindingRequirement;
+  /**
+   * The snapshot family that supplies this action's targets (`cropTargets`), or the surface's silence.
+   *
+   * Carried so a refusal can name the family to re-read rather than a field the caller has no way to look up. The two
+   * halves it joins - the `Discover*` projection that publishes rows and the preflight that refuses them - are
+   * otherwise connected by nothing, which is the shape of every defect that had discovery publish rows execution
+   * refused.
+   */
+  targetFamily: string | null;
 }>;
 
 /**
@@ -124,6 +133,8 @@ type PlanArgumentRequirement = Readonly<{
   actionId: string;
   requiredArguments: readonly PlanArgumentShape[];
   resourceClaims: readonly Readonly<{ key: string; value: string }>[];
+  /** The snapshot family that supplies this action's targets, when the surface names one. */
+  targetFamily?: string;
 }>;
 
 /**
@@ -218,7 +229,7 @@ const EQUIP_TOOL_ACTION_ID = "equip_tool";
  * surface action declaring `day_advanced` must be refused as a mid-plan step, so a second one fails a named assertion
  * instead of being exempt.
  */
-const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["advance_day"]);
+const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["sleep"]);
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
@@ -374,6 +385,7 @@ export function planActionsFromRegistrations(
         toolRequirement: declaredToolRequirementOf(registration),
         approachRequirement: declaredApproachRequirementOf(registration),
         sceneBindingRequirement: declaredSceneBindingRequirementOf(registration),
+        targetFamily: declaredTargetFamilyOf(registration),
       }),
     );
   }
@@ -461,6 +473,18 @@ function declaredSceneBindingRequirementOf(registration: ActionRegistration): Pu
   const declared = registration.descriptor?.sceneTarget;
   if (declared === undefined || declared.required !== true) return Object.freeze({ declared: false });
   return Object.freeze({ declared: true, requiredProperties: Object.freeze([...declared.requiredProperties]) });
+}
+
+/**
+ * The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
+ *
+ * `null` is the surface's own statement that the action addresses no published family (`advance_day`, `dismiss_modal`,
+ * `express_emote`), which is a different answer from a family nobody filled - and the reason this is a plain value and
+ * not a `{ declared: false }` wrapper: there is no third state to distinguish.
+ */
+function declaredTargetFamilyOf(registration: ActionRegistration): string | null {
+  const declared = registration.descriptor?.targetFamily;
+  return typeof declared === "string" && declared.length > 0 ? declared : null;
 }
 
 function declaredApproachRequirementOf(registration: ActionRegistration): PublishedPlanApproachRequirement {
@@ -864,6 +888,9 @@ function requirementOf(action: PublishedPlanAction): PlanArgumentRequirement {
     actionId: action.actionId,
     requiredArguments: action.arguments,
     resourceClaims: action.resourceClaims,
+    // The family the caller should re-read, when the surface names one. A refusal that says a target was refused
+    // without naming where its rows live leaves the author guessing at a vocabulary it cannot see.
+    ...(action.targetFamily === null ? {} : { targetFamily: action.targetFamily }),
   });
 }
 

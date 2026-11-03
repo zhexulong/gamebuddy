@@ -760,17 +760,17 @@ test("published plant_seed mounts only from a live capability and forwards the o
 });
 
 test("a dispatch deadline comes from the action's own published watchdog, not one number for every action", () => {
-  // Measured 2026-10-17: `advance_day` was dispatched with a hard-coded 30s deadline against the Mod's 600s
+  // Measured 2026-10-17: `sleep` was dispatched with a hard-coded 30s deadline against the Mod's 600s
   // watchdog, so it timed out by construction and the failure read as the companion being unable to sleep. The
   // Mod publishes the watchdog on its descriptor, and the Host sizes the deadline from it.
   const registrations: readonly ActionRegistration[] = [
     {
-      actionId: "advance_day",
+      actionId: "sleep",
       familyId: "world_lifecycle",
       identityVersion: 1,
       lifecycle: "live_verified",
       kind: "execution",
-      // `isModDescriptorComplete` is what gates advance_day's mount, so this fixture has to satisfy it - and
+      // `isModDescriptorComplete` is what gates sleep's mount, so this fixture has to satisfy it - and
       // then carry the watchdog this case is about. The night takes no arguments and publishes its own
       // day-advanced postcondition, which is exactly what the gate checks.
       descriptor: { arguments: [], effect: "write", postcondition: "day_advanced", watchdogMs: 600_000 },
@@ -785,9 +785,9 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
       return {
         connected: true,
         sessionId: "session_01",
-        capabilities: ["advance_day", "till_soil"],
+        capabilities: ["sleep", "till_soil"],
         catalogRevision: 1,
-        enabledActionIds: ["advance_day", "till_soil"],
+        enabledActionIds: ["sleep", "till_soil"],
         snapshot: {
           revision: 3,
           location: "Farm",
@@ -796,9 +796,9 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
           exhausted: false,
           health: 100,
           actionable: true,
-          capabilities: ["advance_day", "till_soil"],
+          capabilities: ["sleep", "till_soil"],
           catalogRevision: 1,
-          enabledActionIds: ["advance_day", "till_soil"],
+          enabledActionIds: ["sleep", "till_soil"],
           presentationLocale: "en-US",
           timeOfDay: 600,
           dayOfMonth: 1,
@@ -819,7 +819,7 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
         actionId: request.action,
         requestId: request.requestId,
         state: "succeeded",
-        reasonCode: request.action === "advance_day" ? "day_advanced" : "soil_tilled",
+        reasonCode: request.action === "sleep" ? "day_advanced" : "soil_tilled",
         revision: 4,
         evidence: { detail: "ok=true" },
       };
@@ -829,11 +829,11 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  assert.ok(tools.find((candidate) => candidate.name === "stardew_advance_day"));
+  assert.ok(tools.find((candidate) => candidate.name === "stardew_sleep"));
   assert.ok(tools.find((candidate) => candidate.name === "stardew_till_soil"));
   return (async () => {
     await tools
-      .find((candidate) => candidate.name === "stardew_advance_day")!
+      .find((candidate) => candidate.name === "stardew_sleep")!
       .execute(
         "test",
         { requestId: "request_night_01", idempotencyKey: "idempotency_night_01" },
@@ -857,7 +857,7 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
         {} as never,
       );
     // The published watchdog is honoured (within the scheduling slop of the call itself)...
-    assert.ok((deadlines.advance_day ?? 0) > 590_000, String(deadlines.advance_day));
+    assert.ok((deadlines.sleep ?? 0) > 590_000, String(deadlines.sleep));
     // ...and an action that publishes none keeps the historical default.
     assert.ok((deadlines.till_soil ?? 0) > 25_000 && (deadlines.till_soil ?? 0) < 31_000, String(deadlines.till_soil));
   })();

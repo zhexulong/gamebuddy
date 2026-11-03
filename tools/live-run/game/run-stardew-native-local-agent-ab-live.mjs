@@ -424,15 +424,15 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
 
 const SCENARIO_PROMPTS = Object.freeze({
   morning_routine: Object.freeze({
-    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活——你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟玩家说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（**总共控制在 120 字以内**——这是同伴说话的长度口径，不是让你省略内容，而是像陪玩的人一样挑重点说）。`,
-    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and take today's work as one whole job (field work, odds and ends on the farm, the chests and machines indoors — all fair game): say what the whole job should end up as; how it gets laid out is up to the system. When you are done, tell the player in two or three sentences: how far the whole job got, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). `,
+    zh: `现在是星露谷春季的早晨，你独自在农场里。今天没有人给你派活，你自己看看周围，把今天这一摊活当成一整件事（地里的农活、农场上的杂物、屋里的箱子和机器都算）：先说清楚整件事要做成什么样，其余怎么排开由系统来。做完之后用两三句话跟对方说说：整件活做到哪儿了、哪一段做不了或者卡住了、卡在哪里（控制在 120 字以内，挑重点说，不用把每道工序都报一遍）。`,
+    en: `It is a spring morning in Stardew Valley and you are on the farm by yourself. Nobody has assigned you anything today — look around and take today's work as one whole job (field work, odds and ends on the farm, the chests and machines indoors — all fair game): say what the whole job should end up as; how it gets laid out is up to the system. When you are done, tell your partner in two or three sentences: how far the whole job got, what you could not do or got stuck on, and where (**keep the whole thing within 120 characters** — that is the companion's speaking length, not a request to leave things out; pick what matters the way someone playing alongside would). `,
   }),
   memory_covenant: Object.freeze({
     // The standing rule is NOT in this prompt: it is planted as a memory through the real management surface,
     // so the probe measures whether a memory-driven covenant changes behaviour. Naming it here would make the
     // test pass by coaching.
-    zh: `今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、玩家和你说过的话里，有没有什么关于这些草莓的规矩——如果有，按那个规矩来。别的事按你平时在这院子里的习惯安排。`,
-    en: `Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything the player ever told you about these strawberries — if you remember a rule about them, follow it. `,
+    zh: `今天是星露谷春季的雨天。农场田里的草莓已经熟了，把它们收下来收好。想一想你记得的、对方和你说过的话里，有没有什么关于这些草莓的规矩，如果有，按那个规矩来。别的事按你平时在这院子里的习惯安排。`,
+    en: `Today is a rainy Spring day in Stardew Valley. The strawberries in the farm field are ripe — harvest them and put them away. Think about anything your partner ever told you about these strawberries — if you remember a rule about them, follow it. `,
   }),
   npc_social_and_presence: Object.freeze({
     zh: `今天是星露谷春季的第 19 天。你收到乔迪（Jodi）的来信：她需要一颗新鲜花椰菜做菜，希望你能给她带一颗。你农场的地里正好种着一颗已经长好的花椰菜，她今天就在农场附近。`,
@@ -440,7 +440,7 @@ const SCENARIO_PROMPTS = Object.freeze({
   }),
   multiday_routine: Object.freeze({
     // Per-day, with the day number in the text: the companion decides its day AND decides when the day is
-    // over, by dispatching its own `advance_day`. The loop never ends a night for it - the prompt is where
+    // over, by dispatching its own `sleep`. The loop never ends a night for it - the prompt is where
     // "the day is yours to end" is said, because a night the harness chose would be a scripted crossing.
     //
     // The last clause exists because the previous wording named a CLOCK ("when it gets dark") and left the
@@ -452,13 +452,13 @@ const SCENARIO_PROMPTS = Object.freeze({
     // task switch. The invariant clauses - the player is away, ending the day is yours - are the same every
     // day, because they are what this scenario exists to observe and a task change must not rewrite them.
     zh: (day, task) =>
-      `现在是星露谷的早晨（这是你连着的第 ${String(day)} 天）。` +
-      `玩家去镇上了，临走时交代今天这一件：${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑就回屋睡觉，明天还有别的。（玩家白天在镇上忙，什么时候回来不一定，也可能不回来；他听得见你说话，但你不必等他——天黑了自己回屋睡。）` +
-      `**这一天什么时候结束由你决定**：不用等玩家批准，也不用问；该收了就回床上睡，这一天才真正过去。只在嘴里说一句“我睡了”而身体没躺下，天不会自己过去。`,
+      `现在是星露谷的早晨（连续第 ${String(day)} 天）。` +
+      `桌上留着便签：“我今天去镇上办事，${DAILY_TASK_PROMPT_ZH[task]}你看着办，天黑累了就回屋歇着不用等我，明天还有别的。”` +
+      `活干完了或者天黑累了就回床上睡，这一天才真正过去。只在嘴里说“我睡了”而身体没躺下，天不会自己过去。`,
     en: (day, task) =>
       `It is morning in Stardew Valley (day ${String(day)} in a row for you). ` +
-      `The player has gone into town, and on the way out left you today's one thing: ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; go inside and sleep when it gets dark, and tomorrow there will be something else. (The player is busy in town and may or may not come back; he can hear you, but you are not waiting on him - when it gets dark you go indoors and sleep.) ` +
-      `**Ending this day is your call**: you do not need the player's approval and you do not need to ask - when you decide the day is done, go to bed and sleep, and only then does the night pass. Announcing it without lying down does not end the day. `,
+      `There is a note on the table from your partner: "I'm heading into town today to run errands. ${DAILY_TASK_PROMPT_EN[task]}That is yours to handle; when it gets dark and you're tired, head inside and rest, no need to wait up for me. There will be other things tomorrow." ` +
+      `When the work is done or when it is dark and you are tired, go to bed and sleep so the night passes. Announcing it without lying down does not end the day. `,
   }),
 });
 const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
@@ -1621,7 +1621,7 @@ async function runAgentTurn(text, tools) {
   // Measured 2026-10-25 (`night1`): at in-game 22:00 the companion received the milestone, thought "Time is 2200 …
   // Should I sleep?", and answered with a LINE of text. Its turn then settled - `stopReason: "stop"`, no errors - and
   // because this gate named only `morning_routine`, nothing in the harness could ever deliver another turn. It had the
-  // action available (`advance_day` was in all 97 advertised capabilities and it simply never called it), the world
+  // action available (`sleep` was in all 97 advertised capabilities and it simply never called it), the world
   // ran on to the 2:00 AM pass-out, and the run recorded `companion_did_not_sleep`.
   //
   // A scripted single-goal rung is different: there, one settle IS the end of what it was asked to do, so those keep
@@ -1823,7 +1823,7 @@ function buildCapabilityAudit({
  * the watcher's own bound expired while the day turn was STILL RUNNING, and the run was recorded as
  * `companion_did_not_sleep:day_turn_still_running` - a verdict about a day that had not finished making up its
  * mind, let alone refused to sleep. The watcher already distinguishes the two honest cases: when the day turn
- * SETTLES with no `advance_day`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
+ * SETTLES with no `sleep`, it reports `companion_did_not_sleep` at once. This bound only has to sit past
  * the turn budget, so the run budget stays the hard stop.
  */
 // The engine's own pass-out hour: at 26:00 the actor collapses and the day rolls over by itself
@@ -1832,7 +1832,7 @@ function buildCapabilityAudit({
 //
 // `readWorldClock().spent` used to compare against 22:00 and the night watcher answered `companion_did_not_sleep`
 // the moment a settled turn found the clock past it. Measured 2026-10-26: the companion reached 22:00, said
-// "Time to sleep ... let me observe first then advance_day", and the watcher had already called it a refusal - a
+// "Time to sleep ... let me observe first then sleep", and the watcher had already called it a refusal - a
 // verdict about the harness's hour, reported as a verdict about her behaviour, arriving before the dispatch it had
 // announced. The sleep hour is therefore the engine's, not the scenario's.
 const PASS_OUT_MINUTES = 26 * 60;
@@ -2140,12 +2140,12 @@ function accomplishedSince(startFactIndex) {
     const actionId = receipt.actionId;
     // A day that only walked, looked around, posed and slept has NOT produced farm work, and for the
     // multi-day rule that is the difference between a loop and one rollover. Without this filter the day's own
-    // `advance_day` (whose terminal is `day_advanced`, a registered gate) always landed in the set - so
+    // `sleep` (whose terminal is `day_advanced`, a registered gate) always landed in the set - so
     // `next_day_produced_no_farm_work` could never fire and "the companion kept working" was unprovable
     // (measured 2026-10-17: the rule's own producer made it unreachable).
     if (NON_ACCOMPLISHMENT_ACTIONS.has(actionId)) continue;
     // The task's own progress reports are not work either.
-    if (actionId === "advance_day" || actionId === "dismiss_modal" || actionId === "respond_level_up") continue;
+    if (actionId === "sleep" || actionId === "dismiss_modal" || actionId === "respond_level_up") continue;
     // The registered terminal is the only code that can tell an action that FINISHED from one that only progressed;
     // an action with no published gate declares no terminal, so no receipt can prove it finished.
     const expected = STARDEW_PUBLISHED_ACTION_GATES.find((gate) => gate.actionId === actionId)?.terminalReasonCode;
@@ -2215,7 +2215,7 @@ async function watchNightThroughPassOut({
 }
 
 /**
- * Watch the night that the companion's own `advance_day` starts.
+ * Watch the night that the companion's own `sleep` starts.
  *
  * Started at the SAME moment as the day's turn, because the night begins while the Agent is still blocked
  * inside its tool call. What this adds is the one thing the Agent cannot do for itself: the settlement menu
@@ -2225,7 +2225,7 @@ async function watchNightThroughPassOut({
  */
 // WAIT FOR THE NIGHT TO BEGIN before watching it.
 //
-// The night starts when the companion dispatches `advance_day`, which happens somewhere inside its day. A
+// The night starts when the companion dispatches `sleep`, which happens somewhere inside its day. A
 // watcher that started observing from the first second of the day would poll the world at 4 Hz for the whole
 // turn (measured 2026-10-17: the first multi-day run had the loop observing from t=0, and the bridge closed
 // 15s in) and would ALSO be unable to tell "the companion has not slept yet" from "the companion will not
@@ -2298,7 +2298,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // `day_advanced` succeeded at 17:36:07 and 17:46:21, SMAPI logged "starting spring 6 Y1" - and this function
   // reported `companion_did_not_sleep:day_turn_still_running` after a 31-minute timeout, because
   //
-  //   - it looked for `advance_day` in `actionTrace`, which records only FLAT dispatches, and all 276 of that
+  //   - it looked for `sleep` in `actionTrace`, which records only FLAT dispatches, and all 276 of that
   //     run's dispatches went through Body Program;
   //   - and even had it found one, `readWorldClock().spent` is false the moment a new morning starts (a fresh
   //     day is `timeOfDay: 600`), so it would have waited for a night that had already ended.
@@ -2313,9 +2313,9 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return Number.isInteger(startDay) && Number.isInteger(now) && now !== startDay;
   };
   /**
-   * The companion's own `advance_day` dispatches inside this watch window, from EITHER channel.
+   * The companion's own `sleep` dispatches inside this watch window, from EITHER channel.
    *
-   * `advance_day` is the only thing that starts a `SleepAndAdvanceDayLifecycle`, so this is the dispatch the whole
+   * `sleep` is the only thing that starts a `SleepAndAdvanceDayLifecycle`, so this is the dispatch the whole
    * watcher is built to follow. It reaches the game over TWO channels (see `execution-trace.mjs`), and the watcher
    * used to read only the first one:
    *   - FLAT: a request frame this runner sent itself, recorded in `actionTrace`;
@@ -2327,21 +2327,21 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
    *
    * Measured 2026-10-31 (`round18`): `actionTrace.jsonl` was 1 byte. The Mod logged `sleep lifecycle finished:
    * state=passed; reason=day_advanced` at 03:38:25 and its receipt `state=Succeeded;reason=day_advanced;
-   * revision=1559` (request `3982f1bc...`, `actionId=advance_day`) arrived at that same moment - inside this
+   * revision=1559` (request `3982f1bc...`, `actionId=sleep`) arrived at that same moment - inside this
    * window, which had begun around 03:36:26 - and the watcher still answered `terminal: null`, so both nights were
    * recorded `cause: "engine"` with the crossing witnessed only by the calendar. The receipt was in hand; the
    * watcher never looked.
    */
-  const advanceDayRequestsSinceStart = () => {
+  const sleepRequestsSinceStart = () => {
     const requests = [];
     const add = (requestId) => {
       if (typeof requestId !== "string" || requestId.length === 0) return;
       if (!requests.includes(requestId)) requests.push(requestId);
     };
-    for (const entry of actionTrace.slice(traceStart)) if (entry?.action === "advance_day") add(entry.requestId);
+    for (const entry of actionTrace.slice(traceStart)) if (entry?.action === "sleep") add(entry.requestId);
     for (const entry of factLog.slice(factStart)) {
       const receipt = recordedReceipt(entry);
-      if (receipt === null || receipt.actionId !== "advance_day") continue;
+      if (receipt === null || receipt.actionId !== "sleep") continue;
       add(entry.requestId ?? receipt.requestId);
     }
     return requests;
@@ -2352,9 +2352,9 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
    * The SAME read a flat dispatch gets (`terminalReceiptFor` on the request the dispatch named), applied to the
    * request found in whichever channel carried it.
    */
-  const advanceDayTerminals = () => {
+  const sleepTerminals = () => {
     const terminals = [];
-    for (const requestId of advanceDayRequestsSinceStart()) {
+    for (const requestId of sleepRequestsSinceStart()) {
       const terminal = terminalReceiptFor(factLog, requestId);
       if (terminal !== undefined) terminals.push(terminal);
     }
@@ -2364,28 +2364,28 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
    * The night's own CROSSING receipt - a `succeeded/day_advanced` terminal - or null when no dispatch in this window
    * produced one.
    *
-   * Only a crossing counts as the night's terminal. A `rejected` `advance_day` is a fact about the DISPATCH (the Mod
+   * Only a crossing counts as the night's terminal. A `rejected` `sleep` is a fact about the DISPATCH (the Mod
    * requires an indoor, standing, unheld actor), and handing it back as the night's terminal would make
    * `classifyNight` answer `night_not_advanced` about a night the calendar says was crossed - the opposite of what
    * this record is for. So a refused attempt stays out of `terminal` and the night keeps whatever attribution its
    * other witnesses support.
    */
   const crossingTerminal = () =>
-    advanceDayTerminals().find((entry) => entry.state === "succeeded" && entry.reasonCode === "day_advanced") ?? null;
+    sleepTerminals().find((entry) => entry.state === "succeeded" && entry.reasonCode === "day_advanced") ?? null;
   /**
    * Has a dispatch appeared that can still become this night?
    *
-   * A dispatch alone is not enough, because `advance_day` can be REFUSED and a refusal mints a terminal too. Watching
+   * A dispatch alone is not enough, because `sleep` can be REFUSED and a refusal mints a terminal too. Watching
    * a refused night would spend the whole night budget on one nothing started - and the day loop keeps offering turns
    * until the day is crossed, so a later turn may sleep for real. While every dispatch already ended in a
    * non-crossing terminal the wait therefore keeps waiting, which is what it did when the only channel it read was
    * the flat one.
    */
   const nightBegan = () => {
-    const requests = advanceDayRequestsSinceStart();
+    const requests = sleepRequestsSinceStart();
     if (requests.length === 0) return false;
     if (crossingTerminal() !== null) return true;
-    return advanceDayTerminals().length < requests.length;
+    return sleepTerminals().length < requests.length;
   };
   const observeQuietly = async () => {
     try {
@@ -2406,7 +2406,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       if (bridgeDisconnections.length > 0) {
         return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
       }
-      // The night BEGINS when the companion dispatches `advance_day`, read from EITHER channel. Reading only the
+      // The night BEGINS when the companion dispatches `sleep`, read from EITHER channel. Reading only the
       // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
       // notice the night only once the calendar had moved - i.e. once it was over.
       if (nightBegan()) return null;
@@ -2420,7 +2420,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // reads as a judgement about her behaviour and was a fact about the turn boundary.
       //
       // So the settle keeps the watch waiting while the WORLD still has a day to run. It only concludes when the world
-      // itself says the day is spent - past the sleep hour with no `advance_day`, or no longer running at all - which
+      // itself says the day is spent - past the sleep hour with no `sleep`, or no longer running at all - which
       // is the fact this watcher was always trying to observe.
       if (daySettled) {
         const worldClock = readWorldClock();
@@ -2611,21 +2611,21 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
             : null,
       }),
   });
-  // The companion's own `advance_day` for THIS night - on whichever channel it was dispatched - and the terminal
+  // The companion's own `sleep` for THIS night - on whichever channel it was dispatched - and the terminal
   // receipt its lifecycle minted. Read here rather than after the crossing check because it is one of the witnesses
   // that decides the cause, and a cause read from a receipt that has not been looked up yet is the hole the
   // two-valued ternary hid.
-  const dispatched = advanceDayRequestsSinceStart();
+  const dispatched = sleepRequestsSinceStart();
   const terminal = crossingTerminal();
   // HOW the night ended, from the witnesses that can answer it. It is a CAUSE on the day's record and never a verdict -
   // the night was watched on to the day the engine opened.
   //
-  // THREE values, because `sleep` is a claim only one witness can support. `advance_day` is the only thing that starts
+  // THREE values, because `sleep` is a claim only one witness can support. `sleep` is the only thing that starts
   // a `SleepAndAdvanceDayLifecycle`, so `entered_via=native_sleep_prompt` on its receipt is the one proof that the
   // COMPANION crossed the night. Nothing the harness observes can stand in for it - least of all the absence of a
   // pass-out, which is a fact about a 250 ms poll and not about the night.
   //
-  // MEASURED 2026-10-30 (`round8`): ZERO `advance_day` dispatches in the entire run - attempted, program and flat
+  // MEASURED 2026-10-30 (`round8`): ZERO `sleep` dispatches in the entire run - attempted, program and flat
   // traces alike - because the companion refused in so many words ("Risky—player may want to do something. Better to
   // not end day on my own."). Both nights reached 26:00 (`game_time=2600`) and the engine ran `NewDay` + `SaveGame.Save()`
   // + "after save, starting spring 6/7 Y1": the 2:00 AM pass-out, on the farmhouse floor and then in the middle of Town.
@@ -2657,7 +2657,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // when a receipt exists - `classifyNight` cross-checks the two against each other rather than trusting either.
   //
   // `actionTrace` records only FLAT dispatches. Measured 2026-10-28 (`round5`): all 42 of that run's dispatches went
-  // through Body Program, so `advance_day` - which the Mod DID execute, `dismiss_modal` succeeding at 00:27:59 and
+  // through Body Program, so `sleep` - which the Mod DID execute, `dismiss_modal` succeeding at 00:27:59 and
   // SMAPI logging "after save, starting spring 6 Y1" at 00:28:04 - was invisible here. The run was reported as
   // `night_never_started:actor_held_by_cutscene` while the world had in fact rolled over.
   //
@@ -2671,7 +2671,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return Number.isInteger(dayBefore) && Number.isInteger(now) && now !== dayBefore;
   })();
   if (dayAdvanced && terminal === null) {
-    // The calendar is the only witness this night has: no `advance_day` receipt arrived in this window on either
+    // The calendar is the only witness this night has: no `sleep` receipt arrived in this window on either
     // channel, and inventing one would be a receipt for something nothing observed. `release` says what actually
     // closed the night, and `cause` stays `engine` - the crossing is a fact and its attribution is not.
     return Object.freeze({
@@ -2684,10 +2684,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     });
   }
   // The night's own terminal, already read above because it is one of the cause's witnesses. A window in which
-  // nothing dispatched an `advance_day` and no calendar moved held no night to attribute; a dispatch that neither
+  // nothing dispatched a `sleep` and no calendar moved held no night to attribute; a dispatch that neither
   // crossed nor produced a terminal keeps the watch's own reason at the bottom instead.
   if (dispatched.length === 0 && terminal === null) {
-    // `night_never_started:` stays the prefix because that IS the finding - no `advance_day` ever started a night. The
+    // `night_never_started:` stays the prefix because that IS the finding - no `sleep` ever started a night. The
     // suffix is the watch's own reason, and since `rollover_menu_deadlock` exists it says WHICH kind of night never
     // started: one nothing was closing, or one that was merely slow. Flattening the two back into one word here would
     // throw away the distinction the loop just took the trouble to observe.
@@ -3299,7 +3299,7 @@ if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
   const seeded = await seedMemoriesViaManagementSurface({
     root,
     deploymentManifestPath: manifestPath,
-    seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
+    seeds: ["之前商量好的：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
     // Surface the seed's own phase costs in the run artifact: the seed is the
     // dominant cold-start cost (~49s in a real run), and "the live run is slow to
     // start" is only actionable once it is known which part of the boot pays it.
@@ -3319,7 +3319,7 @@ if (SCENARIO === "memory_covenant" && !usesDisposableRoot) {
     return seedMemoriesViaManagementSurface({
       root,
       deploymentManifestPath: manifestPath,
-      seeds: ["玩家说好的规矩：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
+      seeds: ["之前商量好的：农场里的草莓一颗都不能卖掉，全都留着酿果酒。"],
       gameSessionMode: "known",
       onPhase: (name, elapsedMs) => {
         phaseTimings.marks[`seed_${name}`] = elapsedMs;
@@ -3444,7 +3444,7 @@ try {
   // path below stays a string and only this branch calls it.
   // Whether the in-game DAY is spent, answered by the engine and never by a turn boundary.
   //
-  // Two facts make it true: the clock is past the sleep hour, or `advance_day` settled - the only thing that actually
+  // Two facts make it true: the clock is past the sleep hour, or `sleep` settled - the only thing that actually
   // crosses a night. An unreadable clock is NOT spent: "we could not tell" is not "the day is over".
   // Whether the in-game DAY is spent, answered by the engine and never by a turn boundary.
   //
@@ -3453,7 +3453,7 @@ try {
   // Whether the NIGHT has been crossed — asked about THIS DAY, not about the run.
   //
   // Reaching 22:00 is not it (measured 2026-10-26: a turn ended at 22:00 announcing "Time to sleep ... let me
-  // advance_day" and the loop stopped a round short). Nor is a dispatch from an EARLIER day: `actionTrace` holds
+  // sleep" and the loop stopped a round short). Nor is a dispatch from an EARLIER day: `actionTrace` holds
   // the whole run, so the previous predicate answered "already crossed" on day 2 before it had done anything —
   // which is why `nextDayAccomplishedActionIds` came back empty and the baseline named
   // `next_day_produced_no_farm_work`. Nor is a fresh 06:00 (the multi-day fixture resets the clock to 600 every
@@ -3501,7 +3501,7 @@ try {
       : `(Day ${String(day)} is still going. Carry on.)`;
   // Offered when the world clock says this day's work hours are over but the night has NOT been crossed.
   // Measured 2026-10-26: a turn ended at 22:00 with the companion saying "Time to sleep ... let me observe first
-  // then advance_day"; the next turn it was given was the generic "carry on", which reads as "keep farming".
+  // then sleep"; the next turn it was given was the generic "carry on", which reads as "keep farming".
   // The harness still takes no decision: it states the clock and the one action that ends a day, and leaves
   // whether to take it to the companion.
   const promptForLateDay = (day) =>
@@ -3515,7 +3515,7 @@ try {
   if (SCENARIO === "multiday_routine") {
     // Lane G0: the companion runs consecutive days and ends each one itself. The loop's `dayTurn` is an
     // ordinary agent turn; its `nightWatch` is the rollover observer, because the companion is blocked inside
-    // `advance_day` at exactly the moment the settlement menu is raised.
+    // `sleep` at exactly the moment the settlement menu is raised.
     //
     // HOW each night ended, by the day it ended. The loop owns the record shape, and `onDay` is the hook it offers at
     // exactly the moment the record is published - after BOTH callbacks resolve, so this day's night watch has
@@ -3536,7 +3536,7 @@ try {
         try {
           // A day contains turns, not one turn. The loop asks the ENGINE whether the day is spent - never the turn
           // boundary - and keeps offering turns while the clock still has day left in it. It does not end a turn for the
-          // companion, and it never tells it to sleep: the companion's own dispatch of `advance_day` is the only thing that
+          // companion, and it never tells it to sleep: the companion's own dispatch of `sleep` is the only thing that
           // crosses the night, which is the behaviour this scenario exists to observe.
           let turns = 0;
           const dayScope = dayScopeFrom({

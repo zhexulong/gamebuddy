@@ -249,32 +249,32 @@ for (let index = 0; index < ${MAX_PLAN_NODES + 40}; index++) {
 });
 
 /**
- * `advance_day` rebuilds the world, so it is the LAST node a plan can carry.
+ * `sleep` rebuilds the world, so it is the LAST node a plan can carry.
  *
  * It walks the actor to its own bed and then runs the save/warp/day-start lifecycle, which discards the world every
  * later node was compiled against. A node written after it is a step aimed at a snapshot that no longer describes the
  * farm, so the Mod could only refuse it at runtime - the builder refuses it at the call that wrote it instead, and
  * names both actions so the author sees which line was wrong.
  */
-test("a node compiled after advance_day is refused by name, at the call that wrote it", () => {
+test("a node compiled after sleep is refused by name, at the call that wrote it", () => {
   const result = compile(`
 builder.move_to_tile({ x: 12, y: 8 });
-builder.advance_day();
+builder.sleep();
 builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
 `);
-  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:advance_day");
+  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
 });
 
-test("advance_day as the last node still compiles, and a menu-closing step is not terminal", () => {
+test("sleep as the last node still compiles, and a menu-closing step is not terminal", () => {
   const ending = nodesOf(
     compile(`
 builder.move_to_tile({ x: 12, y: 8 });
-builder.advance_day();
+builder.sleep();
 `),
   );
   assert.deepEqual(
     ending.map((node) => node.actionId),
-    ["move_to_tile", "advance_day"],
+    ["move_to_tile", "sleep"],
   );
   // Closing a menu changes nothing about the world, so watering a crop afterwards is a legal sequence and stays one.
   const afterMenu = nodesOf(

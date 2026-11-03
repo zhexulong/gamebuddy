@@ -1366,7 +1366,7 @@ test("the Stardew catalog and the Mod-catalog predicate answer every registratio
   const driftedDescriptor = { ...completeDescriptor, arguments: [{ name: "hour", type: "integer" }] };
 
   const base = {
-    actionId: "advance_day",
+    actionId: "sleep",
     familyId: "world_lifecycle",
     identityVersion: 1,
     kind: "execution" as const,
@@ -1427,7 +1427,7 @@ test("the Stardew catalog and the Mod-catalog predicate answer every registratio
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.searchVisibleActions(
       [wire({ ...base, lifecycle: "published" }, driftedDescriptor)],
       [base.actionId],
-      "advance_day",
+      "sleep",
     ),
     [],
   );
@@ -1435,9 +1435,9 @@ test("the Stardew catalog and the Mod-catalog predicate answer every registratio
 
 test("a registration shape the wire cannot deliver is refused by name, not projected as invisible", () => {
   const visibleActions = (registration: IntegrationActionRegistration) =>
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.visibleActions([registration], ["advance_day"]);
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.visibleActions([registration], ["sleep"]);
   const base = {
-    actionId: "advance_day",
+    actionId: "sleep",
     familyId: "world_lifecycle",
     identityVersion: 1,
     kind: "execution" as const,
@@ -1447,7 +1447,7 @@ test("a registration shape the wire cannot deliver is refused by name, not proje
   for (const lifecycle of ["planned", "diagnostic"] as const)
     assert.throws(
       () => visibleActions({ ...base, lifecycle }),
-      new RegExp(`integration_registration_lifecycle_unsupported:advance_day:${lifecycle}`),
+      new RegExp(`integration_registration_lifecycle_unsupported:sleep:${lifecycle}`),
       lifecycle,
     );
 
@@ -1455,6 +1455,6 @@ test("a registration shape the wire cannot deliver is refused by name, not proje
   // answered, so it says so instead of reading as an action this Host does not offer.
   assert.throws(
     () => visibleActions({ ...base, lifecycle: "live_verified", kind: undefined } as never),
-    /integration_registration_kind_unsupported:advance_day:undefined/,
+    /integration_registration_kind_unsupported:sleep:undefined/,
   );
 });

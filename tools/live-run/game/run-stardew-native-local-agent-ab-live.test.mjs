@@ -897,7 +897,7 @@ test("memory_covenant is judged by receipts, not keywords", () => {
   );
   assert.match(
     RUNNER_SOURCE,
-    /if \(SCENARIO === "memory_covenant" && !usesDisposableRoot\) \{\n  const seeded = await seedMemoriesViaManagementSurface\(\{\n    root,\n    deploymentManifestPath: manifestPath,\n    seeds: \["玩家说好的规矩/,
+    /if \(SCENARIO === "memory_covenant" && !usesDisposableRoot\) \{\n  const seeded = await seedMemoriesViaManagementSurface\(\{\n    root,\n    deploymentManifestPath: manifestPath,\n    seeds: \["之前商量好的：/,
   );
   assert.match(RUNNER_SOURCE, /covenantSeed = Object\.freeze\(\{\n    durable: seeded\.result\.durable/);
   assert.match(RUNNER_SOURCE, /有没有什么关于这些草莓的规矩/);
@@ -1710,7 +1710,7 @@ test("a night's terminal is read from the receipt the fact log actually holds", 
   const advanceReceipt = {
     executionId: "e-advance",
     requestId: "r-advance",
-    actionId: "advance_day",
+    actionId: "sleep",
     state: "succeeded",
     reasonCode: "day_advanced",
     revision: 12,
@@ -1775,7 +1775,7 @@ test("a night the Mod crossed through Body Program reaches the record with its o
   const advanceReceipt = Object.freeze({
     executionId: "bdf26bff83f743788ce0985e4472d94c",
     requestId: "3982f1bcc6304c63b860a9a9a97c7834",
-    actionId: "advance_day",
+    actionId: "sleep",
     state: "succeeded",
     reasonCode: "day_advanced",
     revision: 1559,
@@ -1794,14 +1794,14 @@ test("a night the Mod crossed through Body Program reaches the record with its o
     });
   const acceptedFact = asRecorded({ ...advanceReceipt, state: "accepted", reasonCode: "accepted" });
   const terminalFact = asRecorded(advanceReceipt);
-  // The refusal `advance_day` mints when the actor is not indoors/standing/free - the ordinary way a companion's
+  // The refusal `sleep` mints when the actor is not indoors/standing/free - the ordinary way a companion's
   // attempt comes back named and the DAY goes on.
   const refusedFact = asRecorded({
     ...advanceReceipt,
     executionId: "9a1c0b7f5d2e4a63b0f7c1d2e3f40516",
     requestId: "6d0f4c9a7e2b18d3c5a4f6e8b0d12345",
     state: "rejected",
-    reasonCode: "advance_day_requires_indoors",
+    reasonCode: "sleep_requires_indoors",
   });
 
   /**
@@ -1889,7 +1889,7 @@ test("a night the Mod crossed through Body Program reaches the record with its o
     null,
     `the night's own receipt IS its terminal; the watcher answered ${String(night.reasonCode ?? night.release)}`,
   );
-  assert.equal(night.terminal.actionId, "advance_day");
+  assert.equal(night.terminal.actionId, "sleep");
   assert.equal(night.terminal.state, "succeeded");
   assert.equal(night.terminal.reasonCode, "day_advanced");
   assert.equal(night.terminal.requestId, advanceReceipt.requestId, "the receipt the Mod minted for THIS dispatch");
@@ -2616,7 +2616,7 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
     // What the day also did, and what must NOT count: motion, gear, and the task's own progress reports.
     recordedActionReceipt("move_to_tile", "target_reached"),
     recordedActionReceipt("equip_tool", "tool_equipped"),
-    recordedActionReceipt("advance_day", "day_advanced"),
+    recordedActionReceipt("sleep", "day_advanced"),
     recordedActionReceipt("dismiss_modal", "modal_dismissed"),
     // A non-receipt fact in the same log is not work either.
     { type: "world_fact", reasonCode: null, requestId: null, worldFactPayload: { kind: "day_started" } },
@@ -2681,7 +2681,7 @@ test("a receipt that only progressed an action is an attempt, never work", () =>
 
   // A night the engine crossed by itself has no `advance_day` receipt at all; it must never read as farm work.
   const nightOnly = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
-    factLog: [recordedActionReceipt("advance_day", "day_advanced")],
+    factLog: [recordedActionReceipt("sleep", "day_advanced")],
     actionTrace: [],
     NON_ACCOMPLISHMENT_ACTIONS: new Set(),
     STARDEW_PUBLISHED_ACTION_GATES,

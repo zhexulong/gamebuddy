@@ -264,6 +264,9 @@ export function projectGameSnapshotContext(
             // `Actionable: true` is not the promise it looks like.
             `- Modal: ${movement.holdingModal} - owns the screen${openedBy(movement.holdingModalActionOwned)}: the game clock does not advance and no other action can run until it is cleared; dismiss_modal closes an informational menu, answer_dialogue a question`,
           ]),
+      ...(location === "FarmHouse" && (clock.timeOfDay >= 1800 || clock.timeOfDay < 600)
+        ? ["- Bed: in FarmHouse, ready to sleep (builder.sleep() ends the day)"]
+        : []),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,
       `- Pets: ${pets.length > 0 ? pets.map((pet) => `${pet.petType}(${pet.stationary ? "stationary" : "moving"})`).join(", ") : "none within range"}]`,

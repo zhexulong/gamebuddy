@@ -3321,12 +3321,12 @@
         "handlerGroup": null
       },
       {
-        "actionId": "advance_day",
+        "actionId": "sleep",
         "identityVersion": 1,
         "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
-          "actionId": "advance_day",
+          "actionId": "sleep",
           "identityVersion": 1,
           "lifecycle": "live_verified",
           "kind": "execution",
@@ -3810,7 +3810,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "respond_level_up",
-      "advance_day",
+      "sleep",
       "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",
@@ -3902,7 +3902,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "respond_level_up",
-      "advance_day",
+      "sleep",
       "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",
@@ -3931,7 +3931,6 @@
     "adapterActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4004,6 +4003,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4025,7 +4025,6 @@
     "toolActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4098,6 +4097,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4119,7 +4119,6 @@
     "toolRouteActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4192,6 +4191,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4213,7 +4213,6 @@
     "requestValidatorActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4286,6 +4285,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4307,7 +4307,6 @@
     "envelopeValidatorActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4380,6 +4379,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4401,7 +4401,6 @@
     "executionRequestUnionActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4474,6 +4473,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4518,6 +4518,8 @@
       "program_submit_result",
       "program_status",
       "program_status_result",
+      "program_stop",
+      "program_stop_result",
       "program_events",
       "program_events_result",
       "error",
@@ -4589,7 +4591,6 @@
     "schemaExecutionActionIds": [
       "accept_daily_quest",
       "accept_special_order",
-      "advance_day",
       "answer_dialogue",
       "bait_crab_pot",
       "break_container_source",
@@ -4662,6 +4663,7 @@
       "shake_tree",
       "ship_item",
       "shop_purchase",
+      "sleep",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -4946,7 +4948,7 @@
         "fixtureScenario": "native_interact_npc_with_item_v1"
       },
       {
-        "actionId": "advance_day",
+        "actionId": "sleep",
         "runner": "run-stardew-native-local-player-advance-day-smoke.mjs",
         "fixtureScenario": null
       },

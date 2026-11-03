@@ -156,7 +156,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["friendship_callback", "true"],
     ],
   },
-  advance_day: {
+  sleep: {
     reasonCode: "day_advanced",
     // The producer's own shape, duplicate `topology` included: the base list
     // (SleepAndAdvanceDayLifecycle.cs:865-874) and the settlement block (:835-852) both write it.

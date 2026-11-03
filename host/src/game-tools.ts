@@ -572,7 +572,7 @@ export function buildCandidateToolSchema(
     );
   }
 
-  if (actionId === "advance_day") {
+  if (actionId === "sleep") {
     // No client-supplied target: the Farmhand's own bed and its native ready
     // state are the whole input, so there is nothing to synthesize or spoof.
     return Type.Object({}, { additionalProperties: false });
@@ -1610,17 +1610,17 @@ export function createStardewActionTools(
   }
   {
     // constant mount; per-action admission at execution
-    const registration = modRegistrations.find((entry) => entry.actionId === "advance_day");
-    if (registration?.descriptor && isModDescriptorComplete("advance_day", registration.descriptor)) {
-      const schema = buildCandidateToolSchema("advance_day", registration.descriptor);
+    const registration = modRegistrations.find((entry) => entry.actionId === "sleep");
+    if (registration?.descriptor && isModDescriptorComplete("sleep", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("sleep", registration.descriptor);
       tools.push(
         makeGameActionTool({
-          name: STARDEW_ACTION_TOOL_NAMES.advance_day,
+          name: STARDEW_ACTION_TOOL_NAMES.sleep,
           label: "Sleep and Advance the Day",
           description:
-            "End the day the way the player does: the Farmhand walks to its own bed, lets the native sleep path run, declares sleep-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
+            "End the day the way the player does: the Farmhand walks to its own bed, lets the native bedtime path run, declares bedtime-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
           parameters: schema,
-          action: "advance_day",
+          action: "sleep",
           toArgs: (params) => declaredArguments(registration.descriptor, params),
         }),
       );
@@ -2830,7 +2830,7 @@ async function executeGameAction(
   // The shared wrapper owns identity, revision, and deadline construction; tool closures contribute only an action
   // literal plus typed args.
   //
-  // The deadline is the ACTION's own budget when the Mod publishes one: `advance_day`'s watchdog is 600s because a
+  // The deadline is the ACTION's own budget when the Mod publishes one: `sleep`'s watchdog is 600s because a
   // night waits on other players, the save and the day start, and a hard-coded 30s made it time out by construction
   // (measured 2026-10-17). The 30s default stays for every action that publishes no watchdog, and the Mod's budget
   // is clamped to the bridge's own maximum so neither side can be handed an unbounded wait.

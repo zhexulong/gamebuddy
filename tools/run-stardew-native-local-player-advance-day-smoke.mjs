@@ -11,7 +11,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const ACTION = "advance_day";
+const ACTION = "sleep";
 const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /**
@@ -27,12 +27,7 @@ const EXPECTED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  * The lifecycle is a multi-frame execution, so the terminal legitimately arrives
  * long after the Accepted receipt: a co-op night waits on other players.
  */
-export async function runAdvanceDaySmoke(
-  client,
-  receipts,
-  config,
-  { terminalTimeoutMs = 300_000 } = {},
-) {
+export async function runAdvanceDaySmoke(client, receipts, config, { terminalTimeoutMs = 300_000 } = {}) {
   const trace = [];
   const startedAt = Date.now();
   const topology = validateTopologyConfig(config);
@@ -71,7 +66,7 @@ export async function runAdvanceDaySmoke(
     // the day the world actually reports afterwards. Total days run continuously
     // across seasons, so the calendar day is derivable and is not a restatement
     // of the receipt.
-    const expectedDayOfMonth = ((dayAfter % 28) + 28) % 28 + 1;
+    const expectedDayOfMonth = (((dayAfter % 28) + 28) % 28) + 1;
     const worldAgrees = after.dayOfMonth === expectedDayOfMonth;
     const passed =
       terminal.state === "succeeded" &&

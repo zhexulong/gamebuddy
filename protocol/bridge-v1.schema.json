@@ -4917,7 +4917,7 @@
         }
       }
     },
-    "advanceDayArgs": {
+    "sleepArgs": {
       "type": "object",
       "additionalProperties": false,
       "maxProperties": 0
@@ -6356,14 +6356,14 @@
             ],
             "properties": {
               "action": {
-                "const": "advance_day"
+                "const": "sleep"
               }
             }
           },
           "then": {
             "properties": {
               "args": {
-                "$ref": "#/$defs/advanceDayArgs"
+                "$ref": "#/$defs/sleepArgs"
               }
             }
           }
@@ -6464,7 +6464,7 @@
             "ride_bus",
             "answer_dialogue",
             "respond_level_up",
-            "advance_day",
+            "sleep",
             "harvest_bush",
             "harvest_fruit_tree",
             "shake_tree",

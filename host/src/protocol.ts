@@ -1105,7 +1105,7 @@ export type ExecutionRequest = Readonly<{
     | "toggle_fence_gate"
     // The cross-day lifecycle. It carries no arguments: its target is the
     // actor's own bed and its readiness is native state.
-    | "advance_day";
+    | "sleep";
   args: Readonly<Record<string, unknown>>;
   expectedRevision: number;
   deadlineMs: number;
@@ -2701,7 +2701,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "cook_recipe" &&
     value.action !== "collect_crab_pot_output" &&
     value.action !== "ship_item" &&
-    value.action !== "advance_day" &&
+    value.action !== "sleep" &&
     value.action !== "harvest_bush" &&
     value.action !== "harvest_fruit_tree" &&
     value.action !== "shake_tree" &&
@@ -2721,7 +2721,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     // a new-day transition, so it shares the navigation ceiling rather than the
     // ordinary one-minute action ceiling.
     value.deadlineMs >
-      nowMs + (value.action === "navigate_to_destination" || value.action === "advance_day" ? 600_000 : 60_000)
+      nowMs + (value.action === "navigate_to_destination" || value.action === "sleep" ? 600_000 : 60_000)
   )
     return "invalid_deadline";
   // REMOVED HERE: the `actionable` short-circuit that returned `player_not_actionable` before the Mod could
@@ -3407,7 +3407,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return `invalid_${value.action}_target`;
-  } else if (value.action === "advance_day") {
+  } else if (value.action === "sleep") {
     // No client-supplied target: the bed and the ready state are native facts.
     if (!hasExactKeys(value.args, [])) return "invalid_args";
   }
@@ -3845,7 +3845,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "shake_tree" ||
       value.action === "take_pedestal_item" ||
       value.action === "toggle_fence_gate" ||
-      value.action === "advance_day") &&
+      value.action === "sleep") &&
       isRecord(value.args) &&
       Object.keys(value.args).length <= 8 &&
       Number.isSafeInteger(value.expectedRevision) &&

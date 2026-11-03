@@ -74,10 +74,10 @@ test("the exporter emits Perfetto-readable JSON for three nested spans", () => {
 test("an open span exports as a zero-duration span that names itself incomplete", () => {
   const clock = fixedClock();
   const trace = createRunTrace("run_02", { now: clock.now });
-  trace.begin(RUN_SPAN_NAMES.action, { actionId: "advance_day" });
+  trace.begin(RUN_SPAN_NAMES.action, { actionId: "sleep" });
   const [event] = toChromeTrace(trace.spans()).traceEvents;
   assert.equal(event!.dur, 0);
-  assert.deepEqual(event!.args, { actionId: "advance_day", open: true });
+  assert.deepEqual(event!.args, { actionId: "sleep", open: true });
 });
 
 test("a span tree yields the same per-action cadence totals the old action-trace aggregator produced", async () => {

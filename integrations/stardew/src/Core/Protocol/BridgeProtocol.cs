@@ -2131,9 +2131,9 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // ship_item names a bin and an item, never a slot: a walk to the bin takes tens of ticks and the pack
         // moves meanwhile, so which stack ships is the body's own decision (the first carried stack of that id).
         "ship_item" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
-        // advance_day targets the actor's own bed and its readiness is native
+        // sleep targets the actor's own bed and its readiness is native
         // state, so it carries no client-supplied arguments at all.
-            "advance_day" => Array.Empty<string>(),
+            "sleep" => Array.Empty<string>(),
     // respond_level_up answers the day-end `LevelUpMenu`: `choice` is the one value its own declared domain allows,
     // and the `(skill, level)` pair the caller believes the menu is about is the binding - a persistent profession
     // write must never be applicable to the wrong level-up.

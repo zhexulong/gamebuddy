@@ -773,7 +773,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             owners.Add((
                 BodyOwnedByDayAdvance,
                 this.activeDayAdvance.ExecutionId,
-                "advance_day",
+                "sleep",
                 waitingToBegin,
                 waitingToBegin ? "approaching" : "committed",
                 waitingToBegin));

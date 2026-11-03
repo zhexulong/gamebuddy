@@ -2663,7 +2663,7 @@
         "targetFamily": "pendingLevelUpChoices"
       },
       {
-        "actionId": "advance_day",
+        "actionId": "sleep",
         "identityVersion": 1,
         "lifecycle": "live_verified",
         "kind": "execution",
@@ -3075,7 +3075,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "respond_level_up",
-      "advance_day",
+      "sleep",
       "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",
@@ -3193,7 +3193,7 @@
       "dismiss_modal",
       "answer_dialogue",
       "respond_level_up",
-      "advance_day",
+      "sleep",
       "send_multiplayer_chat",
       "color_placed_object",
       "clear_fish_pond",

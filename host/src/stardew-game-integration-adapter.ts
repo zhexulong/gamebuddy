@@ -1302,7 +1302,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             e.friendship_callback === "true",
         )
       );
-    case "advance_day":
+    case "sleep":
       // SleepAndAdvanceDayLifecycle.cs:835-853 Finish("passed", "day_advanced", settlement).
       // This terminal is read by field membership, not by the shared key/value parser: the
       // lifecycle's BuildReceiptEvidence (:863-894) appends its settlement block to a base

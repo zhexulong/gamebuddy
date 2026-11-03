@@ -1,4 +1,4 @@
-﻿using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Handlers;
@@ -25,7 +25,7 @@ internal sealed class WorldLifecycleActionHandler : IFarmhandActionHandler
 
         return request.Action switch
         {
-            "advance_day" => this.executions.RequestLocalAdvanceDay(request.RequestId, request.DeadlineMs),
+            "sleep" => this.executions.RequestLocalAdvanceDay(request.RequestId, request.DeadlineMs),
             "accept_daily_quest" => this.executions.RequestLocalAcceptDailyQuest(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
             "accept_special_order" => this.executions.RequestLocalAcceptSpecialOrder(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),
             "claim_museum_reward" => this.executions.RequestLocalClaimMuseumReward(request.RequestId, request.Args.ExpectedTargetId!, request.DeadlineMs),

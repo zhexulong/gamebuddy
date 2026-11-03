@@ -206,8 +206,8 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   ]),
   actionAdapter(
     "break_rock_source",
-    "Break a one-hit rock source",
-    "Use one equipped basic Pickaxe hit on a live ordinary one-hit stone; drops and pickup are separate.",
+    "Break a rock source",
+    "Use one equipped basic Pickaxe swing on a live ordinary breakable stone; a rock that loses durability is progress, and drops/pickup are separate.",
     ["rock_source", "tool"],
   ),
   actionAdapter(
@@ -247,7 +247,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["pet"],
   ),
   actionAdapter(
-    "advance_day",
+    "sleep",
     "Sleep and advance the day",
     "Walk the Farmhand to its own bed, let the native sleep path run, declare local sleep-ready through that same native path, and observe the native save/new-day pipeline. In a shared world the night completes only when every required player is ready, so a barrier that never completes is reported honestly rather than forced.",
     ["own_bed", "day_lifecycle"],
@@ -616,7 +616,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   load_building_chest: "stardew_load_building_chest",
   collect_building_chest_output: "stardew_collect_building_chest_output",
   pet_animal: "stardew_pet_animal",
-  advance_day: "stardew_advance_day",
+  sleep: "stardew_sleep",
   clear_debris: "stardew_clear_debris",
   npc_relationship: "stardew_npc_relationship",
   water_pet_bowl: "stardew_water_pet_bowl",
@@ -697,7 +697,7 @@ export const RETIRED_ACTION_POLICY_MIGRATIONS = Object.freeze({
     "claim_minigame_or_festival_reward",
   ]),
   minigame_play: Object.freeze(["start_minigame_phase", "control_minigame_phase", "claim_minigame_or_festival_reward"]),
-  end_day: Object.freeze(["sleep_ready", "advance_day_after_ready"]),
+  end_day: Object.freeze(["sleep_ready", "sleep_after_ready"]),
   milk_animal: Object.freeze(["collect_animal_product"]),
   shear_animal: Object.freeze(["collect_animal_product"]),
   tool_upgrade: Object.freeze(["request_tool_upgrade", "claim_tool_upgrade"]),
@@ -770,7 +770,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "interact_npc_with_item",
   "talk_to_npc",
   "pet_animal",
-  "advance_day",
+  "sleep",
   "ride_minecart",
   "dismiss_modal",
   "answer_dialogue",
@@ -1109,7 +1109,7 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (publishedPostconditionName(descriptor) !== "item_purchased") return false;
     return true;
   }
-  if (actionId === "advance_day") {
+  if (actionId === "sleep") {
     // The night carries no arguments at all: the bed and the ready state are
     // native facts, so the complete-descriptor gate is the empty argument list
     // plus the declared day-advanced postcondition.

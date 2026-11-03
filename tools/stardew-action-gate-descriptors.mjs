@@ -195,7 +195,7 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
   // sleep-answer/observation, so there is no precondition to provision. It earns
   // the shared-world rung: startSleep forks on Game1.IsMultiplayer, so a
   // single-player pass cannot stand in for the co-op ready barrier.
-  gate("advance_day", 1, "run-stardew-native-local-player-advance-day-smoke.mjs", "day_advanced"),
+  gate("sleep", 1, "run-stardew-native-local-player-advance-day-smoke.mjs", "day_advanced"),
   // Promoted to live_verified (Group B). Each entry records the action's own
   // target-version live run terminal: these runners produced a native receipt
   // and an action-specific postcondition, without an independent publication

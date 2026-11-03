@@ -474,3 +474,25 @@ test("a snapshot with no modal in the way renders no modal line at all", () => {
   assert.notEqual(held.text, idle.text);
   assert.equal(held.movement.holdingModal, "ShippingMenu");
 });
+
+test("projectGameSnapshotContext surfaces Bed sleep affordance in FarmHouse at night", () => {
+  const dayFarmhouse = projectGameSnapshotContext(
+    { ...modalSource, location: "FarmHouse", timeOfDay: 1200 },
+    1_000,
+    1_250,
+  );
+  if (!dayFarmhouse.available) throw new Error("projection_unavailable");
+  assert.doesNotMatch(dayFarmhouse.text, /Bed: in FarmHouse/);
+
+  const nightFarmhouse = projectGameSnapshotContext(
+    { ...modalSource, location: "FarmHouse", timeOfDay: 2200 },
+    1_000,
+    1_250,
+  );
+  if (!nightFarmhouse.available) throw new Error("projection_unavailable");
+  assert.match(nightFarmhouse.text, /Bed: in FarmHouse, ready to sleep \(builder\.sleep\(\) ends the day\)/);
+
+  const nightOutside = projectGameSnapshotContext({ ...modalSource, location: "Farm", timeOfDay: 2200 }, 1_000, 1_250);
+  if (!nightOutside.available) throw new Error("projection_unavailable");
+  assert.doesNotMatch(nightOutside.text, /Bed: in FarmHouse/);
+});

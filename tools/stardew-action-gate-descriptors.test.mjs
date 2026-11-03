@@ -136,7 +136,7 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     // co-op day_advanced, ready 2/2).
     pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
     interact_npc_with_item: "run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
-    advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
+    sleep: "run-stardew-native-local-player-advance-day-smoke.mjs",
     face_direction: "run-stardew-native-local-player-expression-smoke.mjs",
     // Promoted to live_verified in the same ladder: every remaining experimental
     // action has now passed its own native-local run, so each names the
@@ -333,6 +333,6 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
   );
   assert.deepEqual(
     STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => gate.fixtureScenario === null).map((gate) => gate.actionId),
-    ["move_to_tile", "equip_tool", "travel", "enter_exit", "advance_day"],
+    ["move_to_tile", "equip_tool", "travel", "enter_exit", "sleep"],
   );
 });
