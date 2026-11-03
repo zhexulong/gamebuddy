@@ -627,6 +627,7 @@ export type TavernManagementDialogueWebOptions = Readonly<{
                 title: string;
                 macros: readonly Readonly<{ token: string; standard: boolean }>[];
               }>[];
+              macros?: readonly Readonly<{ token: string; standard: boolean }>[];
             }>[];
           }>;
         }>;
@@ -660,6 +661,7 @@ export type TavernManagementDialogueWebOptions = Readonly<{
                 title: string;
                 macros: readonly Readonly<{ token: string; standard: boolean }>[];
               }>[];
+              macros?: readonly Readonly<{ token: string; standard: boolean }>[];
             }>[];
           }>;
         }>;
@@ -750,10 +752,14 @@ function omittedLossRows(
     macros: readonly Readonly<{ token: string; standard: boolean }>[];
   }>[],
 ): { title: string; macros: { token: string; standard: boolean }[] }[] {
-  return omitted.map((entry) => ({
-    title: entry.title,
-    macros: entry.macros.map((macro) => ({ token: macro.token, standard: macro.standard })),
-  }));
+  return omitted.map((entry) => ({ title: entry.title, macros: macroLossRows(entry.macros) }));
+}
+
+/** The macros a FIELD-level loss names, copied the same way: the ledger is frozen, the wire is not. */
+function macroLossRows(
+  macros: readonly Readonly<{ token: string; standard: boolean }>[],
+): { token: string; standard: boolean }[] {
+  return macros.map((macro) => ({ token: macro.token, standard: macro.standard }));
 }
 
 /**
@@ -2060,6 +2066,7 @@ export function createTavernManagementDialogueWebRequestHandler(
                       reason: loss.reason,
                       count: loss.count,
                       ...(loss.omitted === undefined ? {} : { omitted: omittedLossRows(loss.omitted) }),
+                      ...(loss.macros === undefined ? {} : { macros: macroLossRows(loss.macros) }),
                     }),
                   ),
                 }),
@@ -2133,6 +2140,7 @@ export function createTavernManagementDialogueWebRequestHandler(
                     reason: loss.reason,
                     count: loss.count,
                     ...(loss.omitted === undefined ? {} : { omitted: omittedLossRows(loss.omitted) }),
+                    ...(loss.macros === undefined ? {} : { macros: macroLossRows(loss.macros) }),
                   }),
                 ),
               }),
