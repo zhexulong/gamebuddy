@@ -531,12 +531,18 @@ export type StCardImportOmittedEntryV1 = Readonly<{
  * `omitted` names the lost items where the player can act on them, so the review
  * can say which entry and which macro instead of only how many. It is capped, so
  * it can be shorter than `count`.
+ *
+ * `macros` is the same idea for a FIELD-level loss - one field the companion's
+ * context will omit as a whole, as a closing direction carrying `{{time}}` is. It
+ * is a separate member rather than a degenerate `omitted`, because `omitted` rows
+ * carry an entry `title` and a field has none.
  */
 export type StCardImportLossV1 = Readonly<{
   field: string;
   reason: string;
   count: number;
   omitted?: readonly StCardImportOmittedEntryV1[];
+  macros?: readonly StCardImportOmittedMacroV1[];
 }>;
 export type StCardImportStageResultV1 = Readonly<{
   apiVersion: 1;
@@ -2125,7 +2131,6 @@ function isCompanionProfileGreetingVariant(value: unknown): value is CompanionPr
 const IMPORT_FIELD_KEYS = ["field", "eligibility", "chars"] as const;
 const IMPORT_DISPOSITION_KEYS = ["field", "classification", "reason"] as const;
 const IMPORT_LOSS_KEYS = ["field", "reason", "count"] as const;
-const IMPORT_LOSS_KEYS_WITH_OMITTED = [...IMPORT_LOSS_KEYS, "omitted"] as const;
 const IMPORT_OMITTED_ENTRY_KEYS = ["title", "macros"] as const;
 const IMPORT_OMITTED_MACRO_KEYS = ["token", "standard"] as const;
 const IMPORT_STAGE_KEYS = ["apiVersion", "importId", "name", "candidateRevision", "fields", "dispositions"] as const;
@@ -2211,15 +2216,20 @@ function isImportOmittedEntry(value: unknown): value is StCardImportOmittedEntry
 
 function isImportLoss(value: unknown): value is StCardImportLossV1 {
   if (!isRecord(value)) return false;
+  // Each naming member is declared-optional on the wire, so the exact key set is the base
+  // keys plus exactly the members this row carries.
   const withOmitted = Object.hasOwn(value, "omitted");
-  const keys = withOmitted ? IMPORT_LOSS_KEYS_WITH_OMITTED : IMPORT_LOSS_KEYS;
+  const withMacros = Object.hasOwn(value, "macros");
+  const namingMembers = [...IMPORT_LOSS_KEYS, ...(withOmitted ? ["omitted"] : []), ...(withMacros ? ["macros"] : [])];
   return (
-    hasExactKeys(value, keys) &&
+    hasExactKeys(value, namingMembers) &&
     isLengthBoundedString(value.field, 1, 128) &&
     isLengthBoundedString(value.reason, 1, 128) &&
     isNonNegativeSafeInteger(value.count) &&
     (!withOmitted ||
-      (Array.isArray(value.omitted) && value.omitted.length <= 32 && value.omitted.every(isImportOmittedEntry)))
+      (Array.isArray(value.omitted) && value.omitted.length <= 32 && value.omitted.every(isImportOmittedEntry))) &&
+    (!withMacros ||
+      (Array.isArray(value.macros) && value.macros.length <= 8 && value.macros.every(isImportOmittedMacro)))
   );
 }
 
