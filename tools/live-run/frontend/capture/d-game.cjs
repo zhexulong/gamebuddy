@@ -1,6 +1,6 @@
 // Driver D: the Game surface at 1440x900 and 400x800 — the drawer's column count and the scroller's
 // scrollHeight/clientHeight, plus the groups' left-edge count.
-const { connect, reporter, PAGE_HELPERS, activateSurface } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, observe, observationStart } = require("./common.cjs");
 
 const measure = () => {
   const surface = document.querySelector('[data-testid="game-surface"]');
@@ -35,6 +35,7 @@ const measure = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("d-game.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   for (const size of [{ w: 1440, h: 900, tag: "1440x900" }, { w: 400, h: 800, tag: "400x800" }]) {
@@ -48,6 +49,7 @@ const measure = () => {
     await page.screenshot({ path: `${process.env.GB_SHOTS_OUT}\\21-game-${size.tag}-full.png`, animations: "disabled", caret: "initial", timeout: 45000 }).catch(() => undefined);
   }
 
+  await observe(page, say, "d", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-D");
