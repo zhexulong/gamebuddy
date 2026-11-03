@@ -984,6 +984,66 @@ test("volatile selector respects secondaryKeys and selectiveLogic across all 4 m
   }
 });
 
+/**
+ * A world book's key is a trigger WORD, not an assortment of letters.
+ *
+ * The selector tested `corpus.includes(key)`, so an entry about a pet (`cat`) landed in every turn
+ * that happened to spell those letters inside another word (`concatenate`). What a card promises is
+ * "say this word and the entry belongs in the turn". The boundary the fix adds is ASCII-only, which
+ * is also what keeps the product's own Chinese books working: `\b` never forms at all around
+ * `绿茶` in `今天喝绿茶`, because a han character is not a `\b` word character.
+ */
+test("a trigger key fires on the whole word and never on the letters inside a longer one", async () => {
+  const { selectAuthoredContextVolatileSourceRefs } = await import("./chat-thread-store.js");
+  const candidateFor = (id: string, selectionKeys: string[], secondaryKeys?: string[]) => ({
+    sourceId: `source_${id}`,
+    kind: "lorebook_entry" as const,
+    revision: "1",
+    canonicalHash: createHash("sha256").update(`content ${id}`).digest("hex"),
+    totalOrderKey: "0001",
+    provenance: `world-info/${id}`,
+    content: `content ${id}`,
+    budgetTokens: 10,
+    selectionKeys,
+    ...(secondaryKeys === undefined ? {} : { secondaryKeys }),
+  });
+  const selects = (candidate: ReturnType<typeof candidateFor>, text: string): boolean =>
+    selectAuthoredContextVolatileSourceRefs(text, "", [candidate]).refs.length === 1;
+  const cat = candidateFor("cat", ["cat"]);
+
+  // The defect: the letters of `cat` ride inside a longer word that is not the word at all.
+  assert.equal(selects(cat, "concatenate the two strings"), false, "`cat` must not fire inside `concatenate`");
+  assert.equal(selects(cat, "cats and dogs"), false, "a suffix makes it a different word");
+  assert.equal(selects(cat, "a bobcat on the ridge"), false, "so does a prefix");
+
+  // The word it is must still fire: standing alone, inside a sentence, or beside punctuation.
+  assert.equal(selects(cat, "the cat sat on the step"), true, "the plain sentence still selects");
+  assert.equal(selects(cat, "cat"), true, "the whole text being the key still selects");
+  assert.equal(selects(cat, "cat-themed umbrella"), true, "a hyphen is a boundary");
+  assert.equal(selects(cat, "the cat's bowl"), true, "an apostrophe is a boundary");
+  assert.equal(selects(cat, "今天下雨\nthe cat sat"), true, "the visible tail is scanned by the same rule");
+
+  // A phrase key is matched literally, with the same boundary at each end.
+  const festival = candidateFor("festival", ["moon festival"]);
+  assert.equal(selects(festival, "the moon festival starts tonight"), true);
+  assert.equal(selects(festival, "the moon festivals merged"), false, "a suffix on a phrase key is still a suffix");
+  assert.equal(selects(festival, "a honeymoon festival"), false, "and so is a prefix on its first word");
+
+  // A CJK key keeps firing inside a sentence - no ASCII word character borders it.
+  const tea = candidateFor("tea", ["绿茶"]);
+  assert.equal(selects(tea, "今天喝绿茶"), true, "a CJK key is selected inside its sentence");
+  assert.equal(selects(tea, "今天喝红茶"), false, "and a different word selects nothing");
+
+  // The secondary gate is matched by the SAME rule, so the fix has one spelling.
+  const magic = candidateFor("magic", ["magic"], ["fire"]);
+  assert.equal(
+    selects(magic, "a magical firework"),
+    false,
+    "neither the primary nor the secondary word may be satisfied by a longer word's letters",
+  );
+  assert.equal(selects(magic, "magic and fire"), true, "both whole words still satisfy AND ANY");
+});
+
 test("a durable turn plan with volatile world-book sources round-trips through SQLite", async () => {
   // Regression guard: the volatile INSERT carried ten placeholders for a nine-column table, so accepting a
   // turn that actually HAD volatile sources threw `10 values for 9 columns`, which the Chat service re-wrapped
