@@ -188,6 +188,9 @@ public sealed partial class ModEntry : Mod
 
     private long nativeLocalPlayerFixtureLastStageUnixMs;
     private long nativeLocalPlayerFixtureLastReadinessLogUnixMs;
+    /// <summary>The deepest stack this run has sampled, and whether it has already been reported.</summary>
+    private int nativeLocalStackFrames;
+    private bool nativeLocalStackReported;
 private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
     // The recent step sequence, kept in memory because the LAST LINE of a frozen log is not enough: the lane runs seven
     // steps inside a millisecond, and a throttle that prints only one of them cannot say which one hung. Recorded on
@@ -287,6 +290,14 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         return true;
     }
 
+    /// <summary>
+    /// The frame count at which a stack is declared to be growing rather than merely deep.
+    ///
+    /// 200 is far above anything this Mod does by design - the deepest legitimate chain is a dispatch through the
+    /// router into one action handler - and far below the ~10,000 frames a 1 MB stack holds, so a runaway recursion is
+    /// caught while its frames are still readable.
+    /// </summary>
+    private const int StackFrameThreshold = 200;
     private void LogNativeLocalPlayerReadinessIfBlocked()
     {
         if (Game1.player is null || (Game1.player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp))
@@ -346,6 +357,35 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         using System.Diagnostics.Process self = System.Diagnostics.Process.GetCurrentProcess();
         long managedMb = GC.GetTotalMemory(forceFullCollection: false) / (1024 * 1024);
         long workingSetMb = self.WorkingSet64 / (1024 * 1024);
+        // STACK DEPTH, because the process is dying of `0xC00000FD` (STATUS_STACK_OVERFLOW) and every other
+        // explanation has been excluded by measurement.
+        //
+        // Measured 2026-11-03: three runs (`round21`, `round26`, `round27`, `round29`) ended with no crash log, no
+        // Windows event, the engine at 60 fps to the final tick, a managed heap that had gone FLAT, and 1.6 GB of free
+        // memory. The child handle then reported exit code 3221225725, which is `0xC00000FD` - a stack overflow. The
+        // last completed span in the Mod's own trace was `mod.dispatch type=program_submit`, 31 ms before the exit.
+        //
+        // A depth sample every two seconds cannot see the overflow itself (the process is gone at that instant), but it
+        // CAN see a stack that grows without returning, which is the only way managed code exhausts a 1 MB stack. The
+        // deepest sample is reported with its first frames, once, so the recursion names itself instead of needing a
+        // minidump - which this machine cannot take (`admin=False`, no `LocalDumps`, no `dotnet-dump`).
+        System.Diagnostics.StackTrace? stack = this.nativeLocalStackFrames < StackFrameThreshold
+            ? new System.Diagnostics.StackTrace(1, false)
+            : null;
+        int stackFrames = stack?.FrameCount ?? this.nativeLocalStackFrames;
+        if (stack is not null) this.nativeLocalStackFrames = Math.Max(this.nativeLocalStackFrames, stackFrames);
+        if (stackFrames >= StackFrameThreshold && !this.nativeLocalStackReported)
+        {
+            this.nativeLocalStackReported = true;
+            System.Text.StringBuilder deepest = new($"[DEBUG-native-local-stack-depth] frames={stackFrames};top=");
+            for (int index = 0; index < Math.Min(12, stack?.FrameCount ?? 0); index++)
+            {
+                System.Reflection.MethodBase? method = stack?.GetFrame(index)?.GetMethod();
+                if (method is null) continue;
+                deepest.Append(index == 0 ? "" : "<").Append(method.DeclaringType?.Name).Append('.').Append(method.Name);
+            }
+            this.Monitor.Log(deepest.ToString(), LogLevel.Warn);
+        }
         this.Monitor.Log(
             $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}",
             LogLevel.Trace);
