@@ -32,10 +32,12 @@ import { expect, test, type Page } from "./frontend-coverage";
  *    asserts the computed animation the attribute is supposed to produce, so
  *    the two cannot drift apart.
  * 5. `offers regeneration on the transcript's last companion row, and nowhere
- *    else` - the control re-asks the last thing the player said. On a middle
- *    reply it appended an unrelated pair at the tail, and on the opening it
- *    appended the literal "\u8bf7\u7ee7\u7eed". It is therefore offered on one row
- *    only, and a transcript that offers it anywhere else is the defect.
+ *    else` - the control re-asks the last thing the player said, so it needs a
+ *    player turn to re-ask: the Host's own `regenerate` refuses a reply with no
+ *    player row before it. On a middle reply it appended an unrelated pair at the
+ *    tail, and on the opening it appended the literal "\u8bf7\u7ee7\u7eed". It is
+ *    therefore offered on one row only, and a transcript that offers it anywhere
+ *    else is the defect.
  * 6. `the opening switcher reports its own mutation in flight` and 7. `a pending
  *    mutation on one message never disables another message's switcher` - the
  *    same `data-pending`/`aria-busy` projection for the new-chat opening choice
@@ -242,6 +244,16 @@ test("offers regeneration on the transcript's last companion row, and nowhere el
     { role: "companion", text: "A second reply." },
   ]));
   expect(await offered()).toEqual(["h3"]);
+
+  // A transcript that ends on her reply with no player row anywhere - the shape a
+  // deleted player line leaves - is refused by the Host for want of a turn to
+  // re-ask (`parentPlayerMessage === undefined`), so the surface offers nothing.
+  // The old rule counted rows (`transcript.length > 1`), which this shape satisfies.
+  await page.evaluate(() => window.chatProbe.setConversation([
+    { role: "companion", text: "An opening greet." },
+    { role: "companion", text: "A reply with no player line before it." },
+  ]));
+  expect(await offered()).toEqual([]);
 });
 
 /**

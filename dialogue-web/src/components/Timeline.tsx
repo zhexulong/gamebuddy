@@ -313,19 +313,28 @@ export function Timeline({
   /**
    * Regeneration re-asks the last thing the player said, so exactly one row can
    * offer it: the transcript's own last message, when that message is a companion
-   * reply. The opening is message zero - the only companion message a transcript
-   * can begin with - and it has no player turn to repeat, so it never carries the
-   * control. The rule is the Host's own precondition (`regenerate` in
-   * `chat-pipeline-service.ts` refuses every other target), stated here so the
-   * surface never offers an affordance the Host would have to reject.
+   * reply with a player row before it. The opening is message zero - the only
+   * companion message a transcript can begin with - and it has no player turn to
+   * repeat, so it never carries the control. The rule is the Host's own
+   * precondition (`regenerate` in `chat-pipeline-service.ts` finds the player turn
+   * it re-asks by searching the transcript for one), stated here so the surface
+   * never offers an affordance the Host would have to reject.
+   *
+   * That a player row EXISTS is the precondition, and counting rows is not: a
+   * transcript whose player line was deleted still has more than one row and still
+   * ends on her reply, and the Host refuses it for want of a player turn. The two
+   * readings agree only while every conversation keeps its player rows.
    */
+  const lastMessage = transcript[transcript.length - 1];
   const regenerateHandle =
-    regenerateHandler !== undefined && transcript.length > 1 && transcript[transcript.length - 1]?.role === "companion"
-      ? transcript[transcript.length - 1]!.handle
+    regenerateHandler !== undefined &&
+    lastMessage?.role === "companion" &&
+    transcript.some((message) => message.role === "player")
+      ? lastMessage.handle
       : null;
   /**
    * The row the mounted turn's generation wrote. A turn commits exactly one reply, and that reply
-   * is the transcript's last message when it is a companion's - the same premise `regenerateHandle`
+   * is the transcript's last message when it is a companion's - the tail row `regenerateHandle`
    * reads one line above - which is why the sentence and the Regenerate button it names stand on
    * the same row rather than on two.
    */
