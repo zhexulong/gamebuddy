@@ -197,7 +197,6 @@
     "tools/check-dist-runtime-exports.mjs",
     "tools/check-game-context-pressure.mjs",
     "tools/check-live-run-verdict-guards.mjs",
-    "tools/check-post-history-instructions-live.mjs",
     "tools/check-refusal-informativeness.mjs",
     "tools/check-stardew-actor-admissibility.mjs",
     "tools/check-stardew-dialogue-autonomy.mjs",
