@@ -22,10 +22,28 @@ Four observations, all written into each driver's own facts file:
 Absence is reported as `null` or `unobserved:<reason>`, never as `0`: a heap that the browser does not
 expose and a page that never painted are not measurements of zero. The same rule is why `INJECTION`
 says `unobserved:no_provider_request_capture` rather than "0 entries" — a run that recorded no
-provider request did not observe an empty request, it observed nothing. The frontend run dials the
-operator's gateway, so that is the reading a normal run produces; the reader takes a capture written
-where `GB_SHOTS_WIRE_REQUESTS` points (which is what `tools/live-run/core/stub-provider.mjs` records)
-as soon as a run supplies one.
+provider request did not observe an empty request, it observed nothing.
+
+**Why no run supplies that capture, measured 2026-11-03.** The reader takes a capture written where
+`GB_SHOTS_WIRE_REQUESTS` points, and the writer everyone expects is
+`tools/live-run/chat/run-wire-contract-live.mjs`, which mounts `core/stub-provider.mjs` and records
+every request body. Three reasons it is not wired to this run, in the order they were measured:
+
+1. **the provider request never crosses the browser.** `dialogue-web` posts a turn to the Host and
+   reads that turn's SSE; the Host's Pi session is what posts to the gateway. Nothing a driver can
+   intercept over CDP carries a provider body, whatever the launch or capture phase listens for.
+2. **the runner loads its product from a build root the kit never builds.** It imports its modules
+   from `host/dist-test`; `pin.ps1` materializes `node_modules`, the reclaimer `.dist` and the
+   submodules, and `build.ps1` builds the launcher generation - neither produces `dist-test`. Pointing
+   the runner at the built generation instead was tried: its modules do load from there, and it stops
+   at `windows_stale_lock_reclaimer_unavailable`, because a generation is a production tree and the
+   build-tree reclaimer path it verifies is not in one.
+3. **even wired, the bodies would be a different runtime's.** `runLiveRun` mounts its own temp root and
+   answers with its own stub model, so a per-driver `INJECTION <driver> turn=1` line would attribute
+   that instance's prompt to a driver that never sent it.
+
+So the line stays `unobserved:<reason>` and names the layer it could not reach. Wiring it is a decision
+about which instance the reading is allowed to describe, not a missing call.
 
 Two marks families are READ, never re-measured: a driver that timed its own click would be a second
 opinion about where the time went. `gamebuddy:turn:*` lives in `dialogue-web/src/components/turn-timings.ts`,
@@ -46,6 +64,30 @@ No driver is left out. A driver whose scenario takes an early named skip writes 
 before reaching `observe()`, so its facts file carries no `SWITCHES` line at all — and each section of
 `README.txt` names the drivers that wrote no line of it, so a silent driver is a listed absence rather
 than an empty space.
+
+## Waiting for a panel, not for a duration
+
+`activateSurface` commits the surface's region and its paint; it commits nothing about that surface's
+data. The 角色 panel renders `<section data-opening-editor>` as soon as the panel mounts and its
+`.opening-variant-row` rows only once the card read lands, so in between the editor holds ZERO rows and
+no buttons - which is also exactly what a companion already down to one opening holds. On a contended
+machine driver M's fixed 1600 ms sleep read that 0 as a product fact, pressed a save control that did
+not exist yet (`saving the one-opening set: no_button:保存开场白`) and died 30 s later inside the next
+surface switch; the same code passed 20/20 on an idle machine.
+
+`waitForPanel` (`capture/common.cjs`) is the instrument: the panel root present, the product's own
+`.loading-text` gone from that root, and the item count unchanged across two reads. A panel that never
+reaches that state fails the driver as `panel_never_settled:<name>` with the selectors it waited for
+and the page's last reading, instead of a number measured from a panel that was not there.
+
+Driver M's two reads of that editor now wait for it. Everything else that sleeps after
+`activateSurface` was audited and **left**, for a reason per group: their reads are layout or
+descriptive probes that print absence literally (`a`, `b`, `c`, `d`, `g`, `h`, `i`); a missing value
+turns into a named skip rather than a false fact (`j`, `p`); the read is repeated in a loop before
+anything is acted on (`e`, `t`); or the assertion that matters waits on the product's own turn marks
+(`f`, `n`). The same shape does remain in `k`, `l`, `o`, `q`, `r` and `s`, where a pre-load read is a
+count the driver then acts on - each needs its own live run to confirm the panel root and the item
+selector, which is why they are listed here rather than guessed at blind.
 
 ## One command
 
