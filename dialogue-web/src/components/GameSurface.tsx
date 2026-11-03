@@ -243,6 +243,13 @@ export function GameSurface({
       // An explicit uncertain outcome or a missing/malformed response may have
       // followed successful publication. Never refetch or replay this command.
       setCabinView({ kind: "uncertain" });
+    } finally {
+      // Released on every path, not only the stale one. This flag is a re-entrancy guard for the
+      // click, not a record of what the Host decided: the outcome lives in `cabinView`. Holding it
+      // after an `admitted` or an `uncertain` outcome left every later cabin choice answered by the
+      // `if` at the top of this function and nothing else - the buttons stayed visible and did
+      // nothing, which is the one shape a player cannot diagnose.
+      cabinConfirmationActiveRef.current = false;
     }
   };
 
