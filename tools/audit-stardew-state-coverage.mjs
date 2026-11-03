@@ -44,12 +44,20 @@
  *   node tools/audit-stardew-state-coverage.mjs            # gate; exits 1 on any finding
  *   node tools/audit-stardew-state-coverage.mjs --table    # the coverage table as markdown
  *   node tools/audit-stardew-state-coverage.mjs --json     # machine-readable report
+ *
+ * WHERE THE ENGINE TREE IS ABSENT. `ref/` is gitignored (`.gitignore`), so a hosted checkout has no
+ * decompiled source and no way to obtain one. This gate then prints
+ * `stardew_state_coverage_skipped: ...` and exits 0, because an unavailable measurement is not a
+ * finding: it measured nothing, so it claims nothing. `tools/check-ci-coverage.mjs` reads that marker
+ * and counts the gate `not_measured` instead of `passed`, so the two are never confused. The
+ * consequence is stated plainly: this gate protects only machines that hold the decompilation, and a
+ * hosted run cannot tell whether the table is covered.
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
+import { resolveStardewDecompileRoot, StardewDecompileRootMissingError } from "./lib/stardew-decompile-root.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -691,7 +699,17 @@ function table(report) {
 function main(argv) {
   const asJson = argv.includes("--json");
   const asTable = argv.includes("--table");
-  const report = auditStateCoverage();
+  let report;
+  try {
+    report = auditStateCoverage();
+  } catch (error) {
+    if (!(error instanceof StardewDecompileRootMissingError)) throw error;
+    process.stdout.write(
+      `stardew_state_coverage_skipped: ${error.message} - so this run read no engine state, and says nothing ` +
+        "about whether the companion can see any of them; every row in the table is unverified here, not covered\n",
+    );
+    return;
+  }
 
   if (asJson) {
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
