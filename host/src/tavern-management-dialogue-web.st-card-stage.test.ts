@@ -299,6 +299,39 @@ test("a PNG card's fields and its picture both come from the bytes the Host itse
   }
 });
 
+test("the stage route forwards the closing direction's own loss, naming the macros that will cost it", async () => {
+  // End to end on purpose: the decoder records the loss, the route mirror copies it, and the wire
+  // schema accepts it. A member dropped in any of the three leaves the player reading "her closing
+  // direction is missing" with nothing to search the card for.
+  const root = await canonicalTestRoot("tavern-st-card-stage-loss-");
+  const fixture = await stageFixmounted(root);
+  try {
+    const origin = fixture.server.origin;
+    const session = await bootstrap(origin);
+    const staged = await ok<StCardImportStageResultV1>(
+      await post(origin, "/api/tavern/v1/imports", session, {
+        apiVersion: 1,
+        cardSource: "json",
+        card: JSON.stringify({
+          spec: "chara_card_v3",
+          data: { name: "Rin", description: "calm", post_history_instructions: "Close as {{time}} says." },
+        }),
+      }),
+    );
+    const loss = staged.losses?.find((entry) => entry.reason === "unrenderable_post_history_instructions");
+    assert.equal(loss?.field, "post_history_instructions");
+    assert.equal(loss?.count, 1);
+    // The macros the player has to edit out, by name: the record itself is stored verbatim.
+    assert.deepEqual(loss?.macros, [{ token: "{{time}}", standard: true }]);
+    // A field-level row carries no entry title, because a field has none.
+    assert.equal(Object.hasOwn(loss ?? {}, "omitted"), false);
+  } finally {
+    await fixture.server.close();
+    fixture.threads.close?.();
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("confirm provisions the companion and writes her picture where the avatar face reads it", async () => {
   const root = await canonicalTestRoot("tavern-st-card-confirm-");
   const fixture = await stageFixmounted(root);
