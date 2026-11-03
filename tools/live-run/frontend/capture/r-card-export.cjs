@@ -8,7 +8,7 @@
 // Node: signature, IHDR dimensions, and the `chara` chunk's own card - which is the round trip the
 // work claims, because that is the file the surface's own picker is then given back.
 const { readFileSync } = require("node:fs");
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 const sectionFacts = () => {
   const section = document.querySelector("[data-companion-card-export-section]");
@@ -101,6 +101,7 @@ const stagePicker = async (page, name, bytes) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("r-card-export.txt");
+  const observationFrom = await observationStart(page);
 
   const observed = { lastExport: null, downloads: [] };
   page.on("response", async (response) => {
@@ -239,6 +240,7 @@ const stagePicker = async (page, name, bytes) => {
     await shot(page, "89-card-reimported-400x800.png");
   }
 
+  await observe(page, say, "r", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-R");
