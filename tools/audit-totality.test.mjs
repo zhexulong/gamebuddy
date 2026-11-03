@@ -612,6 +612,54 @@ test("hygiene: what production reads stays green, what only a test reads goes re
   }
 });
 
+test("hygiene: a .private.test.ts declares the internal it pins, and a plain test does not", (t) => {
+  const root = fixture();
+  const plain = "host/src/pinned-plan.test.ts";
+  const declaredName = "host/src/pinned-plan.private.test.ts";
+  const pinning = [
+    'import test from "node:test";',
+    'import { modelPlan } from "./pinned-plan.js";',
+    "void modelPlan;",
+    'test("x", () => {});',
+    "",
+  ].join("\n");
+  try {
+    write(root, "host/src/pinned-plan.ts", "export function modelPlan(): number { return 1; }\n");
+    write(root, plain, pinning);
+
+    const broken = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      broken.violations.map((violation) => violation.where),
+      ["host/src/pinned-plan.ts:1"],
+      `a plain test that reads an internal is a finding:\n${broken.violations.map((v) => v.message).join("\n")}`,
+    );
+    const message = broken.violations[0].message;
+    assert.match(message, /modelPlan/u, "the finding names the symbol");
+    assert.match(message, /host\/src\/pinned-plan\.test\.ts/u, "the finding names the test that reaches it");
+    assert.match(message, /\.private\.test\.ts/u, "the finding names the declaration that would settle it");
+
+    // The same import in a test that says what it is: no finding, and the declaration stays visible as a count.
+    rmSync(join(root, plain));
+    write(root, declaredName, pinning);
+    const settled = violationsOf(root, "hygiene");
+    assert.deepEqual(settled.violations, [], `a declared pin is not a finding:\n${settled.notes.join("\n")}`);
+    assert.match(settled.notes.join("\n"), /1 declared as pinned by a \.private\.test\.ts/u);
+    t.diagnostic(settled.notes.join(" | "));
+
+    // ... and one plain witness withdraws the declaration for that export, so it is a per-export claim.
+    write(root, plain, pinning);
+    const witnessed = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      witnessed.violations.map((violation) => violation.where),
+      ["host/src/pinned-plan.ts:1"],
+      "a plain test beside a declared one keeps the finding",
+    );
+    assert.doesNotMatch(witnessed.violations[0].message, /pinned-plan\.private\.test\.ts/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a hygiene site defect blocks while the test-only export reading does not", () => {
   const root = fixture();
   try {

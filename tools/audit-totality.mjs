@@ -97,6 +97,15 @@ const GAME_CONTRACT = ["host", "src", "game-browser-contract", "index.ts"];
 
 /** Test-only source never produces, reads, or bounds a production fact. */
 const TEST_PATH = /(\.test\.(?:ts|tsx)$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]|\.test-support\.ts$)/u;
+
+/**
+ * A test that names itself `*.private.test.ts` declares that it pins a production module's internals on purpose.
+ *
+ * The declaration lives in the file name and nowhere else, so `git grep private.test` lists every internal this
+ * tree has agreed to pin, and a test that is not named this way still reports the export it reaches with the
+ * declaring file and the symbol. It is a per-export claim: one plain test reaching the same export withholds it.
+ */
+const PRIVATE_TEST_PATH = /\.private\.test\.(?:ts|tsx)$/u;
 const SOURCE_FILE = /\.(?:ts|tsx)$/u;
 const SOURCE_EXT = /\.(?:ts|tsx)$/u;
 
@@ -1697,10 +1706,11 @@ const COMMENTED_CODE =
 /**
  * The readings `hygiene` reports, each with what a count of it means.
  *
- * Every finding this class reports today is one pattern, and the owner cannot act on a list that long: either the
- * pattern is accepted wholesale (and the rule is withdrawn) or it is one defect with a mechanical sweep, and neither
- * is a decision about a line. So each kind carries its own reading, every site stays a finding, and the report prints
- * the count with a bounded sample instead of every line.
+ * The owner cannot act on a list of one unreadable pattern that long, so each kind carries its own reading, every
+ * site stays a finding, and the report prints the count with a bounded sample instead of every line. A reading whose
+ * population the rule can now separate is not one decision any more: `test-only export` splits an export that only a
+ * test can mock with (scaffolding, which moves) from a production algorithm a test pins at its boundary (declared by
+ * the test's own `.private.test.ts` name).
  *
  * `decision` is a broad pattern one ruling settles; `defect` is a site that is wrong on its own terms.
  */
@@ -1708,7 +1718,7 @@ const HYGIENE_KINDS = Object.freeze([
   {
     id: "test-only export",
     readsAs: "decision",
-    note: "every finding is the same pattern - a Host export no production code reaches: the modules that import it are tests, resolved through re-export barrels, and the module that declares it never names it - so one ruling settles all of them (move the helper to a test-support module, or drop the export); editing sites one at a time is not the fix",
+    note: "a Host export no production code reaches is one of two things: a helper that only exists so a test can mock with it, which belongs in a test-support module, or a production module whose own algorithm a test pins at its boundary, which the test declares by naming itself `.private.test.ts`. The finding names the declaring file, the symbol and every test that reaches it without declaring, so the fix is a decision about that export and not a line of the gate",
   },
   {
     id: "commented-out code",
@@ -1962,6 +1972,7 @@ function runHygiene(sources) {
   const surfaces = new Map(audited.map((file) => [file, moduleSurface(sources, file)]));
   const consumers = exportConsumers(sources, audited, surfaces);
   let testOnly = 0;
+  let declaredPrivate = 0;
   let examinedExports = 0;
   for (const file of hostFiles) {
     const sourceFile = sources.source(file);
@@ -1971,12 +1982,17 @@ function runHygiene(sources) {
       examinedExports += 1;
       if (users.some((user) => !TEST_PATH.test(user))) continue;
       if (referencedInModule(sources, file, name, declaration)) continue;
+      const undeclared = users.filter((user) => !PRIVATE_TEST_PATH.test(user));
+      if (undeclared.length === 0) {
+        declaredPrivate += 1;
+        continue;
+      }
       testOnly += 1;
       violations.push({
         rank: 4,
         kind: "test-only export",
         where: at(sources.root, declaration, sourceFile, file),
-        message: `${name} is exported and only a test reaches it (${users.map((user) => relativeTo(sources.root, user)).join(", ")}); no production code names it`,
+        message: `${name} is exported and no production code names it; only these tests reach it (${undeclared.map((user) => relativeTo(sources.root, user)).join(", ")}), and none is named .private.test.ts to declare that it pins this internal`,
       });
     }
   }
@@ -1985,7 +2001,7 @@ function runHygiene(sources) {
     count: violations.filter((violation) => violation.kind === kind.id).length,
   }));
   notes.push(
-    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests`,
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts`,
   );
   for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
   return { declared: hostFiles.length + webFiles.length, violations, notes };
@@ -2426,9 +2442,11 @@ function runDelegated(sources, gate) {
  * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
  * that cannot read its own fixture - every rule here is proved clean-then-red-then-clean on the scratch tree.
  *
- * `test-only export` (160 today): every finding is one pattern - a Host export no production code reaches - so one
- * ruling settles all of them (move the helper to a test-support module, or drop the export); editing sites one at a
- * time is not the fix. That count only became a reading when the importer detection was resolved (`759b588a`): the
+ * `test-only export` (161 today): two populations, and the reading now separates them. A module that exists so a test
+ * can mock with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of that
+ * class and it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box
+ * testing, and the test says so by naming itself `*.private.test.ts`; the finding then names the exports no such test
+ * declares. That count only became a reading when the importer detection was resolved (`759b588a`): the
  * scan it replaced keyed importers by the bare name of an `import` declaration, so an export the declaring module
  * itself names was reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287
  * findings that fix removed were that shape; the rest moved to the declaration a re-export list aliases. The class now
@@ -2448,7 +2466,7 @@ export const ADVISORY_READINGS = Object.freeze(
       className: "hygiene",
       kind: "test-only export",
       reason:
-        "one pattern across every finding, settled by a single owner ruling - accept the surface wholesale and withdraw the rule, or sweep it mechanically into test-support modules",
+        "two populations under one reading - scaffolding that belongs in a test-support module, and a production module a test pins at its boundary and declares as `.private.test.ts` - so the ruling is per export, and this reading reports the ones that carry neither home nor declaration",
     },
   ].map(Object.freeze),
 );
