@@ -332,8 +332,22 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         // it", and `last` names the newest frame.
         LocalPipeBridge.InboundFrameCounters inbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotInboundFrameCounters()
             ?? default;
+        // The numbers that would have explained the deaths the log did not.
+        //
+        // Three runs (round21, round26, round27) ended the same way: the last Mod line is an ordinary dispatch, the
+        // engine loop's tick counter is still advancing at 60 fps, SMAPI writes no shutdown, Windows records no crash,
+        // and the process is gone. Nothing in any log was GROWING at the moment it stopped, so the last line said
+        // nothing about why. Memory, threads and GC generations are cheap to read every two seconds and are the
+        // quantities that actually precede an abrupt death.
+        //
+        // Read together they answer the question the empty event log cannot: a rising `managedMB`/`wsMB` says the
+        // process ran itself out of memory, a flat one says something outside it ended the process - and either answer
+        // is actionable, where "the log just stops" is not.
+        using System.Diagnostics.Process self = System.Diagnostics.Process.GetCurrentProcess();
+        long managedMb = GC.GetTotalMemory(forceFullCollection: false) / (1024 * 1024);
+        long workingSetMb = self.WorkingSet64 / (1024 * 1024);
         this.Monitor.Log(
-            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks}",
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}",
             LogLevel.Trace);
     }
 
