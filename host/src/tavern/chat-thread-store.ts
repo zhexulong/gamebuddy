@@ -1524,7 +1524,7 @@ const TURN_TERMINALIZATION_PROVIDER_FAILURE_V8 = `
  * swipe, turn and binding, and gains one empty table.
  */
 const TURN_REPLY_TARGETS_TABLE_V9 = `
-    CREATE TABLE tavern_turn_reply_targets (
+    CREATE TABLE IF NOT EXISTS tavern_turn_reply_targets (
       turn_id TEXT PRIMARY KEY REFERENCES tavern_turns(turn_id) ON DELETE CASCADE,
       player_message_id TEXT NOT NULL
     );
