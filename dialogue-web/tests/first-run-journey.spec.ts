@@ -172,6 +172,68 @@ async function readForm(page: Page) {
 
 const form = (page: Page) => page.getByTestId("settings-surface").locator("[data-connection-form]");
 
+/**
+ * Everything this form NAMES, in the strings a player can read or the browser may show them: the
+ * rendered text, every control's value and placeholder, every option's value and label, every
+ * title. A model id is a name, so a leaked id is a leak in one of these - and the placeholder is
+ * exactly where the measured defect sat (an id stood there as the hint itself).
+ */
+async function readNamedStrings(page: Page): Promise<string[]> {
+  return await form(page).evaluate((node) => {
+    const named = [(node.textContent ?? "").replace(/\s+/gu, " ").trim()];
+    for (const control of [...node.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")])
+      named.push(control.value ?? "", control.placeholder ?? "");
+    for (const option of [...node.querySelectorAll<HTMLOptionElement>("option")]) named.push(option.value, option.label);
+    for (const titled of [...node.querySelectorAll<HTMLElement>("[title]")])
+      named.push(titled.getAttribute("title") ?? "");
+    return named.filter((entry) => entry.length > 0);
+  });
+}
+
+test.describe("2: choosing a provider fills what it can, and names nothing it cannot", () => {
+  test("a pinned provider asks for its own fields, and never names a model another entry publishes", async ({
+    page,
+  }) => {
+    const state = await connection.read();
+    // The ids the catalog publishes for entries OTHER than the one selected. An id is scoped to the
+    // endpoint that serves it, so a form for `api.deepseek.com` naming the operator gateway's id (or
+    // an Ollama id, which is the literal this journey was filed for) is claiming something untrue
+    // about whose endpoint the player is configuring.
+    const curated = await curatedIdsFromCatalog();
+    expect(curated.length, "the catalog publishes at least one id, so the rule below is not vacuous").toBeGreaterThan(0);
+
+    await mountProduct(page, state);
+    for (const providerId of ["deepseek", "openai"]) {
+      const provider = state.providers.find((entry) => entry.providerId === providerId);
+      expect(provider, `${providerId} is offered to a browser`).toBeDefined();
+      // What this entry asks for, read from the projection rather than restated: the player's key and
+      // the player's model. The endpoint and the API shape are the product's own for a pinned entry.
+      expect(provider!.setupFields).toEqual(expect.arrayContaining(["apiKey", "modelId"]));
+      expect(provider!.setupFields).not.toContain("baseUrl");
+      expect(provider!.setupFields).not.toContain("apiShape");
+
+      await form(page).locator("#connection-provider").selectOption(providerId);
+      // What it can ask, it asks.
+      await expect(form(page).locator("#connection-api-key")).toBeVisible();
+      await expect(form(page).locator("#connection-model-id")).toBeVisible();
+      // What the player cannot answer, it does not ask.
+      await expect(form(page).locator("#connection-base-url")).toHaveCount(0);
+      await expect(form(page).locator("#connection-api-shape")).toHaveCount(0);
+
+      const named = await readNamedStrings(page);
+      console.log(`[first-run-names-nothing/${providerId}] ${JSON.stringify(named)}`);
+      for (const modelId of [...curated.map((model) => model.modelId), "qwen2.5-coder:7b"]) {
+        expect(
+          named.filter((entry) => entry.includes(modelId)),
+          `${providerId} must not name ${modelId}, which its endpoint does not serve`,
+        ).toEqual([]);
+      }
+      // The absence is not vacuous: the form does name the entry the player is configuring.
+      expect(named.some((entry) => entry.includes(provider!.label)), "the form names its own provider").toBe(true);
+    }
+  });
+});
+
 test.describe("3: the model suggestions are the Host's projection, reached end to end", () => {
   test("a provider whose endpoint this product does not run names no model at all", async ({ page }) => {
     const state = await connection.read();
