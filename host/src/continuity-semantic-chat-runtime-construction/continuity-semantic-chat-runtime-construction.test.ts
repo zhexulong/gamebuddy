@@ -23,6 +23,7 @@ import {
 import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../tavern/chat-thread-store.js";
 import { TavernConnectionStore, connectionDocumentPath } from "../tavern/connection-store.js";
 import { updateMountedCompanionVoice } from "../tavern/companion-voice-service.js";
+import { macroTable } from "../tavern/macro-engine.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
@@ -464,6 +465,7 @@ test("a character-directive save does not strand the Chats that already exist", 
       containmentRoot: paths.root,
       identityKey: identityKey(principal),
       expectedProfileRevision: 1,
+      macros: macroTable({ char: "Kohaku", locale: "zh-CN" }),
       voice: { text: "Speak in short, warm sentences." },
       refreshThreadBindings: async (previous, next) =>
         await refreshThreadBindings({
