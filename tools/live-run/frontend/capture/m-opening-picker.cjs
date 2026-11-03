@@ -7,9 +7,12 @@
 // editor (`data-opening-editor`). The chat the picker creates is NOT the mounted one, so the choice
 // is proven twice: the panel's own card for the created Chat, and the transcript's first row after
 // switching to that Chat — read from the row the panel itself previews with the chosen text.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanel } = require("./common.cjs");
 
 const NEW_CHAT = '[data-testid="new-chat"]';
+// The opening editor mounts with its section before its card read lands, so every read of it waits for
+// the panel to be loaded rather than for a duration (see `waitForPanel`).
+const OPENING_EDITOR = { name: "opening-editor", panel: "[data-opening-editor]", item: ".opening-variant-row" };
 
 const chatRows = () => {
   const surface = document.querySelector('[data-testid="chats-surface"]');
@@ -140,7 +143,7 @@ const clickOption = (index) => {
 
   say("=== ITEM: her opening set, as the 角色 surface's own editor holds it ===");
   await activateSurface(page, "角色");
-  await page.waitForTimeout(1600);
+  await waitForPanel(page, OPENING_EDITOR);
   const editorBefore = await page.evaluate(openingEditorFacts);
   say(JSON.stringify(editorBefore, null, 1));
 
@@ -216,7 +219,7 @@ const clickOption = (index) => {
 
   say("=== ITEM: her opening set edited down to exactly one ===");
   await activateSurface(page, "角色");
-  await page.waitForTimeout(1600);
+  await waitForPanel(page, OPENING_EDITOR);
   let removed = 0;
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const state = await page.evaluate(openingEditorFacts);
