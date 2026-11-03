@@ -282,6 +282,15 @@ export const DECLARED = Object.freeze([
           "is a real regression, and the assertion says so by name",
       },
       {
+        path: "tools/lib/multiday-daily-tasks.mjs",
+        reason:
+          "each entry is one named task and the actions that task drives, which is authored intent rather " +
+          "than a copy of the surface - measured against the generated surface: it names 45 of 95 published " +
+          "ids and omits 50, so adding or promoting an action cannot make it wrong. The rule's own test " +
+          "('a pure run of five or more ids is a re-declaration') cannot tell a task definition from a copy, " +
+          "which is why this is recorded rather than inferred",
+      },
+      {
         path: "tools/lib/stardew-native-local-player-fixture.mjs",
         reason:
           "each lane's Given set names the production actions that lane drives: authored intent, not a copy of " +
