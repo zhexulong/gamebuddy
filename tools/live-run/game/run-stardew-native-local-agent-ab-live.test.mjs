@@ -1578,7 +1578,17 @@ test("a pass-out mid-night is not the night's outcome: the watch runs on to the 
     /enteredVia: parseReceiptEvidence\(terminal\?\.evidence\)\.entered_via \?\? null,/u,
     "a sleep is claimed only from the lifecycle receipt that proves one",
   );
-  assert.match(RUNNER_SOURCE, /passOutObserved: outcome\.passOutObserved === true,/u);
+  // The pass-out witness has TWO sources, and the record must consult both: the watch's own hold while it is still
+  // polling, and the Mod's `night_ended_pass_out` event. The second is the one that was missing - a night the engine takes
+  // while the watch waits for the calendar returns `crossed: true` on the first attempt, so the poll flag never sets and
+  // the night landed on `cause: "engine"` with `passOutNights: 0` (`round28`), which is a verdict blaming the companion
+  // for an event it could not count.
+  assert.match(
+    RUNNER_SOURCE,
+    /passOutObserved: outcome\.passOutObserved === true \|\| passOutFactThisNight,/u,
+    "the record must count the Mod's pass-out event, not only its own poll",
+  );
+  assert.match(RUNNER_SOURCE, /"night_ended_pass_out"/u, "and it must read that event by name");
   // The two-valued default must not come back: absence of a pass-out is a fact about the poll, not about the night.
   assert.doesNotMatch(RUNNER_SOURCE, /\? "pass_out"\s*:\s*"sleep"/u);
   assert.match(RUNNER_SOURCE, /record\.cause = nightCauses\.get\(record\.day\) \?\? null;/u);

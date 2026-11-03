@@ -2603,9 +2603,23 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   //
   // `engine` is the third answer, and it is not `null`: the crossing IS witnessed (the calendar moved) and only the
   // attribution is not. A reader must be able to distrust the attribution without doubting the night.
+  // The Mod's own pass-out event, which is the witness the watch loop cannot see.
+  //
+  // `outcome.passOutObserved` is set only while the watch is still POLLING a hold (`reasonCode === "actor_passed_out"`).
+  // A night the engine takes while the watch is waiting for the calendar returns `crossed: true` on the first attempt,
+  // so that flag never sets - and the night lands on `cause: "engine"`, which `multiday-baseline` correctly refuses to
+  // call a pass and reports as `night_mechanism_unobserved`.
+  //
+  // Measured 2026-11-03 (`round28`): night 1 was an ordinary 02:00 pass-out (`game_time=2600`, forced NewDay) and the
+  // Mod PUBLISHED `night_ended_pass_out` for it (`StardewSalientEventHooks.cs:88`), yet the record said
+  // `cause: "engine"` with `passOutNights: 0` - the verdict could not count the very thing it was being blamed for.
+  // The night's mechanism was observed; the runner never read the observation.
+  const passOutFactThisNight = factLog
+    .slice(factStart)
+    .some((entry) => entry?.kind === "night_ended_pass_out" || entry?.semanticKind === "night_ended_pass_out");
   const cause = nightCause({
     enteredVia: parseReceiptEvidence(terminal?.evidence).entered_via ?? null,
-    passOutObserved: outcome.passOutObserved === true,
+    passOutObserved: outcome.passOutObserved === true || passOutFactThisNight,
   });
   // Did the night actually pass? The calendar is the witness that no dispatch path can hide, and it is read even
   // when a receipt exists - `classifyNight` cross-checks the two against each other rather than trusting either.
