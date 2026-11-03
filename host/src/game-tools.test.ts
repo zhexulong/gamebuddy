@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDeterministicBridgePair } from "./bridge.js";
+import { createDeterministicBridgePair } from "./test-support/deterministic-bridge.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";

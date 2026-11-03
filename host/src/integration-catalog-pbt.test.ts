@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDeterministicBridgePair } from "./bridge.js";
+import { createDeterministicBridgePair } from "./test-support/deterministic-bridge.js";
 import { GameConnectionTestClient } from "./test-support/game-connection-test-client.js";
 import { newEnvelope, type Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -24,7 +24,7 @@ const registrations = [
     identityVersion: 1,
     lifecycle: "published" as const,
     kind: "execution" as const,
-  }
+  },
 ];
 const policyIdentityValues = [
   "0123456789abcdef0123456789abcdef",
@@ -80,93 +80,87 @@ function sendSnapshot(
 
 test("Catalog PBT: Host projection follows complete monotone Mod publications", () => {
   fc.assert(
-    fc.property(
-      fc.array(fc.boolean(), { minLength: 0, maxLength: 12 }),
-      (desiredMemberships) => {
-        const [host, mod] = createDeterministicBridgePair(scope);
-        const client = new GameConnectionTestClient(scope, host, STARDEW_GAME_INTEGRATION_ADAPTER);
-        try {
-          assert.equal(client.hello(token, now), null);
-          mod.send(
-            newEnvelope(
-              "hello_ack",
-              scope,
-              {
-                sessionId: "session_01",
-                 capabilities: ["inspect_self", "move_to_tile"],
-                 catalogRevision: 1,
-                 policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
-                 enabledActionIds: ["move_to_tile"],
-                presentationLocale: "en-US",
-                registrations,
-                ...TEST_RUNTIME_ATTESTATION,
-              },
-              "hello_01",
-              now,
-            ),
+    fc.property(fc.array(fc.boolean(), { minLength: 0, maxLength: 12 }), (desiredMemberships) => {
+      const [host, mod] = createDeterministicBridgePair(scope);
+      const client = new GameConnectionTestClient(scope, host, STARDEW_GAME_INTEGRATION_ADAPTER);
+      try {
+        assert.equal(client.hello(token, now), null);
+        mod.send(
+          newEnvelope(
+            "hello_ack",
+            scope,
+            {
+              sessionId: "session_01",
+              capabilities: ["inspect_self", "move_to_tile"],
+              catalogRevision: 1,
+              policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              registrations,
+              ...TEST_RUNTIME_ATTESTATION,
+            },
+            "hello_01",
             now,
-          );
-          let enabled = true;
-          let catalogRevision = 1;
-          let snapshotRevision = 1;
-          sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
+          ),
+          now,
+        );
+        let enabled = true;
+        let catalogRevision = 1;
+        let snapshotRevision = 1;
+        sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
 
-           let capabilityRevision = 1;
-           let policyIdentityIndex = 0;
-           let policyIdentityValue = policyIdentityValues[policyIdentityIndex];
-           for (const nextEnabled of desiredMemberships) {
-             if (nextEnabled !== enabled) {
-               capabilityRevision++;
-               policyIdentityIndex++;
-               policyIdentityValue = policyIdentityValues[policyIdentityIndex]!;
-               enabled = nextEnabled;
-              mod.send(
-                newEnvelope(
-                  "catalog_update",
-                  scope,
-                  {
-                     catalogRevision,
-                     policyIdentity: { value: policyIdentityValue, capabilityRevision },
-                     enabledActionIds: enabled ? ["move_to_tile"] : [],
-                  },
-                  `catalog_${catalogRevision}`,
-                  now,
-                ),
-                now,
-              );
-              // No stale snapshot may keep an old catalog executable.
-              assert.equal(client.state.snapshot, null);
-              snapshotRevision++;
-              sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
-            }
-
-             assert.equal(client.state.catalogRevision, 1);
-             assert.equal(client.state.policyIdentity?.capabilityRevision, capabilityRevision);
-             assert.equal(client.state.policyIdentity?.value, policyIdentityValue);
-             assert.deepEqual(
-              client.state.enabledActionIds,
-              enabled ? ["move_to_tile"] : [],
-            );
-            assert.equal(
-              client.execute(
+        let capabilityRevision = 1;
+        let policyIdentityIndex = 0;
+        let policyIdentityValue = policyIdentityValues[policyIdentityIndex];
+        for (const nextEnabled of desiredMemberships) {
+          if (nextEnabled !== enabled) {
+            capabilityRevision++;
+            policyIdentityIndex++;
+            policyIdentityValue = policyIdentityValues[policyIdentityIndex]!;
+            enabled = nextEnabled;
+            mod.send(
+              newEnvelope(
+                "catalog_update",
+                scope,
                 {
-                  requestId: `request_${catalogRevision}`,
-                  idempotencyKey: `idempotency_${catalogRevision}`,
-                  action: "move_to_tile",
-                  args: { x: 11, y: 12 },
-                  expectedRevision: snapshotRevision,
-                  deadlineMs: now + 10_000,
+                  catalogRevision,
+                  policyIdentity: { value: policyIdentityValue, capabilityRevision },
+                  enabledActionIds: enabled ? ["move_to_tile"] : [],
                 },
+                `catalog_${catalogRevision}`,
                 now,
               ),
-              enabled ? null : "not_ready",
+              now,
             );
+            // No stale snapshot may keep an old catalog executable.
+            assert.equal(client.state.snapshot, null);
+            snapshotRevision++;
+            sendSnapshot(mod, snapshotRevision, catalogRevision, enabled);
           }
-        } finally {
-          client.dispose();
+
+          assert.equal(client.state.catalogRevision, 1);
+          assert.equal(client.state.policyIdentity?.capabilityRevision, capabilityRevision);
+          assert.equal(client.state.policyIdentity?.value, policyIdentityValue);
+          assert.deepEqual(client.state.enabledActionIds, enabled ? ["move_to_tile"] : []);
+          assert.equal(
+            client.execute(
+              {
+                requestId: `request_${catalogRevision}`,
+                idempotencyKey: `idempotency_${catalogRevision}`,
+                action: "move_to_tile",
+                args: { x: 11, y: 12 },
+                expectedRevision: snapshotRevision,
+                deadlineMs: now + 10_000,
+              },
+              now,
+            ),
+            enabled ? null : "not_ready",
+          );
         }
-      },
-    ),
+      } finally {
+        client.dispose();
+      }
+    }),
     { numRuns: 100 },
   );
 });

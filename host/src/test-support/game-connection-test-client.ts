@@ -1,4 +1,4 @@
-import type { BridgeFault, DeterministicBridgeEndpoint } from "../bridge.js";
+import type { BridgeFault, DeterministicBridgeEndpoint } from "./deterministic-bridge.js";
 import type { GameIntegrationAdapter } from "../game-integration-adapter.js";
 import type { StardewBridgeConnectionState } from "../game-connection.js";
 import type { KnowledgeBundle } from "../knowledge.js";
@@ -48,10 +48,10 @@ export class GameConnectionTestClient {
       this.#sessionId = null;
       this.#capabilities = [];
       this.#registrations = [];
-       this.#catalogRevision = null;
-       this.#policyIdentity = null;
-       this.#acceptedPolicyIdentityValues.clear();
-       this.#enabledActionIds = [];
+      this.#catalogRevision = null;
+      this.#policyIdentity = null;
+      this.#acceptedPolicyIdentityValues.clear();
+      this.#enabledActionIds = [];
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
@@ -140,28 +140,28 @@ export class GameConnectionTestClient {
         }
         this.#sessionId = message.payload.sessionId;
         this.#capabilities = [...message.payload.capabilities];
-         this.#registrations = [...message.payload.registrations];
-         this.#catalogRevision = message.payload.catalogRevision;
-         this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
-         this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
-         this.#enabledActionIds = [...message.payload.enabledActionIds];
+        this.#registrations = [...message.payload.registrations];
+        this.#catalogRevision = message.payload.catalogRevision;
+        this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
+        this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
+        this.#enabledActionIds = [...message.payload.enabledActionIds];
         this.#snapshot = null;
         this.#latestReceipt = null;
         this.#latestReasonCode = null;
         break;
       case "catalog_update":
         if (
-           message.payload.policyIdentity === undefined ||
-           !/^[0-9a-f]{32}$/iu.test(message.payload.policyIdentity.value) ||
-           !Number.isSafeInteger(message.payload.policyIdentity.capabilityRevision) ||
-           message.payload.policyIdentity.capabilityRevision <= 0 ||
-           this.#sessionId === null ||
-           this.#catalogRevision === null ||
-           this.#policyIdentity === null ||
-           message.payload.catalogRevision !== this.#catalogRevision ||
-           message.payload.policyIdentity.capabilityRevision <= this.#policyIdentity.capabilityRevision ||
-           this.#acceptedPolicyIdentityValues.has(message.payload.policyIdentity.value) ||
-           !message.payload.enabledActionIds.every((actionId) =>
+          message.payload.policyIdentity === undefined ||
+          !/^[0-9a-f]{32}$/iu.test(message.payload.policyIdentity.value) ||
+          !Number.isSafeInteger(message.payload.policyIdentity.capabilityRevision) ||
+          message.payload.policyIdentity.capabilityRevision <= 0 ||
+          this.#sessionId === null ||
+          this.#catalogRevision === null ||
+          this.#policyIdentity === null ||
+          message.payload.catalogRevision !== this.#catalogRevision ||
+          message.payload.policyIdentity.capabilityRevision <= this.#policyIdentity.capabilityRevision ||
+          this.#acceptedPolicyIdentityValues.has(message.payload.policyIdentity.value) ||
+          !message.payload.enabledActionIds.every((actionId) =>
             this.#registrations.some(
               (registration) => registration.actionId === actionId && registration.kind === "execution",
             ),
@@ -172,11 +172,11 @@ export class GameConnectionTestClient {
           this.endpoint.disconnect("invalid_catalog_update");
           break;
         }
-         this.#catalogRevision = message.payload.catalogRevision;
-         this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
-         this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
-         this.#enabledActionIds = [...message.payload.enabledActionIds];
-         this.#snapshot = null;
+        this.#catalogRevision = message.payload.catalogRevision;
+        this.#policyIdentity = Object.freeze({ ...message.payload.policyIdentity });
+        this.#acceptedPolicyIdentityValues.add(message.payload.policyIdentity.value);
+        this.#enabledActionIds = [...message.payload.enabledActionIds];
+        this.#snapshot = null;
         break;
       case "snapshot":
         // A delayed observation response must never replace newer Mod state;

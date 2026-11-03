@@ -7,14 +7,14 @@ import {
   type Scope,
   serializeBounded,
   validateBridgeMessage,
-} from "./protocol.js";
+} from "../protocol.js";
 
 export type BridgeFault = "disconnected" | "invalid_message" | "message_too_large" | "rate_limited";
 
 /**
- * Deterministic in-memory Phase 2 transport. It models delivery, ordering,
- * bounded payloads, rate limits, and disconnection without selecting the
- * production Windows IPC mechanism.
+ * In-memory transport double. It models delivery, ordering, bounded payloads,
+ * rate limits, and disconnection without selecting the production Windows IPC
+ * mechanism, so the Host bridge clients can be driven at their real seams.
  */
 export class DeterministicBridgeEndpoint {
   readonly #events = new EventEmitter();
@@ -57,10 +57,6 @@ export class DeterministicBridgeEndpoint {
       validateBridgeMessage(message, this.#peer.scope, nowMs) !== null
     )
       return "invalid_message";
-    if (message.type === "execution_request") {
-      // Execution requests require snapshot-specific validation at the Mod;
-      // transport only verifies their bounded, scoped envelope.
-    }
     if (message.type === "semantic_event" && this.rateLimited(nowMs)) return "rate_limited";
     this.#peer.#events.emit("message", structuredClone(message));
     return null;
