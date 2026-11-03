@@ -863,13 +863,16 @@ function extractCharacterBook(
  *
  * `<START>` is the spec's own explicit separator, so a card that wrote one is
  * split on it alone. A card without `<START>` separates blocks with a new
- * speaker turn; the decoder's own unit is one user+companion exchange, so the
- * boundary is the next USER label (the labels this decoder accepts). It is
- * deliberately NOT a blank line: an example reply may span paragraphs, and the
- * old `\n{2,}` split cut such a reply in two and recorded its tail as an
- * unparsed block. For the same reason it is not the companion's label either -
- * splitting there would divide the very pair the decoder needs and lose every
- * clean card.
+ * speaker turn, and the boundary is the next USER label (the labels this decoder
+ * accepts). It is deliberately NOT a blank line: an example reply may span
+ * paragraphs, and the old `\n{2,}` split cut such a reply in two and recorded its
+ * tail as an unparsed block. For the same reason it is not the companion's label
+ * either - splitting there would divide the very pair the decoder needs and lose
+ * every clean card.
+ *
+ * A block is NOT one exchange. The ST format lets one `<START>` block hold a card's
+ * whole form teaching - several back-and-forth turns - so `parseExamples` walks every
+ * speaker of a block and this boundary only has to be wide enough not to cut one in two.
  */
 const EXAMPLE_BLOCK_SEPARATOR = /<START>/u;
 const EXAMPLE_TURN_BOUNDARY = /(?=(?:^|\n)\s*(?:\{\{user\}\}|You|User)\s*:)/iu;
@@ -890,8 +893,16 @@ function escapeRegExpLiteral(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
+/** One speaker's turn of one block: who spoke, and what the block gave them to say. */
+type ExampleTurn = Readonly<{ speaker: "user" | "companion"; text: string }>;
+
 /**
- * The speaker-label regexes one card's examples are read with.
+ * The one regex a block is walked with, speaker by speaker.
+ *
+ * The player's labels are capture group 1 and the companion's group 2, and exactly one of
+ * the two is defined per match, so a turn is identified by which alternative matched rather
+ * than by where it sits in the text. The text of a turn runs to the next accepted speaker
+ * label, which is what keeps a reply that spans paragraphs whole.
  *
  * The companion's labels are the spec's own (`{{char}}`/`Character`/`Assistant`) plus the
  * card's declared name, because real cards label her with it: `琥珀: "早安"` and
@@ -904,15 +915,60 @@ function escapeRegExpLiteral(value: string): string {
  * `{{user}}` is resolved by the chat front end at render time - so there is no name to add,
  * and a card that labels the player with one it invented loses that block as before.
  */
-function exampleSpeakerPatterns(declaredName: string | undefined): Readonly<{ user: RegExp; companion: RegExp }> {
+function exampleTurnPattern(declaredName: string | undefined): RegExp {
   const companionLabels =
     declaredName === undefined
       ? EXAMPLE_COMPANION_LABELS
       : `${EXAMPLE_COMPANION_LABELS}|${escapeRegExpLiteral(declaredName)}`;
-  return Object.freeze({
-    user: new RegExp(`(?:${EXAMPLE_USER_LABELS})\\s*:\\s*([\\s\\S]*?)(?=(?:${companionLabels})\\s*:|$)`, "iu"),
-    companion: new RegExp(`(?:${companionLabels})\\s*:\\s*([\\s\\S]*?)(?=(?:${EXAMPLE_USER_LABELS})\\s*:|$)`, "iu"),
-  });
+  const anySpeaker = `(?:(?:${EXAMPLE_USER_LABELS})|(?:${companionLabels}))`;
+  return new RegExp(
+    `(?:(?:${EXAMPLE_USER_LABELS})\\s*:\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*:|$))|(?:(?:${companionLabels})\\s*:\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*:|$))`,
+    "giu",
+  );
+}
+
+/** Every accepted speaker turn of one block, in the order the block wrote them. */
+function exampleTurns(part: string, pattern: RegExp): readonly ExampleTurn[] {
+  const turns: ExampleTurn[] = [];
+  for (const match of part.matchAll(pattern)) {
+    // A label with nothing under it carries nothing, and is not a turn: keeping it would let
+    // an empty line decide where the exchange around it breaks.
+    const text = (match[1] ?? match[2] ?? "").trim();
+    if (text.length === 0) continue;
+    turns.push(Object.freeze({ speaker: match[1] === undefined ? "companion" : "user", text }));
+  }
+  return Object.freeze(turns);
+}
+
+/**
+ * The exchanges one block's turns make, and whether the block was read whole.
+ *
+ * Turns are paired two at a time in the order the block wrote them, and a pair takes
+ * whichever speaker came first, so a block that opens with her line - the shape real cards
+ * ship (`琥珀: "早安"\nYou: 嗯。`) - pairs her line with the player's answer instead of
+ * losing it. A block that stops alternating, that ends mid-exchange, or that carries no
+ * accepted speaker at all is reported by `parseExamples` as lost: repairing it into an
+ * exchange the author never wrote is the silent reshaping the loss ledger exists to prevent.
+ */
+function pairExampleTurns(turns: readonly ExampleTurn[]): Readonly<{
+  exchanges: readonly Readonly<{ user: string; companion: string }>[];
+  complete: boolean;
+}> {
+  const exchanges: Readonly<{ user: string; companion: string }>[] = [];
+  let index = 0;
+  while (index + 1 < turns.length) {
+    const first = turns[index]!;
+    const second = turns[index + 1]!;
+    if (first.speaker === second.speaker)
+      return Object.freeze({ exchanges: Object.freeze(exchanges), complete: false });
+    const user = first.speaker === "user" ? first : second;
+    const companion = first.speaker === "companion" ? first : second;
+    exchanges.push(Object.freeze({ user: user.text, companion: companion.text }));
+    index += 2;
+  }
+  // No turn at all is the one shape with nothing to read, so it is not "complete"; a
+  // leftover turn is a block that ended mid-exchange.
+  return Object.freeze({ exchanges: Object.freeze(exchanges), complete: turns.length > 0 && index === turns.length });
 }
 
 function parseExamples(
@@ -921,17 +977,17 @@ function parseExamples(
   losses: StCardImportLossLedger,
 ): readonly Readonly<{ user: string; companion: string }>[] {
   if (value === undefined) return [];
-  const patterns = exampleSpeakerPatterns(declaredName);
+  const pattern = exampleTurnPattern(declaredName);
   const blocks = (value.includes("<START>") ? value.split(EXAMPLE_BLOCK_SEPARATOR) : value.split(EXAMPLE_TURN_BOUNDARY))
     .map((part) => part.trim())
     .filter(Boolean);
-  const parsed = blocks.flatMap((part) => {
-    const user = part.match(patterns.user)?.[1]?.trim();
-    const companion = part.match(patterns.companion)?.[1]?.trim();
-    return user !== undefined && companion !== undefined && user.length > 0 && companion.length > 0
-      ? [Object.freeze({ user, companion })]
-      : [];
-  });
+  const parsed: Readonly<{ user: string; companion: string }>[] = [];
+  let lostBlocks = 0;
+  for (const part of blocks) {
+    const { exchanges, complete } = pairExampleTurns(exampleTurns(part, pattern));
+    parsed.push(...exchanges);
+    if (!complete) lostBlocks += 1;
+  }
   // The accepted speaker labels are the ST spec's own two speakers - `{{user}}`/
   // `You`/`User` for the player and `{{char}}`/`Character`/`Assistant` for the
   // companion, case-insensitively - plus the card's own declared name for the
@@ -939,7 +995,11 @@ function parseExamples(
   // invented, a third participant - loses that block, and a card's own form
   // teaching may be nothing BUT those blocks, so the loss is reported with its
   // count rather than vanishing.
-  losses.record("mes_example", "unparsed_example_blocks", blocks.length - parsed.length);
+  //
+  // The count is BLOCKS: a block that yielded its first exchange and then ran out of
+  // alternating turns is one lost block, not a loss per turn, because the block is the
+  // unit the card wrote and the exchange it did yield is still carried above.
+  losses.record("mes_example", "unparsed_example_blocks", lostBlocks);
   return Object.freeze(parsed);
 }
 /**

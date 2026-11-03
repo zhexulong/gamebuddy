@@ -1673,6 +1673,80 @@ test("without <START> the block boundary is the next speaker turn, so every turn
   ]);
 });
 
+test("one <START> block holding several exchanges keeps every exchange, not only the first", () => {
+  // The failure this catches: `<START>` separates a card's example BLOCKS, but one block
+  // routinely holds several back-and-forth turns - the card's whole form teaching can be a
+  // single block. The parser took the first user match and the first companion match of each
+  // block and never walked the rest, so every exchange after the first was discarded and no
+  // loss was reported for it: the companion was taught by one line out of six.
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Rin",
+        description: "calm",
+        mes_example:
+          "<START>\n{{user}}: 一\n{{char}}: 甲\n{{user}}: 二\n{{char}}: 乙\n<START>\n{{user}}: 三\n{{char}}: 丙",
+      },
+    }),
+  );
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
+    { user: "三", companion: "丙" },
+  ]);
+  assert.deepEqual(report.losses, []);
+  // The profile and the prompt are where the few-shot actually teaches: the second exchange
+  // of the first block has to reach them, not only the parsed candidate list.
+  const profile = candidateToIdentityProfile(report.candidate!, 1);
+  assert.deepEqual(profile.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
+    { user: "三", companion: "丙" },
+  ]);
+});
+
+test("an example block that stops alternating, or ends mid-exchange, is reported rather than reshaped", () => {
+  // Walking every speaker of a block makes two new shapes reachable, and neither may be
+  // quietly repaired into an exchange the author never wrote: two player turns in a row (the
+  // old parser folded them into ONE user line with a label inside it), and a block that ends
+  // on a player turn with no answer (the old parser dropped that turn and reported nothing).
+  const repeatedPlayerLabel = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "Rin", description: "calm", mes_example: "<START>\n{{user}}: 一\nYou: 二\n{{char}}: 甲" },
+    }),
+  );
+  assert.deepEqual(repeatedPlayerLabel.candidate?.profileCandidate.examples, []);
+  assert.deepEqual(repeatedPlayerLabel.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
+
+  const unansweredPlayerTurn = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "Rin", description: "calm", mes_example: "<START>\n{{user}}: 一\n{{char}}: 甲\n{{user}}: 二" },
+    }),
+  );
+  // The complete exchange in that block still survives; what is lost is the trailing turn.
+  assert.deepEqual(unansweredPlayerTurn.candidate?.profileCandidate.examples, [{ user: "一", companion: "甲" }]);
+  assert.deepEqual(unansweredPlayerTurn.losses, [
+    { field: "mes_example", reason: "unparsed_example_blocks", count: 1 },
+  ]);
+
+  // A block whose labels are all accepted and whose turns alternate reports no loss at all -
+  // the new ledger is not simply "one block, one row".
+  const clean = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "Rin", description: "calm", mes_example: "<START>\n{{user}}: 一\n{{char}}: 甲\nYou: 二\nRin: 乙" },
+    }),
+  );
+  assert.deepEqual(clean.candidate?.profileCandidate.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
+  ]);
+  assert.deepEqual(clean.losses, []);
+});
+
 // --- the card's own secondary selection gate --------------------------------
 
 /** The shipped reviewed card, read from whichever root the suite was started in. */
