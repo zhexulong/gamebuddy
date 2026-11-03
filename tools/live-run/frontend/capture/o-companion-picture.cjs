@@ -10,7 +10,7 @@
 // The monogram is not a missing asset: it is the case of a companion a card brought without a
 // picture. A `.json` card carries no image arm at all, so the companion it provisions IS the
 // fallback case, and it is driven through the surface's own picker.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 const CARD = JSON.stringify({
   spec: "chara_card_v3",
@@ -108,6 +108,7 @@ const stageJsonCard = (card) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("o-companion-picture.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};${PICTURE_HELPER};undefined`);
   await activateSurface(page, "聊天");
@@ -194,6 +195,7 @@ const stageJsonCard = (card) => {
   say(`roster @400x800: rows=${rosterNarrow.length} withPicture=${rosterNarrow.filter((row) => row.hasImage).length} monograms=${JSON.stringify(rosterNarrow.filter((row) => !row.hasImage).map((row) => row.fallbackText))}`);
   await shot(page, "84-monogram-fallback-400x800.png");
 
+  await observe(page, say, "picture", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-O");
