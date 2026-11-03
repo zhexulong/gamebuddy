@@ -1,20 +1,21 @@
 import { ChevronDown } from "lucide-react";
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
+import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, type Messages, messages } from "../i18n";
 import {
   type CompanionWorldBookV1,
   MAX_LOREBOOK_FILE_BYTES,
   type ManagementPipelineApi,
+  TavernProblemError,
   type WorldInfoContentV1,
   type WorldInfoStateV1,
 } from "../management-pipeline-api";
-import { problemTextWithCode } from "../composed-problem-view";
-import { TavernProblemError } from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { CharactersPanel } from "./CharactersPanel";
-import { type CharacterLabels, characterLabels } from "./character-domain-labels";
 import type { InspectedCompanion } from "./CompanionInspectorDrawer";
+import { type CharacterLabels, characterLabels } from "./character-domain-labels";
 import type { WorldInfoSurfaceSource } from "./management-surface-panels";
+import { useRecordDraft } from "./surface-drafts";
 
 /**
  * The product's Characters surface: the character domain and the character's own
@@ -298,6 +299,12 @@ function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: M
  * The draft carries two different things with two different owners: the revision its save
  * CASes on, which follows the book (`submit` moves it to the revision a conflict re-read
  * returns), and the entries, which belong to the player and are never taken from a read.
+ *
+ * Which is why the draft is the SHELL's and not this block's: the block is rendered only while
+ * Characters is the selected surface, so leaving for Settings unmounted it and an editor that
+ * came back CLOSED put every entry the player had written out of reach. The record is held whole
+ * - one draft with its revision and its rows - so the rows keep their own `rowId` and cannot
+ * land on each other.
  */
 type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
@@ -440,7 +447,7 @@ function CompanionWorldBookSection({
 }): ReactElement | null {
   const labels = characterLabels(locale);
   const [view, setView] = useState<CompanionWorldBookView>({ kind: "loading" });
-  const [draft, setDraft] = useState<CompanionWorldBookDraft | null>(null);
+  const bookDraft = useRecordDraft<CompanionWorldBookDraft>("characters.companion-world-book", null);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<CompanionWorldBookNotice>(null);
   // The row whose removal is armed. Arming is per row and per section, so a second arm
@@ -481,7 +488,7 @@ function CompanionWorldBookSection({
 
   const beginEdit = (): void => {
     if (view.kind !== "ready" || view.worldBook.revision === null) return;
-    setDraft({
+    bookDraft.type({
       handle: view.handle,
       expectedRevision: view.worldBook.revision,
       entries: view.worldBook.entries.map(toCompanionWorldBookEntryDraft),
@@ -502,8 +509,8 @@ function CompanionWorldBookSection({
    * player's, and a rebase that replaced them would answer a refusal by deleting her work.
    */
   const submit = (): void => {
-    if (draft === null || !companionWorldBookDraftIsComplete(draft)) return;
-    const target = draft;
+    const target = bookDraft.value;
+    if (target === null || !companionWorldBookDraftIsComplete(target)) return;
     const entries = target.entries.map((entry) => ({
       title: entry.title.trim(),
       keys: parseTriggerWords(entry.keys),
@@ -521,7 +528,7 @@ function CompanionWorldBookSection({
           csrfToken,
         );
         setView({ kind: "ready", handle: target.handle, worldBook: updated });
-        setDraft(null);
+        bookDraft.clear();
       } catch (error) {
         failure = companionWorldBookRefusal(labels, error, messages(locale));
         const reread = await readOnce();
@@ -532,7 +539,7 @@ function CompanionWorldBookSection({
         if (isCompanionWorldBookConflict(error) && rereadView !== null && rereadView.kind === "ready") {
           const revision = rereadView.worldBook.revision;
           if (revision !== null) {
-            setDraft((current) => (current === null ? null : { ...current, expectedRevision: revision }));
+            bookDraft.amend((current) => (current === null ? null : { ...current, expectedRevision: revision }));
             const removed = target.openedTitles.filter(
               (title) => !rereadView.worldBook.entries.some((entry) => entry.title === title),
             );
@@ -551,13 +558,15 @@ function CompanionWorldBookSection({
   };
 
   const remove = (rowId: string): void => {
-    if (draft === null) return;
+    const current = bookDraft.value;
+    if (current === null) return;
     setArmed(null);
-    setDraft({ ...draft, entries: draft.entries.filter((entry) => entry.rowId !== rowId) });
+    bookDraft.type({ ...current, entries: current.entries.filter((entry) => entry.rowId !== rowId) });
   };
 
   if (view.kind !== "ready") return null;
   const entries = view.worldBook.entries;
+  const draft = bookDraft.value;
   return (
     <section aria-label={labels.companionWorldBookTitle} data-companion-world-book>
       <h3>{labels.companionWorldBookTitle}</h3>
@@ -616,7 +625,15 @@ function CompanionWorldBookSection({
           book is the one a player most needs to add to. */}
       {draft === null ? (
         <div className="composer-actions">
-          <button type="button" className="small-button" data-companion-world-book-edit onClick={beginEdit}>
+          {/* The editor's own entry control, declared so the draft gate opens it rather than
+              enumerating a surface with the player's newest editor outside the population. */}
+          <button
+            type="button"
+            className="small-button"
+            data-companion-world-book-edit
+            data-draft-revealer
+            onClick={beginEdit}
+          >
             {labels.companionWorldBookEdit}
           </button>
         </div>
@@ -626,12 +643,12 @@ function CompanionWorldBookSection({
           draft={draft}
           saving={saving}
           armed={armed}
-          onChange={setDraft}
+          onChange={bookDraft.type}
           onArm={setArmed}
           onRemove={remove}
           onSubmit={submit}
           onCancel={() => {
-            setDraft(null);
+            bookDraft.clear();
             setArmed(null);
             setNotice(null);
           }}
@@ -996,7 +1013,10 @@ function CharacterWorldBookPanel({
   // no editor is open). The two are separate: reading an item never opens an
   // editor, and an editor can be open over a closed item.
   const [opened, setOpened] = useState<Readonly<{ handle: string; content: WorldInfoContentV1 }> | null>(null);
-  const [draft, setDraft] = useState<WorldBookDraft | null>(null);
+  // The authored item is the shell's draft, like her own book's: leaving Characters unmounts this
+  // panel, and an item whose title, summary and entries were being written is not the panel's to
+  // throw away. Held whole, so its `handle` and `itemRevision` travel with the text they belong to.
+  const itemDraft = useRecordDraft<WorldBookDraft>("characters.world-book-item", null);
   const [saving, setSaving] = useState(false);
   // The item whose delete is armed. Arming is per item and per panel, so a
   // second arm replaces the first and no stale arm can fire on another row.
@@ -1087,7 +1107,7 @@ function CharacterWorldBookPanel({
   };
 
   const beginCreate = (): void => {
-    setDraft({
+    itemDraft.type({
       handle: null,
       itemRevision: null,
       publicTitle: "",
@@ -1103,7 +1123,7 @@ function CharacterWorldBookPanel({
     void (async () => {
       const content = await readItem(itemHandle);
       if (content === null) return;
-      setDraft({
+      itemDraft.type({
         handle: itemHandle,
         itemRevision: content.revision,
         publicTitle: content.publicTitle,
@@ -1130,6 +1150,7 @@ function CharacterWorldBookPanel({
    * because the next command CASes on the revision that read-back carries.
    */
   const submitDraft = (): void => {
+    const draft = itemDraft.value;
     if (view.kind !== "ready" || draft === null || !worldBookDraftIsComplete(draft)) return;
     const expectedRevision = view.worldInfo.revision;
     const target = draft.handle;
@@ -1173,7 +1194,7 @@ function CharacterWorldBookPanel({
                 csrfToken,
               );
         setView({ kind: "ready", worldInfo: result });
-        setDraft(null);
+        itemDraft.clear();
         setOpened(null);
       } catch (error) {
         failure = problemTextWithCode(
@@ -1205,7 +1226,7 @@ function CharacterWorldBookPanel({
         // panel held open on it closes with it: an editor left open on a removed
         // item would save into `world_info_not_found`.
         if (opened !== null && opened.handle === itemHandle) setOpened(null);
-        if (draft !== null && draft.handle === itemHandle) setDraft(null);
+        if (itemDraft.value !== null && itemDraft.value.handle === itemHandle) itemDraft.clear();
       } catch (error) {
         failure = problemTextWithCode(labels.worldBookDeleteFailed, error, problemLabels);
         setView(await readOnce());
@@ -1286,6 +1307,7 @@ function CharacterWorldBookPanel({
   }
 
   const items = view.worldInfo.items;
+  const draft = itemDraft.value;
   return (
     <section className="management-settings-section" aria-label={labels.worldBookTitle} data-world-book>
       <h3>{labels.worldBookTitle}</h3>
@@ -1321,7 +1343,13 @@ function CharacterWorldBookPanel({
           is here whether or not the library already holds one. */}
       {draft === null && (
         <div className="composer-actions">
-          <button type="button" className="small-button" data-world-book-create onClick={beginCreate}>
+          <button
+            type="button"
+            className="small-button"
+            data-world-book-create
+            data-draft-revealer
+            onClick={beginCreate}
+          >
             {labels.worldBookCreate}
           </button>
         </div>
@@ -1377,9 +1405,9 @@ function CharacterWorldBookPanel({
           labels={labels}
           draft={draft}
           saving={saving}
-          onChange={setDraft}
+          onChange={itemDraft.type}
           onSubmit={submitDraft}
-          onCancel={() => setDraft(null)}
+          onCancel={() => itemDraft.clear()}
         />
       )}
       {view.worldInfo.state === "pending" && <p>{labels.worldBookPending}</p>}
@@ -1496,6 +1524,7 @@ function WorldBookItemRow({
             type="button"
             className="small-button"
             data-world-book-edit
+            data-draft-revealer
             aria-label={`${labels.worldBookEdit}: ${item.title}`}
             onClick={() => onBeginEdit(item.handle)}
           >

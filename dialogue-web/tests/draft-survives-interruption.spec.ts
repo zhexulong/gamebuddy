@@ -18,6 +18,12 @@ import { messages } from "../src/i18n";
  * which appears once a provider is chosen - is inside the population rather than quietly outside
  * it. A sixth field added to any of these surfaces is covered the day it lands.
  *
+ * An editor the player has to OPEN is the same question asked of a press, so the product answers it:
+ * the control that opens an editor carrying the player's own fields is marked `data-draft-revealer`,
+ * and the walk opens every one of them before it enumerates. That is how the two world book editors
+ * came into the population - both are one press away from the surface, and neither was reachable by
+ * an enumeration that only ever looked at what was already on screen.
+ *
  * Each control is then checked ON ITS OWN, on a fresh page, with only the steps that revealed it
  * replayed first. That matters more than it looks: answering one control can hide another (the
  * connection form's `apiKeyRequired` control removes the credential field when it is set to
@@ -40,12 +46,15 @@ import { messages } from "../src/i18n";
  *    is the same defect as a draft a switch eats. A stub that accepted the write would hide it
  *    behind an authority that now agrees with the player.
  *
- * What this file does NOT cover, said plainly rather than implied: a control that only exists after
- * the player acts on one stored row (a Chat's rename, a row's Edit, a chapter correction). Those
- * are one-shot editors, absent from the DOM when the player arrives, and the specs that own them
- * already gate their failing-save behaviour (`memory-authoring-keeps-the-words`,
+ * What this file does NOT cover, said plainly rather than implied: a one-shot editor over ONE stored
+ * row, opened deliberately on that row - a Chat's rename, a chapter correction. Those are absent
+ * from the DOM when the player arrives and answer to Save or Close in place, and the specs that own
+ * them already gate their failing-save behaviour (`memory-authoring-keeps-the-words`,
  * `prompt-addition-refusal-keeps-the-text`, `world-book-conflict-retry`,
- * `failed-send-keeps-the-words`). `prepare()` is how a surface opts such a field INTO this gate.
+ * `failed-send-keeps-the-words`). They are not a narrowing of the world book's coverage: both world
+ * book editors declare themselves and are walked. `prepare()` is the older way a surface opts such
+ * a field IN, and it remains for the two editors that predate the declaration (the companion's
+ * performance directive and the notebook's authoring form).
  */
 
 const token = "A".repeat(43);
@@ -82,7 +91,10 @@ const composedRoot = {
       transcript: [],
       draft: { revision: 0, present: false },
       turn: null,
-      worldInfo: null,
+      // The library's own revision, present and empty: an ABSENT projection makes the whole block
+      // read as "unavailable", with no authoring control in it at all - and the gate would be
+      // walking a surface whose library it never reached.
+      worldInfo: { state: "none", revision: chatHandle, items: [] },
     },
     memory: { readAvailable: true, mutationAvailable: true, projectionRevision },
     eventStream: null,
@@ -206,6 +218,19 @@ async function stubShell(page: Page): Promise<{ languageWrites: () => number }> 
   );
   await page.route("**/api/tavern/v1/companions/*/voice", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, profileRevision: 4, characterVoice: null })),
+  );
+  // The companion's OWN world book, present with one entry. Without a book the section renders no
+  // block at all, and with no entry its editor is a form with no rows: either way the gate would be
+  // measuring something other than the editor the player writes in.
+  await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        present: true,
+        revision: 2,
+        entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+      }),
+    ),
   );
   // The three authored records are PRESENT and non-empty: the stored value is what a silent
   // re-seed puts back, so a field that returns holding the player's text is measurably a draft.
@@ -399,6 +424,28 @@ async function typeInto(region: Locator, control: DraftControl, position: number
 type Filled = Readonly<{ control: DraftControl; value: string }>;
 
 /**
+ * Open every editor the product declares, so its fields are in the population before they are read.
+ *
+ * A field inside an editor the player has to open is invisible to an enumeration that never opens it,
+ * and the walk would then report a surface as covered while the player's own editor sat outside the
+ * population - the silent narrowing this file exists to avoid. The product marks the control that
+ * opens such an editor with `data-draft-revealer`, so the set comes from the product's declaration
+ * rather than from a list of locators somebody has to remember to extend.
+ *
+ * Opening an editor REPLACES the control that opened it. That is the premise the loop rests on: it
+ * is why the count falls to zero, and why each press waits for its own control to go before the next
+ * - pressing one whose editor has not rendered yet would open a fresh empty draft over the entries
+ * the walk had already filled.
+ */
+async function revealEditors(region: Locator): Promise<void> {
+  const revealers = region.locator("[data-draft-revealer]");
+  for (let open = await revealers.count(); open > 0; open -= 1) {
+    await revealers.first().click();
+    await expect(revealers).toHaveCount(open - 1);
+  }
+}
+
+/**
  * Fill every control the surface renders, to a fixed point.
  *
  * The walk repeats until nothing new appears: the connection form's base URL and its model field
@@ -410,6 +457,9 @@ type Filled = Readonly<{ control: DraftControl; value: string }>;
 async function fillEverything(region: Locator): Promise<Filled[]> {
   const filled = new Map<string, Filled>();
   for (;;) {
+    // The editors the product declares open first: their fields belong to the player, and a walk
+    // that never pressed the control that opens them would leave them outside the population.
+    await revealEditors(region);
     const fresh = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
     if (fresh.length === 0) {
       /*
@@ -419,6 +469,9 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
        * is what tells the two apart, and it is the surface's own timing, not a list of fields.
        */
       await region.page().waitForTimeout(250);
+      // An editor whose own entry control renders with that read is opened here rather than missed:
+      // the declaration is on screen by the time the settle has passed, or the surface has none.
+      await revealEditors(region);
       const settled = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
       if (settled.length === 0) return [...filled.values()];
       continue;

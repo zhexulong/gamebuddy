@@ -28,6 +28,14 @@ type Drafts = Readonly<Record<string, string>>;
 type DraftStore = Readonly<{
   drafts: Drafts;
   write: (key: string, value: string) => void;
+  /**
+   * Change a draft as the store holds it NOW, rather than writing a value read before the change.
+   *
+   * An answer that arrives from a request in flight carries the draft as it was when the request
+   * was sent, and the player may have typed since; applying the change inside the update is what
+   * keeps their typing.
+   */
+  amend: (key: string, change: (current: string) => string) => void;
   /** Forget the draft if it is still exactly `sent`; a field the player has gone on typing in keeps it. */
   release: (key: string, sent: string) => void;
   /** Forget the draft outright: the player discarded it. */
@@ -42,6 +50,12 @@ export function SurfaceDrafts({ children }: Readonly<{ children: ReactNode }>) {
     () => ({
       drafts,
       write: (key, value) => setDrafts((current) => ({ ...current, [key]: value })),
+      amend: (key, change) =>
+        setDrafts((current) => {
+          const existing = current[key];
+          if (existing === undefined) return current;
+          return { ...current, [key]: change(existing) };
+        }),
       release: (key, sent) =>
         setDrafts((current) => {
           if (current[key] !== sent) return current;
@@ -77,6 +91,8 @@ export type DraftField<T> = Readonly<{
   value: T;
   /** The player's own edit. */
   type: (next: T) => void;
+  /** A change that is not the player's typing - an answer to a request already sent - applied to the draft as it stands. */
+  amend: (change: (current: T) => T) => void;
   /** A save the Host accepted: hand the field back to the authority, unless the player has typed since. */
   release: (sent: T) => void;
   /** The player discarding their own text: forget it, and show the authority's value again. */
@@ -88,6 +104,8 @@ function field<T>(store: DraftStore, key: string, seed: T): DraftField<T> {
   return {
     value: draft === undefined ? seed : (draft as unknown as T),
     type: (next: T) => store.write(key, next as unknown as string),
+    amend: (change: (current: T) => T) =>
+      store.amend(key, (current) => change(current as unknown as T) as unknown as string),
     release: (sent: T) => store.release(key, sent as unknown as string),
     clear: () => store.forget(key),
   };
@@ -155,4 +173,22 @@ export function useRowsDraft<T>(key: string, seed: readonly T[]): DraftField<rea
   // spelling of "did it change". A new field object per render is harmless here because nothing
   // hands this one to an effect.
   return field(store, key, seed);
+}
+
+/**
+ * One authored record the player is editing, kept whole - and `null` is the editor being closed.
+ *
+ * The world book is the case: a draft is the book's entries AND the revision its save CASes on AND
+ * the titles it was opened over, which is one record and not three drafts. Split per field, the
+ * store would have to hold the row order and the revision somewhere else, and that is the same
+ * draft spelled twice - the rows inside carry their own identity (`rowId`), so nothing is mapped by
+ * its position and two entries cannot collide.
+ *
+ * Closed is a draft like any other, and it lives here for the same reason the words do: a player who
+ * opened the editor, wrote in it and left came back to a CLOSED form. That does not lose the words
+ * so much as make them unreachable, which costs them the same work.
+ */
+export function useRecordDraft<T>(key: string, seed: T | null): DraftField<T | null> {
+  const store = storeFor(key);
+  return useMemo(() => field(store, key, seed), [store, key, seed]);
 }
