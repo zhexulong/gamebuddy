@@ -11,7 +11,7 @@
 // process. When 0, every stage that requires a live turn records a NAMED SKIP and the geometry
 // probes that survive without a turn still run.
 const path = require("node:path");
-const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn, observe, readDurableTranscript } = require("./common.cjs");
+const { connect, reporter, SHOTS, PAGE_HELPERS, activateSurface, shot, canStartTurn, observe, readDurableTranscript, observationStart } = require("./common.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
 const SKIP = (reason) => `SKIPPED:${reason}`;
@@ -187,6 +187,7 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("f-turn-variant.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "聊天");
@@ -357,7 +358,7 @@ async function waitForSettle(page, label, predicate, attempts = 120) {
   await shot(page, "83-variant-switched-forward.png");
 
   // What this driver cost and what the runtime holds, read from the product's own marks.
-  await observe(page, say, "f");
+  await observe(page, say, "f", { sinceMs: observationFrom });
 
   /*
    * Capability observation: what the chat DID with the turn it just ran, read from the durable state
