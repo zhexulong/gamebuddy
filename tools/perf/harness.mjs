@@ -56,7 +56,12 @@ async function runWindow(run, deadlineMs, limit) {
  * result, so a number carries the size it was measured at instead of being a number about nothing.
  *
  * `maxOps` bounds a case that grows a bounded resource, so it measures that resource's cost rather
- * than running into its cap: the windows then end by op count instead of by the clock.
+ * than running into its cap: the windows then end by op count instead of by the clock. It is the
+ * budget for the WHOLE case, split evenly across `rounds`, so a bounded case still runs every round
+ * and its total spend on the resource is what it always was. It used to be a cap on the running
+ * total instead, which truncated the last round and stopped the loop: `admission.action/small` spent
+ * its 4000 ops inside ONE 200 ms window and still reported `rounds: 5`, so the number was a
+ * best-of-one presented as a best-of-five.
  */
 export async function measure({
   id,
@@ -70,14 +75,18 @@ export async function measure({
   // Warmup is bounded by the clock only: it exists to reach steady state, not to be counted against
   // the budget, and a case whose op is fast would otherwise spend its whole op cap before measuring.
   let ops = await runWindow(run, performance.now() + warmupMs, Number.POSITIVE_INFINITY);
-  let measured = 0;
+  const perRoundLimit = maxOps === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : Math.floor(maxOps / rounds);
+  // A cap that cannot give every round an op would measure fewer windows than it reports; that is a
+  // case whose budget is wrong, and it fails here rather than in a number nobody can reproduce.
+  if (perRoundLimit < 1) throw new Error(`perf_case_op_cap_below_rounds:${id}:${size}:${maxOps}<${rounds}`);
   let best;
-  for (let round = 1; round <= rounds && measured < maxOps; round += 1) {
+  let executed = 0;
+  for (let round = 1; round <= rounds; round += 1) {
     const startedAt = performance.now();
-    const roundOps = await runWindow(run, startedAt + durationMs, maxOps - measured);
+    const roundOps = await runWindow(run, startedAt + durationMs, perRoundLimit);
     const elapsedMs = performance.now() - startedAt;
-    measured += roundOps;
     ops += roundOps;
+    executed += 1;
     const opsPerSecond = (roundOps / elapsedMs) * 1000;
     if (best === undefined || opsPerSecond > best.opsPerSecond) best = { roundOps, elapsedMs, opsPerSecond };
   }
@@ -89,7 +98,9 @@ export async function measure({
     // Two decimals: a bench reports a measurement, not precision it does not have.
     opsPerSecond: round(best.opsPerSecond),
     perOpMicros: round((best.elapsedMs * 1000) / best.roundOps),
-    rounds,
+    // The windows that actually ran, never the configured count: a reader who sees 5 must have a
+    // best-of-five in front of them.
+    rounds: executed,
     durationMs,
   });
 }
