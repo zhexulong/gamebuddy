@@ -21,6 +21,7 @@ import { createRoot } from "react-dom/client";
 import type { BrowserMessageV1 } from "../src/reference-pipeline-api";
 import { Composer, type VoiceSurfaceStateV1 } from "../src/components/Composer";
 import { Timeline } from "../src/components/Timeline";
+import { SurfaceDrafts } from "../src/components/surface-drafts";
 import { messages } from "../src/i18n";
 
 const LABELS = messages("en");
@@ -1004,4 +1005,13 @@ const chatProbe = {
 
 (window as unknown as { chatProbe: typeof chatProbe }).chatProbe = chatProbe;
 
-createRoot(document.getElementById("probe-root")!).render(<Probe />);
+createRoot(document.getElementById("probe-root")!).render(
+  /*
+   * The shell's own draft store, mounted here for the same reason the product mounts it: the row's
+   * inline editor keeps the player's words in it, so a probe without the provider would be a page the
+   * product never renders - and every row would throw rather than lose the text.
+   */
+  <SurfaceDrafts>
+    <Probe />
+  </SurfaceDrafts>,
+);

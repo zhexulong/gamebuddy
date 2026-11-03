@@ -46,14 +46,15 @@ import { messages } from "../src/i18n";
  *    is the same defect as a draft a switch eats. A stub that accepted the write would hide it
  *    behind an authority that now agrees with the player.
  *
- * What this file does NOT cover, said plainly rather than implied: a one-shot editor over ONE stored
- * row, opened deliberately on that row - a Chat's rename, a chapter correction. Those are absent
- * from the DOM when the player arrives and answer to Save or Close in place, and the specs that own
- * them already gate their failing-save behaviour (`memory-authoring-keeps-the-words`,
- * `prompt-addition-refusal-keeps-the-text`, `world-book-conflict-retry`,
- * `failed-send-keeps-the-words`). They are not a narrowing of the world book's coverage: both world
- * book editors declare themselves and are walked. `prepare()` is the older way a surface opts such
- * a field IN, and it remains for the two editors that predate the declaration (the companion's
+ * What this file does NOT cover, said plainly rather than implied: an editor over ONE stored ROW that
+ * a mutation answers in place and that belongs to a record this gate never opens - a chapter
+ * correction. Those are absent from the DOM when the player arrives and answer to Save or Close in
+ * place, and the specs that own them already gate their failing-save behaviour
+ * (`memory-authoring-keeps-the-words`, `prompt-addition-refusal-keeps-the-text`,
+ * `world-book-conflict-retry`, `failed-send-keeps-the-words`). This is no longer a narrowing of the
+ * rename's or the row editor's coverage: the Chats surface's rename and the transcript row's
+ * in-place edit both declare themselves and are walked. `prepare()` is the older way a surface opts
+ * such a field IN, and it remains for the two editors that predate the declaration (the companion's
  * performance directive and the notebook's authoring form).
  */
 
@@ -61,6 +62,9 @@ const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
 const chatHandle = `${"B".repeat(42)}A`;
 const companionHandle = `${"D".repeat(42)}A`;
+/** The one settled reply the Chat surface renders, so its in-place editor is reachable. */
+const messageHandle = `${"E".repeat(42)}A`;
+const COMPANION_LINE = "The kettle is on and the sky has not decided yet.";
 const expiresAtMs = 1_900_000_000_000;
 const projectionRevision = `${"M".repeat(42)}A`;
 
@@ -88,7 +92,11 @@ const composedRoot = {
     chat: {
       companion: { name: "Nova", handle: companionHandle },
       title: null,
-      transcript: [],
+      // One settled reply, because the row's own editor is only reachable from a row: a transcript
+      // this gate never renders is a surface walked with the player's newest field outside it.
+      transcript: [
+        { handle: messageHandle, role: "companion", text: COMPANION_LINE, locale: "und", order: 0, revision: 1 },
+      ],
       draft: { revision: 0, present: false },
       turn: null,
       // The library's own revision, present and empty: an ABSENT projection makes the whole block
@@ -266,6 +274,27 @@ async function stubShell(page: Page): Promise<{ languageWrites: () => number }> 
     route.fulfill(jsonOk({ state: "none", revision: chatHandle, items: [] })),
   );
   await page.route("**/api/tavern/v1/import-history", (route) => route.fulfill(jsonOk({ apiVersion: 1, entries: [] })));
+  // ONE saved Chat, because the Chats surface opens one rename at a time: its editor takes the
+  // pencil's place, so a second row would open the second editor by closing the first and the walk
+  // would read that as an editor that never closed.
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: "A Chat the Host already named",
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: "A line the list already carries.",
+          },
+        ],
+      }),
+    ),
+  );
   return { languageWrites: () => languageWrites };
 }
 
@@ -368,17 +397,21 @@ const EXCLUSIONS: Readonly<Record<string, string>> = {
  *
  * Asserted to be a subset of the app bar's own entries, so a surface that disappears from the
  * product cannot leave a stale exemption behind.
+ *
+ * The Chats surface used to be listed here: its only text field is a one-shot rename of one existing
+ * Chat, answered by Save or Close. What that reason missed is that the field outlives NEITHER the
+ * row's own render nor a trip to another surface, and the player types a whole title into it - so
+ * the premise moved and the surface is walked like the rest.
  */
 const EXCLUDED_SURFACES: Readonly<Record<string, string>> = {
   [catalogue.gamePanel]:
     "every field on the Game surface commits as it is changed (the thinking level, the co-op floor, the window mode), and the rest belongs to a creation form the player opens deliberately",
-  [catalogue.chatsPanel]:
-    "the only text field is a one-shot rename of one existing Chat, opened deliberately on its row and answered by Save or Close",
 };
 
-/** The four surfaces this gate walks, in the order it visits them. */
+/** The five surfaces this gate walks, in the order it visits them. */
 const SURFACES = [
   { name: "chat", label: catalogue.chatPanel, testId: "chat-surface" },
+  { name: "chats", label: catalogue.chatsPanel, testId: "chats-surface" },
   { name: "characters", label: catalogue.charactersPanel, testId: "characters-surface" },
   { name: "settings", label: catalogue.settingsPanel, testId: "settings-surface" },
   { name: "memory", label: catalogue.memoryPanel, testId: "memory-surface" },
@@ -542,6 +575,10 @@ test.describe("a draft survives the player leaving its surface and coming back",
 
       const region = await open(page, surface);
       await prepare(page, surface, region);
+      // The declared editors open HERE as well as inside the walk: a surface whose only field sits
+      // one press away (the Chats surface's rename, the transcript row's editor) renders none until
+      // it is opened, and the population is what the player can reach, not what is already drawn.
+      await revealEditors(region);
       expect((await enumerate(region)).length, `${surface.name} renders fields this gate is about`).toBeGreaterThan(0);
       const typed = (await fillEverything(region)).filter((entry) => EXCLUSIONS[entry.control.key] === undefined);      expect(typed.length, `${surface.name} has fields this gate requires a draft from`).toBeGreaterThan(0);
 

@@ -16,6 +16,7 @@ import { useArmedConfirmation } from "./armed-confirmation";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantWords } from "./opening-variant-labels";
+import { useRecordDraft } from "./surface-drafts";
 
 /**
  * The live-streaming caret, inserted into the companion bubble's last block. The
@@ -160,6 +161,14 @@ function SwipeArrow({
     </button>
   );
 }
+
+/**
+ * One row's edit in progress: the words in the field, and the words its last save sent.
+ *
+ * `sent` is what tells a landed save from a refused one, so the two belong to one value rather than
+ * to two slots that could disagree.
+ */
+type MessageEdit = Readonly<{ text: string; sent: string | null }>;
 
 /**
  * The editor a row's strip becomes while the player is rewriting that row's words.
@@ -515,14 +524,22 @@ export const MessageBubble = memo(function MessageBubble({
    */
   const editReplyPoint = onEdit !== undefined && !isPlayer ? message.order : undefined;
   /**
-   * The editor is this row's own presentation state: it holds the words the player is rewriting, and
-   * it exists only while the row does - a row a rewind dropped takes its open editor with it. The
-   * order the page rendered is sent with the save, so a row that moved under the editor is refused by
-   * name rather than edited where the player is not looking.
+   * The editor's words are the SHELL's, not this row's, and the slot is the message's own handle.
+   *
+   * The row's text is the player's, and the shell renders its surfaces conditionally
+   * (`shownSurface === CHAT_PANEL` in `ComposedReferenceGameApp`), so leaving Chat unmounts every row
+   * - a `useState` here took the half-typed correction with it, and the row came back with no editor
+   * at all, which does not lose the words so much as make them unreachable. Keyed by the handle rather
+   * than by a position, so two rows' editors are two drafts and a row that moves cannot inherit
+   * another row's words. `null` is the closed editor, held in the store for the same reason the world
+   * book's closed editor is (`useRecordDraft`): reopening at the row's own words is the truth, and
+   * closing it is what discards them. The order the page rendered is sent with the save, so a row that
+   * moved under the editor is refused by name rather than edited where the player is not looking.
    */
-  const [editor, setEditor] = useState<Readonly<{ text: string; sent: string | null }> | null>(null);
+  const editorDraft = useRecordDraft<MessageEdit>(`chat.message-edit.${message.handle}`, null);
+  const editor = editorDraft.value;
   const openEditor = (): void => {
-    setEditor(Object.freeze({ text: message.text, sent: null }));
+    editorDraft.type(Object.freeze({ text: message.text, sent: null }));
   };
   /**
    * True while this row's strip IS the editor: the bubble has given way to it and the strip takes
@@ -538,8 +555,8 @@ export const MessageBubble = memo(function MessageBubble({
   useEffect(() => {
     if (editor === null || editor.sent === null) return;
     if (pending !== null || message.text !== editor.sent) return;
-    setEditor(null);
-  }, [editor, pending, message.text]);
+    editorDraft.clear();
+  }, [editor, editorDraft, pending, message.text]);
   /**
    * Escape closes the field exactly as Cancel does, and the row OWNS that key while the field is
    * open.
@@ -560,7 +577,7 @@ export const MessageBubble = memo(function MessageBubble({
       if (event.key !== "Escape") return;
       event.stopPropagation();
       if (pending !== null) return;
-      setEditor(null);
+      editorDraft.clear();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
@@ -889,10 +906,10 @@ export const MessageBubble = memo(function MessageBubble({
                   fieldLabel={labels.editReplyField}
                   saveLabel={labels.editMessageSave}
                   cancelLabel={labels.editMessageCancel}
-                  onTextChange={(text) => setEditor({ text, sent: editor.sent })}
-                  onCancel={() => setEditor(null)}
+                  onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
+                  onCancel={() => editorDraft.clear()}
                   onSave={() => {
-                    setEditor({ text: editor.text, sent: editor.text });
+                    editorDraft.type({ text: editor.text, sent: editor.text });
                     onEdit?.(message.handle, message.order, editor.text);
                   }}
                 />
@@ -973,12 +990,16 @@ export const MessageBubble = memo(function MessageBubble({
                 the destructive Delete, which is where both rows end their strip). It is offered on every
                 one of her rows - the OPENING included, which is edited in place for this session alone
                 (the owner's ruling, 2026-10-20) - and it is the words one more thing a row can do to
-                itself, not a new group of them. */}
+                itself, not a new group of them. Both rows' controls declare themselves to the draft
+                gate (`data-draft-revealer`): the field one press away from the row carries the
+                player's own words, and a walk that only enumerated what was already on screen would
+                leave it outside the population. */}
                   {!stripReplaced && editReplyPoint !== undefined && (
                     <button
                       type="button"
                       className="action-btn edit-btn"
                       data-testid="message-edit"
+                      data-draft-revealer
                       disabled={busy}
                       {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
                       onClick={openEditor}
@@ -1076,10 +1097,10 @@ export const MessageBubble = memo(function MessageBubble({
                     fieldLabel={labels.editMessageField}
                     saveLabel={labels.editMessageSave}
                     cancelLabel={labels.editMessageCancel}
-                    onTextChange={(text) => setEditor({ text, sent: editor.sent })}
-                    onCancel={() => setEditor(null)}
+                    onTextChange={(text) => editorDraft.type({ text, sent: editor.sent })}
+                    onCancel={() => editorDraft.clear()}
                     onSave={() => {
-                      setEditor({ text: editor.text, sent: editor.text });
+                      editorDraft.type({ text: editor.text, sent: editor.text });
                       onEdit(message.handle, message.order, editor.text);
                     }}
                   />
@@ -1088,6 +1109,7 @@ export const MessageBubble = memo(function MessageBubble({
                     type="button"
                     className="action-btn edit-btn"
                     data-testid="message-edit"
+                    data-draft-revealer
                     disabled={busy}
                     {...(pending === "edit" ? { "data-busy": "true" as const } : {})}
                     onClick={openEditor}

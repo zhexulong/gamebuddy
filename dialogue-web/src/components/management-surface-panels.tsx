@@ -41,7 +41,7 @@ import { useArmedConfirmation } from "./armed-confirmation";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantName } from "./opening-variant-labels";
-import { useDraft, useDraftOverAuthority } from "./surface-drafts";
+import { useChoiceDraft, useDraft, useDraftOverAuthority } from "./surface-drafts";
 import { type ChatModelRoute, readChatModelRoute } from "../chat-model-route";
 import {
   type ChatTitleV1,
@@ -288,7 +288,26 @@ export function ChatsSurfacePanel({
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [list, setList] = useState<ChatListView>("loading");
-  const [editing, setEditing] = useState<Readonly<{ handle: string; title: string }> | null>(null);
+  /**
+   * The rename editor's two facts, in the shelf's own store rather than in this panel.
+   *
+   * The shell renders this surface conditionally like every other (`shownSurface === …` in
+   * `ComposedReferenceGameApp`), so a `useState` here came back CLOSED after a trip away - which does
+   * not lose the typed title so much as make it unreachable, and that costs the player the same work.
+   *
+   * Which row is open and what was typed in it are two facts, and the second is keyed by the Chat's
+   * own handle: a title half-typed on one row belongs to that row, so pressing another row's pencil
+   * and later coming back finds the first one's words where they were left. The words are seeded from
+   * the row's own durable title, so an untouched editor shows the truth the list just read rather than
+   * a copy this panel made, and a landed rename clears the draft instead of racing the re-read.
+   */
+  const renameOpen = useChoiceDraft<string>("chats.rename-open", "");
+  /** The row whose editor is open, or `null`: `""` is no row, because a Chat handle is never empty. */
+  const renameHandle = renameOpen.value === "" ? null : renameOpen.value;
+  const renameTitle = useDraft(
+    `chats.rename.${renameHandle ?? "closed"}`,
+    renameHandle === null ? "" : (chatListRows(list).find((chat) => chat.handle === renameHandle)?.title ?? ""),
+  );
   // The exact durable opening of the Chat this panel just created: design/26 §4.4 renders the
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
@@ -330,7 +349,11 @@ export function ChatsSurfacePanel({
   // again when the editor closes under the player. The trigger is whichever pencil opened the
   // editor - the pencils share the ref, and the editor's own mount is what re-attaches it, so
   // it can only ever hold the one row that is being renamed.
-  const renamePair = useArmedConfirmation(editing !== null, () => setEditing(null));
+  const renamePair = useArmedConfirmation(renameHandle !== null, () => {
+    // Closing is the player discarding the words: the row goes, and so does what was typed in it.
+    renameOpen.clear();
+    renameTitle.clear();
+  });
   // The row's archive/trash pair takes the same shape (`armed-confirmation.ts`): arming REPLACES
   // the row's control strip with the confirmation, so without it the page drops focus onto
   // `<body>` at both ends, and Escape reaches the shell's window handler - which leaves the whole
@@ -413,7 +436,7 @@ export function ChatsSurfacePanel({
   };
 
   const rename = (handle: string, title: string): void => {
-    setEditing(null);
+    closeRename();
     const entry = chatListRows(list).find((chat) => chat.handle === handle);
     if (entry === undefined) {
       report({ kind: "failure", text: labels.failure });
@@ -457,11 +480,6 @@ export function ChatsSurfacePanel({
    */
   const closeRename = renamePair.cancel;
 
-  const commitRename = (handle: string, title: string): void => {
-    closeRename();
-    rename(handle, title);
-  };
-
   /**
    * The editor's own keyboard path: Enter saves, Escape dismisses, and both give the pencil
    * back. `stopPropagation` on the Escape is the module's, so a dismissal is not also a
@@ -474,9 +492,9 @@ export function ChatsSurfacePanel({
     }
     if (event.key !== "Enter") return;
     event.preventDefault();
-    if (editing === null) return;
-    const next = editing.title.trim();
-    if (next.length > 0) commitRename(editing.handle, next);
+    if (renameHandle === null) return;
+    const next = renameTitle.value.trim();
+    if (next.length > 0) rename(renameHandle, next);
     else closeRename();
   };
 
@@ -875,7 +893,7 @@ export function ChatsSurfacePanel({
             // rename/archive/trash strip steps aside: the confirmation is the row's only action
             // until it is answered.
             const armedHere = confirmation !== null && confirmation.handle === chat.handle;
-            const editingHere = renameHere && editing !== null && editing.handle === chat.handle;
+            const editingHere = renameHere && renameHandle === chat.handle;
             /*
              * The row's whole surface is the select control: its title, its stamp and
              * its preview are one gesture, because the preview is most of the row's
@@ -900,9 +918,10 @@ export function ChatsSurfacePanel({
                     <input
                       type="text"
                       className="form-input"
+                      data-testid="chat-rename-field"
                       aria-label={labels.renameChatTitleField}
-                      value={editing.title}
-                      onChange={(event) => setEditing({ handle: chat.handle, title: event.target.value })}
+                      value={renameTitle.value}
+                      onChange={(event) => renameTitle.type(event.target.value)}
                       autoFocus
                     />
                     <div className="button-group">
@@ -910,8 +929,8 @@ export function ChatsSurfacePanel({
                         type="button"
                         className="small-button primary"
                         onClick={() => {
-                          const next = editing.title.trim();
-                          if (next.length > 0) commitRename(chat.handle, next);
+                          const next = renameTitle.value.trim();
+                          if (next.length > 0) rename(chat.handle, next);
                           else closeRename();
                         }}
                       >
@@ -956,9 +975,10 @@ export function ChatsSurfacePanel({
                               className="icon-button-small"
                               title={labels.renameChat}
                               aria-label={labels.renameChat}
+                              data-draft-revealer
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setEditing({ handle: chat.handle, title: chat.title ?? "" });
+                                renameOpen.type(chat.handle);
                               }}
                             >
                               <Pencil size={14} aria-hidden="true" />
