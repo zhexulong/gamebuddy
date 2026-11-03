@@ -272,6 +272,71 @@ async function activateSurface(page, label) {
 }
 
 /**
+ * Wait until a panel a driver is about to read has mounted its own data.
+ *
+ * `activateSurface` commits the surface's region and its paint; it commits nothing about that
+ * surface's data. The 角色 panel is the measured case: it renders `<section data-opening-editor>` as soon
+ * as the panel mounts and its `.opening-variant-row` rows only once the card read lands, so
+ * between the two the editor holds ZERO rows and NO buttons - and zero rows is also exactly what a
+ * companion whose opening set is already down to one holds. Driver M slept a fixed 1600 ms there,
+ * read `variantCount: 0`, took it for "already one opening", and pressed a save control that did not
+ * exist yet (`saving the one-opening set: no_button:保存开场白`), then died on a 30 s click timeout in
+ * the next surface switch. The sleep was not too short; it was the wrong instrument.
+ *
+ * Three conditions, each named so a failure says what it waited for:
+ *
+ *   present   the panel root exists (`panel`), so the surface really switched;
+ *   loaded    the product's own loading line (`.loading-text`) is gone from that root - the one
+ *             marker the product publishes for "my read has not landed", and the reason a count of 0
+ *             cannot be trusted on its own;
+ *   stable    `item`'s count is the same across two reads `settleMs` apart, so a panel that renders
+ *             its rows one batch at a time is not read half-drawn.
+ *
+ * A condition that never holds throws `panel_never_settled:<name>` and quotes the last reading, so the
+ * driver fails naming its premise instead of reporting a number measured from a panel that was not
+ * there. A driver that legitimately has no items still passes: zero rows after the loading line has
+ * cleared and has stayed cleared is a reading, and the driver's own assertion judges it.
+ */
+async function waitForPanel(page, { name, panel, item = null, timeoutMs = 20000, settleMs = 300 }) {
+  if (typeof name !== "string" || name.length === 0) throw new Error("waitForPanel_requires_a_name");
+  if (typeof panel !== "string" || panel.length === 0)
+    throw new Error(`waitForPanel_${name}_requires_a_panel_selector`);
+  const started = Date.now();
+  let previousCount = null;
+  let reading = { panel: false, loading: 0, count: null };
+  for (;;) {
+    reading = await page.evaluate(
+      ({ panelSelector, itemSelector }) => {
+        const root = document.querySelector(panelSelector);
+        if (root === null) return { panel: false, loading: 0, count: null };
+        return {
+          panel: true,
+          loading: root.querySelectorAll(".loading-text").length,
+          count: itemSelector === null ? null : root.querySelectorAll(itemSelector).length,
+        };
+      },
+      { panelSelector: panel, itemSelector: item },
+    );
+    if (reading.panel && reading.loading === 0) {
+      if (item === null) return { ...reading, waitedMs: Date.now() - started };
+      if (previousCount !== null && reading.count === previousCount)
+        return { ...reading, waitedMs: Date.now() - started };
+      previousCount = reading.count;
+    } else {
+      previousCount = null;
+    }
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(
+        `panel_never_settled:${name} after ${Date.now() - started}ms: waited for ${panel} to mount, its .loading-text to clear${
+          item === null ? "" : ` and ${item} inside it to hold the same count across two reads ${settleMs}ms apart`
+        }; last reading panel=${reading.panel} loading=${reading.loading} count=${reading.count}`,
+      );
+    }
+    await page.waitForTimeout(settleMs);
+  }
+}
+
+/**
  * Create one Chat through the product's own New Chat control, and answer how it really went.
  *
  * One control, two jobs, decided by the catalogue: a companion with openings to choose from opens
@@ -323,6 +388,7 @@ module.exports = {
   SHOTS,
   PAGE_HELPERS,
   activateSurface,
+  waitForPanel,
   shot,
   readDurableTranscript,
   canStartTurn,
