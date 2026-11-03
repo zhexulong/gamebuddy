@@ -39,6 +39,14 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
   tend_the_animals: Object.freeze(["pet_animal", "feed_animal", "collect_animal_product", "water_pet_bowl"]),
   tidy_and_repair: Object.freeze(["clear_debris", "clear_hoedirt", "remove_placed_item", "break_container_source"]),
   dress_and_display: Object.freeze(["equip_wearable", "unequip_wearable", "dress_mannequin", "set_sign_display"]),
+  clear_and_cultivate: Object.freeze([
+    "chop_tree_source",
+    "chop_stump",
+    "clear_debris",
+    "till_soil",
+    "plant_seed",
+    "water_crop",
+  ]),
 });
 
 /**
@@ -62,6 +70,7 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "tidy_and_repair",
   "tend_the_animals",
   "dress_and_display",
+  "clear_and_cultivate",
 ]);
 
 /**

@@ -363,6 +363,9 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   town_errand: "去一趟镇上，找个人说说话。",
   go_mining: "下一趟矿，敲点矿石回来。",
+  // The size is deliberately the companion's call: a number picked here would be a quota, and the point of the
+  // task is to observe how it decides where a clearing should be and how much is enough.
+  clear_and_cultivate: "林子东边太挤了，清一片空地出来，顺手种点东西浇上水。多大你自己定。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
   till_and_sow: "把空地翻一翻，种上种子，浇上水。",
   tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
@@ -376,6 +379,8 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
   town_errand: "go into town and talk to somebody there. ",
   go_mining: "go down the mine and come back with some ore. ",
+  clear_and_cultivate:
+    "the woods on the east side are too thick - clear a patch of open ground, then plant and water something in it. Size is your call.",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
   till_and_sow: "turn the bare ground, put seeds in it, and water them. ",
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
