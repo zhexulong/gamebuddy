@@ -639,13 +639,13 @@ export async function runMountedProviderStart(
     // cannot be split into "we were slow" and "they were slow". It rides the
     // existing diagnostic line rather than a new channel: one bounded integer, no
     // prompt or reply text.
+    const promptStartedAtMs = Date.now();
     // Name this turn on every provider request the prompt makes, and only this turn: Pi stamps
     // `before_provider_headers` from the holder this write sets, so the request a captured body came
     // from can be attributed to a turn instead of to its position in the capture file. A stop that
     // lands between two turns leaves the successor's own write in place, which is why the clear below
     // names the turn it clears rather than emptying the holder.
     scope.runtimeSession.providerTurnHeader.setTurn(scope.facts.turnId);
-    const promptStartedAtMs = Date.now();
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([
