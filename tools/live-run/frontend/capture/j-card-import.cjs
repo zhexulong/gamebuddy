@@ -4,7 +4,7 @@
 //
 // A synthetic chara_card_v3 card is staged through the paste lane (in-page textarea + native input
 // event; nothing leaves the browser). The review is then cancelled, so no companion is provisioned.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 const CARD = JSON.stringify({
   spec: "chara_card_v3",
@@ -89,6 +89,7 @@ const cancelReview = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("j-card-import.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "角色");
@@ -137,6 +138,7 @@ const cancelReview = () => {
   say(JSON.stringify(after, null, 1));
   say(`companion list unchanged: ${JSON.stringify(before.companionCards) === JSON.stringify(after.companionCards)}`);
 
+  await observe(page, say, "j", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-J");
