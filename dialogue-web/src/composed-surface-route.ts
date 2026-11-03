@@ -19,6 +19,30 @@ function readPanelFromUrl(): string | null {
 }
 
 /**
+ * A surface switch, marked so a reader can time the switch itself rather than the first navigation.
+ *
+ * `gamebuddy:switch:<surface>:start` is recorded where the player selects a surface and
+ * `gamebuddy:switch:<surface>:done` where the new region is committed - the two ends of one switch,
+ * named the way `turn-timings.ts` names the ends of a turn, so one reader can pair both families.
+ *
+ * `done` is the COMMIT: React has rendered the new surface and the browser has painted it, because a
+ * passive effect runs after the commit's paint. It is not "the surface's data arrived" - a surface
+ * that mounts and then fetches is done switching while it is still fetching, and calling that
+ * unfinished would make a switch appear to last as long as the Host took to answer it. A reader that
+ * wants content arrival is asking for a different mark that nobody takes yet.
+ *
+ * Back and Escape arrive here too, as `done` with no `start`: the browser moved the history entry, not
+ * the player's press on an entry. A reader that needs both ends omits those, which is the truth about
+ * them - inventing a start for them would describe a selection that never happened.
+ */
+const SWITCH_MARK_PREFIX = "gamebuddy:switch:";
+
+function markSwitch(surface: string, stage: "start" | "done"): void {
+  if (typeof performance === "undefined" || typeof performance.mark !== "function") return;
+  performance.mark(`${SWITCH_MARK_PREFIX}${surface}:${stage}`, { detail: { surface } });
+}
+
+/**
  * The selected surface is a URL history entry rather than hidden state, so Back
  * moves between surfaces, Escape returns to the conversation, and a refresh comes
  * back with the same surface open (design/26 §7.2, design/104 §2). The shell owns
@@ -76,8 +100,10 @@ export function useSurfaceRoute(): Readonly<{
   // mounted gates use. Only a return moves focus; the first paint does not.
   const previousSurfaceRef = useRef<string>(shownSurface);
   useEffect(() => {
-    const returned = shownSurface === CHAT_PANEL && previousSurfaceRef.current !== CHAT_PANEL;
+    const changed = previousSurfaceRef.current !== shownSurface;
+    const returned = shownSurface === CHAT_PANEL && changed;
     previousSurfaceRef.current = shownSurface;
+    if (changed) markSwitch(shownSurface, "done");
     if (returned) document.querySelector<HTMLTextAreaElement>(".composer-textarea")?.focus();
   }, [shownSurface]);
 
@@ -93,6 +119,7 @@ export function useSurfaceRoute(): Readonly<{
         params.set(PANEL_PARAM, panel);
         url.hash = params.toString();
         window.history.pushState({ gbPanel: panel }, "", url.toString());
+        markSwitch(panel, "start");
       }
       setOpenPanel(panel);
     };
