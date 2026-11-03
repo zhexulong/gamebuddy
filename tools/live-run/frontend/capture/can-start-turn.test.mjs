@@ -13,15 +13,15 @@
 // and the test fails naming it rather than letting the gate go quietly permissive.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
-import { classifyComposer } from "./common.cjs";
+import { classifyComposer, REPO_ROOT } from "./common.cjs";
 
 // Resolved from this file, not the cwd: the corpus runner and a direct `node --test` disagree about
-// where they start, and the premise read must not depend on that difference.
-const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+// where they start, and the premise read must not depend on that difference. It walks up to `.git`
+// (`common.cjs`) rather than counting `..`, because the count that was right before the kit moved out of
+// `tools/shots` pointed at `tools/` afterwards - and this read then failed to find `Composer.tsx` at all.
 
 const field = (overrides = {}) => ({
   fieldPresent: true,
@@ -59,7 +59,7 @@ test("a mount with no composer at all refuses the turn instead of claiming it ca
 });
 
 test("the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an empty field", () => {
-  const source = readFileSync(join(REPO, "dialogue-web", "src", "components", "Composer.tsx"), "utf8");
+  const source = readFileSync(join(REPO_ROOT, "dialogue-web", "src", "components", "Composer.tsx"), "utf8");
   const disabled = /className="composer-button send-button"[\s\S]*?disabled=\{([^}]+)\}/u.exec(source);
   assert.ok(disabled !== null, "the send button still declares a disabled expression");
   const terms = disabled[1]
