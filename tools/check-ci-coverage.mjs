@@ -18,11 +18,23 @@
  * decompiled tree, the `design/` mount or a built generation is registered with that reason
  * instead of being silently absent.
  *
+ * A GATE THAT MEASURED NOTHING IS NOT A GATE THAT PASSED, and an exit code cannot tell the two
+ * apart: a gate whose measurement was unavailable on this machine exits 0 on purpose -
+ * `check-perf-budget` on a box that did not record the baseline prints `perf_budget_skipped: ...`
+ * and passes, because a per-op cost describes the machine as much as the code. Counting that as a
+ * pass is how a gate that has never compared anything reads as green. So the run reads the marker
+ * the gate already prints: a gate that exits 0 with a `*_skipped:` line on its stdout is counted
+ * `not_measured` and named in the summary, beside `passed` and `failed`. The rule is the marker,
+ * not a list of gate names - a gate that starts or stops skipping moves between the counts without
+ * being edited in here. Only the counts change: a skip still exits 0, because an unavailable
+ * measurement is not a failure. A gate that prints the marker and then fails is a failure - the
+ * marker excuses a comparison, never an exit status.
+ *
  *   node tools/check-ci-coverage.mjs          # the verdict; exit 1 on a stale or unreasoned entry
  *   node tools/check-ci-coverage.mjs --list   # the derived set, one script name per line
  *   node tools/check-ci-coverage.mjs --run    # run that set, one named line per gate
  */
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +45,14 @@ const GATE_TIMEOUT_MS = 10 * 60_000;
 
 const GATE_NAME = /^(?:check[:-]|audit:|report:|format:check$|dependency-audit$|lint(?::|$)|typecheck(?::|$))/u;
 const SCRIPT_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|cjs|js|ts|ps1)/gu;
+
+/**
+ * How a gate says it measured nothing: a whole line whose marker ends in `_skipped`, as in
+ * `perf_budget_skipped: baseline recorded on <recorded>, measured on <current>`. The convention is
+ * the marker and its position, not who prints it, so this set is whatever the gates report and no
+ * name has to be kept in step with it.
+ */
+const SKIP_MARKER = /^[a-z][a-z0-9_]*_skipped:/mu;
 
 /** Why a gate that exists does not run on a fresh checkout. */
 const REASONS = new Map([
@@ -284,30 +304,65 @@ function report(coverage) {
   return coverage.problems.length === 0 ? 0 : 1;
 }
 
-function runGates(names, scripts) {
+/**
+ * How one gate's run counts: `failed` for any non-zero exit or a timeout, `not_measured` for a clean
+ * exit whose output says the measurement did not happen, `passed` otherwise. The skip marker is
+ * read after the exit status, so a gate that names a skip and then fails is a failure.
+ */
+function gateOutcome({ status, timedOut, stdout }) {
+  if (timedOut || status !== 0) return "failed";
+  return SKIP_MARKER.test(stdout) ? "not_measured" : "passed";
+}
+
+/** One gate, with its stdout tee'd to `out`: the aggregate has to read what the gate printed. */
+function spawnGate(command, out) {
+  return new Promise((settle) => {
+    const child = spawn(command, { cwd: ROOT, shell: true, stdio: ["inherit", "pipe", "inherit"] });
+    let stdout = "";
+    let timedOut = false;
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      out.write(chunk);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, GATE_TIMEOUT_MS);
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      settle({ status, timedOut, stdout });
+    });
+  });
+}
+
+export async function runGates(names, scripts, out = process.stdout) {
+  const passed = [];
   const failed = [];
+  const notMeasured = [];
   const started = Date.now();
   for (const name of names) {
-    const command = scripts[name];
-    process.stdout.write(`ci_gate:${name}:start\n`);
+    out.write(`ci_gate:${name}:start\n`);
     const began = Date.now();
-    const result = spawnSync(command, { cwd: ROOT, shell: true, stdio: "inherit", timeout: GATE_TIMEOUT_MS });
+    const result = await spawnGate(scripts[name], out);
     const seconds = Math.round((Date.now() - began) / 1000);
-    if (result.status === 0) {
-      process.stdout.write(`ci_gate:${name}:passed:${seconds}s\n`);
-      continue;
-    }
-    failed.push(name);
-    process.stdout.write(`ci_gate:${name}:failed:${result.status === null ? "timeout" : result.status}:${seconds}s\n`);
+    const outcome = gateOutcome(result);
+    if (outcome === "passed") passed.push(name);
+    if (outcome === "not_measured") notMeasured.push(name);
+    if (outcome === "failed") failed.push(name);
+    const detail = outcome === "failed" ? `failed:${result.timedOut ? "timeout" : String(result.status)}` : outcome;
+    out.write(`ci_gate:${name}:${detail}:${seconds}s\n`);
   }
-  process.stdout.write(
-    `ci_gates_run total=${names.length} failed=${failed.length} ${Math.round((Date.now() - started) / 1000)}s` +
-      `${failed.length === 0 ? "" : ` failing=${failed.join(",")}`}\n`,
+  out.write(
+    `ci_gates_run total=${names.length} passed=${passed.length} failed=${failed.length} ` +
+      `not_measured=${notMeasured.length} ${Math.round((Date.now() - started) / 1000)}s` +
+      `${failed.length === 0 ? "" : ` failing=${failed.join(",")}`}` +
+      `${notMeasured.length === 0 ? "" : ` not_measured_gates=${notMeasured.join(",")}`}\n`,
   );
   return failed.length === 0 ? 0 : 1;
 }
 
-function main(argv) {
+async function main(argv) {
   const scripts = readScripts(ROOT);
   const coverage = deriveCiCoverage({ scripts, workflowText: workflowText(ROOT) });
   if (argv.includes("--list")) {
@@ -319,5 +374,5 @@ function main(argv) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  process.exitCode = main(process.argv.slice(2));
+  process.exitCode = await main(process.argv.slice(2));
 }

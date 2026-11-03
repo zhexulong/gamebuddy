@@ -1,8 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deriveCiCoverage } from "./check-ci-coverage.mjs";
+import { deriveCiCoverage, runGates } from "./check-ci-coverage.mjs";
 
 const RUNNER_COMMAND = "node tools/check-ci-coverage.mjs --run";
+
+/** A real gate process whose output and exit status the test chooses: `<line>` then `<status>`. */
+function stubGate({ line, status }) {
+  const print = line === undefined ? "" : `console.log('${line.replaceAll("'", "\\'")}');`;
+  return `node -e "${print}process.exit(${status})"`;
+}
+
+/** Run the aggregate over one stub gate, and keep everything it printed. */
+async function runOneGate(scripts) {
+  const written = [];
+  const out = { write: (chunk) => written.push(chunk) };
+  const code = await runGates(Object.keys(scripts), scripts, out);
+  return { code, text: written.join(""), lines: written.join("").split("\n") };
+}
+
+const summaryOf = (lines) => lines.find((line) => line.startsWith("ci_gates_run"));
 
 function coverage({ scripts, workflow = "", register = [] }) {
   return deriveCiCoverage({
@@ -103,4 +119,44 @@ test("test:* suites are the corpus runner's business, not this gate's", () => {
   const result = coverage({ scripts: { "test:stardew-loop-closure": "node --test tools/x.test.mjs" } });
   assert.deepEqual(result.gateScripts, []);
   assert.deepEqual(result.derived, []);
+});
+
+test("a gate that reports a skip and exits 0 is counted not measured, and does not fail the run", async () => {
+  const skip = "perf_budget_skipped: baseline recorded on linux/x64/4 cpus/a, measured on linux/x64/4 cpus/b";
+  const run = await runOneGate({ "check:perf-budget": stubGate({ line: skip, status: 0 }) });
+  assert.equal(run.code, 0);
+  assert.match(run.text, /^ci_gate:check:perf-budget:not_measured:\d+s$/mu);
+  // The gate's own line reaches the aggregate's output, which is why the marker can be read at all.
+  assert.ok(run.lines.includes(skip), run.text);
+  assert.equal(
+    summaryOf(run.lines).replace(/ \d+s/u, ""),
+    "ci_gates_run total=1 passed=0 failed=0 not_measured=1 not_measured_gates=check:perf-budget",
+  );
+});
+
+test("a gate that reports a skip and then fails is a failure, not a skip", async () => {
+  const skip = "perf_budget_skipped: baseline recorded on linux/x64/4 cpus/a, measured on linux/x64/4 cpus/b";
+  const run = await runOneGate({ "check:perf-budget": stubGate({ line: skip, status: 1 }) });
+  assert.equal(run.code, 1);
+  assert.match(run.text, /^ci_gate:check:perf-budget:failed:1:\d+s$/mu);
+  assert.ok(!summaryOf(run.lines).includes("not_measured_gates"), summaryOf(run.lines));
+  assert.match(summaryOf(run.lines), /total=1 passed=0 failed=1 not_measured=0 /u);
+});
+
+test("without the marker the same gate is a pass, and nothing is counted as not measured", async () => {
+  const run = await runOneGate({
+    "check:perf-budget": stubGate({ line: "perf_budget_ok slowest=journal/replay 3.4 µs/op", status: 0 }),
+  });
+  assert.equal(run.code, 0);
+  assert.match(run.text, /^ci_gate:check:perf-budget:passed:\d+s$/mu);
+  assert.ok(!summaryOf(run.lines).includes("not_measured_gates"), summaryOf(run.lines));
+  assert.match(summaryOf(run.lines), /total=1 passed=1 failed=0 not_measured=0 /u);
+});
+
+test("a skip marker is a whole line, so a gate that only mentions one measured", async () => {
+  const run = await runOneGate({
+    "check:perf-budget": stubGate({ line: "note: perf_budget_skipped is what another box prints", status: 0 }),
+  });
+  assert.equal(run.code, 0);
+  assert.match(summaryOf(run.lines), /total=1 passed=1 failed=0 not_measured=0 /u);
 });
