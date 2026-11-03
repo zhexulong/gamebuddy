@@ -11,17 +11,17 @@ import { createDayScope, dayScopeFrom, nightCrossedInScope } from "./multiday-da
  * the two ever agree on that shape, the fix has been reverted and these tests say so.
  */
 function oldNightCrossed({ trace, clock }) {
-  if (trace.some((entry) => entry.action === "advance_day" && entry.settledAtMs !== null)) return true;
+  if (trace.some((entry) => entry.action === "sleep" && entry.settledAtMs !== null)) return true;
   return clock.unknown !== true && Number.isInteger(clock.timeOfDay) && clock.timeOfDay <= 620;
 }
 
-const settled = { action: "advance_day", settledAtMs: 1_000 };
-const running = { action: "advance_day", settledAtMs: null };
+const settled = { action: "sleep", settledAtMs: 1_000 };
+const running = { action: "sleep", settledAtMs: null };
 const clockAt = (timeOfDay) => ({ timeOfDay, unknown: false });
 const UNREADABLE = { timeOfDay: null, unknown: true };
 
 test("day 2 is not already over because day 1 slept", () => {
-  // The live shape: day 1 dispatched advance_day, so the run's trace already holds it.
+  // The live shape: day 1 dispatched sleep, so the run's trace already holds it.
   const trace = [{ action: "till_soil", settledAtMs: 1 }, settled, { action: "cut_weeds", settledAtMs: 2 }];
   const dayTwoStart = trace.length;
   const scope = createDayScope({ dayOfMonth: 2, timeOfDay: 600, traceIndex: dayTwoStart });
@@ -83,7 +83,7 @@ test("facts that cannot be read are absent, never defaulted", () => {
 });
 
 test("a scope's slice is what bounds the dispatch clause", () => {
-  const beforeDay = [{ action: "advance_day", settledAtMs: 1 }];
+  const beforeDay = [{ action: "sleep", settledAtMs: 1 }];
   const scope = createDayScope({ dayOfMonth: 9, timeOfDay: 900, traceIndex: beforeDay.length });
   // No dispatch after the index: not crossed, even though the run holds one from earlier.
   assert.equal(nightCrossedInScope({ scope, trace: beforeDay, clock: clockAt(900), dayOfMonth: 9 }), false);

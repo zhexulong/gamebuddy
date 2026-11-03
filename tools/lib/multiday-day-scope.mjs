@@ -3,10 +3,10 @@
  *
  * The predicate this replaces asked two questions, and neither of them knew what a day was:
  *
- *   if (actionTrace.some((e) => e.action === "advance_day" && e.settledAtMs !== null)) return true;
+ *   if (actionTrace.some((e) => e.action === "sleep" && e.settledAtMs !== null)) return true;
  *   return !clock.unknown && clock.timeOfDay !== null && clock.timeOfDay <= 620;
  *
- * `actionTrace` is one array for the entire run, so after day 1 dispatched `advance_day` the first
+ * `actionTrace` is one array for the entire run, so after day 1 dispatched `sleep` the first
  * clause answered `true` for every later day, and the day loop (`while (!nightCrossed())`) never ran
  * a turn again — day 2 produced no farm work, and the baseline gate named it
  * `next_day_produced_no_farm_work`. The second clause compared against an absolute morning hour, and
@@ -19,13 +19,13 @@
  *
  * A night counts as crossed inside a scope when any of these is observed:
  *
- *   1. an `advance_day` dispatch appeared in this day's own trace slice and settled;
+ *   1. a `sleep` dispatch appeared in this day's own trace slice and settled;
  *   2. the calendar moved (`dayOfMonth` differs from the day's starting day);
  *   3. the clock moved BACKWARDS relative to the day's start (`2600` -> `600` is a rollover).
  *
  * Never: "it is past some hour". Reaching 22:00 is not crossing the night — measured 2026-10-26, a
  * turn ended at 22:00 with the companion saying "Time to sleep ... Let me observe first then
- * advance_day" and the loop stopped one round short of the dispatch it had announced.
+ * sleep" and the loop stopped one round short of the dispatch it had announced.
  */
 
 /** The `timeOfDay`-shaped hours the engine uses: `600` is 06:00, `2600` is 26:00. */
@@ -62,7 +62,7 @@ export function nightCrossedInScope({ scope, trace = [], clock = null, dayOfMont
   const slice = Array.isArray(trace) ? trace.slice(start.traceIndex) : [];
 
   // 1. This day's OWN night dispatch. Not a dispatch from an earlier day: that is the bug.
-  if (slice.some((entry) => entry?.action === "advance_day" && entry?.settledAtMs !== null)) return true;
+  if (slice.some((entry) => entry?.action === "sleep" && entry?.settledAtMs !== null)) return true;
 
   // 2. The calendar moved past the day this scope began on.
   if (start.dayOfMonth !== null && Number.isInteger(dayOfMonth) && dayOfMonth !== start.dayOfMonth) return true;
