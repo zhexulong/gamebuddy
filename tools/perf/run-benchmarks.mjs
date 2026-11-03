@@ -77,15 +77,16 @@ export function runSuite({ files = benchFiles(), profile = false } = {}) {
 
 /**
  * The case results an output carries. The marker is searched inside a line rather than anchored to
- * it, because a reporter may decorate the line a test wrote.
+ * it, because a reporter may decorate the line a test wrote. `marker` selects which contract the
+ * output is read as: a case's cost (`PERF_RESULT`) or a pair's ratio (`PERF_SCALING_RESULT`).
  */
-export function caseResults(stdout) {
-  const marker = `${PERF_RESULT_MARKER} `;
+export function caseResults(stdout, marker = PERF_RESULT_MARKER) {
+  const at0 = `${marker} `;
   const results = [];
   for (const line of stdout.split(/\r?\n/u)) {
-    const at = line.indexOf(marker);
+    const at = line.indexOf(at0);
     if (at < 0) continue;
-    results.push(JSON.parse(line.slice(at + marker.length)));
+    results.push(JSON.parse(line.slice(at + at0.length)));
   }
   return results;
 }
