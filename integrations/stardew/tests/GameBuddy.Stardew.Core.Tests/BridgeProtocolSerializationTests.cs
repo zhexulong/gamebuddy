@@ -1474,6 +1474,65 @@ public sealed class BridgeBodyProgramProtocolTests
     }
 
     [Fact]
+    public void TryDeserializeBodyProgramStopRequest_ValidRequest_DeserializesCorrectly()
+    {
+        BridgeProtocol
+            .TryDeserializeBodyProgramStopRequest(
+                ResultEnvelope("program_stop", "{\"programId\":\"program_1\",\"stopEpoch\":7}"),
+                out BridgeEnvelope<BridgeBodyProgramStopRequest>? envelope,
+                out string reason)
+            .Should()
+            .BeTrue();
+
+        reason.Should().Be("accepted");
+        envelope!.Payload.ProgramId.Should().Be("program_1");
+        envelope!.Payload.StopEpoch.Should().Be(7);
+    }
+
+    /// <summary>
+    /// The epoch is required and must be non-negative.
+    ///
+    /// <para>
+    /// A stop without a fence is a cancel any replay could re-issue, and the authority's own check
+    /// (`stopEpoch <= program.StopEpoch`) can only protect against that if the value arrives at all. So the refusal is the
+    /// wire rejecting the message, not the journal rejecting the request.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"programId\":\"program_1\"}")]
+    [InlineData("{\"programId\":\"program_1\",\"stopEpoch\":-1}")]
+    [InlineData("{\"programId\":\"program_1\",\"stopEpoch\":\"7\"}")]
+    [InlineData("{\"programId\":1,\"stopEpoch\":7}")]
+    [InlineData("{\"programId\":\"\",\"stopEpoch\":7}")]
+    [InlineData("{\"programId\":\"program_1\",\"stopEpoch\":7,\"extra\":true}")]
+    public void TryDeserializeBodyProgramStopRequest_MalformedPayload_FailsClosed(string payload)
+    {
+        BridgeProtocol
+            .TryDeserializeBodyProgramStopRequest(ResultEnvelope("program_stop", payload), out _, out string reason)
+            .Should()
+            .BeFalse();
+
+        reason.Should().Be("invalid_body_program_stop_request");
+    }
+
+    [Theory]
+    [InlineData("program_status")]
+    public void TryDeserializeBodyProgramStatusRequest_ValidRequest_DeserializesCorrectly_Twin(string type)
+    {
+        // Guard against the stop decoder being wired to the status message type by a copy/paste: the status decoder must
+        // still refuse a stop envelope, so the two routes cannot collapse onto one another.
+        BridgeProtocol
+            .TryDeserializeBodyProgramStatusRequest(
+                ResultEnvelope(type, "{\"programId\":\"program_1\",\"stopEpoch\":7}"),
+                out _,
+                out string reason)
+            .Should()
+            .BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
+    [Fact]
     public void TryDeserializeBodyProgramStatusRequest_ValidRequest_DeserializesCorrectly()
     {
         BridgeProtocol.TryDeserializeBodyProgramStatusRequest(ResultEnvelope("program_status", "{\"programId\":\"program_1\"}"), out BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope, out string reason).Should().BeTrue();
