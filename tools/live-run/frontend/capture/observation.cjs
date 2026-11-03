@@ -245,7 +245,8 @@ async function observe(page, say, label = "run", options = {}) {
 	const captured = options.capturedRequests ?? readCapturedRequests(process.env.GB_SHOTS_WIRE_REQUESTS);
 	const injection = await injectionFacts(captured);
 	if (!injection.ok) {
-		say(`INJECTION ${label}: unobserved:${injection.reason}`);
+		/* A driver that ran no turn is not "unobserved" - it is a driver that asked nothing of the request. */
+		if (turns.length > 0 || captured.ok === true) say(`INJECTION ${label}: unobserved:${injection.reason}`);
 	} else {
 		for (const turn of injection.turns) {
 			say(`INJECTION ${label} turn=${turn.turn}: ${describeInjection(turn)}`);
