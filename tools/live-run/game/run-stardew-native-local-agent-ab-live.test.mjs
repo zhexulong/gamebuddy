@@ -295,6 +295,36 @@ test("the failure dump can run before the run has started", () => {
   assert.ok(declaredAt < RUNNER_SOURCE.indexOf("exitAfterDump"), "and ahead of the hook registration");
 });
 
+test("every value the failure dump reads is initialised before the run starts", () => {
+  // THIRD instance of one shape, so it gets a gate instead of another one-line fix. `round29` ran the dump from an EXIT
+  // hook after a startup failure, and each attempt to repair it found the next binding: first `capture`
+  // ("Cannot access 'capture' before initialization"), then `runtimeRoot`. The dump reads a handful of values; the ones
+  // already at module scope could not throw, and the run-scope one could.
+  //
+  // The population is DERIVED from the dump rather than listed: the identifiers it returns must each have a module-scope
+  // declaration. A value added to the dump later is covered without anyone remembering this test.
+  const dumpStart = RUNNER_SOURCE.indexOf("function failureDumpEvidence(");
+  // Bounded by its own closing brace, not by the next function: `writeFailureDump` is defined ABOVE this one, and an
+  // index-ordered slice produced an empty body (caught here by the non-vacuity assertion, which is why it exists).
+  const dumpBody = RUNNER_SOURCE.slice(dumpStart, RUNNER_SOURCE.indexOf("\n};", dumpStart) + 3);
+  // Only BARE identifiers with a trailing comma: those are references to bindings. `settlement: { ... }` and
+  // `tillReceipt: receiptWith([...])` are composed values, and their inputs are read inside functions that are called
+  // later - capturing them here would assert about the wrong thing.
+  const returned = [...dumpBody.matchAll(/^\s+([A-Za-z_$][\w$]*),\s*$/gmu)].map((match) => match[1]);
+  assert.ok(returned.length >= 4, "the parser must find the dump keys; a silent zero would make this gate vacuous");
+  assert.ok(returned.includes("capture") && returned.includes("runtimeRoot"), "including the two that actually threw");
+
+  for (const name of returned) {
+    // Module scope here means the declaration starts at column 0; the run body indents its own.
+    const moduleScope = new RegExp(`^(?:let|const|var)\\s+${name}\\b`, "mu");
+    assert.ok(
+      moduleScope.test(RUNNER_SOURCE),
+      `${name} is read by the failure dump, so it must be declared at module scope - a run that dies before it is\n` +
+        "initialised will throw instead of writing the artifact that explains the run",
+    );
+  }
+});
+
 test("the run asks the companion questions and publishes the verdict", () => {
   // A gate module nobody calls is a document. This asserts the three links that make it a measurement: the import, the
   // delivery of the prompt through the same admission path as a task, and the verdict in the run's own result.

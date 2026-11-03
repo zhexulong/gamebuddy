@@ -145,6 +145,7 @@ import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live
 // to explain (measured 2026-11-03, round29: `live_run_artifact_stale` was replaced by a stack trace). Module scope is
 // initialised before any of that can run.
 let capture = null;
+let runtimeRoot = null;
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath =
@@ -2823,7 +2824,6 @@ let programOutcomesAtTeardown = null;
 let programOutcomesReadAtSubmissionCount = null;
 // Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
 // capture directory it opened): null until then, so a failure at either step still publishes what came before it.
-let runtimeRoot = null;
 // The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
 // narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
 // failed run too.
