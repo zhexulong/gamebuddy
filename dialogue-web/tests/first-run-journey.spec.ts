@@ -31,8 +31,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { startLocalStubProvider } from "../../tools/live-run/core/stub-provider.mjs";
 import { bindWindowsStaleLockReclaimer } from "../../host/src/path-lock.ts";
-import type { TavernConnectionStateV1 } from "../../host/src/tavern/browser-contract/index.ts";
+import type {
+  TavernConnectionCreateCommandV1,
+  TavernConnectionStateV1,
+} from "../../host/src/tavern/browser-contract/index.ts";
 import { createTavernConnectionService, type TavernConnectionService } from "../../host/src/tavern/connection-service.ts";
 import { createBuildWindowsStaleLockReclaimer } from "../../host/src/windows-stale-lock-reclaimer/index.ts";
 import { type Page, expect, test } from "./frontend-coverage";
@@ -121,7 +125,39 @@ async function mountProduct(page: Page, state: TavernConnectionStateV1): Promise
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
-  await page.route("**/api/tavern/v1/settings/connection", (route) => route.fulfill(json200(state)));
+  // The store's own records, and the projection this mount was handed: a test may state a providers
+  // list the shipped catalog does not hold, while the records stay the Host's real ones.
+  await page.route("**/api/tavern/v1/settings/connection", async (route) =>
+    route.fulfill(json200({ ...(await connection.read()), providers: state.providers })),
+  );
+  // The connection writes are the product's own service, called with the command the browser sent:
+  // this mount replaces the transport, not the answer. `environment`/`apiKey` arrive exactly as the
+  // form built them, so what a save accepts is the Host's rule and not this file's.
+  await page.route("**/api/tavern/v1/settings/connections", async (route) => {
+    const command = route.request().postDataJSON() as TavernConnectionCreateCommandV1;
+    if (route.request().method() !== "POST") return await route.fulfill({ status: 405 });
+    return await route.fulfill(json200(await connection.create(command)));
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/test$/u, async (route) => {
+    const connectionId = lastConnectionId(route.request().url());
+    const { expectedRevision } = route.request().postDataJSON() as { expectedRevision: number };
+    await route.fulfill(json200(await connection.test(connectionId, expectedRevision)));
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/activate$/u, async (route) => {
+    const connectionId = lastConnectionId(route.request().url());
+    const { expectedRevision } = route.request().postDataJSON() as { expectedRevision: number };
+    await route.fulfill(json200(await connection.activate(connectionId, expectedRevision)));
+  });
+  await page.route(/\/api\/tavern\/v1\/settings\/connections\/[^/]+\/model$/u, async (route) => {
+    const connectionId = lastConnectionId(route.request().url());
+    const command = route.request().postDataJSON() as {
+      apiVersion: 1;
+      expectedRevision: number;
+      modelId: string;
+      thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    };
+    await route.fulfill(json200(await connection.selectModel(connectionId, command)));
+  });
   await page.route("**/api/tavern/v1/settings/language", (route) =>
     route.fulfill(json200({ revision: 1, locale: "en-US" })),
   );
@@ -171,6 +207,14 @@ async function readForm(page: Page) {
 }
 
 const form = (page: Page) => page.getByTestId("settings-surface").locator("[data-connection-form]");
+
+/** The opaque write handle a connection route is about, read off its own URL. */
+function lastConnectionId(url: string): string {
+  const segments = new URL(url).pathname.split("/");
+  const connectionId = segments[segments.length - 2];
+  if (connectionId === undefined) throw new Error(`not_a_connection_route: ${url}`);
+  return connectionId;
+}
 
 /**
  * Everything this form NAMES, in the strings a player can read or the browser may show them: the
@@ -292,6 +336,56 @@ test.describe("3: the model suggestions are the Host's projection, reached end t
     // A suggestion is not a prefill: naming one silently would claim the endpoint serves it.
     expect(reading.modelField, "the player still types the model").toBe("");
     expect(reading.catalogCount).toBe(`${curated.length} suggestions from GameBuddy's catalog`);
+  });
+});
+
+/** The id this journey's own endpoint serves, and the one it does not. */
+const SERVED = "stub-served-model-1";
+const UNSERVED = "qwen2.5-coder:7b";
+const PLAYER_KEY = "sk-first-run-journey-0001";
+
+const connectionRow = (page: Page) => page.getByTestId("settings-surface").locator("[data-connection-row]");
+
+test.describe("4: an unserved id saves, and the probe is what tells the truth", () => {
+  test("a syntactically valid id the endpoint does not serve saves, cannot be activated, and the test says so", async ({
+    page,
+  }) => {
+    const stub = await startLocalStubProvider({ modelId: SERVED, reply: "The kettle is on." });
+    try {
+      await mountProduct(page, await connection.read());
+      // The escape hatch is the one entry whose endpoint the player supplies, so it is the one that
+      // can be pointed at an endpoint this test serves.
+      await form(page).locator("#connection-provider").selectOption("gamebuddy-openai-compatible");
+      await form(page).locator("#connection-base-url").fill(stub.baseUrl);
+      await form(page).locator("#connection-api-key").fill(PLAYER_KEY);
+      await form(page).locator("#connection-model-id").fill(UNSERVED);
+      await form(page).getByRole("button", { name: "Save connection", exact: true }).click();
+
+      // The save-time answer is the Host's own: the id's SHAPE was accepted, and nothing has been
+      // asked of the endpoint yet. This is the state a player can be left believing works.
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "configured");
+      await expect(connectionRow(page)).toContainText(UNSERVED);
+      await expect(connectionRow(page).locator("[data-connection-untested]")).toHaveText(
+        "Test the connection before activating it.",
+      );
+      await expect(connectionRow(page).getByRole("button", { name: "Save and activate" })).toBeDisabled();
+
+      // The Test is the step that tells the truth, and it tells it against the real endpoint.
+      await connectionRow(page).getByRole("button", { name: "Test connection", exact: true }).click();
+      await expect(connectionRow(page)).toHaveAttribute("data-readiness", "failed");
+      await expect(connectionRow(page).locator("[data-connection-failure]")).toHaveText(
+        "The endpoint did not offer the selected model.",
+      );
+      // What the endpoint DOES serve, from the probe's own listing: the fact that lets the player fix
+      // the id instead of doubting their key.
+      await expect(connectionRow(page).locator("[data-connection-model-count]")).toHaveText(
+        "1 models offered, but not the one you picked.",
+      );
+      await expect(connectionRow(page).getByRole("button", { name: "Save and activate" })).toBeDisabled();
+      console.log(`[first-run-unserved-id] ${JSON.stringify(await connection.read())}`);
+    } finally {
+      await stub.close();
+    }
   });
 });
 
