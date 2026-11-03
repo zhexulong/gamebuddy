@@ -83,11 +83,12 @@ and the page's last reading, instead of a number measured from a panel that was 
 Driver M's two reads of that editor now wait for it. Everything else that sleeps after
 `activateSurface` was audited and **left**, for a reason per group: their reads are layout or
 descriptive probes that print absence literally (`a`, `b`, `c`, `d`, `g`, `h`, `i`); a missing value
-turns into a named skip rather than a false fact (`j`, `p`); the read is repeated in a loop before
-anything is acted on (`e`, `t`); or the assertion that matters waits on the product's own turn marks
-(`f`, `n`). The same shape does remain in `k`, `l`, `o`, `q`, `r` and `s`, where a pre-load read is a
-count the driver then acts on - each needs its own live run to confirm the panel root and the item
-selector, which is why they are listed here rather than guessed at blind.
+turns into a named skip rather than a false fact (`j`); the driver sends its own turn and re-reads when
+the transcript is short, which is a self-heal rather than a measurement (`n`, `p`); the read is repeated
+in a loop before anything is acted on (`e`, `t`); or the assertion that matters waits on the product's
+own turn marks (`f`). The same shape does remain in `k`, `l`, `o`, `q`, `r` and `s`, where a pre-load
+read is a count the driver then acts on - each needs its own live run to confirm the panel root and the
+item selector, which is why they are listed here rather than guessed at blind.
 
 ## One command
 
