@@ -57,15 +57,40 @@ const runDirs =
 if (runDirs.length === 0) fail("no run directories found");
 
 const perRun = [];
+// HISTORICAL IDS -> CURRENT IDS, because an action that was RENAMED is not an action that never worked.
+//
+// Measured 2026-11-04: `break_rock_source` has 201 dispatches and 177 successes across 106 runs, `chop_tree_source`
+// 12 of 12 - and this tool reported `break_rock` and `chop_tree` as "never succeeded", because `0ed75c19` renamed the
+// ids and every earlier run recorded the old spelling. `advance_day` -> `sleep` (`b4c44ea8`) had the same effect.
+//
+// A rename is a one-line commit; without this table it silently resets a real number to zero and buries the evidence
+// that the action works. The table is validated in both directions below: a source that is still a published id is a
+// stale entry, and a target that is not published is a typo - either one fails loudly.
+const RENAMED_ACTION_IDS = Object.freeze({
+  break_rock_source: "break_rock",
+  chop_tree_source: "chop_tree",
+  break_container_source: "break_container",
+  advance_day: "sleep",
+});
+
 const everSucceeded = new Map();
 const everAttempted = new Map();
 const everRejected = new Map();
+for (const [from, to] of Object.entries(RENAMED_ACTION_IDS)) {
+  if (PUBLISHED.includes(from))
+    fail(`RENAMED_ACTION_IDS is stale: ${from} is still a published id, so it is not a rename`);
+  if (!PUBLISHED.includes(to)) fail(`RENAMED_ACTION_IDS points at a missing action: ${from} -> ${to}`);
+}
+const canonicalId = (id) => RENAMED_ACTION_IDS[id] ?? id;
 for (const dir of runDirs) {
   const counted = countDispatches(dir);
   perRun.push({ dir: relative(repoRoot(), dir), ...counted });
-  for (const [id, count] of counted.succeededActions) everSucceeded.set(id, (everSucceeded.get(id) ?? 0) + count);
-  for (const [id, count] of counted.attemptedActions) everAttempted.set(id, (everAttempted.get(id) ?? 0) + count);
-  for (const [id, count] of counted.rejectedActions) everRejected.set(id, (everRejected.get(id) ?? 0) + count);
+  for (const [id, count] of counted.succeededActions)
+    everSucceeded.set(canonicalId(id), (everSucceeded.get(canonicalId(id)) ?? 0) + count);
+  for (const [id, count] of counted.attemptedActions)
+    everAttempted.set(canonicalId(id), (everAttempted.get(canonicalId(id)) ?? 0) + count);
+  for (const [id, count] of counted.rejectedActions)
+    everRejected.set(canonicalId(id), (everRejected.get(canonicalId(id)) ?? 0) + count);
 }
 
 // THE MEASUREMENT THAT MATTERS IS SUCCESS. An action that was only ever rejected is not covered: the run that rejected it
