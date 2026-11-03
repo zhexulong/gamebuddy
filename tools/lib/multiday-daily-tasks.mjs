@@ -29,7 +29,15 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
   water_and_harvest: Object.freeze(["harvest_crop", "scythe_crop", "plant_seed", "water_crop"]),
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree_source"]),
   craft_and_place_machine: Object.freeze(["craft_item", "place_owned_object", "machine_inspect"]),
-  town_errand: Object.freeze(["travel", "talk_to_npc"]),
+  town_market: Object.freeze(["travel", "shop_purchase", "claim_mail_attachment"]),
+  town_visit: Object.freeze([
+    "travel",
+    "talk_to_npc",
+    "npc_relationship",
+    "interact_npc_with_item",
+    "accept_daily_quest",
+    "claim_museum_reward",
+  ]),
   // The rows below exist for COVERAGE, and that is a measured need rather than a preference: of the 95 published
   // actions, 78 were reachable by no task for ever, so a capability could be finished, gated, and still never exercised.
   // `enter_mine` is the proof - published, correct, and used in zero runs because nothing ever asked for a mine.
@@ -63,7 +71,8 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "water_and_harvest",
   "forage_and_trees",
   "craft_and_place_machine",
-  "town_errand",
+  "town_market",
+  "town_visit",
   "go_mining",
   "store_and_sort",
   "till_and_sow",
