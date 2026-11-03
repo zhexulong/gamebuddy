@@ -64,6 +64,12 @@ import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.intern
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
+import {
+  createProviderTurnHeaderScope,
+  PROVIDER_TURN_HEADER_EXTENSION_NAME,
+  providerTurnHeaderExtension,
+  type ProviderTurnHeaderScope,
+} from "./provider-turn-header.internal.js";
 
 import {
   identityKey,
@@ -427,11 +433,11 @@ const MAX_NEARBY_VILLAGER_TILES = 6;
 /**
  * The villager fact's own share of the line, so it can never crowd another fact out of it.
  *
- * `joinBoundedFacts` drops whole facts from the END when the line is over its cap, and stamina is last:
- * an unbounded list of walkable villagers would trade a fact about the world for a fact about her own
- * body. Half the line is the share, and it is enough - measured, the other facts at their heaviest (deep
- * night, green rain, a farmhouse, an upgraded watering can, persistent fatigue, and the whole-map watering
- * answer) cost 155-176 B, so this much still fits under `MAX_GAME_ENVIRONMENT_FACTS_BYTES`.
+ * This is NOT what protects her own body: `boundGameEnvironmentFacts` drops world facts before body facts, and
+ * a byte share cannot order anything. What this bounds is the fact ITSELF - a crowd of walkable destinations is
+ * one fact, and it must not grow until every sibling is gone. Measured: the other world facts cost 155-176 B at
+ * their heaviest (deep night, green rain, a farmhouse, and the whole-map watering answer), so this share leaves
+ * them room.
  */
 const MAX_VILLAGER_FACT_BYTES = MAX_GAME_ENVIRONMENT_FACTS_BYTES / 2;
 /** One published name's share of the line; the wire allows 128 characters. */
@@ -605,44 +611,95 @@ function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): 
     : `nearby unwatered crops: ${crops.length} (within 6 tiles only)`;
 }
 
+/** Which half of the line one fact speaks about: the world she stands in, or her own body. */
+type GameEnvironmentFactSubject = "world" | "body";
+
 /**
- * Drops whole facts from the END while the line is over its byte cap, so a bound
- * can never eat the clock it opens with. Every fact is dropped rather than
- * truncated: half a name reads as a shorter name.
+ * One rendered fact and the half of the line it speaks about.
  *
- * It also reports WHAT it dropped. The rendered line cannot say what was cut out of it
- * (`joinBoundedFacts` only ever returns the survivors), so "did the block ever exceed the cap,
- * and what was lost" is answerable only from here - which is why the observer below is built on
- * this rather than on the joined string.
+ * The subject is declared BESIDE the fact it describes, because it is the one thing `boundGameEnvironmentFacts`
+ * reads to decide what the byte cap spends first. A fact added to `composeGameEnvironmentFacts` therefore has to
+ * state its subject, which is what keeps the drop order a decision instead of the composition order by accident.
  */
-function boundGameEnvironmentFacts(facts: readonly string[]): Readonly<{ kept: string[]; dropped: string[] }> {
-  const kept = [...facts];
-  const dropped: string[] = [];
-  while (kept.length > 1 && Buffer.byteLength(kept.join("；"), "utf8") > MAX_GAME_ENVIRONMENT_FACTS_BYTES) {
-    const removed = kept.pop();
-    if (removed !== undefined) dropped.unshift(removed);
-  }
-  return { kept, dropped };
+export type GameEnvironmentFact = Readonly<{ text: string; subject: GameEnvironmentFactSubject }>;
+
+/** A fact about the world she stands in: the clock, the map, who is near, what is ready. */
+function worldFact(text: string): GameEnvironmentFact {
+  return { text, subject: "world" };
 }
 
-function joinBoundedFacts(facts: readonly string[]): string {
+/** A fact about her own body - what she is holding, her stamina - which the line must lose last. */
+function bodyFact(text: string): GameEnvironmentFact {
+  return { text, subject: "body" };
+}
+
+/**
+ * Drops whole facts while the line is over its byte cap. Every fact is dropped rather than
+ * truncated: half a name reads as a shorter name.
+ *
+ * THE DROP ORDER IS DECLARED, NOT THE ORDER THE FACTS HAPPEN TO BE COMPOSED IN: world facts go first, from the
+ * end of the line backwards, and the facts about her own BODY are dropped only once no world fact is left. The
+ * accidental order spent stamina first, because it is composed last - so the one fact about her body was what a
+ * long world line cost her. An arithmetic argument that the rest "fits" cannot hold the line: a snapshot can
+ * always hand it one more world fact than it has room for (the interactable-tiles block is the next one), while
+ * the subject declared beside each fact is a rule a new fact cannot be added without answering.
+ *
+ * It also reports WHAT it dropped, in the order the facts appear in the line. The rendered line cannot say what
+ * was cut out of it (`joinBoundedFacts` only ever returns the survivors), so "did the block ever exceed the cap,
+ * and what was lost" is answerable only from here - which is why the observer below is built on this rather than
+ * on the joined string.
+ */
+function boundGameEnvironmentFacts(
+  facts: readonly GameEnvironmentFact[],
+): Readonly<{ kept: string[]; dropped: string[] }> {
+  const bytesOf = (kept: readonly GameEnvironmentFact[]): number =>
+    Buffer.byteLength(kept.map((fact) => fact.text).join("；"), "utf8");
+  const kept = [...facts];
+  // Both lists are copies, so reversing them cannot touch the caller's own composition order.
+  const dropOrder = [
+    ...facts.filter((fact) => fact.subject === "world").reverse(),
+    ...facts.filter((fact) => fact.subject === "body").reverse(),
+  ];
+  const dropped: GameEnvironmentFact[] = [];
+  for (const fact of dropOrder) {
+    if (kept.length <= 1 || bytesOf(kept) <= MAX_GAME_ENVIRONMENT_FACTS_BYTES) break;
+    kept.splice(kept.lastIndexOf(fact), 1);
+    dropped.push(fact);
+  }
+  return {
+    kept: kept.map((fact) => fact.text),
+    dropped: dropped.sort((left, right) => facts.indexOf(left) - facts.indexOf(right)).map((fact) => fact.text),
+  };
+}
+
+function joinBoundedFacts(facts: readonly GameEnvironmentFact[]): string {
   return boundGameEnvironmentFacts(facts).kept.join("；");
 }
 
-/** Every fact this snapshot could render, in the order the line prints them. */
-function composeGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string[] {
+/**
+ * Every fact this snapshot could render, in the order the line prints them, each with the half of the line it
+ * speaks about.
+ *
+ * Two of them are about her own BODY - what she is holding and her stamina - and they keep the positions they
+ * have always had, because the line's reading order is a product decision. Its LOSS order is the invariant: see
+ * `boundGameEnvironmentFacts`.
+ */
+export function composeGameEnvironmentFacts(
+  source: GameEnvironmentFactsSource,
+  zh: boolean,
+): readonly GameEnvironmentFact[] {
   return [
-    formatGameClock(source.timeOfDay, zh),
-    formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh),
-    formatGameWeather(source.weather, zh),
-    `${formatGameLocation(source.location, zh)}`,
-    formatGameTile(source.tile, zh),
-    formatHeldTool(source, zh),
-    formatNearbyVillagers(source, zh),
-    formatUnwateredCrops(source, zh),
-    formatChestsSummary(source, zh),
-    formatGameStamina(source.stamina, source.exhausted, zh),
-  ].filter((fact) => fact !== "");
+    worldFact(formatGameClock(source.timeOfDay, zh)),
+    worldFact(formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh)),
+    worldFact(formatGameWeather(source.weather, zh)),
+    worldFact(`${formatGameLocation(source.location, zh)}`),
+    worldFact(formatGameTile(source.tile, zh)),
+    bodyFact(formatHeldTool(source, zh)),
+    worldFact(formatNearbyVillagers(source, zh)),
+    worldFact(formatUnwateredCrops(source, zh)),
+    worldFact(formatChestsSummary(source, zh)),
+    bodyFact(formatGameStamina(source.stamina, source.exhausted, zh)),
+  ].filter((fact) => fact.text !== "");
 }
 
 export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
@@ -655,7 +712,7 @@ export type GameEnvironmentFactsRender = Readonly<{
   /** The exact line the provider returns; `""` when the snapshot carries no facts at all. */
   text: string;
   bytes: number;
-  /** Facts the cap dropped from the END, in the order they were dropped. */
+  /** Facts the cap dropped, in the order the line prints them. World facts are spent before body facts. */
   dropped: readonly string[];
 }>;
 
@@ -989,6 +1046,14 @@ export type RuntimeSession = Readonly<{
   identityProfile: IdentityProfileMetadata;
   profile: IdentityProfile;
   extensions: readonly string[];
+  /**
+   * The turn whose provider request is in flight on this exact session.
+   *
+   * It is held here rather than sent with the prompt because Pi's `PromptOptions` carries no headers and
+   * `models.json` headers are fixed per provider entry: an inline extension reads this holder when Pi fires
+   * `before_provider_headers`, so the value travels with the session that sends the request.
+   */
+  providerTurnHeader: ProviderTurnHeaderScope;
   /** Host-owned surface port; Pi never receives this authority directly. */
   presentation?: PresentationRuntime;
   gameplaySubagent?: GameplayTaskSubagent;
@@ -1693,12 +1758,25 @@ export async function createRuntimeWithFixedToolsCore(
   // Chat never reads it: the addition is the Game surface's own, and a Chat mount that consulted
   // it would be reaching for a setting its own settings group does not show.
   const gamePromptAddition = runtimeSurface === "game" ? await resolveGamePromptAddition(paths.root) : undefined;
+  // The turn a provider request belongs to is stated on the request itself, because nothing else on the
+  // wire carries it and a captured body could otherwise only be attributed by its arrival position. The
+  // value is set by the provider-start runner and cleared by the same turn; an inline factory is the only
+  // per-request seam Pi offers (see `provider-turn-header.internal.ts`), and it survives `noExtensions`,
+  // which describes disabled extension PATHS and not an inline factory the Host registers itself.
+  const providerTurnHeader = createProviderTurnHeaderScope();
   const loader = new DefaultResourceLoader({
     cwd: paths.runtimeCwd,
     agentDir: paths.agentDir,
     settingsManager: settings,
     noExtensions: true,
     additionalExtensionPaths: loadMagicContextExtension ? [magicContextEntry] : [],
+    extensionFactories: [
+      {
+        name: PROVIDER_TURN_HEADER_EXTENSION_NAME,
+        hidden: true,
+        factory: (pi) => providerTurnHeaderExtension(pi, providerTurnHeader),
+      },
+    ],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -2054,6 +2132,7 @@ export async function createRuntimeWithFixedToolsCore(
       identityProfile: profileMetadata,
       profile,
       extensions: loader.getExtensions().extensions.map((extension) => extension.path),
+      providerTurnHeader,
       ...(boundPresentation === undefined ? {} : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
       ...(dispatchController === undefined

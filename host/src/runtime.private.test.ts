@@ -1080,7 +1080,11 @@ test("formal Preview Game composition does not load Magic Context", async () => 
         },
       );
       try {
-        assert.deepEqual(runtime.extensions, []);
+        assert.deepEqual(
+          runtime.extensions.filter((extension) => !extension.startsWith("<inline:")),
+          [],
+          "the formal Preview composition loads no extension path, Magic Context least of all",
+        );
         await assert.rejects(
           access(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc")),
           (error: unknown) => typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT",
@@ -1687,8 +1691,11 @@ test("runtime loads only Magic Context and preserves a session partition", async
 
   try {
     assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
-    assert.equal(runtime.extensions.length, 1);
-    assert.equal(runtime.extensions[0] ?? "", resolveMagicContextExtensionEntry());
+    assert.deepEqual(
+      runtime.extensions.filter((extension) => !extension.startsWith("<inline:")),
+      [resolveMagicContextExtensionEntry()],
+      "no extension path other than Magic Context may load; the turn header is an inline factory, not a path",
+    );
 
     const config = JSON.parse(
       await readFile(join(runtime.paths.runtimeCwd, ".cortexkit", "magic-context.jsonc"), "utf8"),

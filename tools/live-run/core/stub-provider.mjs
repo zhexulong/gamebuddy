@@ -32,6 +32,10 @@ const STREAM_ID = "chatcmpl-live-stub";
  * `next()` hands out the recorded requests in arrival order and resolves immediately for one that has
  * already arrived, so a caller that starts a turn and then waits cannot miss the body it is waiting
  * for; `requests` is the whole log, for a reading taken after the last turn.
+ *
+ * Each record carries the request's headers beside its body, because a body alone cannot be attributed
+ * to a turn: the Host names the turn on `X-GameBuddy-Turn-Id`, and a reader holding only bodies could
+ * only count them in arrival order - which a probe, a retry or a second surface silently shifts.
  */
 export async function startLocalStubProvider({ modelId, reply }) {
   if (typeof modelId !== "string" || modelId.length === 0) throw new Error("stub_provider_model_required");
@@ -63,7 +67,7 @@ export async function startLocalStubProvider({ modelId, reply }) {
       } catch {
         body = undefined;
       }
-      requests.push(Object.freeze({ method: request.method, url: request.url, body }));
+      requests.push(Object.freeze({ method: request.method, url: request.url, headers: { ...request.headers }, body }));
       deliver();
       response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
       const send = (payload) => response.write(`data: ${JSON.stringify(payload)}\n\n`);

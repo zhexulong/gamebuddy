@@ -639,6 +639,12 @@ export async function runMountedProviderStart(
     // cannot be split into "we were slow" and "they were slow". It rides the
     // existing diagnostic line rather than a new channel: one bounded integer, no
     // prompt or reply text.
+    // Name this turn on every provider request the prompt makes, and only this turn: Pi stamps
+    // `before_provider_headers` from the holder this write sets, so the request a captured body came
+    // from can be attributed to a turn instead of to its position in the capture file. A stop that
+    // lands between two turns leaves the successor's own write in place, which is why the clear below
+    // names the turn it clears rather than emptying the holder.
+    scope.runtimeSession.providerTurnHeader.setTurn(scope.facts.turnId);
     const promptStartedAtMs = Date.now();
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
@@ -759,6 +765,9 @@ export async function runMountedProviderStart(
     nativeObserver?.revoke();
     if (previewPublished) await previewPublisher?.clear();
     if (promptPromise !== undefined) await promptPromise;
+    // The prompt has settled, so no provider request of this turn can still be built: the holder stops
+    // naming this turn here rather than outliving it into a probe or a title generation.
+    scope.runtimeSession.providerTurnHeader.clearTurn(scope.facts.turnId);
     await nativeObserver?.close();
     // The prompt has settled and its final assistant snapshot has been drained, so this is the one
     // moment where both what the prompt appended and which row it was committed as are known. It runs

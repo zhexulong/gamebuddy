@@ -22,6 +22,7 @@ import {
   type NativeChatPreviewPublisher,
   type NativeChatSpeechSink,
 } from "./p4-provider-start-execution.js";
+import { createProviderTurnHeaderScope, type ProviderTurnHeaderScope } from "../provider-turn-header.internal.js";
 
 function nativeText(text: string) {
   return Object.freeze({ type: "text" as const, text });
@@ -176,12 +177,20 @@ function createScope(overrides: ScopeOverrides = {}) {
    * `not_started` before it ever reads an entry list).
    */
   const emptyRuntimeSession = Object.freeze({}) as unknown as ProviderInvocationScope["runtimeSession"];
+  /**
+   * Every mounted runtime session carries the holder its inline extension reads. The double creates one when
+   * a case supplies none, so the runner always reaches a real holder and a case that wants to watch what the
+   * runner sets and clears can supply its own.
+   */
+  const providerTurnHeader =
+    (suppliedRuntime?.providerTurnHeader as ProviderTurnHeaderScope | undefined) ?? createProviderTurnHeaderScope();
   const runtimeSession =
     suppliedRuntime === undefined || suppliedSession === undefined
       ? suppliedRuntime
       : Object.freeze({
           ...suppliedRuntime,
           sessionManager,
+          providerTurnHeader,
           // A deliberate partial double of the session surface this runner reaches: the listener port
           // and the prompt port a case supplies.
           session: Object.freeze({
@@ -1048,6 +1057,54 @@ test("P4c returns a normal durable Stop winner when an aborted prompt rejects", 
   assert.deepEqual(presentationTransitions, []);
 });
 
+test("the provider turn header names this turn while its prompt is in flight and no turn afterwards", async () => {
+  // A captured provider body can only be attributed to a turn if the turn names itself ON the request.
+  // The value is the Host's own turn identity, held for exactly the window in which this prompt can
+  // build a request: a holder written later names nothing, and one left written names the wrong turn.
+  const providerTurnHeader = createProviderTurnHeaderScope();
+  let observer: Observer | undefined;
+  const turnsSeenByPrompt: (string | undefined)[] = [];
+  const { scope } = createScope({
+    presentationCommitted: () => true,
+    runtimeSession: Object.freeze({
+      providerTurnHeader,
+      installTavernProviderStartObserver(onStart: Observer) {
+        observer = onStart;
+        return () => undefined;
+      },
+      session: (() => {
+        const listeners = new Set<(event: unknown) => void>();
+        const emit = (event: unknown): void => {
+          for (const listener of [...listeners]) listener(event);
+        };
+        return Object.freeze({
+          subscribe(listener: (event: unknown) => void) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          async prompt() {
+            turnsSeenByPrompt.push(providerTurnHeader.turnInFlight());
+            const partial = nativeAssistant([nativeText("")]);
+            emit({ type: "message_start", message: partial });
+            emit({ type: "message_end", message: nativeAssistant([nativeText("A reply.")]) });
+            observer?.(Object.freeze({ statusClass: "success" as const }));
+          },
+        });
+      })(),
+    }),
+  });
+
+  const result = await runMountedProviderStart(scope);
+
+  assert.equal(result.outcome, "completed");
+  assert.deepEqual(turnsSeenByPrompt, [facts.turnId], "the prompt must run with its own turn named on the holder");
+  assert.equal(
+    providerTurnHeader.turnInFlight(),
+    undefined,
+    "a settled prompt must not leave its turn named for a probe or a title generation",
+  );
+});
+
 test("P4c rereads a normal Stop winner that races completion", async () => {
   let observer: Observer | undefined;
   let stopped = false;
@@ -1267,6 +1324,9 @@ function variantRuntimeSession(reply: string, events: string[] = [], stopReason:
 const variantFacts = Object.freeze({
   ...facts,
   variant: Object.freeze({ targetMessageId: "response_01", anchorMessageId: "player_01" }),
+  // A variant turn answers an existing reply; it is not a reply-target turn, which is the other way a
+  // turn can be told which row it speaks to. The two are mutually exclusive, so this is null here.
+  replyToPlayerMessageId: null,
 });
 
 function branchedVariant(onRevert: () => void = () => undefined) {
