@@ -188,6 +188,35 @@ class Sources {
     for (const directory of roots) visit(directory);
     return found.sort();
   }
+
+  /**
+   * The modules of an operator or build harness: `.mjs`/`.cjs`/`.js` files, which `files` and `allFiles` skip.
+   *
+   * Only text that names a source root is parsed at all - a harness that cannot name a module is a read of nothing
+   * and there are a thousand of them, so the cheap substring decides what the parser sees.
+   */
+  harnessModules(...roots) {
+    const found = [];
+    const visit = (directory) => {
+      let entries;
+      try {
+        entries = readdirSync(directory);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (entry === "node_modules" || entry === "dist" || entry === "dist-test" || entry.startsWith(".")) continue;
+        const full = join(directory, entry);
+        const stats = statSync(full);
+        if (stats.isDirectory()) visit(full);
+        else if (/\.(?:mjs|cjs|js|ts|tsx)$/u.test(entry)) found.push(full);
+      }
+    };
+    for (const directory of roots) visit(directory);
+    return found.filter((file) =>
+      /host[\\/](?:src|dist)|dialogue-web[\\/](?:src|dist)/u.test(readFileSync(file, "utf8")),
+    );
+  }
 }
 
 /** `4 * 1024`, `1_048_576`, `MAX_X` - resolved to a number, or null. */
@@ -1727,7 +1756,7 @@ const HYGIENE_KINDS = Object.freeze([
   {
     id: "test-only export",
     readsAs: "decision",
-    note: "a Host export no production code reaches is one of two things: a helper that only exists so a test can mock with it, which belongs in a test-support module, or a production module whose own algorithm a test pins at its boundary, which the test declares by naming itself `.private.test.ts`. The finding names the declaring file, the symbol and every test that reaches it without declaring, so the fix is a decision about that export and not a line of the gate",
+    note: "a Host export no production code reaches is one of three things: a helper that only exists so a test can mock with it, which belongs in a test-support module; a production module whose own algorithm a test pins at its boundary, which the test declares by naming itself `.private.test.ts`; or a module an operator or build harness loads, which is counted as a harness read rather than as a finding. What is left names the declaring file, the symbol and every test that reaches it without declaring, so the fix is a decision about that export and not a line of the gate",
   },
   {
     id: "commented-out code",
@@ -1915,6 +1944,102 @@ function exportConsumers(sources, files, surfaces) {
 }
 
 /**
+ * The `host/src` or `dialogue-web/src` module a harness specifier names.
+ *
+ * A harness reads the product two ways: the source, or the build of it (`host/dist`, `host/dist-test`,
+ * `dialogue-web/dist`), which is the same module compiled. Both name the declaring module; a comment that mentions
+ * `host/src/x.ts`, a step name in a workflow, or a local function that shares the symbol's name does not, and the
+ * caller only records a specifier it could resolve through here.
+ */
+function sourceBehindHarnessSpecifier(root, from, specifier, surfaces) {
+  if (!specifier.startsWith(".")) return null;
+  const target = relativeTo(root, resolve(dirname(from), specifier));
+  for (const [built, sourceRoot] of [
+    ["host/dist-test/", "host/src/"],
+    ["host/dist/", "host/src/"],
+    ["dialogue-web/dist/", "dialogue-web/src/"],
+    ["host/src/", "host/src/"],
+    ["dialogue-web/src/", "dialogue-web/src/"],
+  ]) {
+    if (!target.startsWith(built)) continue;
+    const tail = target.slice(built.length).replace(/\.(?:m?js|cjs)$/u, ".ts");
+    const candidate = join(root, ...(sourceRoot + tail).split("/"));
+    return surfaces.has(candidate) ? candidate : null;
+  }
+  return null;
+}
+
+/**
+ * The operator and build harnesses that read a Host module, recorded against the module that declares the symbol.
+ *
+ * `tools/` live-run harnesses, `host/scripts/` gates and `dialogue-web/scripts/` manifest builders are neither the
+ * product nor tests, and the reading's own name is what makes them matter: an export a harness loads is not a
+ * test-only export. They are recorded as consumers, so a module only a harness reads stops being a finding, and the
+ * count is printed beside the finding count rather than dropped.
+ */
+function recordHarnessConsumers(sources, surfaces, consumers) {
+  const record = (declarer, name, from) => {
+    if (declarer === null) return;
+    const key = `${declarer}#${name}`;
+    if (!consumers.has(key)) consumers.set(key, new Set());
+    consumers.get(key).add(from);
+  };
+  const files = new Set(
+    sources.harnessModules(
+      sources.path("tools"),
+      sources.path("host", "scripts"),
+      sources.path("dialogue-web", "scripts"),
+    ),
+  );
+  for (const file of files) {
+    walk(sources.source(file), (node) => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+        const target = sourceBehindHarnessSpecifier(sources.root, file, node.moduleSpecifier.text, surfaces);
+        if (target === null || node.importClause === undefined) return;
+        const bindings = node.importClause.namedBindings;
+        if (bindings === undefined) return;
+        if (ts.isNamespaceImport(bindings)) {
+          for (const name of exposedNames(surfaces, target))
+            record(declaringModule(surfaces, target, name), name, file);
+          return;
+        }
+        for (const element of bindings.elements) {
+          const imported = (element.propertyName ?? element.name).text;
+          record(declaringModule(surfaces, target, imported), imported, file);
+        }
+        return;
+      }
+      if (
+        ts.isCallExpression(node) &&
+        (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          node.expression.getText(sources.source(file)) === "require")
+      ) {
+        const argument = node.arguments[0];
+        if (argument === undefined || !ts.isStringLiteral(argument)) return;
+        const target = sourceBehindHarnessSpecifier(sources.root, file, argument.text, surfaces);
+        if (target === null) return;
+        // A dynamic import binds no name, so only an immediate destructure of it names what the harness reads.
+        const declaration = node.parent;
+        if (
+          declaration === undefined ||
+          !ts.isVariableDeclaration(declaration) ||
+          !ts.isObjectBindingPattern(declaration.name)
+        )
+          return;
+        for (const element of declaration.name.elements)
+          if (ts.isBindingElement(element))
+            record(
+              declaringModule(surfaces, target, (element.propertyName ?? element.name).text),
+              (element.propertyName ?? element.name).text,
+              file,
+            );
+      }
+    });
+  }
+  return files;
+}
+
+/**
  * Whether `name` is used inside the module that declares it, anywhere other than the declaration itself.
  *
  * A name-level reading with no scope model, so a shadowing local of the same name would read as a use. It is
@@ -1980,8 +2105,10 @@ function runHygiene(sources) {
   const audited = sources.allFiles(sources.path(...HOST), sources.path(...WEB));
   const surfaces = new Map(audited.map((file) => [file, moduleSurface(sources, file)]));
   const consumers = exportConsumers(sources, audited, surfaces);
+  const harnessFiles = recordHarnessConsumers(sources, surfaces, consumers);
   let testOnly = 0;
   let declaredPrivate = 0;
+  let harnessOnly = 0;
   let examinedExports = 0;
   for (const file of hostFiles) {
     const sourceFile = sources.source(file);
@@ -1989,7 +2116,11 @@ function runHygiene(sources) {
       const users = [...(consumers.get(`${file}#${name}`) ?? [])].filter((user) => user !== file);
       if (users.length === 0) continue;
       examinedExports += 1;
-      if (users.some((user) => !TEST_PATH.test(user))) continue;
+      const shipped = users.filter((user) => !TEST_PATH.test(user));
+      if (shipped.length > 0) {
+        if (shipped.every((user) => harnessFiles.has(user))) harnessOnly += 1;
+        continue;
+      }
       if (referencedInModule(sources, file, name, declaration)) continue;
       const undeclared = users.filter((user) => !PRIVATE_TEST_PATH.test(user));
       if (undeclared.length === 0) {
@@ -2010,7 +2141,7 @@ function runHygiene(sources) {
     count: violations.filter((violation) => violation.kind === kind.id).length,
   }));
   notes.push(
-    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts`,
+    `hygiene: ${violations.length} finding(s) in ${kinds.filter((kind) => kind.count > 0).length} kind(s) across ${hostFiles.length + webFiles.length} source file(s); ${examinedExports} imported export(s) examined, ${testOnly} reached only from tests, ${declaredPrivate} declared as pinned by a .private.test.ts, ${harnessOnly} reached only by an operator or build harness`,
   );
   for (const kind of kinds) notes.push(`hygiene: ${kind.id} (${kind.count}) reads as a ${kind.readsAs}: ${kind.note}`);
   return { declared: hostFiles.length + webFiles.length, violations, notes };
@@ -2451,11 +2582,13 @@ function runDelegated(sources, gate) {
  * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
  * that cannot read its own fixture - every rule here is proved clean-then-red-then-clean on the scratch tree.
  *
- * `test-only export` (161 today): two populations, and the reading now separates them. A module that exists so a test
- * can mock with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of that
- * class and it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box
- * testing, and the test says so by naming itself `*.private.test.ts`; the finding then names the exports no such test
- * declares. That count only became a reading when the importer detection was resolved (`759b588a`): the
+ * `test-only export` (139 today): three populations, and the reading now separates them. A module that exists so a
+ * test can mock with it is scaffolding and belongs in a test-support module - `host/src/bridge.ts` was the member of
+ * that class and it moved. A production module whose own algorithm a test pins at its boundary is legitimate white-box
+ * testing, and the test says so by naming itself `*.private.test.ts`. A module an operator or build harness loads
+ * (`tools/`, `host/scripts/`, `dialogue-web/scripts/`, whether it names the source or its build) is not a test-only
+ * export either, and that count is printed beside this one. What remains is the export no product, harness or
+ * declaring test names. That count only became a reading when the importer detection was resolved (`759b588a`): the
  * scan it replaced keyed importers by the bare name of an `import` declaration, so an export the declaring module
  * itself names was reported as a path with no consumer, and a renamed import cleared the wrong symbol. 286 of the 287
  * findings that fix removed were that shape; the rest moved to the declaration a re-export list aliases. The class now
@@ -2475,7 +2608,7 @@ export const ADVISORY_READINGS = Object.freeze(
       className: "hygiene",
       kind: "test-only export",
       reason:
-        "two populations under one reading - scaffolding that belongs in a test-support module, and a production module a test pins at its boundary and declares as `.private.test.ts` - so the ruling is per export, and this reading reports the ones that carry neither home nor declaration",
+        "three populations under one reading - scaffolding that belongs in a test-support module, a production module a test pins at its boundary and declares as `.private.test.ts`, and a module an operator or build harness loads - so the ruling is per export, and this reading reports the ones that carry none of the three",
     },
   ].map(Object.freeze),
 );

@@ -647,6 +647,63 @@ test("hygiene: a module the tree names as test scaffolding has no production sur
   }
 });
 
+test("hygiene: a harness that loads the module is a reader, a harness that only mentions the name is not", (t) => {
+  const root = fixture();
+  try {
+    write(root, "host/src/harness-read.ts", "export function readByHarness(): number { return 1; }\n");
+    write(
+      root,
+      "tools/probe.mjs",
+      'import { readByHarness } from "../host/dist/harness-read.js";\nconsole.log(readByHarness());\n',
+    );
+    write(root, "host/src/mention-only.ts", "export function namedOnlyInProse(): number { return 2; }\n");
+    write(
+      root,
+      "host/src/mention-only.test.ts",
+      [
+        'import test from "node:test";',
+        'import { namedOnlyInProse } from "./mention-only.js";',
+        "void namedOnlyInProse;",
+        'test("x", () => {});',
+        "",
+      ].join("\n"),
+    );
+    write(
+      root,
+      "tools/notes.mjs",
+      [
+        "// host/src/mention-only.ts declares namedOnlyInProse, which this note is about.",
+        "function namedOnlyInProse() { return 3; }",
+        "console.log(namedOnlyInProse());",
+        "",
+      ].join("\n"),
+    );
+    write(root, "host/src/test-only-still.ts", "export function readOnlyByTest(): number { return 4; }\n");
+    write(
+      root,
+      "host/src/test-only-still.test.ts",
+      [
+        'import test from "node:test";',
+        'import { readOnlyByTest } from "./test-only-still.js";',
+        "void readOnlyByTest;",
+        'test("x", () => {});',
+        "",
+      ].join("\n"),
+    );
+
+    const result = violationsOf(root, "hygiene");
+    assert.deepEqual(
+      result.violations.map((violation) => violation.where),
+      ["host/src/mention-only.ts:1", "host/src/test-only-still.ts:1"],
+      `a harness import clears its module, a comment that shares the name does not:\n${result.violations.map((v) => `${v.where} ${v.message}`).join("\n")}`,
+    );
+    assert.match(result.notes.join("\n"), /1 reached only by an operator or build harness/u);
+    t.diagnostic(result.notes.join(" | "));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("hygiene: a .private.test.ts declares the internal it pins, and a plain test does not", (t) => {
   const root = fixture();
   const plain = "host/src/pinned-plan.test.ts";
