@@ -39,21 +39,44 @@ async function tempDirectory() {
   return mkdtemp(join(await realpath(tmpdir()), "gamebuddy-perf-trace-"));
 }
 
-for (const { size, spans } of SIZES) {
-  test(`${CASE} ${size}`, async () => {
-    const directory = await tempDirectory();
-    try {
-      const recorded = spansFor(spans);
-      const file = join(directory, "run-trace.json");
-      const exportBytes = Buffer.byteLength(`${JSON.stringify(toChromeTrace(recorded), null, 2)}\n`, "utf8");
-      const result = await measure({
-        id: CASE,
-        size,
-        run: () => writeRunTrace(file, recorded),
-      });
-      report({ ...result, detail: { spans: recorded.length, exportBytes } });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it:
+ * `writeRunTrace` awaits its file handle per op, and `node:test` instruments the async work a test
+ * body awaits, so a body that ran these windows would charge the runner to the export. See
+ * `measure`'s contract.
+ */
+async function measureCase({ size, spans }) {
+  const directory = await tempDirectory();
+  try {
+    const recorded = spansFor(spans);
+    const file = join(directory, "run-trace.json");
+    const exportBytes = Buffer.byteLength(`${JSON.stringify(toChromeTrace(recorded), null, 2)}\n`, "utf8");
+    const measured = await measure({
+      id: CASE,
+      size,
+      run: () => writeRunTrace(file, recorded),
+    });
+    return { measured, spans: recorded.length, exportBytes };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+const outcomes = new Map();
+for (const size of SIZES) {
+  try {
+    outcomes.set(size.size, await measureCase(size));
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the other
+    // size's finished measurement down with the file's module load.
+    outcomes.set(size.size, { error });
+  }
+}
+
+for (const { size } of SIZES) {
+  test(`${CASE} ${size}`, () => {
+    const outcome = outcomes.get(size);
+    if (outcome.error !== undefined) throw outcome.error;
+    report({ ...outcome.measured, detail: { spans: outcome.spans, exportBytes: outcome.exportBytes } });
   });
 }

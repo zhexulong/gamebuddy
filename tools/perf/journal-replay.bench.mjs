@@ -147,83 +147,138 @@ function microsPerRecord(perOpMicros, records) {
   return Math.round((perOpMicros / records) * 1000) / 1000;
 }
 
-for (const { size, records, foldOps, foldWindowMs } of SIZES) {
-  test(`${OPEN_CASE} ${size}`, async () => {
-    const directory = await tempDirectory();
+/**
+ * `journal.open-replay`: one open plus its close, on the log `seedLog` left behind.
+ *
+ * At module scope rather than inside the `test()` that reports it: the open awaits a file handle, and
+ * `node:test` instruments the async work a test body awaits, so a body that ran these windows would
+ * charge the runner to the replay. See `measure`'s contract.
+ */
+async function measureOpenReplay({ size, records }) {
+  const directory = await tempDirectory();
+  try {
+    await seedLog(directory, { records, settled: false, maxRecords: JOURNAL_BUDGET.maxRecords });
+    const logBytesBefore = await logBytes(directory);
+    const before = recoveryJournalWriteProfile();
+    const measured = await measure({
+      id: OPEN_CASE,
+      size,
+      run: async () => {
+        const opened = await StardewLogicalActionRecoveryJournal.open(
+          openOptions(directory, JOURNAL_BUDGET.maxRecords),
+        );
+        await opened.close();
+      },
+    });
+    const after = recoveryJournalWriteProfile();
+    return {
+      measured,
+      records,
+      logBytes: logBytesBefore,
+      parses: after.documentParses - before.documentParses,
+      appends: after.appends - before.appends,
+      compactions: after.compactions - before.compactions,
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+/**
+ * `journal.compaction`: one budget-eviction fold of the whole live set per op, at module scope for the
+ * same reason as above.
+ */
+async function measureCompaction({ size, records, foldOps, foldWindowMs }) {
+  const directory = await tempDirectory();
+  try {
+    await seedLog(directory, { records, settled: true, maxRecords: records });
+    let next = records + 1;
+    const journal = await StardewLogicalActionRecoveryJournal.open(openOptions(directory, records));
     try {
-      await seedLog(directory, {
-        records,
-        settled: false,
-        maxRecords: JOURNAL_BUDGET.maxRecords,
-      });
-      const bytes = await logBytes(directory);
       const before = recoveryJournalWriteProfile();
-      const result = await measure({
-        id: OPEN_CASE,
+      const measured = await measure({
+        id: COMPACTION_CASE,
         size,
-        run: async () => {
-          const opened = await StardewLogicalActionRecoveryJournal.open(
-            openOptions(directory, JOURNAL_BUDGET.maxRecords),
-          );
-          await opened.close();
-        },
+        maxOps: foldOps,
+        durationMs: foldWindowMs,
+        warmupMs: 0,
+        run: () => journal.prepare(dispatchMaterial(next++)),
       });
       const after = recoveryJournalWriteProfile();
-      const parses = after.documentParses - before.documentParses;
-      assert.equal(parses, result.ops, "an open must read and fold the log exactly once, however long it is");
-      assert.equal(after.appends - before.appends, 0, "a replay appends nothing: the op must be read-only");
-      assert.equal(after.compactions - before.compactions, 0, "a replay must not fold the log into a new file");
-      report({
-        ...result,
-        detail: {
-          records,
-          microsPerRecord: microsPerRecord(result.perOpMicros, records),
-          logBytes: bytes,
-        },
-      });
+      return {
+        measured,
+        records,
+        compactions: after.compactions - before.compactions,
+        appends: after.appends - before.appends,
+        bytesPerFold: Math.round((after.writtenBytes - before.writtenBytes) / measured.ops),
+        liveRecords: journal.records().length,
+      };
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await journal.close();
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+const outcomes = new Map();
+for (const size of SIZES) {
+  try {
+    outcomes.set(`${OPEN_CASE}/${size.size}`, await measureOpenReplay(size));
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the size's
+    // other case down with the file's module load.
+    outcomes.set(`${OPEN_CASE}/${size.size}`, { error });
+  }
+  try {
+    outcomes.set(`${COMPACTION_CASE}/${size.size}`, await measureCompaction(size));
+  } catch (error) {
+    outcomes.set(`${COMPACTION_CASE}/${size.size}`, { error });
+  }
+}
+
+for (const { size, records } of SIZES) {
+  test(`${OPEN_CASE} ${size}`, () => {
+    const outcome = outcomes.get(`${OPEN_CASE}/${size}`);
+    if (outcome.error !== undefined) throw outcome.error;
+    assert.equal(
+      outcome.parses,
+      outcome.measured.ops,
+      "an open must read and fold the log exactly once, however long it is",
+    );
+    assert.equal(outcome.appends, 0, "a replay appends nothing: the op must be read-only");
+    assert.equal(outcome.compactions, 0, "a replay must not fold the log into a new file");
+    report({
+      ...outcome.measured,
+      detail: {
+        records,
+        microsPerRecord: microsPerRecord(outcome.measured.perOpMicros, records),
+        logBytes: outcome.logBytes,
+      },
+    });
   });
 
-  test(`${COMPACTION_CASE} ${size}`, async () => {
-    const directory = await tempDirectory();
-    try {
-      await seedLog(directory, { records, settled: true, maxRecords: records });
-      let next = records + 1;
-      const journal = await StardewLogicalActionRecoveryJournal.open(openOptions(directory, records));
-      try {
-        const before = recoveryJournalWriteProfile();
-        const result = await measure({
-          id: COMPACTION_CASE,
-          size,
-          maxOps: foldOps,
-          durationMs: foldWindowMs,
-          warmupMs: 0,
-          run: () => journal.prepare(dispatchMaterial(next++)),
-        });
-        const after = recoveryJournalWriteProfile();
-        const compactions = after.compactions - before.compactions;
-        assert.equal(compactions, result.ops, "every op must fold the log exactly once, so the number is the fold's");
-        assert.equal(after.appends - before.appends, 0, "the budget fold appends nothing: its whole write is the fold");
-        assert.equal(
-          journal.records().length,
-          records,
-          "the fold must rewrite the journal's live set, not only the record this op touched",
-        );
-        report({
-          ...result,
-          detail: {
-            records,
-            bytesPerFold: Math.round((after.writtenBytes - before.writtenBytes) / result.ops),
-            microsPerRecord: microsPerRecord(result.perOpMicros, records),
-          },
-        });
-      } finally {
-        await journal.close();
-      }
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+  test(`${COMPACTION_CASE} ${size}`, () => {
+    const outcome = outcomes.get(`${COMPACTION_CASE}/${size}`);
+    if (outcome.error !== undefined) throw outcome.error;
+    assert.equal(
+      outcome.compactions,
+      outcome.measured.ops,
+      "every op must fold the log exactly once, so the number is the fold's",
+    );
+    assert.equal(outcome.appends, 0, "the budget fold appends nothing: its whole write is the fold");
+    assert.equal(
+      outcome.liveRecords,
+      records,
+      "the fold must rewrite the journal's live set, not only the record this op touched",
+    );
+    report({
+      ...outcome.measured,
+      detail: {
+        records,
+        bytesPerFold: outcome.bytesPerFold,
+        microsPerRecord: microsPerRecord(outcome.measured.perOpMicros, records),
+      },
+    });
   });
 }

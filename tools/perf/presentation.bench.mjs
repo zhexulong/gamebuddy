@@ -33,35 +33,56 @@ const SIZES = Object.freeze([
   }),
 ]);
 
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it: `present()`
+ * awaits the bridge per op, and `node:test` instruments the async work a test body awaits, so a body
+ * that ran these windows would charge the runner to the commit. See `measure`'s contract.
+ */
+async function measureCase({ size, text }) {
+  const epochAdmission = createFarmhandPresentationEpochAdmission(createCompanionInterruption());
+  const hostBinding = Object.freeze({});
+  const admission = Object.freeze({
+    hostBinding,
+    assertHostCurrent(binding) {
+      if (binding !== hostBinding) throw new Error("perf_case_stale_host_binding");
+    },
+  });
+  const bridge = Object.freeze({
+    state: Object.freeze({ snapshot: Object.freeze({ revision: 7 }) }),
+    async presentCompanionText() {},
+    async presentSystemNotice() {},
+  });
+  const port = createFarmhandCompanionPresentationPort(bridge, epochAdmission);
+  const expression = Object.freeze({
+    surface: "game",
+    expressionId: "expression-1",
+    sessionId: "session-1",
+    sourceEventId: "event-1",
+    text,
+    locale: "zh-CN",
+  });
+  return await measure({
+    id: CASE,
+    size,
+    run: () => port.present(expression, admission),
+  });
+}
+
+const outcomes = new Map();
+for (const size of SIZES) {
+  try {
+    outcomes.set(size.size, { measured: await measureCase(size) });
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the other
+    // size's finished measurement down with the file's module load.
+    outcomes.set(size.size, { error });
+  }
+}
+
 for (const { size, text } of SIZES) {
-  test(`${CASE} ${size}`, async () => {
-    const epochAdmission = createFarmhandPresentationEpochAdmission(createCompanionInterruption());
-    const hostBinding = Object.freeze({});
-    const admission = Object.freeze({
-      hostBinding,
-      assertHostCurrent(binding) {
-        if (binding !== hostBinding) throw new Error("perf_case_stale_host_binding");
-      },
-    });
-    const bridge = Object.freeze({
-      state: Object.freeze({ snapshot: Object.freeze({ revision: 7 }) }),
-      async presentCompanionText() {},
-      async presentSystemNotice() {},
-    });
-    const port = createFarmhandCompanionPresentationPort(bridge, epochAdmission);
-    const expression = Object.freeze({
-      surface: "game",
-      expressionId: "expression-1",
-      sessionId: "session-1",
-      sourceEventId: "event-1",
-      text,
-      locale: "zh-CN",
-    });
-    const result = await measure({
-      id: CASE,
-      size,
-      run: () => port.present(expression, admission),
-    });
-    report({ ...result, detail: { textBytes: Buffer.byteLength(text, "utf8") } });
+  test(`${CASE} ${size}`, () => {
+    const outcome = outcomes.get(size);
+    if (outcome.error !== undefined) throw outcome.error;
+    report({ ...outcome.measured, detail: { textBytes: Buffer.byteLength(text, "utf8") } });
   });
 }

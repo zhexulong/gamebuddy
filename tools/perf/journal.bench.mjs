@@ -86,45 +86,80 @@ async function logBytes(directory) {
   return (await stat(join(directory, name))).size;
 }
 
-for (const { size, settledHistory } of SIZES) {
-  test(`${CASE} ${size}`, async () => {
-    const directory = await tempDirectory();
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it:
+ * `prepare()` awaits a file handle per op, and `node:test` instruments the async work a test body
+ * awaits, so a body that ran these windows would charge the runner to a durable append. See
+ * `measure`'s contract.
+ *
+ * The write profile and the log's size are read around the whole case here, so the test below can
+ * assert on what ran instead of trusting the number: the counters are facts, the timing is the
+ * measurement.
+ */
+async function measureCase({ size, settledHistory }) {
+  const directory = await tempDirectory();
+  try {
+    const journal = await StardewLogicalActionRecoveryJournal.open({
+      directory,
+      scope: SCOPE,
+      ...JOURNAL_BUDGET,
+    });
     try {
-      const journal = await StardewLogicalActionRecoveryJournal.open({
-        directory,
-        scope: SCOPE,
-        ...JOURNAL_BUDGET,
+      for (let index = 1; index <= settledHistory; index += 1) await journal.prepare(dispatchMaterial(index));
+      let next = settledHistory + 1;
+      const before = recoveryJournalWriteProfile();
+      const bytesBefore = await logBytes(directory);
+      const measured = await measure({
+        id: CASE,
+        size,
+        maxOps: MAX_OPS,
+        run: () => journal.prepare(dispatchMaterial(next++)),
       });
-      try {
-        for (let index = 1; index <= settledHistory; index += 1) await journal.prepare(dispatchMaterial(index));
-        let next = settledHistory + 1;
-        const before = recoveryJournalWriteProfile();
-        const bytesBefore = await logBytes(directory);
-        const result = await measure({
-          id: CASE,
-          size,
-          maxOps: MAX_OPS,
-          run: () => journal.prepare(dispatchMaterial(next++)),
-        });
-        const after = recoveryJournalWriteProfile();
-        const bytesAfter = await logBytes(directory);
-        const appends = after.appends - before.appends;
-        const compactions = after.compactions - before.compactions;
-        assert.equal(appends, result.ops, "every measured transition must still cost exactly one durable append");
-        assert.equal(
-          compactions,
-          0,
-          `the window compacted ${compactions} time(s): a compaction reserialises the whole journal, so these ops are not transitions`,
-        );
-        report({
-          ...result,
-          detail: { settledHistory, bytesPerOp: Math.round((bytesAfter - bytesBefore) / result.ops) },
-        });
-      } finally {
-        await journal.close();
-      }
+      const after = recoveryJournalWriteProfile();
+      const bytesAfter = await logBytes(directory);
+      return {
+        measured,
+        settledHistory,
+        appends: after.appends - before.appends,
+        compactions: after.compactions - before.compactions,
+        bytesPerOp: Math.round((bytesAfter - bytesBefore) / measured.ops),
+      };
     } finally {
-      await rm(directory, { recursive: true, force: true });
+      await journal.close();
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+const outcomes = new Map();
+for (const size of SIZES) {
+  try {
+    outcomes.set(size.size, await measureCase(size));
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the other
+    // size's finished measurement down with the file's module load.
+    outcomes.set(size.size, { error });
+  }
+}
+
+for (const { size, settledHistory } of SIZES) {
+  test(`${CASE} ${size}`, () => {
+    const outcome = outcomes.get(size);
+    if (outcome.error !== undefined) throw outcome.error;
+    assert.equal(
+      outcome.appends,
+      outcome.measured.ops,
+      "every measured transition must still cost exactly one durable append",
+    );
+    assert.equal(
+      outcome.compactions,
+      0,
+      `the window compacted ${outcome.compactions} time(s): a compaction reserialises the whole journal, so these ops are not transitions`,
+    );
+    report({
+      ...outcome.measured,
+      detail: { settledHistory, bytesPerOp: outcome.bytesPerOp },
+    });
   });
 }

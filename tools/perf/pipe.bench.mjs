@@ -46,43 +46,66 @@ function echoServer() {
   });
 }
 
-for (const { size, bodyBytes } of SIZES) {
-  test(`${CASE} ${size}`, { timeout: 120_000 }, async () => {
-    const pipeName = `gamebuddy_perf_${process.pid}_${size}`;
-    let peer;
-    const server = echoServer();
-    server.on("connection", (socket) => {
-      peer = socket;
+/**
+ * One case's measurement, at module scope rather than inside the `test()` that reports it: each op
+ * awaits the peer's echo, and `node:test` instruments the async work a test body awaits, so a body
+ * that ran these windows would charge the runner to the frame. See `measure`'s contract.
+ *
+ * The pipe, the peer and the transport are all built and torn down here, so the test below only
+ * asserts on what the case measured.
+ */
+async function measureCase({ size, bodyBytes }) {
+  const pipeName = `gamebuddy_perf_${process.pid}_${size}`;
+  let peer;
+  const server = echoServer();
+  server.on("connection", (socket) => {
+    peer = socket;
+  });
+  await new Promise((resolve, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject));
+  const transport = await NamedPipeTransport.connect(pipeName);
+  try {
+    const payload = { type: "snapshot", body: "x".repeat(bodyBytes) };
+    const frameJson = JSON.stringify(payload);
+    let settleEcho = () => {};
+    transport.onMessage((json) => {
+      if (json.length !== frameJson.length) throw new Error("perf_case_pipe_frame_mismatch");
+      JSON.parse(json);
+      settleEcho();
     });
-    await new Promise((resolve, reject) => server.listen(`\\\\.\\pipe\\${pipeName}`, resolve).once("error", reject));
-    const transport = await NamedPipeTransport.connect(pipeName);
-    try {
-      const payload = { type: "snapshot", body: "x".repeat(bodyBytes) };
-      const frameJson = JSON.stringify(payload);
-      let settleEcho = () => {};
-      transport.onMessage((json) => {
-        if (json.length !== frameJson.length) throw new Error("perf_case_pipe_frame_mismatch");
-        JSON.parse(json);
-        settleEcho();
-      });
-      const result = await measure({
-        id: CASE,
-        size,
-        run: () => {
-          const echo = new Promise((resolve) => {
-            settleEcho = resolve;
-          });
-          transport.send(payload);
-          return echo;
-        },
-      });
-      report({ ...result, detail: { frameBytes: Buffer.byteLength(frameJson, "utf8") } });
-    } finally {
-      transport.close();
-      peer?.destroy();
-      await new Promise((resolve, reject) =>
-        server.close((error) => (error === undefined ? resolve() : reject(error))),
-      );
-    }
+    const measured = await measure({
+      id: CASE,
+      size,
+      run: () => {
+        const echo = new Promise((resolve) => {
+          settleEcho = resolve;
+        });
+        transport.send(payload);
+        return echo;
+      },
+    });
+    return { measured, frameBytes: Buffer.byteLength(frameJson, "utf8") };
+  } finally {
+    transport.close();
+    peer?.destroy();
+    await new Promise((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error))));
+  }
+}
+
+const outcomes = new Map();
+for (const size of SIZES) {
+  try {
+    outcomes.set(size.size, await measureCase(size));
+  } catch (error) {
+    // The case that could not be measured fails its own test below, instead of taking the other
+    // size's finished measurement down with the file's module load.
+    outcomes.set(size.size, { error });
+  }
+}
+
+for (const { size } of SIZES) {
+  test(`${CASE} ${size}`, () => {
+    const outcome = outcomes.get(size);
+    if (outcome.error !== undefined) throw outcome.error;
+    report({ ...outcome.measured, detail: { frameBytes: outcome.frameBytes } });
   });
 }
