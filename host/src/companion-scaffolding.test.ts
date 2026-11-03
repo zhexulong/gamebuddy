@@ -19,6 +19,13 @@ const SCAFFOLDING: readonly ScaffoldingCase[] = [
   ["the <thought> spelling", "<thought>玩家刚醒。</thought>早安。", "早安。"],
   ["a full-width thought frame", "（思考：她还没吃早饭。）早安。", "早安。"],
   ["a full-width inner-monologue frame", "【内心：别催她。】早安。", "早安。"],
+  ["a reasoning frame in DeepSeek's own spelling", "<think> 她刚醒，先接一句。 </think>早安。", "早安。"],
+  ["the shorter tag does not swallow the longer one", "<thinking>a</thinking>早", "早"],
+  [
+    "a reasoning frame the model never closed is left for the stream to drop",
+    "早安。<think>还没想完",
+    "早安。<think>还没想完",
+  ],
   ["a full-width inner-monologue paren frame", "（脑内：别催她。）早安。", "早安。"],
   ["markdown emphasis, keeping its words", "**今日提醒**：锅里有汤。", "今日提醒：锅里有汤。"],
   ["a divider rule on its own line", "早安。\n\n---\n\n晚上好。", "早安。\n\n\n\n晚上好。"],
@@ -51,8 +58,7 @@ const KEPT: readonly ScaffoldingCase[] = [
 ];
 
 test("every model-scaffolding form is removed, and only the form", () => {
-  for (const [name, input, expected] of SCAFFOLDING)
-    assert.equal(removeModelScaffolding(input), expected, name);
+  for (const [name, input, expected] of SCAFFOLDING) assert.equal(removeModelScaffolding(input), expected, name);
 });
 
 test("no beat and no ordinary form is touched", () => {

@@ -85,6 +85,11 @@ const TAG_CLOSINGS = Object.freeze(["</thinking>", "</thought>"]);
 /** The families, in the order the whole-text rule removes them. */
 const REASONING_FAMILIES: readonly ReasoningFamily[] = Object.freeze([
   Object.freeze({ ignoreCase: true, openings: Object.freeze(["<thinking>", "<thought>"]), closings: TAG_CLOSINGS }),
+  // DeepSeek-R1 and Qwen3's thinking mode frame their reasoning this way. It is a separate
+  // family and not an addition to the line above: openings are matched as literals, so sharing
+  // one family would let this shorter tag claim a <thinking> opening and then close on the
+  // </think prefix of </thinking>, leaving a stray '>' in the reply.
+  Object.freeze({ ignoreCase: true, openings: Object.freeze(["<think>"]), closings: Object.freeze(["</think>"]) }),
   Object.freeze({
     ignoreCase: false,
     openings: Object.freeze(["（思考", "（内心", "（脑内"]),
