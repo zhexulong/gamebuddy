@@ -175,24 +175,35 @@ await waitForFreeFixture();
 // A previous run that died before restoring leaves its working save behind, and prepare then refuses
 // with `native_local_fixture_working_save_exists`. That refusal is right, but it makes one failed run
 // block every later one until someone deletes a directory by hand. Finish the leftover transaction
-// first; the restore has its own ownership check and refuses harmlessly when the leftover is not ours.
-try {
-  run([
-    "tools/restore-stardew-native-local-player-fixture.mjs",
-    "--root",
-    fixtureRoot,
-    "--mods-path",
-    modsPath,
-    "--release-dir",
-    releaseDir,
-    "--backup-name",
-    backupName,
-  ]);
-  console.log("[recover] args=" + JSON.stringify([fixtureRoot, modsPath, releaseDir, backupName]));
-  console.log("[recover] leftover fixture transaction restored before preparing");
-} catch (error) {
-  // No leftover, or one this lane does not own: preparing will refuse with its own named reason.
-  console.log("[recover] no leftover transaction to restore:", String(error?.message ?? error).slice(0, 120));
+// first.
+//
+// THE CALL IS GUARDED BY THE TRANSACTION ITSELF. `restore` refuses with
+// `native_local_fixture_transaction_owner_mismatch` when there is nothing to restore, and that refusal looks exactly
+// like a real failure in the log - measured 2026-11-03: every run since 2026-11-02 opened with
+// `restore_refused:native_local_fixture_restore_failed`, the fixture was in fact prepared correctly from the template,
+// and I spent a turn treating it as "runs do not start from the same day" until the template's own `dayOfMonth 1` refuted
+// that. A log line that reads as a failure when it means "nothing to do" is worse than no line.
+const leftoverTransaction = path.join(fixtureRoot, ".stardew-native-local-player-fixture.lock", "transaction.json");
+if (!fs.existsSync(leftoverTransaction)) {
+  console.log("[recover] no leftover transaction: preparing from the template");
+} else {
+  try {
+    run([
+      "tools/restore-stardew-native-local-player-fixture.mjs",
+      "--root",
+      fixtureRoot,
+      "--mods-path",
+      modsPath,
+      "--release-dir",
+      releaseDir,
+      "--backup-name",
+      backupName,
+    ]);
+    console.log("[recover] leftover fixture transaction restored before preparing");
+  } catch (error) {
+    // There WAS a leftover this lane may not own: preparing will refuse with its own named reason.
+    console.log("[recover] leftover transaction not restorable:", String(error?.message ?? error).slice(0, 120));
+  }
 }
 const orphan = path.join(fixtureRoot, backupName);
 if (fs.existsSync(orphan)) {
