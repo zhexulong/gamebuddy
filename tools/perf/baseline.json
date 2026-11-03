@@ -1,6 +1,6 @@
 {
-  "note": "Per-case perf measurements recorded from this machine, in ops/sec and microseconds per op, at the revision below. tools/check-perf-budget.mjs re-measures and fails when a case costs more than its recorded per-op cost plus BUDGET_TOLERANCE, or when the set of measured cases no longer matches this file. Re-record deliberately, in its own commit, when a change makes a path faster; never to silence a regression. These are the numbers of the machine under `machine`: a run on another machine states perf_budget_skipped instead of comparing, because per-op cost describes the box as much as the code.",
-  "revision": "a6f234f4",
+  "note": "Per-case perf measurements recorded from this machine, in ops/sec and microseconds per op, at the revision below. Each case is the worst reading across the 3 independent benchmark processes named under `recording`, because the spread a budget has to absorb lives between processes rather than inside one. tools/check-perf-budget.mjs re-measures and fails when a case costs more than its recorded per-op cost plus BUDGET_TOLERANCE, or when the set of measured cases no longer matches this file. Re-record deliberately, in its own commit, when a change makes a path faster; never to silence a regression. These are the numbers of the machine under `machine`: a run on another machine states perf_budget_skipped instead of comparing, because per-op cost describes the box as much as the code.",
+  "revision": "18f0b4cc",
   "machine": {
     "platform": "win32",
     "arch": "x64",
@@ -8,10 +8,14 @@
     "cpuModel": "AMD Ryzen 9 9955HX 16-Core Processor"
   },
   "tolerance": 0.5,
+  "recording": {
+    "statistic": "worst",
+    "processes": 3
+  },
   "cases": {
     "admission.action/large": {
-      "opsPerSecond": 4852.45,
-      "perOpMicros": 206.08,
+      "opsPerSecond": 7969.33,
+      "perOpMicros": 125.48,
       "detail": {
         "boundArgs": 32,
         "claims": 16,
@@ -19,8 +23,8 @@
       }
     },
     "admission.action/small": {
-      "opsPerSecond": 21666.09,
-      "perOpMicros": 46.16,
+      "opsPerSecond": 41775.5,
+      "perOpMicros": 23.94,
       "detail": {
         "boundArgs": 1,
         "claims": 0,
@@ -28,96 +32,96 @@
       }
     },
     "journal.compaction/large": {
-      "opsPerSecond": 274.92,
-      "perOpMicros": 3637.46,
+      "opsPerSecond": 426.69,
+      "perOpMicros": 2343.6,
       "detail": {
         "records": 1000,
-        "bytesPerFold": 532569,
-        "microsPerRecord": 3.637
+        "bytesPerFold": 532636,
+        "microsPerRecord": 2.344
       }
     },
     "journal.compaction/small": {
-      "opsPerSecond": 227.04,
-      "perOpMicros": 4404.44,
+      "opsPerSecond": 429.22,
+      "perOpMicros": 2329.83,
       "detail": {
         "records": 100,
-        "bytesPerFold": 52734,
-        "microsPerRecord": 44.044
+        "bytesPerFold": 52719,
+        "microsPerRecord": 23.298
       }
     },
     "journal.open-replay/large": {
-      "opsPerSecond": 48.89,
-      "perOpMicros": 20455.99,
+      "opsPerSecond": 84.94,
+      "perOpMicros": 11772.83,
       "detail": {
         "records": 1000,
-        "microsPerRecord": 20.456,
+        "microsPerRecord": 11.773,
         "logBytes": 524419
       }
     },
     "journal.open-replay/small": {
-      "opsPerSecond": 247.6,
-      "perOpMicros": 4038.83,
+      "opsPerSecond": 408.95,
+      "perOpMicros": 2445.26,
       "detail": {
         "records": 100,
-        "microsPerRecord": 40.388,
+        "microsPerRecord": 24.453,
         "logBytes": 51913
       }
     },
     "journal.write/large": {
-      "opsPerSecond": 1639.23,
-      "perOpMicros": 610.04,
+      "opsPerSecond": 1794.26,
+      "perOpMicros": 557.33,
       "detail": {
         "settledHistory": 400,
         "bytesPerOp": 528
       }
     },
     "journal.write/small": {
-      "opsPerSecond": 1104.32,
-      "perOpMicros": 905.54,
+      "opsPerSecond": 1555.71,
+      "perOpMicros": 642.79,
       "detail": {
         "settledHistory": 8,
-        "bytesPerOp": 525
+        "bytesPerOp": 527
       }
     },
     "pipe.frame/large": {
-      "opsPerSecond": 3820.56,
-      "perOpMicros": 261.74,
+      "opsPerSecond": 8487.5,
+      "perOpMicros": 117.82,
       "detail": {
         "frameBytes": 32797
       }
     },
     "pipe.frame/small": {
-      "opsPerSecond": 45963.62,
-      "perOpMicros": 21.76,
+      "opsPerSecond": 71567.41,
+      "perOpMicros": 13.97,
       "detail": {
         "frameBytes": 157
       }
     },
     "presentation.commit/large": {
-      "opsPerSecond": 116252.51,
-      "perOpMicros": 8.6,
+      "opsPerSecond": 112353.15,
+      "perOpMicros": 8.9,
       "detail": {
         "textBytes": 7412
       }
     },
     "presentation.commit/small": {
-      "opsPerSecond": 225872.3,
-      "perOpMicros": 4.43,
+      "opsPerSecond": 371451.47,
+      "perOpMicros": 2.69,
       "detail": {
         "textBytes": 46
       }
     },
     "trace.export/large": {
-      "opsPerSecond": 268.49,
-      "perOpMicros": 3724.48,
+      "opsPerSecond": 487.07,
+      "perOpMicros": 2053.09,
       "detail": {
         "spans": 2000,
         "exportBytes": 414391
       }
     },
     "trace.export/small": {
-      "opsPerSecond": 1138.79,
-      "perOpMicros": 878.13,
+      "opsPerSecond": 1611.49,
+      "perOpMicros": 620.54,
       "detail": {
         "spans": 25,
         "exportBytes": 5139
