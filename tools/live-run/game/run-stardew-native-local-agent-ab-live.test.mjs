@@ -2607,9 +2607,7 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
   const factLog = [
     // 86 weeds and 48 rocks, as that day produced them: every one a succeeded/terminal receipt.
     ...Array.from({ length: 86 }, (_, index) => workedReceipt("cut_weeds", "weeds_cut", `weed_${index}`)),
-    ...Array.from({ length: 48 }, (_, index) =>
-      workedReceipt("break_rock_source", "rock_source_broken", `rock_${index}`),
-    ),
+    ...Array.from({ length: 48 }, (_, index) => workedReceipt("break_rock", "rock_source_broken", `rock_${index}`)),
     workedReceipt("harvest_crop", "crop_harvested"),
     workedReceipt("plant_seed", "seed_planted"),
     workedReceipt("water_crop", "crop_watered"),
@@ -2664,7 +2662,7 @@ test("a receipt that only progressed an action is an attempt, never work", () =>
     // A succeeded receipt carrying a PROGRESS code instead of the registered terminal: the action moved, it did not finish.
     recordedActionReceipt("harvest_crop", "tool_approach_completed", "succeeded", "r3"),
     // A terminal code with the wrong state: refused work is not credited.
-    recordedActionReceipt("break_rock_source", "rock_source_broken", "rejected", "r4"),
+    recordedActionReceipt("break_rock", "rock_source_broken", "rejected", "r4"),
     recordedActionReceipt("plant_seed", "seed_planted", "failed", "r5"),
     // An action with no published gate declares no terminal, so nothing can prove it finished.
     recordedActionReceipt("fridge_store", "item_stored", "succeeded", "r6"),
@@ -2696,7 +2694,7 @@ test("one action dispatched through both channels is one accomplishment", () => 
     recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", "flat_1"),
     recordedActionReceipt("cut_weeds", "weeds_cut", "succeeded", "program_1"),
     recordedActionReceipt("cut_weeds", "weeds_cut", "partially_succeeded", "program_2"),
-    recordedActionReceipt("break_rock_source", "rock_source_broken", "succeeded", "flat_2"),
+    recordedActionReceipt("break_rock", "rock_source_broken", "succeeded", "flat_2"),
   ];
   const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
     factLog,
@@ -2704,5 +2702,5 @@ test("one action dispatched through both channels is one accomplishment", () => 
     NON_ACCOMPLISHMENT_ACTIONS: new Set(),
     STARDEW_PUBLISHED_ACTION_GATES,
   })[1];
-  assert.deepEqual(accomplishedSince(0), ["break_rock_source", "cut_weeds"], "one action, counted once");
+  assert.deepEqual(accomplishedSince(0), ["break_rock", "cut_weeds"], "one action, counted once");
 });
