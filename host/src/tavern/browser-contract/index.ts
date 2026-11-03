@@ -517,7 +517,8 @@ export const StCardImportDispositionV1Schema = strictObject({
   reason: Type.String({ minLength: 1, maxLength: 128 }),
 });
 /**
- * One macro that kept a world-book entry out of the imported book.
+ * One macro that kept authored material out of the imported companion: a world-book entry, or a
+ * field-level loss such as a closing direction the catalog will omit whole.
  *
  * `standard` is whether SillyTavern itself defines the macro - rendered by the reader, or deliberately left literal. It
  * is only ever a statement about the macros this importer knows, which is why `false` reads as "unrecognised" rather
@@ -548,6 +549,12 @@ export const StCardImportLossV1Schema = strictObject({
   reason: Type.String({ minLength: 1, maxLength: 128 }),
   count: Revision,
   omitted: Type.Optional(Type.Array(StCardImportOmittedEntryV1Schema, { maxItems: 32 })),
+  /**
+   * The macros behind a field-level loss. Declared-optional and additive, and a DIFFERENT member from
+   * `omitted` on purpose: `omitted` names one dropped world-book entry per row (with that entry's
+   * `title`), while a field has no title of its own - `field` already names it.
+   */
+  macros: Type.Optional(Type.Array(StCardImportOmittedMacroV1Schema, { maxItems: 8 })),
 });
 /**
  * The card-file ceiling, base64-inflated: `ST_CARD_DECODER_LIMITS_V1.inputBytesPng`
