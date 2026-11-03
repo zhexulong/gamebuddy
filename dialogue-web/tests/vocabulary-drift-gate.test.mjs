@@ -102,6 +102,9 @@ export const MIRRORED_VOCABULARIES = [
   // refuses a legal operation (or the whole snapshot carrying it) as protocol corruption.
   { mirror: "OPERATION_IDS", contract: { name: "OperationId" } },
   { mirror: "MANAGEMENT_LABEL_KEYS", contract: { name: "LabelKey" } },
+  // The connection probe's closed failure vocabulary. A member the mirror does not know is refused
+  // as protocol corruption, so a player whose endpoint throttled them would read a blank result.
+  { mirror: "CONNECTION_FAILURES", contract: { name: "ConnectionFailure" } },
 ];
 
 /**
@@ -253,6 +256,21 @@ test("vocabulary-drift.1: the contract's declarations are read, not assumed", (t
     [...derived.get("WORLD_INFO_ITEM_KEYS")].sort(),
     ["handle", "pending", "selected", "summary", "title"],
     "and `within` reads the key names of the shape one property hands to its own schema helper",
+  );
+  assert.deepEqual(
+    [...derived.get("CONNECTION_FAILURES")].sort(),
+    [
+      "endpoint_error",
+      "invalid_endpoint",
+      "invalid_response",
+      "not_configured",
+      "not_found",
+      "rate_limited",
+      "timeout",
+      "unauthorized",
+      "unreachable",
+    ],
+    "the probe's failure union is read off the contract, the null arm contributing no literal",
   );
   for (const entry of MIRRORED_VOCABULARIES)
     assert.ok(derived.get(entry.mirror).size >= 2, `${entry.mirror} derived an empty or single-member union`);
