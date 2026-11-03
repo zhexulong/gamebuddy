@@ -13,7 +13,7 @@
 // stays on screen. That is the half most likely to regress, so it is asserted, not observed.
 const { createHash } = require("node:crypto");
 const zlib = require("node:zlib");
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
 
 // A minimal, structurally complete PNG (signature + IHDR + IDAT + IEND, CRCs correct) whose single
 // pixel carries a colour the caller picks - so two uploads are two different files with two digests.
@@ -136,6 +136,7 @@ const faceOf = async (url) => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("s-avatar-upload.txt");
+  const observationFrom = await observationStart(page);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};${CONTROL_HELPER};undefined`);
   await activateSurface(page, "角色");
@@ -284,6 +285,7 @@ const faceOf = async (url) => {
   await page.waitForTimeout(1200);
   await shot(page, "90-avatar-upload-400x800.png");
 
+  await observe(page, say, "s", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-S");
