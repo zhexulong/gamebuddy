@@ -16,6 +16,11 @@
  *
  * So the assertions below are about the rules that survive contact: a player line is answered by
  * exactly one companion row, and that is asked only once the caller says the turn is over.
+ *
+ * Continuity (the second half of the file) was proved the same way - one violation injected at a time,
+ * the named case red, then restored: ignoring `removedHandles`, dropping the duplicate-handle check,
+ * skipping the relative-order comparison, and skipping the order monotonicity check each reddened
+exactly the case that names it.
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -23,7 +28,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { transcriptShapeFindings, worldbookExpectation } from "./capability.cjs";
+import {
+  continuityLine,
+  transcriptContinuityFindings,
+  transcriptShapeFindings,
+  worldbookExpectation,
+} from "./capability.cjs";
 
 const row = (role, text = "x") => ({ role, text });
 
@@ -78,4 +88,109 @@ test("the worldbook reader takes the always-on entries from the file, not from a
     ["b"],
     "an entry with no keys and no constant flag gates nothing, so it is in neither list",
   );
+});
+
+/* ---------- continuity across turns ---------- */
+
+const rowOf = (order, role, handle) => ({ order, role, handle, text: handle });
+
+/** A conversation as the Host keeps it: the opening greeting, then one exchange per turn. */
+const conversation = (turnCount) => [
+  rowOf(0, "companion", "m0"),
+  ...Array.from({ length: turnCount }, (_, index) => index + 1).flatMap((n) => [
+    rowOf(2 * n - 1, "player", `p${n}`),
+    rowOf(2 * n, "companion", `c${n}`),
+  ]),
+];
+
+test("a second turn appends its own rows and keeps the first turn's", () => {
+  const findings = transcriptContinuityFindings([
+    { label: "after turn 1", rows: conversation(1) },
+    { label: "after turn 2", rows: conversation(2) },
+  ]);
+  assert.deepEqual(findings, [], "two turns on one conversation are append-only; nothing here is a count");
+});
+
+test("a row lost between turns is named with the handle that went missing", () => {
+  const before = conversation(2);
+  const after = before.filter((row) => row.handle !== "c1");
+  const findings = transcriptContinuityFindings([
+    { label: "after turn 1", rows: before },
+    { label: "after turn 2", rows: after },
+  ]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "row_lost");
+  assert.match(findings[0].message, /"c1"/u, "the finding must name the row that vanished, not a count difference");
+});
+
+test("a declared removal is not a lost row, and an undeclared one still is", () => {
+  const before = conversation(2);
+  const declared = transcriptContinuityFindings([
+    { label: "before the delete", rows: before },
+    { label: "after the delete", rows: before.filter((row) => row.handle !== "c1"), removedHandles: ["c1"] },
+  ]);
+  assert.deepEqual(declared, [], "the delete driver says which row it removed, so that row leaving is not a finding");
+
+  const surplus = transcriptContinuityFindings([
+    { label: "before the delete", rows: before },
+    {
+      label: "after the delete",
+      rows: before.filter((row) => row.handle !== "c1" && row.handle !== "p2"),
+      removedHandles: ["c1"],
+    },
+  ]);
+  assert.equal(surplus.length, 1, "a declared removal does not license a second row to disappear");
+  assert.equal(surplus[0].code, "row_lost");
+  assert.match(surplus[0].message, /"p2"/u);
+});
+
+test("the same message committed twice is reported as a duplicated row", () => {
+  const rows = conversation(1);
+  const doubled = [...rows, rowOf(3, "companion", "c1")];
+  const findings = transcriptContinuityFindings([{ label: "after turn 1", rows: doubled }]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].code, "row_duplicated");
+  assert.match(findings[0].message, /"c1"/u);
+});
+
+test("rows that survive in a different relative order are reported as reordered", () => {
+  const before = conversation(2);
+  const reordered = [before[0], before[2], before[1], before[3], before[4]];
+  const findings = transcriptContinuityFindings([
+    { label: "after turn 1", rows: before },
+    { label: "after turn 2", rows: reordered },
+  ]);
+  assert.ok(
+    findings.some((finding) => finding.code === "row_reordered"),
+    "an inserted row that lands before an older one is a reorder, not an append",
+  );
+});
+
+test("an order that goes backwards is reported even inside one snapshot", () => {
+  const rows = conversation(2);
+  const shuffled = [rows[0], rows[2], rows[1], rows[3], rows[4]];
+  const findings = transcriptContinuityFindings([{ label: "now", rows: shuffled }]);
+  assert.equal(findings[0].code, "order_not_monotonic");
+  assert.match(findings[0].message, /row 2 carries order 1 after row 1's 2/u);
+});
+
+test("a row the Host did not give a handle is named rather than silently skipped", () => {
+  const findings = transcriptContinuityFindings([
+    { label: "now", rows: [{ order: 0, role: "companion", handle: null }] },
+  ]);
+  assert.equal(findings[0].code, "row_without_handle");
+});
+
+test("the facts-file line says ok or names every finding, and never reports a count as if it were the check", () => {
+  const ok = continuityLine("n before->after", [
+    { label: "a", rows: conversation(1) },
+    { label: "b", rows: conversation(2) },
+  ]);
+  assert.match(ok, /^ok /u);
+  const bad = continuityLine("p", [
+    { label: "a", rows: conversation(1) },
+    { label: "b", rows: [] },
+  ]);
+  assert.match(bad, /^FAIL /u);
+  assert.match(bad, /row_lost/u);
 });
