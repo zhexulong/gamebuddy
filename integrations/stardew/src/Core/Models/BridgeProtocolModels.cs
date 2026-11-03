@@ -1227,6 +1227,23 @@ public sealed record BridgeBodyProgramEventsResult(
 /// <summary>Inbound Body Program status query. Carries only the program identity.</summary>
 public sealed record BridgeBodyProgramStatusRequest(string ProgramId);
 
+/// <summary>
+/// Inbound Body Program stop request: which program, and the STOP epoch that fences it.
+///
+/// <para>
+/// The epoch is the caller's own monotonic fence, not a timestamp. The authority refuses a stop whose epoch is not
+/// strictly greater than the one already recorded for that program, so a replayed or reordered stop cannot cancel a
+/// program that a LATER intent has already taken over. It travels on the wire because the Mod must enforce it against
+/// its own journal rather than trust the caller's ordering.
+/// </para>
+/// </summary>
+public sealed record BridgeBodyProgramStopRequest(string ProgramId, long StopEpoch);
+
+public sealed record BridgeBodyProgramStopResult(
+    string Code,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
+);
+
 /// <summary>Inbound Body Program events page query. Cursor must be non-negative; page size is bounded 1..32.</summary>
 public sealed record BridgeBodyProgramEventsRequest(string ProgramId, long Cursor, int PageSize);
 

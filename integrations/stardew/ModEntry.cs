@@ -1913,6 +1913,7 @@ public sealed partial class ModEntry : Mod
                     "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
                     "program_submit" => this.HandleProgramSubmit(state, inbound.Generation, inbound.Json, correlationId),
                     "program_status" => this.HandleProgramStatus(state, inbound.Generation, inbound.Json, correlationId),
+                    "program_stop" => this.HandleProgramStop(state, inbound.Generation, inbound.Json, correlationId),
                     "program_events" => this.HandleProgramEvents(state, inbound.Generation, inbound.Json, correlationId),
                     "companion_presentation_request" => this.HandleCompanionPresentation(state, inbound.Generation, inbound.Json),
                     "system_notice_request" => this.HandleSystemNotice(state, inbound.Generation, inbound.Json),
@@ -2306,6 +2307,14 @@ public sealed partial class ModEntry : Mod
             return this.SerializeError(state, correlationId, parseReason);
         return this.SerializeBridgeResponse<BridgeBodyProgramStatusRequest, BridgeBodyProgramStatusResult>(state, request,
             (BridgeEnvelope<BridgeBodyProgramStatusRequest> r, out BridgeEnvelope<BridgeBodyProgramStatusResult>? response, out string reason) => state.BridgeSession!.TryProgramStatus(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleProgramStop(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeBodyProgramStopRequest(json, out BridgeEnvelope<BridgeBodyProgramStopRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeBodyProgramStopRequest, BridgeBodyProgramStopResult>(state, request,
+            (BridgeEnvelope<BridgeBodyProgramStopRequest> r, out BridgeEnvelope<BridgeBodyProgramStopResult>? response, out string reason) => state.BridgeSession!.TryProgramStop(generation, r, out response, out reason), out _);
     }
 
     private string? HandleProgramEvents(ScreenEmbodimentState state, long generation, string json, string? correlationId)

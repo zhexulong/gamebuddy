@@ -907,6 +907,35 @@ string? bodyProgramUnavailableReason = null,
         return true;
     }
 
+    /// <summary>
+    /// Authenticated cancellation of one program, fenced by the caller's STOP epoch.
+    ///
+    /// <para>
+    /// This is the last mile of "the player speaks and the work stops". The authority has had `TryStop` since the journal
+    /// was written - it cancels every non-terminal node and releases each node's claim - but nothing on the bridge called
+    /// it, so a Body Program could not be interrupted from outside the Mod at all: `stardew_stop_action` binds to the
+    /// flat single-step execution and answers `no_active_execution` while a program runs.
+    /// </para>
+    /// <para>
+    /// Batched with STATUS deliberately, not with submit: both are addressed to one existing program and neither creates
+    /// one, so a stopped program is answered the same way a queried one is - with its own snapshot, which is where the
+    /// caller reads the `Cancelled` state back.
+    /// </para>
+    /// </summary>
+    internal bool TryProgramStop(long generation, BridgeEnvelope<BridgeBodyProgramStopRequest>? envelope, out BridgeEnvelope<BridgeBodyProgramStopResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "program_stop", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+        if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason ?? "body_program_unavailable"; return false; }
+        BridgeBodyProgramStopRequest request = envelope!.Payload;
+        BodyProgramControllerResult<BodyProgramStatusSnapshot> result = this.bodyProgramAuthority.TryStop(request.ProgramId, request.StopEpoch);
+        response = Reply("program_stop_result", envelope.CorrelationId,
+            new BridgeBodyProgramStopResult(ToWire(result.Code), result.IsSuccess ? ToBridgeSnapshot(result.Value!) : null));
+        reasonCode = "accepted";
+        return true;
+    }
+
     /// <summary>Authenticated read-only cursor-addressed event projection from the Mod journal authority.</summary>
     internal bool TryProgramEvents(long generation, BridgeEnvelope<BridgeBodyProgramEventsRequest>? envelope, out BridgeEnvelope<BridgeBodyProgramEventsResult>? response, out string reasonCode)
     {
@@ -1644,6 +1673,24 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramSubmitCode.PersistenceFailure => "persistence_failure",
         BodyProgramSubmitCode.Quarantined => "quarantined",
         _ => "rejected",
+    };
+    private static string ToWire(BodyProgramControllerResultCode code) => code switch
+    {
+        BodyProgramControllerResultCode.Succeeded => "succeeded",
+        BodyProgramControllerResultCode.NotFound => "not_found",
+        BodyProgramControllerResultCode.InvalidInput => "invalid_input",
+        BodyProgramControllerResultCode.ProgramNotActive => "program_not_active",
+        BodyProgramControllerResultCode.NodeNotEligible => "node_not_eligible",
+        BodyProgramControllerResultCode.PolicyIdentityStale => "policy_identity_stale",
+        BodyProgramControllerResultCode.GrantMismatch => "grant_mismatch",
+        BodyProgramControllerResultCode.ExecutionBindingMismatch => "execution_binding_mismatch",
+        BodyProgramControllerResultCode.FactProvenanceMismatch => "fact_provenance_mismatch",
+        BodyProgramControllerResultCode.InvalidFact => "invalid_fact",
+        BodyProgramControllerResultCode.TerminalProofMissing => "terminal_proof_missing",
+        BodyProgramControllerResultCode.RecoveryRequired => "recovery_required",
+        BodyProgramControllerResultCode.PersistenceWriteFailed => "persistence_write_failed",
+        BodyProgramControllerResultCode.DeadlineExpired => "deadline_expired",
+        _ => "invalid_input",
     };
     private static string ToWire(BodyProgramQueryCode code) => code switch
     {

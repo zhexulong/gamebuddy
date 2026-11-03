@@ -564,6 +564,51 @@ public static class BridgeProtocol
     public static bool TryDeserializeBodyProgramSubmitRequest(string json, out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reasonCode) =>
         TryDeserializeBodyProgramCandidateRequest(json, "program_submit", out envelope, out reasonCode);
 
+    public static bool TryDeserializeBodyProgramStopRequest(
+        string json,
+        out BridgeEnvelope<BridgeBodyProgramStopRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "program_stop", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound body program stop parser returned no document.");
+        using (parsedDocument)
+        {
+            // The epoch is REQUIRED and must be non-negative: a stop without a fence would be a cancel that any replay
+            // could re-issue, which is the one thing the epoch exists to prevent.
+            if (!HasExactProperties(payload, "programId", "stopEpoch")
+                || !payload.TryGetProperty("programId", out JsonElement programId)
+                || programId.ValueKind != JsonValueKind.String
+                || !IsOpaqueId(programId.GetString())
+                || !payload.TryGetProperty("stopEpoch", out JsonElement stopEpoch)
+                || stopEpoch.ValueKind != JsonValueKind.Number
+                || !stopEpoch.TryGetInt64(out long epoch)
+                || epoch < 0)
+            {
+                reasonCode = "invalid_body_program_stop_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeBodyProgramStopRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_envelope";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
     public static bool TryDeserializeBodyProgramStatusRequest(
         string json,
         out BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope,
