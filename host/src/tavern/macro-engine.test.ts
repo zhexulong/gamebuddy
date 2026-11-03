@@ -35,6 +35,81 @@ test("renderMacros uses empty strings for empty variables", () => {
   assert.equal(renderMacros("A {{char}} B <USER> C", { char: undefined as never, user: null as never }), "A  B  C");
 });
 
+/**
+ * The defect this pins: `macroKey` read the name past the space inside the braces while the replacement pattern demanded
+ * it flush against them, so `{{ char }}` was classified as the `char` macro by every bucket test and never replaced by
+ * `renderMacros`. The survivor then read as junk to `hasUnrenderedMacro` and the whole text carrying it was dropped -
+ * a macro this engine knows perfectly well, lost as if it were a typo.
+ */
+test("a macro spelled with space inside its braces renders instead of surviving as junk", () => {
+  assert.equal(renderMacros("{{ char }} says hi", { char: "琥珀", user: "Alex" }), "琥珀 says hi");
+  assert.equal(renderMacros("{{char}} says hi", { char: "琥珀", user: "Alex" }), "琥珀 says hi");
+  assert.equal(
+    renderMacros("{{ user }} and {{  scenario  }}", { char: "琥珀", user: "Alex", scenario: "a farm" }),
+    "Alex and a farm",
+  );
+  assert.equal(hasUnrenderedMacro(renderMacros("{{ char }}", { char: "琥珀", user: "Alex" })), false);
+});
+
+/**
+ * The other half of the same grammar: `macroKey` already took the leading name of a parametric macro, so the render has
+ * to find the whole token too. Recognition widened; what a resolved macro renders to did not - a parametric draw still
+ * belongs to the bucket its name belongs to, and a name neither table knows still survives to be reported.
+ */
+test("a parametric macro is found by the render and still resolves to its name's bucket", () => {
+  const vars = { char: "琥珀", user: "Alex" };
+  for (const token of ["{{random::a::b}}", "{{ random :: a :: b }}", "{{lastMessage}}", "{{ lastmessage }}"])
+    assert.equal(renderMacros(`x ${token} y`, vars), `x ${token} y`, `${token} is left literal, arguments and all`);
+  assert.equal(renderMacros("{{newline::ignored}}", vars), "\n");
+  // A name neither table knows keeps its own arguments and is reported whole, rather than being eaten by the render.
+  assert.equal(renderMacros("{{getvar::score}}", vars), "{{getvar::score}}");
+  assert.deepEqual(unrenderedMacros(renderMacros("a {{getvar::score}} b", vars)), ["{{getvar::score}}"]);
+});
+
+/** The boundary the widened recognition must not cross: a token neither table knows still survives to be reported. */
+test("a token neither table knows survives the widened recognition and is still named", () => {
+  const vars = { char: "琥珀", user: "Alex" };
+  for (const token of ["{{not_a_macro}}", "{{ not_a_macro }}"])
+    assert.equal(renderMacros(token, vars), token, `${token} must not be rendered`);
+  assert.deepEqual(unrenderedMacros(renderMacros("a {{ not_a_macro }} b", vars)), ["{{ not_a_macro }}"]);
+  assert.equal(isStandardSillyTavernMacro("{{ not_a_macro }}"), false);
+});
+
+/**
+ * The gate the two defects above belong to: recognition and classification are one grammar, so every spelling this file
+ * calls standard must also be a spelling the render actually finds.
+ *
+ * The bucket-2 population comes from `LEFT_LITERAL_STANDARD_MACROS` itself, so a macro added there is covered without
+ * touching this test. Bucket 1 has no exported table to derive from, so its names are listed here; the guarantee that
+ * they cannot drift out of recognition is structural - `macroKey` and `MACRO_PATTERN` are built from one `MACRO_NAME`
+ * and one token grammar (see `macro-engine.ts`).
+ */
+test("classification and replacement read one grammar, in every spelling a card writes", () => {
+  const vars = { char: "琥珀", user: "Alex", scenario: "a farm", personality: "quiet", description: "tall" };
+  const bucket1 = ["char", "bot", "user", "scenario", "personality", "description", "newline", "noop"];
+  const spellings = (name: string): readonly string[] => [
+    `{{${name}}}`,
+    `{{ ${name} }}`,
+    `{{${name.toUpperCase()}}}`,
+    `{{ ${name.toUpperCase()} }}`,
+    `{{${name}::argument}}`,
+  ];
+  for (const name of Object.keys(LEFT_LITERAL_STANDARD_MACROS))
+    for (const token of spellings(name)) {
+      assert.equal(isLeftLiteralStandardMacro(token), true, `${token} must classify as deliberately left literal`);
+      assert.equal(renderMacros(token, vars), token, `${token} must survive rendering exactly as written`);
+    }
+  for (const name of bucket1)
+    for (const token of spellings(name)) {
+      assert.equal(isLeftLiteralStandardMacro(token), false, `${token} is filled at render, so it is not a loss`);
+      assert.equal(
+        hasUnrenderedMacro(renderMacros(token, vars)),
+        false,
+        `${token} must be replaced, not left unrendered`,
+      );
+    }
+});
+
 test("renderWorldBookText resolves the player reference and leaves an unknown character name unrendered", () => {
   assert.equal(renderWorldBookText("{{user}} and {{char}} farm.", { char: "Kohaku" }), "User and Kohaku farm.");
   // No known character name: `{{char}}` stays so the caller drops the entry

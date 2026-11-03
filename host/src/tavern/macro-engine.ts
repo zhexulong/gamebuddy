@@ -14,15 +14,35 @@ export function renderMacros(text: string, vars: MacroTable): string {
 }
 
 /**
+ * One macro name - the spelling recognition AND classification both agree on.
+ *
+ * It is one constant because it used to be two spellings in this one file, and they diverged: `macroKey` tolerated the
+ * space inside the braces and read only the leading name of a parametric macro, while the replacement pattern demanded
+ * the name flush against both braces. `{{ char }}` therefore classified as the `char` macro in every bucket test and was
+ * never replaced by `renderMacros`; the survivor then read as junk to `hasUnrenderedMacro` and the whole text carrying it
+ * was dropped. Both readers below derive from this grammar, so a spelling cannot be known to one and invisible to the
+ * other.
+ */
+const MACRO_NAME = String.raw`[a-z_][a-z0-9_]*`;
+/** A `{{...}}` token: optional space, the name, then whatever the macro carries besides braces (`{{random::a::b}}`). */
+const BRACED_MACRO = String.raw`\{\{\s*(${MACRO_NAME})[^{}]*\}\}`;
+/** The angle spelling of the same name: SillyTavern's `<BOT>` and `<USER>`. */
+const ANGLE_MACRO = String.raw`<(${MACRO_NAME})>`;
+/** Every macro token this engine recognises, in either spelling. */
+const MACRO_PATTERN = new RegExp(`${BRACED_MACRO}|${ANGLE_MACRO}`, "giu");
+/** The same grammar anchored to one whole token: how a name is read out of it. */
+const WHOLE_MACRO = new RegExp(`^(?:${BRACED_MACRO}|${ANGLE_MACRO})$`, "iu");
+
+/**
  * One macro name, normalised to the spelling the tables are keyed by: `{{Char}}`, `<BOT>` and `{{ char }}` all read
- * their own key. `undefined` means the token does not start with a macro name at all (`{{...}}`, `{{// note}}`).
+ * their own key. `undefined` means the token is not a macro at all (`{{...}}`, `{{// note}}`).
  */
 function macroKey(token: string): string | undefined {
-  const angle = /^<([a-z_]+)>$/iu.exec(token);
-  if (angle !== null) return angle[1]!.toLowerCase();
   // Only the leading NAME of a parametric macro: `{{random::a::b}}` is `random`, `{{getvar::x}}` is `getvar`. The
-  // arguments are not part of what decides whether the macro can be rendered.
-  return /^\{\{\s*([a-z_][a-z0-9_]*)/iu.exec(token)?.[1]?.toLowerCase();
+  // arguments are not part of what decides whether the macro can be rendered. Either alternative of `WHOLE_MACRO`
+  // captures the name, and only one of them ever participates, so the name is whichever group is present.
+  const match = WHOLE_MACRO.exec(token);
+  return (match?.[1] ?? match?.[2])?.toLowerCase();
 }
 
 /**
@@ -138,9 +158,6 @@ export type MacroTable = Readonly<{
   personality?: string;
   description?: string;
 }>;
-
-/** Every macro spelling this engine recognises, in either brace or angle form. */
-const MACRO_PATTERN = /\{\{[a-z_]+\}\}|<BOT>|<USER>/giu;
 
 /**
  * The one macro table for a rendered companion text, and the one place the
