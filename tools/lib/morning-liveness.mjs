@@ -49,7 +49,16 @@ export function assessMorningLiveness({ facts, endedAtMs }) {
     const nextStart = starts[index + 1]?.atMs ?? Number.POSITIVE_INFINITY;
     // The first milestone inside this day's own span. A later day's milestone does not witness this one: if the clock
     // only moved after the NEXT rollover, this morning was frozen for exactly as long as the rollover was pending.
-    const witness = milestones.find((entry) => entry.atMs > start.atMs && entry.atMs < nextStart) ?? null;
+    // A milestone may arrive slightly BEFORE `day_started`, and on a good run it usually does.
+    //
+    // Measured 2026-11-03 (`round26` timeline): `time_milestone 0600` at 02:45:34, `day_started` at 02:46:16 - 42 seconds
+    // later, because the Mod emits the clock fact while the night's settlement menu is still closing and the day only
+    // "starts" once that menu is gone. Requiring the witness strictly after the announcement threw away the day's own
+    // 06:00 milestone and then reported the day as unwitnessed.
+    const witness =
+      milestones.find((entry) => entry.atMs > start.atMs && entry.atMs < nextStart) ??
+      milestones.find((entry) => entry.atMs <= start.atMs && start.atMs - entry.atMs <= MORNING_CLOCK_GRACE_MS) ??
+      null;
     const observedUntil = Math.min(nextStart, endedAtMs ?? Number.POSITIVE_INFINITY);
     const ranLongEnough = observedUntil - start.atMs >= MORNING_CLOCK_GRACE_MS;
 
@@ -66,7 +75,17 @@ export function assessMorningLiveness({ facts, endedAtMs }) {
     // A day the run barely entered is not evidence of a frozen clock - there was no time to see one. This is the one
     // exemption, and it is about OBSERVATION, not about excusing the product: a run that ends 20 s into a morning has
     // not tested that morning either way.
-    if (witness === null && ranLongEnough) violations.push(`morning_clock_frozen:day=${start.label ?? index}`);
+    // A day that ENDED has proved the clock moved.
+    //
+    // This is the false positive that made `round26` fail: on spring 6 the companion cleared the east side and put itself
+    // to bed before noon, so the day closed without ever reaching 12:00 - no milestone existed to witness it, and the gate
+    // called 263 seconds of a FINISHED day "a frozen clock". The clock had moved; there was simply no 12:00 in that day.
+    //
+    // Only a day still OPEN can be frozen, because only then is "the clock has not advanced" a statement about the
+    // present rather than about a span the next morning has already closed.
+    const dayEnded = nextStart !== Number.POSITIVE_INFINITY;
+    if (witness === null && ranLongEnough && !dayEnded)
+      violations.push(`morning_clock_frozen:day=${start.label ?? index}`);
   }
 
   return Object.freeze({

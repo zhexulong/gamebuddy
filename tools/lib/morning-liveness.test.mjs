@@ -60,9 +60,14 @@ test("a marathon day does not need a milestone inside its first two minutes", ()
   assert.deepEqual(verdict.violations, [], "a late milestone still witnesses the day");
 });
 
-test("the next day's milestone cannot witness this one", () => {
-  // Without this, a run that froze its first morning and then took a second night would look healthy: the second day's
-  // 06:00 milestone would be counted for the first. The span is bounded by the next `day_started`.
+test("the next day's milestone cannot witness this one, and a day that ended is not frozen", () => {
+  // Two claims, kept together because they are easy to confuse.
+  //
+  // 1. The next day's 06:00 must never be counted for the previous day: the span is bounded by the next `day_started`,
+  //    and a run that froze its first morning and then took a second night would otherwise look healthy.
+  // 2. A day that ENDED has proved the clock moved, so it can no longer be called frozen. Measured 2026-11-03
+  //    (`round26`): on spring 6 the companion finished by noon and went to bed, the day closed without reaching 12:00,
+  //    and the gate reported 263 seconds of a finished day as a frozen clock.
   const facts = [
     fact("day_started", 1_000, { day: 5 }),
     fact("day_started", 5_000_000, { day: 6 }),
@@ -70,12 +75,17 @@ test("the next day's milestone cannot witness this one", () => {
   ];
   const verdict = assessMorningLiveness({ facts, endedAtMs: 2_000_000 });
 
-  assert.deepEqual(
-    verdict.violations,
-    ["morning_clock_frozen:day=5"],
-    "day 5 had five minutes of silence before day 6 opened, and day 6's milestone proves nothing about day 5",
-  );
+  assert.equal(verdict.days[0].witnessedAtMs, null, "day 6's milestone must not witness day 5");
+  assert.deepEqual(verdict.violations, [], "a day the next morning already closed cannot be a frozen clock");
   assert.equal(verdict.days[1].milestone, "0600");
+});
+
+test("a day still open, with no milestone, is the frozen clock the gate exists for", () => {
+  // The exemption above must not weaken this: an open morning that never produces a milestone IS the defect.
+  const facts = [fact("day_started", 1_000, { day: 5 })];
+  const verdict = assessMorningLiveness({ facts, endedAtMs: 1_000 + 10 * 60_000 });
+
+  assert.deepEqual(verdict.violations, ["morning_clock_frozen:day=5"]);
 });
 
 test("a run that ends moments into a morning has not tested it, and says so", () => {
