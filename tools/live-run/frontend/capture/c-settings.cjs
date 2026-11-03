@@ -1,6 +1,6 @@
 // Driver C: Settings at 1440x900 and 400x800 — every control's width, whether the visible controls
 // share one measure, and the raw OS controls (native <select>) that don't.
-const { connect, reporter, PAGE_HELPERS, activateSurface } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, observe, observationStart } = require("./common.cjs");
 
 const measure = () => {
   const surface = document.querySelector('[data-testid="settings-surface"]');
@@ -52,6 +52,7 @@ const measure = () => {
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("c-settings.txt");
+  const observationFrom = await observationStart(page);
   await page.evaluate(`${PAGE_HELPERS};undefined`);
 
   for (const size of [{ w: 1440, h: 900, tag: "1440x900" }, { w: 400, h: 800, tag: "400x800" }]) {
@@ -64,6 +65,7 @@ const measure = () => {
     await page.screenshot({ path: `${process.env.GB_SHOTS_OUT}\\90-settings-${size.tag}.png`, animations: "disabled", caret: "initial", timeout: 45000 }).catch(() => undefined);
   }
 
+  await observe(page, say, "c", { sinceMs: observationFrom });
   flush();
   await browser.close().catch(() => undefined);
   say("DONE-C");
