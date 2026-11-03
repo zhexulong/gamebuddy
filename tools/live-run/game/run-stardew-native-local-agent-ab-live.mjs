@@ -232,10 +232,33 @@ async function writeFailureDump(reason) {
   const errorMessage = String(reason instanceof Error ? reason.message : reason);
   console.error("RUNNER_FAILED", errorMessage);
   try {
+    // The evidence is BEST-EFFORT, and this is the one place a guard is the right answer rather than a way of hiding a bug.
+    //
+    // `failureDumpEvidence` reads module-scope bindings, and a run that dies at the startup freshness check dies DURING
+    // module evaluation - so some of them are still in their temporal dead zone. Three attempts to repair that by moving
+    // declarations only changed which name threw first:
+    //
+    //   attempt 1   Cannot access 'capture' before initialization
+    //   attempt 2   Cannot access 'runtimeRoot' before initialization
+    //   attempt 3   Cannot access 'lastObservedSnapshot' before initialization
+    //
+    // and each time the stack trace REPLACED the artifact that would have named `live_run_artifact_stale`. The ordering is
+    // not repairable from here - the throw happens partway through the module body, so everything after it is unreachable
+    // by construction - but the artifact is. "This run never started" is a complete, truthful statement of a startup
+    // failure, so the death keeps its name.
+    let evidence;
+    try {
+      evidence = failureDumpEvidence(errorMessage);
+    } catch (error) {
+      evidence = Object.freeze({
+        settlement: Object.freeze({ reasonCode: errorMessage, component: "runner" }),
+        evidenceUnavailable: String(error?.message ?? error).slice(0, 200),
+      });
+    }
     const result = await buildRunResult({
       state: "blocked",
       error: errorMessage,
-      ...failureDumpEvidence(errorMessage),
+      ...evidence,
     });
     console.error(
       "RUNNER_FAILED dump published",
