@@ -71,6 +71,7 @@ import {
 import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
 import {
   isTerminalProgramStatus,
+  MAX_PROGRAM_STATUS_WAIT_MS,
   programStatusProgress,
   waitForTerminalProgramStatus,
   type ProgramStatusProgress,
@@ -261,12 +262,56 @@ function createBodyProgramTools(
             const code = submitted.details.code;
             if (typeof code !== "string") throw new Error("body_program_protocol_invalid");
             span.end({ programId, submitted: code });
-            // `submitted` is the Mod's own answer; `accepted` is the same fact in the form the companion asks for.
+            const accepted = code === "accepted" || code === "idempotent";
+            // AWAITED, because the original design says so and the shape drifted away from it.
+            //
+            // `design/architecture/game-runtime-hierarchical-proposal.md` writes the intended surface as
+            // `await game.act("till_soil", tile, …)` and says a short dynamic wait belongs to the LOCAL controller,
+            // "not worth waking the model for". What shipped instead returns `accepted` immediately, so the model's only
+            // way to learn the outcome is `program_status` - and a blocking wait there costs a whole model round trip.
+            //
+            // Measured 2026-11-03 (`round29`): 25 plans, 48 `program_status` calls, `waitMs` median 30,000 (the cap),
+            // 29 of 48 asking >= 25 s, 248 s blocked = 28% of wall time. The physical work really takes those seconds;
+            // what is waste is re-entering the model between the submit and the outcome.
+            //
+            // The wait is NOT a new mechanism: it is the same reader, the same cap and the same progress ledger the
+            // status tool uses, so a plan that outlives the bound returns exactly what a status call would have.
+            //
+            // And the cap is deliberately NOT lowered: `program-status-wait.ts` records that answering instantly put the
+            // model in an 84-call loop (round4, 459 s) because "it did not finish" is not something a caller can act on.
+            if (!accepted) return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code });
+            const readStatus = async () => {
+              const result = await withPort(
+                { programId },
+                validateStatusRequest,
+                validateBodyProgramStatusResult,
+                (port) => port.status({ programId }),
+              );
+              programStatusProgress.observe(result);
+              return result;
+            };
+            const first = await readStatus();
+            const { waitMs } = params as { waitMs?: number };
+            const bounded =
+              typeof waitMs === "number" && Number.isFinite(waitMs) && waitMs >= 0
+                ? waitMs
+                : MAX_PROGRAM_STATUS_WAIT_MS;
+            const settled = isTerminalProgramStatus(first)
+              ? Object.freeze({
+                  result: first,
+                  waited: Object.freeze({ reachedTerminal: true, snapshotChanged: false }),
+                })
+              : await waitForTerminalProgramStatus(readStatus, first, bounded);
             return planDetails({
-              accepted: code === "accepted" || code === "idempotent",
+              accepted,
               nodeCount: nodes.length,
               programId,
               submitted: code,
+              settled: settled.waited.reachedTerminal,
+              // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
+              // what is left and whether anything moved while this one held the turn.
+              status: settled.result,
+              ...(settled.waited.snapshotChanged ? {} : { unchangedWhileWaiting: true }),
             });
           } catch (error) {
             span.end({ reasonCode: "plan_submission_failed" });

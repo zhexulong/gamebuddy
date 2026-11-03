@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -38,6 +39,11 @@ import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-ru
 import { gameTurnWorldStateText } from "./continuity-semantic-game-runtime-materializer.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+
+/** The language-neutral wire contract: the authority for every snapshot family's row shape. */
+const WIRE_SCHEMA: any = JSON.parse(
+  readFileSync(fileURLToPath(new URL("../../../protocol/bridge-v1.schema.json", import.meta.url)), "utf8"),
+);
 
 async function canonicalTemporaryRoot(prefix: string): Promise<string> {
   return canonicalTestRoot(prefix);
@@ -1025,6 +1031,22 @@ test("the Game channel's per-turn world-state corpus is the line Magic Context i
 });
 
 /**
+ * The row properties the WIRE publishes for one snapshot family, from `protocol/bridge-v1.schema.json`.
+ *
+ * The schema is the row-shape authority on both sides: `schema-contract.test.ts` proves `protocol.ts` against it, and
+ * the plan parameters are prose about the same rows. Reading it here rather than restating the shapes is what makes the
+ * assertion below fail when a family gains or loses a field instead of when someone edits this file.
+ */
+function rowProperties(family: string): readonly string[] | null {
+  const spec = (WIRE_SCHEMA["$defs"]?.snapshot?.properties ?? {})[family];
+  const reference = spec?.items?.["$ref"];
+  if (typeof reference !== "string") return null;
+  const definition = WIRE_SCHEMA["$defs"]?.[reference.slice(reference.lastIndexOf("/") + 1)];
+  const properties = definition?.properties;
+  return properties === undefined || typeof properties !== "object" ? null : Object.keys(properties);
+}
+
+/**
  * Every array family the Host validates, read from `SNAPSHOT_FAMILY_RULES` itself.
  *
  * The table, not a name suffix. The version of this helper that filtered `Snapshot` fields ending in `Targets` was
@@ -1132,9 +1154,82 @@ test("the plan tool hands its compiled program to the one submission path a mode
     assert.ok(families.includes(family), `${family} is excluded but the Host no longer validates it`);
     assert.equal(listed.has(family), false, `${family} is listed for scripts, so drop its exclusion`);
   }
-  const parameterText = parameters.replaceAll("\\`", "`");
+  // The parameter block is a TEMPLATE: the family lists reach the model expanded, so the clause reader must see the
+  // same text the tool parameter carries. The declared lists are read out of the same block, so a constant that stops
+  // being declared fails here rather than being silently replaced by an empty string.
+  const declaredList = (name: string): readonly string[] => {
+    const match = new RegExp(
+      `const ${name}: readonly string\\[\\] = Object\\.freeze\\(\\[([\\s\\S]*?)\\]\\)`,
+      "u",
+    ).exec(parameters);
+    assert.notEqual(match, null, `the plan parameters no longer declare \`${name}\``);
+    const members = [...match![1]!.matchAll(/"([A-Za-z0-9_]+)"/gu)].map((entry) => entry[1] as string);
+    assert.ok(members.length > 0, `\`${name}\` declares no family`);
+    return members;
+  };
+  const parameterText = [
+    ["PLAN_TARGET_FAMILIES", [...listed]],
+    ["PLAN_TILELESS_FAMILIES", declaredList("PLAN_TILELESS_FAMILIES")],
+    ["PLAN_UNIDENTIFIED_FAMILIES", declaredList("PLAN_UNIDENTIFIED_FAMILIES")],
+  ].reduce(
+    (text, [name, members]) =>
+      text.replaceAll(`\${${String(name)}.join(", ")}`, (members as readonly string[]).join(", ")),
+    parameters.replaceAll("\\`", "`"),
+  );
+  assert.ok(
+    !/\$\{PLAN_[A-Z_]+FAMILIES\.join/u.test(parameterText),
+    "every family interpolation in the parameter block was expanded, so the clauses below are read as the model sees them",
+  );
   assert.match(parameterText, /`snapshot\.tile` is your own `\{ x, y \}`/u);
-  assert.match(parameterText, /every entry carries `targetId`, `x` and `y`/u);
+  // THE ROW SHAPE THE PARAMETERS PROMISE, against the wire's own authority.
+  //
+  // The text used to say "every entry carries `targetId`, `x` and `y`" with four named exceptions. Measured 2026-11-01
+  // against `protocol/bridge-v1.schema.json`: 13 of the 69 families carry no tile and the text named 4 of them, one of
+  // which (`chests`) does carry `x`/`y`. A script over `minecartTargets` or `shopTargets` that believed the text read a
+  // coordinate the row never had, so the population here is the SCHEMA's row shapes over the families the text LISTS as
+  // arrays, and the thing read is the CLAIM clause alone - the family list above it also contains every one of these
+  // names, so a substring test over the whole parameter block would stay green through exactly the defect this exists
+  // for.
+  const rowFamilies = [...listed].filter((family) => rowProperties(family) !== null);
+  const tileless = rowFamilies.filter((family) => {
+    const properties = rowProperties(family)!;
+    return !(properties.includes("x") && properties.includes("y"));
+  });
+  const unidentified = rowFamilies.filter((family) => !rowProperties(family)!.includes("targetId"));
+  /**
+   * The families a claim about one row property names, read from the description ALONE.
+   *
+   * The reader is scoped to the tool description (from `One synchronous script body` to the end of its template),
+   * because both the family list and the doc comment above `PLAN_TILELESS_FAMILIES` quote the same phrase and name the
+   * same families - a substring test over the whole block would stay green through exactly the defect this exists for.
+   * Within the description the claim is read to the first sentence break, so a reworded lead still yields the set it
+   * lists and the failure is the POPULATION rather than a missing phrase.
+   */
+  const description = parameterText.slice(parameterText.indexOf("One synchronous script body"));
+  const claimFamilies = (property: string): readonly string[] => {
+    const claimsAt = description.indexOf("every entry carries");
+    assert.notEqual(claimsAt, -1, "the plan tool's description no longer states any row shape");
+    const at = description.indexOf(property, claimsAt);
+    assert.notEqual(at, -1, `the plan tool's description no longer states the row property ${property}`);
+    const rest = description.slice(at + property.length);
+    const stop = rest.search(/[;.](?=\s|$)/u);
+    const clause = stop === -1 ? rest : rest.slice(0, stop);
+    return [...listed].filter((family) => new RegExp(`\\b${family}\\b`, "u").test(clause)).sort();
+  };
+  assert.deepEqual(
+    claimFamilies("`targetId`"),
+    [...unidentified].sort(),
+    `the plan parameters name the wrong set of families that carry no \`targetId\`. The wire schema says ` +
+      `[${[...unidentified].sort().join(", ")}], so an action addressed through one of those cannot be reached by a ` +
+      `script that copies \`row.targetId\`.`,
+  );
+  assert.deepEqual(
+    claimFamilies("`x` and `y`"),
+    [...tileless].sort(),
+    `the plan parameters name the wrong set of families whose rows carry no tile. The wire schema says ` +
+      `[${[...tileless].sort().join(", ")}]; a script reading \`row.x\` on a family the text omits gets \`undefined\`, and ` +
+      `one the text wrongly lists is a coordinate it was told not to use.`,
+  );
   // Equipment is a live fact, not a static one: the parameters name the held tool and the pack's tool slots so a script
   // can read the slot a tool action must name instead of guessing an index.
   assert.match(parameterText, /`snapshot\.currentTool` is the qualified id of the tool the farmer holds/u);
@@ -1152,7 +1247,29 @@ test("the plan tool hands its compiled program to the one submission path a mode
     source,
     /return planDetails\(\{\n\s+accepted: false,\n\s+nodeCount: 0,\n\s+reasonCode: compiled\.reasonCode,/u,
   );
-  assert.match(source, /accepted: code === "accepted" \|\| code === "idempotent",\n\s+nodeCount: nodes\.length,/u);
+  // What the accepted plan ANSWERS, as a property rather than as one line of source: it must name the program, it must
+  // say whether the plan settled, and it must carry the same status payload a status call would have - because the
+  // whole point of awaiting inside `plan_work` is that the caller needs no second call to learn the outcome.
+  //
+  // Re-anchored 2026-11-03: the previous assertion pinned `accepted: code === "accepted" || code === "idempotent"` and
+  // went red the moment the return grew. An assertion about the SHAPE of the answer is what this test exists for; the
+  // original spelling of that line was not the property.
+  // One computation of "accepted", named once and reused by every branch: two spellings of the same predicate is how
+  // the refusal path and the success path start disagreeing about what `idempotent` means.
+  assert.match(
+    source,
+    /const accepted = code === "accepted" \|\| code === "idempotent";/u,
+    "an accepted submission is named once",
+  );
+  assert.match(source, /^\s+accepted,$/mu, "and every branch reports that same fact");
+  assert.match(source, /^\s+nodeCount: nodes\.length,$/mu, "the plan reports how many steps it carries");
+  assert.match(source, /^\s+settled: settled\.waited\.reachedTerminal,$/mu, "the plan reports whether it settled");
+  assert.match(source, /^\s+status: settled\.result,$/mu, "and carries the status a second call would have fetched");
+  assert.match(
+    source,
+    /await waitForTerminalProgramStatus\(readStatus, first, bounded\)/u,
+    "by WAITING for it with the one waiter, not by returning early and inviting a poll",
+  );
   // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be
   // replayed and audited instead of guessed at.
   assert.match(
