@@ -48,6 +48,7 @@ import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
+import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates } from "../dialogue-gates.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
@@ -684,6 +685,9 @@ let presentedSummary = null;
 // agent turn was accepted, so the first piece's time-to-first-bubble is
 // measurable instead of inferred.
 const presentationPieces = [];
+// What the companion said to each scripted player line, keyed by gate id. A gate with no entry is `not_exercised` -
+// the run never reached that moment - which is a different finding from a bad answer.
+const dialogueReplies = new Map();
 const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 /**
@@ -3437,6 +3441,37 @@ try {
             sessionTurns.push(Object.freeze({ goalIndex: day - 1, goal: promptForDay(day), turn: walked.turn, day }));
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
             if (walked.settled !== true) break;
+            // The player drops in. A companion that is only ever narrated AT the fields has nobody to answer, and a
+            // progress log is the honest output of having no listener - measured 2026-11-03 (round26): five spoken
+            // lines, every one of them "已完成 A，正在执行 B". These are real player turns, delivered through the same
+            // admission path as the day's task, and judged by `dialogue-gates.mjs`.
+            //
+            // Scheduled by DAY rather than by game clock: the runner cannot pre-empt a turn mid-action, so a gate that
+            // fired at exactly 12:00 would often be admitted after she had moved on. "Somewhere in day 1" is the
+            // interval the runner can honour; the gate's own `atGameTime` stays in the record as intent.
+            for (const gate of SCHEDULED_DIALOGUE_GATES) {
+              if (gate.trigger.kind === "recent_refusal") continue;
+              if (gate.trigger.day !== day) continue;
+              if (dialogueReplies.has(gate.id)) continue;
+              const piecesBefore = presentationPieces.length;
+              const answered = await runAgentTurn(gate.prompt, tools);
+              const spoken = presentationPieces
+                .slice(piecesBefore)
+                .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
+                .join("")
+                .trim();
+              dialogueReplies.set(gate.id, spoken);
+              sessionTurns.push(
+                Object.freeze({
+                  goalIndex: day - 1,
+                  goal: gate.prompt,
+                  turn: answered.turn,
+                  day,
+                  dialogueGate: gate.id,
+                }),
+              );
+              if (answered.settled !== true) break;
+            }
             if (turns >= MAX_TURNS_PER_DAY) {
               process.stderr.write(`[multiday] day ${String(day)}: turn budget reached (${String(turns)})\n`);
               break;
@@ -3701,6 +3736,10 @@ try {
   // actions over fifteen minutes and produced no player-facing line at all: the rung's
   // own goal asks for a short report, and "did the companion play" includes "did it
   // tell the player". Silence is its own verdict, never a pass by omission.
+  // The dialogue verdict, judged by the gate module rather than by reading the transcript. `context.yesterday` is
+  // absent because the night records do not carry a bed time yet - and the honesty gate says so (`not_judgeable`)
+  // instead of guessing, which is the signal that the instrument is missing rather than that she answered badly.
+  const dialogueGates = assessDialogueGates({ replies: Object.fromEntries(dialogueReplies), context: {} });
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
 
@@ -3716,6 +3755,7 @@ try {
     multidayAssessment: multidayOutcome?.assessment ?? null,
     agentTurnOutcome,
     morningLiveness,
+    dialogueGates,
   });
   const morningRoutinePassed =
     SCENARIO === "morning_routine"

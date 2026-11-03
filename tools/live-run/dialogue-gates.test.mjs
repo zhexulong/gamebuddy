@@ -103,6 +103,19 @@ test("the obstacle gate is due only while a refusal is still recent", () => {
   assert.equal(obstacleGateIsDue(obstacle, {}, 90_000), false);
 });
 
+test("a gate that lacks its ground truth is not_judgeable, not failed", () => {
+  // The honesty gate needs yesterday's record. Without it the gate says so, and "we could not look" must never be
+  // reported as "she lied" - nor as a pass.
+  const verdict = assessDialogueGates({
+    replies: { "turn-yesterday-honesty": "早睡了。" },
+    context: {},
+  });
+  const finding = verdict.findings.find((entry) => entry.id === "turn-yesterday-honesty");
+  assert.equal(finding.state, "not_judgeable");
+  assert.equal(finding.reason, "gate_cannot_judge_without_yesterday");
+  assert.equal(verdict.failed, 0, "an unjudgeable gate is not a companion failure");
+});
+
 test("a gate with no reply is not_exercised, never a pass", () => {
   const verdict = assessDialogueGates({ replies: {}, context: {} });
   assert.equal(verdict.failed, 0);

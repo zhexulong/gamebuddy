@@ -270,6 +270,15 @@ test("the runner emits system findings as a first-class health signal", () => {
   );
 });
 
+test("the run asks the companion questions and publishes the verdict", () => {
+  // A gate module nobody calls is a document. This asserts the three links that make it a measurement: the import, the
+  // delivery of the prompt through the same admission path as a task, and the verdict in the run's own result.
+  assert.match(RUNNER_SOURCE, /from "\.\.\/dialogue-gates\.mjs"/);
+  assert.match(RUNNER_SOURCE, /await runAgentTurn\(gate\.prompt, tools\)/);
+  assert.match(RUNNER_SOURCE, /const dialogueGates = assessDialogueGates\(/);
+  assert.match(RUNNER_SOURCE, /^\s+dialogueGates,$/mu, "the verdict must reach result.json");
+});
+
 test("prompts state the errand and leave the voice to the system prompt (ladder-3)", () => {
   // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" — that phrasing is what produced the
   // recital the interaction gate rejects.

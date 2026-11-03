@@ -162,7 +162,15 @@ export function assessDialogueGates({ replies, context }) {
       continue;
     }
     const outcome = gate.assert({ text: String(reply) }, context ?? {});
-    findings.push({ id: gate.id, state: outcome.pass ? "passed" : "failed", reason: outcome.reason });
+    // Three states, not two. "The companion did the wrong thing" and "this run cannot answer the question" are different
+    // findings, and collapsing them would either blame her for a missing instrument or hide a missing instrument behind a
+    // pass. The second is the one this repository keeps paying for.
+    const state = outcome.pass
+      ? "passed"
+      : String(outcome.reason ?? "").startsWith("gate_cannot_judge")
+        ? "not_judgeable"
+        : "failed";
+    findings.push({ id: gate.id, state, reason: outcome.reason });
   }
   return { findings, failed: findings.filter((finding) => finding.state === "failed").length };
 }
