@@ -137,6 +137,14 @@ import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live
 // Magic Context database + log, session logs). This is what makes a content
 // defect (e.g. an empty default persona) visible to a reviewer — the harness
 // is an external tool and is not bound by the Host's write-ownership rule.
+
+// Declared at module scope on purpose: the failure dump runs from an EXIT hook, which can fire before `main()` has
+// executed a single statement - a run that dies at the startup freshness check does exactly that. A `let` inside the
+// run function is then still in its temporal dead zone, so reading it from the hook threw
+// `ReferenceError: Cannot access "capture" before initialization` and DESTROYED the artifact of the run it was supposed
+// to explain (measured 2026-11-03, round29: `live_run_artifact_stale` was replaced by a stack trace). Module scope is
+// initialised before any of that can run.
+let capture = null;
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
 const configPath =
@@ -2816,7 +2824,6 @@ let programOutcomesReadAtSubmissionCount = null;
 // Where and when the run stood, and the two facts a later stage assigns (the runtime root it materialized and the
 // capture directory it opened): null until then, so a failure at either step still publishes what came before it.
 let runtimeRoot = null;
-let capture = null;
 // The covenant planted for `memory_covenant`, the agent turn's own terminal facts, the multi-day record, the
 // narrative judgement and this run's own session record: each is assigned by a later stage and each is published by a
 // failed run too.

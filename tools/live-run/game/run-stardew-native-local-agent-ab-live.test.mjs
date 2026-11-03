@@ -277,6 +277,24 @@ test("the runner emits system findings as a first-class health signal", () => {
   );
 });
 
+test("the failure dump can run before the run has started", () => {
+  // The dump is invoked from an EXIT hook, so it can fire on a run that died at the very first check - a stale artifact,
+  // a refused fixture. Measured 2026-11-03 (`round29`): `live_run_artifact_stale` was the real failure, the dump then read
+  // a `let capture` that had not been initialised yet, and the ReferenceError REPLACED the artifact that would have
+  // explained the run. The invariant is "initialised before any run code", so it is asserted as that: one declaration,
+  // and it precedes `main`.
+  const declarations = RUNNER_SOURCE.match(/^let capture = null;$/gmu) ?? [];
+  assert.equal(declarations.length, 1, "capture is declared exactly once");
+  // Ahead of the code that can READ it from the exit hook: the dump is defined and registered later in the file, so a
+  // declaration after them would be executed after the hook exists.
+  const declaredAt = RUNNER_SOURCE.indexOf("let capture = null;");
+  assert.ok(
+    declaredAt >= 0 && declaredAt < RUNNER_SOURCE.indexOf("function failureDumpEvidence("),
+    "and ahead of the dump that reads it",
+  );
+  assert.ok(declaredAt < RUNNER_SOURCE.indexOf("exitAfterDump"), "and ahead of the hook registration");
+});
+
 test("the run asks the companion questions and publishes the verdict", () => {
   // A gate module nobody calls is a document. This asserts the three links that make it a measurement: the import, the
   // delivery of the prompt through the same admission path as a task, and the verdict in the run's own result.
