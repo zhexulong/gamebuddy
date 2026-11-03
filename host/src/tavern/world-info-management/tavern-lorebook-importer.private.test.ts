@@ -233,6 +233,45 @@ test("importTavernLorebook parses secondary_keys, keysecondary, and selectiveLog
   }
 });
 
+/**
+ * The card's own `order` decides an entry's place in the prompt, not the row order of its
+ * `entries` array.
+ *
+ * The managed entry schema carries no `order` member, so the sequence the library stores is the
+ * only place the author's order can live: the importer writes the entries in that order and the
+ * per-turn `totalOrderKey` (catalog-service.ts) follows the stored sequence.
+ */
+test("importTavernLorebook keeps the card's own entry order instead of its rows' order", () => {
+  const request = importTavernLorebook({
+    name: "Valley Hours",
+    description: "When things happen in the valley.",
+    entries: [
+      { comment: "Evening", content: "The valley goes quiet after dusk.", key: "dusk", order: 5 },
+      { comment: "Morning", content: "The valley wakes before the sun clears the ridge.", key: "dawn", order: 1 },
+      { comment: "Noon", content: "The valley dozes through the hot hours.", key: "noon", order: 3 },
+    ],
+  });
+  assert.deepEqual(
+    request.entries.map((entry) => entry.publicTitle),
+    ["Morning", "Noon", "Evening"],
+    "the declared order 1, 3, 5 decides the sequence, not the array's Evening-first row order",
+  );
+
+  // A book that states no order at all imports exactly as written: nothing is invented for it.
+  const unordered = importTavernLorebook({
+    name: "Valley Hours",
+    description: "When things happen in the valley.",
+    entries: [
+      { comment: "Evening", content: "The valley goes quiet after dusk." },
+      { comment: "Morning", content: "The valley wakes before the sun clears the ridge." },
+    ],
+  });
+  assert.deepEqual(
+    unordered.entries.map((entry) => entry.publicTitle),
+    ["Evening", "Morning"],
+  );
+});
+
 test("cleanLorebookText removes C1 control characters in addition to ASCII control characters", () => {
   const withC1 = "Wangshu\u0080\u0085\u009f Inn";
   const cleaned = cleanLorebookText(withC1);
