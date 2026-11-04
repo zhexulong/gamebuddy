@@ -21,6 +21,7 @@ import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
+import { DAILY_TASK_ROTATION } from "../../lib/multiday-daily-tasks.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 // The program tool's description is presented material, but the runner mounts the Host's tool definitions rather
@@ -495,6 +496,7 @@ test("a run whose multi-day assessment is blocked cannot report a completed sess
     bridgeDisconnections: [],
     sessionSpoken: true,
     accomplishedActionIds: ["harvest_crop"],
+    taskPurposes: [],
     multidayAssessment: null,
   };
   assert.equal(deriveSessionVerdict(healthy), "completed");
@@ -549,6 +551,104 @@ test("a run whose multi-day assessment is blocked cannot report a completed sess
     /multidayOutcome\?\.assessment/,
     "a second decision on the assessment is how a completed session published beside a blocked baseline",
   );
+});
+
+test("a session that did work cannot report `completed` for a task whose purpose was not achieved", () => {
+  // The measured false positive: a `go_mining` day declared `[travel, enter_mine, break_rock]`, broke rocks on the
+  // surface, and the run was counted as having done the task because the work list was non-empty. The task's own
+  // criterion (`task-purpose.mjs`) now decides it, and the verdict is where that decision becomes the run's outcome.
+  const deriveSessionVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict");
+  const worked = {
+    worldStallReason: null,
+    sessionTurns: [{}],
+    unsettledTurns: [],
+    turnFailureReason: undefined,
+    bridgeDisconnections: [],
+    sessionSpoken: true,
+    accomplishedActionIds: ["break_rock"],
+    taskPurposes: [],
+    multidayAssessment: null,
+  };
+  // No named task (every scenario but the multi-day routine): the session is judged on itself, and says so.
+  assert.equal(deriveSessionVerdict(worked), "completed");
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [{ day: 1, task: "mine_delve", state: "achieved" }],
+    }),
+    "completed",
+    "the purpose was achieved by its own criterion, so the session completed",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [{ day: 1, task: "mine_delve", state: "not_achieved" }],
+    }),
+    "task_not_achieved",
+    "break_rock succeeded and the rock was on the surface: real work, unmet purpose",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [{ day: 1, task: "clear_east_patch", state: "unproven", missingFact: "no farm-region fact" }],
+    }),
+    "task_purpose_unproven",
+    "a task with no decidable criterion is named, never defaulted to the action success beside it",
+  );
+  // One unachieved day among several is enough: a run is not accomplished by the days that went well.
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [
+        { day: 1, task: "mine_delve", state: "achieved" },
+        { day: 2, task: "store_and_sort", state: "not_achieved" },
+      ],
+    }),
+    "task_not_achieved",
+  );
+  // And a session that did nothing is still `nothing_accomplished`: the purpose arms do not replace that answer.
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      accomplishedActionIds: [],
+      taskPurposes: [{ day: 1, task: "mine_delve", state: "not_achieved" }],
+    }),
+    "nothing_accomplished",
+  );
+  // The runner passes what it judged: a verdict that reads a list nobody fills would be green for ever.
+  const verdictCall = RUNNER_SOURCE.slice(
+    RUNNER_SOURCE.indexOf("const sessionVerdict = deriveSessionVerdict({"),
+    RUNNER_SOURCE.indexOf("\n  );\n  const morningRoutinePassed"),
+  );
+  assert.match(verdictCall, /^    taskPurposes,$/m, "the verdict is handed the judged purposes");
+  assert.match(
+    RUNNER_SOURCE,
+    /^    taskPurposes,$/m,
+    "the judged purposes are published beside the work they were judged against",
+  );
+  assert.match(RUNNER_SOURCE, /taskPurposes\.push\(\n\s+Object\.freeze\(\{ day, task: dayTask,/);
+});
+
+test("every task the rotation asks for is a task the prompt table can state", () => {
+  // The table is read BY KEY, so its keys are the population it must cover. Measured: the rotation asks for
+  // `mine_delve`/`town_market`/`town_visit` while the English table carried `go_mining` and `town_errand`, so those
+  // days were handed the literal string "undefined" and the run measured a task nobody had written. A criterion for a
+  // task that was never stated decides nothing.
+  const promptTableBody = (name) => {
+    const start = RUNNER_SOURCE.indexOf(`const ${name} = Object.freeze({`);
+    const end = RUNNER_SOURCE.indexOf("\n});", start);
+    assert.ok(start >= 0 && end > start, `${name} must be declared as one literal table`);
+    return RUNNER_SOURCE.slice(start, end);
+  };
+  const keysOf = (body) => [...body.matchAll(/^ {2}([a-z][a-z0-9_]*):/gm)].map((match) => match[1]);
+  const drifting = [];
+  for (const name of ["DAILY_TASK_PROMPT_ZH", "DAILY_TASK_PROMPT_EN"]) {
+    const keys = new Set(keysOf(promptTableBody(name)));
+    for (const task of DAILY_TASK_ROTATION) if (!keys.has(task)) drifting.push(`${name} cannot state ${task}`);
+    for (const key of keys)
+      if (!DAILY_TASK_ROTATION.includes(key)) drifting.push(`${name} names ${key}, which no run asks for`);
+  }
+  assert.deepEqual(drifting, [], drifting.join("; "));
 });
 
 test("morning_routine is a self-directed session whose output is a capability audit", () => {
@@ -2622,12 +2722,17 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
     // A non-receipt fact in the same log is not work either.
     { type: "world_fact", reasonCode: null, requestId: null, worldFactPayload: { kind: "day_started" } },
   ];
-  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
-    factLog,
-    actionTrace: [],
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile", "equip_tool"]),
-    STARDEW_PUBLISHED_ACTION_GATES,
-  })[1];
+  const [recordedReceipt, receiptsSince, accomplishedSince] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["recordedReceipt", "receiptsSince", "accomplishedSince"],
+    {
+      factLog,
+      actionTrace: [],
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile", "equip_tool"]),
+      STARDEW_PUBLISHED_ACTION_GATES,
+    },
+  );
+  assert.ok(recordedReceipt, "the receipt reader is part of the same scope");
 
   assert.deepEqual(
     accomplishedSince(0),
@@ -2637,10 +2742,12 @@ test("a day's work is read from the receipts both dispatch channels produce", ()
 
   // The CODE path, not just the number: the read is the fact log's, and the flat trace is no longer a source at all.
   // A dispatch row is not evidence of a terminal, and the join it used to need (`fact.requestId === entry.requestId`)
-  // disappeared with it - the receipt carries the action id itself.
+  // disappeared with it - the receipt carries the action id itself. The window moved one function down into
+  // `receiptsSince`, which is the only place a receipt leaves the log, so the assertions follow it there.
+  const windowBody = receiptsSince.toString();
+  assert.match(windowBody, /factLog\s*\n?\s*\.slice\(startFactIndex\)/u, "the window is the fact log's own position");
+  assert.match(windowBody, /recordedReceipt/u, "the receipt is read from where the recorder puts it");
   const body = accomplishedSince.toString();
-  assert.match(body, /factLog\.slice\(startFactIndex\)/u, "the window is the fact log's own position");
-  assert.match(body, /recordedReceipt\(fact\)/u, "the receipt is read from where the recorder puts it");
   assert.match(body, /receipt\.actionId/u, "the action is named by the Mod's receipt, never guessed");
   assert.doesNotMatch(body, /actionTrace/u, "the flat trace is not a source of terminals");
   assert.doesNotMatch(body, /entry\.requestId/u, "there is no trace row to join the receipt against");
@@ -2672,21 +2779,25 @@ test("a receipt that only progressed an action is an attempt, never work", () =>
     // And the one action that IS a registered gate with a success state, so the test cannot pass by counting nothing.
     recordedActionReceipt("water_crop", "crop_watered", "succeeded", "r7"),
   ];
-  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
-    factLog,
-    actionTrace: [],
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
-    STARDEW_PUBLISHED_ACTION_GATES,
-  })[1];
+  const accomplishedSince = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["recordedReceipt", "receiptsSince", "accomplishedSince"],
+    {
+      factLog,
+      actionTrace: [],
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+      STARDEW_PUBLISHED_ACTION_GATES,
+    },
+  )[2];
   assert.deepEqual(accomplishedSince(0), ["water_crop"], "only the receipt that finished its declared action is work");
 
   // A night the engine crossed by itself has no `advance_day` receipt at all; it must never read as farm work.
-  const nightOnly = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
+  const nightOnly = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "receiptsSince", "accomplishedSince"], {
     factLog: [recordedActionReceipt("sleep", "day_advanced")],
     actionTrace: [],
     NON_ACCOMPLISHMENT_ACTIONS: new Set(),
     STARDEW_PUBLISHED_ACTION_GATES,
-  })[1];
+  })[2];
   assert.deepEqual(nightOnly(0), [], "crossing the day is the loop's own producer, not what the loop produces");
 });
 
@@ -2699,11 +2810,15 @@ test("one action dispatched through both channels is one accomplishment", () => 
     recordedActionReceipt("cut_weeds", "weeds_cut", "partially_succeeded", "program_2"),
     recordedActionReceipt("break_rock", "rock_source_broken", "succeeded", "flat_2"),
   ];
-  const accomplishedSince = extractRunnerFunction(RUNNER_SOURCE, ["recordedReceipt", "accomplishedSince"], {
-    factLog,
-    actionTrace: [],
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(),
-    STARDEW_PUBLISHED_ACTION_GATES,
-  })[1];
+  const accomplishedSince = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["recordedReceipt", "receiptsSince", "accomplishedSince"],
+    {
+      factLog,
+      actionTrace: [],
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(),
+      STARDEW_PUBLISHED_ACTION_GATES,
+    },
+  )[2];
   assert.deepEqual(accomplishedSince(0), ["break_rock", "cut_weeds"], "one action, counted once");
 });

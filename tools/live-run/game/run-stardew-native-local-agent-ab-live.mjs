@@ -43,6 +43,7 @@ import {
   overriddenFirstDayTask,
   runOffsetFor,
 } from "../../lib/multiday-daily-tasks.mjs";
+import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
@@ -403,7 +404,11 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   water_and_harvest: "地里长好的都收下来，收完再把空地种上。",
   forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
-  town_errand: "去一趟镇上，找个人说说话。",
+  // `town_errand` was the key here and it is no species of task: the rotation asks for `town_market` and
+  // `town_visit`, so both days were handed the literal string "undefined" instead of a task. The prompt table is
+  // read by key, so its keys ARE the population it must cover.
+  town_market: "去一趟镇上买点东西，回来把信箱里的信取出来。",
+  town_visit: "去一趟镇上，找个人说说话。",
   mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
   // The size is deliberately the companion's call: a number picked here would be a quota, and the point of the
   // task is to observe how it decides where a clearing should be and how much is enough.
@@ -427,8 +432,9 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   water_and_harvest: "bring in what is ripe, then plant the empty ground. ",
   forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
   craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
-  town_errand: "go into town and talk to somebody there. ",
-  go_mining: "go down the mine and come back with some ore. ",
+  town_market: "go into town, buy something at a shop, and bring the post in. ",
+  town_visit: "go into town and talk to somebody there. ",
+  mine_delve: "go down the mine and come back with some ore. ",
   clear_and_cultivate:
     "the woods on the east side are too thick - clear a patch of open ground, then plant and water something in it. Size is your call.",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
@@ -490,6 +496,10 @@ const SESSION_GOALS = (process.env.GAMEBUDDY_AGENT_SESSION_GOALS ?? "")
 // Every turn the session delivered, with its own settle result: the array exists for every scenario so the
 // result shape is uniform, and a scenario that delivered extra goals has more than one entry.
 const sessionTurns = [];
+// What each multi-day turn was ASKED for, and whether its own purpose was achieved (see `task-purpose.mjs`). One
+// entry per day the run actually delivered, built where the day's receipts are still addressable; the session
+// verdict reads it, and the result publishes it, so a run cannot be green on an unachieved task and cannot hide one.
+const taskPurposes = [];
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -1401,6 +1411,7 @@ function deriveSessionVerdict({
   bridgeDisconnections,
   sessionSpoken,
   accomplishedActionIds,
+  taskPurposes,
   multidayAssessment,
   // The whole session's last model answer, because the wall is a fact about the MODEL and not about the pipe. Only
   // `stopReason` is read here; the outcome object carries much more and none of it belongs in a verdict.
@@ -1434,6 +1445,14 @@ function deriveSessionVerdict({
   if ((morningLiveness?.violations?.length ?? 0) > 0) return "morning_clock_frozen";
   if (!sessionSpoken) return "silent";
   if (accomplishedActionIds.length === 0) return "nothing_accomplished";
+  // A session that changed the world has still not necessarily done the TASK it was given. The task's own criterion
+  // decides that (`task-purpose.mjs`), and the two answers are different: a rock broken on the surface is real
+  // accomplished work and not a mine delved. These arms sit AFTER "did the companion play at all" - a session that
+  // did nothing is already its own verdict - and BEFORE `completed`, so a day whose purpose is unproven or unmet can
+  // never be reported as a completed one. A scenario that names no task passes an empty list and is judged on the
+  // session alone, which is the truth about that scenario rather than a default about a task.
+  if (taskPurposes.some((purpose) => purpose.state === "unproven")) return "task_purpose_unproven";
+  if (taskPurposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
   return "completed";
 }
 
@@ -2143,6 +2162,20 @@ const MULTIDAY_CROSSINGS = (() => {
 })();
 
 /**
+ * The receipts recorded from `startFactIndex` on, in the shape a reader sees.
+ *
+ * The recorder flattens a receipt's identity onto the entry, but the receipt ITSELF - and with it the terminal
+ * `state` - stays whole under `worldFactPayload` (see `recordedReceipt`), so this is the one place a run's
+ * receipts are taken out of the fact log. Everything that asks a question of what the companion DID reads this.
+ */
+function receiptsSince(startFactIndex) {
+  return factLog
+    .slice(startFactIndex)
+    .map(recordedReceipt)
+    .filter((receipt) => receipt !== null);
+}
+
+/**
  * What one day accomplished, read from the RECEIPTS its dispatches produced on EITHER channel.
  *
  * A fact proves one thing about one action: it reached its DECLARED terminal, in a success state. Both halves are
@@ -2159,11 +2192,7 @@ const MULTIDAY_CROSSINGS = (() => {
  */
 function accomplishedSince(startFactIndex) {
   const accomplished = new Set();
-  for (const fact of factLog.slice(startFactIndex)) {
-    // The receipt, from where the recorder puts it: its identity is flattened onto the entry, but the receipt ITSELF
-    // - and with it the terminal `state` - stays whole under `worldFactPayload` (see `recordedReceipt`).
-    const receipt = recordedReceipt(fact);
-    if (receipt === null || typeof receipt.actionId !== "string") continue;
+  for (const receipt of receiptsSince(startFactIndex)) {
     const actionId = receipt.actionId;
     // A day that only walked, looked around, posed and slept has NOT produced farm work, and for the
     // multi-day rule that is the difference between a loop and one rollover. Without this filter the day's own
@@ -3507,16 +3536,20 @@ try {
           ),
         )
       : 0;
+  // One run sometimes has to see a task from day one rather than on the day the rotation reaches it.
+  // `GAMEBUDDY_FIRST_DAY_TASK` names it; every later day keeps the rotation, so the override cannot
+  // silently change what a series of runs covers.
+  const firstDayTask = overriddenFirstDayTask(process.env.GAMEBUDDY_FIRST_DAY_TASK);
+  // Which task a day was ASKED for. Named once, because two readers need the same answer: the prompt that states the
+  // task, and the criterion that decides whether it was accomplished. Two call sites would let the run be judged
+  // against a task it was never asked to do.
+  const taskForDay = (day) =>
+    day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day);
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     if (typeof entry !== "function") return entry;
     if (SCENARIO !== "multiday_routine") return entry(day);
-    // One run sometimes has to see a task from day one rather than on the day the rotation reaches it.
-    // `GAMEBUDDY_FIRST_DAY_TASK` names it; every later day keeps the rotation, so the override cannot
-    // silently change what a series of runs covers.
-    const firstDayTask = overriddenFirstDayTask(process.env.GAMEBUDDY_FIRST_DAY_TASK);
-    const task = day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day);
-    return entry(day, task);
+    return entry(day, taskForDay(day));
   };
 
   // What the harness says when it offers the same day again. Deliberately carries no instruction: anything
@@ -3626,6 +3659,15 @@ try {
           // The day's own verdict: what it accomplished, read from the receipts its dispatches produced. This is
           // the "the companion kept working" half of the baseline, and it is computed from the receipts rather than
           // from the companion's prose or from either dispatch channel's file.
+          //
+          // ACCOMPLISHED WORK IS NOT AN ACCOMPLISHED TASK, and the two are recorded separately. `accomplishedSince`
+          // answers "did anything in the world change"; `judgeTaskPurpose` answers "was THIS day's purpose
+          // achieved", from the task's own criterion (`task-purpose.mjs`). Measured: a `go_mining` day declared
+          // `[travel, enter_mine, break_rock]` broke rocks on the surface, and the second question was never asked.
+          const dayTask = taskForDay(day);
+          taskPurposes.push(
+            Object.freeze({ day, task: dayTask, ...judgeTaskPurpose(dayTask, receiptsSince(factsBefore)) }),
+          );
           return Object.freeze({ accomplishedActionIds: accomplishedSince(factsBefore) });
         } finally {
           settled.resolve();
@@ -3922,6 +3964,7 @@ try {
     hostMemory,
     sessionSpoken,
     accomplishedActionIds,
+    taskPurposes,
     // Present only for the multi-day scenario, where it is the run's own baseline judgement.
     multidayAssessment: multidayOutcome?.assessment ?? null,
     agentTurnOutcome,
@@ -4178,6 +4221,10 @@ try {
     // the difference between "the companion acted" and "the companion moved, looked
     // and reported". Published so the verdict is readable, not just its consequence.
     accomplishedActionIds,
+    // What each multi-day turn was asked for and whether its own purpose was achieved, next to the work it did.
+    // Published because the verdict above is decided from it: a reader must be able to check the judgement instead
+    // of trusting it, and a gap has to travel with the run that hit it (`missingFact`).
+    taskPurposes,
     capabilityAudit,
     presenceProjection,
     // The three assembly/content gates publish their OUTCOME vocabulary, not just a
