@@ -783,7 +783,7 @@ for (const surface of SURFACES) {
         ).toBeGreaterThan(0);
       }
 
-      // 4. The step actually moves something: a press that reaches no route and changes nothing on
+      // 2. The step actually moves something: a press that reaches no route and changes nothing on
       //    screen is a control that exists and does not advance the flow.
       const target = under.declaredControlTestId ?? null;
       const chosen =
@@ -835,7 +835,7 @@ for (const surface of SURFACES) {
           "nothing on screen, so the first viewport offers no step that advances the flow",
       ).toBe(true);
 
-      // 5. A refused press is not a step out. If the Host said no, the player needs something else
+      // 3. A refused press is not a step out. If the Host said no, the player needs something else
       //    to press in the same viewport - otherwise the state names its own refusal and stops.
       const refused = pressedResponses.some((status) => status >= 400);
       if (!refused) return;
