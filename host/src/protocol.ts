@@ -1716,7 +1716,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "world_fact",
 ] as const;
 
-const SNAPSHOT_KEYS = [
+export const SNAPSHOT_KEYS = [
   "revision",
   "location",
   "tile",
