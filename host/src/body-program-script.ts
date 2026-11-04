@@ -211,6 +211,29 @@ export const MAX_PLAN_NODES = 256;
 /** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
 
+/** The published action whose one job is putting the body on (or beside) a tile; a transition's approach step uses it. */
+const MOVE_TO_TILE_ACTION_ID = "move_to_tile";
+
+/** The id prefix a node the compiler inserted carries, so an audit can tell it from one the author asked for. */
+const PLAN_INSERTED_NODE_PREFIX = "auto_walk_";
+
+/**
+ * The two location transitions whose `x`/`y` name a door or warp SOURCE tile the body must already be beside, and which
+ * do not walk there themselves.
+ *
+ * Why the compiler writes the walk: the Mod gates BOTH actions on the actor's distance from the named tile
+ * (`farmhandexecutioncontroller.movementactions.cs:478`, answered as `door_out_of_range` / `warp_out_of_range`), and
+ * neither walks - `travel` and `enter_exit` resolve the warp and drive the transition, while `move_to_tile` is the Mod's
+ * one action that moves the body. Measured 2026-10-25: the companion submitted a one-node `enter_exit(3,12)` from its
+ * bed and was refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. The walk was never a choice
+ * the author should have had to make, and every round trip spent learning it is one the plan did not need.
+ *
+ * The walk is prepended rather than required of the author because reachability is the Mod's answer, not the
+ * compiler's: a door tile with no route is refused by the walk step with `no_native_path`, which names what is in the
+ * way, where the transition's own refusal would only say the body is far from a tile it named correctly.
+ */
+const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["enter_exit", "travel"]);
+
 /**
  * The actions that rebuild the world under a plan, so a plan must END at one.
  *
@@ -1322,9 +1345,19 @@ function emitPlanNode(
     }
     canonical[name] = value;
   }
+  // A transition is written as the walk plus the door: the walk is the compiler's because the Mod refuses the door
+  // on distance alone, and the node the author wrote still runs in the order the author wrote it.
+  const approach = transitionApproachNode(action, canonical, state);
+  if (approach !== null) {
+    // One statement became two nodes, so the cap is checked against both: a walk that pushed the program past the wire
+    // bound would be refused as a malformed request instead of as a plan that is too long.
+    if (state.nodes.length + 2 > MAX_PLAN_NODES)
+      refusePlan(`plan_cap_exceeded:${state.nodes.length + 2}`, state, requirement);
+    state.nodes.push(approach);
+  }
   // The script's statement order IS the plan's order: "till this tile, then fertilise it" is two calls,
   // and the second must not run before the first. That is one dependency edge per call, nothing more.
-  const previous = previousNode?.nodeId;
+  const previous = state.nodes[state.nodes.length - 1]?.nodeId;
   state.nodes.push(
     Object.freeze({
       nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,
@@ -1334,6 +1367,50 @@ function emitPlanNode(
       bindings: Object.freeze({}),
     }),
   );
+}
+
+/**
+ * The compiler's own walk to a transition's source tile, or `null` when the plan already reaches that tile.
+ *
+ * The step carries the transition's OWN coordinates. `move_to_tile` is what makes that executable: it accepts a warp
+ * tile as its target and, because the target is a warp the actor would trigger by stopping on it, arrives ADJACENT
+ * instead of on top of it (`farmhandexecutioncontroller.movementactions.cs:62-63`, `nativeWarpTarget` ->
+ * `adjacentArrival`) - which is exactly the relationship `enter_exit` gates on. The tile is also legal as an
+ * `enter_exit` target by the Mod's own three-way warp rule (same file, `IsWarpBufferTile`).
+ *
+ * Nothing is prepended when the node immediately before already walks to that same tile: the author wrote the walk and
+ * a second one would be a no-op submission. The id is `auto_walk_<position>` rather than `n<position>` so a journal
+ * reader can tell which plan node the compiler wrote, while the author's own nodes keep the order, arguments and
+ * relative position its script gave them.
+ */
+function transitionApproachNode(
+  action: PublishedPlanAction,
+  canonical: Readonly<Record<string, PlanArgument>>,
+  state: PlanScriptState,
+): PlanNode | null {
+  if (!TRANSITION_SOURCE_PLAN_ACTION_IDS.includes(action.actionId)) return null;
+  const x = canonical.x;
+  const y = canonical.y;
+  if (x?.type !== "integer" || y?.type !== "integer") return null;
+  const previous = state.nodes[state.nodes.length - 1];
+  const previousX = previous?.arguments.x;
+  const previousY = previous?.arguments.y;
+  if (
+    previous !== undefined &&
+    previous.actionId === MOVE_TO_TILE_ACTION_ID &&
+    previousX?.type === "integer" &&
+    previousY?.type === "integer" &&
+    previousX.canonicalValue === x.canonicalValue &&
+    previousY.canonicalValue === y.canonicalValue
+  )
+    return null;
+  return Object.freeze({
+    nodeId: `${PLAN_INSERTED_NODE_PREFIX}${String(state.nodes.length + 1).padStart(2, "0")}`,
+    actionId: MOVE_TO_TILE_ACTION_ID,
+    arguments: Object.freeze({ x, y }),
+    dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
+    bindings: Object.freeze({}),
+  });
 }
 
 /** The canonical argument the Mod's own declaration asks for, or `undefined` when the script's value is not one. */

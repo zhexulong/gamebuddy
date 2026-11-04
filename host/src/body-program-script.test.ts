@@ -177,6 +177,88 @@ test("a script's calls become one ordered program, chained in the order it wrote
   assert.equal(nodes[1]!.bindings !== undefined && Object.keys(nodes[1]!.bindings).length, 0);
 });
 
+/**
+ * A door is entered from BESIDE it: the Mod refuses a transition whose source tile is more than one tile from the actor
+ * (`door_out_of_range` / `warp_out_of_range`, `farmhandexecutioncontroller.movementactions.cs:478`). A plan that names
+ * only the door is therefore refused one submit later, so the compiler writes the walk itself - with the door's own
+ * coordinates, which `move_to_tile` accepts as an adjacency target instead of a tile to stand on.
+ */
+test("a transition gets a walk to its own tile prepended, and its own node is otherwise unchanged", () => {
+  const result = compile("builder.enter_exit({ x: 3, y: 12 });");
+  const nodes = nodesOf(result);
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [
+      ["auto_walk_01", "move_to_tile", []],
+      ["n02", "enter_exit", ["auto_walk_01"]],
+    ],
+  );
+  assert.deepEqual(nodes[0]!.arguments, {
+    x: { type: "integer", canonicalValue: "3" },
+    y: { type: "integer", canonicalValue: "12" },
+  });
+  assert.deepEqual(nodes[1]!.arguments, {
+    x: { type: "integer", canonicalValue: "3" },
+    y: { type: "integer", canonicalValue: "12" },
+  });
+  // The prepended step is the compiler's, not the author's: the id says which one it is, and the program it produced is
+  // still one the Mod's own request validator accepts.
+  assert.equal(nodes[0]!.nodeId.startsWith("auto_walk_"), true);
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+});
+
+test("a transition the script already walked to gets no second walk", () => {
+  const nodes = nodesOf(compile("builder.move_to_tile({ x: 3, y: 12 });\nbuilder.enter_exit({ x: 3, y: 12 });"));
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [
+      ["n01", "move_to_tile", []],
+      ["n02", "enter_exit", ["n01"]],
+    ],
+  );
+});
+
+test("a walk to another tile does not stand in for the transition's own tile", () => {
+  const nodes = nodesOf(compile("builder.move_to_tile({ x: 4, y: 12 });\nbuilder.travel({ x: 3, y: 12 });"));
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId]),
+    [
+      ["n01", "move_to_tile"],
+      ["auto_walk_02", "move_to_tile"],
+      ["n03", "travel"],
+    ],
+  );
+});
+
+test("a plan with no transition is exactly the plan the script wrote", () => {
+  const nodes = nodesOf(
+    compile(WATER_BY_DOOR, {
+      enabledActionIds: ["move_to_tile", "water_crop"],
+      cropTargets: [crop("crop_01", 11, 10)],
+    }),
+  );
+  assert.deepEqual(nodes, [
+    {
+      nodeId: "n01",
+      actionId: "move_to_tile",
+      arguments: { x: { type: "integer", canonicalValue: "11" }, y: { type: "integer", canonicalValue: "10" } },
+      dependsOn: [],
+      bindings: {},
+    },
+    {
+      nodeId: "n02",
+      actionId: "water_crop",
+      arguments: {
+        x: { type: "integer", canonicalValue: "11" },
+        y: { type: "integer", canonicalValue: "10" },
+        expectedTargetId: { type: "string", canonicalValue: "crop_01" },
+      },
+      dependsOn: ["n01"],
+      bindings: {},
+    },
+  ]);
+});
+
 test("the program a script produced passes the real Body Program validator", () => {
   const result = compile(WATER_BY_DOOR, {
     enabledActionIds: ["move_to_tile", "water_crop"],
