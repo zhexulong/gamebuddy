@@ -718,10 +718,12 @@ test.describe("installation panel: its actions are never behind its own scroll",
   /**
    * The panel's position on a fresh mount, recorded rather than asserted.
    *
-   * This is a second defect with its own cause - the Game surface stacks a lot of
-   * content above the panel - and it is not repaired by letting the panel scroll.
-   * The measurement is kept here so the reachability claim above is not mistaken
-   * for "the player finds the panel without scrolling".
+   * While no installation is registered the panel leads the surface's content, so
+   * this reading is what says it still does: the number that matters is not the
+   * panel's own height but how far the surface's scroller has to travel to reach it.
+   * Kept as a record beside the first-viewport gate below, so a change that pushes
+   * the panel back under the guide shows up in a printed reading as well as in a
+   * failed assertion.
    */
   test("records where the panel sits on a fresh mount", async ({ page }) => {
     const answers = answersFor(SCENARIOS[3]!);
@@ -741,5 +743,106 @@ test.describe("installation panel: its actions are never behind its own scroll",
       `fresh mount: 400x800 top=${wide!.top}px (${(wide!.top / wide!.viewport.height).toFixed(2)} viewports), scrollTop ${wide!.scrollTopRequired}; ` +
         `1440x900 top=${desktop!.top}px, scrollTop ${desktop!.scrollTopRequired}`,
     );
+  });
+
+  /**
+   * A fresh session's first viewport has to hold a step that can succeed.
+   *
+   * Measured at 400x800 before this change, in the state a first run opens in (the
+   * Host holds no installation, so its projection reads `prerequisites: unknown` and
+   * the scan finds nothing): the guide led, its second control `Activate companion`
+   * sat at y=270..314 inside the 800 px window, and pressing it was refused - "Companion
+   * play needs a Stardew Valley installation set up for this session, and none is yet".
+   * The one control that can act in that state, the panel's `Choose game folder`, sat at
+   * y=1502..1546: 702 px below the fold and 1188 px below the control that refused. The
+   * first viewport therefore offered two controls that could only fail and none that could
+   * work - `AGENTS.md`'s "zero forward path", on the product's first screen.
+   *
+   * The gate asks the layout, not a list written here: which enabled controls are fully
+   * inside the window on a fresh mount, and is the step the guide leads with painted after
+   * the step it depends on. A control added, moved or newly disabled changes the answer
+   * without this file changing.
+   */
+  test("a fresh session's first viewport holds the step that can succeed", async ({ page }) => {
+    const answers = answersFor(SCENARIOS.find((scenario) => scenario.state === "no-candidates")!);
+    // The folder picker is the step this state's first viewport must offer, and registering
+    // through it is what "advances the flow" means: the panel states the registration and
+    // hands the surface the admitted installation.
+    answers.picker = body({ apiVersion: 1, status: "registered" });
+    await mountRoutes(page, answers);
+    await page.setViewportSize({ width: 400, height: 800 });
+    await page.goto(`http://127.0.0.1:4173/#profile=composed-reference-game&boot=${token}`);
+    await openGameSurface(page);
+    await expect(panel(page)).toHaveAttribute("data-state", "no-candidates", { timeout: 15_000 });
+    await page.waitForTimeout(150);
+
+    const reading = await page.evaluate(() => {
+      const round = (value: number) => Math.round(value);
+      const surface = document.querySelector<HTMLElement>('[data-testid="game-surface"]');
+      const content = surface?.querySelector<HTMLElement>(".surface-content");
+      const install = document.querySelector<HTMLElement>(".game-installation-panel");
+      const guide = document.querySelector<HTMLElement>('[data-testid="game-start-guide"]');
+      const name = (node: HTMLElement) =>
+        (node.getAttribute("aria-label") ?? node.textContent ?? "").replace(/\s+/gu, " ").trim();
+      const box = (node: Element | null) => {
+        if (node === null) return null;
+        const rect = node.getBoundingClientRect();
+        return { top: round(rect.top), bottom: round(rect.bottom) };
+      };
+      // Every control the player can press on this surface, and whether it is wholly inside
+      // the first viewport. Disabled controls are not steps: they cannot advance anything.
+      const enabled = [...(content?.querySelectorAll<HTMLElement>("button, a[href], input, select, textarea") ?? [])]
+        .filter((control) => control.getClientRects().length > 0)
+        .filter((control) => !("disabled" in control) || control.disabled !== true)
+        .map((control) => {
+          const rect = control.getBoundingClientRect();
+          return {
+            name: name(control),
+            inInstallationPanel: install !== null && install.contains(control),
+            inFirstViewport: rect.top >= -1 && rect.bottom <= window.innerHeight + 1 && rect.left >= -1,
+            top: round(rect.top),
+            bottom: round(rect.bottom),
+          };
+        });
+      return {
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        viewportHeight: window.innerHeight,
+        enabled,
+        installation: box(install),
+        guideTop: box(guide)?.top ?? null,
+      };
+    });
+    record(
+      `first viewport: ${reading.enabled.filter((control) => control.inFirstViewport).length} enabled control(s) inside 0..${reading.viewportHeight}, ` +
+        `installation top=${reading.installation?.top ?? "absent"}, guide top=${reading.guideTop ?? "absent"}`,
+    );
+    console.log(`[panel-actions] first viewport ${JSON.stringify(reading)}`);
+
+    // The step before any other: the panel that registers the installation is on the surface.
+    expect(reading.installation, "the installation panel is laid out").not.toBeNull();
+    expect(reading.guideTop, "the guide is laid out").not.toBeNull();
+
+    // 1. The first viewport holds at least one control that can act, and it is the
+    //    installation step's own - not a control the Host will refuse for the missing
+    //    registration.
+    const actionable = reading.enabled.filter((control) => control.inFirstViewport && control.inInstallationPanel);
+    expect(
+      actionable.map((control) => control.name),
+      `an enabled control of the installation step is inside the ${reading.viewportHeight} px viewport (read: ${JSON.stringify(reading.enabled)})`,
+    ).not.toEqual([]);
+
+    // 2. The step that depends on the registration is not offered before it: the guide,
+    //    whose step 1 is "enable companion play", is painted after the panel.
+    expect(
+      reading.guideTop!,
+      `the guide leads at y=${reading.guideTop} over an installation step at y=${reading.installation!.top}`,
+    ).toBeGreaterThan(reading.installation!.top);
+
+    // 3. And the control really acts: pressing it registers the folder and the panel says so.
+    const picker = panel(page).getByRole("button", { name: labels.gameInstallationChooseFolder, exact: true });
+    await expect(picker).toBeEnabled();
+    await picker.click();
+    await expect(panel(page)).toHaveAttribute("data-state", "confirmed", { timeout: 15_000 });
+    await expect(panel(page).locator(".installation-state").first()).toHaveText(labels.gameInstallationConfirmed);
   });
 });

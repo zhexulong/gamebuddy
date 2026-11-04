@@ -2012,7 +2012,7 @@ test("an activation refused for a missing installation reads as the prerequisite
   // the player supplies it.
   expect(measurement.tone).toBe("info");
   await expect(statusLine).toContainText("Companion play needs a Stardew Valley installation");
-  await expect(statusLine).toContainText("Choose your game folder in Game installation below");
+  await expect(statusLine).toContainText("Choose your game folder in Game installation on this page");
   await expect(panel).not.toContainText("Companion play could not be enabled");
   // It is really laid out inside step 1: a line that renders, fits the step, and is not a zero-height ghost.
   expect(measurement.textLength).toBeGreaterThan(0);

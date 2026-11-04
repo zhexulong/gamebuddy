@@ -49,7 +49,7 @@ const en = {
   gameActivationInProgress: "Enabling companion play…",
   gameActivationFailed: "Companion play could not be enabled. The latest authoritative game state is shown.",
   gameActivationNotConfigured:
-    "Companion play needs a Stardew Valley installation set up for this session, and none is yet. Choose your game folder in Game installation below, then enable companion play again.",
+    "Companion play needs a Stardew Valley installation set up for this session, and none is yet. Choose your game folder in Game installation on this page, then enable companion play again.",
   gameActivationUnavailable: "This build cannot enable companion play. Update GameBuddy or reload the page.",
   gameActivationRequired: "Companion play is not ready yet. Enable companion play, then try again.",
   gameStop: "Stop game",
@@ -991,7 +991,7 @@ const en = {
   gameStartGuide: "Getting started together",
   gameGuideStepOneTitle: "Start Stardew",
   gameGuideStepOneDetail:
-    "If you have not chosen your game folder yet, choose it under Game installation on this page, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
+    "If you have not chosen your game folder yet, choose it in Game installation on this page, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
   // What each of step 1's two controls is for. They run in one order only - the
   // Host refuses setup before activation - and that order used to reach the
   // player only as a refusal after they had already picked the wrong one.
@@ -1151,7 +1151,7 @@ const zh: Messages = {
   gameActivationInProgress: "正在启用伙伴陪玩…",
   gameActivationFailed: "无法启用伙伴陪玩；当前显示的是最新权威游戏状态。",
   gameActivationNotConfigured:
-    "伙伴陪玩需要先确定《星露谷物语》的安装位置，而现在还没有。请在下面的「游戏安装」里选择游戏文件夹，然后再次启用伙伴陪玩。",
+    "伙伴陪玩需要先确定《星露谷物语》的安装位置，而现在还没有。请在本页的「游戏安装」里选择游戏文件夹，然后再次启用伙伴陪玩。",
   gameActivationUnavailable: "当前版本无法启用伙伴陪玩。请更新 GameBuddy 或重新加载页面。",
   gameActivationRequired: "伙伴陪玩尚未准备完成。请先启用伙伴陪玩，然后重试。",
   gameStop: "停止游戏",

@@ -1053,6 +1053,121 @@ export function GameSurface({
     setEndgameConfirmArmed(false);
   }, [endgameGeneration, sessionControls.endgameAvailable]);
   const gameSyncing = ready && game !== null && game.game.connectionStatus === "syncing";
+  /**
+   * Whether the Host holds a registered Stardew installation for this session.
+   *
+   * `prerequisites.status` turns `met` the moment such a registration exists - before any
+   * activation (`../game-lifecycle-controls`) - so it is the one published fact that says
+   * whether the game's folder is known yet.
+   */
+  const installationRegistered = game !== null && game.game.prerequisites.status === "met";
+  const gameStatePanel = (
+    <GameStatePanel
+      key="game-state-panel"
+      game={game}
+      labels={labels}
+      integrationId={STARDEW_GAME_INTEGRATION_ID}
+      syncing={gameSyncing}
+      lifecycle={{
+        activation: {
+          available: gameActivationAvailable,
+          active: gameActivationActive,
+          failure: gameActivationFailure,
+          notConfigured: gameActivationNotConfigured,
+          unavailable: gameActivationUnavailable,
+        },
+        setup: {
+          available: gameSetupAvailable,
+          active: gameSetupActive,
+          failure: gameSetupFailure,
+          notStaged: gameSetupNotStaged,
+        },
+        launch: {
+          available: gameLaunchAvailable,
+          active: gameLaunchActive,
+          failure: gameLaunchFailure,
+          notStaged: gameLaunchNotStaged,
+        },
+      }}
+      session={{
+        controls: sessionControls,
+        stop: { active: gameStopActive, failure: gameStopFailure },
+        disconnect: { active: disconnectActive, failure: disconnectFailure },
+        endgame: {
+          active: gameEndgameActive,
+          failure: gameEndgameFailure,
+          confirmArmed: endgameConfirmArmed,
+        },
+      }}
+      resume={{
+        active: gameResumeActive,
+        failure: gameResumeFailure,
+        unavailable: gameResumeUnavailable,
+        cancelActive: gameResumeCancelActive,
+        cancelFailure: gameResumeCancelFailure,
+      }}
+      reopen={{
+        active: gameReopenActive,
+        failure: gameReopenFailure,
+        unavailable: gameReopenUnavailable,
+      }}
+      create={{
+        active: gameCreateActive,
+        failure: gameCreateFailure,
+        unavailable: gameCreateUnavailable,
+        formOpen: createFormOpen,
+        continuityIdentity: continuityIdentityInput,
+      }}
+      cabin={cabinView}
+      handlers={{
+        activate: () => void handleLifecycleActivate(),
+        setup: () => void handleGameSetup(),
+        launch: () => void handleGameLaunch(),
+        stop: () => void handleGameStop(),
+        disconnect: () => void handleDisconnect(),
+        endgame: () => void handleGameEndgame(),
+        armEndgame: () => setEndgameConfirmArmed(true),
+        cancelEndgame: () => setEndgameConfirmArmed(false),
+        resume: () => void handleGameResume(),
+        resumeCancel: () => void handleGameResumeCancel(),
+        reopen: () => void handleGameReopen(),
+        create: () => void handleGameCreate(),
+        toggleCreateForm: () => setCreateFormOpen((open) => !open),
+        setContinuityIdentity: setContinuityIdentityInput,
+        confirmCabin: (choice) => void handleCabinConfirmation(choice),
+        refreshCabins: () => void readCabins(true),
+      }}
+    />
+  );
+  const installationDiscovery = (
+    <StardewInstallationDiscovery
+      key="installation-discovery"
+      api={composedApi}
+      labels={labels}
+      // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
+      // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
+      // the folder had been accepted, and only a reload cleared it.
+      onAdmitted={() => void rereadGame()}
+    />
+  );
+  /**
+   * The surface's getting-going flow, in the order this state reads in.
+   *
+   * With no installation registered, every control the guide's first step offers is one the Host
+   * can only refuse: activation reserves and stages the owned Player Host *against that
+   * registration* and answers `stardew_bootstrap_registration_unavailable` without one, and setup
+   * reports the same prerequisite. The one step that can succeed in that state is choosing the
+   * game folder, which is this panel's - so the panel leads and the guide follows it. Once a
+   * registration exists the guide leads and the panel is the setting it was.
+   *
+   * Measured at 400x800 with no installation before this: the guide's "Enable companion play" sat
+   * at y=270..314 inside the 800 px window and refused, while the panel's "Choose game folder" - the
+   * only control that could act - sat at y=1522, 722 px below the fold. The first viewport held two
+   * controls that could only fail and none that could work.
+   */
+  const gettingGoing = installationRegistered
+    ? [gameStatePanel, installationDiscovery]
+    : [installationDiscovery, gameStatePanel];
   if (!selected) return null;
 
   return (
@@ -1075,93 +1190,11 @@ export function GameSurface({
           {arrivalNotice}
         </p>
       )}
-      {/* Installation discovery is a sibling of the Game state region,
-          never inside it, so the region's scope stays exactly its own
-          controls (its Retry/Cancel would otherwise make the region's
-          strict-mode queries ambiguous). */}
-      <GameStatePanel
-        game={game}
-        labels={labels}
-        integrationId={STARDEW_GAME_INTEGRATION_ID}
-        syncing={gameSyncing}
-        lifecycle={{
-          activation: {
-            available: gameActivationAvailable,
-            active: gameActivationActive,
-            failure: gameActivationFailure,
-            notConfigured: gameActivationNotConfigured,
-            unavailable: gameActivationUnavailable,
-          },
-          setup: {
-            available: gameSetupAvailable,
-            active: gameSetupActive,
-            failure: gameSetupFailure,
-            notStaged: gameSetupNotStaged,
-          },
-          launch: {
-            available: gameLaunchAvailable,
-            active: gameLaunchActive,
-            failure: gameLaunchFailure,
-            notStaged: gameLaunchNotStaged,
-          },
-        }}
-        session={{
-          controls: sessionControls,
-          stop: { active: gameStopActive, failure: gameStopFailure },
-          disconnect: { active: disconnectActive, failure: disconnectFailure },
-          endgame: {
-            active: gameEndgameActive,
-            failure: gameEndgameFailure,
-            confirmArmed: endgameConfirmArmed,
-          },
-        }}
-        resume={{
-          active: gameResumeActive,
-          failure: gameResumeFailure,
-          unavailable: gameResumeUnavailable,
-          cancelActive: gameResumeCancelActive,
-          cancelFailure: gameResumeCancelFailure,
-        }}
-        reopen={{
-          active: gameReopenActive,
-          failure: gameReopenFailure,
-          unavailable: gameReopenUnavailable,
-        }}
-        create={{
-          active: gameCreateActive,
-          failure: gameCreateFailure,
-          unavailable: gameCreateUnavailable,
-          formOpen: createFormOpen,
-          continuityIdentity: continuityIdentityInput,
-        }}
-        cabin={cabinView}
-        handlers={{
-          activate: () => void handleLifecycleActivate(),
-          setup: () => void handleGameSetup(),
-          launch: () => void handleGameLaunch(),
-          stop: () => void handleGameStop(),
-          disconnect: () => void handleDisconnect(),
-          endgame: () => void handleGameEndgame(),
-          armEndgame: () => setEndgameConfirmArmed(true),
-          cancelEndgame: () => setEndgameConfirmArmed(false),
-          resume: () => void handleGameResume(),
-          resumeCancel: () => void handleGameResumeCancel(),
-          reopen: () => void handleGameReopen(),
-          create: () => void handleGameCreate(),
-          toggleCreateForm: () => setCreateFormOpen((open) => !open),
-          setContinuityIdentity: setContinuityIdentityInput,
-          confirmCabin: (choice) => void handleCabinConfirmation(choice),
-          refreshCabins: () => void readCabins(true),
-        }}
-      />
-      <StardewInstallationDiscovery
-        api={composedApi}
-        labels={labels}
-        // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
-        // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
-        // the folder had been accepted, and only a reload cleared it.
-        onAdmitted={() => void rereadGame()}
-      />
+      {/* Installation discovery is a sibling of the Game state region, never inside it, so the
+          region's scope stays exactly its own controls (its Retry/Cancel would otherwise make
+          the region's strict-mode queries ambiguous). Which of the two leads is this state's
+          reading order, not a fixed one: see `gettingGoing` above. */}
+      {gettingGoing}
       {/* The Game Agent's own model settings, on the Game surface (design/
           architecture/product-surfaces.md); the Host stores this half of
           settings/profiles separately from Chat's. */}

@@ -316,7 +316,10 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
   };
   return (
     <section className="game-installation-panel" aria-label={labels.gameInstallationAria} data-state={state}>
-      <h4 className="section-subtitle">{labels.gameInstallationTitle}</h4>
+      {/* The section's own title, at the level of its sibling panels' (`SurfaceModelSettings`,
+          `GamePlayerSettings`): while no installation is registered this block leads the surface,
+          and an `h4` above the guide's `h3`s would break the outline it leads. */}
+      <h3 className="section-subtitle">{labels.gameInstallationTitle}</h3>
       {/* `data-state` above stays the typed state the tests assert; the sentence
           a player reads is always the localized outcome (design/104 §10). */}
       <p className="installation-state" role="status">
