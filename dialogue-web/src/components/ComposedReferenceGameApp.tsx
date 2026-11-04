@@ -54,6 +54,9 @@ import { markTurn, observeTurnEvent } from "./turn-timings";
 const RETRY_FIRST_MS = 1_000;
 const RETRY_CEILING_MS = 5_000;
 
+/** Every message-level mutation this surface can have in flight, and show as busy on its own row. */
+type ChatMutationKind = "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+
 /**
  * True when a failed read says something about the conversation rather than about the link.
  *
@@ -101,7 +104,7 @@ export function ComposedReferenceGameApp() {
   // commands (regenerate mints a fresh idempotency key per click). The ref is the
   // synchronous single-flight guard, the state is the projection the surface shows.
   const [chatMutation, setChatMutation] = useState<Readonly<{
-    kind: "swipe" | "swipeRemove" | "regenerate" | "opening" | "rewind" | "edit" | "delete";
+    kind: ChatMutationKind;
     handle: string;
   }> | null>(null);
   // The rewind arm: the message the player asked to cut back to, and the order they were shown it
@@ -132,17 +135,21 @@ export function ComposedReferenceGameApp() {
    */
   const [sendFailure, setSendFailure] = useState<string | null>(null);
   /**
-   * The last variant discard this surface was refused, in the refusal's own sentence.
+   * The last message mutation this surface was refused, in the refusal's own sentence.
    *
-   * A discard is the one mutation here whose control can VANISH on success (the reply falls back to a
-   * single variant), so a refusal cannot be left to the row: the player pressed a button, the variant is
-   * still there, and nothing said why. The Host refuses the last-position case by name
-   * (`chat_swipe_last_variant`) and the catalogue's sentence for it is what this line carries - the code
-   * is contract vocabulary and never printed (see `composed-problem-view.ts`). It is spent by the next
-   * arm of the same control and by adopting another Chat, because past either point it describes a press
-   * that no longer stands.
+   * Every message-level mutation here - the rewind, the delete, the in-place edit, the regenerate,
+   * the swipe, the opening variant, the variant discard - ends in an authoritative reread, and that
+   * reread is what made the silence invisible: it restores the transcript the Host still holds, so a
+   * refused press simply flickered and reverted and the player, who caused it, was told nothing.
+   * Only a reread that ALSO failed reached them, and that replaced the whole surface.
+   *
+   * So the sentence stands beside the conversation, which stays readable underneath: a refusal is a
+   * fact about one press. The words are the catalogue's for the code the Host named
+   * (`composed-problem-view.ts`) - the code itself is contract vocabulary and is never printed. It is
+   * spent by the next message mutation (`beginMessageMutation`) and by adopting another Chat, because
+   * past either point it describes a press that no longer stands.
    */
-  const [swipeRemoveNotice, setSwipeRemoveNotice] = useState<string | null>(null);
+  const [messageMutationNotice, setMessageMutationNotice] = useState<string | null>(null);
   // A created Chat whose chosen opening could not be committed. The Chat itself is durable and the
   // player is landed in it either way, so this is the one fact left to state: it opens on the
   // default opening. It clears when another switch lands.
@@ -746,6 +753,21 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
+   * Takes the single-flight latch and the busy projection for one message mutation, and spends the last
+   * refusal with them.
+   *
+   * The clear belongs here because this is the seam every message-level mutation shares - the swipe, the
+   * opening variant, the regenerate, the rewind, the delete, the discard and the edit - so none of them can
+   * leave a sentence about a press it has already superseded on screen, for the same reason
+   * `beginTurnMutation` spends a refused send's own line.
+   */
+  const beginMessageMutation = (kind: ChatMutationKind, handle: string): void => {
+    chatMutationRef.current = true;
+    setMessageMutationNotice(null);
+    setChatMutation(Object.freeze({ kind, handle }));
+  };
+
+  /**
    * Swipe selection and regenerate are Chat-owned mutations the reference
    * surface offered and the composed shell did not: with the reference entry
    * gone they live here. Both take their own idempotency key and never append a
@@ -761,8 +783,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "swipe" as const, handle: messageHandle }));
+    beginMessageMutation("swipe", messageHandle);
     try {
       await tavernApiRef.current.selectSwipe(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, direction },
@@ -770,6 +791,9 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      // Said out loud before the reread: the reread restores the variant the Host still holds, so
+      // without this line the row flickers back with nothing explaining the press.
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -791,8 +815,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "opening" as const, handle: messageHandle }));
+    beginMessageMutation("opening", messageHandle);
     try {
       await managementPipelineApiRef.current.selectOpeningVariant(
         { apiVersion: 1, selectionGeneration: selection.generation, direction },
@@ -800,6 +823,7 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -825,8 +849,7 @@ export function ComposedReferenceGameApp() {
     // transcript never leaves the pre-regenerate variant.
     const idempotencyKey = newIdempotencyKey();
     if (beginTurnMutation(idempotencyKey, current) === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "regenerate" as const, handle: messageHandle }));
+    beginMessageMutation("regenerate", messageHandle);
     try {
       await tavernApiRef.current.regenerate(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle },
@@ -835,6 +858,7 @@ export function ComposedReferenceGameApp() {
       await rereadChat();
       startPolling();
     } catch (error) {
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -881,8 +905,7 @@ export function ComposedReferenceGameApp() {
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     setRewindArm(null);
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "rewind" as const, handle: messageHandle }));
+    beginMessageMutation("rewind", messageHandle);
     try {
       await tavernApiRef.current.rewind(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
@@ -890,6 +913,7 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -933,8 +957,7 @@ export function ComposedReferenceGameApp() {
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     setDeleteArm(null);
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "delete" as const, handle: messageHandle }));
+    beginMessageMutation("delete", messageHandle);
     try {
       await tavernApiRef.current.delete(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder },
@@ -942,6 +965,7 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -965,7 +989,8 @@ export function ComposedReferenceGameApp() {
   }, [swipeRemoveArm, mountedTranscript]);
 
   const handleSwipeRemoveArm = (messageHandle: string, targetIndex: number): void => {
-    setSwipeRemoveNotice(null);
+    // Arming is a new intent, so the last refusal's sentence - about a different press - goes with it.
+    setMessageMutationNotice(null);
     setRewindArm(null);
     setDeleteArm(null);
     setSwipeRemoveArm(Object.freeze({ handle: messageHandle, targetIndex }));
@@ -989,8 +1014,7 @@ export function ComposedReferenceGameApp() {
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     setSwipeRemoveArm(null);
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "swipeRemove" as const, handle: messageHandle }));
+    beginMessageMutation("swipeRemove", messageHandle);
     try {
       await tavernApiRef.current.removeSwipeVariant(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, targetIndex },
@@ -1000,7 +1024,7 @@ export function ComposedReferenceGameApp() {
     } catch (error) {
       // The refusal's own sentence, said out loud before the reread: a variant that did not leave is a
       // fact about this press, and the words for it already exist in the catalogue.
-      setSwipeRemoveNotice(problemView(error, messages(current.locale)).detail);
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -1023,8 +1047,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    chatMutationRef.current = true;
-    setChatMutation(Object.freeze({ kind: "edit" as const, handle: messageHandle }));
+    beginMessageMutation("edit", messageHandle);
     try {
       await tavernApiRef.current.edit(
         { apiVersion: 1, selectionGeneration: selection.generation, messageHandle, expectedOrder, text },
@@ -1032,6 +1055,10 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      // The editor stays open on the words the player typed (the row closes it only on the edit that
+      // landed), so the sentence is what stands beside them: "nothing happened" with no reason is what
+      // sent players looking for a failure the page never named.
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
@@ -1068,7 +1095,7 @@ export function ComposedReferenceGameApp() {
     // The refusal's sentence described an attempt in the conversation this mount is leaving, so it
     // is not a fact about the one it adopts.
     setSendFailure(null);
-    setSwipeRemoveNotice(null);
+    setMessageMutationNotice(null);
     const base = createReferencePipelineSession(root.chat);
     const session = root.chat.eventStream === null ? base : base.resetEventCheckpoint();
     setMountedChatRevision((revision) => revision + 1);
@@ -1445,7 +1472,7 @@ export function ComposedReferenceGameApp() {
                   notice={
                     pollFailure
                       ? labels().chatFailed
-                      : (streamNotice ?? sendFailure ?? swipeRemoveNotice ?? terminalTurnNotice ?? openingNotice)
+                      : (streamNotice ?? sendFailure ?? messageMutationNotice ?? terminalTurnNotice ?? openingNotice)
                   }
                   arrivalNotice={arrivalReads.chatArrivalNotice}
                   replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
