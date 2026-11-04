@@ -2134,7 +2134,20 @@
     overflow-wrap: anywhere;
   }
 
-  /* Label/value read-back rows: the label is quiet, the value is the fact. */
+  /* Label/value read-back rows: the label is quiet, the value is the fact.
+
+   The term is a WORD and it does not break inside itself. Both children default
+   to `flex-shrink: 1` with the automatic minimum size, and for text that minimum
+   is its min-content width - one character, in CJK - so the row took its free
+   space out of the term as readily as out of the value: measured at 400x800 on
+   the activated connection's own row (the value
+   `openai-compatible/deepseek-v4.1-flash-2026-01-25` beside the term `当前连接`),
+   the term measured 46.02 px for 52 px of text and broke into a 39 px line box
+   and a 13 px one - "当前连" / "接" - while the value beside it merely wrapped.
+
+   `white-space: nowrap` makes the term's min-content its own word, so the row can
+   no longer shrink it and the value - which carries `overflow-wrap: anywhere` -
+   is the part that gives way, inside its own box. */
   .management-settings-details {
     display: grid;
     gap: 6px;
@@ -2151,6 +2164,7 @@
   .management-settings-details dt {
     font-size: 13px;
     color: var(--text-secondary);
+    white-space: nowrap;
   }
 
   .management-settings-details dd {
