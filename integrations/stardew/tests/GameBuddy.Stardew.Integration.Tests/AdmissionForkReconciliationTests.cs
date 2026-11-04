@@ -41,7 +41,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.crabpotactions.cs"] = 1,
         ["farmhandexecutioncontroller.craftingactions.cs"] = 1,
         ["farmhandexecutioncontroller.facilityactions.cs"] = 5,
-        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 11,
+        ["farmhandexecutioncontroller.farmingconstructionactions.cs"] = 12,
         ["farmhandexecutioncontroller.gatheringactions.cs"] = 2,
         ["farmhandexecutioncontroller.itemtileactions.cs"] = 3,
         ["farmhandexecutioncontroller.lifecycleactions.cs"] = 1,

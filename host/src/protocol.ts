@@ -1067,6 +1067,7 @@ export type ExecutionRequest = Readonly<{
     | "place_crab_pot"
     | "bait_crab_pot"
     | "clear_debris"
+    | "break_resource_clump"
     | "machine_inspect"
     | "machine_load"
     | "machine_collect_output"
@@ -2677,6 +2678,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "place_crab_pot" &&
     value.action !== "bait_crab_pot" &&
     value.action !== "clear_debris" &&
+    value.action !== "break_resource_clump" &&
     value.action !== "machine_inspect" &&
     value.action !== "machine_load" &&
     value.action !== "machine_collect_output" &&
@@ -3107,6 +3109,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
         : value.action === "bait_crab_pot"
           ? "invalid_bait_crab_pot_target"
           : "invalid_crab_pot_target";
+  } else if (value.action === "break_resource_clump") {
+    // The clump's own native switch decides which tool it needs, so the wire carries no `slot`: the handler resolves,
+    // selects and restores the tool itself.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_clump_target";
   } else if (value.action === "clear_debris") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
@@ -3839,6 +3853,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "place_crab_pot" ||
       value.action === "bait_crab_pot" ||
       value.action === "clear_debris" ||
+      value.action === "break_resource_clump" ||
       value.action === "machine_inspect" ||
       value.action === "machine_load" ||
       value.action === "machine_collect_output" ||

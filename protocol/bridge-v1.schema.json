@@ -5848,6 +5848,7 @@
               "action": {
                 "enum": [
                   "water_crop",
+                  "break_resource_clump",
                   "machine_inspect",
                   "machine_collect_output",
                   "npc_relationship",
@@ -6425,6 +6426,7 @@
             "place_crab_pot",
             "bait_crab_pot",
             "clear_debris",
+            "break_resource_clump",
             "machine_inspect",
             "machine_load",
             "machine_collect_output",

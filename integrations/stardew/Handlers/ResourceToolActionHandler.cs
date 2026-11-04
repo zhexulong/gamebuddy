@@ -29,6 +29,13 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "break_resource_clump" => this.executions.RequestLocalBreakResourceClump(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "chop_tree" => this.executions.RequestLocalChopTreeSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,

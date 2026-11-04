@@ -482,6 +482,11 @@ export function fixtureActions(action) {
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
   if (action === "clear_debris") return ["move_to_tile", "travel", "equip_tool", "clear_debris"];
+  // Same Given as `clear_debris` (one intact 2x2 `parentSheetIndex=752` ResourceClump on the Farm)
+  // because that is the only pre-attachment recipe that establishes a real clump. `equip_tool` is
+  // here for the action's own contract: it picks and restores the tool the CLUMP demands, so the
+  // slice proves it works while the actor is deliberately holding a different one.
+  if (action === "break_resource_clump") return ["move_to_tile", "travel", "equip_tool", "break_resource_clump"];
   if (action === "enter_exit") return ["move_to_tile", "enter_exit"];
   // The hold-absorption gate drives the till-soil contract and a follow-up at the same tile, so it runs in that world.
   if (action === "hold_absorption") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
@@ -970,6 +975,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("clear_hoedirt")) return "native_clear_hoedirt_v1";
   if (actions.includes("dig_artifact_spot")) return "native_dig_artifact_spot_v1";
   if (actions.includes("clear_debris")) return "native_clear_debris_resource_clump_v1";
+  if (action === "break_resource_clump") return "native_clear_debris_resource_clump_v1";
   if (actions.includes("refill_watering_can")) return "native_refill_watering_can_v1";
   if (actions.includes("water_pet_bowl")) return "native_water_pet_bowl_v1";
   if (actions.includes("water_slime_hutch_trough")) return "native_water_slime_hutch_trough_v1";

@@ -205,6 +205,35 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["expected_stamina_cost", "2"],
     ],
   },
+  break_resource_clump: {
+    // farmhandexecutioncontroller.farmingconstructionactions.cs ExecuteBreakResourceClump, composed from
+    // ToolActionEvidence.BreakResourceClump: a 2x2 boulder (672) cleared with the steel pickaxe its own native branch
+    // demands (`ResourceClump.performToolAction`: 672 needs a Pickaxe at upgrade 2), five swings from 10 health to 0,
+    // the clump gone from `location.resourceClumps` and the destroying swing's item drop observed.
+    reasonCode: "clump_broken",
+    fields: [
+      ["location", "Farm"],
+      ["target", "debris_0123456789abcdef"],
+      ["tile", "8,9"],
+      ["parent", "672"],
+      ["required_upgrade", "2"],
+      ["tool", "pickaxe"],
+      ["tool_selected", "pickaxe"],
+      ["slot", "3"],
+      ["tool_before", "axe"],
+      ["slot_before", "0"],
+      ["health_before", "10"],
+      ["health_after", "0"],
+      ["swings", "5"],
+      ["clump_removed", "true"],
+      ["drop_observed", "true"],
+      ["stamina_before", "100"],
+      ["stamina_after", "90"],
+      ["stamina_delta", "-10"],
+      ["expected_stamina_cost", "10"],
+      ["tool_restored", "axe"],
+    ],
+  },
   npc_relationship: {
     reasonCode: "npc_relationship_inspected",
     fields: [

@@ -319,6 +319,21 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             EmbodiedActorResource, "write", "arrived_at_destination",
             WatchdogMs: NavigationWatchdogMs)),
         E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(CarriedToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
+        // The same ResourceClumps, addressed the way every other tool action is now addressed: no `slot`, and the
+        // handler resolves, selects and restores the tool itself. `clear_debris` above still obeys the caller's slot
+        // and still needs the named slot to hold a usable tool, which is the contract that killed whole plan chains
+        // (4a4012db); this row is the shape those actions moved to.
+        //
+        // It declares NO `tool:` claim, and that is the honest registration rather than an omission: WHICH tool a clump
+        // needs is a property of the clump (`ResourceClump.performToolAction`, ResourceClump.cs:150-234 - 600 needs an
+        // Axe at upgrade 1, 602 an Axe at 2, 672 a Pickaxe at 2, 148/622 a Pickaxe at 3, 752-758 any Pickaxe), and a
+        // row that claimed one family would be wrong for every clump of the other. The requirement therefore travels
+        // with the TARGET, from the same one table the native switch is mirrored in, and the refusal is named
+        // `clump_tool_too_weak` instead of the slot-and-holding words the old contract used.
+        // `Experimental`, not `Published`: a gate descriptor is a promise that this action has its own live-run gate
+        // (check-stardew-action-promotion.mjs:150-156), and no live gate has been run for it. Promotion to
+        // LiveVerified is the parent's step and lands with that gate, the way move_placed_furniture's did.
+        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Target(), FarmhandActionLifecycle.Experimental, "debrisTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),

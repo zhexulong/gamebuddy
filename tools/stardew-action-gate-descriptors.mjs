@@ -780,6 +780,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
+  // `break_resource_clump` is registered Experimental in the Mod catalog and has a native-local
+  // slice: one ResourceClump cleared through `ResourceClump.performToolAction`, with the tool
+  // selected from the CLUMP's own switch and restored afterwards. Its Given is the clump world
+  // the `clear_debris` fixture already owns, so this entry adds a route, not a capability.
+  break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
 });
 
 /**

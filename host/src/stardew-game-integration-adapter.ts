@@ -1353,6 +1353,12 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             hasStaminaConservationEvidence(e),
         )
       );
+    case "break_resource_clump":
+      // farmhandexecutioncontroller.farmingconstructionactions.cs ExecuteBreakResourceClump: the clump is re-resolved by
+      // its own opaque identity after the swings and `clump_removed` is exactly "it left location.resourceClumps";
+      // `drop_observed` is the item-carrying debris the destroying swing left behind. Both are read from the location
+      // after the native call, and both are required - a clump that survived the swing cap settles `Uncertain`.
+      return receipt.reasonCode === "clump_broken" && hasBreakResourceClumpCompletionEvidence(detail);
     case "npc_relationship":
       // farmhandexecutioncontroller.machinesanimalsitemsactions.cs:574-578: a read-only
       // inspection that mints Succeeded from the live Friendship it just read.
@@ -3121,6 +3127,53 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
     // durability_before may be is the rock's whole population (1-25), no longer just the one-swing value 1.
     evidence.durability_after === "removed" &&
     evidence.removed === "true" &&
+    hasStaminaConservationEvidence(evidence)
+  );
+}
+
+function hasBreakResourceClumpCompletionEvidence(detail: string): boolean {
+  const evidence = parseSemicolonEvidence(detail);
+  if (evidence === null) return false;
+  const expectedKeys = [
+    "location",
+    "target",
+    "tile",
+    "parent",
+    "required_upgrade",
+    "tool",
+    "tool_selected",
+    "slot",
+    "tool_before",
+    "slot_before",
+    "health_before",
+    "health_after",
+    "swings",
+    "clump_removed",
+    "drop_observed",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
+    "tool_restored",
+  ];
+  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence)) return false;
+  const tool = evidence.tool;
+  return (
+    hasBoundedNonemptyEvidenceValue(evidence.location) &&
+    hasOpaqueIdEvidenceValue(evidence.target) &&
+    hasTileEvidenceValue(evidence.tile) &&
+    integerEvidenceValue(evidence.parent) !== null &&
+    integerEvidenceValue(evidence.required_upgrade) !== null &&
+    // The family is the CLUMP's own answer (ResourceClump.performToolAction branches per parentSheetIndex), so the
+    // selection must be the tool the target demanded - not one the caller named.
+    (tool === "axe" || tool === "pickaxe") &&
+    hasToolSelectionEvidence(evidence, tool) &&
+    integerEvidenceValue(evidence.swings) !== null &&
+    (integerEvidenceValue(evidence.swings) ?? 0) >= 1 &&
+    finiteEvidenceValue(evidence.health_before) !== null &&
+    finiteEvidenceValue(evidence.health_after) !== null &&
+    evidence.clump_removed === "true" &&
+    evidence.drop_observed === "true" &&
     hasStaminaConservationEvidence(evidence)
   );
 }
