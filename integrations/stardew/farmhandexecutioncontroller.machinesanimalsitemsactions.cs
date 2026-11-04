@@ -773,6 +773,161 @@ internal sealed partial class ExecutionManager
             string.Equals(BuildPetTargetId(location, (int)candidate.Tile.X, (int)candidate.Tile.Y, candidate), expectedTargetId, StringComparison.Ordinal)
             && (!candidate.lastPetDay.TryGetValue(Game1.player.UniqueMultiplayerID, out int lastDay) || lastDay != Game1.Date.TotalDays));
 
+    /// <summary>
+    /// Pets one FARM animal (barn/coop stock, `location.animals`) through `FarmAnimal.pet(who)` (FarmAnimal.cs:693) —
+    /// the same native call the player's own click route makes, not a re-implementation of its effects.
+    ///
+    /// <para>
+    /// This is `pet_farm_animal`, and it is NOT `pet_animal`: that action pets the household `Pet` (cat/dog) through
+    /// `Pet.checkAction` and reads `lastPetDay` / `grantedFriendshipForPet`. The two are different subject classes with
+    /// different native seams, different day markers and a different friendship amount, so they are two actions.
+    /// </para>
+    ///
+    /// <para>
+    /// Every no-op branch of the seam is refused BY NAME before it is called, because the seam itself reports nothing:
+    /// it returns calmly after showing a dialogue, after consuming a held Golden Animal Cracker, or after opening
+    /// `AnimalQueryMenu`, and a caller holding only a receipt would believe the animal had been petted. Branches read
+    /// at FarmAnimal.cs:695-795 and carried by <see cref="FarmAnimalPetRefusal"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// Everything the seam DOES apply is synchronous (friendship, happiness, `wasPet`), so unlike `pet_animal` / 
+    /// `collect_animal_product` this action needs no pending activity slot: the postcondition is read in the same call
+    /// that caused it.
+    /// </para>
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalPetFarmAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
+            return existing;
+
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // Scope-bound actor proof. Authorization precedes the world/location readiness checks: a caller that is not the
+        // scope-bound actor is refused for that reason rather than for where it happens to be standing.
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
+
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        // Shared mechanical admission (identity → actionability → deadline → body exclusivity). A farmer paused mid
+        // animation, eating, in a menu or in a cutscene is refused or parked HERE, which is also what closes the seam's
+        // own `who.FarmerSprite.PauseForSingleAnimation` early return (:697): that branch is reached only by an actor
+        // admission has already let through as Idle.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
+            return admissionRefusal;
+
+        GameLocation location = Game1.player.currentLocation;
+        FarmAnimal? animal = ResolveFarmAnimalPetTarget(location, expectedTargetId);
+        if (animal is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_animal_target_gone", $"target={expectedTargetId}");
+        // Every position-INDEPENDENT refusal is decided BEFORE the geometry, so the actor is not sent walking to an
+        // animal it could not pet on arrival, and re-decided again in the execution body because the walk takes ticks.
+        if (FarmAnimalPetRefusal(Game1.player, animal) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal, $"target={expectedTargetId};animal={animal.myID.Value};time_of_day={Game1.timeOfDay}");
+
+        // Out of the native interaction radius, walk in rather than refuse -- the same ruling the tool family and
+        // `pet_animal` follow: an animal published inside the radius-6 discovery window and refused past radius 1
+        // would be unreachable without the Agent moving the actor itself and re-observing between every step, and a
+        // barn animal wandering is the normal case rather than the exception.
+        int animalTileX = (int)animal.Tile.X;
+        int animalTileY = (int)animal.Tile.Y;
+        if (!IsTileWithinChebyshevRadius(Game1.player, animalTileX, animalTileY, 1))
+            return this.TryBeginToolApproach(requestId, executionId, "pet_farm_animal", location, animalTileX, animalTileY, expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePetFarmAnimal(arrivalExecutionId, arrivalRequestId, expectedTargetId), nowMs, requestedDeadlineMs);
+
+        return this.ExecutePetFarmAnimal(executionId, requestId, expectedTargetId);
+    }
+
+    /// <summary>
+    /// The farm-animal pet's position-independent refusals as ONE predicate, so the admission path and the execution
+    /// body cannot disagree about when `pet` will really pet. Each code names the branch of `FarmAnimal.pet` whose
+    /// effect is not a pet.
+    /// </summary>
+    private static string? FarmAnimalPetRefusal(Farmer who, FarmAnimal animal)
+    {
+        // :745 `if (!wasPet.Value)` guards the entire mutation. When it is false the manual call runs :791-:794
+        // instead, which mounts `AnimalQueryMenu` and changes no friendship at all. Refusing is deliberate rather than
+        // taking the modal route: a modal this action opened would then be its to close, and the postcondition would
+        // have to read the menu's outcome instead of the animal's.
+        if (animal.wasPet.Value) return "farm_animal_already_petted_today";
+        // :726 `if (!hasEatenAnimalCracker.Value && who.ActiveObject?.QualifiedItemId == "(O)GoldenAnimalCracker")`.
+        // The seam spends the held cracker, returns BEFORE any friendship, and mutates the inventory instead of the
+        // animal. A pet must never consume an item the caller did not name.
+        if (!animal.hasEatenAnimalCracker.Value
+            && who.ActiveObject?.QualifiedItemId == "(O)GoldenAnimalCracker"
+            && animal.GetAnimalData()?.CanEatGoldenCrackers == true)
+            return "farm_animal_cracker_would_be_consumed";
+        // :703 `if (Game1.timeOfDay >= 1900 && !isMoving())` -- after 19:00 a STATIONARY animal only answers with the
+        // `TryingToSleep` dialogue. A moving one is still petted, which is why this reads `isMoving()` and not the
+        // clock alone.
+        if (Game1.timeOfDay >= 1900 && !animal.isMoving()) return "farm_animal_pet_requires_movement_after_1900";
+        return null;
+    }
+
+    /// <summary>
+    /// The one petting body, reached both in range and on arrival. It re-resolves the animal from its opaque id and
+    /// measures reach against the animal's LIVE tile: a barn animal wanders while the actor walks, so the coordinate
+    /// the snapshot published is only where it used to be.
+    /// </summary>
+    private LocalExecutionReceipt ExecutePetFarmAnimal(string executionId, string requestId, string expectedTargetId)
+    {
+        GameLocation location = Game1.player.currentLocation;
+        FarmAnimal? animal = ResolveFarmAnimalPetTarget(location, expectedTargetId);
+        if (animal is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_animal_target_gone", $"target={expectedTargetId}");
+        if (FarmAnimalPetRefusal(Game1.player, animal) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal, $"target={expectedTargetId};animal={animal.myID.Value};time_of_day={Game1.timeOfDay};after_approach=true");
+        int animalTileX = (int)animal.Tile.X;
+        int animalTileY = (int)animal.Tile.Y;
+        if (!IsTileWithinChebyshevRadius(Game1.player, animalTileX, animalTileY, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach",
+                $"target={expectedTargetId};animal={animalTileX},{animalTileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
+
+        long animalId = animal.myID.Value;
+        string animalType = animal.type.Value;
+        int friendshipBefore = animal.friendshipTowardFarmer.Value;
+        int happinessBefore = animal.happiness.Value;
+        bool autoPettedBefore = animal.wasAutoPet.Value;
+        // The MINIMUM friendship this pet must apply, taken from the seam's own branches (:751-:763): a manual pet adds
+        // 15, and 7 when the animal was already auto-petted that morning. The friendship-boost profession (:772-:775)
+        // only ever ADDS 15 more, so the branch's base gain is the honest floor, capped exactly where the seam caps it.
+        int friendshipFloor = Math.Min(1000, friendshipBefore + (autoPettedBefore ? 7 : 15));
+
+        animal.pet(Game1.player);
+
+        // The postcondition is the ENGINE'S OWN mutation, not a re-derivation: `wasPet` is the marker `pet` sets at
+        // :749, and the friendship floor is the branch the seam took. A seam that took one of its early returns changed
+        // neither, and is reported Uncertain rather than as a pet that never happened.
+        int friendshipAfter = animal.friendshipTowardFarmer.Value;
+        bool marked = animal.wasPet.Value;
+        bool friendshipApplied = friendshipAfter >= friendshipFloor;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};animal={animalId};type={animalType};tile={animalTileX},{animalTileY};friendship_before={friendshipBefore};friendship_after={friendshipAfter};friendship_floor={friendshipFloor};happiness_before={happinessBefore};happiness_after={animal.happiness.Value};was_auto_pet_before={autoPettedBefore.ToString().ToLowerInvariant()};was_pet={marked.ToString().ToLowerInvariant()};time_of_day={Game1.timeOfDay}";
+        if (!marked || !friendshipApplied)
+        {
+            LocalExecutionReceipt uncertain = new(executionId, requestId, ExecutionState.Uncertain, "farm_animal_pet_postcondition_not_observed", this.revision, evidence);
+            this.Remember(uncertain);
+            this.AddTrace(uncertain);
+            return uncertain;
+        }
+
+        LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "farm_animal_petted", this.revision, evidence);
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        return receipt;
+    }
+
+    /// <summary>
+    /// Re-derives the farm animal a published opaque id names, from the actor's CURRENT location, WITHOUT the day
+    /// filter: an animal this farmer petted after the snapshot was taken must still RESOLVE, so the refusal can name
+    /// `farm_animal_already_petted_today` instead of claiming the animal is gone. BuildFarmAnimalPetTargetId is
+    /// location + animal id only, so a wandering animal resolves to the same subject.
+    /// </summary>
+    private static FarmAnimal? ResolveFarmAnimalPetTarget(StardewValley.GameLocation location, string expectedTargetId) =>
+        location.animals.Values.FirstOrDefault(candidate =>
+            string.Equals(BuildFarmAnimalPetTargetId(location, candidate), expectedTargetId, StringComparison.Ordinal));
+
     /// <summary>Experimental read-only NPC relationship inspection. It never invokes NPC interaction or creates missing friendship records.</summary>
     public LocalExecutionReceipt RequestLocalInspectNpcRelationship(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {

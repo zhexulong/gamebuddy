@@ -598,6 +598,11 @@ export function fixtureActions(action) {
   // alone invokes Pet.checkAction, records today's interaction, applies
   // friendship, and emits its terminal receipt.
   if (action === "pet_animal") return ["pet_animal"];
+  // The farm-animal pet is a second action, not a rename: it reads `location.animals` and calls `FarmAnimal.pet`. The fixture
+  // supplies one coop animal on the Farm with the actor in its ring; `observe_scene` is published so the runner can show,
+  // after the pet, that the animal is still in the location and still reachable (every other animal channel is filtered by
+  // a fact the pet changes).
+  if (action === "pet_farm_animal") return ["pet_farm_animal", "observe_scene"];
   if (action === "use_item") return ["use_item"];
   if (action === "place_wood_fence") return ["move_to_tile", "travel", "place_wood_fence"];
   // The fixture supplies one untouched Crab Pot and warps only to a freshly
@@ -843,6 +848,9 @@ export function fixtureScenario(actions, action) {
   if (action === "ride_minecart") return "native_ride_minecart_v1";
   if (action === "ride_bus") return "native_ride_bus_v1";
   if (action === "shop_purchase") return "native_shop_purchase_v1";
+  // Action-keyed, before every includes() fallback: the farm-animal pet needs its own Given (one coop, exactly one animal,
+  // the actor in its ring), which no other action's world carries.
+  if (action === "pet_farm_animal") return "native_pet_farm_animal_v1";
   if (action === "select_mine_elevator_floor") return "native_mine_elevator_v1";
   // The building-chest pair needs its own world: a finished building whose DATA declares a Load
   // and a Collect chest, with the Load chest empty, the Collect chest stocked, and the actor

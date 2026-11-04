@@ -780,6 +780,10 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
+  // `pet_farm_animal` is registered Experimental in the Mod catalog and has a native-local slice: one coop animal petted
+  // through `FarmAnimal.pet`, the +15 friendship and the `wasPet` marker read straight from the engine, and a second
+  // attempt on the same animal refused by name. The fixture supplies one coop and one animal; the pet is production's.
+  pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
 });
 
 /**

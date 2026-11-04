@@ -2078,6 +2078,38 @@
         }
       }
     },
+    "farmAnimalPetTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y",
+        "animalType",
+        "friendship"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "animalType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "friendship": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
     "animalProductTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -2641,6 +2673,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/petTarget"
+          },
+          "maxItems": 16
+        },
+        "farmAnimalPetTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/farmAnimalPetTarget"
           },
           "maxItems": 16
         },

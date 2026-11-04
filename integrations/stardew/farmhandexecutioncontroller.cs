@@ -2306,6 +2306,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             DiscoverHarvestWhereabouts(),
             DiscoverWateringWhereabouts(),
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
+            advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
@@ -2603,7 +2604,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         CrabPotTargets: null, CrabPotResultTargets: null, CrabPotCollectTargets: null, BaitCrabPotTargets: null, BaitCrabPotResultTargets: null,
         DebrisTargets: null, RockSourceTargets: null, ClearHoeDirtTargets: null, ArtifactSpotTargets: null,
         ArtifactSpotResultTargets: null, ArtifactSpotFarmSourceCount: null, MachineTargets: null,
-        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null,
+        TreeChopSourceTargets: null, TreeChopResultTargets: null, TreeStumpTargets: null, TreeSaplingTargets: null, WeedTargets: null, GrassTargets: null, ScytheCropTargets: null, BushTargets: null, FruitTreeTargets: null, ShakeTreeTargets: null, PedestalTargets: null, FenceGateTargets: null, CaskTargets: null, MannequinTargets: null, SignTargets: null, SiloTargets: null, LanternSlots: null, NpcRelationshipTargets: null, VillagerWhereabouts: null, HarvestWhereabouts: null, WateringWhereabouts: null, PetTargets: null, FarmAnimalPetTargets: null,
         AnimalProductTargets: null, FeedTroughTargets: null, Chests: null, ChestsSummary: null, InventoryItemFacts: null, FoodTargets: null,
         ShippingBinTargets: null, CraftingRecipeTargets: null, CookingRecipeTargets: null, CookingStationTargets: null, MinecartTargets: null, ObeliskTargets: null, MineElevatorFloorTargets: null, ShopTargets: null, RaftTargets: null,
         // Unspecified while the world is not ready: the world snapshot already
@@ -2971,6 +2972,53 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // would then own and have to keep in sync.
                 Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false)))
             .Where(target => !target.PettedToday)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The identity half of `pet_farm_animal`: location + the animal's own native id, and nothing else.
+    ///
+    /// <para>
+    /// No tile, no tool, no produce: `FarmAnimal.pet` is reached by standing next to the animal, and a barn animal
+    /// wanders inside its building, so a coordinate in the id would turn every pet into a race with the animal's own
+    /// movement (the defect `BuildAnimalProductTargetId` had to drop its coordinates for). The animal behind this id is
+    /// re-resolved from the actor's CURRENT location on the game thread.
+    /// </para>
+    /// </summary>
+    private static string BuildFarmAnimalPetTargetId(StardewValley.GameLocation location, FarmAnimal animal)
+    {
+        string raw = $"{location.NameOrUniqueName}:farmAnimal:{animal.myID.Value}";
+        return $"farm_animal_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// Farm animals the actor can still pet today, nearest first.
+    ///
+    /// <para>
+    /// The day filter is `wasPet`, the engine's own marker, NOT a re-derivation: `FarmAnimal.pet` sets it on the first
+    /// manual pet (FarmAnimal.cs:749) and the save clears it overnight, so an animal that is absent from this list has
+    /// already been petted by this farmer today. It is filtered rather than published-and-refused for the same reason
+    /// `petTargets` filters `PettedToday`: there is nothing left to do with it, and the second pet would open
+    /// `AnimalQueryMenu` instead of petting.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeFarmAnimalPetTarget>();
+        return location.animals.Values
+            .Where(animal => !animal.wasPet.Value)
+            .Where(animal => IsTileWithinChebyshevRadius(player, (int)animal.Tile.X, (int)animal.Tile.Y, TargetDiscoveryRadius))
+            .OrderBy(animal => ChebyshevDistance(player, (int)animal.Tile.X, (int)animal.Tile.Y))
+            .ThenBy(animal => animal.Tile.X)
+            .ThenBy(animal => animal.Tile.Y)
+            .Take(16)
+            .Select(animal => new BridgeFarmAnimalPetTarget(
+                BuildFarmAnimalPetTargetId(location, animal),
+                (int)animal.Tile.X,
+                (int)animal.Tile.Y,
+                animal.type.Value,
+                animal.friendshipTowardFarmer.Value))
             .ToArray();
     }
 

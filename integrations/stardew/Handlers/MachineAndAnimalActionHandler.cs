@@ -69,6 +69,13 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "pet_farm_animal" => this.executions.RequestLocalPetFarmAnimal(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "collect_animal_product" => this.executions.RequestLocalCollectAnimalProduct(
                 request.RequestId,
                 request.Args.Slot ?? 0,

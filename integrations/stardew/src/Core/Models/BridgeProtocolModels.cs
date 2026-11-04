@@ -409,6 +409,18 @@ public sealed record BridgeSlimeHutchTroughTarget(string TargetId, int X, int Y)
 
 public sealed record BridgePetTarget(string TargetId, int X, int Y, string PetType, int Friendship, bool PettedToday, bool Stationary);
 
+/// <summary>
+/// One farm animal (barn/coop stock, `location.animals`) this actor can still pet today, addressed by an identity that
+/// carries no coordinate: `FarmAnimal.pet` is reached by walking to wherever the animal currently is, and a barn animal
+/// wanders, so a tile in the id would refuse a legitimate request the moment it moved.
+///
+/// <para>
+/// `friendship` is the engine's own `friendshipTowardFarmer`, the field the pet applies its +15 to (capped at 1000), so
+/// a caller can read the effect of its own petting from the next observation rather than inferring it.
+/// </para>
+/// </summary>
+public sealed record BridgeFarmAnimalPetTarget(string TargetId, int X, int Y, string AnimalType, int Friendship);
+
 public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
 
 public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
@@ -572,6 +584,9 @@ public sealed record BridgeSnapshot(
     IReadOnlyList<BridgeHarvestWhereabouts>? HarvestWhereabouts,
     IReadOnlyList<BridgeWateringWhereabouts>? WateringWhereabouts,
     IReadOnlyList<BridgePetTarget>? PetTargets,
+    // Farm animals (cows/chickens/etc.) that this actor has NOT petted today. `pet_animal` is the household Pet; this
+    // family is `FarmAnimal.pet`, whose +15 friendship and `wasPet` marker are per farmer and per day.
+    IReadOnlyList<BridgeFarmAnimalPetTarget>? FarmAnimalPetTargets,
     IReadOnlyList<BridgeAnimalProductTarget>? AnimalProductTargets,
     IReadOnlyList<BridgeFeedTroughTarget>? FeedTroughTargets,
     // The container family as SENSED ENTITIES: one row per eligible storage container in range, carrying the
