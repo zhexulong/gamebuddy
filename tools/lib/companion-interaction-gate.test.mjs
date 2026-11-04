@@ -23,6 +23,44 @@ test("rejects a step-by-step recital", () => {
   assert.deepEqual(result.reasons, ["step_checklist"]);
 });
 
+test("accepts ordinary two-part speech that names a first and a second thing", () => {
+  // A friend chatting, not a recital. The gate exists for a run of THREE OR MORE steps; firing on any
+  // `先…再…` failed the companion for talking like a person, which is the product's whole point.
+  const colloquial = "我先把院子那两棵浇了，回头再进屋鼓捣。";
+  const result = assessCompanionInteraction(colloquial, []);
+  assert.equal(result.passed, true);
+  assert.deepEqual(result.reasons, []);
+});
+
+test("rejects the three-step recital the rule was written for", () => {
+  // An unmarked middle step sits between two ordered markers, so the count of steps is three even though
+  // the sentence carries a single connective.
+  const recital = "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水。";
+  const result = assessCompanionInteraction(recital, []);
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.reasons, ["step_checklist"]);
+});
+
+test("rejects the formal first/second/then/finally sequence", () => {
+  // 首先…其次…接着…最后… carries no `先…再…` shape at all, so the old single-alternative pattern missed
+  // the whole family.
+  const formal = "首先把土翻了，其次播种，接着浇水，最后收工。";
+  const result = assessCompanionInteraction(formal, []);
+  assert.equal(result.passed, false);
+  assert.deepEqual(result.reasons, ["step_checklist"]);
+});
+
+test("two steps are dialogue and three steps are a recital", () => {
+  const twoStep = ["首先把土翻了，接着浇水。", "我先把院子那两棵浇了，回头再进屋鼓捣。"];
+  for (const line of twoStep) {
+    assert.equal(assessCompanionInteraction(line, []).reasons.includes("step_checklist"), false, line);
+  }
+  const threeStep = ["首先把土翻了，其次播种，接着浇水。", "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水。"];
+  for (const line of threeStep) {
+    assert.equal(assessCompanionInteraction(line, []).reasons.includes("step_checklist"), true, line);
+  }
+});
+
 test("rejects a long broadcast-style summary even without a checklist", () => {
   const result = assessCompanionInteraction(
     "（轻声）今天早上我一直待在农场里，太阳晒得背上暖洋洋的，泥土的味道也很好闻。种子应该很快就能发芽，到时候我们一起去看，顺便也可以摘点别的菜回来。你觉得这样安排可以吗？我觉得这样安排真的挺好的，你觉得呢？我们还可以顺便看看那边的小溪，听说春天里有鱼游过来，你喜欢钓鱼吗？",

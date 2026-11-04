@@ -11,7 +11,8 @@
  *
  * Four hard signals plus one recorded soft signal:
  *   - summary_too_long   : more than 120 characters after trimming
- *   - step_checklist     : a "first…then/and…" step-recital pattern
+ *   - step_checklist     : a THREE-OR-MORE-step recital of what the companion just did (see
+ *                          `recitedSteps` below for the count; two-step speech is dialogue)
  *   - self_tag_leak      : Magic Context's `§N§` prompt self-tag, which the model
  *                          mimics into its reply and the player must never see
  *   - unobserved_event   : asserts a specific thing the world did in response
@@ -33,6 +34,45 @@
  * never as "the line matches the world state". Widening recall needs a
  * non-vocabulary mechanism, which is a separate design.
  */
+/**
+ * How many steps one sentence recites, which is the count `step_checklist` enforces.
+ *
+ * The rule used to be "`先…(再|然后|接着|又)…` inside one sentence", and that is not a recital: 「我先把院子那两
+ * 棵浇了，回头再进屋鼓捣」 is a friend saying what she did this morning, and the gate failed her for talking
+ * like a person. A checklist is THREE OR MORE mechanical steps in sequence (the RP convention this gate
+ * follows), and the shape it exists for is the one a live run presented: 「先翻松泥土，把种子种进土里，又拎
+ * 着浇水壶给它浇了水」 - an unmarked middle step between two ordered markers - and the formal 「首先…其次…接着…
+ * 最后…」, which carries no `先…再…` shape at all and was invisible to the old pattern.
+ *
+ * So the signal is a COUNT over one sentence:
+ *   the opening marker (`先` / `首先` / `第一步`) is step one,
+ *   each clause after it (split on `，` / `、`) is a further step,
+ *   and the sequence must carry an ordered connective (`再` / `然后` / `接着` / `又` / `最后` / `其次`) after the
+ *   opener - without one, "先…，…，…" is three things said in a row, not a recital.
+ *
+ * Two steps are speech and three are a recital. `先` inside a compound that opens no sequence (以前 / 预先 / 优先 /
+ * 事先 / 领先 / 抢先 / 率先 / 祖先) is not a marker. As this gate's CLAIM BOUNDARY says elsewhere, recall is
+ * deliberately narrow: a run-on recital with no clause break at all is not counted.
+ */
+const CHECKLIST_OPENER = /(?:首先|第一步|(?<![以预优事领抢率祖])先)/u;
+const CHECKLIST_CONNECTIVE = /(?:再|然后|接着|又|最后|其次)/u;
+const CHECKLIST_MIN_STEPS = 3;
+const SENTENCE_BREAK = /[。；;！!？?\n]+/u;
+const CLAUSE_BREAK = /[，,、]+/u;
+
+function recitedSteps(text) {
+  let most = 0;
+  for (const sentence of text.split(SENTENCE_BREAK)) {
+    const clauses = sentence.split(CLAUSE_BREAK).filter((clause) => clause.trim().length > 0);
+    const opener = clauses.findIndex((clause) => CHECKLIST_OPENER.test(clause));
+    if (opener < 0) continue;
+    const steps = clauses.slice(opener);
+    if (!steps.some((step) => CHECKLIST_CONNECTIVE.test(step))) continue;
+    most = Math.max(most, steps.length);
+  }
+  return most;
+}
+
 export function assessCompanionInteraction(text, observedEvents = []) {
   const trimmed = String(text ?? "").trim();
   const metrics = { length: [...trimmed].length };
@@ -42,9 +82,7 @@ export function assessCompanionInteraction(text, observedEvents = []) {
 
   const reasons = [];
   if (metrics.length > 120) reasons.push("summary_too_long");
-  // "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水" style recitals.
-  // Also catches "先把…，再…" and "先…，然后…，接着…".
-  if (/先[^。；!！?？]{1,60}(再|然后|接着|又)[^。；!！?？]{1,60}/.test(trimmed)) {
+  if (recitedSteps(trimmed) >= CHECKLIST_MIN_STEPS) {
     reasons.push("step_checklist");
   }
   // Machine identifiers leaking into player-facing speech. A live run (after the

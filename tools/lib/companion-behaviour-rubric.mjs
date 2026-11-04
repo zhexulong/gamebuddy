@@ -92,7 +92,8 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   Object.freeze({
     id: "no_step_recital",
     class: "Invariant",
-    statement: "Spoken text talks to the player, never recites the companion's own steps.",
+    statement:
+      "Spoken text talks to the player, never recites three or more of its own steps in sequence (two-step speech is dialogue).",
     provenance: "identity-profile.ts:385; companion-interaction-gate.mjs:8-10 (RP convention)",
     source: "companion-interaction-gate.mjs:step_checklist",
   }),
