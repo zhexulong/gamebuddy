@@ -1,0 +1,34 @@
+{
+  "schema": "gamebuddy-assertion-substance-baseline/v1",
+  "note": "Journeys whose every assertion is a count, presence or visibility check, measured at this commit. A record of debt, not an acceptance of it: delete an entry by asserting what the player sees, never by recording more.",
+  "entries": [
+    {
+      "file": "dialogue-web/tests/chat-message-copy.spec.ts",
+      "title": "the copy control is offered on every settled message"
+    },
+    {
+      "file": "dialogue-web/tests/composed-reference-game-browser.spec.ts",
+      "title": "Game endgame control is absent when no live session can be ended"
+    },
+    {
+      "file": "dialogue-web/tests/first-screen.spec.ts",
+      "title": "a profile store the Host cannot serve reads the same way, because the player's next step is the same"
+    },
+    {
+      "file": "dialogue-web/tests/first-screen.spec.ts",
+      "title": "every control and data hook the connection group had is still there"
+    },
+    {
+      "file": "dialogue-web/tests/runtime-frontend-gates.spec.ts",
+      "title": "game.3: while disconnected the start guide presents the existing controls in three steps"
+    },
+    {
+      "file": "dialogue-web/tests/ui-hygiene-runtime.spec.ts",
+      "title": "gate 3: the stop control and the card-import trigger are not transparent"
+    },
+    {
+      "file": "dialogue-web/tests/ui-layout-tail.spec.ts",
+      "title": "item 4: one variant has no switcher at all"
+    }
+  ]
+}

@@ -458,6 +458,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "       (tools/check-surface-journeys.test.mjs) adds a surface no journey asserts on, a journey that only clicks its\n" +
       "       control, a panel the shell never renders, and a test id two surfaces render alike",
   },
+  {
+    gate: "check-assertion-substance.mjs",
+    reason:
+      "static source gate over the specs; its falsifier (tools/check-assertion-substance.test.mjs)\n" +
+      "       injects a journey whose only assertion is `toBeVisible()`, one with none at all, and the\n" +
+      "       `toHaveCount(1)` shape the defect is named after, and requires each to be named",
+  },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
