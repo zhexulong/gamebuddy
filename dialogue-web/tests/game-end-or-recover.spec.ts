@@ -445,6 +445,51 @@ test("Cancel failing still leaves the player a way forward, and says which one f
 });
 
 /* ==========================================================================
+   4b. The Start-new-game form is a region that one control shows and hides, so
+       that control is a disclosure: it has to say which region it owns and
+       whether the region is open. The region is read from the id the attribute
+       names, so a later rename of the id keeps the assertion meaningful.
+   ========================================================================== */
+test("Start new game says which region it opens and whether that region is open", async ({ page }) => {
+  await stubHost(page, attachedDropped);
+  // The create control is the rollup's third way out of a resume this surface
+  // watched fail, so the journey takes the same step a player does to reach it.
+  await page.route("**/api/composed-reference-game/v1/game/resume", async (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, status: "unavailable" })),
+  );
+
+  await page.goto(`#profile=composed-reference-game&boot=${token}`);
+  await openGame(page);
+  const panel = panelOf(page);
+  await panel.getByTestId("game-resume").click();
+  const control = panel.getByTestId("game-create");
+  await expect(control).toBeVisible();
+  const regionId = await control.getAttribute("aria-controls");
+
+  // Closed: the region is not rendered at all, and the control still says which
+  // region it would open and that it is not open.
+  await expect(control).toHaveAttribute("aria-expanded", "false");
+  expect(regionId, "the control names the region it opens").toBe("game-create-form");
+  await expect(page.locator(`#${regionId}`)).toHaveCount(0);
+
+  await control.click();
+
+  // Open: the same control, the same region id, and the region that id names is
+  // the create form itself - the fields the player fills in.
+  await expect(control).toHaveAttribute("aria-expanded", "true");
+  expect(await control.getAttribute("aria-controls"), "opening does not re-point the control").toBe(regionId);
+  const region = page.locator(`#${regionId}`);
+  await expect(region).toBeVisible();
+  await expect(region.getByText("Start a new game session")).toBeVisible();
+  await expect(region.getByLabel("Continuity binding")).toBeVisible();
+
+  // Pressing it again closes the same region, and the control says so.
+  await control.click();
+  await expect(control).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(`#${regionId}`)).toHaveCount(0);
+});
+
+/* ==========================================================================
    5. A launch that failed for good. The step out of it is a fresh GameBuddy,
       which is not a control on this page - so the surface has to say so.
    ========================================================================== */

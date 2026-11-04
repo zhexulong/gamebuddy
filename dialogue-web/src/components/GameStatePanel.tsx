@@ -31,6 +31,13 @@ import {
 import { useArmedConfirmation } from "./armed-confirmation";
 
 /**
+ * The create form's id, named once: the control that opens it points at this id with
+ * `aria-controls`, and the region takes it. A second spelling of the string is how the two
+ * would drift apart without either of them looking wrong.
+ */
+const GAME_CREATE_FORM_ID = "game-create-form";
+
+/**
  * The Game panel: one presentation component for every state the composed Game
  * surface models, so the shell owns behaviour and this owns reading order.
  *
@@ -651,6 +658,12 @@ export function GameStatePanel({
                     className="game-action"
                     data-testid="game-create"
                     disabled={create.active}
+                    // The form below is a region this control shows and hides, so the control
+                    // carries the disclosure: which region it owns, and whether that region is
+                    // open. Both read the state that renders the region, so neither can describe
+                    // an openness the form does not have.
+                    aria-expanded={create.formOpen}
+                    aria-controls={GAME_CREATE_FORM_ID}
                     onClick={handlers.toggleCreateForm}
                   >
                     <Plus size={16} aria-hidden="true" />
@@ -688,6 +701,7 @@ export function GameStatePanel({
 
           {create.formOpen && (
             <form
+              id={GAME_CREATE_FORM_ID}
               className="game-create-form"
               onSubmit={(event) => {
                 event.preventDefault();
