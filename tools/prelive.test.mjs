@@ -13,15 +13,21 @@ import test from "node:test";
 
 import {
   DEFAULT_GAME_INSTALL,
+  actionRegistryRung,
   actionRung,
   checkDeployIsolation,
   checkLinkageClosure,
+  checkPopulationAgreement,
   checkRunnerShape,
+  compileHostTestArtifact,
   deployRung,
+  firstTypeScriptError,
   format,
   isInside,
   linkageRung,
   optOutRules,
+  parseActionPopulations,
+  parseArgs,
   parseKnownFixtureScenarios,
   parseModDispatchScenarios,
   runContractTriad,
@@ -290,7 +296,7 @@ test("(v) L0 reports each gate's exit code by name", () => {
   );
 });
 
-test("L2 delegates the named action to the existing live preflight", () => {
+test("L4 delegates the named action to the existing live preflight", () => {
   const commands = [];
   const passed = actionRung({
     action: "till_soil",
@@ -301,6 +307,7 @@ test("L2 delegates the named action to the existing live preflight", () => {
     },
   });
   assert.equal(passed.status, "passed");
+  assert.equal(passed.id, "l4");
   assert.equal(commands[0], "node tools/preflight-live-run.mjs --mods-path C:/mods --action till_soil");
   const failed = actionRung({ action: "till_soil", deployRoot: "C:/mods", run: () => ({ status: 1 }) });
   assert.equal(failed.status, "failed");
@@ -330,12 +337,12 @@ test("the report prints the counts and the members the ladder names", () => {
   const report = format(ladder, {
     elapsedMs: 1,
     options: { noGame: false },
-    notice: "l2_skipped: needs --game",
+    notice: "l4_skipped: needs --game",
   });
   assert.match(report, /linked 1 of 1/u);
   assert.match(report, /shape checked 1 runners; known 0 of 1/u);
   assert.match(report, /command: node tools\/check-a\.mjs/u);
-  assert.match(report, /l2_skipped: needs --game/u);
+  assert.match(report, /l4_skipped: needs --game/u);
   assert.match(report, /prelive: passed/u);
   assert.ok(report.includes("C:\\work\\mods") || report.includes("C:/work/mods"), "both deploy paths must print");
 });
@@ -352,4 +359,175 @@ test("the real tree: linkage closure is closed and the runners' shape is at its 
     "L3 is at its baseline; if a runner was fixed, remove its entry from tools/prelive-l3-baseline.json",
   );
   assert.ok(shape.knownSites > 0, "the baseline must still be describing real sites");
+});
+
+//
+// L2 - compile and population agreement
+//
+
+/** Four populations that agree, so each test below can break exactly one of them. */
+const cleanPopulations = () => ({
+  adapters: ["place_owned_object", "remove_placed_item"],
+  toolNames: ["place_owned_object", "remove_placed_item"],
+  descriptorDerived: ["place_owned_object"],
+  descriptorValidators: ["place_owned_object"],
+  published: ["place_owned_object", "remove_placed_item"],
+});
+
+const members = (report, name) =>
+  report.differences.filter((entry) => entry.direction === name).map((entry) => entry.actionId);
+
+test("(vi) a tool-name map key with no adapter is red and names the action", () => {
+  const report = checkPopulationAgreement({
+    ...cleanPopulations(),
+    toolNames: ["place_owned_object", "remove_placed_item", "rotate_furniture"],
+  });
+  assert.equal(report.status, "failed");
+  assert.deepEqual(members(report, "map_without_adapter"), ["rotate_furniture"]);
+  assert.deepEqual(report.differences, [{ direction: "map_without_adapter", actionId: "rotate_furniture" }]);
+});
+
+test("(vi) an adapter with no tool-name map key is red and names the action", () => {
+  const report = checkPopulationAgreement({
+    ...cleanPopulations(),
+    toolNames: ["place_owned_object"],
+  });
+  assert.equal(report.status, "failed");
+  assert.deepEqual(members(report, "adapter_without_map"), ["remove_placed_item"]);
+});
+
+test("(vi) the descriptor-derived list, the descriptor arms and the published surface are held to the adapters too", () => {
+  const report = checkPopulationAgreement({
+    ...cleanPopulations(),
+    descriptorDerived: ["place_owned_object", "remove_fence"],
+    descriptorValidators: ["put_item_in_fish_tank"],
+    published: ["place_owned_object", "place_item_on_pedestal"],
+  });
+  assert.equal(report.status, "failed");
+  assert.deepEqual(members(report, "descriptor_derived_without_adapter"), ["remove_fence"]);
+  assert.deepEqual(members(report, "descriptor_validator_without_adapter"), ["put_item_in_fish_tank"]);
+  assert.deepEqual(members(report, "published_without_adapter"), ["place_item_on_pedestal"]);
+});
+
+test("(vi) agreeing populations are green and report every count", () => {
+  const report = checkPopulationAgreement(cleanPopulations());
+  assert.equal(report.status, "passed");
+  assert.deepEqual(report.differences, []);
+  assert.deepEqual(report.counts, {
+    adapters: 2,
+    toolNames: 2,
+    descriptorDerived: 1,
+    descriptorValidators: 1,
+    publishedExecution: 2,
+  });
+});
+
+test("(vi) the populations are parsed from the registry source, not listed here", () => {
+  const populated = parseActionPopulations(`
+    export const STARDEW_ACTION_ADAPTERS = Object.freeze([
+      actionAdapter(
+        "place_owned_object",
+        "Place",
+        "Place one object.",
+        ["world_object"],
+      ),
+      actionAdapter("remove_placed_item", "Remove", "Remove one object.", ["world_object"]),
+    ]);
+    export const STARDEW_ACTION_TOOL_NAMES = {
+      // a key whose value is not the tool name is still a key
+      place_owned_object: "stardew_place_owned_object",
+      rotate_furniture: "stardew_rotate_furniture",
+    } as const satisfies Record<string, \`stardew_\${string}\`>;
+    export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
+      "place_owned_object",
+      /* "commented_out" */ "remove_fence",
+    ] as const);
+    export function isModDescriptorComplete(actionId, descriptor) {
+      if (actionId === "place_owned_object") return true;
+      if (actionId === "put_item_in_fish_tank") return true;
+      return false;
+    }
+  `);
+  assert.deepEqual(populated.adapters, ["place_owned_object", "remove_placed_item"]);
+  assert.deepEqual(populated.toolNames, ["place_owned_object", "rotate_furniture"]);
+  assert.deepEqual(populated.descriptorDerived, ["place_owned_object", "remove_fence"]);
+  assert.deepEqual(populated.descriptorValidators, ["place_owned_object", "put_item_in_fish_tank"]);
+});
+
+test("(vii) --skip-compile is parsed, and the rung says the build was skipped instead of passed", () => {
+  assert.equal(parseArgs(["--no-game"]).skipCompile, false);
+  assert.equal(parseArgs(["--no-game", "--skip-compile"]).skipCompile, true);
+  let compiled = 0;
+  const rung = actionRegistryRung({ skipCompile: true, compile: () => (compiled++, { status: "passed", ms: 1 }) });
+  assert.equal(rung.status, "passed");
+  assert.equal(rung.compile.status, "skipped");
+  assert.equal(rung.compile.reason, "--skip-compile");
+  assert.equal(compiled, 0, "--skip-compile must not build");
+  const ladder = runLadder({ rungs: [() => rung] });
+  assert.match(
+    format(ladder, { elapsedMs: 1, options: { noGame: true }, notice: null }),
+    /compile skipped \(--skip-compile\)/u,
+  );
+});
+
+test("(vii) a disagreeing population skips the build, because the member is already named", () => {
+  let compiled = 0;
+  const rung = actionRegistryRung({
+    source: () =>
+      'export const STARDEW_ACTION_ADAPTERS = Object.freeze([actionAdapter("only_action", "a", "b", ["c"])]);\n' +
+      'export const STARDEW_ACTION_TOOL_NAMES = {\n  only_action: "stardew_only_action",\n  rotate_furniture: "stardew_rotate_furniture",\n};\n' +
+      'export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze(["only_action"] as const);\n' +
+      'export function isModDescriptorComplete(actionId, descriptor) { return actionId === "only_action"; }\n',
+    publishedIds: () => ["only_action"],
+    compile: () => (compiled++, { status: "passed", ms: 1 }),
+  });
+  assert.equal(rung.status, "failed");
+  assert.equal(compiled, 0);
+  assert.equal(rung.compile.status, "skipped");
+  const text = format(runLadder({ rungs: [() => rung] }), { elapsedMs: 1, options: { noGame: true }, notice: null });
+  assert.match(text, /map_without_adapter: rotate_furniture/u);
+  assert.match(text, /population agreement failed/u);
+  assert.match(text, /STARDEW_ACTION_TOOL_NAMES has a key/u);
+});
+
+test("(vii) a build failure keeps the first TypeScript diagnostic verbatim", () => {
+  const output =
+    "src/action-registry.ts(672,5): error TS2353: Object literal may only specify known properties, and 'rotate_furniture' does not exist in type 'Record<StardewActionId, `stardew_${string}`>'.\n" +
+    "src/action-registry.ts(700,5): error TS2353: a second error the reader does not need.\n" +
+    "  at run (child-process-tool.mjs:1:1)\n";
+  const compiled = compileHostTestArtifact({ run: () => ({ status: 2, stdout: output, stderr: "" }) });
+  assert.equal(compiled.status, "failed");
+  assert.equal(
+    compiled.firstError,
+    "src/action-registry.ts(672,5): error TS2353: Object literal may only specify known properties, and 'rotate_furniture' does not exist in type 'Record<StardewActionId, `stardew_${string}`>'.",
+  );
+  assert.equal(
+    firstTypeScriptError("Error: test_runner_failed:code=2:signal=none\n"),
+    "Error: test_runner_failed:code=2:signal=none",
+  );
+  assert.equal(firstTypeScriptError(""), "(the build printed nothing)");
+});
+
+test("(vii) a tree without the compiler reports the build as unavailable, never as passed", () => {
+  const rung = actionRegistryRung({ exists: () => false });
+  assert.equal(rung.population.status, "passed");
+  assert.equal(rung.compile.status, "unavailable");
+  const text = format(runLadder({ rungs: [() => rung] }), { elapsedMs: 1, options: { noGame: true }, notice: null });
+  assert.match(text, /compile UNAVAILABLE/u);
+  assert.doesNotMatch(text, /compile passed/u);
+});
+
+test("the real tree: every action population names the same members", () => {
+  const rung = actionRegistryRung({ skipCompile: true });
+  assert.deepEqual(
+    rung.population.differences,
+    [],
+    "a population names an action the Host adapter list does not carry",
+  );
+  assert.equal(rung.population.status, "passed");
+  assert.ok(
+    rung.population.counts.adapters > 90,
+    `expected the whole adapter list, got ${rung.population.counts.adapters}`,
+  );
+  assert.equal(rung.population.counts.adapters, rung.population.counts.toolNames);
 });

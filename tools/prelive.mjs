@@ -12,13 +12,15 @@
  *   L0  contract triad      - runs the existing gates as child processes and reports each exit code by name
  *   L1  linkage closure     - action ids x runner map x tools-side scenario x Mod-side scenario, DERIVED not listed
  *   L1b deploy isolation    - the launcher's resolved deploy root must not be inside the game installation
+ *   L2  compile + agreement - the Host test artifact builds, and every action population names the same ids
  *   L3  runner shape        - a one-shot `observeFresh({actionable:true})` may not be the basis of an assertion
- *   L2  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
+ *   L4  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
  *
  * USAGE:
- *   node tools/prelive.mjs --no-game                       # L0 + L1 + L1b + L3
- *   node tools/prelive.mjs --action <id>                    # the same, then `l2_skipped: needs --game`
- *   node tools/prelive.mjs --action <id> --game             # the same, then L2 for that action
+ *   node tools/prelive.mjs --no-game                       # L0 + L1 + L1b + L2 + L3 (L2 compiles)
+ *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the expensive build
+ *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
+ *   node tools/prelive.mjs --action <id> --game             # the same, then L4 for that action
  *
  * No game, no network, no model. Exit 1 on the first red rung.
  */
@@ -53,6 +55,10 @@ export const CONTRACT_TRIAD = Object.freeze([
 
 const SURFACE = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
 const MOD_CONFIG = "integrations/stardew/ModConfig.cs";
+const ACTION_REGISTRY = "host/src/action-registry.ts";
+/** The body of `npm run build:test` in `host/package.json`; run from `host/`, which is that script's cwd. */
+const HOST_TEST_ARTIFACT_BUILD = "scripts/build-test-artifact.mjs";
+const HOST_TYPESCRIPT_ENTRY = "host/node_modules/typescript/lib/tsc.js";
 const HARNESS_LIB = "tools/lib/stardew-native-smoke-harness-v1.mjs";
 const BASELINE = "tools/prelive-l3-baseline.json";
 
@@ -265,6 +271,177 @@ export function checkDeployIsolation({ deployRoot, gameInstall, allowGameMods = 
       ? `${path.resolve(deployRoot)} is inside the game installation ${path.resolve(gameInstall)}`
       : `${path.resolve(deployRoot)} is outside the game installation ${path.resolve(gameInstall)}`,
   };
+}
+
+//
+// L2 - compile and population agreement
+//
+
+// L2's two halves exist because they failed in the same afternoon, one after the other: a coding lane shipped four
+// actions with `STARDEW_ACTION_TOOL_NAMES` entries, `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` membership and
+// `isModDescriptorComplete` arms, and no `actionAdapter(...)` entries. `StardewActionId` is derived from the adapter
+// list, so the Host artifact could not be built at all - from a commit whose C# tests were green. The population half
+// names the four ids in milliseconds; the compile half is what says a green test suite is not a compilation. Neither
+// half restates a rule the other owns: agreement is about which ids are named where, compiling is about whether the
+// tree is TypeScript at all.
+
+/** The block between `anchor`'s opening brace and its matching brace, comments already blanked by the caller. */
+function braceBlock(source, anchor) {
+  const start = source.indexOf(anchor);
+  if (start < 0) throw new Error(`prelive_block_missing:${anchor}`);
+  const open = source.indexOf("{", start + anchor.length - 1);
+  if (open < 0) throw new Error(`prelive_block_unterminated:${anchor}`);
+  let depth = 0;
+  for (let index = open; index < source.length; index++) {
+    if (source[index] === "{") depth++;
+    else if (source[index] === "}") {
+      depth--;
+      if (depth === 0) return source.slice(open, index + 1);
+    }
+  }
+  throw new Error(`prelive_block_unterminated:${anchor}`);
+}
+
+/** The quoted strings of the array literal that follows `anchor`, in source order. */
+function quotedArray(source, anchor) {
+  const start = source.indexOf(anchor);
+  if (start < 0) throw new Error(`prelive_block_missing:${anchor}`);
+  const open = source.indexOf("[", start + anchor.length - 1);
+  const close = source.indexOf("]", open);
+  if (open < 0 || close < 0) throw new Error(`prelive_block_unterminated:${anchor}`);
+  return [...source.slice(open, close).matchAll(/"([a-z0-9_]+)"/gu)].map((match) => match[1]);
+}
+
+/**
+ * Every population the Host spells by hand, parsed from the one file that spells them. `actionAdapter` entries are the
+ * authority: `StardewActionId` is derived from that list, so each satellite below can name an action this build cannot
+ * carry - and only one of those satellites is visible to the compiler.
+ */
+export function parseActionPopulations(source) {
+  const plain = blankComments(source);
+  const adapters = [...plain.matchAll(/actionAdapter\(\s*"([a-z0-9_]+)"/gu)].map((match) => match[1]);
+  const toolNames = [...braceBlock(plain, "STARDEW_ACTION_TOOL_NAMES = ").matchAll(/^\s*([a-z0-9_]+):/gmu)].map(
+    (match) => match[1],
+  );
+  const descriptorDerived = quotedArray(plain, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze(");
+  const gate = functionBody(plain, "isModDescriptorComplete");
+  if (gate === null) throw new Error("prelive_block_missing:isModDescriptorComplete");
+  const descriptorValidators = [...gate.body.matchAll(/actionId === "([a-z0-9_]+)"/gu)].map((match) => match[1]);
+  return { adapters, toolNames, descriptorDerived, descriptorValidators };
+}
+
+/** One difference direction, named so a bare `direction: id` line says which two populations disagree. */
+export const POPULATION_LABELS = Object.freeze({
+  map_without_adapter:
+    "STARDEW_ACTION_TOOL_NAMES has a key with no actionAdapter(...) entry, and StardewActionId derives from the adapters",
+  adapter_without_map: "an actionAdapter(...) entry has no STARDEW_ACTION_TOOL_NAMES key, so no Host tool mounts it",
+  descriptor_derived_without_adapter:
+    "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS lists it, but no actionAdapter(...) entry carries it",
+  descriptor_validator_without_adapter:
+    "isModDescriptorComplete has an arm for it, but no actionAdapter(...) entry carries it",
+  published_without_adapter: "the Mod publishes it as an execution action, but no actionAdapter(...) entry carries it",
+});
+
+/** Every population against the adapter list, each difference carrying its direction and the member by name. */
+export function checkPopulationAgreement({ adapters, toolNames, descriptorDerived, descriptorValidators, published }) {
+  const adapterIds = new Set(adapters);
+  const names = new Set(toolNames);
+  const difference = (direction, ids, members) =>
+    [...new Set(ids)]
+      .filter((actionId) => !members.has(actionId))
+      .sort()
+      .map((actionId) => ({ direction, actionId }));
+  const differences = [
+    ...difference("map_without_adapter", toolNames, adapterIds),
+    ...difference("adapter_without_map", adapters, names),
+    ...difference("descriptor_derived_without_adapter", descriptorDerived, adapterIds),
+    ...difference("descriptor_validator_without_adapter", descriptorValidators, adapterIds),
+    ...difference("published_without_adapter", published, adapterIds),
+  ];
+  return {
+    status: differences.length === 0 ? "passed" : "failed",
+    counts: {
+      adapters: adapterIds.size,
+      toolNames: names.size,
+      descriptorDerived: new Set(descriptorDerived).size,
+      descriptorValidators: new Set(descriptorValidators).size,
+      publishedExecution: new Set(published).size,
+    },
+    differences,
+  };
+}
+
+/**
+ * The first TypeScript diagnostic in a build's output, verbatim. A compiler failure is one line that names a file, a
+ * position and a code; printing the summary instead is how "the artifact could not be built" reaches a reader as a
+ * count instead of a cause.
+ */
+export function firstTypeScriptError(output) {
+  const lines = output.split("\n").map((line) => line.trimEnd());
+  return (
+    lines.find((line) => /(?:^|\s)error TS\d+/u.test(line)) ??
+    lines.find((line) => line.trim() !== "") ??
+    "(the build printed nothing)"
+  );
+}
+
+const HOST_DIR = path.join(REPO, "host");
+const COMPILE_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `npm run build:test`, as the script runs it: the same entry, the same cwd, no npm in the middle. Its wall time is
+ * reported because it is the rung's whole cost, and on failure only the first diagnostic is kept.
+ */
+export function compileHostTestArtifact({
+  run = (executable, args, options) => spawnSync(executable, args, options),
+  timeoutMs = COMPILE_TIMEOUT_MS,
+} = {}) {
+  const startedAt = Date.now();
+  const outcome = run(process.execPath, [HOST_TEST_ARTIFACT_BUILD], {
+    cwd: HOST_DIR,
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+  const ms = Date.now() - startedAt;
+  if (outcome.error?.code === "ETIMEDOUT")
+    return { status: "failed", ms, firstError: `host_test_artifact_build_timeout:${timeoutMs}ms` };
+  if (outcome.status === 0) return { status: "passed", ms };
+  return { status: "failed", ms, firstError: firstTypeScriptError(`${outcome.stdout ?? ""}${outcome.stderr ?? ""}`) };
+}
+
+/**
+ * L2. Agreement is checked first because it costs milliseconds and names the drifting member; compiling comes after
+ * because it costs a minute and can only say which line stopped it. A red agreement skips the build, and `--skip-compile`
+ * skips it on request - both are reported as skipped, never as passed.
+ */
+export function actionRegistryRung({
+  skipCompile = false,
+  source = () => read(ACTION_REGISTRY),
+  publishedIds = () =>
+    JSON.parse(read(SURFACE))
+      .actions.filter((action) => action.kind === "execution")
+      .map((action) => action.actionId),
+  compile = compileHostTestArtifact,
+  exists = (relative) => fs.existsSync(path.join(REPO, relative)),
+} = {}) {
+  const populations = parseActionPopulations(source());
+  const population = checkPopulationAgreement({ ...populations, published: publishedIds() });
+  if (population.status !== "passed")
+    return { id: "l2", status: "failed", population, compile: { status: "skipped", reason: "population_red" } };
+  if (skipCompile)
+    return { id: "l2", status: "passed", population, compile: { status: "skipped", reason: "--skip-compile" } };
+  if (!exists(HOST_TYPESCRIPT_ENTRY) || !exists(`host/${HOST_TEST_ARTIFACT_BUILD}`))
+    return {
+      id: "l2",
+      status: "passed",
+      population,
+      compile: {
+        status: "unavailable",
+        reason: `${HOST_TYPESCRIPT_ENTRY} or host/${HOST_TEST_ARTIFACT_BUILD} is missing`,
+      },
+    };
+  const compiled = compile();
+  return { id: "l2", status: compiled.status === "passed" ? "passed" : "failed", population, compile: compiled };
 }
 
 //
@@ -595,13 +772,13 @@ export function shapeRung({ directory = TOOLS } = {}) {
 }
 
 /**
- * L2: the action's own live preflight, DELEGATED - `tools/preflight-live-run.mjs` already owns every reason a live run
+ * L4: the action's own live preflight, DELEGATED - `tools/preflight-live-run.mjs` already owns every reason a live run
  * fails before it starts. The ladder's job is to reach it for one named action, not to restate its checks.
  */
 export function actionRung({ action, deployRoot, run = defaultRun }) {
   const command = `node tools/preflight-live-run.mjs --mods-path ${deployRoot} --action ${action}`;
   const outcome = run(command);
-  return { id: "l2", status: outcome.status === 0 ? "passed" : "failed", command, exitCode: outcome.status };
+  return { id: "l4", status: outcome.status === 0 ? "passed" : "failed", command, exitCode: outcome.status };
 }
 
 function defaultRun(command) {
@@ -617,6 +794,7 @@ export function parseArgs(argv) {
   return {
     noGame: argv.includes("--no-game"),
     game: argv.includes("--game"),
+    skipCompile: argv.includes("--skip-compile"),
     action: value("--action"),
     modsPath: value("--mods-path"),
     gameInstall: value("--game-install"),
@@ -642,7 +820,7 @@ export function runLadder({ rungs, stopOnFirstRed = true }) {
 function main(argv) {
   const options = parseArgs(argv);
   if (!options.noGame && options.action === null) {
-    process.stderr.write("usage: node tools/prelive.mjs --no-game | --action <id> [--game]\n");
+    process.stderr.write("usage: node tools/prelive.mjs --no-game | --action <id> [--game] [--skip-compile]\n");
     process.exitCode = 2;
     return;
   }
@@ -660,13 +838,14 @@ function main(argv) {
       () => runContractTriad(),
       () => linkageRung(),
       () => deploy,
+      () => actionRegistryRung({ skipCompile: options.skipCompile }),
       () => shapeRung(),
       ...(options.action === null || !options.game
         ? []
         : [() => actionRung({ action: options.action, deployRoot: deploy.deployRoot })]),
     ],
   });
-  const notice = options.action !== null && !options.game ? "l2_skipped: needs --game" : null;
+  const notice = options.action !== null && !options.game ? "l4_skipped: needs --game" : null;
   process.stdout.write(format(ladder, { elapsedMs: Date.now() - startedAt, options, notice }));
   if (ladder.status !== "passed") process.exitCode = 1;
 }
@@ -675,6 +854,37 @@ function main(argv) {
 function knownAction(action) {
   const published = JSON.parse(read(SURFACE)).actions.some((entry) => entry.actionId === action);
   return published || action in STARDEW_EXPERIMENTAL_ACTION_RUNNERS;
+}
+
+/** L2's own lines: what the populations disagree on, then what the build said, each naming its own fact. */
+function populationRungLines(rung) {
+  const lines = [];
+  const counts = rung.population.counts;
+  lines.push(
+    `  l2: population agreement ${rung.population.status} (adapters=${counts.adapters}, toolNames=${counts.toolNames}, descriptorDerived=${counts.descriptorDerived}, descriptorValidators=${counts.descriptorValidators}, publishedExecution=${counts.publishedExecution})`,
+  );
+  for (const entry of rung.population.differences) lines.push(`    ${entry.direction}: ${entry.actionId}`);
+  for (const direction of new Set(rung.population.differences.map((entry) => entry.direction)))
+    lines.push(`    ${direction} means ${POPULATION_LABELS[direction]}`);
+  const compile = rung.compile;
+  if (compile.status === "passed")
+    lines.push(`  l2: compile passed (host/${HOST_TEST_ARTIFACT_BUILD}) in ${compile.ms}ms`);
+  else if (compile.status === "skipped")
+    lines.push(
+      compile.reason === "population_red"
+        ? "  l2: compile skipped: the populations already disagree, so the build would only restate it"
+        : `  l2: compile skipped (${compile.reason}): only population agreement was checked`,
+    );
+  else if (compile.status === "unavailable")
+    lines.push(
+      `  l2: compile UNAVAILABLE: ${compile.reason} - the Host artifact was NOT compiled here, so a green suite below proves nothing about it`,
+    );
+  else {
+    lines.push(`  l2: compile failed in ${compile.ms}ms - a green test suite is not a compilation`);
+    lines.push(`      | ${compile.firstError}`);
+  }
+  lines.push(`  l2: ${rung.status}`);
+  return lines;
 }
 
 /** The report, as text: every rung's counts plus the member each violation names. */
@@ -715,6 +925,8 @@ export function format(ladder, { elapsedMs, options, notice }) {
       lines.push(`  l1b: deployRoot=${rung.deployRoot}`);
       lines.push(`  l1b: gameInstall=${rung.gameInstall}`);
       lines.push(`  l1b: ${rung.status} - ${rung.message}`);
+    } else if (rung.id === "l2") {
+      lines.push(...populationRungLines(rung));
     } else if (rung.id === "l3") {
       lines.push(`  l3: shape checked ${rung.checked} runners; known ${rung.knownRunners} of ${rung.checked}`);
       for (const entry of rung.violations)
@@ -722,8 +934,8 @@ export function format(ladder, { elapsedMs, options, notice }) {
           `    ${entry.file}:${entry.line} ${entry.rule} asserts ${entry.fact}${entry.baselined ? " (listed in the baseline but no longer matches it)" : ""}`,
         );
       lines.push(`  l3: ${rung.status}`);
-    } else if (rung.id === "l2") {
-      lines.push(`  l2: ${rung.status} (exit=${rung.exitCode}) command: ${rung.command}`);
+    } else if (rung.id === "l4") {
+      lines.push(`  l4: ${rung.status} (exit=${rung.exitCode}) command: ${rung.command}`);
     }
   }
   // An invocation fact, not a rung outcome: it is printed even when an earlier rung is red, because it says what this
