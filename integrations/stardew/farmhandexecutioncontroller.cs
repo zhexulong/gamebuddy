@@ -2369,9 +2369,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmBuildingTargets: advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player) : null,
             // The world-object lane's single shared projection: placement candidates, removable and
-            // non-removable objects, and breakable containers, published while ANY of the three
-            // actions is advertised because all three name targets from this one array.
-            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container_source", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
+            // non-removable objects, breakable containers, placed furniture and empty pedestals,
+            // published while ANY action that names a target from this one array is advertised -
+            // including the furniture and pedestal actions, which are the only ways to act on the
+            // pieces this array is the sole publication of.
+            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container_source", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
             // The disposition this tick, read from the value Update() already computed: publishing a
             // second computation would be a second authority.
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),

@@ -905,6 +905,11 @@ export type Snapshot = Readonly<{
     slot: number;
     qualifiedItemId: string;
     displayName: string;
+    /** The piece's live `currentRotation`, and the size of its own rotation cycle. Both are
+     * `null` for every kind that is not a piece of furniture - never 0 and never -1, because 0
+     * is a legal rotation and a sentinel that reads as a value gets compared as one. */
+    rotation: number | null;
+    rotations: number | null;
   }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
@@ -1721,7 +1726,7 @@ const BRIDGE_MESSAGE_TYPES = [
   "world_fact",
 ] as const;
 
-const SNAPSHOT_KEYS = [
+export const SNAPSHOT_KEYS = [
   "revision",
   "location",
   "tile",

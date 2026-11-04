@@ -1051,7 +1051,9 @@ internal sealed partial class ExecutionManager
                         y,
                         slot,
                         owned.QualifiedItemId,
-                        RequireDisplayName(owned.QualifiedItemId)));
+                        RequireDisplayName(owned.QualifiedItemId),
+                        null,
+                        null));
                     placementCount++;
                 }
             }
@@ -1094,7 +1096,9 @@ internal sealed partial class ExecutionManager
                     (int)tile.Y,
                     actionable ? slot : -1,
                     placed.QualifiedItemId,
-                    string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName));
+                    string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName,
+                    null,
+                    null));
                 objectCount++;
             }
         }
@@ -1111,6 +1115,11 @@ internal sealed partial class ExecutionManager
         // slot would promise one. The removal action refuses a furniture tile by name (see
         // `remove_placed_item_furniture_move_unsupported`) rather than `target_not_found`, so the companion learns the
         // difference between "not there" and "there, but I cannot move it".
+        //
+        // The piece also carries its own `currentRotation` and `rotations`, because those are the two facts an action on
+        // it needs and the only place they exist: `rotations < 2` is why `rotate_furniture` refuses by name instead of
+        // turning nothing, and `currentRotation` before/after is the only witness that a turn happened. A caller cannot
+        // derive either - the target id deliberately excludes anything the piece's own use changes.
         int furnitureCount = 0;
         foreach (Furniture piece in location.furniture)
         {
@@ -1130,7 +1139,9 @@ internal sealed partial class ExecutionManager
                 (int)tile.Y,
                 -1,
                 piece.QualifiedItemId,
-                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName));
+                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName,
+                piece.currentRotation.Value,
+                piece.rotations.Value));
             furnitureCount++;
         }
         // EMPTY PEDESTALS, because nothing published them. `pedestalTargets` is the TAKE projection and carries only a
@@ -1161,7 +1172,9 @@ internal sealed partial class ExecutionManager
                 (int)tile.Y,
                 -1,
                 pedestal.QualifiedItemId,
-                string.IsNullOrEmpty(pedestal.DisplayName) ? pedestal.QualifiedItemId : pedestal.DisplayName));
+                string.IsNullOrEmpty(pedestal.DisplayName) ? pedestal.QualifiedItemId : pedestal.DisplayName,
+                null,
+                null));
             pedestalCount++;
         }
         return result;

@@ -7639,7 +7639,9 @@
         "y",
         "slot",
         "qualifiedItemId",
-        "displayName"
+        "displayName",
+        "rotation",
+        "rotations"
       ],
       "properties": {
         "targetId": {
@@ -7681,6 +7683,18 @@
         "displayName": {
           "type": "string",
           "maxLength": 128
+        },
+        "rotation": {
+          "description": "The piece's live `Furniture.currentRotation`: one quarter-turn of its own cycle. `null` for every kind that is not a piece of furniture - never 0 or -1, because 0 is a legal rotation and a sentinel that reads as a value gets compared as one.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 3
+        },
+        "rotations": {
+          "description": "The size of the piece's own rotation cycle, from Data/Furniture (`Furniture.rotations`). Below 2 the engine's `rotate()` is a no-op, which is why `rotate_furniture` refuses such a piece by name instead of turning nothing. `null` for every kind that is not furniture.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4
         }
       }
     },

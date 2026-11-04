@@ -1287,13 +1287,24 @@ export function isMailboxTargetFact(value: unknown): boolean {
  * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
  * missing or malformed array must fail closed rather than read as a transport fault. */
 
-/** The world-object lane's projection. Every member is always written (the Mod omits nulls,
- * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
- * missing or malformed array must fail closed rather than read as a transport fault. */
+/** The world-object lane's projection. Every member is always written (the Mod omits nulls by
+ * default, which is why `rotation` and `rotations` carry `JsonIgnoreCondition.Never` on the Mod
+ * side), and a missing or malformed array must fail closed rather than read as a transport fault. */
 export function isWorldObjectTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName"]) &&
+    hasExactKeys(value, [
+      "targetId",
+      "kind",
+      "location",
+      "x",
+      "y",
+      "slot",
+      "qualifiedItemId",
+      "displayName",
+      "rotation",
+      "rotations",
+    ]) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     // `placed_furniture` is a piece standing in `location.furniture` - where the room's own bed, sofa and rug live, and
@@ -1321,8 +1332,25 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
     value.slot >= -1 &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
-    typeof value.displayName === "string"
+    typeof value.displayName === "string" &&
+    // `rotation`/`rotations` are the piece's live `currentRotation` and its own cycle length. They are
+    // `null` for every kind that is not furniture, and `null` is the ONLY absence this accepts: a 0 or
+    // -1 sentinel would pass `Number.isSafeInteger`, and 0 is a legal rotation, so the sentinel would
+    // be silently readable as a value. A furniture row that carries no rotation is refused rather than
+    // published without the fact the rotation postcondition reads.
+    isCurrentRotationFact(value.rotation) &&
+    isRotationCycleFact(value.rotations) &&
+    (value.kind !== "placed_furniture" || (value.rotation !== null && value.rotations !== null)) &&
+    (value.kind === "placed_furniture" || (value.rotation === null && value.rotations === null))
   );
+}
+/** `Furniture.currentRotation`: one quarter-turn of the engine's own cycle, or the explicit `null`. */
+function isCurrentRotationFact(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 3);
+}
+/** `Furniture.rotations`: how many quarter-turns the piece's own data allows (Data/Furniture's 0, 2 or 4). */
+function isRotationCycleFact(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 4);
 }
 /** One posted help-wanted quest the actor can name: the opaque id it was published under, the native
  * quest type, and the title a human would recognize. */

@@ -38,6 +38,30 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["world_object"],
   ),
   actionAdapter(
+    "rotate_furniture",
+    "Rotate placed furniture",
+    "Turn one already-placed piece of furniture one step through its own rotation cycle, in place. Read the `placed_furniture` target id and its tile from the `worldObjectTargets` entry of the most recent observation; there is no angle argument, because the piece's own `rotations` data decides whether it alternates 0 <-> 2 or steps 0 -> 1 -> 2 -> 3 -> 0. A piece with fewer than two rotations is refused by name (`furniture_rotation_unsupported`), never reported as a turn that did nothing, and the postcondition is the piece's `currentRotation` changed with the piece still standing on the same tile.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "remove_fence",
+    "Remove a placed fence",
+    "Take one placed fence or fence gate off its tile with the tool the game's own fence data accepts. Read the object target id, its tile and the tool slot from the `worldObjectTargets` entry of the most recent observation. The fence's own `performToolAction` returns false on every branch, including the one that destroyed it, so the postcondition is the fence GONE from the location's objects plus the drops it produced; a tool that cannot remove that exact fence is refused by name (`remove_fence_tool_cannot_remove_target`), never reported as an uncertain result after the swings.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "put_item_in_fish_tank",
+    "Put an item in a fish tank",
+    "Put one backpack item into a placed fish tank, letting the tank's own `CanBeDeposited` rule decide whether it may hold it. Read the tank's `placed_furniture` target id and tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. The postcondition is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported as `fish_tank_deposit_not_observed`, never as a success.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "place_item_on_pedestal",
+    "Place an item on a pedestal",
+    "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. Read the `empty_pedestal` target id, its tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because the pedestal's own branch knocks the standing item off and answers false; the postcondition is the pedestal's `heldObject` being this item while the pack lost exactly one.",
+    ["world_object"],
+  ),
+  actionAdapter(
     "break_container",
     "Break a container",
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
