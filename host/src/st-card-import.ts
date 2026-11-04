@@ -881,10 +881,27 @@ function extractCharacterBook(
  * speaker of a block and this boundary only has to be wide enough not to cut one in two.
  */
 const EXAMPLE_BLOCK_SEPARATOR = /<START>/u;
-const EXAMPLE_TURN_BOUNDARY = /(?=(?:^|\n)\s*(?:\{\{user\}\}|You|User)\s*:)/iu;
 /** The ST spec's own two speakers, as the label alternations the example parser builds from. */
 const EXAMPLE_USER_LABELS = "\\{\\{user\\}\\}|You|User";
 const EXAMPLE_COMPANION_LABELS = "\\{\\{char\\}\\}|Character|Assistant";
+/**
+ * What separates a speaker's label from the line they say.
+ *
+ * A Chinese-authored card writes the full-width colon (`{{user}}：你好`) - it is the normal
+ * punctuation in that community's cards - and only the half-width one was accepted, so the label
+ * matched no speaker at all and the card's every `<START>` block was dropped whole as
+ * `unparsed_example_blocks`. The two are the same separator to a reader, so both are accepted.
+ *
+ * It is ONE constant because three places read it - the turn's own label, the lookahead that ends the
+ * turn, and the block boundary a card without `<START>` is split on. Widened in one and not the
+ * others, a block that mixed the two separators parsed halfway: the turn ran past the labels after
+ * it and swallowed their text.
+ */
+const EXAMPLE_SPEAKER_COLON = "[:：]";
+const EXAMPLE_TURN_BOUNDARY = new RegExp(
+  `(?=(?:^|\\n)\\s*(?:${EXAMPLE_USER_LABELS})\\s*${EXAMPLE_SPEAKER_COLON})`,
+  "iu",
+);
 
 /**
  * Escapes a card-authored string for literal use inside a RegExp source.
@@ -928,7 +945,7 @@ function exampleTurnPattern(declaredName: string | undefined): RegExp {
       : `${EXAMPLE_COMPANION_LABELS}|${escapeRegExpLiteral(declaredName)}`;
   const anySpeaker = `(?:(?:${EXAMPLE_USER_LABELS})|(?:${companionLabels}))`;
   return new RegExp(
-    `(?:(?:${EXAMPLE_USER_LABELS})\\s*:\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*:|$))|(?:(?:${companionLabels})\\s*:\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*:|$))`,
+    `(?:(?:${EXAMPLE_USER_LABELS})\\s*${EXAMPLE_SPEAKER_COLON}\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*${EXAMPLE_SPEAKER_COLON}|$))|(?:(?:${companionLabels})\\s*${EXAMPLE_SPEAKER_COLON}\\s*([\\s\\S]*?)(?=${anySpeaker}\\s*${EXAMPLE_SPEAKER_COLON}|$))`,
     "giu",
   );
 }

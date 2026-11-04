@@ -1732,6 +1732,41 @@ test("one <START> block holding several exchanges keeps every exchange, not only
   ]);
 });
 
+test("a full-width colon separates a speaker exactly as a half-width one does", () => {
+  // Chinese-authored cards write the full-width colon (`{{user}}：你好`) - it is that community's
+  // normal punctuation. The separator was half-width only, in the label match and in the lookahead
+  // that ends a turn, so such a block matched no speaker at all and was dropped whole as
+  // `unparsed_example_blocks`: the companion lost her entire few-shot to a punctuation mark.
+  const card = (mesExample: string): string =>
+    JSON.stringify({ spec: "chara_card_v3", data: { name: "琥珀", description: "calm", mes_example: mesExample } });
+  const halfWidth = decodeStCard(card("<START>\n{{user}}: 今天先做什么？\n{{char}}: 先把西边的荒地清了。"));
+  const fullWidth = decodeStCard(card("<START>\n{{user}}：今天先做什么？\n{{char}}：先把西边的荒地清了。"));
+  assert.deepEqual(fullWidth.candidate?.profileCandidate.examples, [
+    { user: "今天先做什么？", companion: "先把西边的荒地清了。" },
+  ]);
+  // The two spellings are the same separator to a reader, so they produce the same pairs.
+  assert.deepEqual(fullWidth.candidate?.profileCandidate.examples, halfWidth.candidate?.profileCandidate.examples);
+  assert.deepEqual(fullWidth.losses, []);
+
+  // The label match and the lookahead have to agree: with only one of them widened, a block that
+  // MIXED the two separators parsed halfway - the first turn ran to the next accepted label and
+  // the turns after it were swallowed into its text.
+  const mixed = decodeStCard(card("<START>\n{{user}}：一\n{{char}}: 甲\n{{user}}: 二\n{{char}}：乙"));
+  assert.deepEqual(mixed.candidate?.profileCandidate.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
+  ]);
+  assert.deepEqual(mixed.losses, []);
+
+  // A card without `<START>` is split on the same separator rule, so the block boundary reads it too.
+  const noStart = decodeStCard(card("{{user}}：一\n{{char}}：甲\n{{user}}：二\n{{char}}：乙"));
+  assert.deepEqual(noStart.candidate?.profileCandidate.examples, [
+    { user: "一", companion: "甲" },
+    { user: "二", companion: "乙" },
+  ]);
+  assert.deepEqual(noStart.losses, []);
+});
+
 test("an example block that stops alternating, or ends mid-exchange, is reported rather than reshaped", () => {
   // Walking every speaker of a block makes two new shapes reachable, and neither may be
   // quietly repaired into an exchange the author never wrote: two player turns in a row (the
