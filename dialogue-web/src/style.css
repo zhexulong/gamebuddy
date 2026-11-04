@@ -4832,6 +4832,134 @@
     align-self: flex-start;
   }
 
+  /* The Memory panel's Chapters region: the rows the fold leaves once her long story
+   has sealed a chapter, each one keeping its place, its lifecycle and - when the player
+   has corrected it - that provenance beside the lifecycle rather than in its place.
+   Twelve class names were written for this section and no rule implemented any of
+   them, so it laid out as the browser's own `h3`/`h4`/`ul` defaults inside a panel
+   whose every other block is a card: the badges the row exists to show painted as
+   words in the title's line, and a removed chapter indistinguishable from a sealed
+   one. The rules the names promised are below. The three states take the attribute
+   the row already carries (`data-memory-chapter`, `data-memory-chapter-badge`),
+   because one class name cannot state what the status says. */
+  .memory-chapters {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .memory-chapters-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .memory-chapters-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .memory-chapter-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .memory-chapter {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-card);
+  }
+
+  /* A removed chapter keeps its card, because the removal is a fact the player can
+   see; it steps back instead of disappearing, so the list still reads as what she
+   has rather than as if the row had never been written. */
+  .memory-chapter[data-memory-chapter="deleted"] {
+    background-color: var(--surface-elevated);
+    border-style: dashed;
+  }
+
+  .memory-chapter-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .memory-chapter-name {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .memory-chapter-span {
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  /* The lifecycle and the provenance chips: one chip treatment, the same as the Memory
+   entry's own `.memory-item-badge`, because a chip is the same object in both places. */
+  .memory-chapter-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px var(--space-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: var(--surface-elevated);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .memory-chapter-badge[data-memory-chapter-badge="deleted"] {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 32%, transparent);
+  }
+
+  /* Her words, with the line breaks she wrote: the same authored-text read the
+   world-book entries and the drawer's persona take above. */
+  .memory-chapter-body {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .memory-chapter[data-memory-chapter="deleted"] .memory-chapter-body {
+    color: var(--text-disabled);
+  }
+
+  .memory-chapter-correct {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .memory-chapter-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
   /* --- game-surface lane: the companion capability board and the start guide ---
    The board leads the panel and the machine facts are demoted last, so the
    surface reads as what the companion can do with the player. Nothing here owns
