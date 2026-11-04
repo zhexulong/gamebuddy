@@ -218,6 +218,20 @@ try {
         # Read the ladder contract ONCE, before the launch it is supposed to judge: a missing or broken ladder
         # module would otherwise be discovered thirty seconds into a boot, in the teardown.
         $null = Get-PreliveLadder
+        # RUNG 3's PRECONDITION, and also its own failure. The probe executes `host/dist-test` through
+        # `loadHostTestModule`, which refuses an artifact older than its sources; asked only at observe time,
+        # that refusal was reported under the snapshot-not-actionable code - naming a blocker nobody saw.
+        # Same authority the loader asks, its own code, the newest input, the artifact and the rebuild command,
+        # and it is asked HERE so a stale build costs two seconds instead of a boot.
+        $phase = "prelive_harness_freshness"
+        $harnessText = node $preliveLadderTool --mode harness
+        if ([string]::IsNullOrWhiteSpace($harnessText)) { throw "Prelive harness freshness could not be read ($preliveLadderTool --mode harness)." }
+        $harness = $harnessText | ConvertFrom-Json
+        if (-not $harness.passed) {
+            Register-PreliveRungFailure 3 ([string]$harness.code) ([string]$harness.detail)
+            throw "Prelive rung 3 $($harness.code): $($harness.detail)"
+        }
+        $phase = "input_validation"
     }
     $phase = "runner_resolution"
     $smokeScript = node $runnerResolver --action $Action

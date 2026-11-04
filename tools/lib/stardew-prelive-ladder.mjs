@@ -26,9 +26,11 @@
  * precondition stands.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadHostTestModule } from "./host-test-module.mjs";
+import { REBUILD_COMMAND, assessLiveRunArtifactFreshness } from "./live-run-artifact-freshness.mjs";
 import {
   connectNativeLocalClient,
   delay,
@@ -36,6 +38,8 @@ import {
   summarizeSnapshot,
   waitForActionable,
 } from "./stardew-native-smoke-harness-v1.mjs";
+
+const PRELIVE_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /**
  * The ladder itself: one row per rung, in order, carrying the rung number, the name a reader sees, and the
@@ -59,7 +63,19 @@ export const PRELIVE_FAILURE_CODES = Object.freeze({
   scenarioNotInitialized: "prelive_scenario_not_initialized",
   /** The pipe never answered. */
   bridgeNotListening: "prelive_bridge_not_listening",
-  /** The pipe answered, but no actionable snapshot arrived inside the bound. */
+  /**
+   * The Host artifact the probe loads (`host/dist-test` via `loadHostTestModule`) is missing or older than
+   * its sources. Its OWN code, because folding it into `snapshotNotActionable` claims an observation that
+   * never happened - measured 2026-11-05, the first real prelive run: `game-tools.ts` had been edited after
+   * `dist-test` was built, and the ladder reported "the snapshot was not actionable".
+   */
+  harnessStale: "prelive_harness_stale",
+  /** The pipe answered, but the session could not be established or observed at all: nothing was seen. */
+  snapshotUnobservable: "prelive_snapshot_unobservable",
+  /**
+   * A REAL snapshot was observed and it was not actionable (held body, active execution). The only code
+   * allowed to carry the location/can_move/fade/menu diagnosis, because it is the only one with a snapshot.
+   */
   snapshotNotActionable: "prelive_snapshot_not_actionable",
   /** A fatal marker appeared in the Mod log after the deliberate disconnect. */
   dirtyTeardown: "prelive_dirty_teardown",
@@ -294,6 +310,72 @@ export function describePreliveSnapshotBlock({ snapshot, logText }) {
 }
 
 /**
+ * Rung 3's PRECONDITION: the Host artifact the probe executes must be current.
+ *
+ * The probe loads `host/dist-test` through `loadHostTestModule`, which refuses an artifact older than its
+ * sources (or missing) - and that refusal is correct, but it is NOT an observation: nothing was connected,
+ * nothing was seen. Asked only at observe time it surfaced as `prelive_snapshot_not_actionable`, a code
+ * naming a cause that was not the cause (measured 2026-11-05, the first real prelive run: `game-tools.ts` was
+ * edited after `dist-test` was built). So the same authority is asked here, before rung 3 touches the bridge,
+ * and the verdict keeps its own identity.
+ */
+export async function readPreliveHarnessStaleness({ repositoryRoot = PRELIVE_REPOSITORY_ROOT } = {}) {
+  return await assessLiveRunArtifactFreshness({ repositoryRoot });
+}
+
+/** Rung 3's verdict on that precondition, naming the newest input, the artifact and the rebuild command. */
+export function evaluatePreliveHarnessRung(staleness, { repositoryRoot = PRELIVE_REPOSITORY_ROOT } = {}) {
+  const artifact = staleness?.outputs?.path ?? join(repositoryRoot, "host", "dist-test");
+  const newestInput = staleness?.inputs?.path ?? "(no compiled input found)";
+  if (staleness?.stale !== true)
+    return {
+      rung: 3,
+      passed: true,
+      code: null,
+      detail: `host artifact is current: newest input ${newestInput} is not newer than the newest emitted module ${staleness?.outputs?.path ?? "unknown"}`,
+    };
+  const reason = staleness.reason ?? "stale_artifact";
+  // A missing artifact has no modification time to compare, so it is reported as a fact rather than as a
+  // comparison against an invented timestamp.
+  const comparison =
+    staleness.outputs?.path === undefined
+      ? `artifact ${artifact} does not exist`
+      : `newest input ${newestInput} @${new Date(staleness.inputs?.mtimeMs ?? 0).toISOString()} vs artifact ${artifact} @${new Date(staleness.outputs.mtimeMs).toISOString()}`;
+  return {
+    rung: 3,
+    passed: false,
+    code: PRELIVE_FAILURE_CODES.harnessStale,
+    detail: `${reason}: ${comparison}; rebuild with: ${REBUILD_COMMAND}`,
+  };
+}
+
+/**
+ * Why rung 3 did not produce an actionable snapshot, in the code that names the ACTUAL cause.
+ *
+ * One function, three outcomes, and no borrowing: a stale artifact never reads as a blocker (`harnessStale`),
+ * a session that never produced a snapshot never reads as one either (`snapshotUnobservable`), and only a REAL
+ * observed snapshot that is not actionable carries `snapshotNotActionable` together with its
+ * location/can_move/fade/menu diagnosis.
+ */
+export function describePreliveProbeFailure({ error, snapshot = null, logText = "", staleness = null }) {
+  const message = String(error instanceof Error ? error.message : error).slice(0, 240);
+  if (staleness?.stale === true) {
+    const harness = evaluatePreliveHarnessRung(staleness);
+    return { code: harness.code, detail: `${harness.detail};probe=${message}`, snapshot: null };
+  }
+  if (snapshot === null || snapshot === undefined)
+    return { code: PRELIVE_FAILURE_CODES.snapshotUnobservable, detail: message, snapshot: null };
+  const block = describePreliveSnapshotBlock({ snapshot, logText });
+  return {
+    code: PRELIVE_FAILURE_CODES.snapshotNotActionable,
+    detail:
+      `${message};location=${block.location};can_move=${block.can_move};fade=${block.fade};menu=${block.menu}` +
+      `;actionable=${snapshot.actionable ?? "unknown"};disposition=${snapshot.actorDispositionKind ?? "none"}`,
+    snapshot: { ...summarizeSnapshot(snapshot), ...block },
+  };
+}
+
+/**
  * Rung 3, live: connect the way a smoke runner does, and require an actionable snapshot.
  *
  * The connection is retried on ENOENT because the game creates its pipe asynchronously after launch (the same
@@ -321,23 +403,35 @@ export async function runPreliveSnapshotProbe(
       timings: { snapshotMs: Date.now() - startedAt },
     };
   } catch (error) {
-    const snapshot = session?.client?.state?.snapshot ?? null;
-    const block = describePreliveSnapshotBlock({ snapshot, logText: safeLogText(modLogPath) });
+    // The loader refuses a stale artifact BEFORE anything is observed, so that refusal is asked of the same
+    // authority here: the code must name the artifact, not a blocker nobody saw.
+    const failure = describePreliveProbeFailure({
+      error,
+      snapshot: session?.client?.state?.snapshot ?? null,
+      logText: safeLogText(modLogPath),
+      staleness: await safeStaleness(),
+    });
     result = {
       state: "failed",
       passed: false,
       rung: 3,
-      code: PRELIVE_FAILURE_CODES.snapshotNotActionable,
-      detail:
-        `${String(error instanceof Error ? error.message : error).slice(0, 240)}` +
-        `;location=${block.location};can_move=${block.can_move};fade=${block.fade};menu=${block.menu}` +
-        `;actionable=${snapshot?.actionable ?? "no_snapshot"};disposition=${snapshot?.actorDispositionKind ?? "none"}`,
-      snapshot: snapshot === null ? null : { ...summarizeSnapshot(snapshot), ...block },
+      code: failure.code,
+      detail: failure.detail,
+      snapshot: failure.snapshot,
       timings: { snapshotMs: Date.now() - startedAt },
     };
   }
   if (session !== null) await session.close();
   return Object.freeze(result);
+}
+
+/** Staleness for a failure already in flight. A walk that cannot run must not replace the failure it explains. */
+async function safeStaleness() {
+  try {
+    return await readPreliveHarnessStaleness();
+  } catch {
+    return null;
+  }
 }
 
 function safeLogText(path) {
@@ -389,7 +483,7 @@ if (import.meta.main) {
   let payload;
   const usage = (message) => {
     process.stderr.write(
-      `${message}\nusage: --mode ladder|log|config|teardown|snapshot [--log <path>] [--offset <bytes>] [--error-logs <dir>] [--since-ms <ms>] [--scenario <name>] [--timeout-seconds <n>] [--client-config <path>]\n`,
+      `${message}\nusage: --mode ladder|log|harness|config|teardown|snapshot [--log <path>] [--offset <bytes>] [--error-logs <dir>] [--since-ms <ms>] [--scenario <name>] [--timeout-seconds <n>] [--client-config <path>] [--repository-root <dir>]\n`,
     );
     process.exitCode = 2;
   };
@@ -397,6 +491,12 @@ if (import.meta.main) {
     payload = { rungs: PRELIVE_RUNGS, failureCodes: PRELIVE_FAILURE_CODES };
   } else if (mode === "log") {
     payload = resolvePreliveModLog({ errorLogsDir, launchedAtMs }) ?? { path: null, length: 0 };
+  } else if (mode === "harness") {
+    // Always exit 0: the verdict IS the payload, so a stale artifact is read as `prelive_harness_stale` by a
+    // caller that reads the JSON, and never mistaken for "the checker itself failed".
+    const repositoryRoot = argumentValue("--repository-root", argv);
+    const rootOptions = repositoryRoot === undefined ? undefined : { repositoryRoot: resolve(repositoryRoot) };
+    payload = evaluatePreliveHarnessRung(await readPreliveHarnessStaleness(rootOptions), rootOptions);
   } else if (mode === "config") {
     const timeoutSeconds = numberArgument("--timeout-seconds", argv, Number.NaN);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) usage("config mode requires --timeout-seconds");

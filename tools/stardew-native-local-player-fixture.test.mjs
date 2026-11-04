@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, opendir, readdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,6 +14,19 @@ import {
   validateNativeLocalPlayerFixturePreparation,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 import { STARDEW_MOD_FOLDER } from "./lib/stardew-mod-folder.mjs";
+import { REBUILD_COMMAND } from "./lib/live-run-artifact-freshness.mjs";
+import {
+  PRELIVE_FAILURE_CODES,
+  PRELIVE_RUNGS,
+  describePreliveProbeFailure,
+  describePreliveSnapshotBlock,
+  evaluatePreliveConfigRung,
+  evaluatePreliveHarnessRung,
+  evaluatePreliveTeardownRung,
+  pollPreliveConfigRung,
+  readPreliveLogTail,
+  readPreliveReadinessFacts,
+} from "./lib/stardew-prelive-ladder.mjs";
 
 const BUNDLE_FILES = [
   "GameBuddy.Stardew.dll",
@@ -1062,13 +1076,19 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
     /\.checkAction\(|PlaceInMachine|performObjectDropInAction|RequestLocalLoadCoffeeIntoKeg|PublishReceipt/,
   );
   const manager = await readExecutionManagerSources();
-  const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalLoadCoffeeIntoKeg");
+  const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalLoadMachineInput");
   const action = manager.slice(
     actionStart,
-    manager.indexOf("public LocalExecutionReceipt RequestLocalInspectMachine", actionStart),
+    manager.indexOf("public LocalExecutionReceipt RequestLocalCollectMachineOutput", actionStart),
   );
   assert.match(action, /location\.checkAction\(/);
-  assert.doesNotMatch(action, /PlaceInMachine|performObjectDropInAction/);
+  // The native mutation stays inside `checkAction`. `performObjectDropInAction` may appear ONLY as the read-only
+  // `probe: true` admission query - the same call `GameLocation.checkAction` makes before it performs the drop-in
+  // (GameLocation.cs:7768-7772) - because which inputs a machine takes is its own Data/Machines data, not a table in
+  // this source. It replaces nothing about the load itself: `PlaceInMachine` remains forbidden here.
+  assert.doesNotMatch(action, /PlaceInMachine/);
+  assert.match(action, /performObjectDropInAction\(input, probe: true/);
+  assert.doesNotMatch(action, /performObjectDropInAction\([^)]*probe: false/);
   assert.match(action, /machine_coffee_loaded/);
   const runner = await readFile(
     new URL("./run-stardew-native-local-player-machine-load-smoke.mjs", import.meta.url),
@@ -1076,7 +1096,7 @@ test("native-local machine-load fixture supplies only an idle Keg and exact Coff
   );
   assert.match(runner, /native_machine_coffee_load_v1/);
   assert.match(runner, /machine_coffee_loaded/);
-  assert.match(runner, /input_stack_after === "removed"/);
+  assert.match(runner, /input_stack_after === "0"/);
   // The runner must relate the observed duration to the derived one, not assert the
   // content constant 120: the Mod derives the expected duration from live machine
   // data, so pinning the literal here would defeat that.
@@ -1129,7 +1149,7 @@ test("native-local machine-collect fixture starts from loading only; production 
   );
   assert.doesNotMatch(setup, /readyForHarvest\s*=|MinutesUntilReady\s*=|heldObject\.Value\s*=/);
   const manager = await readExecutionManagerSources();
-  const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalCollectCoffeeFromKeg");
+  const actionStart = manager.indexOf("public LocalExecutionReceipt RequestLocalCollectMachineOutput");
   const action = manager.slice(
     actionStart,
     manager.indexOf("public LocalExecutionReceipt RequestLocalInspectMachine", actionStart),
@@ -1485,11 +1505,11 @@ test("native-local place-crab-pot fixture discovers one exact native target and 
   await restoreNativeLocalPlayerFixture(options);
 });
 
-test("native-local break-rock-source fixture is isolated and cannot perform the hit", async (t) => {
-  const options = { ...(await createFixture(t, "break-rock-source")), action: "break_rock_source" };
+test("native-local break-rock fixture is isolated and cannot perform the hit", async (t) => {
+  const options = { ...(await createFixture(t, "break-rock")), action: "break_rock" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "break_rock_source"]);
+  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "break_rock"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_break_rock_source_v1");
   const entry = await readFixtureSource();
   const setup = entry.slice(
@@ -1841,11 +1861,11 @@ test("native-local interact-npc-with-item fixture establishes only an active del
   await restoreNativeLocalPlayerFixture(options);
 });
 
-test("native-local chop-tree-source fixture establishes only the terminal-tree precondition", async (t) => {
-  const options = { ...(await createFixture(t, "chop-tree-source")), action: "chop_tree_source" };
+test("native-local chop-tree fixture establishes only the terminal-tree precondition", async (t) => {
+  const options = { ...(await createFixture(t, "chop-tree")), action: "chop_tree" };
   await prepareNativeLocalPlayerFixture(options);
   const configured = JSON.parse(await readFile(join(options.modRoot, "config.json"), "utf8"));
-  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "chop_tree_source"]);
+  assert.deepEqual(configured.EnabledActions, ["move_to_tile", "travel", "equip_tool", "chop_tree"]);
   assert.equal(configured.NativeLocalPlayerFixture.FixtureScenario, "native_chop_tree_source_v1");
   const entry = await readFixtureSource();
   const setup = entry.slice(
@@ -1859,7 +1879,7 @@ test("native-local chop-tree-source fixture establishes only the terminal-tree p
     new URL("./run-stardew-native-local-player-chop-tree-source-smoke.mjs", import.meta.url),
     "utf8",
   );
-  assert.match(runner, /\["move_to_tile", "travel", "equip_tool", "chop_tree_source"\]/);
+  assert.match(runner, /\["move_to_tile", "travel", "equip_tool", "chop_tree"\]/);
   assert.match(runner, /treeChopSourceTargets/);
   assert.match(runner, /treeChopResultTargets/);
   assert.match(runner, /evidence\.health_before === "1"/);
@@ -2080,7 +2100,7 @@ test("native-local fixture setup fails closed while any warp continuation is pen
 });
 
 test("native-local fixture restore fails closed when a registered backup is tampered", async (t) => {
-  const options = { ...(await createFixture(t, "tampered-restore")), action: "chop_tree_source" };
+  const options = { ...(await createFixture(t, "tampered-restore")), action: "chop_tree" };
   const prepared = await prepareNativeLocalPlayerFixture(options);
   const preparedConfig = await readFile(join(options.modRoot, "config.json"), "utf8");
   await writeFile(join(prepared.backup, "config.json.backup"), "tampered backup");
@@ -2119,3 +2139,374 @@ test("Navigation fixture launchers continue cleanup after restore failure", asyn
     assert.doesNotMatch(launcher, /Join-Path \$ModsPath "GameBuddy\/config\.json"/);
   }
 });
+
+// The prelive ladder's rung 1 verdict, on the Mod's OWN rejection line.
+//
+// This is the run that cost 303 seconds: a configuration the Mod refused at launch, reported only as a
+// bridge timeout once the pipe bound expired. The rung must go red on the line, and the line must be quoted
+// - a code with no text sends the reader back to the log the rung was supposed to read for them.
+const PRELIVE_REJECTION_LINE =
+  "[23:20:00 INFO  GameBuddy.Stardew] GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host.";
+
+test("prelive rung 1 turns red on a rejected profile and quotes the Mod's own line", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-prelive-config-"));
+  t.after(() => removeFixtureTree(root));
+  const logPath = join(root, "SMAPI-latest.txt");
+  await writeFile(
+    logPath,
+    ["[23:19:58 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 on .NET 6.0.0", PRELIVE_REJECTION_LINE, ""].join(
+      "\n",
+    ),
+    "utf8",
+  );
+  const scenario = "native_clear_debris_resource_clump_v1";
+
+  const verdict = evaluatePreliveConfigRung({ logText: await readFile(logPath, "utf8"), scenario });
+  assert.equal(verdict.rung, 1);
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.code, PRELIVE_FAILURE_CODES.configRejected);
+  assert.equal(verdict.detail, PRELIVE_REJECTION_LINE);
+
+  // The path the launcher actually calls: resolve THIS launch's log file, then poll for a verdict.
+  const polled = await pollPreliveConfigRung({
+    errorLogsDir: root,
+    launchedAtMs: Date.now() - 1_000,
+    scenario,
+    timeoutMs: 3_000,
+    pollMs: 50,
+  });
+  assert.equal(polled.passed, false);
+  assert.equal(polled.code, PRELIVE_FAILURE_CODES.configRejected);
+  assert.equal(polled.logPath, logPath);
+  assert.equal(polled.detail, PRELIVE_REJECTION_LINE);
+
+  // The green half of the same rung, for the same scenario: the Mod's own initialized line.
+  const accepted = evaluatePreliveConfigRung({
+    logText:
+      "[23:20:10 INFO  GameBuddy.Stardew] GameBuddy native-local-player initialized clear-debris precondition before bridge attachment: parent=752; tile=62,17; size=2x2; health=8; pickaxe_upgrade=0.\n",
+    scenario,
+  });
+  assert.equal(accepted.passed, true);
+  assert.equal(accepted.rung, 1);
+  assert.equal(accepted.code, PRELIVE_RUNGS[0].passCode);
+});
+
+// The prelive ladder's rung 4 verdict: ONLY the disconnect window is in scope.
+//
+// A teardown check that reads the whole file flags an exception from an earlier phase of the same run, and
+// is turned off within a week. The window starts at the byte offset captured when the probe closed its
+// client, so the test's first half asserts the NEGATIVE as loudly as the second half asserts the hit.
+test("prelive rung 4 turns red only for a fatal line written after the deliberate disconnect", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-prelive-teardown-"));
+  t.after(() => removeFixtureTree(root));
+  const logPath = join(root, "SMAPI-latest.txt");
+  const beforeDisconnect = [
+    "[23:21:00 INFO  SMAPI] Type 'help' for help, or 'help <cmd>' for a command's usage",
+    // Yesterday's exception, inside the same run and before the disconnect: NOT rung 4's business.
+    "[23:21:02 ERROR GameBuddy.Stardew] System.NullReferenceException: Object reference not set to an instance of an object.",
+    "[23:21:05 INFO  GameBuddy.Stardew] GameBuddy local named-pipe bridge started for native local Player screen 1.",
+    "[23:21:20 INFO  GameBuddy.Stardew] GameBuddy local named-pipe bridge closed: client_eof.",
+  ];
+  const preDisconnectText = `${beforeDisconnect.join("\n")}\n`;
+  await writeFile(logPath, preDisconnectText, "utf8");
+  const disconnectOffset = Buffer.byteLength(preDisconnectText, "utf8");
+
+  const clean = evaluatePreliveTeardownRung({
+    logText: readPreliveLogTail({ path: logPath, offset: disconnectOffset }),
+  });
+  assert.equal(clean.rung, 4);
+  assert.equal(clean.passed, true);
+  assert.equal(clean.code, PRELIVE_RUNGS[3].passCode);
+
+  const disconnectFailure =
+    "[23:21:21 ERROR SMAPI] The GameBuddy.Stardew mod failed in the OnUpdateTicked event. Technical details:\n" +
+    "System.NullReferenceException: Object reference not set to an instance of an object.\n";
+  await writeFile(logPath, `${preDisconnectText}${disconnectFailure}`, "utf8");
+  const dirty = evaluatePreliveTeardownRung({
+    logText: readPreliveLogTail({ path: logPath, offset: disconnectOffset }),
+  });
+  assert.equal(dirty.rung, 4);
+  assert.equal(dirty.passed, false);
+  assert.equal(dirty.code, PRELIVE_FAILURE_CODES.dirtyTeardown);
+  assert.match(dirty.detail, /^NullReferenceException: System\.NullReferenceException: Object reference/u);
+
+  // Every marker the rung exists for, and the ordinary shutdown line it must NOT fire on.
+  for (const marker of ["NullReferenceException", "Fatal error", "Unhandled exception", "the game crashed"]) {
+    const verdict = evaluatePreliveTeardownRung({ logText: `[23:21:22 ERROR SMAPI] ${marker} while closing\n` });
+    assert.equal(verdict.code, PRELIVE_FAILURE_CODES.dirtyTeardown, marker);
+    assert.equal(verdict.passed, false, marker);
+  }
+  assert.equal(
+    evaluatePreliveTeardownRung({ logText: "[23:21:23 INFO  SMAPI] SMAPI shut down: the game closed normally.\n" })
+      .passed,
+    true,
+  );
+});
+
+test("prelive rung 3 names why a snapshot was not actionable, from the Mod's own observation", () => {
+  // The Mod's readiness line, verbatim in shape (LogNativeLocalPlayerReadinessIfBlocked). Its trailing
+  // period and its C# `True`/`False` spelling are the two details a naive parse gets wrong.
+  const readiness =
+    "[23:30:00 TRACE GameBuddy.Stardew] [DEBUG-native-local-readiness] state=menu_open;new_day=false;game_mode=3;saving=false;fade=1.00;clock_rate_ms=700;game_time=600;paused=false;freeze_controls=false;location=Farm;tile=62,17;can_move=False;event_up=false;menu=ShippingMenu.";
+  assert.deepEqual(
+    { ...readPreliveReadinessFacts(readiness) },
+    {
+      state: "menu_open",
+      location: "Farm",
+      can_move: "False",
+      fade: "1.00",
+      menu: "ShippingMenu",
+    },
+  );
+  // With the readiness line absent (Trace dropped at the default verbosity) the snapshot's own disposition
+  // detail still names the modal and the body state; only the engine's fade alpha stays unknown.
+  assert.deepEqual(
+    {
+      ...describePreliveSnapshotBlock({
+        snapshot: {
+          location: "Farm",
+          actorDispositionDetail: "modal_type=DialogueBox;action_owned=false;is_question=true;can_move=false",
+        },
+        logText: "",
+      }),
+    },
+    { location: "Farm", can_move: "false", fade: "unknown", menu: "DialogueBox" },
+  );
+});
+
+// A rung code must name the cause that actually happened.
+//
+// Measured on the first real prelive run (2026-11-05): `host/src/game-tools.ts` had been edited after
+// `host/dist-test` was built, the loader refused the stale artifact before any connection existed, and the
+// launcher reported `prelive_snapshot_not_actionable` - claiming a blocker it never observed. That is the
+// defect class this ladder exists to prevent, so a stale artifact now has its own code, its own message
+// (newest input, artifact, rebuild command), and the assertion that it is NOT the snapshot code.
+test("prelive rung 3 reports a stale host artifact as itself, never as a blocker it did not observe", () => {
+  const stale = {
+    stale: true,
+    reason: "artifact_older_than_inputs",
+    inputs: { path: "host/src/game-tools.ts", mtimeMs: Date.parse("2026-11-04T17:02:53Z") },
+    outputs: {
+      path: "host/dist-test/continuity-semantic-game-runtime-materializer.js",
+      mtimeMs: Date.parse("2026-11-04T11:11:11Z"),
+    },
+  };
+  const verdict = evaluatePreliveHarnessRung(stale);
+  assert.equal(verdict.rung, 3, "the rung that cannot be judged is the one reported");
+  assert.equal(verdict.passed, false);
+  assert.equal(verdict.code, PRELIVE_FAILURE_CODES.harnessStale);
+  assert.notEqual(
+    verdict.code,
+    PRELIVE_FAILURE_CODES.snapshotNotActionable,
+    "a stale artifact is not an observation that was not actionable",
+  );
+  assert.match(verdict.detail, /artifact_older_than_inputs/u);
+  assert.match(verdict.detail, /host[\\/]src[\\/]game-tools\.ts/u, "the message must name the newest input");
+  assert.match(verdict.detail, /dist-test[\\/]continuity-semantic-game-runtime-materializer\.js/u);
+  assert.ok(verdict.detail.includes(REBUILD_COMMAND), "the message must name the rebuild command");
+
+  // A missing artifact is the same cause with no timestamp to compare.
+  const missing = evaluatePreliveHarnessRung({ stale: true, reason: "artifact_missing" });
+  assert.equal(missing.code, PRELIVE_FAILURE_CODES.harnessStale);
+  assert.match(missing.detail, /artifact_missing: artifact .*dist-test does not exist/u);
+  assert.ok(missing.detail.includes(REBUILD_COMMAND));
+
+  // A current artifact is not a rung failure at all.
+  const current = evaluatePreliveHarnessRung({
+    stale: false,
+    inputs: { path: "host/src/game-tools.ts", mtimeMs: 1 },
+    outputs: { path: "host/dist-test/a.js", mtimeMs: 2 },
+  });
+  assert.equal(current.passed, true);
+  assert.equal(current.code, null);
+
+  // The same verdict arriving as a thrown error must still not become a blocker code.
+  const thrown = describePreliveProbeFailure({
+    error: new Error("live_run_artifact_stale:artifact_older_than_inputs: ..."),
+    snapshot: null,
+    logText: "",
+    staleness: stale,
+  });
+  assert.equal(thrown.code, PRELIVE_FAILURE_CODES.harnessStale);
+  assert.equal(thrown.snapshot, null);
+
+  // A session that never produced a snapshot is neither a blocker nor a stale artifact.
+  const unobservable = describePreliveProbeFailure({
+    error: new Error("native_local_bridge_connect_timeout"),
+    snapshot: null,
+    logText: "",
+    staleness: { stale: false },
+  });
+  assert.equal(unobservable.code, PRELIVE_FAILURE_CODES.snapshotUnobservable);
+  assert.match(unobservable.detail, /native_local_bridge_connect_timeout/u);
+
+  // And only a REAL observed snapshot that is not actionable keeps the snapshot code and the four facts.
+  const blocked = describePreliveProbeFailure({
+    error: new Error("native_snapshot_not_actionable"),
+    snapshot: {
+      revision: 7,
+      location: "Farm",
+      actionable: false,
+      activeExecution: null,
+      actorDispositionDetail: "modal_type=ShippingMenu;can_move=false",
+    },
+    logText: "",
+    staleness: { stale: false },
+  });
+  assert.equal(blocked.code, PRELIVE_FAILURE_CODES.snapshotNotActionable);
+  assert.match(blocked.detail, /location=Farm;can_move=false/u);
+  assert.match(blocked.detail, /menu=ShippingMenu/u);
+  assert.equal(blocked.snapshot.location, "Farm");
+});
+
+test("prelive rung numbers and codes are one authority the launcher reads instead of spelling", async () => {
+  assert.deepEqual(
+    PRELIVE_RUNGS.map((row) => [row.rung, row.name, row.passCode]),
+    [
+      [1, "config_accepted", "prelive_config_accepted"],
+      [2, "bridge_listening", "prelive_bridge_listening"],
+      [3, "first_snapshot_actionable", "prelive_snapshot_actionable"],
+      [4, "clean_teardown", "prelive_clean_teardown"],
+    ],
+  );
+  assert.deepEqual(
+    { ...PRELIVE_FAILURE_CODES },
+    {
+      configRejected: "prelive_config_rejected",
+      scenarioRejected: "prelive_scenario_rejected",
+      scenarioNotInitialized: "prelive_scenario_not_initialized",
+      bridgeNotListening: "prelive_bridge_not_listening",
+      harnessStale: "prelive_harness_stale",
+      snapshotUnobservable: "prelive_snapshot_unobservable",
+      snapshotNotActionable: "prelive_snapshot_not_actionable",
+      dirtyTeardown: "prelive_dirty_teardown",
+      launchFailed: "prelive_launch_failed",
+    },
+  );
+
+  const launcher = await readFile(
+    new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
+    "utf8",
+  );
+  assert.match(launcher, /\[switch\]\$PreliveOnly/u);
+  assert.match(launcher, /\[string\]\$PreliveResultFile/u);
+  assert.match(launcher, /lib\/stardew-prelive-ladder\.mjs/u);
+  assert.match(launcher, /node \$preliveLadderTool --mode ladder/u);
+  // ONE authority: a code or a pass code written into PowerShell would be a second spelling of the ladder.
+  for (const row of PRELIVE_RUNGS)
+    assert.ok(!launcher.includes(row.passCode), `${row.passCode} must come from the ladder module`);
+  for (const code of Object.values(PRELIVE_FAILURE_CODES))
+    assert.ok(!launcher.includes(code), `${code} must come from the ladder module`);
+
+  // Order: rung 1 is judged before the pipe bound it explains, rung 3 after the exact launch identity,
+  // rung 4 only after the teardown that follows the deliberate disconnect.
+  const rung1 = launcher.indexOf('$phase = "prelive_rung_1_config_accepted"');
+  const pipeReadiness = launcher.indexOf('$phase = "pipe_readiness"');
+  const identity = launcher.indexOf("Assert-LaunchedSmapiIdentity -ExpectedSmapi $smapi");
+  const snapshotRung = launcher.indexOf("Invoke-PreliveSnapshotRung $clientConfig");
+  const smokeDispatch = launcher.indexOf("node (Join-Path $PSScriptRoot $smokeScript) --client-config $clientConfig");
+  const stop = launcher.indexOf("taskkill /PID $process.Id /T /F");
+  const rung4 = launcher.indexOf('$phase = "prelive_rung_4_clean_teardown"');
+  const publish = launcher.indexOf("try { Publish-PreliveResult }");
+  assert.ok(rung1 > 0 && rung1 < pipeReadiness, "rung 1 must precede the pipe bound it explains");
+  assert.ok(pipeReadiness < identity && identity < snapshotRung, "rung 3 needs the attested launch identity first");
+  assert.ok(snapshotRung < smokeDispatch, "no action runner may be dispatched before rung 3");
+  assert.ok(snapshotRung < stop && stop < rung4, "rung 4 must scan after the teardown, never before it");
+  assert.ok(rung4 > 0 && rung4 < publish, "the result is published after the last rung");
+  // The scan window is the disconnect, not the file.
+  assert.match(
+    launcher,
+    /--mode teardown --log \$prelive\.logPath --offset \$prelive\.logOffset/u,
+    "rung 4 must scan only the tail captured at the deliberate disconnect",
+  );
+  assert.match(launcher, /\$prelive\.logOffset = \[long\]\$resolved\.length/u);
+  // A title-screen bootstrap never loads a world, so two of the four rungs would have nothing to observe.
+  assert.match(launcher, /PreliveOnly cannot run the bootstrap lane/u);
+  // Rung 3's precondition is asked BEFORE the game is launched and before anything observes: a stale
+  // `host/dist-test` must cost seconds, and must never be reported as a blocker the ladder saw.
+  const harnessCheck = launcher.indexOf("node $preliveLadderTool --mode harness");
+  const launch = launcher.indexOf("$process = Start-Process -FilePath $smapi");
+  const snapshotInvoke = launcher.indexOf("Invoke-PreliveSnapshotRung $clientConfig");
+  assert.ok(harnessCheck > 0, "the harness freshness check must exist");
+  assert.ok(harnessCheck < launch, "a stale host artifact must be refused before a game is launched");
+  assert.ok(harnessCheck < snapshotInvoke, "and before rung 3 observes anything");
+  assert.match(launcher, /Register-PreliveRungFailure 3 \(\[string\]\$harness\.code\)/u);
+});
+
+// The result artefact itself, executed rather than described.
+//
+// The launcher's OWN prelive functions are lifted out of the launcher source by their boundaries and run in
+// a child PowerShell, so this pins the artefact shape without booting a game: a passed run reports rung 4
+// with the last rung's pass code, a failed one reports the rung that failed with its code and quoted detail,
+// and both carry timings. Re-implementing the writer here would let it drift from the one that ships.
+test("prelive result JSON reports the rung, its code, the detail and the timings", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-prelive-result-"));
+  t.after(() => removeFixtureTree(root));
+  const launcher = await readFile(
+    new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),
+    "utf8",
+  );
+  const start = launcher.indexOf("function Get-PreliveLadder {");
+  const end = launcher.indexOf("function Get-StardewProcessIds() {");
+  assert.ok(start > 0 && end > start, "the prelive ladder helpers must remain one addressable block");
+  const helpers = launcher.slice(start, end);
+  const ladderPath = new URL("./lib/stardew-prelive-ladder.mjs", import.meta.url).pathname
+    .replace(/^\//u, "")
+    .replaceAll("/", "\\");
+  const passPath = join(root, "pass.json").replaceAll("\\", "/");
+  const failPath = join(root, "fail.json").replaceAll("\\", "/");
+  const rejection = "GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save.";
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `$preliveLadderTool = '${ladderPath.replaceAll("'", "''")}'`,
+    "$preliveLadder = $null",
+    `$errorLogsDir = '${root.replaceAll("\\", "/").replaceAll("'", "''")}'`,
+    "$prelive = [pscustomobject]@{ enabled = $true; rung = 0; code = $null; detail = $null; failure = $null; logPath = $null; logOffset = 0; launchedAtMs = 0; startedAtUtc = [DateTime]::UtcNow; timings = [ordered]@{} }",
+    helpers,
+    // A passing ladder: every rung reached, the last one is what the artefact reports.
+    `$preliveResultPath = '${passPath}'`,
+    "Set-PreliveRung 1 'accepted'; Set-PreliveRung 2 'pipe'; Set-PreliveRung 3 'snapshot'; Set-PreliveRung 4 'clean'",
+    "Publish-PreliveResult",
+    // A failing ladder: rung 1 rejected the profile, and the Mod's line is the detail.
+    `$prelive.failure = $null; $preliveResultPath = '${failPath}'`,
+    `Register-PreliveRungFailure 1 (Get-PreliveFailureCode 'configRejected') '${rejection}'`,
+    "Publish-PreliveResult",
+  ].join("\n");
+  const result = await runPowerShell(command);
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /prelive passed rung=4 code=prelive_clean_teardown/u);
+  assert.match(result.stdout, /prelive failed rung=1 code=prelive_config_rejected/u);
+
+  const passed = JSON.parse(await readFile(passPath, "utf8"));
+  assert.deepEqual(Object.keys(passed), ["state", "rung", "code", "detail", "timings"]);
+  assert.equal(passed.state, "passed");
+  assert.equal(passed.rung, 4);
+  assert.equal(passed.code, PRELIVE_RUNGS[3].passCode);
+  assert.equal(passed.detail, "clean");
+  for (const row of PRELIVE_RUNGS) assert.ok(Number.isInteger(passed.timings[row.name]), row.name);
+  assert.ok(Number.isInteger(passed.timings.totalMs));
+
+  const failed = JSON.parse(await readFile(failPath, "utf8"));
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.rung, 1);
+  assert.equal(failed.code, PRELIVE_FAILURE_CODES.configRejected);
+  assert.equal(failed.detail, rejection);
+  assert.ok(Number.isInteger(failed.timings.failed_rung_1));
+  assert.ok(Number.isInteger(failed.timings.totalMs));
+});
+
+function runPowerShell(command) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
