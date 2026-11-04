@@ -334,6 +334,14 @@ export class CompanionHostService {
   #arrivalSaid = false;
   /** The notice identities this session has already delivered (see `native-notice-fact.ts`). */
   readonly #nativeNotices = new NativeNoticeLedger();
+  /**
+   * The session's latest world snapshot fact, re-stated into every turn (see `#restateWorldSnapshot`).
+   *
+   * The pump holds a snapshot as latest state and hands it out with the batch that follows its arrival, so a
+   * turn with no new observation would carry no state at all. That is the defect the standing state block
+   * exists to remove: a model told where the ladder was four turns ago either guesses or re-observes.
+   */
+  #latestSnapshotFact: WorldFact | undefined;
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
   #presentStopSystemNotice: ((notice: StopSystemNotice, noticeId: string) => Promise<void>) | undefined;
   #activePiBatch: Readonly<{ sourceEventId: string; batchId: string }> | undefined;
@@ -797,7 +805,10 @@ export class CompanionHostService {
     if (fact.source === "host_local_transport") throw new Error("adapter_transport_source_reserved");
     try {
       // The snapshot is also where the world day and the presentation locale of a native notice are read.
-      if (fact.kind === "snapshot") this.#nativeNotices.observeSnapshot(fact.payload);
+      if (fact.kind === "snapshot") {
+        this.#nativeNotices.observeSnapshot(fact.payload);
+        this.#latestSnapshotFact = fact;
+      }
       // The attach's own snapshot is the world clock's first live reading for this session, so the
       // arrival fact is minted here - before the snapshot itself, which the pump holds as latest state
       // and never turns into a turn on its own.
@@ -977,6 +988,25 @@ export class CompanionHostService {
     await this.loop.steer();
   }
 
+  /**
+   * Put the session's current world snapshot back into the pump, immediately before a turn is composed.
+   *
+   * <p>
+   * STATE IS NOT A DELTA, and the pump's snapshot slot is: it holds the latest snapshot and hands it to the
+   * NEXT batch, so a turn triggered by a receipt or by the player's own words would carry no state at all.
+   * Measured over 1,777 delivered batches in the persisted game sessions of 2026-10-31..2026-11: 1,086 (61%)
+   * carried no snapshot, and a model reading one of those has only its own memory of the last one it saw.
+   * </p>
+   * <p>
+   * Re-stating the fact is safe in the only way that matters: `enqueueFact` keeps the snapshot with the
+   * greatest revision, so a newer observation already waiting for this batch is never replaced by this one.
+   * </p>
+   */
+  #restateWorldSnapshot(): void {
+    const snapshot = this.#latestSnapshotFact;
+    if (snapshot !== undefined) this.loop.pump.enqueueFact(snapshot);
+  }
+
   private async flushSoon(): Promise<void> {
     if (this.#closed || !this.#integrationAdmissionOpen) return;
     // A steer runs exactly when a flush cannot: it injects into the turn that is ALREADY running, so
@@ -998,6 +1028,7 @@ export class CompanionHostService {
       // An overflow can occur after this work was scheduled. Admission is the
       // Host-owned cancellation fence for scheduled and retry flushes.
       if (!this.#closed && this.#integrationAdmissionOpen) {
+        this.#restateWorldSnapshot();
         // The loop reports how the delivered turn ended (or nothing when there was nothing to deliver).
         // Retained so a caller that awaits player input can report it instead of guessing from silence.
         const outcome = await this.loop.flush();

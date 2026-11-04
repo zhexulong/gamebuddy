@@ -1,4 +1,5 @@
 import type { Snapshot } from "./protocol.js";
+import { formatGameClock, seasonName } from "./snapshot-hud.js";
 
 const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
 /** The projection is smaller than the bridge frame and remains safe to attach to a turn batch. */
@@ -260,12 +261,11 @@ export function projectGameSnapshotContext(
   const petBowls = Object.freeze(petBowlSource.map((bowl) => Object.freeze({ ...bowl })));
   const slimeHutchTroughs = Object.freeze(slimeHutchTroughSource.map((trough) => Object.freeze({ ...trough })));
   const sampledAgeMs = boundedAge(sampledAtMs, nowMs);
-  const seasonName = ["Spring", "Summer", "Fall", "Winter"][clock.seasonIndex] ?? "Unknown";
   const text = boundedUtf8(
     [
       "[Game Snapshot Projection v1:",
       `- Snapshot Revision: #${snapshot.revision} (Sampled: ${sampledAgeMs}ms ago)`,
-      `- Time: ${formatClock(clock.timeOfDay)}, Season: ${seasonName}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
+      `- Time: ${formatGameClock(clock.timeOfDay)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
       ...(movement.holdingModal === null
         ? []
@@ -328,14 +328,6 @@ function openedBy(actionOwned: boolean | null): string {
 function boundedAge(sampledAtMs: number, nowMs: number): number {
   if (!Number.isFinite(sampledAtMs) || !Number.isFinite(nowMs)) return 0;
   return Math.min(MAX_SNAPSHOT_AGE_MS, Math.max(0, Math.trunc(nowMs - sampledAtMs)));
-}
-
-/** Renders a Stardew time-of-day int (e.g. 2350) as HH:MM (23:50). */
-function formatClock(timeOfDay: number): string {
-  if (!Number.isInteger(timeOfDay) || timeOfDay < 0 || timeOfDay > 2600) return `${timeOfDay}`;
-  const hours = Math.floor(timeOfDay / 100);
-  const minutes = timeOfDay % 100;
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 function boundedUtf8(value: string, maxBytes: number): string {
