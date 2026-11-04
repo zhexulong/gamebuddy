@@ -237,10 +237,9 @@ public sealed record BridgeDoor(
 public sealed record BridgeSoilTile(int X, int Y);
 
 /// <summary>
-/// One inventory slot that holds a tool: the slot the tool-family actions name as their `slot` argument, the
-/// tool's own item identity, and its upgrade level. The level is a fact, not advice: those handlers require the
-/// BASIC tool (`basic_axe_not_equipped_in_requested_slot`, `basic_pickaxe_not_equipped_in_requested_slot`), so
-/// an identity alone would leave an upgraded tool looking equipped and explain nothing.
+/// One inventory slot that holds a tool: a slot a tool action may name, the tool's own item identity, and its upgrade
+/// level. The level is a fact, not advice: which owned tool satisfies an action's `tool:&lt;category&gt;` claim is decided
+/// by the claim's own upgrade requirement, so an identity alone would leave the level unreadable beside it.
 ///
 /// <para>
 /// <see cref="Label"/> is the native identity an internal item id happens to be (`(W)47` for the scythe), which
@@ -701,13 +700,13 @@ public sealed record BridgeSnapshot(
     // on the chosen id and NOT on the other card, and the level-5 choice a level-10 pair continues from is a member
     // of it. Defaulted and LAST for the same reason as its siblings above.
     IReadOnlyList<int>? Professions = null,
-    // The farmer's ACTIVE tool slot (`Farmer.CurrentToolIndex`) and what that slot holds, whatever its kind. The
-    // tool-family actions (`cut_weeds`, `break_rock_source`, `chop_tree_source`, `water_crop`, ...) take a `slot`
-    // that must EQUAL this index and hold the exact tool, so the companion cannot judge or name it statically -
-    // last night's `basic_pickaxe_not_equipped_in_requested_slot` and `invalid_tool_selector` receipts were that
-    // guess failing. `currentToolSlotItem` names the occupant even when it is NOT a tool, so a present occupant
-    // beside an absent `currentTool` reads as "holding something that is not a tool" rather than as an equip that
-    // silently did nothing. Null only while the world is not ready, like every sibling projection.
+    // The farmer's ACTIVE tool slot (`Farmer.CurrentToolIndex`) and what that slot holds, whatever its kind. A tool
+    // action takes a `slot` it RECORDS and then selects the tool its own claim declares, so this index is what the actor
+    // was holding - never a precondition the caller has to satisfy - and the companion cannot name it statically: last
+    // night's `invalid_tool_selector` receipts were that guess failing. `currentToolSlotItem` names the occupant even
+    // when it is NOT a tool, so a present occupant beside an absent `currentTool` reads as "holding something that is
+    // not a tool" rather than as an equip that silently did nothing. Null only while the world is not ready, like every
+    // sibling projection.
     // Defaulted and LAST for the same reason as its siblings above.
     int? CurrentToolSlot = null,
     string? CurrentToolSlotItem = null);

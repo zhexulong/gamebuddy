@@ -24,8 +24,10 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree"));
+        // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
+        // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
+        if (ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -66,40 +68,58 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe) || !DeclaredToolAllows(axe.UpgradeLevel, "chop_tree"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_tree"));
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
-            || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
-        float before = tree.health.Value;
-        bool stumpBefore = tree.stump.Value;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
-        bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
-        float after = sameTree ? tree.health.Value : float.NaN;
-        bool stumpAfter = sameTree && tree.stump.Value;
-        // ONE SWING, TWO LEGAL OUTCOMES, and neither of them is a particular health value.
-        //
-        // `Axe.DoFunction` swings once (Axe.cs:63-97) and `Tree.performToolAction` removes `upgradeLevel switch { 0 => 1f,
-        // ... }` (Tree.cs:1177-1200) - so a basic axe takes a mature tree from 10 to 9. On the swing that reaches <= 0 the
-        // engine sets `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497), which is why the
-        // stump stays for `chop_stump` to target next.
-        //
-        // The old predicate was `after == 5f && stumpAfter`, which encoded the second outcome only - and encoded it with the
-        // engine's own felled-stump constant, so it read as if one swing had taken five points and felled the tree. A live
-        // tree therefore never satisfied it: every chop reported `tree_source_chop_postcondition_unavailable` and settled
-        // `Uncertain`. It came from a fixture that stubbed `health = 1f` so a single swing would fell it.
-        bool felled = !stumpBefore && stumpAfter;
-        bool damaged = !stumpBefore && !stumpAfter && after < before;
-        bool succeeded = sameTree && (felled || damaged);
-        string evidence = $"target={expectedTargetId};tool=axe;slot={slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable", evidence);
+        // Selection facts are deliberately NOT published here: this action takes the axe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasChopTreeSourceCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
+        // that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "chop_tree", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not Axe axe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+                || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
+                || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
+            float before = tree.health.Value;
+            bool stumpBefore = tree.stump.Value;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
+            bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
+            float after = sameTree ? tree.health.Value : float.NaN;
+            bool stumpAfter = sameTree && tree.stump.Value;
+            // ONE SWING, TWO LEGAL OUTCOMES, and neither of them is a particular health value.
+            //
+            // `Axe.DoFunction` swings once (Axe.cs:63-97) and `Tree.performToolAction` removes `upgradeLevel switch { 0 => 1f,
+            // ... }` (Tree.cs:1177-1200) - so a basic axe takes a mature tree from 10 to 9. On the swing that reaches <= 0 the
+            // engine sets `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497), which is why the
+            // stump stays for `chop_stump` to target next.
+            //
+            // The old predicate was `after == 5f && stumpAfter`, which encoded the second outcome only - and encoded it with the
+            // engine's own felled-stump constant, so it read as if one swing had taken five points and felled the tree. A live
+            // tree therefore never satisfied it: every chop reported `tree_source_chop_postcondition_unavailable` and settled
+            // `Uncertain`. It came from a fixture that stubbed `health = 1f` so a single swing would fell it.
+            bool felled = !stumpBefore && stumpAfter;
+            bool damaged = !stumpBefore && !stumpAfter && after < before;
+            bool succeeded = sameTree && (felled || damaged);
+            evidence = $"target={expectedTargetId};tool=axe;slot={selection.Slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -218,8 +238,8 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || !DeclaredToolAllows(hoe.UpgradeLevel, "dig_artifact_spot"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (ResolveDeclaredTool(Game1.player.Items, "dig_artifact_spot").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "dig_artifact_spot", toolRefusal, slot));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.isTileOnMap(tile)
@@ -254,41 +274,59 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteDigArtifactSpot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Hoe hoe || !ReferenceEquals(Game1.player.CurrentTool, hoe) || !DeclaredToolAllows(hoe.UpgradeLevel, "dig_artifact_spot"))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_hoe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.isTileOnMap(tile)
-            || !location.objects.TryGetValue(tile, out StardewValley.Object? artifactSpot)
-            || !NativeItemPredicates.IsArtifactSpot(artifactSpot)
-            || !string.Equals(BuildArtifactSpotTargetId(location, targetX, targetY, artifactSpot.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
-        bool sourcePresentBefore = true;
-        bool hoeDirtPresentBefore = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? beforeFeature) && beforeFeature is StardewValley.TerrainFeatures.HoeDirt;
-        if (hoeDirtPresentBefore)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_hoedirt_present_before", $"target={targetX},{targetY};hoedirt_present_before=true");
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        bool sourcePresentAfter = location.objects.TryGetValue(tile, out _);
-        bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
-            && afterDirt.crop is null
-            && !(location.objects.TryGetValue(tile, out StardewValley.Object? placedAfter) && placedAfter is StardewValley.Objects.IndoorPot);
-        bool succeeded = !hoeDirtPresentBefore && !sourcePresentAfter && hoeDirtPresentAfter;
-        string? resultTargetId = succeeded ? BuildArtifactSpotResultTargetId(location, targetX, targetY) : null;
-        if (succeeded)
+        // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasDigArtifactSpotCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
+        // that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "dig_artifact_spot", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "dig_artifact_spot", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
         {
-            this.artifactSpotResultTarget = new BridgeArtifactSpotResultTarget(resultTargetId!, location.NameOrUniqueName, targetX, targetY, Crop: false, Ground: true);
-            this.artifactSpotResultExecutionId = executionId;
-            this.artifactSpotResultRequestId = requestId;
-            this.artifactSpotResultRevision = this.revision;
-            this.artifactSpotResultDay = Game1.Date.TotalDays;
+            if (selection.Tool is not Hoe hoe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.isTileOnMap(tile)
+                || !location.objects.TryGetValue(tile, out StardewValley.Object? artifactSpot)
+                || !NativeItemPredicates.IsArtifactSpot(artifactSpot)
+                || !string.Equals(BuildArtifactSpotTargetId(location, targetX, targetY, artifactSpot.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_target_changed", $"target={targetX},{targetY}");
+            bool sourcePresentBefore = true;
+            bool hoeDirtPresentBefore = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? beforeFeature) && beforeFeature is StardewValley.TerrainFeatures.HoeDirt;
+            if (hoeDirtPresentBefore)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "artifact_spot_hoedirt_present_before", $"target={targetX},{targetY};hoedirt_present_before=true");
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+            bool sourcePresentAfter = location.objects.TryGetValue(tile, out _);
+            bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                && afterFeature is StardewValley.TerrainFeatures.HoeDirt afterDirt
+                && afterDirt.crop is null
+                && !(location.objects.TryGetValue(tile, out StardewValley.Object? placedAfter) && placedAfter is StardewValley.Objects.IndoorPot);
+            bool succeeded = !hoeDirtPresentBefore && !sourcePresentAfter && hoeDirtPresentAfter;
+            string? resultTargetId = succeeded ? BuildArtifactSpotResultTargetId(location, targetX, targetY) : null;
+            if (succeeded)
+            {
+                this.artifactSpotResultTarget = new BridgeArtifactSpotResultTarget(resultTargetId!, location.NameOrUniqueName, targetX, targetY, Crop: false, Ground: true);
+                this.artifactSpotResultExecutionId = executionId;
+                this.artifactSpotResultRequestId = requestId;
+                this.artifactSpotResultRevision = this.revision;
+                this.artifactSpotResultDay = Game1.Date.TotalDays;
+            }
+            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;slot={selection.Slot};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable";
         }
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;slot={slot};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable", evidence);
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -303,7 +341,8 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe probePickaxe || !ReferenceEquals(Game1.player.CurrentTool, probePickaxe) || !DeclaredToolAllows(probePickaxe.UpgradeLevel, "clear_hoedirt")) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
+        if (ResolveDeclaredTool(Game1.player.Items, "clear_hoedirt").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusal, slot));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
@@ -333,21 +372,40 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteClearHoeDirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Pickaxe pickaxe || !ReferenceEquals(Game1.player.CurrentTool, pickaxe) || !DeclaredToolAllows(pickaxe.UpgradeLevel, "clear_hoedirt")) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_pickaxe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
-        // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
-        float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
-        bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
-        bool removed = !hoeDirtPresentAfter;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(requestId, executionId, removed ? ExecutionState.Succeeded : ExecutionState.Uncertain, removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable", evidence);
+        // Selection facts are deliberately NOT published here: this action takes the pickaxe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasClearHoeDirtCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
+        // that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "clear_hoedirt", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not Pickaxe pickaxe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.HoeDirt dirt || dirt.crop is not null || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot) || !string.Equals(BuildClearHoeDirtTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clear_hoedirt_target_changed", $"target={targetX},{targetY}");
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(pickaxe, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // Pickaxe covers power with toolPower.Value (tap => 0), so a basic
+            // pickaxe tap costs 2*(0+1) - Mining*0.1 = 2 - Mining*0.1.
+            float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
+            bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
+            bool removed = !hoeDirtPresentAfter;
+            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={selection.Slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, long requestedDeadlineMs)
@@ -375,6 +433,10 @@ internal sealed partial class ExecutionManager
         // Physical: tilling drives the Hoe.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is { } admissionRefusal)
             return admissionRefusal;
+        // The hoe is the action's own declared tool, not the caller's hand: a pack that cannot satisfy the claim is
+        // refused before any walk, exactly as the other declared-tool actions do. This action takes no `slot` argument.
+        if (ResolveDeclaredTool(Game1.player.Items, "till_soil").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusal));
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             // Distinguish "wrong tile" from "right tile, too far to act on". A
@@ -423,18 +485,32 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY}");
         if (!IsDiggableSoilTile(location, targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_not_diggable", $"target={targetX},{targetY}");
-        if (Game1.player.CurrentTool is not Hoe hoe)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hoe_not_equipped", null);
+        // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasTillSoilCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend that
+        // validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "till_soil", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusalCode));
+        LocalExecutionReceipt receipt;
+        try
+        {
+            if (selection.Tool is not Hoe hoe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", null);
 
-        LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
-        string before = "none";
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        bool tilled = location.GetHoeDirtAtTile(tile) is not null;
-        LocalExecutionReceipt receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={(tilled ? "HoeDirt" : "none")};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+            LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
+            string before = "none";
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+            bool tilled = location.GetHoeDirtAtTile(tile) is not null;
+            receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={(tilled ? "HoeDirt" : "none")};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -626,28 +702,6 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Whether one owned tool's upgrade level is inside what the action's own registration permits.
-    ///
-    /// <para>
-    /// ONE reading of "may this tier do this action". Six handlers used to carry `tool.UpgradeLevel != 0` inline, which
-    /// is `BasicOnly` spelled in six places while the declarations say `AnyUpgrade` - the same defect `6d5a086d` fixed on
-    /// the declaration side and left standing here. A player who upgraded their axe could no longer chop a tree, and the
-    /// refusal said `basic_axe_not_equipped_in_requested_slot` about a slot that held a perfectly good axe.
-    /// </para>
-    /// <para>
-    /// It reads the claim rather than a table, so a future action declaring `BasicOnly` keeps working and an action that
-    /// declares nothing is not silently narrowed.
-    /// </para>
-    /// </summary>
-    private static bool DeclaredToolAllows(int upgradeLevel, string actionId)
-    {
-        FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
-        if (claim is null) return true;
-        (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
-        return upgradeLevel >= minimum && upgradeLevel <= maximum;
-    }
-
-    /// <summary>
     /// Takes the tool the action's registration declares as the actor's current INPUT, and saves the index that was
     /// held. Equipping in Stardew is input selection, not an action: `Farmer.CurrentTool` is `Items[CurrentToolIndex] as
     /// Tool`, so the native building-chest load already does exactly this - save `CurrentToolIndex`, hold the slot for
@@ -695,45 +749,25 @@ internal sealed partial class ExecutionManager
     internal static string DescribeToolCategory(Tool? tool) => ToolCategory(tool) ?? "none";
 
     /// <summary>
-    /// The evidence one refused `slot`-named tool request carries: the slot the caller named, what that slot ACTUALLY
-    /// holds, what the actor is holding, and the slot the action's own claim selects (with that claim's refusal when
-    /// nothing satisfies it). The refusal condition below collapses six different realities - no such index, an empty
-    /// slot, a non-axe, an axe the actor is not holding, an upgraded axe, a held axe at another index - and the whole
-    /// detail used to be `slot=N`, so the refused caller could not tell which of them to repair and had only another
-    /// guess. Naming the four facts is the receipt's whole job here: the action still does not equip anything.
+    /// The evidence one refused declared-tool request carries, read from the action's OWN claim: the slot the caller
+    /// named (when it named one), the claim's refusal word, and the layer half of the same fact in the shared field the
+    /// model branches on.
+    ///
+    /// <para>
+    /// `tool_refusal` says why within the layer and `blocked_by` says which layer, both from one resolution, so the two
+    /// cannot name different tools. The pair matters now that every tool action selects its own tool: the old
+    /// `*_not_equipped_in_requested_slot` told a caller the actor was holding something else, which is never the reason
+    /// once the handler equips - `tool_not_owned:&lt;category&gt;` is, and it says the pack cannot be repaired by a
+    /// different request.
+    /// </para>
     /// </summary>
-    private static string DescribeRequestedSlot(IList<Item?> items, int requestedSlot, int heldSlot, string actionId)
+    private static string DescribeDeclaredToolRefusal(IList<Item?> items, string actionId, string refusalCode, int? requestedSlot = null)
     {
         DeclaredToolResolution resolution = ResolveDeclaredTool(items, actionId);
-        return $"slot={requestedSlot.ToString(CultureInfo.InvariantCulture)}"
-            + $";holds={DescribeSlotOccupant(items, requestedSlot)}"
-            + $";held={DescribeSlotOccupant(items, heldSlot)}"
-            + $";tool_slot={(resolution.Slot >= 0 ? resolution.Slot.ToString(CultureInfo.InvariantCulture) : "none")}"
-            + $";tool_refusal={resolution.RefusalCode ?? "none"}"
-            // The layer half of the same fact, in the shared field the model branches on: `tool_refusal` says why within
-            // the layer, `blocked_by` says which layer. Both come from this one resolution, and the field is absent when
-            // the claim is SATISFIED - a request that merely named the wrong slot has no declared layer to blame, and
-            // naming `tool` there would claim a missing tool the pack actually holds.
-            + (resolution.RefusalDetail is { } detail
-                ? $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Tool, detail).Format()}"
-                : string.Empty);
-    }
-
-    /// <summary>
-    /// What one pack slot holds, in the vocabulary the published tool slots speak: a tool's claim category, a
-    /// non-tool item's identity, `none` for an empty slot, and `out_of_range` for an index the pack does not have -
-    /// "there is no slot 12" is a different repair from "slot 12 is empty".
-    /// </summary>
-    private static string DescribeSlotOccupant(IList<Item?> items, int slot)
-    {
-        if (slot < 0 || slot >= items.Count)
-            return "out_of_range";
-        return items[slot] switch
-        {
-            null => "none",
-            Tool tool => ToolCategory(tool) ?? DescribeTool(tool) ?? "tool",
-            Item item => item.QualifiedItemId,
-        };
+        string detail = resolution.RefusalDetail ?? (resolution.Category.Length > 0 ? resolution.Category : "undeclared");
+        return (requestedSlot is int slot ? $"slot={slot.ToString(CultureInfo.InvariantCulture)};" : string.Empty)
+            + $"tool_refusal={refusalCode}"
+            + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Tool, detail).Format()}";
     }
 
     /// <summary>
@@ -756,8 +790,10 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_stump"));
+        // Ask before walking: a pack that cannot satisfy the action's own claim is refused now rather than after an
+        // approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
+        if (ResolveDeclaredTool(Game1.player.Items, "chop_stump").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusal, slot));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
@@ -791,70 +827,86 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopStump(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Axe axe || !ReferenceEquals(Game1.player.CurrentTool, axe))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "basic_axe_not_equipped_in_requested_slot", DescribeRequestedSlot(Game1.player.Items, slot, Game1.player.CurrentToolIndex, "chop_stump"));
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || !tree.stump.Value
-            || !string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
-        float before = tree.health.Value;
-        string treeType = tree.treeType.Value;
-        int axeLevel = axe.UpgradeLevel;
-        // A stump carries 5 health and a basic axe deals 1 damage per
-        // native swing (Tree.performToolAction upgradeLevel 0 => 1f). One
-        // DoFunction call is never enough; keep swinging the same equipped
-        // axe on the same tile until the stump falls (health <= 0 triggers
-        // native performTreeFall, which marks -100 and drops wood) or the
-        // bounded safety cap stops us. This mirrors the repeated native
-        // seam a holding player executes; no menu, no direct world write,
-        // and every swing runs the native damage/debris path.
-        const int maximumSwingCount = 12;
-        // The stamina floor, checked BEFORE the first swing.
-        //
-        // The loop below cannot know how many swings it will need - a stump falls when its health reaches zero,
-        // not when a budget says so - so the worst case it is willing to spend is the cap itself, and that is what
-        // gets priced. Refusing when the worst case does not fit is the honest answer: the alternative is letting
-        // the actor swing through to the engine's -15 pass-out, which halves next day's stamina and ends a multi-day
-        // routine outright (`Game1.cs:6452`).
-        ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
-            Game1.player.Stamina,
-            ToolStaminaGuard.EstimatedCost(maximumSwingCount, Game1.player.ForagingLevel, axe.IsEfficient));
-        if (!stamina.Allowed)
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                stamina.ReasonCode,
-                $"target={targetX},{targetY};tree_type={treeType};{stamina.Evidence};swings_worst_case={maximumSwingCount}");
-
-        int swingCount = 0;
-        float staminaBefore = Game1.player.Stamina;
-        while (tree.health.Value > 0f && swingCount < maximumSwingCount)
+        // Selection facts are deliberately NOT published here: this action takes the axe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
+        // `chop_stump` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
+        // Whoever adds those keys must extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "chop_stump", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
         {
-            UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
-            swingCount++;
+            if (selection.Tool is not Axe axe)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
+                || !tree.stump.Value
+                || !string.Equals(BuildTreeStumpTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "stump_target_changed", $"target={targetX},{targetY}");
+            float before = tree.health.Value;
+            string treeType = tree.treeType.Value;
+            int axeLevel = axe.UpgradeLevel;
+            // A stump carries 5 health and a basic axe deals 1 damage per
+            // native swing (Tree.performToolAction upgradeLevel 0 => 1f). One
+            // DoFunction call is never enough; keep swinging the same equipped
+            // axe on the same tile until the stump falls (health <= 0 triggers
+            // native performTreeFall, which marks -100 and drops wood) or the
+            // bounded safety cap stops us. This mirrors the repeated native
+            // seam a holding player executes; no menu, no direct world write,
+            // and every swing runs the native damage/debris path.
+            const int maximumSwingCount = 12;
+            // The stamina floor, checked BEFORE the first swing.
+            //
+            // The loop below cannot know how many swings it will need - a stump falls when its health reaches zero,
+            // not when a budget says so - so the worst case it is willing to spend is the cap itself, and that is what
+            // gets priced. Refusing when the worst case does not fit is the honest answer: the alternative is letting
+            // the actor swing through to the engine's -15 pass-out, which halves next day's stamina and ends a multi-day
+            // routine outright (`Game1.cs:6452`).
+            ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
+                Game1.player.Stamina,
+                ToolStaminaGuard.EstimatedCost(maximumSwingCount, Game1.player.ForagingLevel, axe.IsEfficient));
+            if (!stamina.Allowed)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    stamina.ReasonCode,
+                    $"target={targetX},{targetY};tree_type={treeType};{stamina.Evidence};swings_worst_case={maximumSwingCount}");
+
+            int swingCount = 0;
+            float staminaBefore = Game1.player.Stamina;
+            while (tree.health.Value > 0f && swingCount < maximumSwingCount)
+            {
+                UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
+                swingCount++;
+            }
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
+            float expectedStaminaCost = perSwingStaminaCost * swingCount;
+            // native Tree.performTreeFall() on a stump sets health = -100 (the
+            // destroyed marker) and the terrainFeature is then removed by the
+            // native tick (destroy.Value). Accept either the immediate -100
+            // marker or a removed terrainFeature as the fresh postcondition.
+            bool removed = tree.health.Value <= -100f;
+            bool terrainGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                || !ReferenceEquals(afterFeature, tree);
+            string healthAfterText = removed ? "destroyed" : terrainGone ? "removed"
+                : afterFeature is StardewValley.TerrainFeatures.Tree afterTree
+                    ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
+                    : "missing";
+            evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            state = removed || terrainGone ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = removed || terrainGone ? "stump_cleared" : "stump_clear_postcondition_unavailable";
         }
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float perSwingStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
-        float expectedStaminaCost = perSwingStaminaCost * swingCount;
-        // native Tree.performTreeFall() on a stump sets health = -100 (the
-        // destroyed marker) and the terrainFeature is then removed by the
-        // native tick (destroy.Value). Accept either the immediate -100
-        // marker or a removed terrainFeature as the fresh postcondition.
-        bool removed = tree.health.Value <= -100f;
-        bool terrainGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            || !ReferenceEquals(afterFeature, tree);
-        string healthAfterText = removed ? "destroyed" : terrainGone ? "removed"
-            : afterFeature is StardewValley.TerrainFeatures.Tree afterTree
-                ? afterTree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)
-                : "missing";
-        string evidence = $"target={expectedTargetId};type=tree_stump;tree={treeType};tool=axe;tool_level={axeLevel};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};swings={swingCount};stump_removed={(removed || terrainGone).ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        if (removed || terrainGone)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "stump_cleared", evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "stump_clear_postcondition_unavailable", evidence);
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>

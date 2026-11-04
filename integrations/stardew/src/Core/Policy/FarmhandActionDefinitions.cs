@@ -62,8 +62,9 @@ public enum FarmhandResourceTemplateValue
 public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
-/// handler requires to be the current tool, and whose value half is the upgrade-level requirement
-/// (<see cref="FarmhandResourceTemplateValue.AnyUpgrade"/> / <see cref="FarmhandResourceTemplateValue.BasicOnly"/>).</summary>
+/// handler requires the actor to OWN and takes as the current tool by selecting it, and whose value half is the
+/// upgrade-level requirement (<see cref="FarmhandResourceTemplateValue.AnyUpgrade"/> /
+/// <see cref="FarmhandResourceTemplateValue.BasicOnly"/>).</summary>
 public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandResourceTemplateValue Value);
 
 /// <summary>
@@ -273,11 +274,12 @@ public static class FarmhandActionCatalog
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
 // learned the precondition only by being refused. Declared here so `plan_shape` can say it instead.
 E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: true), FarmhandActionLifecycle.Published, "warps"),
-        // till_soil drives the actor's own Hoe and refuses `hoe_not_equipped` when the hand holds anything else, so
-        // the hoe is an unconditional requirement - declared the way water_crop declares its can, and for the same
-        // reason: a planner cannot see a tool requirement the surface never states. Which hoe is NOT declared (the
-        // handler accepts any upgrade level). Its arguments stay {x,y}: the Mod derives the target identity it uses
-        // for the approach leg itself (`till_soil_x_y`), so there is no id for the caller to copy.
+        // till_soil drives the actor's own Hoe: the handler takes the hoe its claim names before tilling
+        // (`tool_not_owned:hoe` when the pack holds none), so the hoe is an unconditional requirement - declared the way
+        // water_crop declares its can, and for the same reason: a planner cannot see a tool requirement the surface never
+        // states. Which hoe is NOT declared (the handler accepts any upgrade level). Its arguments stay {x,y}: the Mod
+        // derives the target identity it uses for the approach leg itself (`till_soil_x_y`), so there is no id for the
+        // caller to copy.
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer")), FarmhandActionLifecycle.Published, "soilTiles"),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage() with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }, FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem(), FarmhandActionLifecycle.Published, "itemTargets"),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
@@ -308,8 +310,8 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // Declares the axe its handler requires, like break_rock declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.
-        E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, ToolSlotMeaning), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
-        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
+        E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
+        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
@@ -337,7 +339,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, ContainerItemTarget(ChestStoreItemMeaning), FarmhandActionLifecycle.LiveVerified, "chests"),
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, ContainerItemTarget(ChestRetrieveItemMeaning), FarmhandActionLifecycle.LiveVerified, "chests"),
-        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, ToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "treeStumpTargets"),
+        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "treeStumpTargets"),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified, "treeSaplingTargets"),
         // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
         // below. A scythe has no upgrade ladder, so "any" is exact.
@@ -549,19 +551,18 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     private static FarmhandActionDescriptor Described(FarmhandActionArgument[] arguments, string postcondition = "native_action_postcondition") => new(arguments, new Dictionary<string,string>(), EmbodiedActorResource, "write", postcondition);
 
     /// <summary>
-    /// What `slot` means on an action that consumes a held tool.
+    /// What `slot` means on an action whose handler compares the named slot against the actor's held one.
     ///
-    /// Published per ARGUMENT rather than as one Host-side paragraph, because the families disagree: a tool action's
-    /// slot must equal `Farmer.CurrentToolIndex` and hold that exact tool (`resourcetoolactions.cs:27`), while an item
-    /// action's slot is any pack index. One sentence covering both was false for one of them - measured 2026-10-29, the
-    /// Host carried exactly such a sentence ("never a backpack index") that is false for all four of them.
+    /// Published per ARGUMENT rather than as one Host-side paragraph, because the families disagree: some handlers read
+    /// `Items[CurrentToolIndex]` and refuse a slot that is not the held one, while an item action's slot is any pack
+    /// index. One sentence covering both was false for one of them - measured 2026-10-29, the Host carried exactly such a
+    /// sentence ("never a backpack index") that is false for all four of them.
     ///
     /// <para>
-    /// Measured 2026-11-01: the disagreement was never repaired, and it is eleven actions wide. Seven actions that
-    /// refuse anything but the held slot published <see cref="ItemSlotMeaning"/> ("this need not be the held one"), and
-    /// four actions that select their own tool published this sentence while comparing nothing. Each sentence below is
-    /// now the one its handler enforces; `InventoryAddressabilityTests` reads the published claim and fails when an
-    /// action's slot description and its enforcement disagree.
+    /// An action that declares a `tool:&lt;category&gt;` claim publishes <see cref="AutoSelectedToolSlotMeaning"/> instead:
+    /// its handler selects the tool its own claim names and restores the actor's selection afterwards, so a slot that
+    /// differs from `currentToolSlot` is recorded rather than refused. `InventoryAddressabilityTests` reads each published
+    /// claim and fails when an action's slot description and its enforcement disagree.
     /// </para>
     /// </summary>
     private const string ToolSlotMeaning = "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you.";
@@ -572,10 +573,10 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// <summary>
     /// What `slot` means on an action that takes a carried TOOL and does not require it to be the held one.
     ///
-    /// Three tool actions (`break_rock_source`, `cut_weeds`, `cut_grass`) declare a `tool:` claim and select the tool
-    /// themselves (`ResolveDeclaredTool` / `TrySelectDeclaredTool`), so the number a caller passes is recorded in the
-    /// receipt and never compared to `CurrentToolIndex`. Publishing <see cref="ToolSlotMeaning"/> there demanded
-    /// something nothing checks: a caller reading it would believe a mismatch is refused when it is ignored.
+    /// Every action that consumes a tool declares a `tool:` claim and selects the tool it names itself
+    /// (`ResolveDeclaredTool` / `TrySelectDeclaredTool`), so the number a caller passes is recorded in the receipt and
+    /// never compared to `CurrentToolIndex`. Publishing <see cref="ToolSlotMeaning"/> there demanded something nothing
+    /// checks: a caller reading it would believe a mismatch is refused when it is ignored.
     /// </summary>
     private const string AutoSelectedToolSlotMeaning = "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot.";
 

@@ -16,11 +16,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// <para>
 /// Why this exists: a live run that had to hand a tool action a <c>slot</c> guessed the number and came back with
-/// <c>basic_pickaxe_not_equipped_in_requested_slot</c> and <c>invalid_tool_selector</c> receipts. The actions whose own
-/// registration claims a tool (<c>cut_weeds</c>, <c>cut_grass</c>, <c>break_rock_source</c>, <c>water_crop</c>) now select
-/// that tool themselves and ignore the number; the ones that still require it to EQUAL <c>Game1.player.CurrentToolIndex</c>
-/// and to hold the exact tool (<c>farmhandexecutioncontroller.resourcetoolactions.cs</c>) are why the Mod publishes which
-/// slot holds which tool instead of leaving the caller to guess.
+/// <c>basic_pickaxe_not_equipped_in_requested_slot</c> and <c>invalid_tool_selector</c> receipts. Every tool action now
+/// selects the tool its own registration claims and ignores the number; the snapshot still publishes which slot holds
+/// which tool, because that is how a caller names one in a receipt or in an <c>equip_tool</c> step.
 /// </para>
 ///
 /// <para>
@@ -41,7 +39,7 @@ public sealed class HeldToolProjectionTests
     public void EveryToolSlotIsPublishedWithItsIdentityAndUpgradeLevel()
     {
         // The axe sits in slot 0 and the hoe in slot 2; slot 1 is empty. A caller that must name one of them needs
-        // both the number and which tool it is - and the level, because the handlers require the BASIC tool, so an
+        // both the number and which tool it is - and the level, because an action's claim may pin an upgrade tier, so an
         // upgraded axe is a different fact from the basic one even though both are "(T)Axe".
         IList<Item?> items = new List<Item?> { Axe(upgradeLevel: 2), null, Hoe() };
 

@@ -81,8 +81,9 @@ public sealed class ToolApproachContractSourceShapeTests
 
         // Every position-independent precondition is evaluated BEFORE the geometry
         // decision, so an approach is only started for a tool/target that could
-        // actually succeed on arrival.
-        int axeCheck = body.IndexOf("basic_axe_not_equipped_in_requested_slot", StringComparison.Ordinal);
+        // actually succeed on arrival. The tool half is the action's OWN claim, not
+        // the caller's slot: an empty pack refuses `tool_not_owned:axe` here.
+        int axeCheck = body.IndexOf("ResolveDeclaredTool(Game1.player.Items, \"chop_tree\")", StringComparison.Ordinal);
         int targetCheck = body.IndexOf("tree_chop_target_changed", StringComparison.Ordinal);
         int geometry = body.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
         int approach = body.IndexOf("TryBeginToolApproach", StringComparison.Ordinal);

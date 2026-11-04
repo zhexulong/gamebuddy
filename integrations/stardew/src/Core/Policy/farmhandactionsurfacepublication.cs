@@ -76,7 +76,7 @@ public sealed record FarmhandActionArgumentSchema(
     ///
     /// Published per argument because one sentence for a shared argument name cannot be true for every action that
     /// takes it: measured 2026-10-29, every action taking a `slot` reads a backpack index (`Items[slot]`), while the
-    /// Host's single paragraph claimed it is "never a backpack index", and three of those actions additionally require
+    /// Host's single paragraph claimed it is "never a backpack index", and some of those actions additionally require
     /// the slot to equal `Farmer.CurrentToolIndex`. Sourced from `FarmhandActionArgument.Description`, so a change to the
     /// rule and a change to its words are the same edit.
     /// </summary>

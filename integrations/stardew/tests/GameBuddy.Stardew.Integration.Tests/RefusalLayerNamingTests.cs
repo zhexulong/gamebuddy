@@ -40,7 +40,7 @@ public sealed class RefusalLayerNamingTests
     /// </summary>
     private static readonly string[] FieldRenderingHelpers =
     {
-        "DescribeRequestedSlot",
+        "DescribeDeclaredToolRefusal",
         "DescribeApproachRange",
     };
 

@@ -223,8 +223,8 @@ internal static class TargetRoundTripProbe
     /// <summary>
     /// Refusals that mean the preflight stopped BEFORE it looked at the target at all.
     ///
-    /// The tool family is the case that matters: `chop_tree_source` and `break_rock_source` refuse
-    /// `*_not_equipped_in_requested_slot` / `tool_not_owned:<category>` before any tile is read. Counting such a refusal
+    /// The tool family is the case that matters: every tool action asks its own `tool:` claim before it looks at any
+    /// tile and refuses `tool_not_owned:<category>` when the pack cannot satisfy it. Counting such a refusal
     /// as a pass is exactly the vacuous shape this gate exists for - measured while proving this gate red: an injected
     /// `rock:Farm:3,2` identity mismatch went UNNOTICED because the pack held no pickaxe, so the preflight refused the
     /// tool and the target check never ran. It is reported as a harness limit instead, never as a round trip.

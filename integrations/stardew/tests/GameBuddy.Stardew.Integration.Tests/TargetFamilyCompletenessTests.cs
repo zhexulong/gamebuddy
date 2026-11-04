@@ -831,9 +831,9 @@ public sealed class TargetFamilyCompletenessTests
         /// </summary>
         internal void PopulateFor(string family)
         {
-            // The pack first: every tool-driven action's preflight refuses `*_not_equipped_in_requested_slot` or
-            // `tool_not_owned:<category>` BEFORE it ever looks at the target, so a world without the declared tool
-            // makes the round trip pass while the target check never runs - the vacuous shape this gate exists for.
+            // The pack first: every tool-driven action's preflight refuses `tool_not_owned:<category>` BEFORE it ever
+            // looks at the target, so a world without the declared tool makes the round trip pass while the target check
+            // never runs - the vacuous shape this gate exists for.
             switch (family)
             {
                 case "treeChopSourceTargets":

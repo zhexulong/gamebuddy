@@ -30,7 +30,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// is an uninitialized instance seeded through the very fields its identity and level are read from -
 /// <c>Item._qualifiedItemId</c> and <c>Tool.upgradeLevel</c> - which is the suite's standing pattern
 /// (<see cref="HeldToolProjectionTests"/>). The switch and its restore need a live <c>Game1.player</c>, so they are
-/// pinned at the source instead: every one of the four handlers selects, and every exit restores in a <c>finally</c>. The
+/// pinned at the source instead: every declared-tool action selects, and every exit restores in a <c>finally</c> - held by
+/// <see cref="ToolPreconditionUniformityTests"/>, whose population is the catalog rather than a list here. The
 /// native half - a wrong tool held and the action still swings - belongs to the native-local fixture lane.
 /// </para>
 /// </summary>
@@ -48,13 +49,15 @@ public sealed class DeclaredToolSelectionTests
         Claim("chop_tree").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("chop_stump").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_crop").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
-        // till_soil refuses `hoe_not_equipped` unless the hand already holds a Hoe, and that handler accepts any
-        // upgrade level - so the hoe is a requirement the surface has to state, exactly as water_crop states its can.
-        // Unlike water_crop, `RequestLocalTillSoil` does not select it (`TrySelectDeclaredTool` is not called there),
-        // so satisfying this claim is the CALLER's equip step; the claim is what makes that step plannable at all.
+        // EVERY tool action declares the tool its handler takes, including the two that used to demand the caller hold
+        // it first (`clear_hoedirt` drove a pickaxe, `dig_artifact_spot` a hoe, and neither said so on the surface).
+        Claim("clear_hoedirt").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pickaxe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("dig_artifact_spot").Should().Be(new FarmhandActionResourceTemplateClaim("tool:hoe", FarmhandResourceTemplateValue.AnyUpgrade));
+        // till_soil takes no `slot` argument but drives the actor's own hoe, which the handler now takes from this claim
+        // rather than requiring the caller to equip it first.
         Claim("till_soil").Should().Be(new FarmhandActionResourceTemplateClaim("tool:hoe", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
-        Claim("clear_hoedirt").Should().BeNull();
+        Claim("use_raft").Should().BeNull();
     }
 
     [Fact]
@@ -131,34 +134,6 @@ public sealed class DeclaredToolSelectionTests
         // An upgraded pickaxe now SATISFIES the claim, so a tier mismatch is only reachable through a claim that
         // declares a floor above the owned level - `ResolveDeclaredTool` still refuses by name when one does.
         Resolve(new List<Item?> { Pickaxe(upgradeLevel: 3) }, "break_rock").RefusalCode.Should().BeNull();
-    }
-
-    [Fact]
-    public void EveryToolActionSelectsItsDeclaredToolAndRestoresItInAFinally()
-    {
-        // The switch and the restore need a live `Game1.player`, so they are pinned where they are written: each handler
-        // selects the tool its registration names (never the request's slot) and restores the actor's own selection on
-        // EVERY exit, including the refusals after the switch.
-        foreach ((string actionId, string file, string signature) in new[]
-        {
-            ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds("),
-            ("cut_grass", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutGrass("),
-            ("break_rock", ResourceToolActions, "private LocalExecutionReceipt ExecuteBreakRockSource("),
-            ("water_crop", FarmingConstructionActions, "private LocalExecutionReceipt ExecuteWaterCrop("),
-        })
-        {
-            string body = MethodBody(Read(file), signature);
-
-            body.Should().Contain($"TrySelectDeclaredTool(Game1.player, \"{actionId}\",",
-                $"{actionId} takes the tool its own registration declares");
-            body.Should().Contain("finally", $"{actionId} restores the actor's selection on every exit");
-            body.Should().Contain("RestoreToolSelection(Game1.player, selection)",
-                $"{actionId} puts the index the actor held back");
-            body.Should().NotContain("not_equipped",
-                $"{actionId} no longer refuses the request's slot or the tool it happens to be holding");
-            body.Should().NotContain("Game1.player.Items[slot]",
-                $"{actionId} does not read a tool out of a slot the caller named");
-        }
     }
 
     [Fact]
@@ -253,11 +228,16 @@ public sealed class DeclaredToolSelectionTests
     }
 
     [Fact]
-    public void EveryToolActionComposesItsReceiptAfterTheRestoreSoTheRestoreFactIsTrue()
+    public void EveryToolActionThatPublishesTheSelectionFactsComposesItsReceiptAfterTheRestore()
     {
         // `tool_restored` may only be written after the finally has put the actor's selection back, and the receipt is
         // composed after that - so the key can never describe a restore that has not happened. Reordering either half
         // fails here rather than shipping a receipt that asserts an unperformed restore.
+        //
+        // The population is exactly the actions that PUBLISH those facts; the other tool actions select and restore
+        // without publishing them (they say so at their own selection call), so asking them for `tool_restored` would
+        // be asking for a key their Host validator refuses. `ToolPreconditionUniformityTests` is what holds the
+        // selection itself across every declared tool action.
         foreach ((string actionId, string file, string signature, string keyList) in new[]
         {
             ("cut_weeds", ResourceToolActions, "private LocalExecutionReceipt ExecuteCutWeeds(", "CutWeeds"),
