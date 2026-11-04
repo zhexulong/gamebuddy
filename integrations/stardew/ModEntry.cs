@@ -1063,7 +1063,12 @@ public sealed partial class ModEntry : Mod
             this.Monitor.Log("GameBuddy body program journal opened for this scope; program_submit/status/events routes are live.", LogLevel.Info);
         }
         state.BodyProgramController = farmhandBodyProgramController;
-        farmhandBodyProgramController!.Diagnostics = detail => this.Monitor.Log(detail, LogLevel.Debug);
+        // Guarded, not null-forgiven. The controller exists only when the journal is open AND the bridge session is
+        // bound; with the bridge disabled or not yet attached the value is null, and `!` turned that into an
+        // uncaught NullReferenceException during world setup - a fatal startup crash on exactly the configuration
+        // (bridge off) that is supposed to do nothing at all.
+        if (farmhandBodyProgramController is not null)
+            farmhandBodyProgramController.Diagnostics = detail => this.Monitor.Log(detail, LogLevel.Debug);
         state.LastPublishedCatalogRevision = state.CapabilityPublication.CapabilityRevision;
         if (!scopeMatchesWorld && formalClientConfigured)
             this.Monitor.Log("GameBuddy formal attachment remains closed: manifest and local save/world/Farmhand scope do not match.", LogLevel.Warn);
