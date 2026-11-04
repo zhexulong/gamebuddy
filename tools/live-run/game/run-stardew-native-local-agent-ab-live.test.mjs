@@ -94,7 +94,10 @@ test("the runner reads the run manifest under the same Game session path the run
   // when a surface session id is supplied, and the runtime always supplies the
   // Game session id. Reading without it would silently find no manifest and the
   // persona/world-book evidence would never be observed.
-  assert.match(RUNNER_SOURCE, /const gameSessionId = `game-\$\{Date\.now\(\)\}`/);
+  // The session id is now ASSIGNED where it used to be DECLARED, so the failure path cannot reach a binding that has not
+  // run yet. What this assertion is for is unchanged: the directory name is `game-<ts>`, and the runner resolves the
+  // runtime paths and the bundle from that same value.
+  assert.match(RUNNER_SOURCE, /gameSessionId = `game-\$\{Date\.now\(\)\}`/);
   assert.match(RUNNER_SOURCE, /resolveRuntimePaths\(identity, runtimeRoot, gameSessionId\)/);
   assert.match(RUNNER_SOURCE, /readAssembledContextEvidence\(gameSessionPaths\)/);
   assert.match(RUNNER_SOURCE, /gameSessionId,/);

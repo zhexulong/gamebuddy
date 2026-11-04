@@ -145,6 +145,18 @@ import { probeProviderReadiness, providerReadinessRefusal } from "../../lib/live
 // to explain (measured 2026-11-03, round29: `live_run_artifact_stale` was replaced by a stack trace). Module scope is
 // initialised before any of that can run.
 let capture = null;
+
+// The run's session directory name, and the FOURTH value to fall into this trap.
+//
+// `capture`, `runtimeRoot` and `lastObservedSnapshot` each destroyed a run's artifact the same way: a startup failure ran
+// the dump before their `let` had been reached, and the ReferenceError replaced the artifact that would have explained the
+// run. This one is read by `writeRunBundle`, which the SAME failure path calls - so `round31` reported
+// "Cannot access 'gameSessionId' before initialization" and wrote an unassembled artifact, one line after the real
+// failure (`invalid_snapshot:worldObjectTargets`) had been reported by the bridge.
+//
+// Declared here and ASSIGNED where it used to be declared, so the ordinary path is unchanged and the failure path gets a
+// name instead of an exception.
+let gameSessionId = null;
 let runtimeRoot = null;
 const LIVE_RUN_ROOT = resolveLiveRunRoot({ repoRoot: fileURLToPath(new URL("../../..", import.meta.url)) });
 
@@ -3284,7 +3296,7 @@ capture = await openLiveRunCapture({ kind: "game-ladder", label: SCENARIO, root:
 // One Game activation id for this run: it is the surface session id the runtime
 // uses for its durable run manifest, so the context-evidence read below resolves
 // the same file the runtime wrote.
-const gameSessionId = `game-${Date.now()}`;
+gameSessionId = `game-${Date.now()}`;
 const gameSessionPaths = resolveRuntimePaths(identity, runtimeRoot, gameSessionId);
 // Covenant seeding (memory_covenant): the standing rule is PLANTED through the real
 // management surface under the product continuity (the same path a player
@@ -3401,7 +3413,7 @@ try {
         operationId: `op-${Date.now()}`,
         requestId: `req-${Date.now()}`,
         kind: "enter",
-        gameSessionId,
+        gameSessionId: gameSessionId ?? "unassembled",
         world: execution.world,
         bindingDigest: execution.bindingFacts.bindingDigest,
         owner: execution.bindingFacts.owner,
