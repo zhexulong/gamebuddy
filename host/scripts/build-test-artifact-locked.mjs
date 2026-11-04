@@ -5,9 +5,11 @@ import { resolveTypeScriptInvocation } from "./build-production-artifact.mjs";
 import { runBoundedChild } from "./child-process-tool.mjs";
 import { readTestArtifactLock } from "./test-artifact-lock.mjs";
 import { writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
+import { COPIED_TEST_ARTIFACT_ASSETS, writeTestArtifactBuildManifest } from "./test-artifact-build-manifest.mjs";
 import { writeHostVerificationArtifactManifest } from "./verification-artifact-manifest.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = resolve(hostRoot, "..");
 const outputRoot = resolve(hostRoot, "dist-test");
 
 /**
@@ -112,17 +114,13 @@ try {
   }
   // TypeScript fixture workers are emitted by the test compiler. Copy only the
   // PowerShell assets that cannot be emitted, so dist-test never mixes source
-  // .ts files with its compiled test artifact.
-  for (const source of [
-    "src/test-fixtures/windows-named-mutex-abandon-child.ps1",
-    "src/test-fixtures/windows-named-mutex-broker-test-sidecar.ps1",
-    "src/test-fixtures/windows-named-mutex-retained-abandon.ps1",
-  ]) {
-    const destination = resolve(stagingRoot, source.slice("src/".length));
+  // .ts files with its compiled test artifact. The list is the same one the
+  // build manifest records as inputs, so a copied asset cannot go unrecorded.
+  for (const asset of COPIED_TEST_ARTIFACT_ASSETS) {
+    const destination = resolve(stagingRoot, asset.destination);
     await mkdir(dirname(destination), { recursive: true });
-    await cp(resolve(hostRoot, source), destination, { force: true, verbatimSymlinks: true });
+    await cp(resolve(hostRoot, asset.source), destination, { force: true, verbatimSymlinks: true });
   }
-  await cp(resolve(hostRoot, "resources/windows-named-mutex-broker.ps1"), resolve(stagingRoot, "windows-named-mutex-broker.ps1"), { force: true, verbatimSymlinks: true });
   // Publish. Windows refuses to rename a directory tree this size (measured: 200 files
   // across 10 directories comes back EPERM), so the staged tree cannot be swapped in with
   // one directory rename. Move its files instead: each move is atomic, which keeps the
@@ -141,5 +139,8 @@ try {
 }
 // The inventory describes what was published, so it is written once the tree is in place,
 // and the verification manifest follows it: its digest covers the whole published tree.
+// The build manifest must be written BEFORE the verification manifest for that same reason - a
+// file added to `dist-test` afterwards would make the recorded output digest disagree with the tree.
 await writeTestArtifactInventory({ outputRoot, buildStartedAtMs });
+await writeTestArtifactBuildManifest({ repositoryRoot, outputRoot, builtAtMs: buildStartedAtMs });
 await writeHostVerificationArtifactManifest({ root: hostRoot, outputRoot });
