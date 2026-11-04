@@ -1089,6 +1089,30 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
   panSites: "pan_for_ore's sites; published per-family and addressed through the action's own target",
 });
 
+test("a plan does not hold the turn unless the caller asks it to", async () => {
+  // This is a CORRECTION, and the assertion exists so it cannot be undone by accident.
+  //
+  // `plan_work` first blocked until the program settled, which saved one model round trip (polling fell 48 -> 4) and
+  // took away the control points that make a body program usable: while the call is held the model cannot `stop`,
+  // `append` or redirect, so `program_stop` is unreachable exactly when a player needs it, and a steering message waits
+  // behind the call for up to MAX_PROGRAM_STATUS_WAIT_MS. A companion you cannot interrupt mid-swing is not the product.
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const source = await readFile(
+    join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
+    "utf8",
+  );
+  const plan = source.slice(source.indexOf("const submitted = await submitProgram({ programId, nodes });"));
+  const guard = plan.indexOf("waitMs <= 0");
+  const wait = plan.indexOf("waitForTerminalProgramStatus(");
+  assert.ok(guard > 0, "the plan tool guards on the caller's own waitMs");
+  assert.ok(wait > guard, "and reaches the shared waiter only past that guard, so the default cannot block");
+  assert.match(
+    plan.slice(guard, wait),
+    /settled: false/u,
+    "the immediate answer still says the program has not settled, rather than implying it has",
+  );
+});
+
 test("the plan tool hands its compiled program to the one submission path a model-authored program takes", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
   const source = await readFile(

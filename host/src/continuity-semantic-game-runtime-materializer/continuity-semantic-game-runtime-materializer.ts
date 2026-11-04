@@ -304,12 +304,21 @@ function createBodyProgramTools(
               programStatusProgress.observe(result);
               return result;
             };
-            const first = await readStatus();
+            // WAITING IS OPT-IN, AND THE DEFAULT IS NOT TO.
+            //
+            // The first version blocked until the program settled, to save one model round trip. It does save that -
+            // measured, polling fell from 48 calls to 4 - and it takes away the control points that make a body program
+            // usable: while the call is held the model cannot stop, append or redirect, so `program_stop` is unreachable
+            // exactly when it is needed, and a player's steering message waits behind the call for up to
+            // MAX_PROGRAM_STATUS_WAIT_MS. A companion you cannot interrupt mid-swing is not this product.
+            //
+            // So the call returns as soon as the Mod accepts. A caller that genuinely wants to block passes `waitMs`, and
+            // the capability survives without being imposed on everyone.
             const { waitMs } = params as { waitMs?: number };
-            const bounded =
-              typeof waitMs === "number" && Number.isFinite(waitMs) && waitMs >= 0
-                ? waitMs
-                : MAX_PROGRAM_STATUS_WAIT_MS;
+            if (typeof waitMs !== "number" || !Number.isFinite(waitMs) || waitMs <= 0)
+              return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code, settled: false });
+            const bounded = Math.min(waitMs, MAX_PROGRAM_STATUS_WAIT_MS);
+            const first = await readStatus();
             const settled = isTerminalProgramStatus(first)
               ? Object.freeze({
                   result: first,
