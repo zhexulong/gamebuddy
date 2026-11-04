@@ -135,6 +135,16 @@ internal sealed partial class ExecutionManager
         ExecutionState state = active.Lifecycle.TerminalState switch
         {
             "passed" => ExecutionState.Succeeded,
+            // Pre-start eligibility refusals. Nothing native ran, so nothing is uncertain about the world: the night was
+            // declined and the reason says why. Reporting these as Uncertain claimed doubt about an effect that never
+            // existed, and it hid a plain answer ("you are not home") behind the vocabulary reserved for real doubt.
+            "not_home" => ExecutionState.Rejected,
+            "time_paused" => ExecutionState.Rejected,
+            "menu_open" => ExecutionState.Rejected,
+            "dialogue_up" => ExecutionState.Rejected,
+            "event_up" => ExecutionState.Rejected,
+            "already_new_day" => ExecutionState.Rejected,
+            "passed_out" => ExecutionState.Rejected,
             // "waiting" is the honest coordinated terminal: the actor is at its own
             // bed and has declared local ready, but the native barrier is owned by
             // the other players. It is neither a failure nor a completion.

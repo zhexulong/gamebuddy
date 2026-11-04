@@ -84,7 +84,10 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
   }),
   floor: Object.freeze({
     toolCount: 14,
-    systemChars: 10709,
+    // +177 chars when the conduct gained the sentence about the bed being inside the house. The character counts are
+    // re-derived from the product builder by the test itself; the token column below is the older MEASUREMENT and was not
+    // re-tokenised (ai-tokenizer is not resolvable from the Host package), so it is now a slight under-count.
+    systemChars: 10886,
     systemTokens: 5119,
     toolsTokens: 3552,
     envelopeChars: 23152,
@@ -92,7 +95,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 6017,
+    chars: 6194,
     tokens: 1227,
     charShareOfSystemPrompt: 0.5619,
     tokenShareOfSystemPrompt: 0.24,
