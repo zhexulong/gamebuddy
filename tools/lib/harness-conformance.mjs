@@ -490,6 +490,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-stardew-wia-agent-loop.mjs", reason: "requires a ladder-result json" },
   { gate: "check-tavern-release-prerequisites.mjs", reason: "reads the live environment; no offline rule set" },
   { gate: "check-test-store-teardown.mjs", reason: "static source gate; falsifier in its test" },
+  {
+    gate: "check-unreported-catch.mjs",
+    reason:
+      "static source gate over dialogue-web's catch clauses, read through the workspace's TypeScript compiler; " +
+      "its falsifier is tools/check-unreported-catch.test.mjs, which plants a re-read-only catch, a log-only " +
+      "catch, an undefined answer and the real pre-fix commit, and the gate's own red-proof markers name both",
+  },
   { gate: "check-text-hygiene.mjs", reason: "scans the tree; falsifier in its test" },
   // Added 2026-10-23/24. Each one's falsifier lives in the matching test file, which
   // the suite runs; this entry exists so the conformance gate sees them at all.
