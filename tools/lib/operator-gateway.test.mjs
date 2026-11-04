@@ -11,7 +11,7 @@
  *   - the last test asserts the module spells no absolute URL at all, which is what makes "the address is read,
  *     never invented" a property of the file rather than a promise in its header.
  *
- * red-proof: mutate - change `OPERATOR_GATEWAY_PROVIDER_ID` in `tools/lib/operator-gateway.mjs` to any other id and
+ * red-proof: inject  change `OPERATOR_GATEWAY_PROVIDER_ID` in `tools/lib/operator-gateway.mjs` to any other id and
  * "the provider id is the Host authority's" fails, naming the Host declaration it disagrees with; delete the
  * `configured === ""` branch and "an unset switch is refused by name" fails.
  */
