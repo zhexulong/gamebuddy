@@ -32,6 +32,9 @@ const baseSnapshot: Snapshot = {
     { targetId: "crop_1", x: 4, y: 10, cropId: "24", displayName: "Cauliflower" },
     { targetId: "crop_2", x: 5, y: 10, cropId: "24", displayName: "Cauliflower" },
   ],
+  // The whole-map row the Mod sends alongside the radius scan. A fixture without it describes a world the Mod cannot produce,
+  // and it is exactly the row the HUD line now reads.
+  wateringWhereabouts: [{ location: "Farm", needsWaterCount: 2, nearestX: 4, nearestY: 10 }],
 };
 
 function lineValues(text: string): Map<string, string> {
@@ -72,7 +75,7 @@ test("the state block is byte-identical for two turns in the same world", () => 
       "- health: 100",
       "- exhausted: no",
       "- held tool: Hoe in slot 1",
-      "- unwatered crops: 2 in reach",
+      "- unwatered crops: 2 on Farm (nearest 4,10)",
       "]",
     ].join("\n"),
   );
@@ -124,6 +127,10 @@ test("every printed field is a declared snapshot field, and no line reads an und
     ["currentTool", "Axe"],
     ["currentToolSlot", 2],
     ["cropTargets", []],
+    // The whole-map row the unwatered line reads. A probe that moves it to a DIFFERENT map is the only one that can tell
+    // "read from this field" apart from "printed the figure" - the base row is already Farm, so replacing it with another
+    // Farm row would change no bytes.
+    ["wateringWhereabouts", [{ location: "Desert", needsWaterCount: 7, nearestX: 3, nearestY: 4 }]],
   ]);
   // The fixture carries no `actorDispositionKind`, so `actionable` is the field that decides the body line. A
   // disposition would shadow it, and the gate would then be silent about a declared field that stopped being read.
@@ -163,4 +170,44 @@ test("the state block stays out of the snapshot projection's own detail text", (
   // One spelling of the clock: both renderers share the formatter.
   assert.match(projection.text, /Time: 06:20/u);
   assert.match(formatSnapshotHud(baseSnapshot), /time: 06:20/u);
+});
+test("the dry-crop line counts the whole map, not the radius scan", () => {
+  // The defect this pins: `cropTargets` is a radius-6 entity scan, so a companion standing in its own house read "0 in reach"
+  // with dry crops outside, and a live run spent an afternoon in Town with full stamina on an unwatered farm. The whole-map
+  // fact was already being sent; the line simply did not read it.
+  const here = formatSnapshotHud({
+    ...baseSnapshot,
+    wateringWhereabouts: [{ location: "Farm", needsWaterCount: 34, nearestX: 12, nearestY: 20 }],
+  });
+  assert.equal(lineValues(here).get("unwatered crops"), "34 on Farm (nearest 12,20)");
+});
+
+test("dry crops on another map are reported, never folded into a zero", () => {
+  // Standing in Town with a dry farm: "0" alone would say "nothing to do" in the one place the work is not.
+  const elsewhere = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "Town",
+    wateringWhereabouts: [{ location: "Farm", needsWaterCount: 12, nearestX: 30, nearestY: 8 }],
+  });
+  assert.equal(lineValues(elsewhere).get("unwatered crops"), "0 here; 12 on Farm (nearest 30,8)");
+});
+
+test("no dry crops anywhere is stated as a fact, not left blank", () => {
+  const none = formatSnapshotHud({ ...baseSnapshot, wateringWhereabouts: [] });
+  assert.equal(lineValues(none).get("unwatered crops"), "none on any map");
+});
+
+test("the dry-crop line ignores the cropTargets count when the whole-map fact disagrees", () => {
+  // Two spellings of one fact is the failure mode here: if the radius scan says 2 and the map says 34, 34 is the answer.
+  const both = formatSnapshotHud({
+    ...baseSnapshot,
+    cropTargets: [
+      { targetId: "crop_1", x: 4, y: 10, cropId: "24", displayName: "Cauliflower" },
+      { targetId: "crop_2", x: 5, y: 10, cropId: "24", displayName: "Cauliflower" },
+    ],
+    wateringWhereabouts: [{ location: "Farm", needsWaterCount: 34, nearestX: 12, nearestY: 20 }],
+  });
+  const rendered = lineValues(both).get("unwatered crops") ?? "";
+  assert.match(rendered, /34/u);
+  assert.doesNotMatch(rendered, /in reach/u, "the radius answer must not survive beside the whole-map one");
 });

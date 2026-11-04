@@ -23,35 +23,45 @@ type SnapshotHudLine = Readonly<{
   render: (snapshot: Snapshot) => string;
 }>;
 
-/** Fixed order, because the block is re-sent every turn and a reordered block is a changed cache prefix. */
-export const SNAPSHOT_HUD_LINES: readonly SnapshotHudLine[] = Object.freeze([
-  { name: "time", fields: ["timeOfDay"], render: (snapshot) => formatGameClock(snapshot.timeOfDay) },
-  {
-    name: "calendar",
-    fields: ["seasonIndex", "dayOfMonth", "year"],
-    render: (snapshot) => `${seasonName(snapshot.seasonIndex)}, day ${snapshot.dayOfMonth}, year ${snapshot.year}`,
-  },
-  { name: "weather", fields: ["weather"], render: (snapshot) => snapshot.weather },
-  {
-    name: "where",
-    fields: ["location", "tile"],
-    render: (snapshot) => `${snapshot.location} at (${snapshot.tile.x}, ${snapshot.tile.y})`,
-  },
-  {
-    name: "body",
-    fields: ["actionable", "actorDispositionKind"],
-    render: bodyStateOf,
-  },
-  { name: "stamina", fields: ["stamina"], render: (snapshot) => `${snapshot.stamina}` },
-  { name: "health", fields: ["health"], render: (snapshot) => `${snapshot.health}` },
-  { name: "exhausted", fields: ["exhausted"], render: (snapshot) => (snapshot.exhausted ? "yes" : "no") },
-  { name: "held tool", fields: ["currentTool", "currentToolSlot"], render: heldToolOf },
-  {
-    name: "unwatered crops",
-    fields: ["cropTargets"],
-    render: (snapshot) => `${snapshot.cropTargets?.length ?? 0} in reach`,
-  },
-]);
+/** Fixed order, because the block is re-sent every turn and a reordered block is a changed cache prefix. */ export const SNAPSHOT_HUD_LINES: readonly SnapshotHudLine[] =
+  Object.freeze([
+    { name: "time", fields: ["timeOfDay"], render: (snapshot) => formatGameClock(snapshot.timeOfDay) },
+    {
+      name: "calendar",
+      fields: ["seasonIndex", "dayOfMonth", "year"],
+      render: (snapshot) => `${seasonName(snapshot.seasonIndex)}, day ${snapshot.dayOfMonth}, year ${snapshot.year}`,
+    },
+    { name: "weather", fields: ["weather"], render: (snapshot) => snapshot.weather },
+    {
+      name: "where",
+      fields: ["location", "tile"],
+      render: (snapshot) => `${snapshot.location} at (${snapshot.tile.x}, ${snapshot.tile.y})`,
+    },
+    {
+      name: "body",
+      fields: ["actionable", "actorDispositionKind"],
+      render: bodyStateOf,
+    },
+    { name: "stamina", fields: ["stamina"], render: (snapshot) => `${snapshot.stamina}` },
+    { name: "health", fields: ["health"], render: (snapshot) => `${snapshot.health}` },
+    { name: "exhausted", fields: ["exhausted"], render: (snapshot) => (snapshot.exhausted ? "yes" : "no") },
+    { name: "held tool", fields: ["currentTool", "currentToolSlot"], render: heldToolOf },
+    {
+      // WHOLE MAP, not a radius.
+      //
+      // This line rendered `cropTargets.length` - the radius-6 entity scan - so a companion standing in its own house read
+      // "0 in reach" while thirty-four crop tiles sat dry outside, and a live run spent a whole afternoon in Town with full
+      // stamina on an unwatered farm. The whole-map fact already existed and was already being sent (`wateringWhereabouts`
+      // counts every loaded location with the engine's own `HoeDirt.needsWatering()`), so the fix is to read it here rather
+      // than to add anything.
+      //
+      // The radius answer is kept as a second clause ONLY when it differs from the whole-map total for this map, because two
+      // numbers that are always equal are two spellings of one fact.
+      name: "unwatered crops",
+      fields: ["wateringWhereabouts", "location"],
+      render: (snapshot) => unwateredCropsOf(snapshot),
+    },
+  ]);
 
 /**
  * The Game model's standing state block: where the companion is, what time it is, and whether its body is free.
@@ -103,6 +113,31 @@ function heldToolOf(snapshot: Snapshot): string {
   const tool = snapshot.currentTool ?? "nothing";
   const slot = snapshot.currentToolSlot;
   return slot === undefined || slot === null ? tool : `${tool} in slot ${slot}`;
+}
+
+/**
+ * The dry-crop line, read from the whole-map fact rather than the radius scan.
+ *
+ * `wateringWhereabouts` carries one row per location that has dry crops, with the count and the nearest tile on the player's
+ * own map. Three shapes, each said plainly:
+ *
+ *   here and everywhere  `34 on Farm (nearest 12,20)`      - the count IS this map's
+ *   elsewhere            `0 here; 12 on Farm (nearest 12,20)` - the count is another map's, and saying "0" alone would
+ *                                                            report "nothing to do" in the one place the companion is not
+ *   nowhere              `none on any map`                  - a fact, not an absence: every grown crop that needs water has it
+ *
+ * Deterministic by construction: the rows are already ordered by location, and this reads the first one for this map and the
+ * first one for any map, never a set or a map iteration of its own.
+ */
+function unwateredCropsOf(snapshot: Snapshot): string {
+  const rows = snapshot.wateringWhereabouts ?? [];
+  const here = rows.find((row) => row.location === snapshot.location);
+  const elsewhere = rows.find((row) => row.location !== snapshot.location);
+  const describe = (row: { location: string; needsWaterCount: number; nearestX: number; nearestY: number }): string =>
+    `${row.needsWaterCount} on ${row.location} (nearest ${row.nearestX},${row.nearestY})`;
+  if (here !== undefined) return describe(here);
+  if (elsewhere !== undefined) return `0 here; ${describe(elsewhere)}`;
+  return "none on any map";
 }
 
 function composeHud(lines: readonly Readonly<{ name: string; value: string }>[], omitted: readonly string[]): string {
