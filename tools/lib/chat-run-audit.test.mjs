@@ -91,7 +91,13 @@ test("a probe event must bind to its manifest, and only a breach must place itse
   const bound = { probeId: "p-turn-01", manifestDigest: "a".repeat(64) };
   const withProbe = (code, meta) => {
     const audit = baseAudit();
-    audit.events.splice(4, 0, { at: 35, kind: "probe", actor: "harness", code, ...(meta === undefined ? {} : { meta }) });
+    audit.events.splice(4, 0, {
+      at: 35,
+      kind: "probe",
+      actor: "harness",
+      code,
+      ...(meta === undefined ? {} : { meta }),
+    });
     return audit;
   };
   // Non-breach outcomes only have to name their probe and manifest.
@@ -99,12 +105,8 @@ test("a probe event must bind to its manifest, and only a breach must place itse
   assert.equal(validateChatRunAudit(withProbe("needle.miss", { ...bound, distance: "turn" })).valid, true);
   // A probe event with no meta at all cannot carry either binding.
   assert.ok(reasonsFor(withProbe("needle.hit", undefined)).includes("probe_id_missing"));
-  assert.ok(
-    reasonsFor(withProbe("needle.hit", { probeId: "p-turn-01" })).includes("probe_manifest_digest_invalid"),
-  );
-  assert.ok(
-    reasonsFor(withProbe("needle.hit", { manifestDigest: "a".repeat(64) })).includes("probe_id_missing"),
-  );
+  assert.ok(reasonsFor(withProbe("needle.hit", { probeId: "p-turn-01" })).includes("probe_manifest_digest_invalid"));
+  assert.ok(reasonsFor(withProbe("needle.hit", { manifestDigest: "a".repeat(64) })).includes("probe_id_missing"));
   // The two enumerable domains are closed.
   assert.ok(reasonsFor(withProbe("needle.hit", { ...bound, distance: "week" })).includes("probe_distance_invalid"));
   assert.ok(
@@ -118,8 +120,7 @@ test("a probe event must bind to its manifest, and only a breach must place itse
     ),
   );
   assert.equal(
-    validateChatRunAudit(withProbe("isolation.breach", { ...bound, distance: "fold", dimension: "isolation" }))
-      .valid,
+    validateChatRunAudit(withProbe("isolation.breach", { ...bound, distance: "fold", dimension: "isolation" })).valid,
     true,
   );
 });
@@ -164,7 +165,13 @@ test("a kind/code mismatch is rejected, so a mis-kinded breach cannot bypass int
   // A code shared across kinds stays legal in each of its own kinds.
   for (const kind of ["provider", "presentation", "probe"]) {
     const shared = baseAudit();
-    shared.events.splice(4, 0, { at: 35, kind, actor: "harness", code: "observability_gap", ...(kind === "probe" ? { meta: { probeId: "p-01", manifestDigest: "a".repeat(64) } } : {}) });
+    shared.events.splice(4, 0, {
+      at: 35,
+      kind,
+      actor: "harness",
+      code: "observability_gap",
+      ...(kind === "probe" ? { meta: { probeId: "p-01", manifestDigest: "a".repeat(64) } } : {}),
+    });
     assert.equal(validateChatRunAudit(shared).valid, true, `${kind}.observability_gap must stay valid`);
   }
 });
@@ -308,7 +315,11 @@ test("validateChatRunAudit accepts exactly the frozen meta keys", () => {
     },
   };
   assert.equal(validateChatRunAudit(audit).valid, true, JSON.stringify(validateChatRunAudit(audit).errors));
-  assert.equal(CHAT_RUN_AUDIT_META_KEYS.length, 13);
+  // The list's SIZE is not asserted: it was pinned at 13 here and the allow-list legitimately grew twice
+  // (`gateMarker`, then `firstResponseMs`), so the pin only ever asked for an edit. The population that keeps this
+  // closed is the one in `tools/live-run/chat/run-chat-live-audit.test.mjs`, which compares the kernel table with the
+  // harness's own `AUDIT_META_KEYS` in both directions - a key either side adds alone fails there. These assertions
+  // keep the read side: every documented key is in the list, and an undocumented one is refused by the test above.
   assert.ok(CHAT_RUN_AUDIT_META_KEYS.includes("providerObservability"));
   for (const key of ["probeId", "distance", "dimension", "manifestDigest"]) {
     assert.ok(CHAT_RUN_AUDIT_META_KEYS.includes(key), `${key} must be in the frozen allow-list`);
@@ -942,7 +953,10 @@ test("formatChatRunAuditReportText renders a clean run without a seam table", as
 test("the frozen vocabulary matches §3.1 exactly, with only the documented kind collision", () => {
   const all = Object.values(CHAT_RUN_AUDIT_CODES_BY_KIND).flat();
   for (const code of all) assert.match(code, /^[a-z0-9_.:-]{1,160}$/);
-  assert.equal(all.length, 33);
+  // No total is asserted: the vocabulary was pinned at 33 codes and grew (`provider.boundary_unsettled`), so the pin
+  // only ever asked for an edit. What has force is here below - the shape of every code, the kinds agreeing with the
+  // table, the probe arm's own size, and exactly one code shared across kinds - and the population itself is pinned
+  // against the harness's `AUDIT_VOCABULARY` in both directions by `tools/live-run/chat/run-chat-live-audit.test.mjs`.
   assert.deepEqual([...CHAT_RUN_AUDIT_KINDS], Object.keys(CHAT_RUN_AUDIT_CODES_BY_KIND));
   assert.equal(countCodeEntries(CHAT_RUN_AUDIT_CODES_BY_KIND, "probe"), 9);
   // §3.1 deliberately reuses the bare code `observability_gap` under `provider`,

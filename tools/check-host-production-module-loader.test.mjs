@@ -5,9 +5,15 @@ import test from "node:test";
 
 const root = resolve(import.meta.dirname, ".");
 const moduleLoader = await readFile(join(root, "lib", "host-production-module.mjs"), "utf8");
-// The only tool allowed to name the mutable production generation root directly:
-// it carries `host/dist/` as a literal deny-list string, not a loader or import.
-const allowedProductionRootReferences = new Set(["check-text-hygiene.mjs"]);
+// The only tools allowed to name the mutable production generation root directly. Each entry says which kind of
+// naming it is, because the exception is about NAMING the root (a deny-list string, a fixture, a built->source
+// translation), never about loading it: a tool that imports from `host/dist` must go through
+// `lib/host-production-module.mjs`, and that is what the loader assertions above hold.
+const allowedProductionRootReferences = new Map([
+  ["check-text-hygiene.mjs", "carries `host/dist/` in its deny-list"],
+  ["audit-totality.mjs", "maps a harness specifier under `host/dist/` back to the `host/src/` module it names"],
+  ["audit-totality.test.mjs", "writes that specifier into a fixture root, to prove a reader is distinguished"],
+]);
 
 // The mutable production root is exactly `host/dist`. `host/dist-test` and
 // `host/dist-reference-check` are test infrastructure, not the generation
@@ -35,7 +41,7 @@ test("normal Host runners resolve inventory-pinned production modules instead of
   // Derived from the tree rather than pinned to a count or a stale name list: a
   // tool that starts reaching into the mutable production root fails here until
   // it is accounted for, and an allowance cannot outlive the reference it excuses.
-  assert.deepEqual(await toolsReferencingProductionRoot(), [...allowedProductionRootReferences].sort());
+  assert.deepEqual(await toolsReferencingProductionRoot(), [...allowedProductionRootReferences.keys()].sort());
 });
 
 test("the production module loader does not reconstruct current.json or a generation path", () => {

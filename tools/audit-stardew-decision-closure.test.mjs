@@ -1201,8 +1201,25 @@ test("a site that drifts is named, and the real families show it", () => {
   );
 
   const refusedReal = findings.filter((entry) => entry.code === "target_family_real_value_refused");
-  // 66 of the 68, exactly as measured: `warps` and `chests` are the two `IDENTIFIER` happens to admit.
-  assert.equal(refusedReal.length, 66, `IDENTIFIER admits 2 of 68, so 66 must be named (named ${refusedReal.length})`);
+  // `IDENTIFIER` is the ACTION-ID rule (snake_case), so the only real families it can still admit are the ones
+  // spelled that way. Naming those two is the contract; the count of refused families is then DERIVED from the
+  // artifact, because the artifact is where the population comes from. The hardcoded 66 it replaces was measured
+  // once and failed on a change that was correct: `pet_farm_animal` added `farmAnimalPetTargets` (camelCase), so the
+  // drifted producer refuses 67 of 69 - and a new SNAKE_CASE family still fails here, naming itself.
+  const identiferAdmits = new Set(["chests", "warps"]);
+  const declaredFamilies = targetFamilyFixtures().declared;
+  assert.deepEqual(
+    declaredFamilies.filter(
+      (value) => !refusedReal.some((entry) => entry.identity.startsWith(`producer:${JSON.stringify(value)}`)),
+    ),
+    [...identiferAdmits].sort(),
+    "only the snake_case families may survive the drifted producer's rule, and each must be named",
+  );
+  assert.equal(
+    refusedReal.length,
+    declaredFamilies.length - identiferAdmits.size,
+    "every other declared family must be named as refused",
+  );
   assert.ok(refusedReal.every((entry) => entry.identity.startsWith("producer:")));
 
   // And the reuse is wrong on a second axis the real families cannot show: `IDENTIFIER` is a SNAKE_CASE rule, so it
