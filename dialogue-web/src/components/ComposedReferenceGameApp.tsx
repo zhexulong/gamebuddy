@@ -628,11 +628,28 @@ export function ComposedReferenceGameApp() {
    * until the stream's next delta rebuilt it from nothing. The comparison runs
    * through the updater so it reads the preview that is actually committed, never
    * the one this render closed over.
+   *
+   * A view that is not ready is the one other case, and it is what the problem
+   * screen's step is: the shell has no session to apply the snapshot to, so this
+   * same read - the mount's own - rebuilds one from what the Host publishes.
+   * Nothing is carried over because there is nothing to carry: the player's place
+   * on a problem screen is the problem screen, and a read that lands replaces it
+   * wholesale.
    */
   const rereadChat = async (): Promise<void> => {
     const current = viewRef.current;
-    if (current.kind !== "ready") return;
     const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
+    if (current.kind !== "ready") {
+      setPreview(null);
+      commit({
+        kind: "ready",
+        root,
+        session: createReferencePipelineSession(root.chat),
+        draft,
+        locale: localeRef.current,
+      });
+      return;
+    }
     const runningTurn =
       root.chat.chat.turn === null || terminalTurn(root.chat.chat.turn) ? null : root.chat.chat.turn.handle;
     setPreview((existing) =>
@@ -645,6 +662,29 @@ export function ComposedReferenceGameApp() {
       session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
       draft,
     });
+  };
+
+  /**
+   * The problem screen's one step: the read it came from, taken again.
+   *
+   * `rereadChat` is that read - the composed root and the draft it carries, which is what the mount
+   * took and every view here was committed over - so the control is a real call rather than a reload,
+   * and the player's place survives either way: a read that lands replaces the screen, and one the
+   * Host refuses commits its own sentence to the same card. The ref is the single-flight guard; the
+   * button shows nothing while the read is outstanding, so a second state would only be a second
+   * `/state`.
+   */
+  const problemRetryRef = useRef(false);
+  const retryProblemView = (): void => {
+    if (problemRetryRef.current) return;
+    problemRetryRef.current = true;
+    void rereadChat()
+      .catch((error: unknown) => {
+        commit(problemView(error, messages(localeRef.current)));
+      })
+      .finally(() => {
+        problemRetryRef.current = false;
+      });
   };
 
   /**
@@ -1384,7 +1424,13 @@ export function ComposedReferenceGameApp() {
             </div>
           </main>
         )}
-        {view.kind === "problem" && <ProblemView title={view.title} detail={view.detail} />}
+        {view.kind === "problem" && (
+          <ProblemView
+            title={view.title}
+            detail={view.detail}
+            action={{ label: labels().problemRetryRead, run: retryProblemView }}
+          />
+        )}
         {view.kind === "ready" && view.session.snapshot.chat !== null && (
           <>
             <AppBar

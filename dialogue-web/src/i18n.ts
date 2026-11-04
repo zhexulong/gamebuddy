@@ -557,6 +557,9 @@ const en = {
   problemRouteUnavailableTitle: "Unable to reach chat",
   problemRouteUnavailableDetail:
     "This GameBuddy build does not serve the route the page asked for. Update GameBuddy or reload the page.",
+  // The problem screen's one control, whose call the shell owns: it re-reads the composed state the
+  // screen came from, so it says what it does rather than naming a mechanism.
+  problemRetryRead: "Read it again",
   problemInternalErrorTitle: "Unable to read chat",
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
@@ -1517,6 +1520,7 @@ const zh: Messages = {
     "你的 GameBuddy 会话已失效，因此没有可读取的内容。请重新启动 GameBuddy，并重新加载它打开的页面。",
   problemRouteUnavailableTitle: "无法访问聊天",
   problemRouteUnavailableDetail: "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
+  problemRetryRead: "重新读取",
   problemInternalErrorTitle: "无法读取聊天",
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
   problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
