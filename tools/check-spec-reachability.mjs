@@ -55,8 +55,8 @@
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { untrackedFiles } from "./lib/journey-source.mjs";
 import { corpusFiles } from "./run-tool-test-corpus.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -74,21 +74,6 @@ const read = (path) => {
 };
 
 const toPosix = (path) => path.split(sep).join("/");
-
-/**
- * Files git reports as untracked, which are not part of the commit this gate judges.
- *
- * A worktree where several lanes are running holds suites somebody is still writing, and `--update`
- * would record one as debt: the entry would then go stale - and the gate red - the moment that lane
- * commits or deletes it. An untracked file is not in the commit, so the population is the commit. A
- * directory that is not a git worktree (a falsifier's synthetic tree) reports nothing untracked, and
- * then every file on disk is its population.
- */
-function untrackedFiles(root) {
-  const result = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
-  if (result.status !== 0) return { files: new Set(), measured: false };
-  return { files: new Set(String(result.stdout).split("\n").filter(Boolean).map(toPosix)), measured: true };
-}
 
 /** Every file under `directory` whose name matches `accept`, as paths relative to `root`. */
 function scan(directory, accept, root, out = []) {
@@ -298,12 +283,14 @@ export function auditSpecReachability({ root = REPOSITORY_ROOT } = {}) {
     ? new Set(corpusFiles({ root }))
     : new Set();
   const named = new Set([...testCommands.map((path) => toPosix(path)), ...aggregate]);
+  // An untracked file is not in the commit this gate judges: judging one would fail another lane's
+  // in-flight work, and recording one in the baseline would go stale the moment that lane lands it.
   const untracked = untrackedFiles(root);
-  const committed = (file) => !untracked.files.has(file);
+  const committed = (file) => !untracked.has(file);
   const findings = [];
   const unassessed = [];
-  if (untracked.files.size > 0)
-    unassessed.push(`unassessed: ${untracked.files.size} untracked file(s) - not part of the commit this gate judges`);
+  if (untracked.size > 0)
+    unassessed.push(`unassessed: ${untracked.size} untracked file(s) - not part of the commit this gate judges`);
 
   const declaration = playwrightDeclaration(root);
   const mountedScripts = packages.flatMap((entry) =>

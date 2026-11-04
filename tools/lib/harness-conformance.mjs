@@ -451,6 +451,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "       suite no reachable command names, a spec the config's testIgnore excludes, a deleted mounted step and a missing\n" +
       "       config, and requires each to be named",
   },
+  {
+    gate: "check-surface-journeys.mjs",
+    reason:
+      "static source gate over the panel union and the specs; its falsifier\n" +
+      "       (tools/check-surface-journeys.test.mjs) adds a surface no journey asserts on, a journey that only clicks its\n" +
+      "       control, a panel the shell never renders, and a test id two surfaces render alike",
+  },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
