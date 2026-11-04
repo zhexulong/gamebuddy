@@ -2057,9 +2057,31 @@ const MOD_HEARTBEAT_STALL_MS = 90_000;
 // console into it) reads THAT: the machine-global `SMAPI-latest*.txt` is numbered by player index inside the game, so
 // under two concurrent lanes the unsuffixed file describes whichever instance SMAPI numbered first - reading it means
 // auditing the other lane. The global path stays the default for a single-lane invocation that declares none.
-const MOD_LOG_PATH = () =>
-  process.env.GAMEBUDDY_STARDEW_LANE_LOG_PATH ||
-  join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+//
+// EVERY file that can carry the marker, because one of them demonstrably does and the other demonstrably does not.
+//
+// Measured 2026-11-04: for a run whose lane log held zero heartbeat lines, `%APPDATA%/StardewValley/ErrorLogs/SMAPI-latest.txt`
+// held 50-89 of them for that same run - SMAPI writes the marker to its log FILE, while the lane log is the CONSOLE capture.
+// The liveness meter therefore read an empty file and declared `world_stopped_advancing:silent_ms=90000:last_heartbeat=`
+// while the bridge was carrying dispatches (round32: 5-15 submissions, all observed, zero disconnections).
+//
+// So the meter reads the marker wherever it is written and reports WHICH file it came from, instead of inferring "the world
+// stopped" from "the file this code happens to prefer is quiet". The lane log stays in the list: under two concurrent lanes
+// it is the only per-lane source, and the global file is shared, so neither can be dropped.
+const MOD_LOG_PATHS = () => {
+  const paths = [];
+  const laneLog = process.env.GAMEBUDDY_STARDEW_LANE_LOG_PATH;
+  if (laneLog) paths.push(laneLog);
+  const errorLogs = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs");
+  try {
+    for (const name of readdirSync(errorLogs)) {
+      if (name.startsWith("SMAPI-latest") && name.endsWith(".txt")) paths.push(join(errorLogs, name));
+    }
+  } catch {
+    // An unreadable directory is not evidence of a stall; the other source may still answer.
+  }
+  return paths;
+};
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
 
@@ -2224,14 +2246,29 @@ function sampleGameProcess() {
 
 function sampleModHeartbeat() {
   try {
-    const lines = readFileSync(MOD_LOG_PATH(), "utf8")
-      .split("\n")
-      .filter((line) => line.includes(MOD_HEARTBEAT_MARKER));
-    const grew = lines.length > modHeartbeatSample.count;
+    // The source with the most marker lines wins: a file that cannot carry the marker must not be able to report silence.
+    let best = { count: 0, line: "", path: null };
+    let readable = false;
+    for (const candidate of MOD_LOG_PATHS()) {
+      let lines;
+      try {
+        lines = readFileSync(candidate, "utf8")
+          .split("\n")
+          .filter((line) => line.includes(MOD_HEARTBEAT_MARKER));
+      } catch {
+        continue;
+      }
+      readable = true;
+      if (lines.length > best.count)
+        best = { count: lines.length, line: (lines.at(-1) ?? "").trim().slice(0, 200), path: candidate };
+    }
+    if (!readable) throw new Error("no heartbeat source readable");
+    const grew = best.count > modHeartbeatSample.count;
     modHeartbeatSample = {
-      count: lines.length,
+      count: best.count,
       sinceMs: grew ? Date.now() : modHeartbeatSample.sinceMs,
-      line: (lines.at(-1) ?? "").trim().slice(0, 200),
+      line: best.line,
+      source: best.path,
     };
   } catch (error) {
     // Unreadable is not stalled: the run has no evidence either way, and inventing a stall would be worse.
@@ -3606,6 +3643,7 @@ const stallSampler = setInterval(() => {
   const threads = sampleGameThreads();
   worldStallReason =
     `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}` +
+    `:heartbeat_source=${String(liveness.source ?? "none")}` +
     `:game_responding=${String(game.responding)}:game_cpu_s=${String(Math.round(game.cpuSeconds ?? -1))}` +
     (game.note === null ? "" : `:game_probe=${String(game.note)}`) +
     `:game_threads=${threads}`;
