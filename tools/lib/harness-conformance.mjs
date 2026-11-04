@@ -442,6 +442,16 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-stardew-dialogue-autonomy.mjs", reason: "requires a ladder-result json" },
   { gate: "check-stardew-dialogue-stream.mjs", reason: "requires a result json" },
   {
+    gate: "check-stardew-discovery-collection-coverage.mjs",
+    reason:
+      "static source gate over the Mod tree; its falsifier (tools/check-stardew-discovery-collection-coverage.test.mjs) " +
+      "asserts the gate's own REPORT - findings[].code/collection and rows[], the same judgements the CLI prints - on a " +
+      "discovery that reads the wrong collection, one that names its collection only in a comment, a delegation claim " +
+      "with no call behind it, a scan that found nothing and a ratchet entry that outlived its fix, with the real Mod " +
+      "tree beside them as the accepting sample; two of its cases read collectionsRead/parseDiscoveries directly rather " +
+      "than the report; the gate's own red-proof marker names the injected deletion",
+  },
+  {
     gate: "check-stardew-execution-receipt-field-parity.mjs",
     reason: "static field-parity gate; falsifier in its test",
   },

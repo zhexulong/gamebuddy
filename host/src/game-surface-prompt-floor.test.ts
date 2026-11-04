@@ -73,8 +73,8 @@ const LOCALE = "zh-CN";
 const GAME_PROMPT = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
 
 /** The conduct block, anchored to its first and last rule rather than quoted in full. */
-const CONDUCT_FIRST = "Speak to the PLAYER, not about yourself, like a friend playing together.";
-const CONDUCT_LAST = "Talk to the player, never to a customer.";
+const CONDUCT_FIRST = "Speak to your partner, not about yourself, like a friend playing together.";
+const CONDUCT_LAST = "Talk to your partner, never to a customer.";
 
 function conductBlock(prompt: string): string {
   const start = prompt.indexOf(CONDUCT_FIRST);

@@ -82,7 +82,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
   }),
   floor: Object.freeze({
     toolCount: 14,
-    systemChars: 8494,
+    systemChars: 10784,
     systemTokens: 5119,
     toolsTokens: 3552,
     envelopeChars: 23227,
@@ -90,7 +90,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 4502,
+    chars: 5709,
     tokens: 1227,
     charShareOfSystemPrompt: 0.53,
     tokenShareOfSystemPrompt: 0.24,
