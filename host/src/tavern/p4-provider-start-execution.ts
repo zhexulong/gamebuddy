@@ -642,10 +642,15 @@ export async function runMountedProviderStart(
     const promptStartedAtMs = Date.now();
     // Name this turn on every provider request the prompt makes, and only this turn: Pi stamps
     // `before_provider_headers` from the holder this write sets, so the request a captured body came
-    // from can be attributed to a turn instead of to its position in the capture file. A stop that
-    // lands between two turns leaves the successor's own write in place, which is why the clear below
-    // names the turn it clears rather than emptying the holder.
-    scope.runtimeSession.providerTurnHeader.setTurn(scope.facts.turnId);
+    // from can be attributed to a turn instead of to its position in the capture file. The naming
+    // carries the submission key beside the turn id because the page that caused the turn knows only
+    // the key, and a reader holding the page's marks can name this request only through it. A stop
+    // that lands between two turns leaves the successor's own write in place, which is why the clear
+    // below names the turn it clears rather than emptying the holder.
+    scope.runtimeSession.providerTurnHeader.setTurn({
+      turnId: scope.facts.turnId,
+      idempotencyKey: scope.facts.idempotencyKey,
+    });
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([

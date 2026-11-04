@@ -1,17 +1,26 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
- * The header that names the Chat turn an outbound provider request belongs to.
+ * The two headers that name the turn an outbound provider request belongs to.
  *
  * A captured wire body could not be attributed to a turn before this: a live run could only
  * count bodies in arrival order, so a `/models` probe, a transport retry or a second surface
  * shifted every reading after it and one driver reported another's prompt. Arrival order is
  * not turn order, and nothing on the wire said which turn a body was.
  *
- * The value is the Host's own turn identity (`ProviderInvocationScope.facts.turnId`) and
- * nothing else: no prompt text, no credential, no path.
+ * Two identities, because the two parties that must agree know different things. The Host knows
+ * `turn_<uuid>`, and nothing else does. A browser knows the idempotency key it submitted the turn
+ * under (`newIdempotencyKey()`, an opaque 16-byte token), and the Host deliberately never gives it
+ * back the raw turn id - the browser only ever sees an HMAC turn handle. The store maps the two, so
+ * either identity alone is enough to *find* the turn, but only the key lets a reader that holds a
+ * page's marks name the request that page caused. Recording both means the join needs no knowledge
+ * of the store's schema, and a support engineer can correlate a player's report with a wire request
+ * without opening a database.
+ *
+ * Both values are opaque identities: no prompt text, no credential, no path.
  */
 export const PROVIDER_TURN_HEADER_NAME = "X-GameBuddy-Turn-Id";
+export const PROVIDER_IDEMPOTENCY_KEY_HEADER_NAME = "X-GameBuddy-Idempotency-Key";
 
 /** The name the loader publishes this extension under, as `<inline:gamebuddy-provider-turn-header>`. */
 export const PROVIDER_TURN_HEADER_EXTENSION_NAME = "gamebuddy-provider-turn-header";
@@ -24,24 +33,26 @@ export const PROVIDER_TURN_HEADER_EXTENSION_NAME = "gamebuddy-provider-turn-head
  * none - it would attribute a request to the previous turn, which is the defect this replaces -
  * so the runner clears in a `finally` and clearing names the turn it clears.
  */
+export type ProviderTurnNaming = Readonly<{ turnId: string; idempotencyKey: string }>;
+
 export type ProviderTurnHeaderScope = Readonly<{
-  setTurn(turnId: string): void;
+  setTurn(naming: ProviderTurnNaming): void;
   /** Clears only the turn it names, so a successor turn's value is never erased by this one. */
   clearTurn(turnId: string): void;
   /** The turn in flight, or `undefined` when the request belongs to no turn at all. */
-  turnInFlight(): string | undefined;
+  turnInFlight(): ProviderTurnNaming | undefined;
 }>;
 
 export function createProviderTurnHeaderScope(): ProviderTurnHeaderScope {
-  let turnId: string | undefined;
+  let naming: ProviderTurnNaming | undefined;
   return Object.freeze({
-    setTurn(next: string): void {
-      turnId = next;
+    setTurn(next: ProviderTurnNaming): void {
+      naming = Object.freeze({ turnId: next.turnId, idempotencyKey: next.idempotencyKey });
     },
     clearTurn(clearing: string): void {
-      if (turnId === clearing) turnId = undefined;
+      if (naming?.turnId === clearing) naming = undefined;
     },
-    turnInFlight: () => turnId,
+    turnInFlight: () => naming,
   });
 }
 
@@ -60,8 +71,9 @@ export function createProviderTurnHeaderScope(): ProviderTurnHeaderScope {
  */
 export function providerTurnHeaderExtension(pi: ExtensionAPI, scope: ProviderTurnHeaderScope): void {
   pi.on("before_provider_headers", (event) => {
-    const turnId = scope.turnInFlight();
-    if (turnId === undefined) return;
-    event.headers[PROVIDER_TURN_HEADER_NAME] = turnId;
+    const naming = scope.turnInFlight();
+    if (naming === undefined) return;
+    event.headers[PROVIDER_TURN_HEADER_NAME] = naming.turnId;
+    event.headers[PROVIDER_IDEMPOTENCY_KEY_HEADER_NAME] = naming.idempotencyKey;
   });
 }

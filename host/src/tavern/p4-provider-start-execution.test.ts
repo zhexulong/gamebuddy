@@ -22,7 +22,11 @@ import {
   type NativeChatPreviewPublisher,
   type NativeChatSpeechSink,
 } from "./p4-provider-start-execution.js";
-import { createProviderTurnHeaderScope, type ProviderTurnHeaderScope } from "../provider-turn-header.internal.js";
+import {
+  createProviderTurnHeaderScope,
+  type ProviderTurnHeaderScope,
+  type ProviderTurnNaming,
+} from "../provider-turn-header.internal.js";
 
 function nativeText(text: string) {
   return Object.freeze({ type: "text" as const, text });
@@ -1063,7 +1067,7 @@ test("the provider turn header names this turn while its prompt is in flight and
   // build a request: a holder written later names nothing, and one left written names the wrong turn.
   const providerTurnHeader = createProviderTurnHeaderScope();
   let observer: Observer | undefined;
-  const turnsSeenByPrompt: (string | undefined)[] = [];
+  const turnsSeenByPrompt: (ProviderTurnNaming | undefined)[] = [];
   const { scope } = createScope({
     presentationCommitted: () => true,
     runtimeSession: Object.freeze({
@@ -1097,7 +1101,11 @@ test("the provider turn header names this turn while its prompt is in flight and
   const result = await runMountedProviderStart(scope);
 
   assert.equal(result.outcome, "completed");
-  assert.deepEqual(turnsSeenByPrompt, [facts.turnId], "the prompt must run with its own turn named on the holder");
+  assert.deepEqual(
+    turnsSeenByPrompt,
+    [{ turnId: facts.turnId, idempotencyKey: facts.idempotencyKey }],
+    "the prompt must run with its own turn and its own submission key named on the holder",
+  );
   assert.equal(
     providerTurnHeader.turnInFlight(),
     undefined,
