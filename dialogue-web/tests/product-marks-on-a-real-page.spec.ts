@@ -37,8 +37,18 @@ const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json
  * The Host behind the shell, as one mutable record: a journey can settle a turn on it without
  * reloading the page, which is what a live Host does while the player watches.
  */
+type TranscriptRow = Readonly<{
+  handle: string;
+  role: "player" | "companion";
+  text: string;
+  locale: string;
+  order: number;
+  revision: number;
+}>;
+
 type HostState = {
   turnState: "running" | "completed" | null;
+  transcript: readonly TranscriptRow[];
 };
 
 function composedRoot(state: HostState) {
@@ -58,7 +68,7 @@ function composedRoot(state: HostState) {
       chat: {
         companion: { name: "Mira", handle: companionHandle },
         title: null,
-        transcript: [],
+        transcript: state.transcript.map((row) => ({ ...row })),
         draft: { revision: 4, present: true },
         turn:
           state.turnState === null
@@ -150,12 +160,14 @@ async function emitEvent(page: Page, eventType: string, data: string): Promise<v
   );
 }
 
-type PageMark = Readonly<{ name: string; at: number }>;
+type PageMark = Readonly<{ name: string; at: number; detail: Record<string, string> }>;
 
 /** Every mark on the page's own timeline, in page order - the buffer the live reader reads. */
 async function readMarks(page: Page): Promise<PageMark[]> {
   return await page.evaluate(() =>
-    performance.getEntriesByType("mark").map((entry) => ({ name: entry.name, at: entry.startTime })),
+    performance
+      .getEntriesByType("mark")
+      .map((entry) => ({ name: entry.name, at: entry.startTime, detail: (entry.detail ?? {}) as Record<string, string> })),
   );
 }
 
@@ -179,7 +191,7 @@ const startOf = (marks: readonly PageMark[], name: string): number => {
 
 test.describe("the marks the product records reach a real page", () => {
   test("switching surfaces records both ends of the switch", async ({ page }) => {
-    const state: HostState = { turnState: null };
+    const state: HostState = { turnState: null, transcript: [] };
     await stubHost(page, state);
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
     await expect(page.getByTestId("chat-surface")).toBeVisible();
@@ -215,7 +227,7 @@ test.describe("the marks the product records reach a real page", () => {
    * player's selection. That is the same reason Back and Escape arrive as `done` alone.
    */
   test("the first press on the conversation records both ends of its switch", async ({ page }) => {
-    await stubHost(page, { turnState: null });
+    await stubHost(page, { turnState: null, transcript: [] });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
     await expect(page.getByTestId("chat-surface")).toBeVisible();
 
@@ -232,7 +244,7 @@ test.describe("the marks the product records reach a real page", () => {
 
   test("a turn records its submit and its settlement", async ({ page }) => {
     test.setTimeout(60_000);
-    const state: HostState = { turnState: null };
+    const state: HostState = { turnState: null, transcript: [] };
     await installQuietStream(page);
     await stubHost(page, state);
     await page.route("**/api/tavern/v1/messages", (route) =>
@@ -286,5 +298,154 @@ test.describe("the marks the product records reach a real page", () => {
 
     const marks = await readMarks(page);
     expect(startOf(marks, "gamebuddy:turn:settled")).toBeGreaterThanOrEqual(startOf(marks, "gamebuddy:turn:submit"));
+  });
+
+  /**
+   * A regenerate starts a durable turn of its own, and the page has to say whose turn it is.
+   *
+   * Measured on a real run: `handleRegenerate` published the pending record and sent the request,
+   * and did nothing else - so the turn it started carried no `submit` mark and nothing ever wrote
+   * `turnKeyRef.current`. Its `accepted`/`first-token`/`settled` marks were emitted with `null`.
+   *
+   * The worse half is what this journey drives. The fallback poll (and the reconcile pass that
+   * confirms a committed message) spends the pending record from an authoritative read and never
+   * clears the ref - only a terminal `turn.state_changed` does - so a turn settled that way leaves
+   * the PREVIOUS turn's key standing, and the next regenerate's marks borrow it. A mark that names
+   * another turn is worse than no mark: it attributes one turn's timing to another.
+   *
+   * The key is not invented here. It is the `idempotency-key` header the page sends on the
+   * regenerate request - the same durable turn identity the Host stamps on the provider request
+   * (`X-GameBuddy-Idempotency-Key`) and the wire capture records.
+   */
+  test("a regenerated turn marks itself, and does not borrow the turn before it", async ({ page }) => {
+    test.setTimeout(60_000);
+    const openingHandle = `${"O".repeat(42)}A`;
+    const playerHandle = `${"P".repeat(42)}A`;
+    const replyHandle = `${"R".repeat(42)}A`;
+    const playerText = "A first line.";
+    const replyText = "Her first reply.";
+    const opening: TranscriptRow = {
+      handle: openingHandle,
+      role: "companion",
+      text: "An opening greet.",
+      locale: "und",
+      order: 0,
+      revision: 1,
+    };
+    const state: HostState = { turnState: null, transcript: [opening] };
+    await installQuietStream(page);
+    await stubHost(page, state);
+
+    const acceptedBody = (message: TranscriptRow) =>
+      JSON.stringify({
+        apiVersion: 1,
+        disposition: "accepted",
+        message,
+        turn: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      });
+    let sendKey: string | null = null;
+    let regenerateKey: string | null = null;
+    await page.route("**/api/tavern/v1/messages", (route) => {
+      sendKey = route.request().headers()["idempotency-key"] ?? null;
+      return route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: acceptedBody({
+          handle: playerHandle,
+          role: "player",
+          text: playerText,
+          locale: "und",
+          order: 1,
+          revision: 1,
+        }),
+      });
+    });
+    await page.route("**/api/tavern/v1/messages/regenerate", (route) => {
+      regenerateKey = route.request().headers()["idempotency-key"] ?? null;
+      return route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: acceptedBody({
+          handle: replyHandle,
+          role: "companion",
+          text: replyText,
+          locale: "und",
+          order: 2,
+          revision: 2,
+        }),
+      });
+    });
+
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    const chat = page.getByTestId("chat-surface");
+    await expect(chat).toBeVisible();
+    await expect
+      .poll(async () => await page.evaluate(() => (window as unknown as { __handlers: unknown[] }).__handlers.length))
+      .toBe(1);
+
+    // A turn the player really started, so a previous turn's key exists to be borrowed.
+    await chat.locator("textarea").fill(playerText);
+    await chat.getByRole("button", { name: "Send", exact: true }).click();
+    await waitForMark(page, "gamebuddy:turn:submit");
+    await expect.poll(() => sendKey).not.toBeNull();
+
+    // THE STALE-KEY SHAPE. The reply lands with the turn already terminal, and the page learns it
+    // from a committed message rather than a terminal transition: the reconcile pass spends the
+    // pending record from its authoritative read, and the ref - which only a terminal
+    // `turn.state_changed` clears - keeps the send's key.
+    state.turnState = "completed";
+    state.transcript = [
+      opening,
+      { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 1, revision: 1 },
+      { handle: replyHandle, role: "companion", text: replyText, locale: "und", order: 2, revision: 2 },
+    ];
+    await emitEvent(
+      page,
+      "message.committed",
+      JSON.stringify({
+        apiVersion: 1,
+        epoch: streamEpoch,
+        sequence: 1,
+        selectionGeneration: 1,
+        eventType: "message.committed",
+        payload: { handle: playerHandle, role: "player", text: playerText, locale: "und", order: 1, revision: 1 },
+      }),
+    );
+
+    // The reply row and its control, which only the authoritative read can bring.
+    const regenerateControl = page.locator(`li[data-handle="${replyHandle}"] .regenerate-btn`);
+    await expect(regenerateControl).toBeVisible();
+    await regenerateControl.click();
+    await expect.poll(() => regenerateKey).not.toBeNull();
+
+    // The turn that regenerate started reaches `running` on the stream the page opened.
+    await emitEvent(
+      page,
+      "turn.state_changed",
+      JSON.stringify({
+        apiVersion: 1,
+        epoch: streamEpoch,
+        sequence: 2,
+        selectionGeneration: 1,
+        eventType: "turn.state_changed",
+        payload: { handle: turnHandle, state: "running", projectionRevision: 1, canCancel: true },
+      }),
+    );
+
+    const marks = await readMarks(page);
+    const acceptedMarks = marks.filter((mark) => mark.name === "gamebuddy:turn:accepted");
+    expect(acceptedMarks.length).toBeGreaterThan(0);
+    const accepted = acceptedMarks[acceptedMarks.length - 1]!;
+    // The mark must name the turn it belongs to.
+    expect(accepted.detail.turnKey).toBe(regenerateKey);
+    // The stale case on its own, because it is the failure that matters: a mark borrowed from the
+    // turn before attributes this turn's timing to one that already settled.
+    expect(accepted.detail.turnKey).not.toBe(sendKey);
+    // ...and the submit that acceptance belongs to is on the timeline under the same key, first.
+    const regenerateSubmits = marks.filter(
+      (mark) => mark.name === "gamebuddy:turn:submit" && mark.detail.turnKey === regenerateKey,
+    );
+    expect(regenerateSubmits).toHaveLength(1);
+    expect(regenerateSubmits[0]!.at).toBeLessThanOrEqual(accepted.at);
   });
 });

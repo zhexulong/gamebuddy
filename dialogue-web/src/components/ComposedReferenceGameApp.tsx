@@ -889,6 +889,14 @@ export function ComposedReferenceGameApp() {
     // transcript never leaves the pre-regenerate variant.
     const idempotencyKey = newIdempotencyKey();
     if (beginTurnMutation(idempotencyKey, current) === null) return;
+    // The turn-key discipline is `handleSend`'s, word for word, and it is here for the same reason:
+    // this regenerate mints a NEW durable turn - it reuses message identities, never a turn handle -
+    // so every mark the turn produces has to name it. Without these two lines the turn's
+    // `accepted`/`first-token`/`settled` marks named no turn at all, and after a turn settled by
+    // the fallback poll or a committed message rather than a terminal state event - the only thing
+    // that clears `turnKeyRef` - they named the turn BEFORE this one.
+    turnKeyRef.current = idempotencyKey;
+    markTurn("submit", { surface: "chat", turnKey: idempotencyKey });
     beginMessageMutation("regenerate", messageHandle);
     try {
       await tavernApiRef.current.regenerate(

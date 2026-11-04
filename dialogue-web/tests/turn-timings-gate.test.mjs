@@ -115,3 +115,44 @@ test("every stage the shell marks is a declared mark name", async () => {
 		"the shell marks these five; a stage added here without a call site would be a name nothing emits",
 	);
 });
+
+/**
+ * A turn the surface starts has to be a turn the surface can name.
+ *
+ * `markTurn` is only half the contract: the stages after `submit` are emitted from the stream with
+ * `turnKeyRef.current`, and that ref is written by the mutation that starts the turn. A
+ * turn-starting mutation that skips both leaves every mark it produces naming no turn - and, because
+ * only a terminal state event clears the ref, it can leave the marks naming the PREVIOUS turn, which
+ * attributes one turn's timing to another. Measured on a real run 2026-11-04: `handleRegenerate`
+ * called `beginTurnMutation` and nothing else, so its captured request was a turn nothing on the
+ * page could name.
+ *
+ * The population is the source itself, not a list here: every call site of `beginTurnMutation` is
+ * a mutation that opens a durable turn, by that function's own contract. A third one added tomorrow
+ * fails this gate until it follows the same two lines, and the message names which handler drifted.
+ */
+test("every turn-starting mutation joins the turn ledger it opens", async () => {
+	const { readFile } = await import("node:fs/promises");
+	const source = await readFile(new URL("../src/components/ComposedReferenceGameApp.tsx", import.meta.url), "utf8");
+	// The declaration is `const beginTurnMutation = (`; only a call has the paren hard against it.
+	const callSites = [...source.matchAll(/beginTurnMutation\(/gu)].map((match) => match.index ?? 0);
+	assert.ok(callSites.length > 0, "the shell must open its turns through one seam, and this gate found none");
+	const disciplines = [
+		["writes the turn key", /turnKeyRef\.current\s*=\s*idempotencyKey\s*;/u],
+		[
+			"marks the submit",
+			/markTurn\(\s*"submit"\s*,\s*\{[^}]*turnKey:\s*idempotencyKey\s*\}/u,
+		],
+	];
+	for (const [index, at] of callSites.entries()) {
+		const handler = [...source.slice(0, at).matchAll(/const (handle\w+) =/gu)].pop()?.[1] ?? `call site ${index}`;
+		// The segment this call owns runs to the next one: a handler that set the key for a
+		// DIFFERENT mutation would otherwise satisfy its neighbour's gate.
+		const segment = source.slice(at, callSites[index + 1] ?? source.length);
+		for (const [what, pattern] of disciplines)
+			assert.ok(
+				pattern.test(segment),
+				`${handler} starts a durable turn through beginTurnMutation but never ${what}; a turn nothing names cannot be read back from the page's timeline`,
+			);
+	}
+});
