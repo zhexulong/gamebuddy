@@ -41,6 +41,7 @@ import {
   isItemTargetFact,
   isLanternSlotFact,
   isLevelUpChoiceFact,
+  isMachineInputCount,
   isMachineTargetFact,
   isMailboxTargetFact,
   isMineElevatorFloorFact,
@@ -55,6 +56,7 @@ import {
   isPedestalTargetFact,
   isPetBowlTargetFact,
   isPetTargetFact,
+  isQualifiedItemId,
   isRaftTargetFact,
   isRecipeTargetFact,
   isRecord,
@@ -643,7 +645,11 @@ export type Snapshot = Readonly<{
     qualifiedHarvestItemId: string;
     displayName: string;
   }>[];
-  /** Nearby native machines; an idle Keg may expose the one exact Coffee Bean input slot accepted by machine_load, and a ready Coffee result may expose collection eligibility. */
+  /**
+   * Nearby native machines. An idle machine whose own `Data/Machines` rows accept a carried stack publishes that stack
+   * (`loadInputSlot`/`loadInputQualifiedItemId`/`loadInputStack`), and a machine the game itself marked ready to harvest
+   * publishes `collectOutputReady`. Both are the machine's own facts, not a table kept here.
+   */
   machineTargets?: readonly Readonly<{
     targetId: string;
     x: number;
@@ -655,8 +661,8 @@ export type Snapshot = Readonly<{
     heldObjectQualifiedItemId?: string | null;
     lastInputQualifiedItemId?: string | null;
     loadInputSlot?: number | null;
-    loadInputQualifiedItemId?: "(O)433" | null;
-    loadInputStack?: 5 | null;
+    loadInputQualifiedItemId?: string | null;
+    loadInputStack?: number | null;
     collectOutputReady?: boolean | null;
   }>[];
   /** Nearby live NPCs with an existing Farmhand friendship record; inspection is read-only. */
@@ -886,8 +892,9 @@ export type Snapshot = Readonly<{
 
   /** One object the world-object lane can act on at a world tile, plus the backpack slot that
    * acts. `kind` is what the live object IS for this lane ('placement_candidate',
-   * 'removable_object', 'non_removable_object', 'breakable_container'); `slot` is the backpack
-   * slot the named action must act through, or -1 when the actor owns no tool for it. */
+   * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture'); `slot`
+   * is the backpack slot the named action must act through, or -1 when the actor owns no tool for
+   * it. */
   worldObjectTargets?: readonly Readonly<{
     targetId: string;
     kind: string;
@@ -3130,11 +3137,13 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isToolSlot(value.args.slot) ||
       !isTileCoordinate(value.args.x) ||
       !isTileCoordinate(value.args.y) ||
-      value.args.expectedQualifiedItemId !== "(O)433" ||
+      !isQualifiedItemId(value.args.expectedQualifiedItemId) ||
       typeof value.args.expectedTargetId !== "string" ||
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_machine_load_target";
+    const publishedInputVerdict = validateMachineLoadAgainstPublishedRow(value.args, snapshot);
+    if (publishedInputVerdict !== null) return publishedInputVerdict;
   } else if (value.action === "machine_collect_output") {
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
 
@@ -4557,6 +4566,29 @@ function validateMinecartRideTarget(args: Record<string, unknown>, snapshot: Sna
   if (match.stationX !== args.x || match.stationY !== args.y) return "invalid_minecart_station";
   return null;
 }
+/**
+ * A machine load must be the load the machine's own data offered: when the dispatched snapshot publishes that machine,
+ * `slot` and `expectedQualifiedItemId` must be the pair on its row (`loadInputSlot`/`loadInputQualifiedItemId`), and the
+ * row must name a positive `loadInputStack`. The Mod re-derives all three from the live machine on the game thread, so a
+ * request that CONTRADICTS the row it copied is refused before the write instead of being reconciled onto whatever now
+ * stands there.
+ *
+ * A machine the snapshot no longer lists is NOT refused here. It is either busy now or gone, and both are refusals the
+ * Mod already names from the live world - including the one that matters: a request re-sent with the identity of a load
+ * that already happened must reach the Mod, which replays that request's own receipt instead of letting the Host turn a
+ * stale snapshot into a failure for an action the world already performed.
+ */
+function validateMachineLoadAgainstPublishedRow(args: Record<string, unknown>, snapshot: Snapshot): string | null {
+  const targets = snapshot.machineTargets;
+  if (!Array.isArray(targets)) return null;
+  const match = targets.find((target) => target.targetId === args.expectedTargetId);
+  if (match === undefined) return null;
+  if (match.loadInputSlot !== args.slot) return "machine_load_input_not_published";
+  if (match.loadInputQualifiedItemId !== args.expectedQualifiedItemId) return "machine_load_input_not_published";
+  if (!isMachineInputCount(match.loadInputStack)) return "machine_load_input_not_published";
+  return null;
+}
+
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "arguments",
   "argumentSchema",

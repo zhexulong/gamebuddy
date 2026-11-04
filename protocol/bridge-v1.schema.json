@@ -7644,12 +7644,14 @@
           "maxLength": 128
         },
         "kind": {
+          "description": "What the live thing IS for this lane, in the Mod's own words. `placed_furniture` is a piece in `location.furniture` - the room's own bed, sofa or rug - which `place_owned_object` can add to but no object kind can describe, because furniture never sits in `location.objects`.",
           "type": "string",
           "enum": [
             "placement_candidate",
             "removable_object",
             "non_removable_object",
-            "breakable_container"
+            "breakable_container",
+            "placed_furniture"
           ]
         },
         "location": {

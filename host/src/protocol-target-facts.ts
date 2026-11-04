@@ -553,15 +553,21 @@ export function isMachineTargetFact(value: unknown): boolean {
     (value.loadInputSlot === undefined || value.loadInputSlot === null || isToolSlot(value.loadInputSlot)) &&
     (value.loadInputQualifiedItemId === undefined ||
       value.loadInputQualifiedItemId === null ||
-      value.loadInputQualifiedItemId === "(O)433") &&
-    (value.loadInputStack === undefined || value.loadInputStack === null || value.loadInputStack === 5) &&
+      isQualifiedItemId(value.loadInputQualifiedItemId)) &&
+    (value.loadInputStack === undefined ||
+      value.loadInputStack === null ||
+      isMachineInputCount(value.loadInputStack)) &&
     (value.collectOutputReady === undefined ||
       value.collectOutputReady === null ||
       typeof value.collectOutputReady === "boolean") &&
+    // The three load fields are one fact: the slot that holds the input, the item it holds, and the count the machine's
+    // own rows consume. Half a load is not a smaller promise, it is an unusable one, so all three appear together.
     ((value.loadInputSlot === undefined &&
       value.loadInputQualifiedItemId === undefined &&
       value.loadInputStack === undefined) ||
-      (isToolSlot(value.loadInputSlot) && value.loadInputQualifiedItemId === "(O)433" && value.loadInputStack === 5)) &&
+      (isToolSlot(value.loadInputSlot) &&
+        isQualifiedItemId(value.loadInputQualifiedItemId) &&
+        isMachineInputCount(value.loadInputStack))) &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128
@@ -1290,10 +1296,17 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
     hasExactKeys(value, ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName"]) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
+    // `placed_furniture` is a piece standing in `location.furniture` - where the room's own bed, sofa and rug live, and
+    // where `place_owned_object` puts a piece down (Game1.cs:7033-7043) - never in `location.objects`, so none of the four
+    // object kinds describes one. Its `slot` is -1 because no tool in this lane lifts furniture, and the piece is named
+    // through `move_placed_furniture`, whose published target family IS this one. The Mod emitted this kind for a real
+    // frame before this list named it, so the first snapshot carrying a room's furniture was refused
+    // `invalid_snapshot:worldObjectTargets` and the bridge closed 331 ms into `round31`.
     (value.kind === "placement_candidate" ||
       value.kind === "removable_object" ||
       value.kind === "non_removable_object" ||
-      value.kind === "breakable_container") &&
+      value.kind === "breakable_container" ||
+      value.kind === "placed_furniture") &&
     typeof value.location === "string" &&
     typeof value.x === "number" &&
     Number.isSafeInteger(value.x) &&
@@ -1698,6 +1711,24 @@ export function hasExactKeysOrOptional(
 
 export function isOpaqueId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+/**
+ * A qualified item id: an uppercase item-type prefix and a numeric id (`(O)433`, `(BC)12`). It is the ONE spelling the
+ * game accepts, and the Mod compares a request's id against the qualified id of a LIVE carried stack - so a free-form
+ * string here could only ever compare false, and the caller would learn it from a refusal instead of from the value.
+ */
+export function isQualifiedItemId(value: unknown): value is string {
+  return typeof value === "string" && /^\([A-Z]+\)[0-9]+$/.test(value);
+}
+
+/**
+ * How many items a machine row consumes: a positive count. The engine reads the same number off the trigger rule that
+ * matched (`MachineOutputTriggerRule.RequiredCount`) and refuses the load when the carried stack is smaller than it
+ * (MachineDataUtility.cs:90-95), so a zero or negative count is not a smaller load - it is not a load.
+ */
+export function isMachineInputCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 9999;
 }
 
 export function isStringArray(value: unknown): value is readonly string[] {
