@@ -92,6 +92,12 @@ export type CharacterLabels = Readonly<{
 
   companionsTitle: string;
   companionsEmpty: string;
+  /**
+   * Said after a card import whose roster re-read failed: the card IS imported and the list on
+   * screen is one revision behind it, so the player's new companion is missing for a reason that
+   * has nothing to do with the import being refused.
+   */
+  companionsRefreshFailed: string;
   companionCurrent: string;
   /**
    * What choosing a companion does, and when. The Host RECORDS the choice
@@ -462,6 +468,8 @@ const en: CharacterLabels = Object.freeze({
 
   companionsTitle: "Companions",
   companionsEmpty: "No companions yet.",
+  companionsRefreshFailed:
+    "The companion was imported, but the list could not be refreshed. Reload the page to see them.",
   companionCurrent: "current",
   companionInPlay:
     "The companion in play is the one this installation started with. Choose another here and she plays from the next start: the choice is recorded now, and the restart is what puts her in play.",
@@ -751,6 +759,7 @@ const zh: CharacterLabels = Object.freeze({
 
   companionsTitle: "伙伴",
   companionsEmpty: "还没有伙伴。",
+  companionsRefreshFailed: "伙伴已导入，但列表没能刷新；重新加载页面就能看到。",
   companionCurrent: "当前",
   companionInPlay:
     "在玩的伙伴就是这次启动选定的那一位。你可以在这里选另一位，她会从下次启动开始陪你：选择现在就会被记下，真正让她上场的是重新启动。",
