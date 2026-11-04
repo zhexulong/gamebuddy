@@ -1451,7 +1451,15 @@ function deriveSessionVerdict({
   // did nothing is already its own verdict - and BEFORE `completed`, so a day whose purpose is unproven or unmet can
   // never be reported as a completed one. A scenario that names no task passes an empty list and is judged on the
   // session alone, which is the truth about that scenario rather than a default about a task.
-  if (taskPurposes.some((purpose) => purpose.state === "unproven")) return "task_purpose_unproven";
+  // UNPROVEN IS NOT A FAILED DAY.
+  //
+  // A criterion can be missing because a FACT we publish is missing - seven rotation tasks are in exactly that state,
+  // each naming the fact (see `task-purpose.mjs`). Judging the run on it turns our own reporting gap into a product
+  // failure, which is the same mistake as a gate that cannot judge and fails anyway, only pointed the other way: a
+  // check must say "not exercised" rather than decide. The purposes travel in the artifact by name with the missing
+  // fact, so the gap stays visible without being charged to the companion.
+  //
+  // `not_achieved` still decides, because there the receipts are complete evidence that the purpose did NOT hold.
   if (taskPurposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
   return "completed";
 }

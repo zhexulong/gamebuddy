@@ -587,13 +587,25 @@ test("a session that did work cannot report `completed` for a task whose purpose
     "task_not_achieved",
     "break_rock succeeded and the rock was on the surface: real work, unmet purpose",
   );
+  // UNPROVEN IS NOT A FAILED DAY, and this is the assertion that keeps our own gap from being charged to the companion:
+  // a task whose criterion is missing because a FACT we publish is missing reports the fact by name, and the session is
+  // still judged on what it did. The verdict that decides is `not_achieved`, where the receipts are complete evidence
+  // that the purpose did not hold.
   assert.equal(
     deriveSessionVerdict({
       ...worked,
       taskPurposes: [{ day: 1, task: "clear_east_patch", state: "unproven", missingFact: "no farm-region fact" }],
     }),
-    "task_purpose_unproven",
-    "a task with no decidable criterion is named, never defaulted to the action success beside it",
+    "completed",
+    "a task with no decidable criterion is NOT EXERCISED, named in the artifact, never charged to the run",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [{ day: 1, task: "mine_delve", state: "not_achieved" }],
+    }),
+    "task_not_achieved",
+    "while a purpose with evidence against it still decides the day",
   );
   // One unachieved day among several is enough: a run is not accomplished by the days that went well.
   assert.equal(
