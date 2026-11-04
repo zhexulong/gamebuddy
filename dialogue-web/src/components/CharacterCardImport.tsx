@@ -12,6 +12,7 @@ import {
 } from "../management-pipeline-api";
 import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { canonicalBase64Of, isPngCardFile } from "./png-character-card";
+import { useDraft } from "./surface-drafts";
 
 /** The JSON arm's own ceiling: the decoder's text input bound (StageStCardImportCommandV1). */
 const MAX_CARD_TEXT_LENGTH = 2_097_152;
@@ -229,7 +230,15 @@ export function CharacterCardImport({
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
   /** The Host's staged report, held until the player confirms or cancels it. */
   const [staged, setStaged] = useState<StCardImportStageResultV1 | null>(null);
-  const [pasted, setPasted] = useState("");
+  /**
+   * The pasted card text, held by the shell rather than by this form.
+   *
+   * It was `useState` here, and this form lives on the Characters surface, which
+   * `ComposedReferenceGameApp` renders conditionally - so leaving for another surface unmounted the
+   * whole subtree and took a card body the player was part-way through pasting with it. The words
+   * are the player's, not this projection's, which is the one rule `surface-drafts.tsx` states.
+   */
+  const pasted = useDraft("characters.card-import-paste", "");
   const [history, setHistory] = useState<StCardImportHistoryV1 | "failed" | "unavailable">("unavailable");
 
   useEffect(() => {
@@ -427,15 +436,15 @@ export function CharacterCardImport({
           aria-label={labels.importPasteLabel}
           rows={4}
           placeholder='{"spec":"chara_card_v3","data":{"name":"…"}}'
-          value={pasted}
-          onChange={(event) => setPasted(event.target.value)}
+          value={pasted.value}
+          onChange={(event) => pasted.type(event.target.value)}
         />
         <div className="composer-actions">
           <button
             type="button"
             className="small-button"
-            disabled={busy || pasted.trim().length === 0}
-            onClick={() => void stageCard({ apiVersion: 1, cardSource: "json", card: pasted.trim() })}
+            disabled={busy || pasted.value.trim().length === 0}
+            onClick={() => void stageCard({ apiVersion: 1, cardSource: "json", card: pasted.value.trim() })}
           >
             {busy ? labels.importBusy : labels.importSubmit}
           </button>
