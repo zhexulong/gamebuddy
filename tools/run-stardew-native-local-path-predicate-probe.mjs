@@ -26,8 +26,17 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareNativeLocalPlayerFixture, restoreNativeLocalPlayerFixture } from "./lib/stardew-native-local-player-fixture.mjs";
-import { normalizeLiveRunWindowMode, windowModeEnvironment } from "./lib/stardew-live-run.mjs";
+import {
+  prepareNativeLocalPlayerFixture,
+  restoreNativeLocalPlayerFixture,
+} from "./lib/stardew-native-local-player-fixture.mjs";
+import { laneSmapiLogPath } from "./lib/stardew-lane-scope.mjs";
+import {
+  normalizeLiveRunWindowMode,
+  openLaneLog,
+  pipeConsoleInto,
+  windowModeEnvironment,
+} from "./lib/stardew-live-run.mjs";
 
 const SCHEMA = "gamebuddy-path-predicate-probe/v1";
 const WINDOW_MODES = Object.freeze(["visible", "foreground", "minimized", "hidden", "background"]);
@@ -70,7 +79,7 @@ export async function runPathPredicateProbe(options) {
     if (releaseSha256 !== deployedSha256) throw new Error("deployed_mod_bundle_hash_mismatch");
 
     await rm(input.evidencePath, { force: true });
-    stage.child = spawnSmapi(input.gamePath, input.modsPath, input.windowMode, input.evidencePath);
+    stage.child = spawnSmapi(input, input.evidencePath);
     const launchIdentity = stage.child.identity;
     const evidence = await waitForEvidence(input, stage.child);
 
@@ -127,18 +136,17 @@ export async function runPathPredicateProbe(options) {
 }
 
 /**
- * The tail of this run's SMAPI log, as an appended diagnostic string. The Mod
- * reports a rejected probe configuration only through the log, since it writes
- * no evidence file in that case; without this the failure would be an
- * unexplained timeout.
+ * The tail of THIS lane's SMAPI console log, as an appended diagnostic string. The Mod
+ * reports a rejected probe configuration only through the log, since it writes no evidence file in that case; without
+ * this the failure would be an unexplained timeout.
  */
 async function readSmapiLogTail(input) {
-  const path = join(input.stardewSaveRoot, "..", "ErrorLogs", "SMAPI-latest.txt");
+  const path = input.laneLogPath;
   try {
     const raw = await readFile(path, "utf8");
-    return `; smapi_log_tail=${raw.slice(-6_000)}`;
+    return `; smapi_log=${path}; smapi_log_tail=${raw.slice(-6_000)}`;
   } catch {
-    return "; smapi_log_tail=unavailable";
+    return `; smapi_log=${path}; smapi_log_tail=unavailable`;
   }
 }
 
@@ -153,6 +161,9 @@ function validateInput(options) {
   const gamePath = absolute(options.gamePath, "game_path");
   const stardewSaveRoot = absolute(options.stardewSaveRoot, "stardew_save_root");
   const evidencePath = absolute(options.evidencePath, "evidence_path");
+  // This lane's own log, never the machine-global `SMAPI-latest*.txt`: SMAPI numbers that file by PLAYER INDEX, so
+  // under two lanes the unsuffixed one describes whichever instance started first. See `lib/stardew-lane-scope.mjs`.
+  const laneLogPath = absolute(laneSmapiLogPath({ fixtureRoot, logPath: options.laneLogPath }), "lane_log_path");
   const saveName = options.saveName;
   if (typeof saveName !== "string" || !/^GameBuddyFixture[A-Za-z0-9]{0,64}_[0-9]{1,32}$/.test(saveName))
     throw new Error("invalid_fixture_observed_save_slot");
@@ -165,7 +176,8 @@ function validateInput(options) {
   const timeoutSeconds = options.timeoutSeconds ?? 180;
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 30 || timeoutSeconds > 300)
     throw new Error("invalid_timeout_seconds");
-  if (options.windowMode !== undefined && !WINDOW_MODES.includes(options.windowMode)) throw new Error("invalid_window_mode");
+  if (options.windowMode !== undefined && !WINDOW_MODES.includes(options.windowMode))
+    throw new Error("invalid_window_mode");
   return Object.freeze({
     gamePath,
     modsPath,
@@ -176,6 +188,7 @@ function validateInput(options) {
     binding,
     stardewSaveRoot,
     evidencePath,
+    laneLogPath,
     timeoutSeconds,
     windowMode: normalizeLiveRunWindowMode(options.windowMode ?? "background"),
     clientConfigPath: join(modsPath, FIXTURE_PROFILE_FOLDER, "config.json"),
@@ -184,8 +197,6 @@ function validateInput(options) {
     maxRecordedPathTiles: options.maxRecordedPathTiles ?? 128,
   });
 }
-
-
 
 async function restoreWorkingSave(input) {
   await runFixtureSaveHarness(input, []);
@@ -215,8 +226,15 @@ function runFixtureSaveHarness(input, extraArguments) {
  * the argument shape, the working directory and the window-mode environment
  * mirror `lib/stardew-live-run.mjs`; this runner needs its own handle only
  * because pipe readiness is irrelevant to a Mod-side probe.
+ *
+ * The console stream is piped into this lane's own log for the same reason the
+ * launcher drains it: an unread pipe fills and blocks the game thread. The
+ * difference is that these bytes are kept - this is the only log that belongs
+ * to this run.
  */
-function spawnSmapi(gamePath, modsPath, windowMode, evidencePath) {
+function spawnSmapi(input, evidencePath) {
+  const { gamePath, modsPath, windowMode, laneLogPath } = input;
+  const laneLog = openLaneLog(laneLogPath);
   const child = spawn(join(gamePath, "StardewModdingAPI.exe"), ["--mods-path", modsPath], {
     cwd: gamePath,
     env: {
@@ -235,6 +253,8 @@ function spawnSmapi(gamePath, modsPath, windowMode, evidencePath) {
   child.stderr.on("data", (chunk) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
   });
+  pipeConsoleInto(laneLog, { stdout: child.stdout, stderr: child.stderr });
+  child.once("close", () => laneLog.end());
   const exit = new Promise((resolvePromise) => {
     child.on("exit", (code) => resolvePromise(code));
     child.on("error", () => resolvePromise(null));
@@ -282,7 +302,8 @@ async function waitForEvidence(input, child) {
   for (;;) {
     const evidence = await readEvidenceIfPresent(input.evidencePath);
     if (evidence !== null) return evidence;
-    if (exited !== null) throw new Error(`smapi_exited_before_probe_wrote_evidence:${exited}:${child.getStderrTail().trim()}`);
+    if (exited !== null)
+      throw new Error(`smapi_exited_before_probe_wrote_evidence:${exited}:${child.getStderrTail().trim()}`);
     if (Date.now() >= deadline) throw new Error("probe_wrote_no_evidence_before_timeout");
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   }
@@ -332,7 +353,9 @@ function runPowerShellFile(file, args) {
     });
     child.on("error", reject);
     child.on("exit", (code) =>
-      code === 0 ? resolvePromise(undefined) : reject(new Error(`fixture_save_harness_failed:${code}:${stderr.trim()}`)),
+      code === 0
+        ? resolvePromise(undefined)
+        : reject(new Error(`fixture_save_harness_failed:${code}:${stderr.trim()}`)),
     );
   });
 }
@@ -348,14 +371,14 @@ function runPowerShellCommand(command) {
       stdout += chunk.toString();
     });
     child.on("error", reject);
-    child.on("exit", (code) =>
-      code === 0 ? resolvePromise(stdout) : reject(new Error(`powershell_failed:${code}`)),
-    );
+    child.on("exit", (code) => (code === 0 ? resolvePromise(stdout) : reject(new Error(`powershell_failed:${code}`))));
   });
 }
 
 async function hashFile(path) {
-  return createHash("sha256").update(await readFile(path)).digest("hex");
+  return createHash("sha256")
+    .update(await readFile(path))
+    .digest("hex");
 }
 
 // ── CLI ───────────────────────────────────────────────────────────────────
@@ -398,6 +421,7 @@ async function cliMain(argv) {
     saveName,
     backupName: required("--backup-name"),
     stardewSaveRoot: required("--stardew-save-root"),
+    laneLogPath: values.get("--lane-log-path"),
     evidencePath: required("--evidence-path"),
     binding,
     timeoutSeconds: optionalInteger("--timeout-seconds"),

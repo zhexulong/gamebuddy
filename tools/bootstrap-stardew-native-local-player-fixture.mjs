@@ -1,13 +1,17 @@
 import { bootstrapNativeLocalPlayerFixture } from "./lib/stardew-native-local-player-fixture.mjs";
+import { laneSaveName } from "./lib/stardew-lane-scope.mjs";
 
 const values = parseArguments(process.argv.slice(2));
+const root = required(values, "--root");
 console.log(
   JSON.stringify(
     await bootstrapNativeLocalPlayerFixture({
-      root: required(values, "--root"),
+      root,
       modsPath: required(values, "--mods-path"),
       releaseDir: required(values, "--release-dir"),
-      logicalSaveName: required(values, "--logical-save-name"),
+      // Omitted means this lane's own logical name, derived from its fixture root: the slot a bootstrap observes is
+      // `<logical>_<nativeId>`, so two lanes bootstrapping the same world no longer share one directory.
+      logicalSaveName: laneSaveName({ fixtureRoot: root, saveName: values.get("--logical-save-name") }),
       backupName: required(values, "--backup-name"),
       timeoutSeconds: values.has("--timeout-seconds") ? Number(required(values, "--timeout-seconds")) : undefined,
       action: values.get("--action"),

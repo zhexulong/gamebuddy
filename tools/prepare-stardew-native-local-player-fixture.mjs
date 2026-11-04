@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { prepareNativeLocalPlayerFixture } from "./lib/stardew-native-local-player-fixture.mjs";
+import { resolveLaneSaveRoot } from "./lib/stardew-lane-scope.mjs";
 
 const values = parseArguments(process.argv.slice(2));
 try {
@@ -14,7 +15,10 @@ try {
         timeoutSeconds: values.has("--timeout-seconds") ? Number(required(values, "--timeout-seconds")) : undefined,
         action: values.get("--action"),
         binding: JSON.parse(await readFile(required(values, "--binding-path"), "utf8")),
-        stardewSaveRoot: values.get("--stardew-save-root"),
+        // Omitted means the game's own root: no flag can point the game at another one, so the lane-scoped unit
+        // here is `--save-name` (an observed slot), not the root. An explicit flag still wins and is what the
+        // fixture library validates.
+        stardewSaveRoot: resolveLaneSaveRoot({ stardewSaveRoot: values.get("--stardew-save-root") }),
         sleepModalProbe: values.has("--sleep-modal-probe-mode")
           ? {
               Enable: true,

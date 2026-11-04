@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { classifyPathEntry, listStardewProcessIds, removeSandboxTree } from "./lib/windows-process-tree.mjs";
 import { appendLaneOutput, laneDiagnosis, liveLaneVerdict } from "./lib/lane-diagnosis.mjs";
 import { STARDEW_MOD_FOLDER } from "./lib/stardew-mod-folder.mjs";
+import { laneSaveName, laneSmapiLogPath } from "./lib/stardew-lane-scope.mjs";
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
 const RELEASE_DIR = join(REPO, "integrations", "stardew", "bin", "Release", "net6.0");
@@ -135,7 +136,15 @@ function makeSandbox(name, configOverrides = {}) {
     `${JSON.stringify({ ...config, ...configOverrides }, null, 2)}\n`,
     "utf8",
   );
-  return { name, root, modsPath, modRoot };
+  // The two lane-scoped resources no flag can supply: the save name a bootstrap creates and the log this lane reads.
+  return {
+    name,
+    root,
+    modsPath,
+    modRoot,
+    saveName: laneSaveName({ fixtureRoot: root }),
+    laneLogPath: laneSmapiLogPath({ fixtureRoot: root }),
+  };
 }
 
 function prepare(lane, { backupName = `${lane.name}-fixture-backup`, timeoutSeconds = 30 } = {}) {
@@ -211,6 +220,25 @@ function fixtureChecks() {
     check(
       "fixture_rewrote_the_run_own_config",
       readFileSync(join(laneA.modRoot, "config.json"), "utf8") !== seededConfigs.get(laneA.name),
+    );
+
+    // ── 1b. What no flag can give a lane is derived from its own root ─────────────────────────────
+    // A save ROOT cannot be per lane: the game reads one, `%APPDATA%\StardewValley\Saves` (SMAPI 4.5.2 has no
+    // `--save-path`, and overriding `APPDATA` does not move .NET's `SpecialFolder.ApplicationData`). The unit that
+    // CAN differ is the save NAME a lane's bootstrap creates, and the slot is `<logical>_<nativeId>` - so two lanes
+    // bootstrapping the same world still land in different directories. The log is the same story: SMAPI names its
+    // own file by player index, so a lane's log is a path its own launcher owns.
+    check(
+      "each_lane_derives_its_own_save_name",
+      laneA.saveName !== laneB.saveName,
+      `${laneA.saveName} / ${laneB.saveName}`,
+    );
+    check(
+      "each_lane_derives_its_own_log_path",
+      laneA.laneLogPath !== laneB.laneLogPath &&
+        laneA.laneLogPath.startsWith(laneA.root) &&
+        laneB.laneLogPath.startsWith(laneB.root),
+      `${laneA.laneLogPath} / ${laneB.laneLogPath}`,
     );
 
     // ── 2. Nothing outside the sandbox was written ────────────────────────────────────────────────

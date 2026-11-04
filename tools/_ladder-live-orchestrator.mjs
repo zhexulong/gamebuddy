@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { bridgePipeNameFor } from "./lib/stardew-bridge-pipe.mjs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
 
@@ -48,6 +48,11 @@ try {
 
 const logPath = process.env.GAMEBUDDY_LADDER_LIVE_LOG ?? resolve(process.cwd(), "tools", "_ladder-live-runner.log");
 const runnerLog = createWriteStream(logPath, { flags: "w" });
+// THIS lane's SMAPI log, next to its runner log. SMAPI's own file is named by player index inside the game, so a
+// second concurrent lane writes `SMAPI-latest.player-2.txt` and neither name is attributable to a lane. Piping the
+// console into a path this lane owns is the only log a lane can read as its own; the runner is told the same path so
+// its heartbeat/stall sampling and its archived `mod-log.txt` describe THIS run.
+const laneLogPath = process.env.GAMEBUDDY_LADDER_SMAPI_LOG ?? join(dirname(logPath), "_ladder-smapi-console.log");
 
 let game = null;
 try {
@@ -58,8 +63,12 @@ try {
     windowMode: WINDOW_MODE,
     pipeName: bridgePipeNameFor(MODS_PATH),
     timeoutMs: 150_000,
+    logPath: laneLogPath,
   });
-  console.error("SMAPI_LAUNCHED", JSON.stringify({ pid: game.pid, windowMode: game.windowMode }));
+  console.error(
+    "SMAPI_LAUNCHED",
+    JSON.stringify({ pid: game.pid, windowMode: game.windowMode, laneLog: game.laneLogPath }),
+  );
   // Log the moment the game process ends, as it happens, with the pair that separates the two possibilities.
   //
   // A **code** means the process ended itself; a **signal** means something else terminated it; both null means the exit
@@ -73,7 +82,7 @@ try {
   // 2. Now run the ladder runner against the live bridge.
   const runner = spawn(process.execPath, ["tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"], {
     cwd: process.cwd(),
-    env: process.env,
+    env: { ...process.env, GAMEBUDDY_STARDEW_LANE_LOG_PATH: laneLogPath },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let runnerStdout = "";
@@ -96,6 +105,7 @@ try {
     .at(-1);
   console.log(resultLine ?? runnerStdout.slice(-2000));
   console.error("RUNNER_LOG", logPath);
+  console.error("SMAPI_LOG", laneLogPath);
 } finally {
   const reclamation = await game?.close?.();
   // ZERO SURVIVORS IS THE ASSERTION, not an assumption. A launch that reclaimed its owner still leaves the

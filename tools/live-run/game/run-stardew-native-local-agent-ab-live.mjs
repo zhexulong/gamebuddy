@@ -415,6 +415,10 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
   tend_the_animals: "去看看牲口，该摸的摸，该喂的喂，有东西就收。",
   dress_and_display: "给自己换身衣裳，把屋里摆出点样子来。",
+  // Three ways the same world can be under-used, each with an action that had no task behind it.
+  mine_ladder_to_depth: "下矿去看看，往深处走走，回来的时候自己找梯子上来。",
+  furnish_and_arrange: "屋里东西摆得别扭。把家具挪一挪、换换颜色，重新归置一下。",
+  run_the_machines: "把机器都用起来：装料、等它出东西、收回来。",
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
@@ -432,6 +436,10 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
   tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",
   dress_and_display: "put on something else, and make the house look like somebody lives in it. ",
+  mine_ladder_to_depth: "go down the mine and work deeper, then find the ladder back up yourself. ",
+  furnish_and_arrange:
+    "the furniture in the house is in the wrong places - move it about, change a colour, put it right.",
+  run_the_machines: "put the machines to work: load them, wait for the output, collect it. ",
 });
 
 const SCENARIO_PROMPTS = Object.freeze({
@@ -1890,7 +1898,7 @@ const MULTIDAY_POLL_INTERVAL_MS = 250;
  * SetForegroundWindow=refused while running in foreground mode.
  */
 function captureModLogFacts(runDir) {
-  const path = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+  const path = MOD_LOG_PATH();
   try {
     const text = readFileSync(path, "utf8");
     const rows = text.split("\n");
@@ -1937,7 +1945,14 @@ function captureModLogFacts(runDir) {
 const MOD_HEARTBEAT_STALL_MS = 90_000;
 
 /** Where the Mod's own log lives, and the one line in it that proves the world is still advancing. */
-const MOD_LOG_PATH = () => join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+//
+// A lane that declared its own log (`GAMEBUDDY_STARDEW_LANE_LOG_PATH`, set by the launcher that piped this run's SMAPI
+// console into it) reads THAT: the machine-global `SMAPI-latest*.txt` is numbered by player index inside the game, so
+// under two concurrent lanes the unsuffixed file describes whichever instance SMAPI numbered first - reading it means
+// auditing the other lane. The global path stays the default for a single-lane invocation that declares none.
+const MOD_LOG_PATH = () =>
+  process.env.GAMEBUDDY_STARDEW_LANE_LOG_PATH ||
+  join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
 const MOD_HEARTBEAT_MARKER = "DEBUG-native-local-heartbeat";
 let modHeartbeatSample = { count: -1, sinceMs: Date.now(), line: "" };
 

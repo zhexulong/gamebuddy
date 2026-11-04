@@ -20,8 +20,8 @@
 import { spawn } from "node:child_process";
 import { assertLiveRunArtifactFresh } from "./live-run-artifact-freshness.mjs";
 import { killProcessTree } from "./windows-process-tree.mjs";
-import { readdirSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { createWriteStream, mkdirSync, readdirSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 
 // ── Window-mode mirror (authority: host/src/live-run/window-mode.ts) ──────
 const WINDOW_MODES = Object.freeze(["visible", "foreground", "minimized", "hidden", "background"]);
@@ -74,6 +74,35 @@ async function waitForPipe(pipeName, timeoutMs) {
 }
 
 // ── Launch ────────────────────────────────────────────────────────────────
+/**
+ * A lane's own console log, opened for the launch.
+ *
+ * A live run must survive a log it cannot write - the run is the evidence, the log is the diagnostic - so a write
+ * error is reported on stderr and the run continues. The directory is created because the lane log lives below the
+ * lane's own root, one level deeper than anything the fixture transaction creates. Exported together with
+ * `pipeConsoleInto` because the launch itself needs `StardewModdingAPI.exe` and a listening pipe, while "the bytes the
+ * drain keeps land in the lane's own file" is a property a test can drive with any child process.
+ */
+export function openLaneLog(logPath) {
+  mkdirSync(dirname(logPath), { recursive: true });
+  const stream = createWriteStream(logPath, { flags: "w" });
+  stream.on("error", (error) => {
+    process.stderr.write(`[live-run] lane log unavailable: ${String(error?.message ?? error)}\n`);
+  });
+  return stream;
+}
+
+/**
+ * Keep the console stream the drain must read, in this lane's own file.
+ *
+ * Called while the child is alive: `stderr` is written through on arrival, `stdout` is piped. Neither stream may be
+ * left unread - see the drain comment in `launchStardewLiveRun` for the freeze that costs.
+ */
+export function pipeConsoleInto(laneLog, { stdout, stderr }) {
+  stdout?.pipe(laneLog);
+  stderr?.on("data", (chunk) => laneLog.write(chunk));
+}
+
 export async function launchStardewLiveRun({
   gamePath,
   modsPath,
@@ -81,11 +110,17 @@ export async function launchStardewLiveRun({
   pipeName,
   timeoutMs = 120_000,
   detached = false,
+  logPath,
 }) {
   if (typeof gamePath !== "string" || !isAbsolute(gamePath)) throw new Error("invalid_live_run_game_path");
   if (typeof modsPath !== "string" || !isAbsolute(modsPath)) throw new Error("invalid_live_run_mods_path");
   if (typeof pipeName !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(pipeName))
     throw new Error("invalid_live_run_pipe_name");
+  // A lane's log path is caller-supplied because only the caller knows its lane: SMAPI names its own file by PLAYER
+  // INDEX (`SMAPI-latest.txt`, then `SMAPI-latest.player-2.txt`), so under two lanes the unsuffixed file belongs to
+  // whichever instance SMAPI numbered first. See `stardew-lane-scope.mjs` for the measurement.
+  if (logPath !== undefined && (typeof logPath !== "string" || !logPath.length || !isAbsolute(logPath)))
+    throw new Error("invalid_live_run_log_path");
   // The window mode is validated with the REST of the caller's inputs, before any environment check: a malformed
   // argument is a caller bug regardless of the tree's state, and checking the build first made this refusable only
   // as `live_run_artifact_stale` whenever another lane had touched host/src (found by this module's own test on a
@@ -105,6 +140,8 @@ export async function launchStardewLiveRun({
   if (gameBuddyFolders.length !== 1)
     throw new Error(`live_run_mods_path_needs_exactly_one_gamebuddy:${gameBuddyFolders.join("+") || "none"}`);
   const smapi = join(gamePath, "StardewModdingAPI.exe");
+  // Opened BEFORE the spawn, so an unusable lane-log path is a refusal with a name instead of a crashed run.
+  const laneLog = logPath === undefined ? null : openLaneLog(logPath);
 
   const child = spawn(smapi, ["--mods-path", modsPath], {
     cwd: gamePath,
@@ -115,18 +152,23 @@ export async function launchStardewLiveRun({
   });
 
   const pid = child.pid ?? 0;
-  // DRAIN stdout. This is the freeze's root cause (2026-10-19). SMAPI writes its log to disk, but it ALSO writes to the
-  // console, and a pipe nobody reads fills: once the OS buffer is full (~64 KiB) the write blocks IN THE KERNEL on the
-  // game thread, which is exactly what the freeze looks like - a thread in WaitReason.Executive for the whole stall (46 of
-  // 48 unresponsive samples in one run), the engine render counter stopped, no Mod log line ever written, and the Mod's
-  // own watchdog silent because the game thread never returned. Reproduced directly: a child writing to an unread pipe
-  // never exits, while the same child with `stdout.resume()` exits immediately. Nothing in this file reads child.stdout,
-  // so draining it changes nothing else.
-  child.stdout?.resume();
   let stderrTail = "";
   child.stderr.on("data", (chunk) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4096);
   });
+  // DRAIN stdout, into the lane's own log when one was named. This is the freeze's root cause (2026-10-19). SMAPI
+  // writes its log to disk, but it ALSO writes to the console, and a pipe nobody reads fills: once the OS buffer is
+  // full (~64 KiB) the write blocks IN THE KERNEL on the game thread, which is exactly what the freeze looks like - a
+  // thread in WaitReason.Executive for the whole stall (46 of 48 unresponsive samples in one run), the engine render
+  // counter stopped, no Mod log line ever written, and the Mod's own watchdog silent because the game thread never
+  // returned. Reproduced directly: a child writing to an unread pipe never exits, while the same child with
+  // `stdout.resume()` exits immediately. Piping into the lane log is the same drain with the bytes kept: it is the
+  // one log that belongs to THIS lane, because SMAPI's own file name is decided by player index inside the game.
+  // stderr has two readers on purpose: the tail is what an error message quotes, the lane log is what an audit reads
+  // afterwards, and neither is derivable from the other.
+  if (laneLog === null) child.stdout?.resume();
+  else pipeConsoleInto(laneLog, { stdout: child.stdout, stderr: child.stderr });
+  child.once("close", () => laneLog?.end());
   let rejectSpawnError;
   const spawnError = new Promise((_resolve, reject) => {
     rejectSpawnError = reject;
@@ -139,6 +181,9 @@ export async function launchStardewLiveRun({
     await Promise.race([waitForPipe(pipeName, timeoutMs), spawnError]);
   } catch (error) {
     killProcessTree(pid);
+    // The lane log is closed here too: a launch that refused still leaves a file an operator will open to see WHY,
+    // and an unfinished stream is a file whose last lines may never have been flushed.
+    laneLog?.end();
     throw error;
   }
 
@@ -171,6 +216,14 @@ export async function launchStardewLiveRun({
     pid,
     pipeName,
     windowMode: mode,
+    /**
+     * Where THIS lane's SMAPI console stream is being written, or null when the caller named none.
+     *
+     * A reader that needs the Mod's own lines takes this path. The machine-global
+     * `%APPDATA%/StardewValley/ErrorLogs/SMAPI-latest*.txt` is numbered by player index, so under two lanes it holds
+     * whichever instance SMAPI numbered first - not this one.
+     */
+    laneLogPath: logPath ?? null,
     /**
      * HOW the game process ended: `{ code, signal, atMs }`, or nulls while it is still running.
      *
