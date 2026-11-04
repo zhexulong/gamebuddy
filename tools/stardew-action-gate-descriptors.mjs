@@ -701,6 +701,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // The way OUT of a shaft. Its own runner because its proof is the opposite fact from the
   // ladder-down gate: the actor must be OUTSIDE every MineShaft afterwards.
   use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
+  // Picking an already-placed piece of furniture up, through the game's own
+  // `GameLocation.removeQueuedFurniture`. EXPERIMENTAL because the Mod catalog registers it on that
+  // rung: the descriptor table is the published set, and this runner is what its live gate will
+  // resolve. The fixture world is the ordinary one - the piece is the game's own starter furniture,
+  // not something the fixture placed.
+  move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under

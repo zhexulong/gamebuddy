@@ -750,6 +750,14 @@ export function fixtureActions(action) {
   if (action === "place_owned_object") return ["place_owned_object"];
   if (action === "remove_placed_item") return ["remove_placed_item"];
   if (action === "break_container") return ["break_container"];
+  // Picking a piece of placed furniture up needs no fixture fact at all: a brand-new save's own
+  // FarmHouse already stands a bed beside the actor, and that is the Given. `remove_placed_item` is
+  // listed ONLY so the shared `worldObjectTargets` projection is published at all - the Mod publishes
+  // that one array while `place_owned_object`, `remove_placed_item` or `break_container_source` is
+  // advertised, and `move_placed_furniture` is not among them (measured 2026-11-04:
+  // farmhandexecutioncontroller.cs, the `WorldObjectTargets:` row of the snapshot projection). The
+  // runner never invokes it.
+  if (action === "move_placed_furniture") return ["move_placed_furniture", "remove_placed_item"];
   if (action === "enter_mine") return ["enter_mine"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
@@ -811,6 +819,13 @@ export function fixtureScenario(actions, action) {
   // milestone gate kept reporting `milestone_not_projected:0` - the fixture never armed the branch Given at all.
   if (action === "hold_absorption") return "native_till_soil_v1";
   if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
+  // The furniture pickup asks for the ORDINARY world and nothing else: the bed it lifts is the
+  // game's own starter furniture, standing where the save put it. It must be action-keyed here,
+  // because the lane's set also carries `remove_placed_item` (only to publish the shared
+  // `worldObjectTargets` projection) and that sibling would otherwise claim this through the
+  // world-object fallback below - a world whose actor is warped to the Farm, where no furniture
+  // stands at all.
+  if (action === "move_placed_furniture") return "";
 
   // The requested harness action can select a distinct scenario for the SAME
   // action set: the built-in kitchen fridge is the chest store/take intent over a
