@@ -202,6 +202,7 @@ export class CompanionEventPump {
     if (fact.source === "host_local_transport" && (fact.kind !== "lifecycle" || fact.revision !== 0))
       throw new Error("invalid_local_transport_fact");
     const frozen = Object.freeze({ ...fact });
+    this.#observeWorldTransition(frozen);
     if (fact.kind === "snapshot") {
       if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
       return;
@@ -363,12 +364,67 @@ export class CompanionEventPump {
    */
   #steerInFlight: Promise<boolean> | undefined;
 
+  /**
+   * The world is mid-transition and the companion's BODY is owned by it.
+   *
+   * <p>
+   * Day advance is the measured case: at 22:00 the companion runs `sleep()`, the Mod answers
+   * `body_owned_by_day_advance`, and the pump kept delivering - a 23:40 batch, a 24:10 full snapshot, and then the
+   * engine's own 26:00 `night_ended_pass_out_day_5` - to a character who was, in the fiction, asleep. She rationalised
+   * it the only way available to her and said "睡到系统替我关灯了", which is the machinery showing through the stage.
+   * </p>
+   * <p>
+   * The same window exists for every transition that takes the body: a warp, a cutscene, a festival, a pass-out. The
+   * class is "facts describing the runtime's own bookkeeping reach the persona while the persona is inside a state the
+   * player reads as asleep, waiting or loading". So the guard is not named after sleep.
+   * </p>
+   * <p>
+   * While this is set, `flush` delivers nothing: the facts stay queued, nothing is dropped, and the first flush after
+   * the transition ends carries them together with the `day_started` fact that explains where the companion now is.
+   * Player input is queued too - a person typing is not told to wait by our bookkeeping - and STOP never comes through
+   * here at all.
+   * </p>
+   */
+  #worldTransition: string | null = null;
+
+  /**
+   * Read the transition state off the facts, because that is the one thing both sides already agree on.
+   *
+   * <p>
+   * ENTERING is the Mod saying the body is no longer ours - `body_owned_by_*` arrives as a refusal code. LEAVING is the
+   * day actually starting, which is also the fact the companion needs in order to know where it now is. A timeout would
+   * be a second authority that can disagree with the game, so there is none.
+   * </p>
+   */
+  #observeWorldTransition(fact: WorldFact): void {
+    const payload = fact.payload as Record<string, unknown> | undefined;
+    const codes = [payload?.reasonCode, payload?.failureCode, payload?.rejectionCode].filter(
+      (value): value is string => typeof value === "string",
+    );
+    const owned = codes.find((code) => code.startsWith("body_owned_by_"));
+    if (owned !== undefined) {
+      this.#worldTransition = owned;
+      return;
+    }
+    const kind =
+      typeof payload?.kind === "string" ? payload.kind : typeof payload?.state === "string" ? payload.state : "";
+    if (kind === "day_started") this.#worldTransition = null;
+  }
+
+  /** Whether the pump is holding delivery because the body is owned by a world transition. */
+  public get isWorldTransition(): boolean {
+    return this.#worldTransition !== null;
+  }
+
   /** Authenticated player input has been accepted but is not yet Pi-consumed. */
   public get hasPendingPlayerInput(): boolean {
     return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
   }
 
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
+    // HELD, NOT DROPPED. A companion whose body is in bed does not get woken to read the runtime's bookkeeping; the
+    // facts wait for the transition to end and arrive together with the fact that explains the new day.
+    if (this.isWorldTransition) return undefined;
     if (this.#delivering || !this.hasPendingDelivery) return undefined;
     this.#delivering = true;
     const generation = this.#generation;

@@ -649,6 +649,64 @@ test("event pump delivers an npc_dialogue_presented world fact to the Agent's co
   assert.deepEqual(event?.payload.pages, ["早安，今天也要加油哦。", "你这阵子都没来看我。"]);
 });
 
+test("a body owned by a world transition holds the facts until the day starts", async () => {
+  // Measured on a real run (day 5, 22:00): the companion ran `sleep()`, the Mod answered `body_owned_by_day_advance`, and
+  // the pump kept delivering - 23:40, a 24:10 full snapshot, then the engine's own `night_ended_pass_out_day_5` at 26:00 -
+  // to a character who was asleep. She said "睡到系统替我关灯了", which is the machinery showing through the stage.
+  const pump = new CompanionEventPump();
+  const receipt = (state: string, extra: Record<string, unknown> = {}) => ({
+    source: "stardew_mod" as const,
+    kind: "execution_receipt" as const,
+    eventId: `receipt_${state}_${String(extra.failureCode ?? "")}`,
+    sourceEventId: `receipt_${state}`,
+    correlationId: `receipt_${state}`,
+    revision: 1,
+    observedTick: 100,
+    payload: Object.freeze({ state, ...extra }),
+  });
+  const delivered: string[] = [];
+  const sink = {
+    async deliver(text: string) {
+      delivered.push(text);
+    },
+  };
+
+  pump.enqueueFact(receipt("rejected", { failureCode: "body_owned_by_day_advance" }) as never);
+  assert.equal(pump.isWorldTransition, true, "the Mod saying the body is not ours starts the hold");
+
+  // Facts keep arriving while she is in bed - they must QUEUE, not wake her.
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: "night_ended_pass_out_day_5",
+    sourceEventId: "night_ended_pass_out_day_5",
+    correlationId: "night_ended_pass_out_day_5",
+    revision: 1,
+    observedTick: 2600,
+    semanticKind: "night_ended_pass_out",
+    payload: Object.freeze({ kind: "night_ended_pass_out" }),
+  } as never);
+  assert.equal(await pump.flush(sink), undefined, "a delivery during the hold is refused, not dropped");
+  assert.equal(delivered.length, 0, "and nothing reached the companion while she was asleep");
+
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "lifecycle",
+    eventId: "day_started_6",
+    sourceEventId: "day_started_6",
+    correlationId: "day_started_6",
+    revision: 1,
+    observedTick: 101,
+    payload: Object.freeze({ kind: "day_started" }),
+  } as never);
+  assert.equal(pump.isWorldTransition, false, "the day starting ends the hold");
+
+  await pump.flush(sink);
+  assert.equal(delivered.length, 1, "everything she missed arrives together, with the fact that explains the new day");
+  assert.match(delivered[0] ?? "", /night_ended_pass_out/u, "including the pass-out she was never awake for");
+  assert.match(delivered[0] ?? "", /day_started/u, "and the new day");
+});
+
 test("a time milestone steers into a running turn while flush is blocked by it", async () => {
   const pump = new CompanionEventPump();
   const milestone = (minute: string) => ({
