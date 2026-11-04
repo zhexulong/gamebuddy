@@ -516,6 +516,7 @@ public sealed class BridgeProtocolSerializationTests
             HarvestWhereabouts: null,
             WateringWhereabouts: null,
             PetTargets: null,
+            FarmAnimalPetTargets: null,
             AnimalProductTargets: null,
             FeedTroughTargets: null,
             Chests: null,
