@@ -18,6 +18,8 @@ const csrfToken = "C".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 const cabinChoiceHandle = "E".repeat(42) + "A";
 
+const draft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
+
 const chat = {
   apiVersion: 1,
   build: {
@@ -42,7 +44,11 @@ const chat = {
         revision: 1,
       },
     ],
-    draft: { revision: 4, present: true },
+    // The body arrives in this same read. `/composed-reference-game/v1/state` carries
+    // `{revision, present, text}`, so the shell needs no second route for the draft - and
+    // `present` is the same fact as `text !== null`, written from one facade field
+    // (`projectSnapshotDraftV1`, host/src/tavern/browser-contract/index.ts).
+    draft: { revision: draft.revision, present: draft.text !== null, text: draft.text },
     turn: null,
     // The mount's World Info, which the Host projects from the same read its
     // `GET /world-info` answers from: empty is where a fresh product's library is.
@@ -95,8 +101,6 @@ const root = {
 function progressStatus(panel: ReturnType<Page["getByRole"]>) {
   return panel.locator('[role="status"][data-tone="progress"]');
 }
-
-const draft = { apiVersion: 1, revision: 4, text: "A durable delegated draft." };
 
 /**
  * The Game surface is one of the shell's peer surfaces (design/104 §2), so a
@@ -218,7 +222,11 @@ test("composed profile redeems once, renders nested Chat and redacted Game, then
   expect(bootstrapRequests).toBe(1);
   expect(tavernBootstrapRequests).toBe(0);
   expect(tavernStateRequests).toBe(0);
-  expect(draftRequests).toBe(2);
+  // The draft is in the same read as its revision, so the shell never spends
+  // `/api/tavern/v1/draft` on this journey: the body it shows at line 181 arrived in
+  // the composed snapshot. A second route here would be the pair read that can
+  // disagree with itself while a turn lands.
+  expect(draftRequests).toBe(0);
   expect(cabinReadRequests).toBe(2);
 });
 
@@ -688,11 +696,19 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
  * or interrupts the other. A Game operation's authoritative reread must depend
  * only on the Game projection, so a Chat draft revision that moves underneath it
  * - the player typing in the conversation, another tab, a background poll - can
- * never turn into a Game failure. Here the ONLY thing that moves between the
- * composed root and draft reads is Chat's draft: the Game projection is
- * unchanged and the setup command succeeds, so the operation must complete.
+ * never turn into a Game failure. Here the ONLY thing that moves under the Game
+ * reread is Chat's draft: the Game projection is unchanged and the setup command
+ * succeeds, so the operation must complete.
+ *
+ * The premise this journey was written on has moved. It used to take two reads -
+ * the composed root for the Game half, `/api/tavern/v1/draft` for the Chat body -
+ * and the moved revision could be observed only in the second one, so `draftReads`
+ * was the instrument. The body and its revision now arrive in the one `/state`
+ * read beside the Game projection (`readChatSnapshotPair`), so the moved revision is
+ * served from that read and the counter says 0. The guarantee is unchanged and its
+ * expression is stricter: a Game reread spends no draft read at all.
  */
-test("Game setup ignores a Chat draft that moves between the composed state and draft reads", async ({ page }) => {
+test("Game setup ignores a Chat draft that moves under the composed state it rereads", async ({ page }) => {
   const keys: string[] = [];
   let stateReads = 0;
   let draftReads = 0;
@@ -709,17 +725,23 @@ test("Game setup ignores a Chat draft that moves between the composed state and 
   });
   // The Game projection never moves: only the composed root's Game half is
   // served, exactly as it was, so any Game failure here can only come from Chat.
+  // The mount reads `bootstrap`, so the first `/state` here is already the Game
+  // reread - and it reports the Chat draft the player moved to while the command
+  // was in flight (revision 5).
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) });
+    const moved = {
+      ...root,
+      chat: { ...root.chat, chat: { ...root.chat.chat, draft: { revision: 5, present: true, text: "The player kept typing." } } },
+    };
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(moved) });
   });
-  // The first read is the mount bootstrap, which legitimately reconciles the
-  // nested Chat projection (revision 4). Every later read reports the Chat draft
-  // the player moved to while the Game operation was in flight (revision 5).
+  // No route answers the draft here, and none is expected to: the moved revision
+  // above is the only one this page can serve, and a request for the body is the
+  // second read this contract removed.
   await page.route("**/api/tavern/v1/draft", (route) => {
     draftReads += 1;
-    const body = draftReads === 1 ? draft : { ...draft, revision: 5, text: "The player kept typing." };
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) });
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -730,9 +752,11 @@ test("Game setup ignores a Chat draft that moves between the composed state and 
   // The command was admitted and its authoritative Game reread converged.
   await expect.poll(() => keys.length).toBe(1);
   await expect.poll(() => stateReads).toBe(1);
-  // A Game reread never reads the Chat draft at all: the moved revision cannot
-  // be observed by the Game path, so it cannot fail the Game operation.
-  expect(draftReads).toBe(1);
+  // A Game reread never reads the Chat draft at all - not even the mount once a
+  // read - because the body arrives in the `/state` it already took. The moved
+  // revision therefore cannot be observed by the Game path, so it cannot fail the
+  // Game operation, and a draft request here would be the pair read returning.
+  expect(draftReads).toBe(0);
   // The Game operation completed: no reconciliation problem was surfaced, and
   // the unchanged authoritative projection was applied (the control stays
   // offered and a later attempt is a fresh-key attempt, not a stuck replay).
@@ -741,7 +765,7 @@ test("Game setup ignores a Chat draft that moves between the composed state and 
   await setup.click();
   await expect.poll(() => keys.length).toBe(2);
   expect(keys[1]).not.toBe(keys[0]);
-  expect(draftReads).toBe(1);
+  expect(draftReads).toBe(0);
 });
 
 test("Game STOP is generation-bound, single-flight, rereads stopped, and remains independent from Chat Stop", async ({ page }) => {
@@ -4550,11 +4574,14 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   await expect.poll(() => stateReads).toBeGreaterThan(0);
   await expect(composer).toBeDisabled();
   await page.waitForTimeout(2_500);
-  // The measurement: every HTTP request this turn made under a live stream.
+  // The measurement: every HTTP request this turn made under a live stream. The
+  // authoritative read is ONE request - `/state` carries the draft's body beside
+  // the transcript - so `draft=0` is the same fact as `state=1`, not a read that
+  // went missing.
   console.log(
     `poll-measure: live stream, one turn -> state=${stateReads} draft=${draftReads} status=${statusReads}`,
   );
-  expect({ stateReads, draftReads, statusReads }).toEqual({ stateReads: 1, draftReads: 2, statusReads: 0 });
+  expect({ stateReads, draftReads, statusReads }).toEqual({ stateReads: 1, draftReads: 0, statusReads: 0 });
 
   // The stream settles the turn itself: one frame, one authoritative reread, and
   // still no status read - so the settle came from the stream, not from a poll.
@@ -4596,7 +4623,6 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   await page.waitForTimeout(1_500);
   expect(statusReads).toBe(0);
 
-  const draftsBeforeFailure = draftReads;
   await page.evaluate(() => (window as unknown as { __fail: (index: number) => void }).__fail(0));
   await expect.poll(() => statusReads).toBeGreaterThan(0);
   await expect(composer).toBeEnabled();
@@ -4605,9 +4631,12 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   // authoritative read it needed was the one the recovery had just performed.
   expect(statusReads).toBe(1);
   expect(stateReads).toBe(settledFromRead);
-  // The recovery read spends one `/draft`; the poll's hop reuses what that
-  // snapshot described instead of spending a second read on it.
-  expect(draftReads).toBe(draftsBeforeFailure + 1);
+  // That recovery read is one `/state` and the poll's hop reuses it rather than
+  // spending a read of its own - the guarantee the line above states. It used to
+  // need a second clause here for the draft half of the pair; the body now arrives
+  // in the same snapshot, so a draft request anywhere in this journey is the
+  // regression.
+  expect(draftReads).toBe(0);
 });
 
 /**
@@ -5710,7 +5739,7 @@ test("switching chats reseeds the composer from the target chat's own durable dr
           revision: 1,
         },
       ],
-      draft: { revision: secondDraft.revision, present: true },
+      draft: { revision: secondDraft.revision, present: secondDraft.text !== null, text: secondDraft.text },
     },
   };
   const mountedRoot = () => ({ ...root, chat: mountedHandle === handle ? firstChat : secondChat });
@@ -6620,8 +6649,21 @@ test("the composed conversation opens the projected event stream, previews a del
   let currentCursor = initialCursor;
   let stateReads = 0;
   let draftReads = 0;
+  // What the repair read is given: a draft that moved while the stream was open.
+  // It can only reach the field through the authoritative snapshot, so the field
+  // holding this text is the proof that the body came in that one read.
+  const repairedDraft = { revision: draft.revision + 1, present: true, text: "The draft the repair carried." };
 
-  const projection = () => ({ ...root, chat: { ...chat, eventStream: { epoch: streamEpoch, cursor: currentCursor } } });
+  // `chat` here is the nested Chat snapshot, so the override goes one level in:
+  // the draft belongs to `chat.chat`, beside the transcript it is committed with.
+  const projection = (draftBody: typeof chat.chat.draft | null = null) => ({
+    ...root,
+    chat: {
+      ...chat,
+      chat: { ...chat.chat, ...(draftBody === null ? {} : { draft: draftBody }) },
+      eventStream: { epoch: streamEpoch, cursor: currentCursor },
+    },
+  });
 
   await page.addInitScript(() => {
     const state = window as unknown as {
@@ -6665,7 +6707,7 @@ test("the composed conversation opens the projected event stream, previews a del
     // The repair's own read moves the checkpoint: the reconnect must carry the
     // cursor this answer names, never the id of the frame that was rejected.
     currentCursor = recoveredCursor;
-    return route.fulfill(jsonOk(projection()));
+    return route.fulfill(jsonOk(projection(repairedDraft)));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -6717,7 +6759,12 @@ test("the composed conversation opens the projected event stream, previews a del
   await expect.poll(() => stateReads).toBe(1);
   await expect.poll(streamUrls).toHaveLength(2);
   expect((await streamUrls())[1]).toContain(`cursor=${recoveredCursor}`);
-  expect(draftReads).toBe(2);
+  // The repair is one `/state`, and the draft is in it: the moved revision above
+  // reached the field without a second route being read. This is where the old
+  // `draftReads === 2` went - `state` says once per resync, `draft` says the body
+  // now travels inside that same answer instead of a pair that could disagree.
+  expect(draftReads).toBe(0);
+  await expect(surface.locator(".composer-textarea")).toHaveValue(repairedDraft.text);
   expect(await page.evaluate(() => (window as unknown as { __streams: Array<{ closed: boolean }> }).__streams[0]!.closed)).toBe(true);
   await expect(surface).not.toContainText("Unable to read chat");
 
@@ -6734,15 +6781,17 @@ test("the composed conversation opens the projected event stream, previews a del
 });
 
 /**
- * A burst of stream frames is confirmed by one authoritative read pair, not one per frame.
+ * A burst of stream frames is confirmed by one authoritative read per pass, not one per frame.
  *
  * The measured defect: `message.committed` and `turn.state_changed` each performed
  * `GET /state` and then `GET /draft`, so a burst paid two serial round trips per
  * frame and the queue of reads outran the stream it was confirming - the state
- * lagged the very frames it was meant to confirm.
+ * lagged the very frames it was meant to confirm. The pair is one request now (the
+ * snapshot carries the draft's body), so the cost of a frame is a single read and
+ * the measurement below reads `draft: 0` where it used to read `draft: frames`.
  *
  * The two directions this pins:
- *  - N frames must not produce N state reads and N draft reads;
+ *  - N frames must not produce N authoritative reads;
  *  - the last frame's own state must still land. The first read is served the
  *    durable state at the moment it was dispatched, which is before the final
  *    frame exists - so only a read issued *after* that frame carries the committed
@@ -6753,7 +6802,7 @@ test("the composed conversation opens the projected event stream, previews a del
  * connection, so the frames that arrive while a read is in flight were threaded
  * into the session's checkpoint rather than rejected as a gap.
  */
-test("a burst of stream frames costs one read pair plus one, and the last frame's state still lands", async ({ page }) => {
+test("a burst of stream frames costs two authoritative reads, not one per frame, and the last frame's state still lands", async ({ page }) => {
   test.setTimeout(90_000);
   const streamEpoch = `${'E'.repeat(42)}A`;
   const streamCursor = `${'F'.repeat(42)}A`;
@@ -6912,9 +6961,9 @@ test("a burst of stream frames costs one read pair plus one, and the last frame'
   const measured = { state: stateReads - baseline.state, draft: draftReads - baseline.draft };
   const wire = wireCounts(wireBaseline);
   console.log(
-    `sse-coalesce: ${frames} frames -> route state=${measured.state} draft=${measured.draft}, wire state=${wire.state} draft=${wire.draft}; one pair per frame would be state=${frames} draft=${frames}`,
+    `sse-coalesce: ${frames} frames -> route state=${measured.state} draft=${measured.draft}, wire state=${wire.state} draft=${wire.draft}; one read per frame would be state=${frames}`,
   );
-  expect(measured).toEqual({ state: 2, draft: 2 });
+  expect(measured).toEqual({ state: 2, draft: 0 });
   expect(wire).toEqual(measured);
   // No gap was manufactured by the frames that arrived mid-read: the burst needed
   // no recovery and no reconnect.
