@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LOOKUP_SUBJECTS, lookUp, MAX_LOOKUP_ROWS } from "./game-lookup.js";
+import { LOOKUP_SUBJECTS, lookUp, MAX_LOOKUP_ROWS, noSnapshot } from "./game-lookup.js";
 import type { Snapshot } from "./protocol.js";
 
 const base: Snapshot = {
@@ -24,6 +24,10 @@ const base: Snapshot = {
   cropTargets: [],
   wateringWhereabouts: [{ location: "Farm", needsWaterCount: 34, nearestX: 12, nearestY: 20 }],
   harvestWhereabouts: [{ location: "Farm", readyForHarvestCount: 3, nearestX: 14, nearestY: 21 }],
+  inventoryItemFacts: [
+    { slot: 0, qualifiedItemId: "(O)380", displayName: "Iron Ore", stack: 12 },
+    { slot: 1, qualifiedItemId: "(O)388", displayName: "Wood", stack: 40 },
+  ],
   chests: [
     {
       chestId: "chest_a",
@@ -76,6 +80,25 @@ test("a chest lookup that finds nothing still says how many were searched", () =
   assert.equal(body.searched, 2);
 });
 
+test("an inventory lookup answers from the published family and names the family it read", () => {
+  const answer = lookUp(base, "inventory", "iron");
+  assert.ok("answer" in answer);
+  assert.equal(answer.source.family, "inventoryItemFacts");
+  const rows = (answer.answer as Record<string, unknown>).rows as readonly { displayName: string }[];
+  assert.deepEqual(
+    rows.map((row) => row.displayName),
+    ["Iron Ore"],
+  );
+});
+
+test("an npc lookup answers where each villager is", () => {
+  const answer = lookUp(base, "npcs", "abi");
+  assert.ok("answer" in answer);
+  assert.equal(answer.source.family, "villagerWhereabouts");
+  const rows = (answer.answer as Record<string, unknown>).rows as readonly unknown[];
+  assert.deepEqual(rows, [{ name: "Abigail", location: "Town", at: { x: 40, y: 12 } }]);
+});
+
 test("a fact the snapshot does not carry answers unknown and names the field", () => {
   const answer = lookUp(base, "calendar");
   assert.ok("answer" in answer);
@@ -85,11 +108,47 @@ test("a fact the snapshot does not carry answers unknown and names the field", (
   assert.equal(body.festivalToday?.missingField, "festivalToday");
 });
 
-test("an absent family is unknown, naming the family, never an empty list", () => {
-  const { inventoryItemFacts: _omitted, ...withoutInventory } = base;
-  const noInventory = lookUp(withoutInventory, "inventory", "ore");
-  assert.ok("unknown" in noInventory);
-  assert.equal(noInventory.missingField, "inventoryItemFacts");
+/**
+ * THE REASON THIS MODULE EXISTS. "We did not look" and "there is nothing" are different answers, and a caller that cannot
+ * tell them apart will read an absent family as an empty world. So an absent family answers `source.family: null` - the one
+ * spelling of "not looked" - and it does NOT answer with an empty list, which would be a claim about the world. The
+ * population is every subject whose family is optional on the wire, so a subject added later without this property shows
+ * up here by name.
+ */
+test("a subject the snapshot does not carry answers source.family null, never an empty result", () => {
+  const absent: readonly (readonly [subject: string, fields: readonly (keyof Snapshot)[], answerKey: string])[] = [
+    ["inventory", ["inventoryItemFacts"], "rows"],
+    ["npcs", ["villagerWhereabouts"], "rows"],
+    ["chests", ["chests", "chestsSummary"], "matches"],
+    ["crops", ["wateringWhereabouts", "harvestWhereabouts"], "needsWater"],
+  ];
+  for (const [subject, fields, answerKey] of absent) {
+    const withoutFamily = { ...(base as Record<string, unknown>) };
+    for (const field of fields) delete withoutFamily[field];
+    const answer = lookUp(withoutFamily as Snapshot, subject, "iron");
+    assert.ok("unknown" in answer, `${subject} must answer unknown when ${fields.join(" and ")} are absent`);
+    assert.equal(answer.source.family, null, `${subject} must say it did not look, not that the world is empty`);
+    // The source still names the snapshot it was asked about: null family is "not looked", not "no snapshot".
+    assert.equal(answer.source.snapshotRevision, base.revision);
+    assert.equal(
+      answer.missingField,
+      String(fields[0]),
+      `${subject} must name the field that would have to be published`,
+    );
+    assert.equal(
+      answerKey in answer,
+      false,
+      `${subject} answered with ${answerKey}: an empty list is a claim about the world, not a refusal to claim`,
+    );
+  }
+});
+
+test("no snapshot at all is also not-looked, and names the snapshot rather than a family", () => {
+  const answer = noSnapshot("integration_not_ready");
+  assert.equal(answer.source.family, null);
+  assert.equal(answer.source.snapshotRevision, null);
+  assert.equal(answer.missingField, "snapshot");
+  assert.match(answer.unknown, /integration_not_ready/u);
 });
 
 test("an unknown subject is refused with the list derived from the table", () => {
@@ -97,6 +156,7 @@ test("an unknown subject is refused with the list derived from the table", () =>
   assert.ok("refused" in refused);
   assert.deepEqual(refused.subjects, LOOKUP_SUBJECTS);
   assert.match(refused.refused, /unknown_subject:rocks/u);
+  assert.equal(refused.source.family, null);
 });
 
 test("a large answer is bounded and reports how many rows it dropped", () => {
@@ -113,4 +173,12 @@ test("a large answer is bounded and reports how many rows it dropped", () => {
   const body = answer.answer as Record<string, unknown>;
   assert.equal((body.matches as readonly unknown[]).length, MAX_LOOKUP_ROWS);
   assert.equal(body.omitted, 5);
+});
+
+test("an answer that dropped nothing says so with 0 rather than an absent key", () => {
+  const answer = lookUp(base, "npcs");
+  assert.ok("answer" in answer);
+  const body = answer.answer as Record<string, unknown>;
+  assert.equal(body.omitted, 0);
+  assert.equal((body.rows as readonly unknown[]).length + (body.omitted as number), 1);
 });

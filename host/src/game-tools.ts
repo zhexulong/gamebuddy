@@ -13,6 +13,7 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import { LOOKUP_SUBJECTS, lookUp, noSnapshot } from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
@@ -206,6 +207,41 @@ export function createStardewObservationTools(
       };
     },
   });
+  /**
+   * A question about the state this session already holds, not a new observation.
+   *
+   * `stardew_observe` asks the Mod; this answers from the snapshot the last observation admitted, so it costs a tool call
+   * and no bridge round trip. It is mounted beside the observation tools because it is the same kind of thing - read-only,
+   * constant, and never an action - and it is deliberately NOT one of the adapter's action tools: `runtime-core.internal.ts`
+   * strips those when a composition declares `planActionSurface`, and a question about the world is not a step in a plan.
+   */
+  const lookup = defineTool({
+    name: "stardew_look_up",
+    label: "Look Up Stardew",
+    description:
+      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
+    parameters: Type.Object(
+      {
+        // The subject vocabulary is the module's own table, so a subject cannot be advertised here and refused there.
+        subject: literalUnionSchema(LOOKUP_SUBJECTS.map((subject) => Type.Literal(subject))),
+        query: Type.Optional(Type.String({ minLength: 0, maxLength: 64 })),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (_toolCallId, params) => {
+      const asked = params as Readonly<{ subject?: unknown; query?: unknown }>;
+      const state = integration.state;
+      const snapshot = state.connected ? state.snapshot : null;
+      const answer =
+        snapshot === null
+          ? noSnapshot(state.latestReasonCode ?? "integration_not_ready")
+          : lookUp(snapshot, String(asked.subject), typeof asked.query === "string" ? asked.query : "");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(answer) }],
+        details: { answer, available: snapshot !== null, snapshotRevision: snapshot?.revision ?? null },
+      };
+    },
+  });
   const execution = defineTool({
     name: "stardew_execution_status",
     label: "Stardew Execution Status",
@@ -362,7 +398,7 @@ export function createStardewObservationTools(
     );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [observe, execution, catalog, search];
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search];
   {
     // constant mount; readiness re-checked at execution
     tools.push(
