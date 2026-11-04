@@ -6186,6 +6186,20 @@
    body; at 400x800, 301 px in a 301 px body).
 
    Appended block; the rules above are untouched.
+
+   **The short line, re-measured (400x800), against the claim that a two-character CJK message
+   collapses to one glyph wide** - `fit-content` resolving to min-content on a flex item, where with
+   `overflow-wrap: anywhere` every CJK character is a break point, so 你好 lays out as one 42 px
+   column. It does not: "你好" is ONE line box in a 58 px bubble - 28 px of text in a 28 px content
+   box, 4.14 em at 14 px type, which is the two glyphs plus the bubble's own 14 + 14 px padding - and
+   a 400-character line is 271 px of text in exactly the 271 px the column gives it, 22 line boxes,
+   no overflow inside the bubble and none on the page. The formula is why: `fit-content` is
+   `min(max-content, max(min-content, stretch))`, so the item's min-content contribution (one glyph)
+   decides the width only when the column is narrower than max-content - never for a two-glyph word in
+   a column this wide. The reading is pinned absolutely now
+   (`tests/message-bubble-is-as-wide-as-its-line.spec.ts`), because the two-box comparison that let the
+   claim stand cannot see it: `conversation-rendering-defects.spec.ts` asserts the short bubble is
+   narrower than the long one and narrower than its body, and a one-glyph column satisfies both.
    ========================================================================== */
 
   .message.player .message-bubble {
