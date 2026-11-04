@@ -7,6 +7,12 @@
  * Test (v) proves the ladder's own composition green over a synthetic clean tree. The REAL tree's L3 state is not a
  * green: it is the recorded baseline in `tools/prelive-l3-baseline.json` (11 known sites, every one of them a runner
  * that asserts a world fact from a one-shot observation), and the ratchet can only move that number down.
+ *
+ * red-proof: fixture  the ladder's rules are falsified by fabricating the drift in a synthetic tree
+ * rather than by waiting for it to appear: test (iv) drives a one-shot actionable observation whose
+ * assertion reads a world fact and expects the ladder to report it red, and test (iii) plants a sibling
+ * directory sharing the installation's name prefix and expects it to be refused. A rung that stopped
+ * checking either would fail those tests, not pass silently.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
