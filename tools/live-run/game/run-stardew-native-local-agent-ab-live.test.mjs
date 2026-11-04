@@ -349,6 +349,51 @@ test("the run asks the companion questions and publishes the verdict", () => {
   assert.match(RUNNER_SOURCE, /^\s+dialogueGates,$/mu, "the verdict must reach result.json");
 });
 
+test("the scheduled gates are delivered from ground truth the run observed, and every delivery is published", () => {
+  // Two gates were wired but unreachable. The honesty gate asked about yesterday and was handed `context: {}`, so it
+  // could only ever answer `gate_cannot_judge_without_yesterday`; the obstacle gate was skipped by kind in the only
+  // delivery site, so it could only ever read as "not triggered".
+  //
+  // 1. The context is a function of the gate: the record looked up is the one the gate's own trigger names.
+  assert.match(RUNNER_SOURCE, /context: dialogueGateContext,/);
+  assert.match(
+    RUNNER_SOURCE,
+    /yesterday:\s*\n?\s*Number\.isInteger\(triggerDay\) && triggerDay > 1/,
+    "yesterday must be the night before the gate's own day, not a constant",
+  );
+  // 2. Yesterday is the night watch's own observation, and it is an observation: the latest clock it saw on that day.
+  assert.match(RUNNER_SOURCE, /bedTime: bedTimeBeforeCrossing/);
+  assert.match(
+    RUNNER_SOURCE,
+    /bedTimeBeforeCrossing = Math\.max\(bedTimeBeforeCrossing \?\? 0, snapshot\.timeOfDay\)/,
+    "the bed time is the engine's clock, read by the watch that is already polling",
+  );
+  // 3. The refusal gate is planned, not skipped: the schedule is the gate module's, and no branch here filters gates out
+  //    by trigger kind.
+  assert.match(RUNNER_SOURCE, /planGateDeliveries\(SCHEDULED_DIALOGUE_GATES,/);
+  assert.doesNotMatch(
+    RUNNER_SOURCE,
+    /kind === "recent_refusal"\)\s*continue/,
+    "a gate filtered out by kind is a gate that can never be spoken",
+  );
+  // 4. The refusal evidence is the game's own record of a refused action, read from this run's Mod log.
+  assert.match(RUNNER_SOURCE, /const MOD_RECEIPT_MARKER = "\[receipt-publish-marker\]";/);
+  assert.match(RUNNER_SOURCE, /line\.includes\("state=Rejected"\)/);
+  assert.match(RUNNER_SOURCE, /readFileSync\(MOD_LOG_PATH\(\), "utf8"\)/, "read where the Mod actually logs");
+  // 5. A gate is CLAIMED before the admission is awaited, so two turns cannot both speak the same line.
+  const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day)");
+  const deliverBody = RUNNER_SOURCE.slice(
+    deliverStart,
+    RUNNER_SOURCE.indexOf("\nasync function runAgentTurn", deliverStart),
+  );
+  const claimAt = deliverBody.indexOf("dialogueDelivery.set(gate.id, claimed)");
+  const submitAt = deliverBody.indexOf("await submitPlayerPrompt({");
+  assert.ok(claimAt > 0 && submitAt > claimAt, "the claim must be taken before the await, not after it");
+  // 6. Delivery is published beside the judgement, so "delivered and unanswered" and "never delivered" are different
+  //    readings of result.json instead of the same one.
+  assert.match(RUNNER_SOURCE, /^\s+dialogueGateDelivery,$/mu);
+});
+
 test("prompts state the errand and leave the voice to the system prompt (ladder-3)", () => {
   // The ladder-3 prompts must NOT ask the Agent to "summarize what you did" — that phrasing is what produced the
   // recital the interaction gate rejects.
@@ -1754,7 +1799,11 @@ test("a pass-out mid-night is not the night's outcome: the watch runs on to the 
   assert.match(RUNNER_SOURCE, /"night_ended_pass_out"/u, "and it must read that event by name");
   // The two-valued default must not come back: absence of a pass-out is a fact about the poll, not about the night.
   assert.doesNotMatch(RUNNER_SOURCE, /\? "pass_out"\s*:\s*"sleep"/u);
-  assert.match(RUNNER_SOURCE, /record\.cause = nightCauses\.get\(record\.day\) \?\? null;/u);
+  assert.match(
+    RUNNER_SOURCE,
+    /record\.cause = night\?\.cause \?\? null;/u,
+    "the day's record takes its cause from the night record, which is the one the dialogue gates also read",
+  );
 });
 
 test("a stalled Mod heartbeat is named while it is happening, not six minutes later", () => {

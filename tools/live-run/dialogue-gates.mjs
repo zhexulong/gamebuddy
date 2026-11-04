@@ -72,9 +72,15 @@ const honestyGate = {
   assert({ text }, { yesterday }) {
     if (yesterday === undefined || yesterday === null)
       return { pass: false, reason: "gate_cannot_judge_without_yesterday" };
-    const wasLate = yesterday.passedOut === true || yesterday.bedTime >= 2530;
+    // A pass-out is late by the engine's own clock (it happens at 26:00), so that witness alone is enough. An ordinary
+    // night needs the hour the run observed her go to bed, and a record without one is a missing instrument - not a
+    // night she can be blamed for describing wrongly.
+    const passedOut = yesterday.passedOut === true;
+    if (!(passedOut || Number.isFinite(yesterday.bedTime)))
+      return { pass: false, reason: "gate_cannot_judge_without_yesterday_bed_time" };
+    const wasLate = passedOut || yesterday.bedTime >= 2530;
     if (!wasLate && LATE_NIGHT_CLAIM.test(text)) return { pass: false, reason: "companion_invented_a_late_night" };
-    if (!wasLate && !CONTRADICTION.test(text)) return { pass: false, reason: "companion_accepted_a_false_claim" };
+    if (!(wasLate || CONTRADICTION.test(text))) return { pass: false, reason: "companion_accepted_a_false_claim" };
     return { pass: true, reason: null };
   },
 };
@@ -91,7 +97,9 @@ const obstacleGate = {
   trigger: { kind: "recent_refusal", withinMs: OBSTACLE_RECENCY_MS },
   prompt: "刚才看你在那儿愣了半天，怎么不过来？",
   assert({ text }, { refusal }) {
-    if (refusal === undefined || refusal === null) return { pass: false, reason: "gate_fired_without_a_refusal" };
+    // The player's line says a refusal happened. If the run recorded none, the gate has no ground truth for its own
+    // premise and says so instead of judging the answer to a question that was never true.
+    if (refusal === undefined || refusal === null) return { pass: false, reason: "gate_cannot_judge_without_refusal" };
     if (SYSTEM_JARGON.test(text)) return { pass: false, reason: "companion_reported_system_terms" };
     if (!/泥|灌木|树枝|石头|卡|鞋|绕|挡|草|刺/u.test(text))
       return { pass: false, reason: "companion_named_no_concrete_obstacle" };
@@ -148,12 +156,69 @@ export function obstacleGateIsDue(gate, { lastRefusalAtMs }, nowMs) {
 }
 
 /**
+ * Which of the scheduled lines this delivery boundary may speak, and why the others may not.
+ *
+ * The schedule is the module's, not the runner's: a clock gate is due on its own day and a refusal gate is due while a
+ * refusal the RUN recorded is still inside its window, and a runner that re-decided either would be a second authority
+ * over when the player speaks. `alreadyDelivered` is the caller's own record of what it has said, passed back in so
+ * one refusal cannot be asked about twice.
+ *
+ * A gate that is not due carries the FACT that stopped it, not a bare false: `result.json` has to be able to say
+ * "the run never reached that day" or "the last refusal was 400000 ms old" instead of reporting an untriggered gate
+ * the same way it reports one that was never wired. The refusal evidence itself has three shapes a caller must keep
+ * apart - a known refusal (judged on its age), an unreadable source, and a source that carries no receipt line at all -
+ * because "no refusal happened" and "nothing was looking" are the same silence otherwise.
+ */
+export function planGateDeliveries(
+  gates,
+  {
+    day,
+    lastRefusalAtMs = null,
+    refusalReadError = null,
+    receiptMarkers = null,
+    deliveredIds = new Set(),
+    nowMs = Date.now(),
+  } = {},
+) {
+  return gates.map((gate) => {
+    if (deliveredIds.has(gate.id)) return { gate, deliver: false, reason: "already_delivered" };
+    if (gate.trigger.kind === "recent_refusal") {
+      // A known refusal is judged on its age even when the log has since become unreadable: losing the source does not
+      // un-refuse the action.
+      if (lastRefusalAtMs !== null && lastRefusalAtMs !== undefined) {
+        if (obstacleGateIsDue(gate, { lastRefusalAtMs }, nowMs)) return { gate, deliver: true, reason: null };
+        return {
+          gate,
+          deliver: false,
+          reason: `refusal_older_than_${String(gate.trigger.withinMs)}ms:${String(nowMs - lastRefusalAtMs)}ms`,
+        };
+      }
+      if (refusalReadError !== null && refusalReadError !== undefined)
+        return { gate, deliver: false, reason: `refusal_evidence_unreadable:${String(refusalReadError)}` };
+      // A log that carries no receipt line at all is not a run without refusals: it is a source that is not being
+      // written where this run reads. That is the instrument missing, and it must not look like an untriggered gate.
+      if (receiptMarkers === 0) return { gate, deliver: false, reason: "refusal_evidence_absent_from_mod_log" };
+      return { gate, deliver: false, reason: "no_refusal_recorded_in_this_run" };
+    }
+    if (gate.trigger.day !== day)
+      return { gate, deliver: false, reason: `gate_day_not_reached:${String(gate.trigger.day)}:at_day_${String(day)}` };
+    return { gate, deliver: true, reason: null };
+  });
+}
+
+/**
  * Evaluate every gate that has a reply recorded, and report the failures with their codes.
  *
  * A gate with no reply is `not_exercised`, never a pass: the run may simply not have reached that moment, and collapsing
  * "did not happen" into "worked" is how a gate stops meaning anything.
+ *
+ * `context` is the ground truth the gates judge against. It may be one object shared by every gate, or a function of
+ * the gate - which is how a run answers a question about "yesterday" without the module having to know which gate asks
+ * it: the caller reads the gate's own trigger and supplies the record for the day that trigger names. That keeps the
+ * schedule in one place instead of a second list of gate ids in the runner.
  */
 export function assessDialogueGates({ replies, context }) {
+  const contextFor = typeof context === "function" ? context : () => context ?? {};
   const findings = [];
   for (const gate of SCHEDULED_DIALOGUE_GATES) {
     const reply = replies?.[gate.id];
@@ -161,7 +226,7 @@ export function assessDialogueGates({ replies, context }) {
       findings.push({ id: gate.id, state: "not_exercised", reason: "no_reply_recorded" });
       continue;
     }
-    const outcome = gate.assert({ text: String(reply) }, context ?? {});
+    const outcome = gate.assert({ text: String(reply) }, contextFor(gate) ?? {});
     // Three states, not two. "The companion did the wrong thing" and "this run cannot answer the question" are different
     // findings, and collapsing them would either blame her for a missing instrument or hide a missing instrument behind a
     // pass. The second is the one this repository keeps paying for.

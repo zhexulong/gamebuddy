@@ -50,7 +50,7 @@ import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
-import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates } from "../dialogue-gates.mjs";
+import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates, planGateDeliveries } from "../dialogue-gates.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
@@ -776,8 +776,15 @@ const presentationPieces = [];
 // What the companion said to each scripted player line, keyed by gate id. A gate with no entry is `not_exercised` -
 // the run never reached that moment - which is a different finding from a bad answer.
 const dialogueReplies = new Map();
-// Why a scripted player line was NOT admitted, when that happened. Silence and refusal are different findings.
-const dialogueGateRefusals = new Map();
+// How each scripted player line reached the session - or why it never did. Keyed by gate id and written at the moment
+// the gate is claimed, so `result.json` cannot read "delivered and unanswered" the same way as "never delivered".
+// A claimed entry carries `state: "delivered"` with the moment, the refusal it was spoken against and what the admission
+// path answered (`accepted`, or `refused:<code>`).
+const dialogueDelivery = new Map();
+// The night that ended each day, as this run's own night watch observed it: `bedTime` is the latest clock it saw while
+// that day was still current, `passedOut` is the ENGINE taking the night at its own 26:00. The honesty gate asks about
+// yesterday, and this process has no other record of yesterday to answer with.
+const nightRecordsByDay = new Map();
 const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
 /**
@@ -1522,17 +1529,82 @@ async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_00
 const DIALOGUE_REPLY_WINDOW_MS = Number(process.env.GAMEBUDDY_DIALOGUE_REPLY_WINDOW_MS ?? 45_000);
 
 /**
- * Submit the gates due on one game day, without waiting for that day's turn to settle.
+ * The ground truth a scheduled gate is judged against, per gate.
+ *
+ * `yesterday` is the night record of the day BEFORE the morning the gate speaks on - `gate.trigger.day - 1`, derived
+ * from the gate itself so the record and the question cannot disagree about which night is meant. The night watch
+ * observes that record: `bedTime` is the latest clock it saw while the day was still current and `passedOut` is the
+ * engine taking the night at its own 26:00. Nothing in this process stores a bed time anywhere else, so it is an
+ * observation rather than a constant.
+ *
+ * `refusal` travels with the DELIVERY rather than with the assessment: it is the evidence that was in hand at the
+ * moment the player line was claimed, so a gate can never be handed a refusal that arrived after it spoke.
+ */
+function dialogueGateContext(gate) {
+  const triggerDay = gate.trigger.day;
+  const delivery = dialogueDelivery.get(gate.id);
+  return Object.freeze({
+    yesterday: Number.isInteger(triggerDay) && triggerDay > 1 ? (nightRecordsByDay.get(triggerDay - 1) ?? null) : null,
+    refusal: delivery?.state === "delivered" ? (delivery.refusal ?? null) : null,
+  });
+}
+
+/**
+ * Submit the gates due at this delivery boundary, without waiting for that day's turn to settle.
  *
  * Delivery and capture are separated on purpose: delivery goes through the same admission path a player uses, so it is a
  * real player turn and steers into the running work; capture reads the presentation pieces produced during the reply
  * window, sliced by index so one gate's answer cannot be attributed to another's turn.
+ *
+ * WHICH gates are due is decided by `planGateDeliveries`, from the schedule the gate module owns - including the
+ * refusal-triggered obstacle gate, which was skipped here by kind and therefore could never be spoken at all. Every
+ * decision, spoken or not, is recorded with the fact behind it, so an untriggered gate stops reading like an unwired one.
  */
 async function deliverDialogueGatesForDay(day) {
-  for (const gate of SCHEDULED_DIALOGUE_GATES) {
-    if (gate.trigger.kind === "recent_refusal") continue;
-    if (gate.trigger.day !== day) continue;
-    if (dialogueReplies.has(gate.id)) continue;
+  // A refusal is the obstacle gate's only ground truth, and the boundary is where that gate is decided on: re-read it
+  // here so the age judged is the age now, not the age at the last in-turn sample.
+  sampleRefusalEvidence();
+  const plans = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, {
+    day,
+    lastRefusalAtMs: refusalSample.atMs,
+    refusalReadError: refusalSample.readError,
+    receiptMarkers: refusalSample.markers,
+    deliveredIds: new Set([...dialogueDelivery].filter(([, entry]) => entry.state === "delivered").map(([id]) => id)),
+    nowMs: Date.now(),
+  });
+  for (const plan of plans) {
+    const gate = plan.gate;
+    if (plan.deliver !== true) {
+      if (plan.reason !== "already_delivered")
+        dialogueDelivery.set(
+          gate.id,
+          Object.freeze({ state: "not_delivered", day, atMs: Date.now(), reason: plan.reason }),
+        );
+      continue;
+    }
+    // Re-checked per gate: a concurrent invocation may have claimed a LATER gate while this one waited out an earlier
+    // gate's reply window, and the plan it worked from is by then stale.
+    if (dialogueDelivery.get(gate.id)?.state === "delivered") continue;
+    // Claimed BEFORE the first await: two turns can reach this function at once, and a gate claimed twice is the same
+    // player asking the same question twice.
+    const claimed = Object.freeze({
+      state: "delivered",
+      day,
+      atMs: Date.now(),
+      // The refusal is evidence only for the gate that is triggered by one; it is the sample, plus how old it was when
+      // the player spoke, so the answer can be traced back to the refusal it answers.
+      refusal:
+        gate.trigger.kind === "recent_refusal"
+          ? Object.freeze({
+              atMs: refusalSample.atMs,
+              ageMs: Date.now() - refusalSample.atMs,
+              code: refusalSample.code,
+              requestId: refusalSample.requestId,
+            })
+          : null,
+      admission: null,
+    });
+    dialogueDelivery.set(gate.id, claimed);
     const piecesBefore = presentationPieces.length;
     const admission = await submitPlayerPrompt({
       accept: (promptText, locale) => tools.acceptPlayerText(promptText, locale),
@@ -1542,9 +1614,12 @@ async function deliverDialogueGatesForDay(day) {
     }).catch((error) => ({ accepted: false, lastRefusal: String(error?.message ?? error) }));
     if (admission.accepted !== true) {
       // A refused line is recorded as an absent answer WITH its reason: an admission that never happened must not read
-      // as silence from the companion.
+      // as silence from the companion, and it must not read as a gate nobody wired either.
+      dialogueDelivery.set(
+        gate.id,
+        Object.freeze({ ...claimed, admission: `refused:${admission.lastRefusal ?? "unknown"}` }),
+      );
       dialogueReplies.set(gate.id, "");
-      dialogueGateRefusals.set(gate.id, admission.lastRefusal ?? "unknown");
       continue;
     }
     await new Promise((resolve) => setTimeout(resolve, DIALOGUE_REPLY_WINDOW_MS));
@@ -1554,6 +1629,7 @@ async function deliverDialogueGatesForDay(day) {
       .join("")
       .replace(/\s+/gu, " ")
       .trim();
+    dialogueDelivery.set(gate.id, Object.freeze({ ...claimed, admission: "accepted" }));
     dialogueReplies.set(gate.id, spoken);
   }
 }
@@ -1643,6 +1719,10 @@ async function runAgentTurn(text, tools) {
         worldStallReason = `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}`;
         break;
       }
+      // The refusal this run's own game recorded, kept current WHILE the turn runs. A refusal timestamped at the next
+      // delivery boundary would date a twenty-minute-old refusal to the moment the player asked about it, and the
+      // obstacle gate's whole premise is that the player is asking about something that just happened.
+      if (SCENARIO === "multiday_routine") sampleRefusalEvidence();
     }
     const quick = await Promise.race([agentTurn, Promise.resolve(null)]);
     if (quick !== null) {
@@ -2159,6 +2239,62 @@ function sampleModHeartbeat() {
   }
   return Object.freeze({ ...modHeartbeatSample, silentMs: Date.now() - modHeartbeatSample.sinceMs });
 }
+/**
+ * The Mod's own line for a published receipt - the one this run reads a refusal out of.
+ *
+ * `ModTrace.ReceiptPublishLogLine` prints it for EVERY receipt the Mod publishes, and `state=Rejected` is the Mod's own
+ * name for an action it refused to perform (an unreachable target, a blocked tile, an actor held by a menu). Every
+ * receipt passes through that one funnel (`FarmhandExecutionController.AddTrace`), so the population is all refusals
+ * this game recorded - not a sample of the ones somebody remembered to log.
+ */
+const MOD_RECEIPT_MARKER = "[receipt-publish-marker]";
+let refusalSample = Object.freeze({
+  markers: null,
+  count: null,
+  atMs: null,
+  code: null,
+  requestId: null,
+  readError: null,
+});
+/**
+ * Refresh this run's newest refusal from its own Mod log.
+ *
+ * Counting, not timestamp-parsing, and `Date.now()` is taken when the count GREW: the log's clock is written by another
+ * process in another format and midnight makes it ambiguous, so the sample's own arrival is the time this run can
+ * defend. The first sample is the BASELINE - lines already in the log belong to an earlier run of this lane, and
+ * counting them would let last night's refusal answer a question about "just now". An unreadable log records its
+ * reason and keeps whatever refusal was already known: losing the source does not un-refuse the action.
+ *
+ * Sampled from the running turn (so a refusal is timestamped when it happens, not when the turn ends) and again at each
+ * delivery boundary (so the last few seconds before the player speaks are not lost).
+ */
+function sampleRefusalEvidence() {
+  let markers;
+  let rejected;
+  try {
+    const rows = readFileSync(MOD_LOG_PATH(), "utf8")
+      .split("\n")
+      .filter((line) => line.includes(MOD_RECEIPT_MARKER));
+    markers = rows.length;
+    rejected = rows.filter((line) => line.includes("state=Rejected"));
+  } catch (error) {
+    refusalSample = Object.freeze({ ...refusalSample, readError: String(error?.message ?? error).slice(0, 120) });
+    return refusalSample;
+  }
+  const grew = refusalSample.count !== null && rejected.length > refusalSample.count;
+  const newest = grew ? (rejected.at(-1) ?? "") : null;
+  refusalSample = Object.freeze({
+    // How many receipt lines the log carries AT ALL. Zero is not "no refusal happened": it is this lane's log not
+    // carrying the marker, and a reader must be able to tell that from a run whose game refused nothing.
+    markers,
+    count: rejected.length,
+    atMs: grew ? Date.now() : refusalSample.atMs,
+    code: grew ? (newest.match(/reason=([^;]+)/u)?.[1] ?? null) : refusalSample.code,
+    requestId: grew ? (newest.match(/request=([^;]+)/u)?.[1] ?? null) : refusalSample.requestId,
+    readError: null,
+  });
+  return refusalSample;
+}
 const MULTIDAY_CROSSINGS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_CROSSINGS ?? "2", 10);
   if (!Number.isInteger(requested) || requested < MINIMUM_BASELINE_DAYS || requested > MAXIMUM_BASELINE_DAYS) {
@@ -2451,14 +2587,27 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     if (crossingTerminal() !== null) return true;
     return sleepTerminals().length < requests.length;
   };
+  // The hour the farmer actually went to bed, as this watch's own observations say it: the latest `timeOfDay` the
+  // engine reported while the PRE-CROSSING day was still current. The night record carries no bed time, so this is
+  // where the honesty gate's ground truth comes from - and it is an observation, not a constant: a companion who slept
+  // at 22:10 and one the engine passed out at 26:00 are different nights and different tests.
+  //
+  // A maximum, not the last reading: the game clock only advances within a day, so the latest value seen is the hour
+  // the night took the actor even if a later poll during the rollover fade returned the cached projection. A watch that
+  // never observed the clock leaves it null, and the gate then says what it is missing instead of guessing.
+  let bedTimeBeforeCrossing = null;
   const observeQuietly = async () => {
+    let snapshot;
     try {
-      return await client.observe();
+      snapshot = await client.observe();
     } catch {
       // A rollover's fade legitimately refuses an observation for a frame or two; the cached projection is
       // the current truth in that window.
-      return client.state?.snapshot ?? null;
+      snapshot = client.state?.snapshot ?? null;
     }
+    if (Number.isInteger(startDay) && snapshot?.dayOfMonth === startDay && Number.isInteger(snapshot?.timeOfDay))
+      bedTimeBeforeCrossing = Math.max(bedTimeBeforeCrossing ?? 0, snapshot.timeOfDay);
+    return snapshot;
   };
   const waitForNightToBegin = async () => {
     let daySettled = false;
@@ -2502,7 +2651,15 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   };
   const neverStarted = await waitForNightToBegin();
   if (neverStarted !== null) {
-    return Object.freeze({ terminal: null, after: await observeQuietly(), menus: [], reasonCode: neverStarted });
+    return Object.freeze({
+      terminal: null,
+      after: await observeQuietly(),
+      menus: [],
+      // A night that never began has no bed time to report; the field is published as null rather than omitted, so a
+      // reader never has to tell "not observed" apart from "not a field on this shape".
+      bedTime: bedTimeBeforeCrossing,
+      reasonCode: neverStarted,
+    });
   }
   // The day this watch began on - which is NOT the day the world is on once the wait above is over.
   //
@@ -2744,6 +2901,9 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       menus: outcome.menus,
       cause,
       release: "calendar_advanced",
+      // The hour the night took the actor, as this watch saw the clock. A night the calendar alone witnessed still has
+      // an hour: the observations kept coming while the day was current.
+      bedTime: bedTimeBeforeCrossing,
       reasonCode: null,
     });
   }
@@ -2760,6 +2920,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       after: afterNight,
       menus: outcome.menus,
       cause: null,
+      bedTime: bedTimeBeforeCrossing,
       reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,
     });
   }
@@ -2768,6 +2929,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     after: await observeQuietly(),
     menus: outcome.menus,
     cause,
+    bedTime: bedTimeBeforeCrossing,
     reasonCode: outcome.reasonCode ?? null,
   });
 }
@@ -3589,7 +3751,12 @@ try {
     // exactly the moment the record is published - after BOTH callbacks resolve, so this day's night watch has
     // already answered. The record therefore says whether the ENGINE ended the night (the 2:00 AM pass-out) or the
     // companion's own sleep, which is a cause and never a reason to stop: a pass-out starts the next day itself.
-    const nightCauses = new Map();
+    //
+    // The observation itself is kept in `nightRecordsByDay`, which is also what the honesty gate reads: one record per
+    // night, so the artifact and the gate cannot describe the same night differently.
+    // The baseline for the refusal sample, taken BEFORE the first turn: lines already in this lane's log belong to an
+    // earlier run, and counting them would let an old refusal answer a question about "just now".
+    sampleRefusalEvidence();
     const crossing = await runMultiDayLoop({
       crossNights: MULTIDAY_CROSSINGS,
       dayTurn: async (day) => {
@@ -3683,14 +3850,36 @@ try {
       },
       nightWatch: async (day) => {
         const night = await watchNightRollover(day, { dayTurnSettled });
-        nightCauses.set(day, night.cause ?? null);
+        // The same night, kept as the record a later PLAYER question is judged against: the honesty gate asks on the
+        // morning after and needs the hour she went to bed and whether the engine took the night. `passedOut` is
+        // `cause === "pass_out"` - an unattributed crossing (`engine`) is NOT evidence that she was up late, and this
+        // record does not round it into one.
+        nightRecordsByDay.set(
+          day,
+          Object.freeze({
+            day,
+            bedTime: night.bedTime ?? null,
+            passedOut: night.cause === "pass_out",
+            cause: night.cause ?? null,
+          }),
+        );
         return night;
       },
       onDay: (record) => {
-        record.cause = nightCauses.get(record.day) ?? null;
+        // The night's own observation travels on the day record, so the ground truth the honesty gate is judged
+        // against is visible in the artifact rather than only in this process's memory.
+        const night = nightRecordsByDay.get(record.day) ?? null;
+        record.cause = night?.cause ?? null;
+        record.bedTime = night?.bedTime ?? null;
+        record.passedOut = night?.passedOut ?? null;
         console.error(
           "MULTIDAY_NIGHT",
-          JSON.stringify({ day: record.day, cause: record.cause, menus: record.menus.map((menu) => menu.menuType) }),
+          JSON.stringify({
+            day: record.day,
+            cause: record.cause,
+            bedTime: record.bedTime,
+            menus: record.menus.map((menu) => menu.menuType),
+          }),
         );
       },
     });
@@ -3956,10 +4145,29 @@ try {
   // actions over fifteen minutes and produced no player-facing line at all: the rung's
   // own goal asks for a short report, and "did the companion play" includes "did it
   // tell the player". Silence is its own verdict, never a pass by omission.
-  // The dialogue verdict, judged by the gate module rather than by reading the transcript. `context.yesterday` is
-  // absent because the night records do not carry a bed time yet - and the honesty gate says so (`not_judgeable`)
-  // instead of guessing, which is the signal that the instrument is missing rather than that she answered badly.
-  const dialogueGates = assessDialogueGates({ replies: Object.fromEntries(dialogueReplies), context: {} });
+  //
+  // The dialogue verdict, judged by the gate module rather than by reading the transcript. Each gate is handed the
+  // ground truth IT needs (`dialogueGateContext`): yesterday's night record for the gate that speaks on the morning
+  // after, and the refusal the run had in hand when the obstacle gate spoke. A fact the run could not observe makes
+  // that gate `not_judgeable` with the missing fact named - never a pass, and never a charge against her.
+  const dialogueGates = assessDialogueGates({
+    replies: Object.fromEntries(dialogueReplies),
+    context: dialogueGateContext,
+  });
+  // What happened to each scheduled line, from the same population the judgement walks: delivered (with the moment,
+  // the admission answer and the refusal it was spoken against) or not delivered with the fact that stopped it. Without
+  // this, a gate the run never reached and a gate that was delivered and went unanswered publish identically.
+  const dialogueGateDelivery = Object.freeze(
+    SCHEDULED_DIALOGUE_GATES.map((gate) =>
+      Object.freeze({
+        id: gate.id,
+        ...(dialogueDelivery.get(gate.id) ?? {
+          state: "not_delivered",
+          reason: "no_delivery_boundary_reached",
+        }),
+      }),
+    ),
+  );
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
 
@@ -4233,6 +4441,11 @@ try {
     // Published because the verdict above is decided from it: a reader must be able to check the judgement instead
     // of trusting it, and a gap has to travel with the run that hit it (`missingFact`).
     taskPurposes,
+    // The scheduled player lines, judged by the gate module, and what happened to each of them: a gate that was never
+    // delivered is a different finding from one that was delivered and answered badly, and both are different from a
+    // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).
+    dialogueGates,
+    dialogueGateDelivery,
     capabilityAudit,
     presenceProjection,
     // The three assembly/content gates publish their OUTCOME vocabulary, not just a
