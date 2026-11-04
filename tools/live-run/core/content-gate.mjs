@@ -21,35 +21,22 @@ import { join, sep } from "node:path";
  *   The full three-field shape is the product baseline, but a single filled
  *   field is already "the card has a soul"; `personaComplete` additionally
  *   requires all three.
- * - `macroResidue`: unrendered SillyTavern macros ({{char}}, {{user}}) left
- *   in the profile would leak raw placeholders into the prompt tier.
+ * - Macros are NOT a content fact about this record. The durable profile is
+ *   AUTHORED data: it deliberately keeps the card's own `{{char}}` / `{{user}}`
+ *   and renders them at read (`host/src/tavern/macro-engine.ts` RESOLVED_MACROS,
+ *   `host/src/identity-profile.ts` renderIdentityProfile), which is how every
+ *   imported card is stored. A macro surviving into RENDERED text is the defect,
+ *   and only rendered text can show it: `companion-experience.mjs`
+ *   `evaluateHygiene` (rule `macro_residue`) over the companion's reply,
+ *   `browser-evidence.mjs` `no_macro_residue_in_dom` over the rendered DOM.
+ *   Reading the authored record for them reported the correct authored form as
+ *   residue and could never see a leak.
  */
 
 export const DEFAULT_PROFILE_ID = "gamebuddy.companion.default";
 
-const MACRO_PATTERN = /\{\{\s*(char|user|time|random|persona|description)\s*\}\}/gu;
-
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function findMacros(text) {
-  const found = new Set();
-  if (typeof text !== "string") return found;
-  for (const match of text.matchAll(MACRO_PATTERN)) found.add(match[0]);
-  return found;
-}
-
-function collectProfileText(profile) {
-  const parts = [];
-  if (isNonEmptyString(profile?.identity?.name)) parts.push(profile.identity.name);
-  if (isNonEmptyString(profile?.identity?.role)) parts.push(profile.identity.role);
-  if (isNonEmptyString(profile?.identity?.continuity)) parts.push(profile.identity.continuity);
-  const persona = profile?.persona ?? {};
-  for (const key of ["core", "interactionStyle", "expressionStyle"]) {
-    if (isNonEmptyString(persona[key])) parts.push(persona[key]);
-  }
-  return parts.join("\n");
 }
 
 /** Content facts from a parsed identity profile object. */
@@ -60,7 +47,6 @@ export function assessIdentityProfile(profile) {
       personaPresent: false,
       personaComplete: false,
       personaFields: Object.freeze({ core: false, interactionStyle: false, expressionStyle: false }),
-      macroResidue: [],
       identityName: null,
       isDefaultProfile: false,
     });
@@ -71,13 +57,11 @@ export function assessIdentityProfile(profile) {
     interactionStyle: isNonEmptyString(persona.interactionStyle),
     expressionStyle: isNonEmptyString(persona.expressionStyle),
   });
-  const macros = findMacros(collectProfileText(profile));
   return Object.freeze({
     profileRead: true,
     personaPresent: personaFields.core || personaFields.interactionStyle || personaFields.expressionStyle,
     personaComplete: personaFields.core && personaFields.interactionStyle && personaFields.expressionStyle,
     personaFields,
-    macroResidue: [...macros],
     identityName: isNonEmptyString(profile?.identity?.name) ? profile.identity.name : null,
     isDefaultProfile: profile?.profileId === DEFAULT_PROFILE_ID,
   });

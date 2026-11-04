@@ -42,7 +42,6 @@ test("an empty default profile is reported as present=false and complete=false",
   assert.equal(assessed.personaPresent, false);
   assert.equal(assessed.personaComplete, false);
   assert.deepEqual(assessed.personaFields, { core: false, interactionStyle: false, expressionStyle: false });
-  assert.deepEqual(assessed.macroResidue, []);
 });
 
 test("a full persona is present and complete", () => {
@@ -59,21 +58,24 @@ test("a single filled persona field is present but not complete", () => {
   assert.equal(assessed.personaComplete, false);
 });
 
-test("unrendered SillyTavern macros are detected as residue", () => {
+test("the card's own macros in the authored profile are not residue", () => {
+  // The durable profile keeps the author's `{{char}}`/`{{user}}` on purpose: that is the SillyTavern-compatible
+  // authored form every imported card is stored in, and `renderIdentityProfile` fills them when the profile is
+  // read (host/src/identity-profile.ts, host/src/tavern/macro-engine.ts). Reporting them here called the
+  // reviewed card's own persona a defect. Residue is a fact about RENDERED text, which this record is not.
   const profile = {
     ...personatedProfile,
     persona: { core: "{{char}} is a whale girl who lives in {{user}}'s world." },
   };
   const assessed = assessIdentityProfile(profile);
   assert.equal(assessed.personaPresent, true);
-  assert.deepEqual(assessed.macroResidue, ["{{char}}", "{{user}}"]);
+  assert.equal(Object.hasOwn(assessed, "macroResidue"), false);
 });
 
 test("null/undefined profile is a read gap, not an assertion", () => {
   const assessed = assessIdentityProfile(null);
   assert.equal(assessed.profileRead, false);
   assert.equal(assessed.personaPresent, false);
-  assert.deepEqual(assessed.macroResidue, []);
 });
 
 test("assessCapturedIdentityProfile finds the deep runtime-root profile and returns its facts", async (t) => {
