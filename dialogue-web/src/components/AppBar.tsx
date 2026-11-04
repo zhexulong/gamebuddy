@@ -61,8 +61,22 @@ export type AppBarProps = Readonly<{
   companionDigest?: string;
   /** Localized status word: online, or the turn state while one is in flight. */
   statusLabel: string;
-  /** `progress` adds the pulsing accent dot a running turn already implies. */
-  statusTone?: "idle" | "progress";
+  /**
+   * What the dot beside that word is a claim about: whether *this conversation* can send.
+   *
+   * - `idle` - the Host answered and nothing is generating, so the next turn has a route.
+   *   This is the only state that gets the shared `.status-dot`'s own `--success` paint.
+   * - `progress` - a turn is in flight; the accent dot pulses.
+   * - `cannot-send` - no connection or model, so nothing leaves this conversation. It takes
+   *   the shared neutral tone, never the success one, and it deliberately does not say
+   *   "not configured": a conversation whose connection exists but whose model is wrong is
+   *   this same state, and `statusLabel` is what names it.
+   * - `unknown` - the route read did not answer, so the dot has no claim to make and none is
+   *   drawn. A grey dot would say "we established that there is no route", which is the part
+   *   that is not known; the badge keeps the word as its accessible name at every width, so
+   *   omitting the dot omits no information.
+   */
+  statusTone?: "idle" | "progress" | "cannot-send" | "unknown";
   entries: readonly AppBarEntry[];
   /**
    * Where the bar folds its trailing entries behind one `More` disclosure. The
@@ -91,6 +105,10 @@ export function AppBar({
   // companion falls back to the brand mark, which is a name this bar already has.
   // `CompanionAvatar` owns the picture-or-monogram choice itself.
   const avatarName = companionName.trim().length === 0 ? brandMark : companionName.trim();
+
+  // The shared dot's paint for this bar's claim (style.css). `undefined` leaves the base
+  // `.status-dot` rule - which is `--success` - and is right in exactly one case, `idle`.
+  const statusDotTone = statusTone === "progress" ? "progress" : statusTone === "cannot-send" ? "neutral" : undefined;
 
   const foldAt = fold?.from ?? entries.length;
   const visibleEntries = entries.slice(0, foldAt);
@@ -180,11 +198,7 @@ export function AppBar({
             name it at every width, so retiring the word never retires the fact
             and "a coloured dot" is never the whole of it. */}
         <span className="app-bar-status" role="status" aria-label={statusLabel} title={statusLabel}>
-          <span
-            className="status-dot"
-            {...(statusTone === "progress" ? { "data-tone": "progress" } : {})}
-            aria-hidden="true"
-          />
+          {statusTone !== "unknown" && <span className="status-dot" data-tone={statusDotTone} aria-hidden="true" />}
           <span className="app-bar-status-label">{statusLabel}</span>
         </span>
       </div>

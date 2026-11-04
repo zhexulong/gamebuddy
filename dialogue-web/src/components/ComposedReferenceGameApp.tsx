@@ -25,7 +25,7 @@ import {
   useComposedBootstrap,
 } from "./use-composed-bootstrap";
 import { useArrivalReread } from "./use-arrival-reread";
-import { AppBar } from "./AppBar";
+import { AppBar, type AppBarProps } from "./AppBar";
 import { ChatSurface } from "./ChatSurface";
 import { GameSurface } from "./GameSurface";
 import { ContextDrawer } from "./ContextDrawer";
@@ -1380,7 +1380,8 @@ export function ComposedReferenceGameApp() {
   const arrivalReads = useArrivalReread(shownSurface, bootstrap, localeRef, rereadChat, managementPipelineApiRef);
 
   /**
-   * The app bar's status word, from the only facts this shell actually holds.
+   * The app bar's status: one derivation, read twice - the word the badge carries and the tone
+   * of the dot beside it.
    *
    * A turn in flight is the one state that was ever honest on its own. Beyond it, the bar used to say
    * `online` for everything that was not generating - so a conversation with no model behind it, the
@@ -1388,7 +1389,7 @@ export function ComposedReferenceGameApp() {
    * list: `chat.submit` is projected `available` exactly when no turn exists (`host/src/tavern/
    * reference-pipeline-state.ts`, `projectOperations`), which is a fact about the turn, not about the
    * configuration. The one fact about whether a reply can reach a model is `chatModelRoute`, read
-   * from the two settings projections by `chat-model-route.ts`, and it is what these two words say.
+   * from the two settings projections by `chat-model-route.ts`, and it is what these words say.
    *
    * `online` therefore means what this shell can know - a saved connection is active, so the next
    * turn is sent through it - and not "the Host is reachable": there is no health fact here at all,
@@ -1396,14 +1397,19 @@ export function ComposedReferenceGameApp() {
    * read that did not answer, and an answer that did not arrive is not evidence that one would; the
    * badge cannot be omitted (`AppBar.statusLabel` is required and its accessible name is read from
    * it), so it says so instead of guessing.
+   *
+   * The dot is the same fact in the other channel, so it is decided here beside the word: a bar at
+   * 400 px hides `.app-bar-status-label` and the dot is all that is left, and an always-success dot
+   * meant a cold start with no connection still glowed green. The two are one object so they cannot
+   * disagree (`AppBar.statusTone`).
    */
-  const statusLabel = turnInFlight
-    ? labels().generating
+  const status: Readonly<{ label: string; tone: NonNullable<AppBarProps["statusTone"]> }> = turnInFlight
+    ? { label: labels().generating, tone: "progress" }
     : arrivalReads.chatModelRoute.kind === "connection"
-      ? labels().online
+      ? { label: labels().online, tone: "idle" }
       : arrivalReads.chatModelRoute.kind === "none"
-        ? labels().statusNotReady
-        : labels().statusUnknown;
+        ? { label: labels().statusNotReady, tone: "cannot-send" }
+        : { label: labels().statusUnknown, tone: "unknown" };
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -1439,8 +1445,8 @@ export function ComposedReferenceGameApp() {
               companionName={view.session.snapshot.chat.companion.name}
               companionHandle={view.session.snapshot.chat.companion.handle}
               companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-              statusLabel={statusLabel}
-              statusTone={turnInFlight ? "progress" : "idle"}
+              statusLabel={status.label}
+              statusTone={status.tone}
               entries={[
                 // The surfaces are peers: each entry selects the region's content and
                 // the conversation is simply the default one (design/104 §2).

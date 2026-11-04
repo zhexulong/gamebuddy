@@ -20,6 +20,12 @@ import { expect, test } from "./frontend-coverage";
  *  - no element in the bar overflows its own box: catches the retired status word
  *    coming back as a 1px box whose text still lays out 24px (`overBy 23`) - a
  *    clipped sliver that is neither readable nor gone.
+ *
+ * The mount is a conversation with an active connection, because the badge this file
+ * measures is the dot: the dot is a claim about whether this conversation can send, so a
+ * mount whose model route never answered draws no dot at all and there would be nothing on
+ * the monogram to place (`app-bar-status-claims-a-fact.spec.ts` pins that reading, and the
+ * two settings reads below are what make this one a real connectable conversation).
  */
 
 const token = "A".repeat(43);
@@ -76,6 +82,21 @@ const composedRoot = {
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
+// The two projections `chat-model-route.ts` reads, so the badge has a route to claim.
+const connectionId = "E".repeat(42) + "A";
+const ACTIVE_CONNECTION = {
+  connectionId,
+  label: "DeepSeek",
+  providerLabel: "DeepSeek",
+  modelId: "deepseek-v4-pro",
+  modelLabel: "DeepSeek V4 Pro",
+  thinkingLevel: "high",
+  readiness: "ready",
+  baseUrl: null,
+  failure: null,
+  lastCheckedAtMs: null,
+};
+
 test("the 400px app bar names its status on the companion's monogram and keeps the name whole", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -89,6 +110,38 @@ test("the 400px app bar names its status on the companion's monogram and keeps t
   );
   await page.route("**/api/tavern/v1/chats?*", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, chats: [] })),
+  );
+  await page.route("**/api/tavern/v1/settings/connection", (route) =>
+    route.fulfill(
+      jsonOk({
+        apiVersion: 1,
+        revision: 3,
+        active: ACTIVE_CONNECTION,
+        connections: [
+          {
+            connectionId,
+            label: "DeepSeek",
+            providerId: "deepseek",
+            providerLabel: "DeepSeek",
+            configured: true,
+            readiness: "ready",
+            active: true,
+            modelId: "deepseek-v4-pro",
+            modelLabel: "DeepSeek V4 Pro",
+            thinkingLevel: "high",
+            allowedThinkingLevels: ["high", "max"],
+            modelIds: null,
+            baseUrl: null,
+            failure: null,
+            lastCheckedAtMs: null,
+          },
+        ],
+        providers: [],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/settings/profiles", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, recommendedModels: [], chat: { revision: 0, thinkingLevel: "high" }, game: { revision: 0, thinkingLevel: "high" } })),
   );
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 

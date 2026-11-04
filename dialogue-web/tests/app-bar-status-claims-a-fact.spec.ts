@@ -29,6 +29,13 @@ import { messages } from "../src/i18n";
  *    connection panel's own "Not configured", which answers a different question);
  *  - a route read that did not answer → a word that admits it, never 在线: an answer that did not
  *    arrive is not evidence that one would.
+ *
+ * The dot beside the word is the same claim in the other channel, and at ≤480 px it is the only
+ * channel left (`style.css` hides `.app-bar-status-label` there). Measured defect D5: the tone was
+ * binary - `progress` or `idle` - so every state that was not generating painted the shared
+ * `.status-dot`, whose own rule is `--success`. A cold start with no connection, no key and the
+ * Bridge offline glowed green. So each reading below pairs its word with the dot's computed
+ * `background-color`, measured against the same page's resolved `var(--success)`.
  */
 
 const token = "A".repeat(43);
@@ -142,6 +149,26 @@ async function stubShell(
 const statusWord = async (page: Page): Promise<string | null> =>
   await page.locator(".app-bar-status").getAttribute("aria-label");
 
+/**
+ * What the status dot is painted, and what the success paint is on this page.
+ *
+ * Measured as the computed `background-color`, because that is the claim the eye reads at 400 px,
+ * where `style.css` retires `.app-bar-status-label` and the dot is the whole of the badge. The
+ * success paint is resolved from `var(--success)` by the same engine rather than transcribed here,
+ * so this reading cannot drift from the token the shared `.status-dot` rule uses.
+ */
+async function dotPaint(page: Page): Promise<Readonly<{ dot: string | null; success: string }>> {
+  return await page.evaluate(() => {
+    const dot = document.querySelector<HTMLElement>(".app-bar-status .status-dot");
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = "var(--success)";
+    document.body.appendChild(probe);
+    const success = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return { dot: dot === null ? null : getComputedStyle(dot).backgroundColor, success };
+  });
+}
+
 test.describe("the app bar's status is a fact about this conversation", () => {
   test("with no connection and no model it does not claim to be online", async ({ page }) => {
     await stubShell(page, { active: false });
@@ -153,6 +180,12 @@ test.describe("the app bar's status is a fact about this conversation", () => {
       catalogue.connectionReadinessUnconfigured,
     );
     expect(await statusWord(page), "and nothing claims reachability").not.toBe(catalogue.online);
+    // The dot is the same claim in the other channel, and at 400 px it is the only channel left:
+    // a cold start with no connection painted it `--success`, so the strip glowed green over a
+    // conversation that could not send anything.
+    const paint = await dotPaint(page);
+    expect(paint.dot, "the badge still draws a dot").not.toBeNull();
+    expect(paint.dot, "no connection and no model is not painted as reachable").not.toBe(paint.success);
     // The surface already says why, where the player is looking - the bar is the summary, not the
     // only statement.
     await expect(page.getByTestId("chat-surface")).toContainText(catalogue.chatNoModelTitle);
@@ -167,6 +200,10 @@ test.describe("the app bar's status is a fact about this conversation", () => {
     expect(await statusWord(page), "an answer that did not arrive is not evidence one would").not.toBe(
       catalogue.online,
     );
+    // And the dot makes no claim either: neither the success paint (which would be the "online"
+    // this reading just refused to say) nor the neutral one, which asserts the opposite fact - that
+    // there is no route. Nothing is known, so nothing is drawn; the word above is the whole report.
+    expect((await dotPaint(page)).dot, "a route read that did not answer draws no dot at all").toBeNull();
   });
 
   test("an active connection is online", async ({ page }) => {
@@ -175,6 +212,10 @@ test.describe("the app bar's status is a fact about this conversation", () => {
     await expect(page.getByTestId("chat-surface")).toBeVisible();
 
     await expect.poll(() => statusWord(page)).toBe(catalogue.online);
+    // The control for the two readings above: this is the one state whose dot is the success paint,
+    // so an assertion that the other two differ from it cannot pass by the paint being unreadable.
+    const paint = await dotPaint(page);
+    expect(paint.dot, "an active connection paints the dot as the reachable one").toBe(paint.success);
   });
 
   test("a turn in flight is still the generating word", async ({ page }) => {
