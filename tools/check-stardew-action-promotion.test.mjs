@@ -18,6 +18,11 @@ const sources = await Object.fromEntries(
       ["gameTools", "host/src/game-tools.ts"],
       ["protocol", "host/src/protocol.ts"],
       ["schema", "protocol/bridge-v1.schema.json"],
+      // The Host's own lifecycle admission set, which runs BEFORE every other clause: a lifecycle it drops makes a
+      // registration malformed, so no downstream predicate can rescue it. Without this source the whole suite was
+      // red on `admission_vocabulary_not_found` while the gate itself was green - the falsifier could not fail for
+      // the reason it exists for.
+      ["integrationAdapter", "host/src/game-integration-adapter.ts"],
     ].map(async ([key, path]) => [key, await readFile(resolve(root, path), "utf8")]),
   ),
 );
@@ -39,6 +44,16 @@ test("promotion checker rejects a Bridge hello that stops projecting Mod registr
   });
 
   assert.ok(failures.includes("bridge_hello_registration_advertisement_missing:move_to_tile"));
+});
+
+test("promotion checker rejects a Host admission vocabulary that drops a descriptor-eligible lifecycle", () => {
+  // The rule this falsifies is the one that ran in the Host and discarded 66 actions as malformed registrations.
+  // It is asserted through the SAME source map the passing case uses, so a mutation here is the only way the
+  // admission clause is proven able to fail.
+  const dropped = sources.integrationAdapter.replace('  "live_verified",\n', "");
+  assert.notEqual(dropped, sources.integrationAdapter, "the mutation must actually apply");
+  const failures = failuresFor({ integrationAdapter: dropped });
+  assert.ok(failures.includes("admission_vocabulary_missing:live_verified"), JSON.stringify(failures));
 });
 
 test("promotion checker rejects a duplicate or missing source-owned projection", () => {
