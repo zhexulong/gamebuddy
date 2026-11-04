@@ -123,22 +123,48 @@ export function AppBar({
   const morePanelId = useId();
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const moreTriggerRef = useRef<HTMLButtonElement>(null);
 
-  // The folded entries are the same peer controls, so the disclosure that holds
-  // them is a disclosure and nothing more: Escape closes it and returns focus to
-  // the button that opened it, a click outside closes it, nothing is covered and
-  // nothing is modal - selecting an entry replaces the surface exactly as a
-  // visible entry does.
+  // The folded entries are the same peer controls, so nothing is covered and nothing
+  // is modal: there is no backdrop, no dimming and no `aria-modal`, and selecting an
+  // entry replaces the surface exactly as a visible entry does. Its keyboard behaviour
+  // is a closed loop all the same, because that is what the panel is for at 400 px:
+  // opening moves focus onto its first entry, Tab wraps inside it (last -> first, and
+  // first -> last with Shift), Escape closes it and returns focus to the button that
+  // opened it, and a click outside closes it. Tab is wrapped rather than allowed to
+  // leave: these four peers exist nowhere else in a 400 px bar, so a Tab that escaped
+  // would make the panel a one-way trip to the page behind it - measured before this,
+  // the fifth Tab left the panel for the conversation below.
   useEffect(() => {
     if (!moreOpen) return;
+    // The trigger's own next Tab would land behind the panel the player just opened.
+    moreMenuRef.current?.querySelector<HTMLElement>("button")?.focus();
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      // Escape belongs to this disclosure while it is open: closing the panel
-      // must not also step the shell back to the conversation behind it.
-      event.stopPropagation();
-      setMoreOpen(false);
-      moreTriggerRef.current?.focus();
+      if (event.key === "Escape") {
+        // Escape belongs to this disclosure while it is open: closing the panel
+        // must not also step the shell back to the conversation behind it.
+        event.stopPropagation();
+        setMoreOpen(false);
+        moreTriggerRef.current?.focus();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const menu = moreMenuRef.current;
+      // Focus on the trigger (or anywhere outside the panel) is not the panel's to hold:
+      // the trigger's own Tab already leads into it.
+      if (menu === null || !menu.contains(document.activeElement)) return;
+      const panelEntries = [...menu.querySelectorAll<HTMLElement>("button")];
+      if (panelEntries.length === 0) return;
+      const first = panelEntries[0];
+      const last = panelEntries[panelEntries.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     const onPointerDown = (event: PointerEvent): void => {
       if (moreRef.current !== null && !moreRef.current.contains(event.target as Node)) setMoreOpen(false);
@@ -222,7 +248,12 @@ export function AppBar({
             >
               <MoreHorizontal size={18} aria-hidden="true" />
             </button>
-            <div className="app-bar-more-menu" id={morePanelId} {...(moreOpen ? { "data-open": "true" as const } : {})}>
+            <div
+              className="app-bar-more-menu"
+              ref={moreMenuRef}
+              id={morePanelId}
+              {...(moreOpen ? { "data-open": "true" as const } : {})}
+            >
               {foldedEntries.map((entry) =>
                 renderEntry({
                   ...entry,
