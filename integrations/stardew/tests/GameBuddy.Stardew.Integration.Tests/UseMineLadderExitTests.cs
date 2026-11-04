@@ -27,10 +27,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <c>MineShaft</c> - it needs a loaded map and a content manager - so the success path (the question opening, the
 /// answer being accepted, the warp landing the actor outside) is asserted by SOURCE PIN here and by nothing else;
 /// the live proof is <c>tools/run-stardew-native-local-player-use-mine-ladder-smoke.mjs</c>, which has not been run.
-/// The decompiled-line anchors live in <c>MineExitLadderNativeDriftTests</c>, which this game-free lane cannot compile
+/// The decompiled-line anchors live in <c>MineExitLadderSourceShapeTests</c>, which this game-free lane cannot compile
 /// because its source reads the gitignored reference tree.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the three catalog and acceptance tests construct the real FarmhandActionCatalog, BridgeProtocol and FarmhandExecutionAcceptance and call them; every other test here, including the gate-registration class below, reads repository source text, because the native mine seam needs a loaded map and a content manager that a headless runner cannot build.
 public sealed class UseMineLadderExitTests
 {
     private const string TransportActionsFile =

@@ -16,7 +16,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <c>reference-tree</c>).
 /// </para>
 /// </summary>
-public sealed class MineExitLadderNativeDriftTests
+[Trait("kind", "source-shape")]
+public sealed class MineExitLadderSourceShapeTests
 {
     private const string MineShaftRelativePath =
         "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/MineShaft.cs";

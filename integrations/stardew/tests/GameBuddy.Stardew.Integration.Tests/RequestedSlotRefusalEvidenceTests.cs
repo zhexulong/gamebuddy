@@ -45,8 +45,10 @@ public sealed class RequestedSlotRefusalEvidenceTests
     {
         // The two repairs are different - one cannot be fixed by the Mod at all - and the claim's own
         // vocabulary already states which is which, so the receipt reuses it rather than inventing a word.
+        // `blocked_by` is the LAYER half of the same resolution: `tool_refusal` says why within the layer, the shared
+        // field says which layer, and the detail is the category the action's own claim names.
         DescribeSlot(new List<Item?> { Hoe(), null }, requestedSlot: 1, heldSlot: 0, actionId: "chop_stump")
-            .Should().Be("slot=1;holds=none;held=hoe;tool_slot=none;tool_refusal=tool_not_owned:axe");
+            .Should().Be("slot=1;holds=none;held=hoe;tool_slot=none;tool_refusal=tool_not_owned:axe;blocked_by=tool:axe");
 
         // An UPGRADED axe now SATISFIES `chop_stump`, because the claim is `AnyUpgrade` - the old `BasicOnly` demanded
         // the level-0 tier the game does not require (see `FarmhandResourceTemplateValue.BasicOnly`).

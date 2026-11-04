@@ -165,13 +165,18 @@ public class MoveApproachSubstitutionTests
         controller.Should().Contain("FormatReachableHint(assessed.ClosestToTarget");
         // And a refusal must NAME what blocks a tile it refuses: resource clumps, large terrain features and
         // buildings live outside objects/terrainFeatures, so asking only those answered "none" about a real wall
-        // (measured: live refusals read blocked_by=none for tiles the planner would not enter).
-        controller.Should().Contain("clump:",
+        // (measured: live refusals read blocked_by=none for tiles the planner would not enter). The name is now a
+        // declared LAYER rather than a "clump:" prefix composed at the call site, so the assertion follows the
+        // declaration: the terrain stage must ask each of those layers, and the closed set must render each word.
+        controller.Should().Contain("RefusalLayerKind.Clump",
             "resource clumps block tiles and are not in objects or terrainFeatures");
-        controller.Should().Contain("large:",
+        controller.Should().Contain("RefusalLayerKind.Large",
             "large terrain features block tiles and are not in objects or terrainFeatures");
-        controller.Should().Contain("building:",
+        controller.Should().Contain("RefusalLayerKind.Building",
             "building footprints block tiles and are not in objects or terrainFeatures");
+        string layers = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "RefusalLayer.cs")));
+        layers.Should().Contain("\"clump\"").And.Contain("\"large\"").And.Contain("\"building\"",
+            "a layer the probe can report must have one wire word in the closed set");
         // And a refusal must say when the wall is REMOVABLE, because "no route" and "no route until you chop the
         // twig" are different messages. The predicates are the same ones the clearing actions use.
         controller.Should().Contain("IsRemovableLitter(blockedItem)");

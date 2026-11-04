@@ -14,11 +14,15 @@ namespace GameBuddy.Stardew.Core.Models;
 /// removes; <c>non_removable_object</c> is an object no axe or pickaxe removes, so the
 /// removal action refuses it by name instead of the Agent having to guess why it is
 /// invisible; <c>breakable_container</c> is a breakable container and <c>Slot</c> holds
-/// a heavy hitter for it.
+/// a heavy hitter for it; <c>placed_furniture</c> is a piece standing in
+/// <c>location.furniture</c> - the room's own bed, sofa or rug, which never appears in
+/// <c>location.objects</c>, so none of the four object kinds can describe it - and it is
+/// named through <c>move_placed_furniture</c>.
 /// </para>
 /// <para>
 /// <c>Slot</c> is the backpack slot the named action must act through, or -1 when the
-/// actor owns no tool this lane can act with. It is a fact about the actor's own
+/// actor owns no tool this lane can act with (a placed furniture piece is always -1:
+/// no tool in this lane lifts one). It is a fact about the actor's own
 /// backpack, not an instruction: the action still requires that slot to be EQUIPPED and
 /// refuses with a named code when it is not. The Mod's serializer omits null members, so
 /// every field here is always written and never null.

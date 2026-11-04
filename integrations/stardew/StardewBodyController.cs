@@ -345,9 +345,14 @@ internal sealed class StardewBodyController
             // The blocker this walk was started for is gone, yet the engine still has no route. That is a fact
             // about the world; the fresh plan is offered when one resolves, and no second clear is implied.
             string next = fresh is null ? string.Empty : $";{fresh.Evidence}";
+            // The ONE `no_native_path` refusal that used to omit the field: every other mint site carried it, so this one
+            // read as "nothing is in the way" about a world the caller had just failed to walk through.
+            string blockedBy = RefusalProbe
+                .Describe(action: null, localPlayer.currentLocation, arrived.Requested.TargetTile, localPlayer)
+                .Format();
             this.Fail(
                 NoNativePathReasonCode,
-                $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true{next}");
+                $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true;blocked_by={blockedBy}{next}");
             return;
         }
 
@@ -394,7 +399,13 @@ internal sealed class StardewBodyController
         evidence = null;
         // Asked once and shared by the evidence and the hint, in both branches that can refuse. It is a pure read of the
         // map and the entity lists, so a second call would only risk a second answer.
-        string blockedBy = DescribeTargetOccupant(localPlayer.currentLocation, specification.TargetTile, localPlayer);
+        //
+        // No action row: a WALK declares no tool, no item and no approach, so the layers that can honestly answer are the
+        // world ones (a character or an object on the tile, then the map). Passing the caller's action here would let
+        // `blocked_by` blame its inventory for a route the planner refused.
+        string blockedBy = RefusalProbe
+            .Describe(action: null, localPlayer.currentLocation, specification.TargetTile, localPlayer)
+            .Format();
         if (this.active is not null)
         {
             // The body controller can hold exactly one ownership: an in-flight local move. It names it through the
@@ -1046,18 +1057,7 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
-    /// Names what stands on a refused destination tile, so the refusal is
-    /// actionable: <c>&lt;qualifiedItemId&gt;@x,y</c> for an object,
-    /// <c>terrain:&lt;type&gt;</c> for a terrain feature, <c>clump:&lt;type&gt;</c>, <c>large:&lt;type&gt;</c> or
-    /// <c>building:&lt;type&gt;</c> for the blocking collections that are not <c>objects</c> or
-    /// <c>terrainFeatures</c>, or <c>none</c>.
-    ///
-    /// Why the extra collections: a live refusal reported <c>blocked_by=none</c> for tiles the planner refuses,
-    /// which reads as "nothing is in the way" about a wall. Resource clumps, large terrain features and buildings
-    /// live in their own collections, so asking only the first two answered <c>none</c> for a real obstacle.
-    /// </summary>
-    /// <summary>
-    /// Why a tile is not standable, asked in the SAME order the engine asks it.
+    /// What stands on one tile, in the order the ENGINE asks it, as the layer `blocked_by` names.
     ///
     /// <para>
     /// The order is the point, not the detail. `GameLocation.isTilePassable` (GameLocation.cs:2898) reads the Back tile,
@@ -1068,8 +1068,14 @@ internal sealed class StardewBodyController
     /// <para>
     /// Measured 2026-11-01 (`round23`): 25 `no_native_path` refusals in Mountain, every one carrying `blocked_by=none`,
     /// while the companion re-aimed at nine coordinates. The mine entrance is behind `landslide`, which is
-    /// `DaysPlayed < 5` (Mountain.cs:34) over tiles (50,4)-(52,8) (Mountain.cs:36). It is a NetBool, not an object, so
+    /// `DaysPlayed &lt; 5` (Mountain.cs:34) over tiles (50,4)-(52,8) (Mountain.cs:36). It is a NetBool, not an object, so
     /// enumerating entity types could never name it.
+    /// </para>
+    /// <para>
+    /// The extra collections are why it is layered at all: a live refusal reported `blocked_by=none` for tiles the planner
+    /// refuses, which reads as "nothing is in the way" about a wall. Resource clumps, large terrain features and buildings
+    /// live in their own collections, so asking only the first two answered `none` for a real obstacle. Furniture lives in
+    /// its own collection too (`GameLocation.furniture`), which is why a sofa used to read as empty floor.
     /// </para>
     /// <para>
     /// This reports the LAYER that refuses, not the field that makes the layer refuse. `location_constraint` says the map
@@ -1078,50 +1084,94 @@ internal sealed class StardewBodyController
     /// decision - this answers the question without it.
     /// </para>
     /// </summary>
-    internal static string DescribeTargetOccupant(GameLocation location, Vector2 tile, Farmer? player = null)
+    internal static RefusalLayerToken DescribeTargetOccupant(GameLocation location, Vector2 tile, Farmer? player = null)
     {
         Point point = new((int)tile.X, (int)tile.Y);
+        RefusalLayerToken tileLayer = DescribeTileLayer(location, point);
+        if (tileLayer.Refused)
+            return tileLayer;
+        RefusalLayerToken constraint = DescribeLocationConstraint(location, tile, player);
+        if (constraint.Refused)
+            return constraint;
+        RefusalLayerToken occupying = RefusalProbe.ObjectOn(location, tile);
+        if (occupying.Refused)
+            return occupying;
+        return DescribeFeatureLayer(location, tile);
+    }
 
-        // The engine's own two tile tests, in its own order. Asking `isTilePassable` would collapse them into one
-        // boolean; asking the layers separately names which one refused.
+    /// <summary>
+    /// The same world question WITHOUT the object layer, for a caller that asks about objects at its own point in the
+    /// order (<see cref="RefusalProbe"/>): one reading of a tile's object, composed where each caller needs it.
+    /// </summary>
+    internal static RefusalLayerToken DescribeTerrainLayer(GameLocation location, Vector2 tile, Farmer? player = null)
+    {
+        Point point = new((int)tile.X, (int)tile.Y);
+        RefusalLayerToken tileLayer = DescribeTileLayer(location, point);
+        if (tileLayer.Refused)
+            return tileLayer;
+        RefusalLayerToken constraint = DescribeLocationConstraint(location, tile, player);
+        if (constraint.Refused)
+            return constraint;
+        return DescribeFeatureLayer(location, tile);
+    }
+
+    /// <summary>The engine's own two tile tests, in its own order. Asking `isTilePassable` would collapse them.</summary>
+    private static RefusalLayerToken DescribeTileLayer(GameLocation location, Point point)
+    {
         xTile.Tiles.Tile? backTile = location.map?.GetLayer("Back")?.Tiles[point.X, point.Y];
         if (backTile is not null && backTile.TileIndexProperties.ContainsKey("Passable"))
-            return $"back_tile:Passable@{point.X},{point.Y}";
+            return new RefusalLayerToken(RefusalLayerKind.BackTile, $"Passable@{point.X},{point.Y}");
 
         xTile.Tiles.Tile? buildingTile = location.map?.GetLayer("Buildings")?.Tiles[point.X, point.Y];
         if (buildingTile is not null
             && !buildingTile.TileIndexProperties.ContainsKey("Shadow")
             && !buildingTile.TileIndexProperties.ContainsKey("Passable"))
-            return $"buildings_tile:blocked@{point.X},{point.Y}";
+            return new RefusalLayerToken(RefusalLayerKind.BuildingsTile, $"blocked@{point.X},{point.Y}");
+        return RefusalLayerToken.None;
+    }
 
-        // A location-level constraint is invisible to every entity query: it is a rectangle test inside a virtual the
-        // location overrides. Probe it the way a walking character would, over the tile's own pixel box.
-        if (player is not null
-            && location.isCollidingPosition(new Microsoft.Xna.Framework.Rectangle(point.X * 64, point.Y * 64, 64, 64),
-                Game1.viewport, isFarmer: true, damagesFarmer: 0, glider: false, player))
-            return $"location_constraint@{point.X},{point.Y}";
+    /// <summary>
+    /// A location-level constraint is invisible to every entity query: it is a rectangle test inside a virtual the
+    /// location overrides (Mountain's `landslide`), so it is probed the way a walking character would, over the tile's
+    /// own pixel box. `blocked` is the relation word rather than a bare position: the field says WHICH relation failed.
+    /// </summary>
+    private static RefusalLayerToken DescribeLocationConstraint(GameLocation location, Vector2 tile, Farmer? player)
+    {
+        if (player is null)
+            return RefusalLayerToken.None;
+        Point point = new((int)tile.X, (int)tile.Y);
+        return location.isCollidingPosition(new Microsoft.Xna.Framework.Rectangle(point.X * 64, point.Y * 64, 64, 64),
+            Game1.viewport, isFarmer: true, damagesFarmer: 0, glider: false, player)
+            ? new RefusalLayerToken(RefusalLayerKind.LocationConstraint, $"blocked@{point.X},{point.Y}")
+            : RefusalLayerToken.None;
+    }
 
-        if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
-            return $"{item.QualifiedItemId}@{point.X},{point.Y}";
+    /// <summary>
+    /// The blocking collections that are neither `objects` nor map tiles: a terrain feature, a resource clump, a large
+    /// terrain feature's bounding box, or a building footprint.
+    /// </summary>
+    private static RefusalLayerToken DescribeFeatureLayer(GameLocation location, Vector2 tile)
+    {
+        Point point = new((int)tile.X, (int)tile.Y);
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) && feature is not null)
-            return $"terrain:{feature.GetType().Name}@{point.X},{point.Y}";
+            return new RefusalLayerToken(RefusalLayerKind.Terrain, $"{feature.GetType().Name}@{point.X},{point.Y}");
         foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
         {
             if (clump.occupiesTile(point.X, point.Y))
-                return $"clump:{clump.GetType().Name}@{point.X},{point.Y}";
+                return new RefusalLayerToken(RefusalLayerKind.Clump, $"{clump.GetType().Name}@{point.X},{point.Y}");
         }
         foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
         {
             // Large terrain features have a bounding box, not an occupancy query; the tile centre is the honest test.
             if (large.getBoundingBox().Contains(point.X * 64 + 32, point.Y * 64 + 32))
-                return $"large:{large.GetType().Name}@{point.X},{point.Y}";
+                return new RefusalLayerToken(RefusalLayerKind.Large, $"{large.GetType().Name}@{point.X},{point.Y}");
         }
         foreach (StardewValley.Buildings.Building building in location.buildings)
         {
             if (building.occupiesTile(tile, applyTilePropertyRadius: false))
-                return $"building:{building.buildingType.Value}@{point.X},{point.Y}";
+                return new RefusalLayerToken(RefusalLayerKind.Building, $"{building.buildingType.Value}@{point.X},{point.Y}");
         }
-        return "none";
+        return RefusalLayerToken.None;
     }
 
     /// <summary>
@@ -1173,7 +1223,7 @@ internal sealed class StardewBodyController
                 parts.Add($"{direction}:off_map");
                 continue;
             }
-            string occupant = DescribeTargetOccupant(location, neighbourTile, actor);
+            string occupant = DescribeTargetOccupant(location, neighbourTile, actor).Format();
             bool walkable = IsWalkableTile(location, actor, neighbourTile);
             // A blocked tile that holds a REMOVABLE object is a different message from one that does not: the first
             // tells the caller the wall can be taken down with a tool it already has, the second that it cannot. The

@@ -555,7 +555,7 @@ internal sealed partial class ExecutionManager
     /// "which tool" a published fact - `cut_weeds` needs the scythe because its registration claims one, not because
     /// this file remembers it.
     /// </summary>
-    private static FarmhandActionResourceTemplateClaim? DeclaredToolClaim(string actionId)
+    internal static FarmhandActionResourceTemplateClaim? DeclaredToolClaim(string actionId)
     {
         FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
             .FirstOrDefault(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
@@ -589,7 +589,7 @@ internal sealed partial class ExecutionManager
     /// NAMED reason nothing does. It reads the pack and never the held tool - holding an axe is not a reason a scythe
     /// action cannot run - and it mutates nothing, so a test can ask the same question with a synthetic pack.
     /// </summary>
-    private static DeclaredToolResolution ResolveDeclaredTool(IList<Item?> items, string actionId)
+    internal static DeclaredToolResolution ResolveDeclaredTool(IList<Item?> items, string actionId)
     {
         FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
         if (claim is null)
@@ -709,7 +709,14 @@ internal sealed partial class ExecutionManager
             + $";holds={DescribeSlotOccupant(items, requestedSlot)}"
             + $";held={DescribeSlotOccupant(items, heldSlot)}"
             + $";tool_slot={(resolution.Slot >= 0 ? resolution.Slot.ToString(CultureInfo.InvariantCulture) : "none")}"
-            + $";tool_refusal={resolution.RefusalCode ?? "none"}";
+            + $";tool_refusal={resolution.RefusalCode ?? "none"}"
+            // The layer half of the same fact, in the shared field the model branches on: `tool_refusal` says why within
+            // the layer, `blocked_by` says which layer. Both come from this one resolution, and the field is absent when
+            // the claim is SATISFIED - a request that merely named the wrong slot has no declared layer to blame, and
+            // naming `tool` there would claim a missing tool the pack actually holds.
+            + (resolution.RefusalDetail is { } detail
+                ? $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Tool, detail).Format()}"
+                : string.Empty);
     }
 
     /// <summary>
@@ -1273,14 +1280,15 @@ internal sealed partial class ExecutionManager
                     ExecutionState.Rejected,
                     "hollow_ring_no_step_out",
                     DescribeNoReachableApproach(anchor, actor, isStandable, footprint).Evidence
-                        + ";hollow_ring=true;step_out=none");
+                        + ";hollow_ring=true;step_out=none"
+                        + DescribeApproachRange(footprint[0].X, footprint[0].Y));
             }
 
             // Nothing is dispatched: no walk is committed for a placement the actor cannot
             // reach, so the refusal arrives before the engine spends its search budget.
             (string refusalCode, string refusalEvidence) = DescribeNoReachableApproach(
                 anchor, actor, isStandable, footprint);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y));
         }
         (int X, int Y) goal = standingTile.Value;
         // The tile the arrival must be measured against: for a single-tile target the target itself, so every existing
@@ -1382,6 +1390,28 @@ internal sealed partial class ExecutionManager
             requestedDeadlineMs);
 
     /// <summary>
+    /// The layer an approach-leg refusal carries on `blocked_by`: `range`, with the detail the geometry decided.
+    ///
+    /// <para>
+    /// The leg exists because the actor is outside the native interaction radius, so the usual answer is
+    /// `range:reach:&lt;n&gt;` - the distance to the interaction tile. The other answer is `range:standability`: the actor
+    /// is ALREADY inside the radius (or standing on the target) and no ring tile can be stood on, so no distance
+    /// explains the refusal - the ring does, and `hollow_ring_no_step_out` is that same fact as a reason code.
+    /// </para>
+    /// <para>
+    /// The radius is not restated here: it is the one <c>IsTileWithinChebyshevRadius</c> already takes, and the distance
+    /// is the same Chebyshev the receipts publish as `reach=1` and `distance=`. Two readers of one geometry.
+    /// </para>
+    /// </summary>
+    private static string DescribeApproachRange(int targetX, int targetY)
+    {
+        string detail = IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)
+            ? "standability"
+            : $"reach:{ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture)}";
+        return $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, detail).Format()}";
+    }
+
+    /// <summary>
     /// Completes a tool-family approach: re-validates the world and then runs the
     /// kind-specific native call.
     ///
@@ -1446,7 +1476,22 @@ internal sealed partial class ExecutionManager
 }
 
 /// <summary>What one action's pack answers for its declared tool, before anything is switched.</summary>
-internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode);
+internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode)
+{
+    /// <summary>
+    /// The layer detail a refusal of this claim carries on `blocked_by`: the tool CATEGORY the action's own row named.
+    ///
+    /// <para>
+    /// Derived here, beside the resolution that decides it, rather than at each refusal site - the category and the
+    /// refusal code are two readings of one decision, and a call site that composed its own detail would be the second
+    /// copy this Mod keeps rediscovering. `undeclared` is the honest detail when a handler asked for a claim its own row
+    /// does not carry: that is a registration defect, not something the world is missing.
+    /// </para>
+    /// </summary>
+    internal string? RefusalDetail => this.RefusalCode is null
+        ? null
+        : this.Category.Length > 0 ? this.Category : "undeclared";
+}
 
 /// <summary>
 /// The actor's tool selection while one action runs: the tool taken, the category it satisfies, the index it
