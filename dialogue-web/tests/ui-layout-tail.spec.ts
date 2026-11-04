@@ -346,18 +346,29 @@ test("item 1: a card is as tall as its own content, and the trigger list is fold
   console.log(`[item-1 export card top @1440, pre-fix grid injected] ${exportTopBefore}`);
   await gridBefore.evaluate((node) => node.remove());
   expect(reread, "the Characters surface renders with the pre-fix grid injected").not.toBeNull();
-  // The row track is what costs the height: 用户设定 and 场景 end 359 px and 416 px
-  // above 开场白's foot, and the row cannot start its next card before it.
+  // The row track is what costs the canvas: a card shorter than its row's tallest
+  // ends above where the next row starts, so the space inside its own column is the
+  // track's surplus PLUS the column gap - never the column gap alone, which is what
+  // the columns layout reports above.
+  //
+  // This proof used to be a panel-height comparison ("the grid is taller by its row
+  // track", asserted as panelHeight > the columns' + 100). That premise moved when
+  // the opening editor's variant list became a bounded scroller: 开场白 is 555 px
+  // now, where it used to grow to 757 px and beyond, so the grid's second row is no
+  // longer taller than the columns layout's longest column and the totals stop
+  // expressing the defect. The canvas is still there and is read where it is.
+  const surplus = reread!.columns.flatMap((column) =>
+    column.gapsBetween.map((gap) => gap - reread!.columnGap).filter((extra) => extra > 0),
+  );
+  console.log(`[item-1 row-track surplus @1440] ${JSON.stringify(surplus)}`);
   expect(
-    reread!.panelHeight!,
-    `the grid is taller by its row track, not by its content (${reread!.panelHeight} px against ${grid!.panelHeight} px in columns)`,
-  ).toBeGreaterThan(grid!.panelHeight! + 100);
-  // …which is exactly the complaint: the export card below the panel moves down by
-  // the same amount, further out of the first viewport.
+    surplus.length,
+    `the grid leaves a row track's canvas inside its columns (${JSON.stringify(reread!.columns)} at a ${reread!.columnGap} px gap)`,
+  ).toBeGreaterThan(0);
   expect(
-    exportTopBefore!,
-    `the export card below the panel moves down with the row track (${exportTopBefore} px against ${exportTop} px)`,
-  ).toBeGreaterThan(exportTop! + 100);
+    surplus.some((extra) => extra > 10),
+    `…and it is the track's own surplus, not a rounding difference (${JSON.stringify(surplus)})`,
+  ).toBe(true);
 
   // …and the same holds in the one-column layout, where one card is one row and
   // columns and grid are the same thing.

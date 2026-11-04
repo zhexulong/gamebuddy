@@ -1026,39 +1026,41 @@ export function CharactersPanel({
                     maxLength={128}
                     onChange={(event) => openingLabel.type(event.target.value)}
                   />
-                  {openingVariants.value.map((variant, index) => (
-                    <div key={index} className="opening-variant-row">
-                      <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
-                        {labels.openingVariantText} #{index + 1}
-                      </label>
-                      <textarea
-                        id={`opening-variant-${index}-text`}
-                        className="form-textarea"
-                        rows={2}
-                        value={variant.text}
-                        maxLength={8192}
-                        onChange={(event) =>
-                          openingVariants.type(
-                            openingVariants.value.map((item, itemIndex) =>
-                              itemIndex === index ? { label: item.label, text: event.target.value } : item,
-                            ),
-                          )
-                        }
-                      />
-                      <div className="composer-actions">
-                        <button
-                          type="button"
-                          className="small-button"
-                          disabled={openingVariants.value.length <= 1}
-                          onClick={() =>
-                            openingVariants.type(openingVariants.value.filter((_, itemIndex) => itemIndex !== index))
+                  <div className="opening-variants" data-opening-variants tabIndex={0}>
+                    {openingVariants.value.map((variant, index) => (
+                      <div key={index} className="opening-variant-row">
+                        <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
+                          {labels.openingVariantText} #{index + 1}
+                        </label>
+                        <textarea
+                          id={`opening-variant-${index}-text`}
+                          className="form-textarea"
+                          rows={2}
+                          value={variant.text}
+                          maxLength={8192}
+                          onChange={(event) =>
+                            openingVariants.type(
+                              openingVariants.value.map((item, itemIndex) =>
+                                itemIndex === index ? { label: item.label, text: event.target.value } : item,
+                              ),
+                            )
                           }
-                        >
-                          {labels.discard}
-                        </button>
+                        />
+                        <div className="composer-actions">
+                          <button
+                            type="button"
+                            className="small-button"
+                            disabled={openingVariants.value.length <= 1}
+                            onClick={() =>
+                              openingVariants.type(openingVariants.value.filter((_, itemIndex) => itemIndex !== index))
+                            }
+                          >
+                            {labels.discard}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                   <div className="composer-actions">
                     <button
                       type="button"

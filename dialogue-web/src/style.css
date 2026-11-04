@@ -2478,6 +2478,34 @@
     border-radius: var(--radius-sm);
   }
 
+  /* The variant list is the one region of the opening card that scrolls itself, so
+   a player who adds openings changes the list's length and not the page's.
+
+   Measured at 1440x900 before this rule: each press of 添加开场白 added a 158 px
+   row, the card grew a row with it (757 px at three variants, 1421 px at seven),
+   and the surface grew the same (scrollHeight 1330 -> 1988) - so reaching the
+   presses scrolled the page to a 1421 px card, and the other columns' headings,
+   painted at the top of the panel, left the viewport (measured at -507 px above
+   the top edge).
+
+   The bound is the installation panel's own (`.installation-candidates`) because
+   the reason is the same one, and it belongs in the same place: on the LIST, not
+   on the box that also holds the decision. That is the record
+   `.card-import-report` carries below - a cap on the outer box "cuts exactly the
+   controls at the bottom" - and here the decision is 保存开场白, a sibling of this
+   list, so it stays painted whatever the list's length. The last row is still
+   reachable: the list is a tab stop (as `.installation-candidates` is) and its
+   rows keep the 8 px rhythm the card's own gap gave them. */
+  .opening-variants {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: min(32dvh, 300px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-subtle) transparent;
+  }
+
   /* ==========================================================================
    Management shell only (P9 gamebuddy.tavern-management.chat-list-title).
    Everything the two shells share moved above; what stays here is the
