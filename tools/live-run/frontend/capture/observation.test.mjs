@@ -187,6 +187,51 @@ const asLines = (records) => records.map((record) => JSON.stringify(record)).joi
 
 const BARE = [{ messages: [{ role: "user", content: "你好" }] }];
 
+/**
+ * The shape this product actually posts: the authored catalogue is the FIRST USER message (the cached
+ * prefix's M0) and the volatile sources are the message after it - the system message carries only the
+ * Host's floor and the card's voice.
+ */
+const productRequest = (authored, volatile) => ({
+  messages: [
+    { role: "system", content: "You are 琥珀, accompanying the player." },
+    { role: "user", content: [{ type: "text", text: authored.join("\n") }] },
+    { role: "user", content: [{ type: "text", text: volatile.join("\n") }] },
+    { role: "assistant", content: "起来啦？" },
+    { role: "user", content: "你好" },
+  ],
+});
+
+test("the blocks are read from the messages that carry them, not only from the system prompt", async () => {
+  /*
+   * Measured on a real run: the request carried `<gamebuddy-authored-context version="v2">` with two
+   * sources as its first user message, and a reader that asked the system message alone answered
+   * `authoredContext=absent` - an absence belonging to the reader, which is the one thing this section
+   * must never report.
+   */
+  const injection = await injectionFacts(capture([request("key-1", productRequest(AUTHORED, VOLATILE))]), ["key-1"]);
+  assert.equal(injection.ok, true);
+  const [turn] = injection.turns;
+  assert.equal(turn.authoredContext.present, true, "the block is in a user message, and that is a reading of it");
+  assert.equal(turn.authoredContext.block, "gamebuddy-authored-context");
+  assert.equal(turn.authoredContext.sources, 2);
+  assert.deepEqual(turn.authoredContext.kinds, ["lorebook_constant", "persona"]);
+  assert.equal(turn.volatileContext.present, true);
+  assert.deepEqual(turn.volatileContext.names, ["银行家的戒指在抽屉里。"]);
+  assert.equal(turn.volatileContext.namesFrom, "block-first-line");
+});
+
+test("a turn that carried no volatile sources says so while its authored block still reads", async () => {
+  const later = productRequest(AUTHORED, ["<session-history-since>(no new content since last materialization)"]);
+  const injection = await injectionFacts(capture([request("key-1", later)]), ["key-1"]);
+  assert.deepEqual(
+    injection.turns[0].volatileContext,
+    { present: false },
+    "a turn whose volatile block was empty is a turn that carried none, not a zero-byte block",
+  );
+  assert.equal(injection.turns[0].authoredContext.present, true);
+});
+
 test("an injected authored-context block is reported with its size and the kinds it carries", async () => {
   const injection = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))]));
   assert.equal(injection.ok, true);

@@ -399,9 +399,10 @@ function readCapturedRequests(file, read = readFileSync) {
  * `names` are the volatile block's own words. The block `<gamebuddy-volatile-source>` carries no name
  * attribute today, so what identifies an entry on the wire is the first line of its prose;
  * `namesFrom` says which of the two a reader is looking at rather than letting an excerpt be mistaken
- * for a title. The system prompt is read through the live kit's ONE wire reader
- * (`chat/wire-contract.mjs::systemPromptOf`), not a second copy of the content-shape rule: the wire
- * sends `content` as a string on some turns and as `{type,text}` parts on others.
+ * for a title. The blocks are read across every message of the request, through the live kit's ONE wire
+ * reader (`chat/wire-contract.mjs::wireMessageText`) rather than a second copy of the content-shape rule:
+ * a message's `content` is a string on some turns and `{type,text}` parts on others, and the product puts
+ * the authored catalogue in a user message (M0), not in the system prompt.
  */
 async function injectionFacts(captured, turnIds) {
 	if (captured === null || captured === undefined || captured.ok !== true)
@@ -443,7 +444,7 @@ async function injectionFacts(captured, turnIds) {
 	}
 	if (byKey.size === 0)
 		return { ok: false, reason: "no_provider_request_capture:capture_records_carry_no_submission_key" };
-	const { systemPromptOf } = await import("../../chat/wire-contract.mjs");
+	const { wireMessageText } = await import("../../chat/wire-contract.mjs");
 	const ids = wanted ?? [...byKey.keys()];
 	const turns = [];
 	const missing = [];
@@ -452,7 +453,7 @@ async function injectionFacts(captured, turnIds) {
 			missing.push(turnId);
 			continue;
 		}
-		turns.push({ turnId, ...blocksIn(systemPromptOf(byKey.get(turnId))) });
+		turns.push({ turnId, ...blocksIn(requestTextOf(byKey.get(turnId), wireMessageText)) });
 	}
 	const foreign = wanted === null ? 0 : [...byKey.keys()].filter((turnId) => !wanted.includes(turnId)).length;
 	return { ok: true, source, turns, missing, foreign, unlabelled, unjoinable };
@@ -461,9 +462,24 @@ async function injectionFacts(captured, turnIds) {
 const byteLength = (text) => Buffer.byteLength(text, "utf8");
 const countOf = (text, pattern) => (text.match(pattern) ?? []).length;
 
-/** The authored-context and volatile blocks a system prompt carries, with their sizes. */
-function blocksIn(systemText) {
-	const text = typeof systemText === "string" ? systemText : "";
+/**
+ * Every message's text in the request, in order.
+ *
+ * The blocks are not always in the system prompt. This product renders the authored catalogue as the first
+ * USER message (the cached prefix's M0) and the volatile sources as the message after it, so a reading that
+ * asked only for the system message reported `authoredContext=absent` on a turn whose request carried
+ * `<gamebuddy-authored-context version="v2">` with two sources - an absence that was the reader's, not the
+ * wire's. `wireMessageText` is the live kit's ONE reader of a message's content shape (string or parts), so
+ * no second copy of that rule lives here.
+ */
+function requestTextOf(body, messageText) {
+	const messages = Array.isArray(body?.messages) ? body.messages : [];
+	return messages.map((message) => messageText(message)).join("\n");
+}
+
+/** The authored-context and volatile blocks a request carries, with their sizes. */
+function blocksIn(requestText) {
+	const text = typeof requestText === "string" ? requestText : "";
 	const authored = /<gamebuddy-authored-context[\s\S]*?<\/gamebuddy-authored-context>/u.exec(text);
 	const stable = /<gamebuddy-stable-context[\s\S]*?<\/gamebuddy-stable-context>/u.exec(text);
 	const stableBlock = authored ?? stable;
