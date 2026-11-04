@@ -82,6 +82,11 @@ const ACTION = "play_session_multi_day";
 const GAME_PATH = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
 const GAME_DIR = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
 const RUNTIME_ROOT = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "GameBuddy") : null;
+// The lane's own root, declared once. `deployMod` and the save-slot resolver both read it, and it is the same root the ladder
+// launcher derives its private --mods path from.
+const FIXTURE_ROOT =
+  process.env.GAMEBUDDY_STARDEW_FIXTURE_ROOT ??
+  (RUNTIME_ROOT === null ? null : path.join(RUNTIME_ROOT, "stardew-fixtures"));
 // Resolved here, AFTER `RUNTIME_ROOT`, because the binding lookup reads the root this script cleans and builds (see
 // `resolveFixtureSave`). Declaring it above that constant read an uninitialised binding and threw
 // `Cannot access 'RUNTIME_ROOT' before initialization`.
@@ -116,15 +121,20 @@ if (!skipBuild) {
  */
 function deployMod() {
   const build = path.join(repo, "integrations/stardew/bin/Release/net6.0");
-  const target = path.join(GAME_DIR, "Mods", "GameBuddy");
+  // The LANE's own mods folder, never <game>/Mods: this script used to rewrite the Steam install on every run, which Steam
+  // reported - correctly - as the installation being modified. The fixture loads this same path through the ladder
+  // launcher's private --mods, so the copy here is the one the run actually loads.
+  if (FIXTURE_ROOT === null) {
+    console.error("no fixture root: cannot deploy the Mod for this lane");
+    process.exit(1);
+  }
+  const target = path.join(FIXTURE_ROOT, "mods", "GameBuddy");
   if (!fs.existsSync(build)) {
     console.error(`build output missing: ${build}`);
     process.exit(1);
   }
-  if (!fs.existsSync(target)) {
-    console.error(`mod folder missing: ${target}`);
-    process.exit(1);
-  }
+  // Created rather than demanded: the folder is ours, so its absence is a first run, not an error.
+  fs.mkdirSync(target, { recursive: true });
   const names = ["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "GameBuddy.Stardew.deps.json"];
   const copied = [];
   for (const name of names) {
