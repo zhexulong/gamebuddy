@@ -80,21 +80,21 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     worldbookTools:
       "A fresh root has no worldbook.json, so the pipe run mounts none. createWorldBookTools over DEFAULT_COMPANION_PRESET.worldBook supplies the two tools a seeded root adds.",
     remeasured_2026_11_05:
-      "One rule was added to the Game conduct (the room's own form: the starting house is one room and a kitchen appears only with the upgrade - `identity-profile.ts`). The CHARACTER columns below were re-derived from the product's builder exactly; the TOKEN columns were NOT re-measured, because that needs the whole materialized-session instrumentation above and the claude-encoding count this lane could reproduce differs from the reading's, so they are stale by that one rule and must not be quoted again until `scratch/pf-*.mjs` re-runs. `envelopeChars`/`envelopeBytes` moved by the rule's exact character count, which is also its exact byte count: the added text is ASCII with nothing JSON must escape.",
+      "Negative prompt examples and quotes were removed in favor of affirmative target framing across card.json and identity-profile.ts. The CHARACTER columns below were re-derived from the product's builder exactly; the TOKEN columns were NOT re-measured, because that needs the whole materialized-session instrumentation above and the claude-encoding count this lane could reproduce differs from the reading's. `envelopeChars`/`envelopeBytes` moved by the exact character count delta.",
   }),
   floor: Object.freeze({
     toolCount: 14,
-    systemChars: 11191,
+    systemChars: 10709,
     systemTokens: 5119,
     toolsTokens: 3552,
-    envelopeChars: 23634,
-    envelopeBytes: 28692,
+    envelopeChars: 23152,
+    envelopeBytes: 28210,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 6116,
+    chars: 6017,
     tokens: 1227,
-    charShareOfSystemPrompt: 0.5465,
+    charShareOfSystemPrompt: 0.5619,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
