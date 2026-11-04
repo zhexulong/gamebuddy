@@ -3003,7 +3003,7 @@
         "wateringWhereabouts": {
           "type": "array",
           "items": {
-            "$ref": "#/$defs/harvestWhereabouts"
+            "$ref": "#/$defs/wateringWhereaboutsRow"
           },
           "maxItems": 64
         }
@@ -8237,6 +8237,34 @@
         "loadInputStack": {
           "type": "integer",
           "minimum": 1
+        }
+      }
+    },
+    "wateringWhereaboutsRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "needsWaterCount",
+        "nearestX",
+        "nearestY"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "needsWaterCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "nearestX": {
+          "$ref": "#/$defs/tile"
+        },
+        "nearestY": {
+          "$ref": "#/$defs/tile"
         }
       }
     }
