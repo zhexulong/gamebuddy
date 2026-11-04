@@ -15,25 +15,31 @@ test("the fixture's action sets parse, including a multi-line one", () => {
     if (action === "equip_tool") return ["equip_tool"];
     if (action === "play_session_multi_day")
       return [
-        "advance_day",
+        "sleep",
         // a comment with "quotes" in it
         "respond_level_up",
       ];
   `);
   assert.deepEqual(sets.get("equip_tool"), ["equip_tool"]);
-  assert.deepEqual(sets.get("play_session_multi_day"), ["advance_day", "respond_level_up"]);
+  assert.deepEqual(sets.get("play_session_multi_day"), ["sleep", "respond_level_up"]);
 });
 
 test("a lane that omits an action its run needs is a named violation", () => {
   // The night's own defect (run g22): the multi-day lane granted the settlement menu's action and not the level-up
   // menu's, so the night could not finish - and the refusal reached the caller as its own timeout.
+  //
+  // The example is built from the required set ITSELF rather than spelling an action id, so a rename (the night's
+  // action became `sleep`) cannot make this case stale: what it proves is that omitting one required action is named,
+  // whichever action that is. `respond_level_up` is that one today, and it is the one that actually happened.
+  const required = REQUIRED_LANE_ACTIONS.play_session_multi_day;
+  const omitted = required.at(-1);
   const violations = fixtureActionCoverageViolations({
-    sets: new Map([["play_session_multi_day", ["advance_day", "dismiss_modal"]]]),
-    publishedIds: new Set(["advance_day", "dismiss_modal", "respond_level_up"]),
+    sets: new Map([["play_session_multi_day", required.filter((id) => id !== omitted)]]),
+    publishedIds: new Set(required),
   });
   assert.deepEqual(
     violations.map((entry) => entry.code),
-    ["fixture_lane_missing_required_action:play_session_multi_day:respond_level_up"],
+    [`fixture_lane_missing_required_action:play_session_multi_day:${omitted}`],
   );
 });
 
@@ -53,8 +59,8 @@ test("a lane that grants an unpublished action is a named violation", () => {
 test("a required lane the fixture never declares is named, and an empty surface is not a pass", () => {
   const missingLane = fixtureActionCoverageViolations({
     sets: new Map(),
-    publishedIds: new Set(["advance_day"]),
-    required: { lane_that_does_not_exist: ["advance_day"] },
+    publishedIds: new Set(["sleep"]),
+    required: { lane_that_does_not_exist: ["sleep"] },
   });
   assert.deepEqual(
     missingLane.map((entry) => entry.code),

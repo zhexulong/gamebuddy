@@ -15,6 +15,14 @@ const LAUNCHER = readFileSync(new URL("./launch-ladder-live.mjs", import.meta.ur
 
 const SCENARIOS = ["morning_routine", "memory_covenant", "npc_social_and_presence", "multiday_routine"];
 
+/**
+ * The night tool is spelled `sleep`, which is also the ordinary English verb these prompts use on purpose ("go to
+ * bed and sleep so the night passes"), so the bare word can no longer separate intent from coaching. The two shapes
+ * that still can: the DISPATCH an agent would copy (a quoted action id) and a tool name that is still a code word.
+ */
+const DISPATCH_IN_PROMPT = /action:\s*"sleep"|["'`]sleep["'`]/u;
+const TOOL_CODE_WORD = /move_to_tile|stardew_/u;
+
 /** The scenario list both entry points declare, so they cannot disagree about what exists. */
 function declaredScenarios(source) {
   const match = source.match(/const SCENARIOS = Object\.freeze\(\[([^\]]*)\]\)/u);
@@ -187,7 +195,14 @@ test("the covenant rule is never in the prompt: it is planted in memory", () => 
   for (const rule of ["一颗都不要卖掉", "never sold or sent to the shipping bin", "不能卖掉"]) {
     assert.ok(!prompts.includes(rule), `the covenant prompt must not state the rule: ${rule}`);
   }
-  assert.ok(RUNNER.includes("玩家说好的规矩"), "the rule is seeded through the management surface");
+  // The rule's own words are ONE of the seeds the management surface is called with. Binding the text to that call
+  // is what keeps this a memory the companion READS rather than a prompt line it was handed: a rule that moved into
+  // a prompt, or into any other call, fails here. The seed's wording is the runner's to change.
+  assert.match(
+    RUNNER,
+    /seedMemoriesViaManagementSurface\(\{[\s\S]{0,240}?seeds: \[[\s\S]{0,80}?一颗都不能卖掉/u,
+    "the rule is one of the seeds the management surface is called with",
+  );
 });
 
 test("every scenario owns an acceptance clause, and the verdict ANDs all three", () => {
@@ -245,7 +260,7 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   const at = prompts.indexOf("multiday_routine: Object.freeze({");
   const block = prompts.slice(at, prompts.indexOf("}),", at));
   // The assertions are about what the MODEL READS, so they run on the template lines rather than the whole
-  // block: the block's comments legitimately discuss `advance_day` (that is documentation, not prompt text).
+  // block: the block's comments legitimately discuss `sleep` (that is documentation, not prompt text).
   //
   // The template lines are EVERY backtick line between the locale keys, not only the one carrying
   // `${PRESENCE_PARAGRAPH_`. Narrowing it to that single line is how this test went blind: the prompt legitimately
@@ -265,9 +280,12 @@ test("the multi-day prompt states the day as the companion's own, without coachi
   );
   // The hour is theirs; the tool and the steps are not the prompt's business. Naming them is the coaching this
   // file's own comment says was deleted, and design/handbook/live-run-patterns.md forbids it ("the prompt gives the
-  // player's intent, not steps, tool names or coordinates"). The refusal receipt is where "advance_day only works
+  // player's intent, not steps, tool names or coordinates"). The refusal receipt is where "the night tool only works
   // indoors" belongs. Measured 2026-10-17/18: the coaching was there, and a reviewer graded it over-encoding.
-  assert.doesNotMatch(promptText, /advance_day/u, "the prompt must not name the tool");
+  //
+  // The tool was renamed `advance_day` -> `sleep`, and `sleep` is the ordinary verb the prompt must use, so the word
+  // alone is no longer evidence of coaching: what must not appear is the dispatch, or another tool's code word.
+  assert.doesNotMatch(promptText, DISPATCH_IN_PROMPT, "the prompt must not spell the dispatch");
   assert.doesNotMatch(promptText, /农舍|farmhouse/u, "the prompt must not prescribe the step");
   // The same rule for the prompt the loop offers LATER in the day, which is outside `SCENARIO_PROMPTS` and was
   // therefore unread by the assertions above. It states the clock and hands the decision over; naming the tool
@@ -277,24 +295,25 @@ test("the multi-day prompt states the day as the companion's own, without coachi
     RUNNER.indexOf("let status = null;", RUNNER.indexOf("const promptForLateDay")),
   );
   assert.ok(latePrompt.length > 0, "the late-day prompt must exist for this assertion to read it");
-  assert.doesNotMatch(latePrompt, /advance_day|move_to_tile|stardew_/u, "the late-day prompt must not name a tool");
-  // The night stays the companion's own decision, so the loop never dispatches one: `advance_day` appears only as
+  assert.doesNotMatch(latePrompt, DISPATCH_IN_PROMPT, "the late-day prompt must not spell the dispatch");
+  assert.doesNotMatch(latePrompt, TOOL_CODE_WORD, "the late-day prompt must not name a tool");
+  // The night stays the companion's own decision, so the loop never dispatches one: `sleep` appears only as
   // the receipt it reads back.
   const watcher = RUNNER.slice(
     RUNNER.indexOf("async function watchNightRollover(day"),
     RUNNER.indexOf("async function startVoiceLane"),
   );
-  assert.doesNotMatch(watcher, /action: "advance_day"/u, "the watcher must not dispatch a night");
-  // BOTH channels, because `advance_day` reaches the game either way: as a flat request frame the runner sent
+  assert.doesNotMatch(watcher, /action: "sleep"/u, "the watcher must not dispatch a night");
+  // BOTH channels, because `sleep` reaches the game either way: as a flat request frame the runner sent
   // (`actionTrace`) or as a Body Program node the Mod ran natively. A program execution has no request frame at all,
   // but its receipt names its own `actionId`, which is what the watcher reads instead. Measured 2026-10-31
   // (`round18`): every dispatch went through a program, `actionTrace.jsonl` held 1 byte, and a watcher that looked
   // only at the flat trace published two `entered_via=native_sleep_prompt` nights as `terminal: null, cause:
   // "engine"`.
-  assert.match(watcher, /entry\?*\.action === "advance_day"/u, "the watcher reads the companion's own dispatch");
+  assert.match(watcher, /entry\?*\.action === "sleep"/u, "the watcher reads the companion's own dispatch");
   assert.match(
     watcher,
-    /receipt\.actionId !== "advance_day"/u,
+    /receipt\.actionId !== "sleep"/u,
     "and the receipt a program node minted, which names the action it ran",
   );
 });
