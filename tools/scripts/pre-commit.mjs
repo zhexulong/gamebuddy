@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 /**
  * Pre-commit hook: format what is being committed, so the formatting ratchet in CI stops seeing new
@@ -53,6 +54,21 @@ if (owners.length > 1) {
 }
 
 const targets = staged.filter((path) => FORMATTABLE.test(path));
+// Snapshot the bytes BEFORE the formatter runs. What this hook may re-stage is "the formatter changed
+// this file", and the only way to know that is to compare the file with itself. `git diff --name-only`
+// answers a different question - "the worktree differs from the index" - which is also true for any
+// neighbour's uncommitted work in the same checkout. That predicate put a foreign hunk into a commit on
+// 2026-11-04: a file committed through a scratch index differed from the worktree by another lane's
+// lines, and re-staging by that predicate swept them in.
+const beforeFormatting = new Map(
+  targets.map((path) => {
+    try {
+      return [path, readFileSync(path, "utf8")];
+    } catch {
+      return [path, null];
+    }
+  }),
+);
 // No `process.exit(0)` here: this hook has a second, blocking job at the end, and an early exit would skip it for
 // exactly the commits that stage no formattable file.
 if (targets.length === 0) console.log("pre-commit: nothing formattable staged");
@@ -76,14 +92,20 @@ try {
   }
 }
 
-// Re-stage only the files this hook was allowed to touch: a formatting change must ride along with
-// the commit it belongs to, and nothing else may be added to the index.
+// Re-stage only the files the formatter actually rewrote: a formatting change must ride along with the
+// commit it belongs to, and nothing else may be added to the index.
 const changed =
   targets.length === 0
     ? []
-    : git(["diff", "--name-only", "--", ...targets])
-        .split(/\r?\n/)
-        .filter((path) => path.length > 0);
+    : targets.filter((path) => {
+        const before = beforeFormatting.get(path);
+        if (before === null || before === undefined) return false;
+        try {
+          return readFileSync(path, "utf8") !== before;
+        } catch {
+          return false;
+        }
+      });
 if (changed.length > 0) {
   execFileSync("git", ["add", "--", ...changed], { stdio: "inherit" });
   console.log(`pre-commit: re-staged ${changed.length} formatted file(s)`);
