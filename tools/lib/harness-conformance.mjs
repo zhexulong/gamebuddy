@@ -465,6 +465,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "       injects a journey whose only assertion is `toBeVisible()`, one with none at all, and the\n" +
       "       `toHaveCount(1)` shape the defect is named after, and requires each to be named",
   },
+  {
+    gate: "check-stub-subject-collision.mjs",
+    reason:
+      "a report, not a gate: it lists heuristic title-against-stub collisions and always exits 0 by design.\n" +
+      "       Its falsifier (tools/check-stub-subject-collision.test.mjs) drives a synthetic tree through a title that names\n" +
+      "       the resource it stubs and its control, a route stubbed by an imported helper, a route named by a constant, an\n" +
+      "       unresolvable route name and a probe-mounted spec, and asserts the report exits 0 with a collision on it",
+  },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
