@@ -1523,6 +1523,91 @@ test(
 );
 
 /**
+ * One corpus, two paths that ask the same question.
+ *
+ * A turn's volatile World Info is selected from the accepted player line plus a bounded visible
+ * tail. A regenerate re-asks an accepted line, so it must select from the corpus the turn it
+ * regenerates selected from: the transcript as it stood BEFORE that line was accepted.
+ *
+ * This is not a hypothetical. On the run this descends from, the matched entry rode the greeting's
+ * own word ("防风草") rather than the anchor line ("你好"), and the regenerate - selecting against
+ * the anchor line alone, with an empty tail - carried none of it. The regenerated turn was authored
+ * from a strictly smaller corpus than the turn it replaced, and nothing said so: the plan row was
+ * honest turn by turn, and the two rows simply had different inputs.
+ *
+ * The tail here is planted exactly as the submit-only test above plants it: a trigger word on
+ * turn 1's own line, a turn-2 line that carries none of that entry's keys. So turn 2 can only reach
+ * the entry through its tail, and the regenerate has to reach it through the same one.
+ */
+test(
+  "a regenerate selects authored context from the corpus its anchor turn scanned",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const output = await mounted(`
+  const fx = await fixture();
+  let startCalls = 0;
+  const service = serviceFor(fx, async () => { startCalls += 1; });
+  const resume = () => fx.store().resumeThread(fx.lease.chatThreadId, fx.lease.chatSurfaceSessionId);
+  const handleOf = (id) => fx.lease.browserProjection.projectMessageHandle(id);
+  const sourceIds = (plan) => plan === undefined ? [] : plan.volatileSources.map((s) => s.sourceId).slice().sort();
+  const { readFile } = await import("node:fs/promises");
+  // The BOUND BOOK owns both the window and the trigger, exactly as in the submit-only test above.
+  const runtimeCwd = resolveRuntimePaths(principal, fx.root).runtimeCwd;
+  const book = JSON.parse(await readFile(runtimeCwd + "/worldbook.json", "utf8"));
+  const opening = (await resume()).messages[0].text;
+  const neutral = ["接着聊聊别的吧", "还是别的话题"];
+  const reply = "Synthetic companion reply.";
+  const keywordEntries = book.entries.filter((entry) => entry.constant !== true);
+  const plantedIndex = keywordEntries.findIndex((entry) => {
+    const keys = entry.keys ?? [];
+    return keys.length > 0 && keys.every((key) => ![opening, reply, ...neutral].some((text) => text.includes(key)));
+  });
+  if (plantedIndex < 0) throw new Error("worldbook_has_no_isolatable_trigger");
+  const plantedKey = keywordEntries[plantedIndex].keys[0];
+  const plantedSourceId = book.worldBookId + "_entry_" + (plantedIndex + 1);
+  // Turn 1 puts the word on the player's own line; turn 2 asks a line that carries none of that
+  // entry's keys, so only the tail can reach it.
+  await service.submitAfterResponseCommit(commandFor(fx, { text: plantedKey, expectedDraftRevision: 0 }), "eeeeeeeeeeeeeeeeeeeeea", async () => undefined);
+  await waitFor(() => startCalls === 1);
+  await driveToTerminal(fx, "completed", "response_turn_1");
+  await service.submitAfterResponseCommit(commandFor(fx, { text: neutral[0], expectedDraftRevision: 1 }), "fffffffffffffffffffffa", async () => undefined);
+  await waitFor(() => startCalls === 2);
+  const anchoredPlan = sourceIds((await resume()).currentTurnContextPlan);
+  await driveToTerminal(fx, "completed", "response_turn_2");
+  // The reply the player is looking at, re-asked as a same-position variant.
+  const settled = await resume();
+  const tail = settled.messages[settled.messages.length - 1];
+  const regenerated = await run(async () =>
+    service.regenerate({ apiVersion: 1, selectionGeneration: fx.generation, messageHandle: handleOf(tail.messageId) }, "ggggggggggggggggggggga"));
+  const regeneratePlan = sourceIds((await resume()).currentTurnContextPlan);
+  await service.close();
+  await fx.lease.close();
+  await fx.authority.close();
+  process.stdout.write(JSON.stringify({ anchoredPlan, regeneratePlan, plantedSourceId, regenerated, tailRole: tail.role }));
+`);
+    const anchoredPlan = output.anchoredPlan as string[];
+    const regeneratePlan = output.regeneratePlan as string[];
+    const plantedSourceId = output.plantedSourceId as string;
+    // The premise, and the whole reason the tail matters: turn 2's own line names none of the
+    // entry's keys, so the entry is in its plan because the tail reached it.
+    assert.ok(
+      anchoredPlan.includes(plantedSourceId),
+      `the anchor turn selects ${plantedSourceId} through its tail, got ${JSON.stringify(anchoredPlan)}`,
+    );
+    assert.equal(output.tailRole, "companion");
+    const regenerated = output.regenerated as { ok: boolean; error?: string };
+    assert.equal(regenerated.ok, true, regenerated.error);
+    // The two paths must agree. A regenerate that selects from the current transcript instead
+    // reports [] here - or, once the depth window slides past the plant, another set entirely.
+    assert.deepEqual(
+      regeneratePlan,
+      anchoredPlan,
+      `the regenerate must select the same entries as the turn it regenerates; anchor=${JSON.stringify(anchoredPlan)} regenerate=${JSON.stringify(regeneratePlan)}`,
+    );
+  },
+);
+
+/**
  * The rewind's real-root proof, and the one that decides the Pi-side mechanism.
  *
  * Two turns are driven through the real production coordinator mount, each with Pi's own half of a

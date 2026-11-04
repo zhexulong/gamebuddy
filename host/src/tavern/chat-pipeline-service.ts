@@ -623,6 +623,18 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
       if (parentPlayerMessage === undefined) throw unavailable();
       if (answersPlayerLine && state.turnLedger !== null && !isTerminalLedger(state.turnLedger)) throw unavailable();
       const promptText = parentPlayerMessage.text;
+      // The per-turn volatile selection scans the accepted line plus a bounded visible
+      // tail, and a regenerate re-asks the anchor line from the point in the conversation
+      // where it was first asked: the transcript BEFORE that line was accepted, which is
+      // exactly the corpus the anchor turn's own selection scanned. The current transcript
+      // cannot stand in for it - it already carries the reply being replaced, so the book's
+      // depth window slides forward past the messages the anchor turn saw, and the
+      // regenerated turn would silently carry different authored context from the turn it
+      // is regenerating.
+      const boundedTail = boundedVisibleTail(
+        state.messages.slice(0, state.messages.indexOf(parentPlayerMessage)),
+        await worldBookScanDepth(state.thread.companionWorldBookBinding),
+      );
       // A replayed key answers `duplicate` with the same durable turn, exactly as
       // an ordinary submit does: acceptance alone is idempotent here too.
       const duplicate = state.idempotency.some((record) => record.key === idempotencyKey);
@@ -635,6 +647,7 @@ export function createChatPipelineService(options: ChatPipelineServiceOptions): 
             locale: "und",
             idempotencyKey,
             expectedDraftRevision: state.draft.revision,
+            boundedVisibleTail: boundedTail,
             ...(answersPlayerLine
               ? { replyToPlayerMessageId: targetMessage.messageId }
               : { variantTargetMessageId: targetMessage.messageId }),
