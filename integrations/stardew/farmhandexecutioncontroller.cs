@@ -2388,7 +2388,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
             // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
             CurrentToolSlot: player.CurrentToolIndex,
-            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex)
+            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
+            // The map's own fixed interaction points: whole-map, no entities, no reachability. Published
+            // unconditionally for the same reason `warps` is - a location's topology is not a slice of one
+            // action, and a companion without `enter_mine` still has to name the way out of a mine. The
+            // count of what the cap left out rides beside the list, so truncation is stated.
+            FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
+            FixedInteractionPointsOmitted: fixedInteractionPointsOmitted
         );
     }
 
@@ -3719,15 +3725,51 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         })
         .ToArray();
 
-    private static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
+    /// <summary>
+    /// The cap on published refill tiles. Equal to the Host's `maxItems` for `refillWateringCanTargets`;
+    /// one entry past it would close the bridge rather than shorten the list.
+    /// </summary>
+    private const int MaximumRefillWateringCanTargets = 8;
+
+    /// <summary>
+    /// The tiles a watering can can be refilled at, WHOLE MAP, nearest first.
+    ///
+    /// <para>
+    /// The scan used to stop at <see cref="TargetDiscoveryRadius"/>, which is right for an entity and wrong
+    /// for water: a pond is a map feature, and on a farm the nearest water is routinely ten to twenty tiles
+    /// away. Measured 2026-11-04: the family published ZERO refill targets on a farm whose pond sat outside
+    /// the six-tile ring, so a watering plan dead-ended on an empty can while the map had water the actor
+    /// could walk to. Reachability is decided by the WALK, never by this list - the radius only ever decided
+    /// which water a snapshot mentioned.
+    /// </para>
+    ///
+    /// <para>
+    /// Nearest first, then X, then Y, and the cap keeps the nearest: every dropped row is therefore strictly
+    /// farther than every published one, which is the one truncation a refill plan cannot be misled by - it
+    /// walks to the closest water and refills there. The predicate is the engine's own
+    /// <c>GameLocation.CanRefillWateringCanOnTile</c> (<c>GameLocation.cs:2293</c>), so a water tile, a
+    /// <c>WaterSource</c> property and an indoor kitchen all arrive through the same authority the tool itself
+    /// uses rather than through a second reading of the map data.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeRefillWateringCanTarget>();
-        List<BridgeRefillWateringCanTarget> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= Math.Min(1000, player.TilePoint.X + TargetDiscoveryRadius) && result.Count < 8; x++)
-        for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(1000, player.TilePoint.Y + TargetDiscoveryRadius) && result.Count < 8; y++)
-            if (location.CanRefillWateringCanOnTile(x, y)) result.Add(new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, x, y), x, y));
-        return result;
+        if (location?.map is null) return Array.Empty<BridgeRefillWateringCanTarget>();
+        if (location.map.Layers.Count == 0) return Array.Empty<BridgeRefillWateringCanTarget>();
+        int width = location.map.Layers[0].LayerWidth;
+        int height = location.map.Layers[0].LayerHeight;
+        List<(int X, int Y)> candidates = new();
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            if (location.CanRefillWateringCanOnTile(x, y)) candidates.Add((x, y));
+        return candidates
+            .OrderBy(tile => ChebyshevDistance(player, tile.X, tile.Y))
+            .ThenBy(tile => tile.X)
+            .ThenBy(tile => tile.Y)
+            .Take(MaximumRefillWateringCanTargets)
+            .Select(tile => new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, tile.X, tile.Y), tile.X, tile.Y))
+            .ToArray();
     }
 
     private static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)

@@ -255,6 +255,31 @@ public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, str
 
 public sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
 
+/// <summary>
+/// One interaction point the MAP ITSELF fixes at a tile: a mine level's ladder, a shop counter, a
+/// television. Not an entity, and not a warp: it has no <c>location.objects</c> row and no
+/// <c>location.warps</c> entry, so a radius-bounded entity discovery can never publish it.
+///
+/// <para>
+/// <see cref="Kind"/> is a token from the closed vocabulary in
+/// <c>GameBuddy.Stardew.Core.Policy.FixedInteractionPointKinds</c>, mirrored by the wire schema's
+/// enum. <see cref="ActionWord"/> is the engine's own first word at that tile (<c>MinecartTransport</c>
+/// out of <c>Action: MinecartTransport Default</c>), and <c>null</c> where the engine carries no word
+/// - a mine ladder is a tile INDEX, not a property, so it has nothing to quote.
+/// </para>
+/// </summary>
+public sealed record BridgeFixedInteractionPoint(
+    int X,
+    int Y,
+    string Kind,
+    // NEVER omitted. The bridge's own serializer drops a null member
+    // (`BridgeProtocol.JsonOptions.DefaultIgnoreCondition = WhenWritingNull`), and the wire schema REQUIRES this
+    // member: a null that vanished would fail `hasExactKeys` on the Host and refuse the WHOLE snapshot with
+    // `invalid_snapshot:fixedInteractionPoints`. A mine ladder has no engine word, so null is the honest value and
+    // it has to reach the wire.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionWord
+);
+
 public sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
 public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
@@ -709,7 +734,16 @@ public sealed record BridgeSnapshot(
     // sibling projection.
     // Defaulted and LAST for the same reason as its siblings above.
     int? CurrentToolSlot = null,
-    string? CurrentToolSlotItem = null);
+    string? CurrentToolSlotItem = null,
+    // The map's OWN fixed interaction points, whole-map and small: no entities, no reachability. Every
+    // other family in this record is either an entity within `TargetDiscoveryRadius` or a table the engine
+    // keeps for itself (`warps`, `doorTargets`); a mine level's ladder tile is in neither, which is why a
+    // companion that entered a mine could name no way out. `fixedInteractionPointsOmitted` counts the
+    // points the cap left out, so truncation is stated rather than silent.
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already
+    // closed by the parameters before them.
+    IReadOnlyList<BridgeFixedInteractionPoint>? FixedInteractionPoints = null,
+    int? FixedInteractionPointsOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

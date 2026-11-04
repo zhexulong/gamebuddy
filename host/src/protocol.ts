@@ -30,6 +30,7 @@ import {
   isFenceGateTargetFact,
   isFiniteNumber,
   isFishPondTargetFact,
+  isFixedInteractionPointFact,
   isFoodTargetFact,
   isForageTargetFact,
   isGrassTargetFact,
@@ -330,6 +331,31 @@ export type Snapshot = Readonly<{
     targetX: number;
     targetY: number;
   }>[];
+  /**
+   * The map's OWN fixed interaction points, WHOLE MAP and without entities: a mine level's ladder tiles,
+   * a shop counter, a television.
+   *
+   * <p>
+   * Every other family on this type is either an entity within the Mod's six-tile discovery radius or a
+   * table the engine keeps for itself (`warps`, `doorTargets`). A mine level's ladder-up is a
+   * Buildings-layer TILE INDEX, so it is in neither, and no radius ever reaches it from anywhere - which
+   * is why a companion in a mine could name no way out. `kind` is the closed vocabulary the wire schema
+   * declares; `actionWord` is the engine's own first word at that tile and is null where it carries none.
+   * Older Mod snapshots may omit the field.
+   * </p>
+   */
+  fixedInteractionPoints?: readonly Readonly<{
+    x: number;
+    y: number;
+    kind: string;
+    actionWord: string | null;
+  }>[];
+  /**
+   * The fixed interaction points the Mod's cap left out of `fixedInteractionPoints`, so a truncated list
+   * says so instead of reading as the whole map. Absent on a Mod older than the field; null when the
+   * family itself was not measured.
+   */
+  fixedInteractionPointsOmitted?: number | null;
   /** Current live tiles that the target-version Hoe can potentially till. */
   soilTiles?: readonly Readonly<{ x: number; y: number }>[];
   /**
@@ -1745,6 +1771,8 @@ const SNAPSHOT_KEYS = [
   "activeExecution",
   "warps",
   "doorTargets",
+  "fixedInteractionPoints",
+  "fixedInteractionPointsOmitted",
   "soilTiles",
   "toolSlots",
   "wateringCanFacts",
@@ -3520,6 +3548,9 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "fishPondTargets", maxItems: 16, accepts: isFishPondTargetFact },
   { field: "warps", maxItems: 512, accepts: isWarp },
   { field: "doorTargets", maxItems: 64, accepts: isWarp },
+  // The map's own fixed interaction points. `isWarp` is the wrong shape here on purpose: a ladder tile names
+  // no destination, so this family carries a closed `kind` instead of a target location.
+  { field: "fixedInteractionPoints", maxItems: 64, accepts: isFixedInteractionPointFact },
   { field: "soilTiles", maxItems: 64, accepts: isSoilTile },
   { field: "toolSlots", maxItems: 36, accepts: isToolSlotFact },
   { field: "forageTargets", maxItems: 64, accepts: isForageTargetFact },
@@ -3692,6 +3723,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       value.artifactSpotFarmSourceCount < 0)
   )
     return "invalid_snapshot:artifactSpotFarmSourceCount";
+  // The count of fixed interaction points the Mod's cap left out. Beside the family it counts, the same way
+  // `artifactSpotFarmSourceCount` sits beside its own: one number, checked as a non-negative integer.
+  if (
+    value.fixedInteractionPointsOmitted !== undefined &&
+    value.fixedInteractionPointsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)
+  )
+    return "invalid_snapshot:fixedInteractionPointsOmitted";
   // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
   // not measure it (the container actions were not advertised); a present one must be the whole shape.
   if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
@@ -3756,6 +3795,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
       (typeof value.artifactSpotFarmSourceCount === "number" &&
         Number.isSafeInteger(value.artifactSpotFarmSourceCount) &&
         value.artifactSpotFarmSourceCount >= 0)) &&
+    (value.fixedInteractionPointsOmitted === undefined ||
+      value.fixedInteractionPointsOmitted === null ||
+      isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)) &&
     (value.chestsSummary === undefined || isChestsSummaryFact(value.chestsSummary)) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&

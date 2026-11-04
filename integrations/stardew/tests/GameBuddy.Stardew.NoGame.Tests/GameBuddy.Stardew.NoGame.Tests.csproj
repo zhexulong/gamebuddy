@@ -72,6 +72,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterExitWarpActionSourceShapeTests.cs" Link="EnterExitWarpActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\EnterMineLadderSourceShapeTests.cs" Link="EnterMineLadderSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ExecutionArgumentWireCoverageTests.cs" Link="ExecutionArgumentWireCoverageTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixedInteractionPointWholeMapSourceShapeTests.cs" Link="FixedInteractionPointWholeMapSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\FixtureTickGateLivenessTests.cs" Link="FixtureTickGateLivenessTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityAdmissionSourceShapeTests.cs" Link="HarvestQualityAdmissionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityProjectionSourceShapeTests.cs" Link="HarvestQualityProjectionSourceShapeTests.cs" />
@@ -85,6 +86,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetSourceShapeTests.cs" Link="PlantableTargetSlotBudgetSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ReceiptRevisionMonotonicitySourceShapeTests.cs" Link="ReceiptRevisionMonotonicitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RefillWateringCanWholeMapSourceShapeTests.cs" Link="RefillWateringCanWholeMapSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SettlementMenuCapabilitySourceShapeTests.cs" Link="SettlementMenuCapabilitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />

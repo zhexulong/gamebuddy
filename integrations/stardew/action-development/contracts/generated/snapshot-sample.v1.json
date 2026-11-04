@@ -303,6 +303,10 @@
     {
       "field": "professions",
       "reason": "the headless sample world does not construct this family"
+    },
+    {
+      "field": "fixedInteractionPoints",
+      "reason": "the headless sample world does not construct this family"
     }
   ],
   "consumedBy": "host/src/snapshot-loopback.test.ts",
