@@ -390,6 +390,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
   {
+    gate: "check-class-name-declarations.mjs",
+    reason:
+      "static source gate over dialogue-web's own tsx and css, read through the workspace's TypeScript compiler; " +
+      "its falsifier is tools/check-class-name-declarations.test.mjs, which plants an undeclared className, an " +
+      "unreadable expression, an unearned exemption and the real pre-fix commit, and the gate's own red-proof " +
+      "markers name both",
+  },
+  {
     gate: "check-live-run-isolation.mjs",
     reason:
       "builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam install; on a checkout it exits 1 before printing a report, which is why it is not a gate whose default run self-verifies",
