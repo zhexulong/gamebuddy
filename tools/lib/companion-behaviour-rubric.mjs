@@ -91,11 +91,11 @@ export const COMPANION_BEHAVIOUR_OBLIGATIONS = Object.freeze([
   }),
   Object.freeze({
     id: "no_step_recital",
-    class: "Invariant",
+    class: "Unjudged",
     statement:
-      "Spoken text talks to the player, never recites three or more of its own steps in sequence (two-step speech is dialogue).",
-    provenance: "identity-profile.ts:385; companion-interaction-gate.mjs:8-10 (RP convention)",
-    source: "companion-interaction-gate.mjs:step_checklist",
+      "Whether spoken text talks to the player rather than reciting mechanical chore steps; decommissioned from downstream regex gate to eliminate false positives on natural spoken clauses, governed upstream by persona grounding.",
+    provenance: "identity-profile.ts:385 (RP convention)",
+    source: null,
   }),
   Object.freeze({
     id: "no_unobserved_world_reaction",
@@ -579,8 +579,6 @@ function reasonToObligation(reason) {
       return "no_machine_token_leak";
     case "self_tag_leak":
       return "no_self_tag_leak";
-    case "step_checklist":
-      return "no_step_recital";
     case "unobserved_event":
       return "no_unobserved_world_reaction";
     case "summary_too_long":

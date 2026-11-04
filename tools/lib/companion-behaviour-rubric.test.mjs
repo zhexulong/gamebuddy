@@ -45,11 +45,12 @@ test("reading a receipt's wire format out loud breaks the leak obligation", () =
   assert.equal(obligation(rubric, "no_machine_token_leak").verdict, "broken");
 });
 
-test("a step recital breaks the recital obligation", () => {
+test("the recital obligation is classified as Unjudged after decommissioning heuristic regex gates", () => {
   const rubric = assessCompanionBehaviourRubric({
     turns: [{ turnId: "turn_1", text: "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水。" }],
   });
-  assert.ok(rubric.verdict.broken.includes("no_step_recital"));
+  assert.equal(obligation(rubric, "no_step_recital").verdict, "unmeasured");
+  assert.ok(rubric.verdict.unmeasured.includes("no_step_recital"));
 });
 
 test("claiming an NPC reaction is broken only when no receipt proved it", () => {

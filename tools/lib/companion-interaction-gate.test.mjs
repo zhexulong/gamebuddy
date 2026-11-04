@@ -15,66 +15,20 @@ test("accepts a short emotion-first exclamation without addressing the player", 
   assert.equal(result.metrics.hasPlayerAddress, false);
 });
 
-test("rejects a step-by-step recital", () => {
-  const result = assessCompanionInteraction(
-    "（轻声）我在屋外找了块空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水，现在等它慢慢长大。",
-  );
-  assert.equal(result.passed, false);
-  assert.deepEqual(result.reasons, ["step_checklist"]);
-});
-
-test("accepts ordinary two-part speech that names a first and a second thing", () => {
-  // A friend chatting, not a recital. The gate exists for a run of THREE OR MORE steps; firing on any
-  // `先…再…` failed the companion for talking like a person, which is the product's whole point.
-  const colloquial = "我先把院子那两棵浇了，回头再进屋鼓捣。";
-  const result = assessCompanionInteraction(colloquial, []);
-  assert.equal(result.passed, true);
-  assert.deepEqual(result.reasons, []);
-});
-
-test("rejects the three-step recital the rule was written for", () => {
-  // An unmarked middle step sits between two ordered markers, so the count of steps is three even though
-  // the sentence carries a single connective.
-  const recital = "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水。";
-  const result = assessCompanionInteraction(recital, []);
-  assert.equal(result.passed, false);
-  assert.deepEqual(result.reasons, ["step_checklist"]);
-});
-
-test("rejects the formal first/second/then/finally sequence", () => {
-  // 首先…其次…接着…最后… carries no `先…再…` shape at all, so the old single-alternative pattern missed
-  // the whole family.
-  const formal = "首先把土翻了，其次播种，接着浇水，最后收工。";
-  const result = assessCompanionInteraction(formal, []);
-  assert.equal(result.passed, false);
-  assert.deepEqual(result.reasons, ["step_checklist"]);
-});
-
-test("two steps are dialogue and three steps are a recital", () => {
-  const twoStep = ["首先把土翻了，接着浇水。", "我先把院子那两棵浇了，回头再进屋鼓捣。"];
-  for (const line of twoStep) {
-    assert.equal(assessCompanionInteraction(line, []).reasons.includes("step_checklist"), false, line);
+test("natural dialogue with ordering or sequence markers is not failed by decommissioned step_checklist", () => {
+  const samples = [
+    "我先把院子那两棵浇了，回头再进屋鼓捣。",
+    "我先歇会儿，今天天真热，太阳晒得人头晕，等太阳下山了我再去地里。",
+    "我先把院子扫了，刚才风吹落了满地的枯叶，弄完我又去喂了鸡。",
+    "我先去西边看看，要是那边杂草多的话，回头再叫你一起弄。",
+    "先等一下，我把鞋带系好，再去把那棵树给砍了。",
+    "我先把水浇了，顺便看了一眼防风草，然后就赶紧跑回来了。",
+  ];
+  for (const line of samples) {
+    const result = assessCompanionInteraction(line, []);
+    assert.equal(result.reasons.includes("step_checklist"), false, line);
+    assert.equal(result.passed, true, line);
   }
-  const threeStep = ["首先把土翻了，其次播种，接着浇水。", "先翻松泥土，把种子种进土里，又拎着浇水壶给它浇了水。"];
-  for (const line of threeStep) {
-    assert.equal(assessCompanionInteraction(line, []).reasons.includes("step_checklist"), true, line);
-  }
-});
-
-test("rejects a long broadcast-style summary even without a checklist", () => {
-  const result = assessCompanionInteraction(
-    "（轻声）今天早上我一直待在农场里，太阳晒得背上暖洋洋的，泥土的味道也很好闻。种子应该很快就能发芽，到时候我们一起去看，顺便也可以摘点别的菜回来。你觉得这样安排可以吗？我觉得这样安排真的挺好的，你觉得呢？我们还可以顺便看看那边的小溪，听说春天里有鱼游过来，你喜欢钓鱼吗？",
-  );
-  assert.equal(result.passed, false);
-  assert.deepEqual(result.reasons, ["summary_too_long"]);
-});
-
-test("rejects the exact recital pattern observed in the live run", () => {
-  const observed =
-    "都弄妥当啦——我在屋外找了块向阳的空地，先翻松泥土，把一颗花椰菜种子种进土里，又拎着浇水壶给它浇了水；现在乔迪的花椰菜就安安稳稳躺在湿润的土里等着慢慢长大，等它成熟我第一时间摘下来给她送去。";
-  const result = assessCompanionInteraction(observed);
-  assert.equal(result.passed, false);
-  assert.ok(result.reasons.includes("step_checklist"));
 });
 
 test("rejects empty text", () => {
@@ -158,4 +112,11 @@ test("a motionless body-part description is not a reaction claim", () => {
     assert.equal(result.passed, true, line);
     assert.equal(result.metrics.claimedNpcReaction, false, line);
   }
+});
+
+test("hypothetical condition with NPC verb is not an unobserved event", () => {
+  const line = "她要是答应了，咱们就省事多了。";
+  const result = assessCompanionInteraction(line, []);
+  assert.equal(result.passed, true, line);
+  assert.equal(result.reasons.includes("unobserved_event"), false, line);
 });

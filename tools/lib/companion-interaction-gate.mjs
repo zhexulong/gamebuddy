@@ -9,22 +9,25 @@
  * structuring"; "end each response with a question" as the classic turnover
  * device).
  *
- * Four hard signals plus one recorded soft signal:
+ * Hard signals plus one recorded soft signal:
  *   - summary_too_long   : more than 120 characters after trimming
- *   - step_checklist     : a THREE-OR-MORE-step recital of what the companion just did (see
- *                          `recitedSteps` below for the count; two-step speech is dialogue)
  *   - self_tag_leak      : Magic Context's `§N§` prompt self-tag, which the model
  *                          mimics into its reply and the player must never see
+ *   - machine_token_leak : machine wire identifiers (gift_given, quest_25_completed)
  *   - unobserved_event   : asserts a specific thing the world did in response
  *                          (e.g. an NPC rejoiced, reacted, or said something)
- *                          when the receipts carry no such event. A trace shows
- *                          the companion narrating "Jodi beamed and said dinner
- *                          was saved" while the offer receipt recorded
- *                          showed_response=false — i.e. no dialogue happened at
- *                          all. Inventing a reaction is a worse interaction
- *                          failure than being long, so it is a hard signal.
+ *                          when the receipts carry no such event.
  *   - hasPlayerAddress   : mentions the player or asks a question (recorded,
  *                          not enforced — a companion may also just exclaim)
+ *
+ * NOTE (step_checklist decommissioned):
+ * Downstream regex matching for procedural recitals (`step_checklist` / `先…再…`)
+ * has been decommissioned. Heuristic parsing of comma-separated clauses caused persistent
+ * false-positive errors on ordinary spoken Chinese (e.g. conditional clauses,
+ * environmental pauses, incidental remarks). Invariant alignment against chore
+ * checklists is owned upstream at the prompt and persona layer (identity-profile.ts
+ * and card.json) where positive target templates guide conversational register.
+ *
  * All hard signals must pass for the summary to be acceptable.
  *
  * CLAIM BOUNDARY: this is a high-precision, LOW-RECALL detector. The reaction
@@ -34,44 +37,6 @@
  * never as "the line matches the world state". Widening recall needs a
  * non-vocabulary mechanism, which is a separate design.
  */
-/**
- * How many steps one sentence recites, which is the count `step_checklist` enforces.
- *
- * The rule used to be "`先…(再|然后|接着|又)…` inside one sentence", and that is not a recital: 「我先把院子那两
- * 棵浇了，回头再进屋鼓捣」 is a friend saying what she did this morning, and the gate failed her for talking
- * like a person. A checklist is THREE OR MORE mechanical steps in sequence (the RP convention this gate
- * follows), and the shape it exists for is the one a live run presented: 「先翻松泥土，把种子种进土里，又拎
- * 着浇水壶给它浇了水」 - an unmarked middle step between two ordered markers - and the formal 「首先…其次…接着…
- * 最后…」, which carries no `先…再…` shape at all and was invisible to the old pattern.
- *
- * So the signal is a COUNT over one sentence:
- *   the opening marker (`先` / `首先` / `第一步`) is step one,
- *   each clause after it (split on `，` / `、`) is a further step,
- *   and the sequence must carry an ordered connective (`再` / `然后` / `接着` / `又` / `最后` / `其次`) after the
- *   opener - without one, "先…，…，…" is three things said in a row, not a recital.
- *
- * Two steps are speech and three are a recital. `先` inside a compound that opens no sequence (以前 / 预先 / 优先 /
- * 事先 / 领先 / 抢先 / 率先 / 祖先) is not a marker. As this gate's CLAIM BOUNDARY says elsewhere, recall is
- * deliberately narrow: a run-on recital with no clause break at all is not counted.
- */
-const CHECKLIST_OPENER = /(?:首先|第一步|(?<![以预优事领抢率祖])先)/u;
-const CHECKLIST_CONNECTIVE = /(?:再|然后|接着|又|最后|其次)/u;
-const CHECKLIST_MIN_STEPS = 3;
-const SENTENCE_BREAK = /[。；;！!？?\n]+/u;
-const CLAUSE_BREAK = /[，,、]+/u;
-
-function recitedSteps(text) {
-  let most = 0;
-  for (const sentence of text.split(SENTENCE_BREAK)) {
-    const clauses = sentence.split(CLAUSE_BREAK).filter((clause) => clause.trim().length > 0);
-    const opener = clauses.findIndex((clause) => CHECKLIST_OPENER.test(clause));
-    if (opener < 0) continue;
-    const steps = clauses.slice(opener);
-    if (!steps.some((step) => CHECKLIST_CONNECTIVE.test(step))) continue;
-    most = Math.max(most, steps.length);
-  }
-  return most;
-}
 
 export function assessCompanionInteraction(text, observedEvents = []) {
   const trimmed = String(text ?? "").trim();
@@ -82,9 +47,6 @@ export function assessCompanionInteraction(text, observedEvents = []) {
 
   const reasons = [];
   if (metrics.length > 120) reasons.push("summary_too_long");
-  if (recitedSteps(trimmed) >= CHECKLIST_MIN_STEPS) {
-    reasons.push("step_checklist");
-  }
   // Machine identifiers leaking into player-facing speech. A live run (after the
   // NPC-reaction hole was fixed) told the player “回执显示这算普通送礼
   // （gift_given）…quest_25_completed 还是 false” — it read the receipt's wire
@@ -135,9 +97,14 @@ export function assessCompanionInteraction(text, observedEvents = []) {
     "[^。；.!！?？]{0,6}" +
     "(弯|亮|红|湿|白|上扬|翘|敛|皱|瞪|睁大|眯|颤|僵|柔和|发红)";
   const window = "[^。；.!！?？]{0,12}";
-  const claimsNpcReaction =
-    new RegExp(`${subject}${window}${reaction}`).test(withoutToneTags) ||
-    new RegExp(`${subject}${window}${bodyPartChange}`).test(withoutToneTags);
+  const reactionRegex = new RegExp(`${subject}${window}${reaction}`);
+  const bodyPartChangeRegex = new RegExp(`${subject}${window}${bodyPartChange}`);
+  const reactionClauses = withoutToneTags.split(/[，,、。；;！!？?\n]+/).filter((c) => c.trim().length > 0);
+  const claimsNpcReaction = reactionClauses.some((clause) => {
+    const c = clause.trim();
+    if (/(要是|如果|假如|万一|只要)/.test(c) || /的话$/.test(c)) return false;
+    return reactionRegex.test(c) || bodyPartChangeRegex.test(c);
+  });
   if (claimsNpcReaction && !observedEvents.includes("npc_dialogue")) {
     reasons.push("unobserved_event");
   }
