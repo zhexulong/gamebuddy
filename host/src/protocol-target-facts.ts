@@ -1306,7 +1306,11 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
       value.kind === "removable_object" ||
       value.kind === "non_removable_object" ||
       value.kind === "breakable_container" ||
-      value.kind === "placed_furniture") &&
+      value.kind === "placed_furniture" ||
+      // `empty_pedestal` is a pedestal standing in `location.objects` that holds NOTHING, which is the only state
+      // `place_item_on_pedestal` can address. `pedestalTargets` cannot supply it: that family is the TAKE projection and
+      // carries only a pedestal that already holds an item, binding that item's identity and stack.
+      value.kind === "empty_pedestal") &&
     typeof value.location === "string" &&
     typeof value.x === "number" &&
     Number.isSafeInteger(value.x) &&

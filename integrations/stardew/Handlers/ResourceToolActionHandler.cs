@@ -95,6 +95,14 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
 
             "move_placed_furniture" => this.executions.RequestLocalMovePlacedFurniture(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
+            "rotate_furniture" => this.executions.RequestLocalRotateFurniture(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "remove_fence" => this.executions.RequestLocalRemoveFence(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "put_item_in_fish_tank" => this.executions.RequestLocalPutItemInFishTank(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "place_item_on_pedestal" => this.executions.RequestLocalPlaceItemOnPedestal(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
             "place_owned_object" => this.executions.RequestLocalPlaceOwnedObject(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "color_placed_object" => this.executions.RequestLocalColorPlacedObject(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.Args.ColorSelection ?? 0, request.DeadlineMs),
             "pan_ore" => this.executions.RequestLocalPanOre(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.DeadlineMs),

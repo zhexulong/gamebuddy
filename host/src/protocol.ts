@@ -892,7 +892,8 @@ export type Snapshot = Readonly<{
 
   /** One object the world-object lane can act on at a world tile, plus the backpack slot that
    * acts. `kind` is what the live object IS for this lane ('placement_candidate',
-   * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture'); `slot`
+   * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture', 'empty_pedestal');
+   * `slot`
    * is the backpack slot the named action must act through, or -1 when the actor owns no tool for
    * it. */
   worldObjectTargets?: readonly Readonly<{
@@ -1031,6 +1032,10 @@ export type ExecutionRequest = Readonly<{
     | "place_owned_object"
     | "remove_placed_item"
     | "move_placed_furniture"
+    | "rotate_furniture"
+    | "remove_fence"
+    | "put_item_in_fish_tank"
+    | "place_item_on_pedestal"
     | "break_container"
     | "use_obelisk"
     | "toggle_animal_door"
@@ -2647,6 +2652,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
     value.action !== "move_placed_furniture" &&
+    value.action !== "rotate_furniture" &&
+    value.action !== "remove_fence" &&
+    value.action !== "put_item_in_fish_tank" &&
+    value.action !== "place_item_on_pedestal" &&
     value.action !== "break_container" &&
     value.action !== "use_warp_item" &&
     value.action !== "pan_ore" &&
@@ -3797,6 +3806,10 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     value.action === "place_owned_object" ||
     value.action === "remove_placed_item" ||
     value.action === "move_placed_furniture" ||
+    value.action === "rotate_furniture" ||
+    value.action === "remove_fence" ||
+    value.action === "put_item_in_fish_tank" ||
+    value.action === "place_item_on_pedestal" ||
     value.action === "break_container" ||
     value.action === "equip_wearable" ||
     value.action === "unequip_wearable" ||
@@ -3894,6 +3907,10 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
     value.action !== "move_placed_furniture" &&
+    value.action !== "rotate_furniture" &&
+    value.action !== "remove_fence" &&
+    value.action !== "put_item_in_fish_tank" &&
+    value.action !== "place_item_on_pedestal" &&
     value.action !== "break_container"
   )
     return null;
@@ -3905,6 +3922,31 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_placement_tile";
     if (!isToolSlot(args.slot)) return "invalid_placement_slot";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
+      return "invalid_placement_item";
+  } else if (value.action === "rotate_furniture") {
+    // Turning a placed piece names the tile and the piece's own opaque `placed_furniture` id, and nothing
+    // else. No slot and no angle: which rotation the turn lands on is the piece's own cycle
+    // (`Furniture.rotate`, Furniture.cs:1153-1162), so a caller-supplied angle would have to pretend to
+    // accept orientations the game does not have.
+    if (!hasExactKeys(args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+  } else if (value.action === "place_item_on_pedestal") {
+    // The same item shape as the tank deposit: the tile, the pack slot the item is taken from, that item's wire
+    // identity and the pedestal's own target id.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
+      return "invalid_placement_item";
+  } else if (value.action === "put_item_in_fish_tank") {
+    // The tank deposit names the tile, the pack slot holding the item, that item's wire identity and the tank's
+    // `placed_furniture` id. All four are mandatory: the native method deposits whatever the actor is HOLDING
+    // (`who.ActiveObject`/`who.CurrentItem`, FishTankFurniture.cs:235), so the slot is what selects the stack and the
+    // id is what proves the stack is still the one the caller saw.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
     if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
       return "invalid_placement_item";
   } else if (value.action === "move_placed_furniture") {

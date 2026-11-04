@@ -669,6 +669,10 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
   move_placed_furniture: "stardew_move_placed_furniture",
+  rotate_furniture: "stardew_rotate_furniture",
+  remove_fence: "stardew_remove_fence",
+  put_item_in_fish_tank: "stardew_put_item_in_fish_tank",
+  place_item_on_pedestal: "stardew_place_item_on_pedestal",
   break_container: "stardew_break_container",
   use_obelisk: "stardew_use_obelisk",
   accept_special_order: "stardew_accept_special_order",
@@ -776,6 +780,10 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "place_owned_object",
   "remove_placed_item",
   "move_placed_furniture",
+  "rotate_furniture",
+  "remove_fence",
+  "put_item_in_fish_tank",
+  "place_item_on_pedestal",
   "break_container",
   "equip_wearable",
   "unequip_wearable",
@@ -910,6 +918,37 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "placed_furniture_picked_up") return false;
+    return true;
+  }
+  if (actionId === "rotate_furniture") {
+    // The same tile-and-target shape as the pickup, because it names the same physical piece; the rotation
+    // the call lands on is the piece's own cycle, so there is no angle argument to admit.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "furniture_rotated") return false;
+    return true;
+  }
+  if (actionId === "remove_fence") {
+    // The tool shape, like the sibling removal: the tile, the tool slot and the fence's own object target.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "fence_removed") return false;
+    return true;
+  }
+  if (actionId === "place_item_on_pedestal") {
+    // The item shape, with the pedestal's own target rather than a tank's.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "pedestal_item_placed") return false;
+    return true;
+  }
+  if (actionId === "put_item_in_fish_tank") {
+    // The item shape: the tile, the pack slot the item is taken from, that item's identity and the tank's target.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "fish_tank_item_deposited") return false;
     return true;
   }
   if (actionId === "break_container") {
