@@ -77,18 +77,37 @@ const gameDir =
 // `native_local_fixture_absolute_paths_required`, and an env override can be relative.
 // An EMPTY env var is not an answer: `??` only falls back on null/undefined, so a blank
 // GAMEBUDDY_STARDEW_MODS_DIR became an empty argument and the fixture refused the whole run in 65 seconds.
+const fixtureRoots = resolveStardewFixtureRoots({ fixturesRoot: option("root", null) });
+const fixtureRoot = fixtureRoots.fixturesRoot;
+announceStardewFixtureRoots(fixtureRoots);
+
+//
+// The DEFAULT is a lane-private mods folder, never <game>/Mods.
+//
+// This used to default to the game's own Mods directory, so every run wrote the built bundle into the Steam install. Steam
+// notices: it reported the install as modified, because it was - by us, on every run. Deploying there was also redundant,
+// since the fixture copies the same bundle into its own root and launches SMAPI with `--mods-path`.
+//
+// Pointing at the install now requires saying so explicitly (`--allow-game-mods`), because a silent default that writes
+// into a store-managed directory is exactly the kind of side effect a run should never have.
+const allowGameMods = option("allow-game-mods", null) !== null;
 const modsPath = path.resolve(
-  nonEmpty(option("mods", null)) ?? nonEmpty(process.env.GAMEBUDDY_STARDEW_MODS_DIR) ?? path.join(gameDir, "Mods"),
+  nonEmpty(option("mods", null)) ?? nonEmpty(process.env.GAMEBUDDY_STARDEW_MODS_DIR) ?? path.join(fixtureRoot, "mods"),
 );
+const gameModsRoot = path.resolve(path.join(gameDir, "Mods"));
+if (!allowGameMods && (modsPath === gameModsRoot || modsPath.startsWith(`${gameModsRoot}${path.sep}`))) {
+  throw new Error(
+    `refusing_to_write_into_the_game_install:${modsPath} (pass --allow-game-mods if that is really intended; ` +
+      `Steam reports files under its install as modified, and the fixture deploys its own copy anyway)`,
+  );
+}
 // Both fixture roots come from the single shared resolver
 // (tools/lib/stardew-fixture-roots.mjs). The defaults are the historical paths;
 // GAMEBUDDY_STARDEW_PROFILE_ROOT / GAMEBUDDY_STARDEW_FIXTURE_ROOT point one
 // concurrent lane at private roots, and an explicit --root still wins. The
 // resolved roots are printed once so an operator can see which root this run
 // holds before it takes the fixture transaction.
-const fixtureRoots = resolveStardewFixtureRoots({ fixturesRoot: option("root", null) });
-const fixtureRoot = fixtureRoots.fixturesRoot;
-announceStardewFixtureRoots(fixtureRoots);
+
 // resolve(), not join(): the fixture refuses relative paths with
 // `native_local_fixture_absolute_paths_required`, so a relative --release silently broke the restore half of
 // every run while the run itself looked healthy.
