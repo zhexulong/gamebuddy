@@ -12,6 +12,16 @@
  *                       against its own turn id", which is the defect this reader was rebuilt for.
  *                       Refusing the recording proxy's source reddens "the reading names the instance
  *                       whose wire it describes" - the run whose capture this kit now produces.
+ *   the driver-level lines
+ *                       Writing the foreign-record count under `INJECTION <label>: unobserved:` reddens
+ *                       "the INJECTION line carries the turn key and the instance": on the run that
+ *                       produced this fix the join had worked for f, n and p and the only driver-level
+ *                       line left was `unobserved:1_capture_record_for_a_turn_not_observed_here`,
+ *                       which reads as the driver having measured nothing. Reporting a wanted key
+ *                       without the keys the capture held reddens "names both sides of the join".
+ *                       A line for a driver that marked no turn reddens "a driver that ran no turn
+ *                       writes no INJECTION line", and dropping a keyless mark from the timings
+ *                       reddens "a stage marked for a turn with no key is named".
  *   prefixes            renaming the product's switch prefix reddens "the kit reads the marks the
  *                       product emits".
  *
@@ -284,7 +294,11 @@ test("a body with no matching submission key is unobserved, never guessed", asyn
     "key-c has no captured body, and key-b belongs to another turn: neither may be reported as key-c",
   );
   assert.deepEqual(injection.missing, ["key-c"], "the turn this driver ran and cannot read is named");
-  assert.equal(injection.foreign, 1, "one record belongs to a turn this driver did not observe");
+  assert.deepEqual(
+    injection.heldKeys,
+    ["key-a", "key-b"],
+    "the capture's own keys are returned so a caller can name the join it could not make, rather than printing a count",
+  );
 });
 
 test("the volatile block's entries are named, and a block naming itself is preferred over its first line", async () => {
@@ -405,6 +419,17 @@ test("an empty request list is still unobserved rather than a turn with nothing 
   assert.match(injection.reason, /no_parsed_request_body/u);
 });
 
+/** The two marks a keyed turn leaves, in the order the product emits them. */
+const turnMarks = (key, at = 10) => [
+  { entryType: "mark", name: "gamebuddy:turn:submit", startTime: at, detail: { turnKey: key } },
+  { entryType: "mark", name: "gamebuddy:turn:settled", startTime: at + 50, detail: { turnKey: key } },
+];
+
+/** A stage the page marked for a turn it has no key for - what a regenerated variant leaves behind. */
+const keylessMark = (stage, at) => ({ entryType: "mark", name: `gamebuddy:turn:${stage}`, startTime: at });
+
+const injectionLines = (lines) => lines.filter((line) => line.startsWith("INJECTION "));
+
 test("the INJECTION line carries the turn key and the instance, and says which turn it could not read", async () => {
   /*
    * A driver shares the page with the other nineteen, so it must report only the turn it observed -
@@ -413,8 +438,7 @@ test("the INJECTION line carries the turn key and the instance, and says which t
    */
   const lines = [];
   const page = fakePage([
-    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 10, detail: { turnKey: "key-a" } },
-    { entryType: "mark", name: "gamebuddy:turn:settled", startTime: 60, detail: { turnKey: "key-a" } },
+    ...turnMarks("key-a", 10),
     { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 70, detail: { turnKey: "key-c" } },
   ]);
   await observe(page, (line) => lines.push(line), "f", {
@@ -422,18 +446,98 @@ test("the INJECTION line carries the turn key and the instance, and says which t
     capturedRequests: capture([request("key-a", systemPrompt(AUTHORED)), request("key-z", systemPrompt(BARE))]),
   });
   const injection = lines.filter((line) => line.startsWith("INJECTION f turn="));
-  assert.deepEqual(
-    injection.map((line) => line.slice(0, line.indexOf(":"))),
-    ["INJECTION f turn=key-a source=local-stub-provider", "INJECTION f turn=key-c"],
-    "one line per turn this driver observed, each naming its own key and the instance the wire describes",
+  assert.equal(injection.length, 2, "one line per turn this driver observed");
+  assert.match(
+    injection[0],
+    /^INJECTION f turn=key-a source=local-stub-provider: authoredContext=present block=gamebuddy-authored-context/u,
+    "the joined turn names its own key and the instance the wire describes",
   );
-  assert.match(injection[0], /authoredContext=present block=gamebuddy-authored-context/u);
-  assert.match(injection[1], /unobserved:no_capture_for_turn/u);
+  assert.equal(
+    injection[1],
+    'INJECTION f turn=key-c: unobserved:no_capture_for_turn:capture_holds=["key-a","key-z"]',
+    "the turn this driver ran and cannot read is named, together with the keys the capture did hold",
+  );
+  assert.deepEqual(
+    lines.filter((line) => line.startsWith("INJECTION f: unobserved:")),
+    [],
+    "key-a's body IS in the capture, so this driver has no absence to report: the count that used to be written here (`1_capture_record_for_a_turn_not_observed_here`) read as this driver's blindness on a turn it had just measured",
+  );
   assert.match(
     lines.join("\n"),
-    /INJECTION f: unobserved:1_capture_record_for_a_turn_not_observed_here/u,
-    "a record belonging to another turn is reported as somebody else's, never shown as this driver's",
+    /INJECTION f: capture_keys_with_no_turn_mark_here=\["key-z"\]/u,
+    "a record for a turn this driver never marked is named by its key, and named as a fact about the shared file rather than as this driver's absence",
   );
+});
+
+test("a capture holding only other turns' keys says so, and names both sides of the join", async () => {
+  const lines = [];
+  await observe(fakePage(turnMarks("key-a", 10)), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: capture([request("key-b", systemPrompt(AUTHORED))]),
+  });
+  assert.deepEqual(
+    injectionLines(lines),
+    [
+      'INJECTION f turn=key-a: unobserved:no_capture_for_turn:capture_holds=["key-b"]',
+      'INJECTION f: capture_keys_with_no_turn_mark_here=["key-b"]',
+    ],
+    "the key this driver wanted and the keys the capture held are both named: a count alone leaves the next reader guessing which turn was read",
+  );
+});
+
+test("a turn marked with no submission key is reported as exactly that", async () => {
+  /* The page marked a stage of a turn and cannot name it, so there is nothing to look up. */
+  const lines = [];
+  await observe(fakePage([keylessMark("accepted", 5)]), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: capture([request("key-a", systemPrompt(AUTHORED))]),
+  });
+  assert.deepEqual(
+    injectionLines(lines),
+    ["INJECTION f: unobserved:observed_turn_has_no_turnId"],
+    "an unkeyed mark is an observation this reader cannot join, and it says so instead of borrowing another turn's key",
+  );
+});
+
+test("a driver that ran no turn writes no INJECTION line at all", async () => {
+  /*
+   * Seventeen drivers observe a layout and never ask the request anything. `report.mjs` names each of
+   * them as having written no line; a line here used to claim an `observed_turn_has_no_turnId` for a
+   * turn nobody ran, which is a false statement about the page rather than an absence in the capture.
+   */
+  const lines = [];
+  await observe(
+    fakePage([{ entryType: "mark", name: "gamebuddy:switch:chat:done", startTime: 4 }]),
+    (line) => lines.push(line),
+    "h",
+    {
+      sinceMs: 0,
+      capturedRequests: capture([request("key-a", systemPrompt(AUTHORED))]),
+    },
+  );
+  assert.deepEqual(injectionLines(lines), [], "the driver asked the request nothing, so it has no reading to give");
+});
+
+test("a stage marked for a turn with no key is named rather than silently dropped from the timings", async () => {
+  /*
+   * Regenerating a reply starts a real turn and posts a real request, and the page marks its stages
+   * without a submission key. Those marks used to vanish from `TIMINGS` (no `submit` mark, so no row)
+   * and their request showed up only as a count of records "for a turn not observed here" - the
+   * unreadable half of the same defect.
+   */
+  const lines = [];
+  await observe(
+    fakePage([...turnMarks("key-a", 10), keylessMark("accepted", 80), keylessMark("first-token", 90)]),
+    (line) => lines.push(line),
+    "f",
+    { sinceMs: 0, capturedRequests: capture([request("key-a", systemPrompt(AUTHORED))]) },
+  );
+  assert.match(
+    lines.join("\n"),
+    /TIMINGS f: marks_with_no_submission_key=2 stages=\["accepted","first-token"\]/u,
+    "a mark the page emitted and this reader cannot attribute is a named fact, not a shortened row list",
+  );
+  assert.match(lines.join("\n"), /TIMINGS f turn=key-a: settled=50ms/u, "the keyed turn keeps its own row");
 });
 
 /** A minimal line that declares its writer, so the reader's agreement rule is testable without a proxy. */

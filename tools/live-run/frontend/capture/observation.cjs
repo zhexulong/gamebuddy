@@ -73,6 +73,7 @@ async function readSwitchMarks(page, sinceMs = 0) {
 }
 
 const SWITCH_PREFIX = "gamebuddy:switch:";
+const TURN_PREFIX = "gamebuddy:turn:";
 
 /**
  * Pair each switch's two ends, in page order.
@@ -127,7 +128,7 @@ function durationsByTurn(marks) {
 	for (const mark of marks) {
 		const key = mark.turnKey ?? "unattributed";
 		if (!byTurn.has(key)) byTurn.set(key, {});
-		byTurn.get(key)[mark.name.replace("gamebuddy:turn:", "")] = mark.at;
+		byTurn.get(key)[mark.name.replace(TURN_PREFIX, "")] = mark.at;
 	}
 	const durations = {};
 	for (const [key, stages] of byTurn) {
@@ -202,6 +203,23 @@ async function readPaintFacts(page) {
  * and the capture file: a driver that reported whatever bodies the file held would report another
  * driver's prompt as its own. `durationsByTurn`'s bare `unattributed` bucket is not an id and is never
  * used as one - a turn whose mark carries no key is reported as a turn that cannot be matched.
+ *
+ * The three shapes are distinct and must stay distinct, because the difference between them is the
+ * difference between a measurement and the reader's own blindness:
+ *
+ *   this driver marked no turn         it asked the request nothing, so it writes no INJECTION line;
+ *                                      `report.mjs` names every such driver in the section's silence
+ *                                      list, which is a report about the driver, not about the wire.
+ *   a turn is marked, with no key      the observation exists and cannot be looked up:
+ *                                      `unobserved:observed_turn_has_no_turnId`.
+ *   a turn is marked, with a key       each key is looked up in the capture. A key with no record says
+ *                                      `no_capture_for_turn` AND names the keys the capture did hold;
+ *                                      a record for a key this driver never marked is reported as
+ *                                      `capture_keys_with_no_turn_mark_here`, a fact about the shared
+ *                                      file and never an absence of this driver's reading. A count of
+ *                                      such records used to be written as `unobserved:<n>_capture_records
+ *                                      _for_a_turn_not_observed_here`, and on a run where the join had
+ *                                      worked perfectly it read as the driver having measured nothing.
  */
 async function observe(page, say, label = "run", options = {}) {
 	const sinceMs = typeof options.sinceMs === "number" ? options.sinceMs : 0;
@@ -220,6 +238,20 @@ async function observe(page, say, label = "run", options = {}) {
 				.join(" ");
 			say(`TIMINGS ${label} turn=${key}: ${parts.length === 0 ? "unobserved:no-terminal-mark" : parts}`);
 		}
+	}
+	/*
+	 * A stage marked for a turn the page has no key for cannot be attributed to a turn, so it is not a
+	 * duration - but it is not nothing either: regenerating a reply starts a real turn, marks its stages
+	 * and posts a real request, and those marks used to disappear between `durationsByTurn` (which needs
+	 * a `submit` mark to open a row) and the capture (whose record this driver then could not name).
+	 *
+	 * Not emitted when the keyless marks include a `submit`: `durationsByTurn` has already reported that
+	 * turn as `turn=unattributed`, and one fact must not be spelled twice.
+	 */
+	const keyless = marks.filter((mark) => mark.turnKey === null);
+	if (keyless.length > 0 && durations.unattributed === undefined) {
+		const stages = [...new Set(keyless.map((mark) => mark.name.replace(TURN_PREFIX, "")))];
+		say(`TIMINGS ${label}: marks_with_no_submission_key=${keyless.length} stages=${JSON.stringify(stages)}`);
 	}
 
 	const runtime = await readRuntimeFacts(page);
@@ -248,30 +280,31 @@ async function observe(page, say, label = "run", options = {}) {
 		}
 	}
 
-	const captured = options.capturedRequests ?? readCapturedRequests(process.env.GB_SHOTS_WIRE_REQUESTS);
-	const injection = await injectionFacts(captured, turnIds);
-	if (!injection.ok) {
-		/* A driver that ran no turn is not "unobserved" - it is a driver that asked nothing of the request. */
-		if (turnIds.length > 0 || captured.ok === true) say(`INJECTION ${label}: unobserved:${injection.reason}`);
-	} else {
-		for (const turn of injection.turns) {
-			say(`INJECTION ${label} turn=${turn.turnId} source=${injection.source}: ${describeInjection(turn)}`);
+	let injection = null;
+	/* A driver that marked no turn asked the request nothing: `report.mjs` names it in the silence list. */
+	if (marks.length > 0 && turnIds.length === 0) {
+		say(`INJECTION ${label}: unobserved:observed_turn_has_no_turnId`);
+	} else if (turnIds.length > 0) {
+		const captured = options.capturedRequests ?? readCapturedRequests(process.env.GB_SHOTS_WIRE_REQUESTS);
+		injection = await injectionFacts(captured, turnIds);
+		if (!injection.ok) {
+			say(`INJECTION ${label}: unobserved:${injection.reason}`);
+		} else {
+			for (const turn of injection.turns) {
+				say(`INJECTION ${label} turn=${turn.turnId} source=${injection.source}: ${describeInjection(turn)}`);
+			}
+			const held = JSON.stringify(injection.heldKeys);
+			for (const turnId of injection.missing) {
+				say(`INJECTION ${label} turn=${turnId}: unobserved:no_capture_for_turn:capture_holds=${held}`);
+			}
+			const unmarked = injection.unmarked;
+			if (unmarked.length > 0)
+				say(`INJECTION ${label}: capture_keys_with_no_turn_mark_here=${JSON.stringify(unmarked)}`);
+			if (injection.unjoinable > 0)
+				say(`INJECTION ${label}: capture_records_naming_a_turn_and_no_submission_key=${injection.unjoinable}`);
+			if (injection.unlabelled > 0)
+				say(`INJECTION ${label}: capture_records_with_no_turn_identity=${injection.unlabelled}`);
 		}
-		for (const turnId of injection.missing) {
-			say(`INJECTION ${label} turn=${turnId}: unobserved:no_capture_for_turn`);
-		}
-		if (injection.foreign > 0)
-			say(
-				`INJECTION ${label}: unobserved:${injection.foreign}_capture_record${injection.foreign === 1 ? "" : "s"}_for_a_turn_not_observed_here`,
-			);
-		if (injection.unjoinable > 0)
-			say(
-				`INJECTION ${label}: unobserved:${injection.unjoinable}_capture_record${injection.unjoinable === 1 ? "" : "s"}_naming_a_turn_and_no_submission_key`,
-			);
-		if (injection.unlabelled > 0)
-			say(
-				`INJECTION ${label}: unobserved:${injection.unlabelled}_capture_record${injection.unlabelled === 1 ? "" : "s"}_with_no_turn_identity`,
-			);
 	}
 
 	return { durations, runtime, paint, switches, injection };
@@ -386,8 +419,8 @@ function readCapturedRequests(file, read = readFileSync) {
  *
  *   `turnIds` given (a driver's own page marks)
  *                   each key is looked up by its own value. A key with no record is reported as
- *                   `unobserved:no_capture_for_turn`; a record for a key not asked about is counted as
- *                   `foreign` rather than shown as one of this driver's turns.
+ *                   `no_capture_for_turn`; the capture's own keys come back as `heldKeys` so the caller
+ *                   can name the join it could not make instead of printing a count.
  *   `turnIds` omitted
  *                   every record that names a submission key is described under it - never under its
  *                   position. A record naming a turn but no key cannot be attributed to any page and is
@@ -417,8 +450,11 @@ async function injectionFacts(captured, turnIds) {
 				(source === REMOTE_CAPTURE_SOURCE ? "remote_gateway_wire_unintercepted" : "capture_source_undeclared"),
 		};
 	const wanted = Array.isArray(turnIds) ? turnIds : null;
-	if (wanted !== null && wanted.length === 0)
-		return { ok: false, reason: "no_provider_request_capture:observed_turn_has_no_turnId" };
+	/*
+	 * A turn marked with no submission key is a page-side observation this reader cannot look up: the
+	 * capture has nothing to look it up by. Not a capture failure, so it carries no capture prefix.
+	 */
+	if (wanted !== null && wanted.length === 0) return { ok: false, reason: "observed_turn_has_no_turnId" };
 	const bodies = (Array.isArray(captured.requests) ? captured.requests : []).filter(
 		(entry) =>
 			entry !== null &&
@@ -455,8 +491,13 @@ async function injectionFacts(captured, turnIds) {
 		}
 		turns.push({ turnId, ...blocksIn(requestTextOf(byKey.get(turnId), wireMessageText)) });
 	}
-	const foreign = wanted === null ? 0 : [...byKey.keys()].filter((turnId) => !wanted.includes(turnId)).length;
-	return { ok: true, source, turns, missing, foreign, unlabelled, unjoinable };
+	const heldKeys = [...byKey.keys()];
+	/*
+	 * The keys this driver never marked, computed once: `observe` names them, and the writer-side join
+	 * gate (`core/recording-provider-proxy.test.mjs`) reads `foreign` as their count.
+	 */
+	const unmarked = wanted === null ? [] : heldKeys.filter((key) => !wanted.includes(key));
+	return { ok: true, source, turns, missing, heldKeys, unmarked, foreign: unmarked.length, unlabelled, unjoinable };
 }
 
 const byteLength = (text) => Buffer.byteLength(text, "utf8");
