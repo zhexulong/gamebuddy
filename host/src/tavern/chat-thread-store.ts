@@ -2434,6 +2434,10 @@ export function createChatThreadStore(
         }
         const updatedAt = now();
         db.prepare("UPDATE tavern_threads SET updated_at_ms = ? WHERE thread_id = ?").run(updatedAt, chatThreadId);
+        // Her reply's root: this append answers the player line above it, which is the only knowledge this
+        // path has - no turn, so no turn-level position fact to read. Written onto the row in the same
+        // shape the presentation commit writes it, so a reply always says which line it answered.
+        const answered = [...current.messages].reverse().find((message) => message.role === "player");
         insertMessage(
           db,
           chatThreadId,
@@ -2444,6 +2448,7 @@ export function createChatThreadStore(
             text: response.text,
             occurredAtMs: response.occurredAtMs,
             greetingSource: null,
+            ...(answered === undefined ? {} : { parentId: answered.messageId }),
           }),
         );
         return readStateFromDb(db, chatThreadId);
@@ -2741,6 +2746,17 @@ export function createChatThreadStore(
             turnId,
           );
         for (const turnId of doomedTurnIds) db.prepare("DELETE FROM tavern_turns WHERE turn_id = ?").run(turnId);
+        // A reply's root is the player row it names as its parent, and that link is a foreign key with
+        // `ON DELETE RESTRICT`: deleting the line her reply answered would be REFUSED by the constraint
+        // unless the link is cleared first. It is cleared rather than cascaded because the delete is one
+        // row - `chat-pipeline-service.delete` fails closed if a second row went with the named one, so a
+        // cascade here would be refused by this operation's own caller - and because her reply is not
+        // what the player asked to remove. The reply stands with no root, and re-asking its question
+        // refuses by name (`resolveTurnVariantTarget`).
+        db.prepare("UPDATE tavern_messages SET parent_id = NULL WHERE thread_id = ? AND parent_id = ?").run(
+          chatThreadId,
+          input.messageId,
+        );
         // The row's own binding goes with it (`ON DELETE CASCADE`), so the row cannot leave a binding
         // behind that names a session entry no transcript row is carried by any more.
         db.prepare("DELETE FROM tavern_messages WHERE thread_id = ? AND message_id = ?").run(
@@ -3393,6 +3409,12 @@ export function createChatThreadStore(
               text: command.message.text,
               occurredAtMs: command.message.occurredAtMs,
               greetingSource: null,
+              // The player row this reply answers, read off the turn's own position facts - a variant
+              // turn names its anchor, a reply-target turn the line it re-asked, and an ordinary turn the
+              // player row it minted - and written onto the ROW, because the row outlives the turn: the
+              // delete removes the turn that names both and leaves her reply standing, and without this
+              // the reply would have no durable root at all (see `resolveTurnVariantTarget`).
+              parentId: ledger.variant?.anchorMessageId ?? ledger.replyToPlayerMessageId ?? ledger.messageId,
             }),
           );
           break;
@@ -4576,19 +4598,28 @@ export function readSwipePosition(
 }
 
 /**
- * Resolves the durable position facts of a same-position variant acceptance from
- * the transcript alone. It fails closed with a bounded code for an unknown
- * target, a target that is not a companion reply, and a companion reply with no
- * anchor player message before it (the opening is the only such reply).
+ * Resolves the durable position facts of a same-position variant acceptance from the transcript alone.
+ *
+ * The anchor is the player row her reply NAMES AS ITS PARENT - the row it answered, recorded when the
+ * reply was written - and never the nearest player row above it. Adjacency was the derivation until a
+ * hole could exist: a single-row delete leaves her reply standing without the line it answered (the
+ * browser's delete removes exactly the named row, and its caller refuses a second one), and the nearest
+ * player row above it is then a DIFFERENT question, which this acceptance would have re-asked under her
+ * reply. A reply whose parent is gone is refused by name instead, because there is no prompt to re-run.
+ *
+ * An unknown target, a target that is not a companion reply, and the opening (the one reply with no
+ * player line before it) keep the refusals they had.
  */
 function resolveTurnVariantTarget(messages: readonly ChatThreadMessage[], targetMessageId: string): TurnVariantTarget {
   const targetIndex = messages.findIndex((message) => message.messageId === targetMessageId);
   if (targetIndex < 0) throw new Error("chat_variant_target_not_found");
   const target = messages[targetIndex]!;
   if (target.role !== "companion") throw new Error("chat_variant_target_not_companion");
-  const anchor = [...messages.slice(0, targetIndex)].reverse().find((message) => message.role === "player");
-  if (anchor === undefined) throw new Error("chat_variant_anchor_unavailable");
-  return Object.freeze({ targetMessageId, anchorMessageId: anchor.messageId });
+  const anchorId = target.parentId ?? null;
+  const anchorIndex = anchorId === null ? -1 : messages.findIndex((message) => message.messageId === anchorId);
+  if (anchorIndex < 0 || anchorIndex >= targetIndex || messages[anchorIndex]!.role !== "player")
+    throw new Error("chat_variant_anchor_unavailable");
+  return Object.freeze({ targetMessageId, anchorMessageId: anchorId! });
 }
 
 /**

@@ -2319,3 +2319,149 @@ test("a mid-transcript delete removes exactly one row and only the turns that ro
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * The hole the reported defect was about, measured rather than reasoned about.
+ *
+ * Deleting the player line her reply answered leaves her reply standing: the browser's delete removes
+ * exactly one row (`chat-pipeline-service.delete` fails closed if a second went with the named one), so
+ * the reply keeps its own variants and its pager keeps working - `swipeInfo` is read off the row's own
+ * `swipes`/`activeSwipeIndex` (`chat-pipeline-service.projectSwipePosition`) and never off the row above
+ * it. That is why "the variant pager loses its root" is not what happens.
+ *
+ * What the hole does destroy is the question. Her reply names the player row it answered as its parent,
+ * and the same delete clears that link; a regeneration therefore refuses by name instead of re-asking the
+ * nearest player line above it, which after a hole is a DIFFERENT question - the acceptance this test
+ * pins red-before, where `resolveTurnVariantTarget` resolved the anchor by adjacency.
+ */
+test("deleting the line her reply answered leaves the reply and its pager standing, and refuses to re-ask it", async () => {
+  const root = await canonicalTestRoot("gamebuddy-chat-thread-delete-answered-");
+  const continuityKey = createHash("sha256")
+    .update(["player_01", "companion_01", "continuity_01"].join("\u001f"))
+    .digest("hex");
+  const t0 = Date.now();
+  const s = createChatThreadStore(root, continuityKey, () => t0);
+  const reopened = createChatThreadStore(root, continuityKey, () => t0);
+  try {
+    const creation = createProfileAwareChatThreadCreationCapability(s, profileReader);
+    await creation.createExplicit(request(opening));
+    const { acceptMountedPlayerMessage } = await import("./chat-thread-store.js");
+    const binding = {
+      runtimeRoot: root,
+      playerId: "player_01",
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "surface_01",
+      selectionGeneration: 1,
+    };
+    const claimBinding = {
+      ...binding,
+      runtimeBindingDigest: "b".repeat(64),
+      runtimeOwner: {
+        ownerToken: "owner_01",
+        runtimeInstanceId: "inst_01",
+        ownerPid: 1234,
+        ownerProcessStartIdentity: "pid_1234",
+      },
+    };
+    /** One complete turn: accept, claim, arm, run, commit the reply, complete. */
+    const turn = async (ordinal: number, text: string, replyId: string) => {
+      const key = `key${ordinal}`.padEnd(22, "x");
+      const accepted = await acceptMountedPlayerMessage(binding, {
+        text,
+        locale: "en-US",
+        idempotencyKey: key,
+        expectedDraftRevision: ordinal - 1,
+        authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+      });
+      const claimed = await claimMountedAttempt(claimBinding);
+      const attempt = { ...claimBinding, attemptId: claimed.attempt.attemptId };
+      await transitionMountedProviderStart(attempt, { operation: "arm", observedAtMs: t0 + 1 });
+      await transitionMountedProviderStart(attempt, {
+        operation: "running",
+        statusClass: "success",
+        observedAtMs: t0 + 2,
+      });
+      await transitionMountedPresentation(attempt, {
+        operation: "commit_presentation",
+        cancelEpoch: 1,
+        message: { messageId: replyId, text: `${text} back`, occurredAtMs: t0 + 3 },
+        committedAtMs: t0 + 3,
+      });
+      await transitionMountedPresentation(attempt, { operation: "claim_completion", claimedAtMs: t0 + 4 });
+      await transitionMountedPresentation(attempt, { operation: "complete", completedAtMs: t0 + 5 });
+      return { key, playerId: accepted.messageId, turnId: accepted.turnId };
+    };
+
+    const first = await turn(1, "First line", "reply_01");
+    const second = await turn(2, "Second line", "reply_02");
+    // Her reply is a position with two pages, so the pager is really a pager after the hole.
+    await s.appendSwipeVariant!(testTransitionAuthority.authority, "thread_01", "reply_02", "Second line, retold");
+    const before = await s.resumeThread("thread_01", "surface_01");
+    const beforeReply = before.messages.find((message) => message.messageId === "reply_02");
+    // The root is recorded on the row it belongs to, not inferred from what stands above it.
+    assert.equal(beforeReply?.parentId, second.playerId);
+
+    const after = await s.deleteTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {
+      messageId: second.playerId,
+      expectedOrder: 3,
+    });
+    // One row left. Her reply did not, and neither did anything else.
+    assert.deepEqual(
+      after.messages.map((message) => message.messageId),
+      ["opening_01", first.playerId, "reply_01", "reply_02"],
+    );
+    // The turn that evidenced both rows is the only other thing that went, so no ledger names a row
+    // the transcript no longer carries.
+    assert.equal(after.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      after.idempotency.map((record) => record.key),
+      [first.key],
+    );
+    // The pager is the row's own: both variants and the page it stood on survive, and paging works.
+    const afterReply = after.messages.find((message) => message.messageId === "reply_02");
+    assert.deepEqual(afterReply?.swipes, ["Second line back", "Second line, retold"]);
+    assert.equal(afterReply?.activeSwipeIndex, 1);
+    const paged = await s.selectSwipe!(testTransitionAuthority.authority, "thread_01", "reply_02", {
+      direction: "prev",
+    });
+    const pagedReply = paged.messages.find((message) => message.messageId === "reply_02");
+    assert.equal(pagedReply?.activeSwipeIndex, 0);
+    assert.equal(pagedReply?.text, "Second line back");
+    // Its root is gone, and the row says so rather than naming a row that no longer exists.
+    assert.equal(afterReply?.parentId, undefined);
+    const durable = await reopened.resumeThread("thread_01", "surface_01");
+    assert.equal(durable.messages.find((message) => message.messageId === "reply_02")?.parentId, undefined);
+
+    // Re-asking her reply's question is refused by name: the line it answered is not in the transcript,
+    // and the nearest player line above it is the previous turn's question.
+    await assert.rejects(
+      () =>
+        acceptMountedPlayerMessage(binding, {
+          text: "First line",
+          locale: "en-US",
+          idempotencyKey: "key9".padEnd(22, "x"),
+          expectedDraftRevision: 2,
+          variantTargetMessageId: "reply_02",
+          authoredContextPreparation: { sourceRefs: [], stableTokenCount: 0 },
+        }),
+      /chat_variant_anchor_unavailable/,
+    );
+    // The refusal commits nothing: no turn, no idempotency record, no row.
+    const held = await s.resumeThread("thread_01", "surface_01");
+    assert.deepEqual(
+      held.messages.map((message) => message.messageId),
+      after.messages.map((message) => message.messageId),
+    );
+    assert.equal(held.turnLedger?.turnId, first.turnId);
+    assert.deepEqual(
+      held.idempotency.map((record) => record.key),
+      [first.key],
+    );
+  } finally {
+    reopened.close?.();
+    s.close?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
