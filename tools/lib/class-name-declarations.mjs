@@ -184,7 +184,7 @@ function toPosix(path) {
 }
 
 /** Every file under `directory` whose name ends with `extension`, as absolute paths. */
-export function listFiles(directory, extension) {
+function listFiles(directory, extension) {
   const files = [];
   const walk = (current) => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
@@ -217,7 +217,7 @@ export function declaredClassNames(cssTexts) {
  * The class names one `className` expression renders, and whether the gate could read all of it.
  * `names` is empty and `readable` false for an expression with no static part at all.
  */
-export function readClassNameExpression(ts, node) {
+function readClassNameExpression(ts, node) {
   const read = (expression) => {
     if (expression === undefined) return { names: [], readable: false };
     if (ts.isParenthesizedExpression(expression)) return read(expression.expression);
@@ -259,7 +259,7 @@ function tokens(text) {
  * gate could not read. A name inside an object key, a comment or a non-class string never enters:
  * the walk only looks at JSX attributes named `className`.
  */
-export function usedClassNames({ repoRoot, files = listFiles(join(repoRoot, UI_ROOT), TSX_EXTENSION) }) {
+function usedClassNames({ repoRoot, files = listFiles(join(repoRoot, UI_ROOT), TSX_EXTENSION) }) {
   const ts = typescript();
   const usages = new Map();
   const unreadable = [];

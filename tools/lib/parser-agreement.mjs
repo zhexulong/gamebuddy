@@ -121,7 +121,7 @@ function macroSpellings(name) {
 }
 
 /** The member population of the macro vocabulary: its own names, at every spelling axis, plus junk. */
-export function macroMembers(source) {
+function macroMembers(source) {
   const names = new Set();
   for (const pattern of MACRO_NAME_IN_SOURCE) for (const match of source.matchAll(pattern)) names.add(match[1]);
   const spellingsOf = [...names].sort().map(macroSpellings);
@@ -214,7 +214,7 @@ function declarationStatement(source, name) {
  * `missing` is not an error here: it is the answer to "does the reader this declaration names still
  * exist", which the caller reports by name instead of skipping the comparison.
  */
-export function evaluateDeclarations(source, names) {
+function evaluateDeclarations(source, names) {
   const statements = [];
   const missing = [];
   for (const name of names) {

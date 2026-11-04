@@ -68,7 +68,7 @@ function hasScannedExtension(name) {
 }
 
 /** Every scanned source file under `directory`, as absolute paths. */
-export function listSourceFiles(directory) {
+function listSourceFiles(directory) {
   const files = [];
   const walk = (current) => {
     for (const entry of readdirSync(current, { withFileTypes: true })) {
@@ -122,7 +122,7 @@ function calledNames(ts, block) {
 /**
  * Whether the catch block reports. Returns `{ reports: true, how }` or `{ reports: false, does }`.
  */
-export function classifyCatch(ts, clause) {
+function classifyCatch(ts, clause) {
   const block = clause.block;
   let how = null;
   const visit = (node) => {
@@ -311,7 +311,7 @@ export const DECLARED = Object.freeze([
 ]);
 
 /** Every catch clause in the tree, with what it does and whether that counts as reporting. */
-export function findUnreportedCatches({ repoRoot, files = listSourceFiles(join(repoRoot, UI_ROOT)) } = {}) {
+function findUnreportedCatches({ repoRoot, files = listSourceFiles(join(repoRoot, UI_ROOT)) } = {}) {
   const ts = typescript();
   const sites = [];
   for (const file of files) {

@@ -167,7 +167,7 @@ export function scalingRequested() {
  * reason a measurement cannot be read as a bare number: the line carries the axis, both sizes, both
  * per-op costs, the ratio between them and the band the case declares.
  */
-export const PERF_SCALING_MARKER = "PERF_SCALING_RESULT";
+const PERF_SCALING_MARKER = "PERF_SCALING_RESULT";
 
 export function reportScaling(result, band) {
   process.stdout.write(`${PERF_SCALING_MARKER} ${JSON.stringify({ ...result, band })}\n`);

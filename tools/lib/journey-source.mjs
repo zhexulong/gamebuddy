@@ -23,7 +23,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 
-export const JOURNEY_DIRECTORY = "dialogue-web/tests";
+const JOURNEY_DIRECTORY = "dialogue-web/tests";
 
 const toPosix = (path) => path.split(sep).join("/");
 
@@ -199,7 +199,7 @@ export function assertionsOf(body) {
 }
 
 /** The stubbed route pattern of every `page.route(...)`/`context.route(...)` call, in source order. */
-export function stubbedRoutes(source) {
+function stubbedRoutes(source) {
   const routes = [];
   for (const match of source.matchAll(/\b(?:page|context|browserContext)\.route\s*\(\s*(["'`])([^"'`]+)\1/gu)) {
     routes.push(match[2]);
