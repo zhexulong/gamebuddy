@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { runPaths, loadRunConfig } from "../lib/config.mjs";
 import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
 import { seedRunConnection } from "../lib/seed-connection.mjs";
+import { startWireCapture } from "../lib/wire-capture.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
 if (run === null) throw new Error(`run_config_unreadable:${process.argv[2]}`);
@@ -260,6 +261,31 @@ async function main() {
     "utf8",
   );
   say("manifest runtimeRoot (the launcher's own declared data root):", declaredDataRoot);
+
+  // The run's provider wire, produced here because nothing else in the run can produce it: the page
+  // never posts a provider request (the Host does), and the operator's gateway keeps no request log.
+  // `startWireCapture` reads the endpoint the product resolves, listens in front of it and points this
+  // launched child at the listener, so each turn's body is recorded with the turn id the Host stamps on
+  // it. A run that cannot record keeps dialling its own gateway and says so by name.
+  await rm(paths.wireRequestsFile, { force: true });
+  const wireCapture = await startWireCapture({
+    artifactRoot: paths.artifact,
+    capturePath: paths.wireRequestsFile,
+  });
+  const wireCaptureFact =
+    wireCapture.kind === "recording"
+      ? {
+          kind: "recording",
+          baseUrl: wireCapture.baseUrl,
+          upstreamBaseUrl: wireCapture.upstreamBaseUrl,
+          capturePath: wireCapture.capturePath,
+        }
+      : { kind: "unavailable", reason: wireCapture.reason };
+  say(
+    wireCapture.kind === "recording"
+      ? `wire capture: recording ${wireCapture.upstreamBaseUrl} as ${wireCapture.baseUrl} -> ${wireCapture.capturePath}`
+      : `wire capture: unavailable:${wireCapture.reason} - nothing is recorded and INJECTION reports the absence`,
+  );
 
   // The root the child is about to mount has no model of its own: this product ships no endpoint, so a
   // fresh root projects `no_model`, the composer refuses the send, and the three drivers that need a real
@@ -505,6 +531,7 @@ async function main() {
         stderrBytes: Buffer.byteLength(stderr, "utf8"),
         mounted: Boolean(mounted),
         connection,
+        wireCapture: wireCaptureFact,
         title,
         launchUrlRedacted: launchUrl.replace(/boot=[^&]*/u, "boot=<redacted>"),
         measureRunRootsAfterLaunch: measurement,
@@ -534,6 +561,7 @@ async function main() {
   }
   // Kills the product child, the browser and their own children - only the pids this run started.
   killStartedChildren();
+  if (wireCapture.kind === "recording") await wireCapture.close();
   await new Promise((resolve) => setTimeout(resolve, 5000));
   say("child exited code=", launch.child.exitCode, "alive after kill=", launch.child.exitCode === null);
   const prodAfter = await fingerprint(prod);

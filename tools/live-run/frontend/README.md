@@ -24,26 +24,52 @@ expose and a page that never painted are not measurements of zero. The same rule
 says `unobserved:no_provider_request_capture` rather than "0 entries" — a run that recorded no
 provider request did not observe an empty request, it observed nothing.
 
-**Why no run supplies that capture, measured 2026-11-03.** The reader takes a capture written where
-`GB_SHOTS_WIRE_REQUESTS` points, and the writer everyone expects is
-`tools/live-run/chat/run-wire-contract-live.mjs`, which mounts `core/stub-provider.mjs` and records
-every request body. Three reasons it is not wired to this run, in the order they were measured:
+**How the capture is produced.** The launch phase starts a recording proxy
+(`tools/live-run/core/recording-provider-proxy.mjs`, wired by `lib/wire-capture.mjs`) in front of the
+endpoint the product resolves, and points the launched Host child at it through the product's own
+`GAMEBUDDY_OPERATOR_GATEWAY_BASE_URL` switch. `launch.log` says which happened and `launch.json`
+carries it as `wireCapture`.
+
+Three facts make that a measurement of the real run rather than of a substitute:
 
 1. **the provider request never crosses the browser.** `dialogue-web` posts a turn to the Host and
-   reads that turn's SSE; the Host's Pi session is what posts to the gateway. Nothing a driver can
-   intercept over CDP carries a provider body, whatever the launch or capture phase listens for.
-2. **the runner loads its product from a build root the kit never builds.** It imports its modules
-   from `host/dist-test`; `pin.ps1` materializes `node_modules`, the reclaimer `.dist` and the
-   submodules, and `build.ps1` builds the launcher generation - neither produces `dist-test`. Pointing
-   the runner at the built generation instead was tried: its modules do load from there, and it stops
-   at `windows_stale_lock_reclaimer_unavailable`, because a generation is a production tree and the
-   build-tree reclaimer path it verifies is not in one.
-3. **even wired, the bodies would be a different runtime's.** `runLiveRun` mounts its own temp root and
-   answers with its own stub model, so a per-driver `INJECTION <driver> turn=1` line would attribute
-   that instance's prompt to a driver that never sent it.
+   reads that turn's SSE; the Host's Pi session is what posts to the gateway. So the proxy sits there,
+   between the Host and the gateway, and not between the page and the Host: nothing a driver can
+   intercept over CDP carries a provider body, whatever the capture phase listens for.
+2. **the endpoint is the product's own, and the reply is the real model's.** The upstream is read from
+   the generation's catalog (`operatorGatewayBaseUrl()`) instead of being spelled here, so the run
+   dials the address it would have dialled; the request is forwarded unchanged and the endpoint's own
+   reply streams back. A stub that answered instead would change what the run measures.
+3. **attribution is by identity, never by position.** The Host stamps each outbound request with the
+   turn it belongs to and the submission key that turn was accepted under
+   (`X-GameBuddy-Turn-Id` and `X-GameBuddy-Idempotency-Key`, `host/src/provider-turn-header.internal.ts`).
+   Two identities because the two parties know different things: the Host knows `turn_<uuid>`, and no
+   page is ever given it (a browser sees only an HMAC turn handle); a browser marks its own turn with
+   the idempotency key it submitted under. The key is what lets a reader holding a driver's marks name
+   the request that driver caused, so the join needs no knowledge of the store's schema. A request with
+   no headers is recorded with `turnId: null` and `idempotencyKey: null` and reported as
+   `no_capture_for_turn`. Arrival order is not turn order: a `/models` probe, a transport retry or a
+   second surface inserts a record and shifts every later position.
 
-So the line stays `unobserved:<reason>` and names the layer it could not reach. Wiring it is a decision
-about which instance the reading is allowed to describe, not a missing call.
+The file is `<stage>/state/wire-requests.jsonl`: one JSON object per line, appended as each request
+arrives, and each line names its own writer. An append is the right shape for a run that streams -
+rewriting a growing document after every request costs the square of the run and loses every earlier
+record if the process is killed mid-write. Each record is
+`{ source, at, method, path, turnId, idempotencyKey, body }` and carries no headers: the credential
+travels in `authorization`, and this file lives for the whole run and is kept beside the report. The
+reader refuses a file whose lines disagree about the writer (`capture_source_conflict`, naming both) or
+whose line declares none (`capture_source_undeclared`), and calls zero records `capture_file_empty`
+rather than a capture that saw none. What the capture cannot see: the connection's own `/models` probe
+(not a turn, and it posts no body), the reply, and anything the Host does after the request - `TIMINGS`
+and `CAPABILITY` cover those.
+
+What a reading still cannot claim: a record whose turn carries a turn id but no submission key cannot be
+attributed to any page, and is reported as `unobserved:<n>_capture_records_naming_a_turn_and_no_submission_key`
+rather than guessed into a neighbour. That is the shape a Host older than the key header would produce,
+and a turn shape that reused a turn without its key would land there too.
+
+A run whose recorder could not start says `wire capture: unavailable:<reason>` in `launch.log` and every
+driver reads `unobserved:no_provider_request_capture:<reason>`; the run keeps dialling its own gateway.
 
 Two marks families are READ, never re-measured: a driver that timed its own click would be a second
 opinion about where the time went. `gamebuddy:turn:*` lives in `dialogue-web/src/components/turn-timings.ts`,

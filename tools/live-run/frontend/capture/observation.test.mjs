@@ -10,6 +10,8 @@
  *                       empty request list reddens "no capture is not an empty injection".
  *                       Attributing bodies by their index in the file reddens "each body is read
  *                       against its own turn id", which is the defect this reader was rebuilt for.
+ *                       Refusing the recording proxy's source reddens "the reading names the instance
+ *                       whose wire it describes" - the run whose capture this kit now produces.
  *   prefixes            renaming the product's switch prefix reddens "the kit reads the marks the
  *                       product emits".
  *
@@ -23,6 +25,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { injectionFacts, observe, readCapturedRequests, readPaintFacts, switchDurations } from "./observation.cjs";
+import { RECORDING_PROXY_CAPTURE_SOURCE } from "../../core/recording-provider-proxy.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..", "..");
@@ -160,12 +163,27 @@ const VOLATILE = [
 const capture = (requests, source = "local-stub-provider") => ({ ok: true, source, requests });
 
 /**
- * One captured request as the writer must record it: the turn it answered, and the body it carried.
+ * One captured record as the writer appends it: the identities the Host put on the request, and the body
+ * it carried.
  *
- * The turn id is not decoration. A capture file holds every request one instance posted, so a body
- * carries the only fact that can tie it back to the turn it belongs to.
+ * Two identities, and they are deliberately distinct here. `pageKey` is the submission key a browser mints
+ * and marks its own turn with (`newIdempotencyKey()`), so it is the only value a driver can look a record
+ * up by; `turnId` is the Host's durable `turn_<uuid>`, which no page is ever given. A reader that joined on
+ * `turnId` would therefore find nothing on every real run - which is exactly what this fixture makes
+ * impossible to hide.
  */
-const request = (turnId, body) => ({ method: "POST", url: "/chat/completions", turnId, body });
+const request = (pageKey, body) => ({
+  source: RECORDING_PROXY_CAPTURE_SOURCE,
+  at: "2026-11-04T00:00:00.000Z",
+  method: "POST",
+  path: "/v1/chat/completions",
+  turnId: `turn_${pageKey}`,
+  idempotencyKey: pageKey,
+  body,
+});
+
+/** A capture file as the proxy writes it: one record per line, each naming its own source. */
+const asLines = (records) => records.map((record) => JSON.stringify(record)).join("\n");
 
 const BARE = [{ messages: [{ role: "user", content: "你好" }] }];
 
@@ -185,42 +203,42 @@ test("an injected authored-context block is reported with its size and the kinds
   );
 });
 
-test("each body is read against its own turn id, whatever order the file lists them in", async () => {
+test("each body is read against the submission key its own turn was observed under", async () => {
   /*
    * The file's order is arrival order, and arrival order is NOT turn order: a retried turn, a
    * provider liveness probe or a second surface interleaves freely, and a body can land before the
    * turn it belongs to is even known. Reading by index attributes turn A's prompt to turn B the
    * moment one record is inserted ahead of it.
    */
-  const outOfOrder = capture([request("turn-b", systemPrompt(BARE)), request("turn-a", systemPrompt(AUTHORED))]);
-  const injection = await injectionFacts(outOfOrder, ["turn-a", "turn-b"]);
+  const outOfOrder = capture([request("key-b", systemPrompt(BARE)), request("key-a", systemPrompt(AUTHORED))]);
+  const injection = await injectionFacts(outOfOrder, ["key-a", "key-b"]);
   assert.equal(injection.ok, true);
   const byTurn = new Map(injection.turns.map((turn) => [turn.turnId, turn]));
   assert.deepEqual(
     [...byTurn.keys()].sort(),
-    ["turn-a", "turn-b"],
-    "both turns must be reported, each under its own id",
+    ["key-a", "key-b"],
+    "both turns must be reported, each under the key the page knows it by",
   );
   assert.equal(
-    byTurn.get("turn-a").authoredContext.present,
+    byTurn.get("key-a").authoredContext.present,
     true,
-    "turn-a's body carries the authored block, so turn-a is the turn it belongs to - a reader indexing the file reports turn-b's bare prompt as turn-a",
+    "key-a's body carries the authored block, so key-a is the turn it belongs to - a reader indexing the file reports key-b's bare prompt as key-a",
   );
-  assert.equal(byTurn.get("turn-b").authoredContext.present, false);
+  assert.equal(byTurn.get("key-b").authoredContext.present, false);
 });
 
-test("a body with no matching turn is unobserved, never guessed", async () => {
+test("a body with no matching submission key is unobserved, never guessed", async () => {
   /* Two records, and this driver observed one of its turns plus one it has no capture for. */
   const injection = await injectionFacts(
-    capture([request("turn-a", systemPrompt(AUTHORED)), request("turn-b", systemPrompt(BARE))]),
-    ["turn-a", "turn-c"],
+    capture([request("key-a", systemPrompt(AUTHORED)), request("key-b", systemPrompt(BARE))]),
+    ["key-a", "key-c"],
   );
   assert.deepEqual(
     injection.turns.map((turn) => turn.turnId),
-    ["turn-a"],
-    "turn-c has no captured body, and turn-b belongs to another turn: neither may be reported as turn-c",
+    ["key-a"],
+    "key-c has no captured body, and key-b belongs to another turn: neither may be reported as key-c",
   );
-  assert.deepEqual(injection.missing, ["turn-c"], "the turn this driver ran and cannot read is named");
+  assert.deepEqual(injection.missing, ["key-c"], "the turn this driver ran and cannot read is named");
   assert.equal(injection.foreign, 1, "one record belongs to a turn this driver did not observe");
 });
 
@@ -259,37 +277,62 @@ test("a turn with no body still counts as a turn, and says what it carried", asy
   assert.equal(injection.turns[0].authoredContext.present, true);
 });
 
-test("a record with no turn id cannot be attributed, and says so rather than claiming a position", async () => {
+test("a record that names no submission key cannot be attributed to a page, and says so", async () => {
   const injection = await injectionFacts(
-    capture([{ method: "POST", url: "/chat/completions", body: systemPrompt(AUTHORED) }]),
+    capture([{ method: "POST", path: "/v1/chat/completions", turnId: "turn_orphan", body: systemPrompt(AUTHORED) }]),
   );
-  assert.equal(injection.ok, false, "a body nobody labelled is a body that could belong to any turn");
-  assert.match(injection.reason, /capture_records_carry_no_turnId/u);
+  assert.equal(injection.ok, false, "a body this reader cannot tie to any page's turn is not a reading of one");
+  assert.match(injection.reason, /capture_records_carry_no_submission_key/u);
 
   const mixed = await injectionFacts(
     capture([
-      { method: "POST", url: "/chat/completions", body: systemPrompt(AUTHORED) },
-      request("turn-2", systemPrompt(BARE)),
+      { method: "POST", path: "/v1/chat/completions", turnId: "turn_orphan", body: systemPrompt(AUTHORED) },
+      request("key-b", systemPrompt(BARE)),
     ]),
   );
-  assert.equal(mixed.unlabelled, 1, "the labelled record is readable; the unlabelled one is counted, not guessed");
+  assert.equal(
+    mixed.unjoinable,
+    1,
+    "a record naming the Host's turn but no submission key is counted as unjoinable, never guessed into another turn",
+  );
   assert.deepEqual(
     mixed.turns.map((turn) => turn.turnId),
-    ["turn-2"],
+    ["key-b"],
   );
+
+  const identityless = await injectionFacts(
+    capture([
+      { method: "GET", path: "/v1/models", turnId: null, idempotencyKey: null, body: { object: "list" } },
+      request("key-b", systemPrompt(BARE)),
+    ]),
+  );
+  assert.equal(identityless.unlabelled, 1, "a probe that names no turn at all is counted, not attributed");
 });
 
 test("the reading names the instance whose wire it describes, or refuses to describe one", async () => {
-  const stub = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))]));
+  const stub = await injectionFacts(capture([request("key-1", systemPrompt(AUTHORED))]));
   assert.equal(stub.source, "local-stub-provider");
 
-  const remote = await injectionFacts(capture([request("turn-1", systemPrompt(AUTHORED))], "remote-gateway"));
+  /* The wire a run forwards through the recording proxy is still a wire served on this machine. */
+  const forwarded = await injectionFacts(
+    capture([request("key-1", systemPrompt(AUTHORED))], RECORDING_PROXY_CAPTURE_SOURCE),
+    ["key-1"],
+  );
+  assert.equal(
+    forwarded.ok,
+    true,
+    "a capture written by the recording proxy is this run's own wire, so its blocks are a reading",
+  );
+  assert.equal(forwarded.source, RECORDING_PROXY_CAPTURE_SOURCE);
+  assert.equal(forwarded.turns[0].authoredContext.present, true);
+
+  const remote = await injectionFacts(capture([request("key-1", systemPrompt(AUTHORED))], "remote-gateway"));
   assert.equal(remote.ok, false, "a gateway's traffic leaves the machine; the browser side cannot read it");
   assert.equal(remote.reason, "no_provider_request_capture:remote_gateway_wire_unintercepted");
 
   const undeclared = await injectionFacts({
     ok: true,
-    requests: [request("turn-1", systemPrompt(AUTHORED))],
+    requests: [request("key-1", systemPrompt(AUTHORED))],
   });
   assert.equal(
     undeclared.ok,
@@ -317,26 +360,27 @@ test("an empty request list is still unobserved rather than a turn with nothing 
   assert.match(injection.reason, /no_parsed_request_body/u);
 });
 
-test("the INJECTION line carries the turn id and the instance, and says which turn it could not read", async () => {
+test("the INJECTION line carries the turn key and the instance, and says which turn it could not read", async () => {
   /*
    * A driver shares the page with the other nineteen, so it must report only the turn it observed -
-   * by id - and must say `unobserved` for a turn it ran while the capture holds nothing for it.
+   * by the key the page knows it by - and must say `unobserved` for a turn it ran while the capture
+   * holds nothing for it.
    */
   const lines = [];
   const page = fakePage([
-    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 10, detail: { turnKey: "turn-a" } },
-    { entryType: "mark", name: "gamebuddy:turn:settled", startTime: 60, detail: { turnKey: "turn-a" } },
-    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 70, detail: { turnKey: "turn-c" } },
+    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 10, detail: { turnKey: "key-a" } },
+    { entryType: "mark", name: "gamebuddy:turn:settled", startTime: 60, detail: { turnKey: "key-a" } },
+    { entryType: "mark", name: "gamebuddy:turn:submit", startTime: 70, detail: { turnKey: "key-c" } },
   ]);
   await observe(page, (line) => lines.push(line), "f", {
     sinceMs: 0,
-    capturedRequests: capture([request("turn-a", systemPrompt(AUTHORED)), request("turn-z", systemPrompt(BARE))]),
+    capturedRequests: capture([request("key-a", systemPrompt(AUTHORED)), request("key-z", systemPrompt(BARE))]),
   });
   const injection = lines.filter((line) => line.startsWith("INJECTION f turn="));
   assert.deepEqual(
     injection.map((line) => line.slice(0, line.indexOf(":"))),
-    ["INJECTION f turn=turn-a source=local-stub-provider", "INJECTION f turn=turn-c"],
-    "one line per turn this driver observed, each naming its own id and the instance the wire describes",
+    ["INJECTION f turn=key-a source=local-stub-provider", "INJECTION f turn=key-c"],
+    "one line per turn this driver observed, each naming its own key and the instance the wire describes",
   );
   assert.match(injection[0], /authoredContext=present block=gamebuddy-authored-context/u);
   assert.match(injection[1], /unobserved:no_capture_for_turn/u);
@@ -347,20 +391,60 @@ test("the INJECTION line carries the turn id and the instance, and says which tu
   );
 });
 
-test("the capture reader names an unset path, an absent file and a file holding no request array", () => {
+/** A minimal line that declares its writer, so the reader's agreement rule is testable without a proxy. */
+const lineWithSource = (source) =>
+  JSON.stringify({ source, at: "2026-11-04T00:00:00.000Z", method: "POST", path: "/v1/chat/completions", body: {} });
+
+test("the capture reader accepts only lines that agree about which instance wrote them", () => {
   assert.match(readCapturedRequests(undefined).reason, /GB_SHOTS_WIRE_REQUESTS_is_unset/u);
   assert.match(
-    readCapturedRequests("C:/nowhere/wire-requests.json").reason,
+    readCapturedRequests("C:/nowhere/wire-requests.jsonl").reason,
     /capture_file_absent/u,
     "a run that records nothing must say the file is absent, not that the request was clean",
   );
-  assert.match(readCapturedRequests("capture.json", () => JSON.stringify({ nothing: 1 })).reason, /no_request_array/u);
-  assert.equal(readCapturedRequests("capture.json", () => JSON.stringify([{ body: {} }])).ok, true);
-  assert.equal(
-    readCapturedRequests("capture.jsonl", () => '{"body":{}}\n{"body":{}}').requests.length,
-    2,
-    "one request per line is the shape a stub provider appends",
+  assert.match(
+    readCapturedRequests("capture.jsonl", () => "\n  \n").reason,
+    /capture_file_empty/u,
+    "zero records is not a capture that saw zero requests",
   );
+  assert.match(
+    readCapturedRequests("capture.jsonl", () => `${lineWithSource(RECORDING_PROXY_CAPTURE_SOURCE)}\nnot json`).reason,
+    /capture_file_unreadable:line_2/u,
+    "the line that could not be read is the one named",
+  );
+  assert.match(
+    readCapturedRequests(
+      "capture.jsonl",
+      () => `${lineWithSource(RECORDING_PROXY_CAPTURE_SOURCE)}\n${JSON.stringify({ body: {} })}`,
+    ).reason,
+    /capture_source_undeclared:line_2/u,
+    "a line that names no writer is refused by name: a source is never inherited from the line before it",
+  );
+  assert.match(
+    readCapturedRequests("capture.jsonl", () => `${lineWithSource("a")}\n${lineWithSource("b")}`).reason,
+    /capture_source_conflict:a_vs_b:line_2/u,
+    "two writers in one file is not a reading of one wire, and both are named",
+  );
+  const agreed = readCapturedRequests(
+    "capture.jsonl",
+    () => `${lineWithSource(RECORDING_PROXY_CAPTURE_SOURCE)}\n${lineWithSource(RECORDING_PROXY_CAPTURE_SOURCE)}`,
+  );
+  assert.equal(agreed.ok, true);
+  assert.equal(agreed.source, RECORDING_PROXY_CAPTURE_SOURCE);
+  assert.equal(
+    agreed.requests.length,
+    2,
+    "every line declaring the same writer is what a capture of one wire looks like",
+  );
+});
+
+test("a whole-document capture is not a line-per-record file, and is refused by that name", async () => {
+  /* The writer appends one record per line; a document left over from another shape must fail visibly. */
+  const read = readCapturedRequests("capture.jsonl", () =>
+    JSON.stringify({ source: RECORDING_PROXY_CAPTURE_SOURCE, requests: [] }),
+  );
+  assert.equal(read.ok, false);
+  assert.match(read.reason, /capture_line_is_not_a_record:line_1/u);
 });
 
 /* ---------- the marks the kit reads are the marks the product emits ---------- */

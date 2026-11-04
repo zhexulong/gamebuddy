@@ -264,9 +264,13 @@ async function observe(page, say, label = "run", options = {}) {
 			say(
 				`INJECTION ${label}: unobserved:${injection.foreign}_capture_record${injection.foreign === 1 ? "" : "s"}_for_a_turn_not_observed_here`,
 			);
+		if (injection.unjoinable > 0)
+			say(
+				`INJECTION ${label}: unobserved:${injection.unjoinable}_capture_record${injection.unjoinable === 1 ? "" : "s"}_naming_a_turn_and_no_submission_key`,
+			);
 		if (injection.unlabelled > 0)
 			say(
-				`INJECTION ${label}: unobserved:${injection.unlabelled}_capture_record${injection.unlabelled === 1 ? "" : "s"}_with_no_turnId`,
+				`INJECTION ${label}: unobserved:${injection.unlabelled}_capture_record${injection.unlabelled === 1 ? "" : "s"}_with_no_turn_identity`,
 			);
 	}
 
@@ -276,10 +280,18 @@ async function observe(page, say, label = "run", options = {}) {
 /* ---------- what reached the request ---------- */
 
 /**
- * The capture is a reading of ONE instance, and `local-stub-provider` is the only instance this kit can
- * read: the stub serves the request on this machine. A real gateway's request leaves the machine after
- * Pi posts it, so nothing on the browser side - and nothing this kit runs - can see it. `remote-gateway`
- * therefore names an interception that does not exist rather than an absence of injected context.
+ * The capture is a reading of ONE instance, and only an instance on THIS machine can be read: something
+ * here has to serve the request or forward it for the body to exist locally.
+ *
+ *   `local-stub-provider`      `core/stub-provider.mjs` ANSWERS the request itself. What the run then
+ *                              measures is what the product sends, never what a model replies.
+ *   `recording-provider-proxy` `core/recording-provider-proxy.mjs` FORWARDS the request unchanged and
+ *                              keeps a copy, so the real endpoint answers and the run measures both the
+ *                              reply and the assembled request.
+ *
+ * `remote-gateway` names an interception that does not exist rather than an absence of injected context:
+ * a request posted straight to a gateway leaves this machine after Pi posts it, so nothing on the browser
+ * side - and nothing this kit runs - can see it.
  */
 const STUB_CAPTURE_SOURCE = "local-stub-provider";
 const REMOTE_CAPTURE_SOURCE = "remote-gateway";
@@ -287,20 +299,25 @@ const REMOTE_CAPTURE_SOURCE = "remote-gateway";
 /**
  * The captured provider request bodies this run holds, or a named reason it holds none.
  *
- * This is NOT "no memory was injected". A run whose product talks to a remote gateway records no
- * provider request on this machine at all, and answering `0 entries` for it would report an absence of
- * memory where the truth is an absence of observation - the confusion this kit has already paid for
- * once (`PAINT`'s permanently-empty LCP). So `ok: false` and the reason, every time.
+ * This is NOT "no memory was injected". A run whose product talks to a remote gateway with nothing in
+ * front of it records no provider request on this machine at all, and answering `0 entries` for it would
+ * report an absence of memory where the truth is an absence of observation - the confusion this kit has
+ * already paid for once (`PAINT`'s permanently-empty LCP). So `ok: false` and the reason, every time.
  *
- * The kit reuses `startLocalStubProvider` (`tools/live-run/core/stub-provider.mjs`) for the runs that
- * can capture: it records one `{ method, url, turnId?, body }` per request and writes them where
- * `GB_SHOTS_WIRE_REQUESTS` points. No run writes that file today, so `capture_file_absent` is the
- * honest reading of a real run.
+ * The writer is `startRecordingProviderProxy` (`core/recording-provider-proxy.mjs`), which forwards each
+ * request to the endpoint the product resolved and appends one `{ source, at, method, path, turnId,
+ * idempotencyKey, body }` line to the file `GB_SHOTS_WIRE_REQUESTS` names. `startLocalStubProvider`
+ * (`core/stub-provider.mjs`) serves the same reader for a run whose subject is only what the product
+ * sends; it answers the request itself, so that run measures no reply at all.
  *
- * A document that declares its own `source` keeps it: the writer is the only party that knows which
- * instance posted the bodies, and a file that does not say cannot be read as this instance's. The object
- * form is what declares it - a file that is one request per line holds records and no document, so it
- * is read as `capture_source_undeclared` rather than inheriting a source from its first line.
+ * A file declares its writer on EVERY line, and every line must agree: the writer is the only party that
+ * knows which instance posted the bodies, and a file that does not say cannot be read as any of them.
+ * Three failures are distinct facts rather than one:
+ *
+ *   capture_source_undeclared   a line names no writer, so nothing says whose wire this is.
+ *   capture_source_conflict     two lines name different writers, so this file holds two instances'
+ *                               records and no reading of it describes one wire.
+ *   capture_file_empty          zero records is not a capture that saw zero requests.
  */
 function readCapturedRequests(file, read = readFileSync) {
 	if (typeof file !== "string" || file.trim().length === 0)
@@ -311,41 +328,70 @@ function readCapturedRequests(file, read = readFileSync) {
 	} catch (error) {
 		return { ok: false, reason: `no_provider_request_capture:capture_file_absent:${file}` };
 	}
-	const trimmed = text.trim();
-	if (trimmed.length === 0) return { ok: false, reason: `no_provider_request_capture:capture_file_empty:${file}` };
-	let parsed;
-	try {
-		parsed = JSON.parse(trimmed);
-	} catch {
-		/* One request per line is what a stub provider appends; a single array is what a run delivers. */
+	const lines = text.split("\n").filter((line) => line.trim().length > 0);
+	if (lines.length === 0) return { ok: false, reason: `no_provider_request_capture:capture_file_empty:${file}` };
+	const requests = [];
+	const sources = [];
+	for (const [index, line] of lines.entries()) {
+		let record;
 		try {
-			parsed = trimmed.split("\n").map((line) => JSON.parse(line));
+			record = JSON.parse(line);
 		} catch (error) {
-			return { ok: false, reason: `no_provider_request_capture:capture_file_unreadable:${String(error).slice(0, 80)}` };
+			return {
+				ok: false,
+				reason: `no_provider_request_capture:capture_file_unreadable:line_${index + 1}:${String(error).slice(0, 60)}`,
+			};
 		}
+		if (record === null || typeof record !== "object" || Array.isArray(record))
+			return { ok: false, reason: `no_provider_request_capture:capture_line_is_not_a_record:line_${index + 1}` };
+		// The writer puts a `body` on every record, even an empty one, so a line without it is a line of
+		// some other shape - a whole document, or a record from a writer this reader does not know.
+		if (!("body" in record))
+			return { ok: false, reason: `no_provider_request_capture:capture_line_is_not_a_record:line_${index + 1}` };
+		requests.push(record);
+		sources.push(typeof record.source === "string" ? record.source.trim() : "");
 	}
-	const requests = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.requests) ? parsed.requests : null;
-	if (requests === null) return { ok: false, reason: `no_provider_request_capture:capture_file_holds_no_request_array:${file}` };
-	const source = typeof parsed?.source === "string" && parsed.source.trim().length > 0 ? parsed.source : undefined;
-	return source === undefined ? { ok: true, requests } : { ok: true, source, requests };
+	const undeclared = sources.findIndex((source) => source.length === 0);
+	if (undeclared >= 0)
+		return { ok: false, reason: `no_provider_request_capture:capture_source_undeclared:line_${undeclared + 1}` };
+	const source = sources[0];
+	const conflicting = sources.findIndex((other) => other !== source);
+	if (conflicting >= 0)
+		return {
+			ok: false,
+			reason:
+				`no_provider_request_capture:capture_source_conflict:` +
+				`${source}_vs_${sources[conflicting]}:line_${conflicting + 1}`,
+		};
+	return { ok: true, source, requests };
 }
 
 /**
  * One reading per turn this run observed: which authored-context blocks reached THAT turn's request.
  *
- * The index is the turn id and nothing else. A capture file is written in arrival order, and arrival
- * order is not turn order: a retried turn, a provider liveness probe, a second surface or another
- * driver sharing the page all insert records that shift every position after them. Reading by index then
- * reports the N-th captured prompt as the N-th turn - which is how one driver came to report another's
- * prompt. So:
+ * The index is an identity and nothing else. A capture file is appended in arrival order, and arrival
+ * order is not turn order: a retried turn, a provider liveness probe, a second surface or another driver
+ * sharing the page all insert records that shift every position after them. Reading by index then reports
+ * the N-th captured prompt as the N-th turn - which is how one driver came to report another's prompt.
+ *
+ * The identity that can be indexed is the SUBMISSION KEY, not the Host's turn id, and that is the whole
+ * reason the wire carries it. A driver's own marks name a turn by the idempotency key the browser
+ * submitted it under (`newIdempotencyKey()` in `ComposedReferenceGameApp.tsx`); the Host's durable
+ * `turn_<uuid>` is never given to the browser, which sees only an HMAC turn handle. The store maps the
+ * two, but a reader that joined through it would depend on the store's schema; the header puts the
+ * browser's own identity on the same request, so the join needs no second authority. The record still
+ * carries the Host turn id, which is what a support engineer correlates with the Host's own logs.
+ *
+ * So:
  *
  *   `turnIds` given (a driver's own page marks)
- *                   each id is looked up by its own value. An id with no record is reported as
- *                   `unobserved:no_capture_for_turn`; a record for an id not asked about is counted as
+ *                   each key is looked up by its own value. A key with no record is reported as
+ *                   `unobserved:no_capture_for_turn`; a record for a key not asked about is counted as
  *                   `foreign` rather than shown as one of this driver's turns.
  *   `turnIds` omitted
- *                   every labelled record is described under the id it carries - never under its
- *                   position. A record that carries none cannot be attributed at all and is counted.
+ *                   every record that names a submission key is described under it - never under its
+ *                   position. A record naming a turn but no key cannot be attributed to any page and is
+ *                   counted as `unjoinable`; one naming neither is counted as `unlabelled`.
  *
  * One turn can post more than one request (Pi's tool-call rounds are continuations of the same authored
  * context), so the first record for a turn is the one described.
@@ -361,7 +407,8 @@ async function injectionFacts(captured, turnIds) {
 	if (captured === null || captured === undefined || captured.ok !== true)
 		return { ok: false, reason: (captured && captured.reason) || "no_provider_request_capture" };
 	const source = captured.source;
-	if (source !== STUB_CAPTURE_SOURCE)
+	const { RECORDING_PROXY_CAPTURE_SOURCE } = await import("../../core/recording-provider-proxy.mjs");
+	if (source !== STUB_CAPTURE_SOURCE && source !== RECORDING_PROXY_CAPTURE_SOURCE)
 		return {
 			ok: false,
 			reason:
@@ -371,34 +418,44 @@ async function injectionFacts(captured, turnIds) {
 	const wanted = Array.isArray(turnIds) ? turnIds : null;
 	if (wanted !== null && wanted.length === 0)
 		return { ok: false, reason: "no_provider_request_capture:observed_turn_has_no_turnId" };
-	const bodies = (Array.isArray(captured.requests) ? captured.requests : [])
-		.map((entry) => (entry !== null && typeof entry === "object" && "body" in entry ? entry : { body: entry }))
-		.filter((entry) => entry.body !== null && typeof entry.body === "object" && !Array.isArray(entry.body));
+	const bodies = (Array.isArray(captured.requests) ? captured.requests : []).filter(
+		(entry) =>
+			entry !== null &&
+			typeof entry === "object" &&
+			!Array.isArray(entry) &&
+			entry.body !== null &&
+			typeof entry.body === "object" &&
+			!Array.isArray(entry.body),
+	);
 	if (bodies.length === 0) return { ok: false, reason: "no_provider_request_capture:no_parsed_request_body" };
-	const byTurn = new Map();
+	const byKey = new Map();
 	let unlabelled = 0;
+	let unjoinable = 0;
 	for (const entry of bodies) {
-		const turnId = typeof entry.turnId === "string" && entry.turnId.trim().length > 0 ? entry.turnId : null;
-		if (turnId === null) {
-			unlabelled += 1;
+		const key =
+			typeof entry.idempotencyKey === "string" && entry.idempotencyKey.trim().length > 0 ? entry.idempotencyKey : null;
+		if (key === null) {
+			if (typeof entry.turnId === "string" && entry.turnId.trim().length > 0) unjoinable += 1;
+			else unlabelled += 1;
 			continue;
 		}
-		if (!byTurn.has(turnId)) byTurn.set(turnId, entry.body);
+		if (!byKey.has(key)) byKey.set(key, entry.body);
 	}
-	if (byTurn.size === 0) return { ok: false, reason: "no_provider_request_capture:capture_records_carry_no_turnId" };
+	if (byKey.size === 0)
+		return { ok: false, reason: "no_provider_request_capture:capture_records_carry_no_submission_key" };
 	const { systemPromptOf } = await import("../../chat/wire-contract.mjs");
-	const ids = wanted ?? [...byTurn.keys()];
+	const ids = wanted ?? [...byKey.keys()];
 	const turns = [];
 	const missing = [];
 	for (const turnId of ids) {
-		if (!byTurn.has(turnId)) {
+		if (!byKey.has(turnId)) {
 			missing.push(turnId);
 			continue;
 		}
-		turns.push({ turnId, ...blocksIn(systemPromptOf(byTurn.get(turnId))) });
+		turns.push({ turnId, ...blocksIn(systemPromptOf(byKey.get(turnId))) });
 	}
-	const foreign = wanted === null ? 0 : [...byTurn.keys()].filter((turnId) => !wanted.includes(turnId)).length;
-	return { ok: true, source, turns, missing, foreign, unlabelled };
+	const foreign = wanted === null ? 0 : [...byKey.keys()].filter((turnId) => !wanted.includes(turnId)).length;
+	return { ok: true, source, turns, missing, foreign, unlabelled, unjoinable };
 }
 
 const byteLength = (text) => Buffer.byteLength(text, "utf8");

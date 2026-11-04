@@ -24,7 +24,7 @@ const PROBE_ATTEMPTS = 3;
 const PROBE_RETRY_DELAY_MS = 1_500;
 
 /** The generation directory the artifact's own pointer names - the one the launcher will install. */
-async function resolveGenerationRoot(artifactRoot) {
+export async function resolveGenerationRoot(artifactRoot) {
   let pointer;
   try {
     pointer = JSON.parse(await readFile(join(artifactRoot, "current.json"), "utf8"));

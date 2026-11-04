@@ -50,10 +50,12 @@ export function runPaths(run) {
     portFile: join(stage, "state", "port.txt"),
     launchStateFile: join(stage, "state", "launch.json"),
     /*
-     * Where a run's captured provider request bodies live, if it captured any. The frontend run dials
-     * the operator's gateway, whose wire this machine never sees, so the file is normally absent - and
-     * `observe()`'s INJECTION section then says so by name instead of reporting an empty injection.
-     * A run that mounts the local stub provider (`tools/live-run/core/stub-provider.mjs`) writes here.
+     * Where a run's captured provider request bodies live, if it captured any. The launch phase puts a
+     * recording proxy in front of the endpoint the product resolves and points the launched child at it
+     * (`lib/wire-capture.mjs`), so a run that could record writes here. A run whose proxy could not be
+     * started has no file, and `observe()`'s INJECTION section says so by name instead of reporting an
+     * empty injection. The writer appends one record per line, each naming its own source, so a reader
+     * never inherits a source from the wrong line (`core/recording-provider-proxy.mjs`).
      */
     wireRequestsFile: join(stage, "state", "wire-requests.jsonl"),
     stopFlag: join(stage, "state", "stop.flag"),
