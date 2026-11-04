@@ -187,7 +187,10 @@ test("a disposable root lives in the repository's own scratch area, never the pr
     SOURCE,
     /const root = usesDisposableRoot \? await mkdtemp\(join\(disposableParent, "gamebuddy-agent-ab-"\)\) : configuredRuntimeRoot;/,
   );
-  assert.doesNotMatch(SOURCE, /from "node:os"/);
+  // The prohibition is `os.tmpdir()`, not `node:os` itself: the runner imports `freemem` from it to record what free
+  // memory was doing when a bridge died, and a proxy that banned the whole module made that fix look like this
+  // violation. What must never appear is a path under the shared OS temp tree.
+  assert.doesNotMatch(SOURCE, /\btmpdir\b/u, "the OS temp tree is shared with every other tool");
 });
 
 test("the launcher and the runner agree about the window mode the bundle reports", () => {
