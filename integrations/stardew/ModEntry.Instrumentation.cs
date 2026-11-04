@@ -155,7 +155,8 @@ public sealed partial class ModEntry : Mod
         this.nativeLocalPlayerFixtureLastStageUnixMs = now;
         this.Monitor.Log(
             $"[DEBUG-native-local-stage] stage={phase};tick={Interlocked.Read(ref this.tickWatchdogTick)}",
-            LogLevel.Trace);
+            // Info, not Trace: the liveness meter reads the lane's console capture, and Trace never reaches it.
+            LogLevel.Info);
     }
 
     /// <summary>
