@@ -29,6 +29,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// pure half, what one pack answers for one action's claim, runs for real in <see cref="DeclaredToolSelectionTests"/>.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the source-shape pin keeps every tool site on the declared-tool shape while the behaviour test
+// drives a site with a tool the actor is not holding; a uniform-looking source can still refuse the plan the model wrote.
 public sealed class ToolPreconditionUniformityTests
 {
     /// <summary>How a handler takes the tool its own registration declares.</summary>

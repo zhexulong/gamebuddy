@@ -31,6 +31,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// Adding an action that declares a tool, or a refusal path that mints `no_native_path`, enrols it automatically.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the source-shape pins read the Mod's own text to keep the refusal vocabulary closed, while the
+// behaviour tests drive the layer probe with real tiles to see which layer names itself; one guards invention, the other lying.
 public sealed class RefusalLayerNamingTests
 {
     /// <summary>
