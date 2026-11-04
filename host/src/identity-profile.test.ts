@@ -6,6 +6,7 @@ import test from "node:test";
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import {
   buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
@@ -291,6 +292,35 @@ test("the Game conduct names the ids she may not say out loud, and keeps them wh
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /\(T\)Hoe/u);
 });
 
+test("the house's own form is a standing premise, not a book entry waiting on a keyword", () => {
+  // Measured 2026-11-05, day 2 at 18:00 in the starter farmhouse: the companion said
+  // "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" in a house with neither a kitchen nor a stove. The shipped
+  // book DOES say so (`wb-entry-07`), but only behind a keyword-gated entry, and that sentence carries none of
+  // its keys - so the entry could not fire, and nothing else in the prompt described the room. Both halves are
+  // asserted: the gate really cannot fire on the measured sentence, and the premise reaches the always-on
+  // system prompt with no book, no retrieval and no keyword at all.
+  const SENTENCE = "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了";
+  const kitchenEntries = DEFAULT_COMPANION_PRESET.worldBook.entries.filter(
+    (entry) => entry.constant !== true && /厨房|灶台/u.test(`${entry.title}${entry.content}`),
+  );
+  assert.ok(
+    kitchenEntries.length > 0,
+    "the shipped book is where the room's form was written; if it no longer says so, the premise below is the only carrier and this test has to name what replaced it",
+  );
+  for (const entry of kitchenEntries)
+    assert.deepEqual(
+      (entry.keys ?? []).filter((key) => SENTENCE.includes(key)),
+      [],
+      `${entry.entryId} would have fired on the measured sentence, so a keyword gate is not what cost that run`,
+    );
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /the starting house is one room/, "the room's own form must be stated on every turn");
+  assert.match(game, /a kitchen with a stove appears only once the house has been upgraded/);
+  assert.match(game, /never cook, brew, or name a stove or a pot unless the live state reports a kitchen/);
+  // Chat has no world and no room, so the premise must not follow the shared card onto that surface.
+  assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /kitchen|stove/u);
+});
+
 test("the Game conduct turns an obstacle and a service register into a person", () => {
   // Two registers the companion falls into when it has no line for them: the
   // Mod's reason for a refusal (a live run read `gift_given` / `quest_25_completed`
@@ -305,6 +335,13 @@ test("the Game conduct turns an obstacle and a service register into a person", 
   // unobserved NPC reaction and the emote channel are contract, not style.
   assert.match(game, /never claim an NPC smiled, beamed, was delighted, or said something on your account/);
   assert.match(game, /Body language goes through the native actions stardew_express_emote and stardew_face_direction/);
+});
+
+test("the Game conduct anchors the player's turn and forbids walkie-talkie telemetry (MaiBot & QQ bot simulation protocol)", () => {
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /land your first reaction on what they said/iu);
+  assert.match(game, /walkie-talkie dispatcher|internal event logger/iu);
+  assert.match(game, /Ground feelings in tangible specifics/iu);
 });
 
 test("IdentityProfile rejects malformed or control-bearing content", () => {
