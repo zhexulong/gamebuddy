@@ -374,11 +374,16 @@ function createBodyProgramTools(
         // The siblings described themselves with their own names, which is zero information (measured: an agent
         // reading this list could not tell what any of the three was for).
         //
-        // `progress` is what the caller sizes its NEXT wait from, and it exists because the result used to give it
-        // nothing to size one with: measured 2026-11-02, 65 status calls spent 281 s of a 24-minute run, every long one
-        // asking for the whole 30,000 ms bound, because the answer named the nodes and never the work left.
+        // `progress` is what a caller reads when it wants to know whether the plan is still moving: it exists because
+        // the result used to give it nothing to size a decision with - measured 2026-11-02, 65 status calls spent 281 s
+        // of a 24-minute run.
+        //
+        // And it is a DIAGNOSTIC, which the text has to say or the tool gets used as a progress bar: `plan_work` returns
+        // as soon as the plan is accepted, so the settlement arrives as an execution receipt on the pump
+        // (`host-service.ts` `acceptIntegrationFact`) rather than by asking here. Measured 2026-11-03 (`round29`): 48
+        // calls, `waitMs` median 30,000 (the cap), 248 s blocked - the description advertised waiting, so it waited.
         description:
-          "Read a submitted plan's state: per-node progress and the authoritative outcome so far. Use it after submitting a plan to see which node ran, which is still waiting, and why a plan stopped. `progress` summarises what is left: `total`, `settled`, `remaining`, `running` (dispatched, receipt still owed), `queued` (not started) and `current` - the node the plan is on now, with `observedInStateMs`, how long the Host has watched it in that state (`0` means it has just appeared, not that it has done nothing). Measured actions take seconds, not tens of seconds (`move_to_tile` p90 3.6 s, `harvest_crop` p90 4.1 s), so `progress` is what tells you whether `current` is working or stuck. Pass waitMs to wait for the plan to finish instead of polling it: the call returns as soon as the plan reaches a terminal state or the wait expires, and the result says which of the two happened. Choose waitMs from `progress` rather than passing the 30,000 maximum by habit: a wait costs nothing when the plan settles inside it, and costs everything it asked for when it does not. An expired wait also says whether the plan changed while it waited: `waited.snapshotChanged: false` means the plan stood still for the whole wait, so asking again the same way will report the same thing - do something else instead (check the game, change the approach) rather than waiting again.",
+          "One submitted plan's journal state and its `progress`: `total`, `settled`, `remaining`, `running` (dispatched, receipt owed), `queued`, and `current` with `observedInStateMs` - how long this Host has watched that node in its state, so `0` means it has just appeared. This is a DIAGNOSTIC, not a progress bar: a plan's progress reaches you as receipts, so read this when a settlement you expected never arrived, or when a step looks stuck - not after every submission. `waitMs` is a rare opt-in that holds your turn until the plan settles or the bound expires (`waited.reachedTerminal` says which, `waited.snapshotChanged: false` that nothing moved); while it holds the turn you cannot stop, append or steer, so leave it out unless this turn genuinely needs the settled answer.",
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -636,7 +641,7 @@ function bodyProgramToolParameters(name: string) {
             minimum: 0,
             maximum: 30_000,
             description:
-              "Wait up to this many milliseconds for the plan to reach a terminal state instead of returning at once. 0 or omitted returns immediately, which is the polling behaviour; the result's waited.reachedTerminal says whether the wait saw it finish or expired while it was still running, waited.snapshotChanged says whether the plan's own state or nodes moved at all during the wait, and progress says what work is left and how long the current node has been in its state - read it before choosing this value instead of passing the maximum out of habit.",
+              "Wait up to this many milliseconds for the plan to settle instead of returning at once; 0 or omitted returns immediately, which is what you want unless this turn needs the settled answer - while the call holds your turn you cannot stop, append or steer. waited.reachedTerminal says whether it settled or the bound expired, waited.snapshotChanged whether the plan moved at all meanwhile.",
           }),
         ),
       },

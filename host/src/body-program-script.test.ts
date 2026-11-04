@@ -1528,3 +1528,96 @@ test("the description's example uses a published action and that action's own de
     "the example's argument names are that action's declared ones, in order",
   );
 });
+
+/**
+ * The two program tools' descriptions as the model is handed them: `stardew_plan_work` is compiled here, and
+ * `stardew_action_program_status` is written inline beside the tool that mounts it, so it is read off that source.
+ *
+ * One reader for both, because the defect this pins is a CONVERSATION between them: `plan_work` returns as soon as the
+ * plan is accepted, so a status description that advertises waiting is the instruction that fills the gap.
+ */
+function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus", string>> {
+  const source = readFileSync(
+    resolve(
+      hostRoot,
+      "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
+    ),
+    "utf8",
+  );
+  const toolAt = source.indexOf('name: "stardew_action_program_status"');
+  assert.notEqual(toolAt, -1, "the status tool is gone, so where its description is written is no longer checkable");
+  const literal = /description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/u.exec(source.slice(toolAt));
+  const descriptionSource = literal?.[1];
+  assert.ok(descriptionSource !== undefined, "the status tool still carries its description as one string literal");
+  return Object.freeze({
+    planWork: planWorkDescription(CATALOG_ACTIONS),
+    programStatus: JSON.parse(`"${descriptionSource}"`) as string,
+  });
+}
+
+test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes the companion", () => {
+  // `plan_work` returns the moment the Mod accepts. That is only safe if the companion expects the outcome to arrive on
+  // its own: measured 2026-11-03 (`round29`), a description that said nothing about a wake produced 48
+  // `stardew_action_program_status` calls, `waitMs` median 30,000 (the cap), 248 s blocked.
+  const { planWork } = programToolDescriptions();
+  assert.match(planWork, /returns as soon as the plan is accepted/u, "the plan tool says when it returns");
+  assert.match(planWork, /do NOT poll/u, "and forbids polling it");
+  assert.match(
+    planWork,
+    /each step's receipt arrives later as a new message/u,
+    "naming the fact that wakes the companion instead of a tool it would have to call",
+  );
+  assert.match(planWork, /end your turn and speak to the player/u, "so the turn it should take is stated too");
+  assert.match(
+    planWork,
+    /stardew_action_program_status is for a plan that is not moving, not a progress bar/u,
+    "and the status tool is pointed at its one remaining use",
+  );
+});
+
+test("stardew_action_program_status is described as a diagnostic with a rare opt-in wait", () => {
+  const { programStatus } = programToolDescriptions();
+  assert.match(programStatus, /DIAGNOSTIC, not a progress bar/u, "the tool says what it is not");
+  assert.match(
+    programStatus,
+    /not after every submission/u,
+    "and when it is not to be read, which is the instruction the old text got wrong",
+  );
+  assert.match(programStatus, /`waitMs` is a rare opt-in/u, "waitMs is documented as the exception, not the default");
+  assert.match(
+    programStatus,
+    /while it holds the turn you cannot stop, append or steer/u,
+    "with the cost that makes it rare: a held turn cannot be interrupted",
+  );
+});
+
+/**
+ * Neither description may tell the model to poll.
+ *
+ * <p>
+ * The failure is measurable: `stardew_action_program_status` was called 48-89 times per run for 248-452 s of blocked
+ * turns (`round29`, `round7`), because one description said "Use it after submitting a plan to see which node ran" and the
+ * other said "Pass waitMs to wait for the plan to finish". Both are read here sentence by sentence, since that is the
+ * unit a model acts on, and a sentence that carries a prohibition ("do NOT poll", "not after every submission") is the
+ * contract rather than the defect.
+ * </p>
+ */
+test("neither program tool description tells the model to poll", () => {
+  const descriptions = programToolDescriptions();
+  for (const [tool, text] of Object.entries(descriptions))
+    assert.match(
+      text,
+      /(?:do NOT poll|not a progress bar)/u,
+      `${tool} no longer states that it is not to be polled, which is the whole contract after plan_work stopped waiting`,
+    );
+
+  const prescription = /\b(?:use|read|call|ask|pass|choose|keep|poll)\w*/iu;
+  const progressNoun = /\b(?:wait\w*|progress\w*|again|poll\w*)\b/iu;
+  const prohibition = /\b(?:not|never|no|unless|instead|rather than)\b/iu;
+  for (const [tool, text] of Object.entries(descriptions)) {
+    const offending = text
+      .split(/(?<=[.;:])\s+/u)
+      .filter((sentence) => prescription.test(sentence) && progressNoun.test(sentence) && !prohibition.test(sentence));
+    assert.deepEqual(offending, [], `${tool} tells the model to poll for progress: ${offending.join(" | ")}`);
+  }
+});

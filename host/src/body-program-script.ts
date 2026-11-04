@@ -614,10 +614,17 @@ export function planShape(
  * The vocabulary is the actions handed in - the same `PublishedPlanAction[]` `planShape` answers from - so there is no
  * hand-maintained list to drift from the Mod's catalog. Every id is printed once, under the family the Mod declared it
  * in; nothing else in the block is prose, because the block is read as a vocabulary.
+ *
+ * The other thing it has to teach is SUBMIT, THEN END THE TURN. `plan_work` returns as soon as the Mod accepts, because a
+ * held call makes `stop`, `append` and a player's steering unreachable exactly while they matter. The wake is not
+ * invented here: a dispatched node's execution receipt reaches the same pump as every other fact
+ * (`host-service.ts` `acceptIntegrationFact` -> `CompanionEventPump.flush`), and a terminal receipt is not a held progress
+ * fact, so it starts a follow-up turn (`event-pump.ts` `#hasPendingFactTrigger`). Measured 2026-11-03 (`round29`): 48
+ * `program_status` calls, `waitMs` median 30,000, 248 s blocked - the description never said a receipt was coming.
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step, and the host compiles it into a single plan the Mod runs and advances itself - you do not come back between steps. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape for one action's argument names. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape for one action's argument names. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
