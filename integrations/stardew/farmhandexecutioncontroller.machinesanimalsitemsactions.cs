@@ -1,4 +1,5 @@
 using System.Globalization;
+using GameBuddy.Stardew.Core;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
@@ -100,33 +101,60 @@ internal sealed partial class ExecutionManager
     /// <summary>The refusal token used when the machine's own data cannot state which inputs it takes.</summary>
     private const string UnavailableAcceptedInputs = "unavailable_in_machine_data";
 
+    /// <summary>The refusal token used when the machine's data was read and declares no item-placed input at all.</summary>
+    private const string NoAcceptedMachineInputs = "none_in_machine_data";
+
     /// <summary>
-    /// The inputs the machine's own <c>Data/Machines</c> rows declare for an item drop-in, named for a refusal.
+    /// The machine's own <c>ItemPlacedInMachine</c> trigger rows, enumerated ONCE for both readers: the refusal prose
+    /// below and the acceptance the machine's target row publishes (<see cref="BridgeMachineTarget.Accepts"/>).
     ///
-    /// This reads the same trigger rows the engine's matcher walks (<c>MachineDataUtility.CanApplyOutput</c>,
-    /// MachineDataUtility.cs:65-102) and decides nothing: the admission is the machine's <c>performObjectDropInAction</c>
-    /// probe. A refusal that says only "unsupported input" leaves the caller guessing which of the game's machine rules
-    /// it stands in front of; naming the accepted set turns it into something a plan can be rewritten from.
+    /// <para>
+    /// This is the trigger set the engine's admission matcher walks (<c>MachineDataUtility.CanApplyOutput</c>, decompiled
+    /// <c>MachineDataUtility.cs:65-102</c>), and the fields copied here are exactly the ones it consults per row:
+    /// <c>RequiredItemId</c>, <c>RequiredTags</c>, <c>RequiredCount</c> and the row's <c>Condition</c>. Nothing is decided
+    /// at this layer - the admission is the machine's own <c>performObjectDropInAction(probe: true)</c>.
+    /// </para>
+    /// <para>
+    /// null means the engine data cannot answer (the object has no machine data). An empty list is a DIFFERENT fact: the
+    /// data was read and declares no item-placed rule, which the matcher can never match, so the machine takes no load.
+    /// </para>
     /// </summary>
-    private static string DescribeAcceptedMachineInputs(StardewValley.Object machine)
+    private static IReadOnlyList<MachineInputTriggerRule>? ReadMachineInputTriggerRules(StardewValley.Object machine)
     {
-        MachineData? machineData = machine.GetMachineData();
-        if (machineData?.OutputRules is null) return UnavailableAcceptedInputs;
-        List<string> accepted = new();
+        if (machine.GetMachineData() is not MachineData machineData) return null;
+        List<MachineInputTriggerRule> rules = new();
+        if (machineData.OutputRules is null) return rules;
         foreach (MachineOutputRule rule in machineData.OutputRules)
         {
             if (rule.Triggers is null) continue;
             foreach (MachineOutputTriggerRule trigger in rule.Triggers)
             {
                 if (!trigger.Trigger.HasFlag(MachineOutputTrigger.ItemPlacedInMachine)) continue;
-                string count = $"x{trigger.RequiredCount.ToString(CultureInfo.InvariantCulture)}";
-                if (trigger.RequiredItemId is { Length: > 0 } requiredItemId) accepted.Add($"{requiredItemId} {count}");
-                if (trigger.RequiredTags is { Count: > 0 } requiredTags) accepted.Add($"tag:{string.Join("+", requiredTags)} {count}");
+                rules.Add(new MachineInputTriggerRule(trigger.RequiredItemId, trigger.RequiredTags, trigger.RequiredCount, trigger.Condition is not null));
             }
         }
-        // Bounded so one refusal cannot become an essay: the first twelve distinct entries name the shape of every
-        // machine rule in the game, and the count is what a caller needs to replan against.
-        return accepted.Count == 0 ? UnavailableAcceptedInputs : string.Join(",", accepted.Distinct().Take(12));
+        return rules;
+    }
+
+    /// <summary>
+    /// What this machine declares it takes, bounded and derived - the fact <c>machine_load</c>'s target row publishes so a
+    /// caller does not have to guess what a furnace takes. null is "the machine's data cannot answer", never "it takes
+    /// nothing".
+    /// </summary>
+    private static MachineInputAcceptance? ReadMachineInputAcceptance(StardewValley.Object machine)
+    {
+        return MachineInputAcceptance.Derive(ReadMachineInputTriggerRules(machine));
+    }
+
+    /// <summary>
+    /// The same acceptance, spelled for a refusal: a caller refused for its INPUT is told the inputs the machine's data
+    /// declares, from the one derivation the published row uses, so the refusal can never name a set the row does not.
+    /// </summary>
+    private static string DescribeAcceptedMachineInputs(StardewValley.Object machine)
+    {
+        MachineInputAcceptance? acceptance = ReadMachineInputAcceptance(machine);
+        if (acceptance is null) return UnavailableAcceptedInputs;
+        return acceptance.Inputs.Count == 0 ? NoAcceptedMachineInputs : string.Join(",", acceptance.Inputs);
     }
 
     /// <summary>

@@ -664,6 +664,14 @@ export type Snapshot = Readonly<{
     loadInputQualifiedItemId?: string | null;
     loadInputStack?: number | null;
     collectOutputReady?: boolean | null;
+    /**
+     * What this machine's own `Data/Machines` rows declare it takes, published so a caller does not have to guess: a
+     * furnace says five copper ore, not coffee beans. Empty `inputs` means the machine declares no load input; `null`
+     * means its data could not answer, which is a different fact from "takes nothing"; `omitted` counts what the cap
+     * withheld. The live load hint (`loadInputSlot`/`loadInputQualifiedItemId`) stays the machine's own probe of the
+     * carried stack, so the declaration and the current affordance are two answers to two questions.
+     */
+    accepts?: Readonly<{ inputs: readonly string[]; omitted: number }> | null;
   }>[];
   /** Nearby live NPCs with an existing Farmhand friendship record; inspection is read-only. */
   npcRelationshipTargets?: readonly Readonly<{
