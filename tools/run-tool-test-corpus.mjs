@@ -62,7 +62,9 @@ export function corpusFiles({ root = ROOT } = {}) {
   ].join("\n");
   const files = new Set();
   for (const [name, command] of Object.entries(pkg.scripts)) {
-    if (!name.startsWith("test:")) continue;
+    // `suite:` names a library's own tests, `test:` names a gate's. Both run here; only `test:` carries the
+    // meta-gate's obligation to state a falsifier, which is why the two prefixes exist separately.
+    if (!name.startsWith("test:") && !name.startsWith("suite:")) continue;
     const match = /^node --test (.+)$/.exec(command);
     if (!match) continue;
     const paths = match[1].trim().split(/\s+/);
