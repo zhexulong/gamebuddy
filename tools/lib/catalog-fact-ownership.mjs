@@ -42,9 +42,13 @@
  *
  * THE RULE. A declared fact spelled as a literal in `host/src` is a finding when
  * it sits in the same record as a shipped model id, or when that record's id is a
- * computed expression (the generic writer shape - a literal there prices whatever
- * model the caller names). Values are compared EXACTLY: these are declarations,
- * not measurements, so no tolerance is applied.
+ * computed expression this file cannot resolve (the generic writer shape - a literal
+ * there prices whatever model the caller names). An id written as a file-local string
+ * constant IS resolved to its literal (`localIdConstants`): a fixture whose model id
+ * no catalog entry describes has nothing to compare a copy against, exactly like the
+ * literal spelling of the same id, and reporting it as "whatever the caller names" is
+ * the gate reading its own limit as a product defect. Values are compared EXACTLY:
+ * these are declarations, not measurements, so no tolerance is applied.
  *
  * The declaration is exempt from its own rule where it must spell a fact name or
  * a model id to look for it (see `GATE_PATHS`).
@@ -412,6 +416,31 @@ function idIn(recordText) {
   return { kind: "computed", value: match[3] };
 }
 
+/**
+ * The string-valued `const`s declared in one file, by name.
+ *
+ * `const MODEL_ID = "turn-header-test-model";` followed by `id: MODEL_ID` states the
+ * same record a literal id would, one line up, and the two must not be reported as two
+ * different shapes: the id is knowable, so the catalog can say whether it describes it.
+ *
+ * Only a same-file `const` bound to a string literal counts. A name bound any other way
+ * - a parameter, a property access, an import - stays computed, because resolving it
+ * means reading another module and guessing there is the defect this gate exists for.
+ */
+function localIdConstants(text, { strings, comments }) {
+  const ids = new Map();
+  for (const match of text.matchAll(
+    /(?<![\w$.])const\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=;\n]+)?=\s*(?:"([^"\n]*)"|'([^'\n]*)')\s*(?:as const)?;/gu,
+  )) {
+    // The declaration itself must be code: a `const` inside a string or a comment is text.
+    if (coveredBy(strings, match.index, 1)) continue;
+    if (comments.some(([start, end]) => match.index >= start && match.index < end)) continue;
+    const value = match[2] ?? match[3];
+    if (value !== undefined) ids.set(match[1], value);
+  }
+  return ids;
+}
+
 function describe(value) {
   return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
 }
@@ -505,7 +534,7 @@ function declaredValue(models, modelId, field) {
  * The finding one resolved spelling contributes, or null when it is not a finding:
  * an id the catalog does not describe, a record with no id at all, or an exemption.
  */
-function findingFor(text, path, spelling, models, exemptions) {
+function findingFor(text, path, spelling, models, exemptions, localIds) {
   // The regex pass already resolved its model from the enclosing block; the other
   // passes resolve it from the record the fact itself sits in.
   let modelId = spelling.modelId ?? null;
@@ -513,13 +542,15 @@ function findingFor(text, path, spelling, models, exemptions) {
   if (spelling.modelId === undefined) {
     const id = idIn(text.slice(spelling.record[0], spelling.record[1]));
     if (id === null) return null;
-    if (id.kind === "literal") {
+    // A file-local constant IS the literal it is bound to, so both spellings resolve alike.
+    const spelled = id.kind === "literal" ? id.value : localIds.get(id.value);
+    if (spelled === undefined) {
+      computedId = true;
+    } else {
       // A literal id this catalog does not describe belongs to an endpoint the catalog
       // is not the owner of, so there is nothing to compare a copy against.
-      if (!models.has(id.value)) return null;
-      modelId = id.value;
-    } else {
-      computedId = true;
+      if (!models.has(spelled)) return null;
+      modelId = spelled;
     }
   }
   if (exemptionFor(exemptions, path, modelId, spelling.field, computedId) !== null) return null;
@@ -554,12 +585,13 @@ export function findCatalogFactCopies({ root, models, exemptions = DECLARED_EXEM
     const { strings, comments } = lexicalRanges(text);
     const blanked = blankRanges(text, [...strings, ...comments]);
     const ranges = { strings, comments, regions: braceRegions(blanked) };
+    const localIds = localIdConstants(text, ranges);
     for (const spelling of [
       ...codeSpellings(text, ranges),
       ...pinnedDocumentSpellings(text, strings, models),
       ...regexAssertionSpellings(text, ranges, models),
     ]) {
-      const finding = findingFor(text, path, spelling, models, exemptions);
+      const finding = findingFor(text, path, spelling, models, exemptions, localIds);
       if (finding !== null) findings.push(finding);
     }
   }

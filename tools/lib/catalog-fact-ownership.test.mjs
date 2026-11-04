@@ -167,6 +167,65 @@ test("a literal in a record whose id is an EXPRESSION is reported as unowned", a
   assert.match(formatFinding(findings[0]), /^catalog_fact_ownership:unowned_literal:computed-id:cost:/u);
 });
 
+test("an id spelled as a file-local constant resolves to that model, so a drift is NAMED", async () => {
+  // The strengthening this resolution buys: before it, a catalog model whose id was written
+  // through a const was reported as an unowned literal with `catalog=null`, so the gate never
+  // printed the number it disagreed with - the reader had to go and compare it by hand.
+  const root = makeTree({
+    "host/src/writer.ts": [
+      'const MODEL_ID = "test-model-flash";',
+      "export const entry = { models: [{ id: MODEL_ID,",
+      "  cost: { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 } }] };",
+      "",
+    ].join("\n"),
+  });
+  const { models } = await loadDeclaredModels({ root });
+  const findings = findCatalogFactCopies({ root, models, exemptions: [] });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].modelId, "test-model-flash");
+  assert.equal(findings[0].computedId, false);
+  assert.equal(findings[0].matches, false);
+  assert.deepEqual(findings[0].declared, DECLARED_COST);
+  assert.match(formatFinding(findings[0]), /^catalog_fact_ownership:fact_mismatch:test-model-flash:cost:/u);
+});
+
+test("a fixture whose model id is a file-local constant no catalog entry describes is not this gate's business", async () => {
+  // The shipped defect of 2026-11-04: `host/src/provider-turn-header.test.ts` writes a models.json
+  // for a synthetic model id the product does not sell, at the tiny window Pi requires. The id was
+  // written through a const, so the gate could not read it and reported the fixture as "whatever the
+  // caller names" - `unowned_literal:computed-id:contextWindow: ... :115: catalog=null spelled=8192`.
+  // The id IS knowable, and the catalog does not describe it, which is the literal-id answer.
+  const root = makeTree({
+    "host/src/fixture.test.ts": [
+      'const MODEL_ID = "turn-header-test-model";',
+      'const KEY_ENV = "GAMEBUDDY_TURN_HEADER_TEST_KEY";',
+      "export const entry = { models: [{ id: MODEL_ID, contextWindow: 8192 }] };",
+      "",
+    ].join("\n"),
+  });
+  const { models } = await loadDeclaredModels({ root });
+  assert.deepEqual(findCatalogFactCopies({ root, models, exemptions: [] }), []);
+});
+
+test("a name that is not a same-file constant is still a computed id", async () => {
+  // The boundary that keeps the recorded shape covered: an id that arrives from another module,
+  // a parameter or a property access cannot be resolved here, so a literal beside it still prices
+  // whatever the caller names.
+  const root = makeTree({
+    "host/src/writer.ts": [
+      'import { MODEL_ID } from "./ids.js";',
+      "export const entry = { models: [{ id: MODEL_ID, contextWindow: 131072 }] };",
+      "",
+    ].join("\n"),
+  });
+  const { models } = await loadDeclaredModels({ root });
+  const findings = findCatalogFactCopies({ root, models, exemptions: [] });
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].computedId, true);
+  assert.equal(findings[0].modelId, null);
+  assert.match(formatFinding(findings[0]), /^catalog_fact_ownership:unowned_literal:computed-id:contextWindow:/u);
+});
+
 test("a model the catalog does not describe is not this gate's business", async () => {
   // The catalog is not the owner of an id it does not declare, so there is no value
   // to compare a copy against - and inventing one is the defect this gate exists for.
