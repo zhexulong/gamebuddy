@@ -23,7 +23,7 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "machine_load" => this.executions.RequestLocalLoadCoffeeIntoKeg(
+            "machine_load" => this.executions.RequestLocalLoadMachineInput(
                 request.RequestId,
                 request.Args.Slot ?? 0,
                 (int)(request.Args.X ?? 0),
@@ -32,7 +32,7 @@ internal sealed class MachineAndAnimalActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
-            "machine_collect_output" => this.executions.RequestLocalCollectCoffeeFromKeg(
+            "machine_collect_output" => this.executions.RequestLocalCollectMachineOutput(
                 request.RequestId,
                 (int)(request.Args.X ?? 0),
                 (int)(request.Args.Y ?? 0),

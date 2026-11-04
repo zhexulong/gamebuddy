@@ -76,6 +76,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityAdmissionSourceShapeTests.cs" Link="HarvestQualityAdmissionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityProjectionSourceShapeTests.cs" Link="HarvestQualityProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\LevelUpSettledEvidenceTests.cs" Link="LevelUpSettledEvidenceTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MachineLoadMachineDataSourceShapeTests.cs" Link="MachineLoadMachineDataSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ModEntryFixtureBoundaryTests.cs" Link="ModEntryFixtureBoundaryTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MoveStallProbeFixtureSourceShapeTests.cs" Link="MoveStallProbeFixtureSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MovingTargetApproachTests.cs" Link="MovingTargetApproachTests.cs" />

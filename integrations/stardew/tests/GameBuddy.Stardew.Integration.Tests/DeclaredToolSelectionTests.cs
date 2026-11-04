@@ -48,8 +48,13 @@ public sealed class DeclaredToolSelectionTests
         Claim("chop_tree").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("chop_stump").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_crop").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
+        // till_soil refuses `hoe_not_equipped` unless the hand already holds a Hoe, and that handler accepts any
+        // upgrade level - so the hoe is a requirement the surface has to state, exactly as water_crop states its can.
+        // Unlike water_crop, `RequestLocalTillSoil` does not select it (`TrySelectDeclaredTool` is not called there),
+        // so satisfying this claim is the CALLER's equip step; the claim is what makes that step plannable at all.
+        Claim("till_soil").Should().Be(new FarmhandActionResourceTemplateClaim("tool:hoe", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
-        Claim("till_soil").Should().BeNull();
+        Claim("clear_hoedirt").Should().BeNull();
     }
 
     [Fact]

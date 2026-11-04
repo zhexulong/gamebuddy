@@ -490,6 +490,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:hoe",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -791,7 +795,7 @@
             },
             "expectedQualifiedItemId": {
               "type": "string",
-              "description": "Exactly (O)433, and no other qualified item id: this action's acceptance refuses every other value on this argument before any native call runs. Copy the id from the target's own published field instead of substituting the item you would rather use."
+              "description": "The item to load into the machine, copied from `loadInputQualifiedItemId` of the machineTargets row. The machine's own Data/Machines rows decide which inputs it accepts and how many it consumes; the row publishes the item that machine takes. An input its data does not accept is refused `machine_load_unsupported_input`, and that refusal names the inputs the machine does take."
             },
             "expectedTargetId": {
               "type": "string"
@@ -4767,6 +4771,7 @@
       "travel",
       "unequip_wearable",
       "use_item",
+      "use_mine_ladder",
       "use_obelisk",
       "use_raft",
       "use_warp_item",

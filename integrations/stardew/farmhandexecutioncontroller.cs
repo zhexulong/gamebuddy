@@ -314,7 +314,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // on the game thread; tests that fork several managers must reset their
         // own lease through RegisterModalOwner/ReleaseModalOwner, and a null
         // lease (no action ever registered) stays worldOwned — the safe default.
-        WorldModel.ModalActionOwnedCheck = () => this.activeModalOwnerExecutionId is not null;
+        // The lease alone is not enough: it names an execution, and the modal is that execution's own only while the
+        // execution is still active (see WorldModel.OwnsCurrentModal).
+        WorldModel.ModalActionOwnedCheck = () =>
+            WorldModel.OwnsCurrentModal(this.activeModalOwnerExecutionId, this.IsExecutionActive);
     }
 
     /// <summary>
@@ -329,6 +332,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal void RegisterModalOwner(string executionId)
     {
         this.activeModalOwnerExecutionId = executionId;
+    }
+
+    /// <summary>
+    /// Whether the named execution still holds work, asked of this class's own receipt record: <see cref="Remember"/> is
+    /// its only writer, so "the latest receipt is not terminal" is the one place that knows an execution ended. An
+    /// execution that never reported - or that has already settled - answers false, which keeps its lease from
+    /// suppressing a world interruption.
+    /// </summary>
+    private bool IsExecutionActive(string executionId)
+    {
+        foreach (LocalExecutionReceipt receipt in this.receiptsByRequestId.Values)
+        {
+            if (string.Equals(receipt.ExecutionId, executionId, StringComparison.Ordinal))
+                return !receipt.State.IsTerminal();
+        }
+        return false;
     }
 
     /// <summary>Releases the owner lease; only the owning execution may clear it.</summary>
@@ -1883,6 +1902,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// Whether the actor is no longer in the location the pending travel started from - the one fact that says the
+    /// engine has already performed this travel's warp, whatever the travel is still waiting for.
+    /// </summary>
+    private bool TravelOriginHasBeenLeft(LocalTravelSpec travel)
+    {
+        StardewValley.GameLocation? location = Game1.player?.currentLocation;
+        return location is not null
+            && !string.Equals(location.NameOrUniqueName, travel.SourceLocation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// WIA §4.1/§4.3: terminates non-movement executions the moment the world
     /// holds an interruptible state that requires the body (a modal, an event
     /// cutscene, or an imminent pass-out). World-change classification follows
@@ -1907,13 +1937,36 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || this.activeAnimalProduct is not null || this.activeItemUse is not null
             || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null)
         {
+            // A travel the ENGINE has already warped owns its terminal from the live world, even when a world-change
+            // disposition is present: an event or a faint that begins AFTER the actor left the origin is what happened
+            // next, not an interruption of the arrival. Measured 2026-11-04: `use_mine_ladder` answered the game's own
+            // `ExitMine` question, the engine moved the actor to `Mine:23,8`, and the mine entrance's first-visit
+            // cutscene set `eventUp` one tick before SMAPI's Warped event reached this class - so a completed departure
+            // was reported `invalidated/event_started` with no evidence at all. The terminal comes from the funnel that
+            // owns every warp arrival, which decides success from the destination postcondition and reports a mismatch
+            // as uncertain instead of inventing either.
+            if (this.disposition.Kind is ActorDispositionKind.Event or ActorDispositionKind.PassOut or ActorDispositionKind.Modal
+                && this.activeTravel is { } departedTravel
+                && this.TravelOriginHasBeenLeft(departedTravel))
+            {
+                this.CompleteTravelAfterWarp();
+                return;
+            }
+
             switch (this.disposition.Kind)
             {
                 case ActorDispositionKind.Event:
                     this.InvalidateForLifecycle("event_started");
                     break;
-                case ActorDispositionKind.Modal:
+                case ActorDispositionKind.Modal when !this.disposition.ModalActionOwned:
                     this.InvalidateForLifecycle("modal_interrupted");
+                    break;
+                case ActorDispositionKind.Modal:
+                    // WIA §4.2 actionOwned: the modal on screen is the one THIS execution deliberately opened, and it is
+                    // closing it. Interrupting the execution would interrupt the flow that asked the question - measured
+                    // 2026-11-04: `use_mine_ladder` answered the game's own `ExitMine` question, went `accepted /
+                    // mine_exit_pending`, and was invalidated `modal_interrupted` one tick later while the queued exit
+                    // warp was still fading and the answered box was still the active menu.
                     break;
                 case ActorDispositionKind.PassOut:
                     this.InvalidateForLifecycle("pass_out");
@@ -2947,16 +3000,24 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     null,
                     null,
                     null,
-                    machine.QualifiedItemId == "(BC)12" && machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value?.QualifiedItemId == "(O)395" && machine.lastInputItem.Value?.QualifiedItemId == "(O)433");
-                if (machine.QualifiedItemId == "(BC)12" && machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0)
+                    // Ready means the machine's OWN lifecycle finished: `readyForHarvest` is set exactly when the window
+                    // reaches zero (Object.cs:2581-2585), so a ready machine that holds something is collectable whatever
+                    // it is - the state, not a Keg id, is what the collect action needs.
+                    machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null);
+                if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
                 {
                     for (int slot = 0; slot < player.Items.Count; slot++)
                     {
-                        if (player.Items[slot] is StardewValley.Object beans && beans.QualifiedItemId == "(O)433" && beans.Stack == 5)
-                        {
-                            target = target with { LoadInputSlot = slot, LoadInputQualifiedItemId = "(O)433", LoadInputStack = 5 };
-                            break;
-                        }
+                        // The row publishes the input the ACTION will accept: the machine's own admission decides whether
+                        // it takes this stack (Object.performObjectDropInAction, probe: true - the call GameLocation.checkAction
+                        // makes at GameLocation.cs:7768-7772), and the machine's own rows decide how many it consumes. Discovery
+                        // and the action therefore publish and enforce the same fact instead of two guesses at it.
+                        if (player.Items[slot] is not StardewValley.Object carried
+                            || !machine.performObjectDropInAction(carried, probe: true, player)
+                            || !TryReadMachineLoadRequirement(machine, carried, player, location, out MachineLoadRequirement requirement))
+                            continue;
+                        target = target with { LoadInputSlot = slot, LoadInputQualifiedItemId = carried.QualifiedItemId, LoadInputStack = requirement.ConsumedCount };
+                        break;
                     }
                 }
                 return target;
@@ -5172,6 +5233,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         this.receiptsByRequestId[receipt.RequestId] = receipt;
+        // The ONE release of a modal owner lease. Every terminal of an execution passes through this map - rejection,
+        // invalidation, deadline expiry, cancellation, the native warp's own success - so releasing here cannot be
+        // forgotten by a new exit path, and nothing else in this class clears the lease. A lease that outlived its
+        // execution would suppress the next world interruption (WorldModel.OwnsCurrentModal re-checks activity as the
+        // second line of defence).
+        if (receipt.State.IsTerminal())
+            this.ReleaseModalOwner(receipt.ExecutionId);
     }
 
     /// <summary>

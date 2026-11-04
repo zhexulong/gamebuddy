@@ -36,6 +36,9 @@ public sealed class UseMineLadderExitTests
     private const string TransportActionsFile =
         "integrations/stardew/farmhandexecutioncontroller.transportactions.cs";
 
+    private const string MovementActionsFile =
+        "integrations/stardew/farmhandexecutioncontroller.movementactions.cs";
+
     [Fact]
     public void TheRegistrationNamesItsOwnKindAndItsOneOwner()
     {
@@ -130,6 +133,26 @@ public sealed class UseMineLadderExitTests
         code.Should().NotContain("enterMine", "leaving is not entering");
         // The receipt states the DECISION, not only the aftermath.
         body.Should().Contain("question={MineExitQuestionKey};response={MineExitResponseKey}");
+    }
+
+    /// <summary>
+    /// BOTH exit terminals state the decision. The answer sometimes warps synchronously (the immediate `mine_left`) and
+    /// sometimes through the game's own Warped edge (the travel terminal), so naming the question on only one of them
+    /// makes the same action auditable or not depending on a native timing detail. Measured 2026-11-04: the
+    /// warp-completed terminal carried `expected=…;actual=…` alone and the live runner refused it with
+    /// `use_mine_ladder_question_missing`.
+    /// </summary>
+    [Fact]
+    public void BothExitTerminalsNameTheDecisionInTheirEvidence()
+    {
+        string immediate = MethodBody(ReadRepositoryFile(TransportActionsFile), "private LocalExecutionReceipt ExecuteUseMineLadder(");
+        immediate.Should().Contain("question={MineExitQuestionKey};response={MineExitResponseKey}");
+
+        string travel = MethodBody(ReadRepositoryFile(MovementActionsFile), "public void CompleteTravelAfterWarp(");
+        travel.Should().Contain("string mineExitDecisionEvidence = specification.Action == \"use_mine_ladder\"");
+        travel.Should().Contain("question={MineExitQuestionKey};response={MineExitResponseKey}");
+        travel.Should().Contain("expected={specification.TargetLocation}",
+            "the aftermath fields stay; the decision is added beside them, not instead of them");
     }
 
     /// <summary>

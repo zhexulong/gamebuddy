@@ -1,4 +1,5 @@
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using Xunit;
 
@@ -274,6 +275,87 @@ public sealed class WorldInterruptionTests
             "the controller replans through the native path finder after quiet waiting");
         source.Should().Contain(";stalled_ticks={stalledTicks}",
             "the timeout keeps tile/target evidence and adds elapsed stall ticks");
+    }
+
+    // ---- WIA §4.2 action-owned modal lease ----------------------------------
+
+    /// <summary>
+    /// The lease is a NAME, and the ruling requires an execution behind it: an owner that is finished, refused,
+    /// cancelled, invalidated or unknown suppresses nothing. This is the half that turns the fix into a policy break if
+    /// it is missing - a stale lease would silently stop every later interruption from reaching the player.
+    /// </summary>
+    [Fact]
+    public void TheModalOwnerLeaseSuppressesOnlyWhileItsExecutionIsActive()
+    {
+        WorldModel.OwnsCurrentModal(null, _ => true).Should().BeFalse(
+            "no action registered a lease, so the modal is world-owned");
+        WorldModel.OwnsCurrentModal("execution-1", id => id == "execution-1").Should().BeTrue(
+            "the owning execution is still active, so the modal it opened is its own");
+        WorldModel.OwnsCurrentModal("execution-1", _ => false).Should().BeFalse(
+            "a lease naming an execution that already ended must not suppress the world interruption");
+    }
+
+    [Fact]
+    public void AReleasedLeaseNoLongerSuppressesEvenForAnActiveExecution()
+    {
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        try
+        {
+            executions.RegisterModalOwner("execution-1");
+            executions.ActiveModalOwnerExecutionId.Should().Be("execution-1");
+
+            executions.ReleaseModalOwner("execution-1");
+
+            executions.ActiveModalOwnerExecutionId.Should().BeNull();
+            WorldModel.OwnsCurrentModal(executions.ActiveModalOwnerExecutionId, _ => true).Should().BeFalse(
+                "a released lease names nothing, so no execution can hide behind it");
+        }
+        finally
+        {
+            WorldModel.ModalActionOwnedCheck = null;
+        }
+    }
+
+    [Fact]
+    public void ArbitrationSkipsAnOwnedModalAndTheLeaseIsReleasedWhereAnExecutionEnds()
+    {
+        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+
+        // The ruling: a modal interrupts only when it is NOT the owning execution's own.
+        MethodBody(source, "private void ArbitrateWorldChangeInterruptions(")
+            .Should().Contain("case ActorDispositionKind.Modal when !this.disposition.ModalActionOwned:",
+                "WIA §4.2: an actionOwned modal is closed by its own action, so it cannot interrupt that action");
+
+        // The release lives in the receipt funnel every terminal passes through, keyed by the execution, and nowhere
+        // else: a second release site is a lifecycle that can disagree with this one.
+        MethodBody(source, "private void Remember(LocalExecutionReceipt receipt)")
+            .Should().Contain("this.ReleaseModalOwner(receipt.ExecutionId);");
+        int releaseCalls = 0;
+        foreach (string line in source.Split('\n'))
+        {
+            if (line.Contains("this.ReleaseModalOwner(", StringComparison.Ordinal))
+                releaseCalls++;
+        }
+
+        releaseCalls.Should().Be(1, "one owner, one release");
+    }
+
+    [Fact]
+    public void ArbitrationLetsACommittedArrivalOwnTheTerminal()
+    {
+        string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs")));
+        string arbitration = MethodBody(source, "private void ArbitrateWorldChangeInterruptions(");
+
+        // A world-change disposition must not void a travel the engine already warped: the actor left the origin, so the
+        // arrival fact wins and the terminal is minted by the ONE funnel that owns warp arrivals.
+        arbitration.Should().Contain("this.TravelOriginHasBeenLeft(departedTravel)");
+        arbitration.Should().Contain("this.CompleteTravelAfterWarp();",
+            "the arrival terminal has one owner; the arbiter may not mint its own version of it");
+        int originLeft = arbitration.IndexOf("this.TravelOriginHasBeenLeft(departedTravel)", StringComparison.Ordinal);
+        int modalRuling = arbitration.IndexOf("case ActorDispositionKind.Modal when", StringComparison.Ordinal);
+        originLeft.Should().BeLessThan(modalRuling,
+            "the already-warped check must precede every world-change ruling, including the modal one");
     }
 
     private static string MethodBody(string source, string signature)

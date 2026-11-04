@@ -315,7 +315,7 @@ internal sealed class FarmhandExecutionJournal
 
             FarmhandExecutionJournalRecord updated = current with
             {
-                State = IsTerminal(receipt.State)
+                State = receipt.State.IsTerminal()
                     ? FarmhandExecutionJournalRecordState.TerminalSettled
                     : FarmhandExecutionJournalRecordState.AcceptedOrPending,
                 Receipt = receipt,
@@ -476,8 +476,8 @@ internal sealed class FarmhandExecutionJournal
 
         return record.State switch
         {
-            FarmhandExecutionJournalRecordState.AcceptedOrPending => record.Receipt is null || !IsTerminal(record.Receipt.State),
-            FarmhandExecutionJournalRecordState.TerminalSettled => record.Receipt is not null && IsTerminal(record.Receipt.State),
+            FarmhandExecutionJournalRecordState.AcceptedOrPending => record.Receipt is null || !record.Receipt.State.IsTerminal(),
+            FarmhandExecutionJournalRecordState.TerminalSettled => record.Receipt is not null && record.Receipt.State.IsTerminal(),
             _ => false,
         };
     }
@@ -613,12 +613,9 @@ internal sealed class FarmhandExecutionJournal
         ExecutionState.Accepted => 0,
         ExecutionState.Running => 1,
         ExecutionState.MeaningfulProgress => 2,
-        _ when IsTerminal(state) => 3,
+        _ when state.IsTerminal() => 3,
         _ => -1,
     };
-
-    private static bool IsTerminal(ExecutionState state) => state is not (
-        ExecutionState.Accepted or ExecutionState.Running or ExecutionState.MeaningfulProgress);
 
     private static FarmhandExecutionJournalRecord? FindExact(
         IReadOnlyList<FarmhandExecutionJournalRecord> records,

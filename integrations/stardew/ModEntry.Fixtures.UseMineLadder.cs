@@ -1,4 +1,5 @@
 using System;
+using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Locations;
@@ -31,6 +32,15 @@ public sealed partial class ModEntry
     /// <c>Game1.enterMine</c> so the landing tile is the level's own choice (<c>MineShaft.resetLocalState</c>).
     /// It emits no receipt and performs no exit: the action under test is the one that leaves.
     /// </para>
+    ///
+    /// <para>
+    /// The landing tile is read from <c>shaft.mineEntrancePosition</c>, never from <c>player.TilePoint</c>:
+    /// <c>Game1.enterMine</c> only QUEUES the warp (<c>Game1.warpFarmer</c> sets <c>locationRequest</c>,
+    /// <c>xLocationAfterWarp</c> and <c>_isWarping</c> and fades to black), so the actor still reports the tile of the
+    /// PREVIOUS location until the fade completes. Measured 2026-11-04: reading it synchronously compared a
+    /// FarmHouse tile against the mine's ladder and refused a correct Given with
+    /// <c>fixture_native_local_use_mine_ladder_arrival_out_of_range:10,3:9,9</c>.
+    /// </para>
     /// </summary>
     private void InstallNativeLocalUseMineLadderFixture(Farmer player)
     {
@@ -49,21 +59,26 @@ public sealed partial class ModEntry
         if (!ExecutionManager.TryFindMineExitLadderTile(shaft, out int exitX, out int exitY))
             throw new InvalidOperationException("fixture_native_local_use_mine_ladder_exit_ladder_missing");
 
-        Game1.enterMine(UseMineLadderFixtureLevel);
-
-        // The arrival is the level's own choice, so it is read after the entry rather than assumed. It must be inside
-        // the radius the handler re-checks (Chebyshev 1), or the run would depend on a walk rather than on the ladder.
-        int actorX = player.TilePoint.X;
-        int actorY = player.TilePoint.Y;
-        int chebyshev = Math.Max(Math.Abs(actorX - exitX), Math.Abs(actorY - exitY));
+        // The arrival is the level's own choice, so it is asked of the level rather than assumed, and it is asked
+        // BEFORE the entry because the warp is queued. `resetLocalState` lands the actor on this exact tile, and
+        // `findLadder` derives it as the tile beneath the level's own ladder tile, so the two coordinates have one
+        // source and the run depends on the ladder rather than on a walk.
+        Vector2 arrival = shaft.mineEntrancePosition(player);
+        int arrivalX = (int)arrival.X;
+        int arrivalY = (int)arrival.Y;
+        int chebyshev = Math.Max(Math.Abs(arrivalX - exitX), Math.Abs(arrivalY - exitY));
+        string exitSheet = shaft.getTileSheetIDAt(exitX, exitY, "Buildings");
         if (chebyshev > 1)
             throw new InvalidOperationException(
-                $"fixture_native_local_use_mine_ladder_arrival_out_of_range:{actorX},{actorY}:{exitX},{exitY}");
+                $"fixture_native_local_use_mine_ladder_arrival_out_of_range:{arrivalX},{arrivalY}:{exitX},{exitY}:{exitSheet}");
+
+        Game1.enterMine(UseMineLadderFixtureLevel);
 
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
             "GameBuddy native-local-player initialized use-mine-ladder precondition before bridge attachment: "
-                + $"shaft={levelName};level={shaft.mineLevel};exit={exitX},{exitY};arrival={actorX},{actorY};"
+                + $"shaft={levelName};level={shaft.mineLevel};exit={exitX},{exitY};exit_sheet={exitSheet};"
+                + $"arrival={arrivalX},{arrivalY};"
                 + "descent_ladder_absent=true; production alone leaves the mine and emits the receipt.",
             LogLevel.Info);
     }

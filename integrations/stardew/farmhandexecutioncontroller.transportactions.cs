@@ -412,6 +412,11 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_ladder_not_handled",
                 $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_handled=false");
 
+        // WIA §4.2 owner lease: the box that is about to appear is the one THIS execution caused by driving the ladder,
+        // so it is action-owned until the execution ends. Without the lease the world-change arbitration reads the
+        // game's own ExitMine question as an external interruption and kills the exit inside its own answer.
+        this.RegisterModalOwner(executionId);
+
         // The question the GAME asked: its key and the responses it offered are read from the box it opened, never
         // assumed, so a level whose 115 branch changes shape is a refusal rather than a guessed answer.
         DialogueBox? question = Game1.activeClickableMenu as DialogueBox;

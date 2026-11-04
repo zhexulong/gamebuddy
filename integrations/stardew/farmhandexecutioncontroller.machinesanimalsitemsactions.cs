@@ -12,7 +12,7 @@ namespace GameBuddy.Stardew;
 // FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
-    public LocalExecutionReceipt RequestLocalLoadCoffeeIntoKeg(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalLoadMachineInput(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
@@ -24,82 +24,145 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (expectedQualifiedItemId != SupportedMachineInputItemId)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_unsupported_input", $"expected={expectedQualifiedItemId};supported={SupportedMachineInputItemId}");
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != SupportedMachineInputItemId || input.Stack != SupportedMachineInputStack)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
+        if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, machineRefusal.ReasonCode, machineRefusal.Detail);
 
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != SupportedMachineItemId
-            || machine.GetMachineData() is null
-            || machine.heldObject.Value is not null
-            || machine.readyForHarvest.Value
-            || machine.MinutesUntilReady > 0
-            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
-        // 5.2: out of the native radius, walk in rather than refuse. The bean stack and
-        // the machine are validated above; both are re-checked after the walk inside the
-        // closure, because `location.checkAction` is a real player input path whose
-        // outcome depends on the world at the moment it runs.
+        // 5.2: out of the native radius, walk in rather than refuse. The input stack and the
+        // machine are validated above; both are re-checked after the walk inside the closure,
+        // because `location.checkAction` is a real player input path whose outcome depends on
+        // the world at the moment it runs.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
                 "machine_load",
-                location,
+                Game1.player.currentLocation,
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteLoadCoffeeIntoKeg(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteLoadMachineInput(arrivalExecutionId, arrivalRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId),
                 nowMs,
                 requestedDeadlineMs);
         }
 
-        return this.ExecuteLoadCoffeeIntoKeg(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
+        return this.ExecuteLoadMachineInput(executionId, requestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId);
     }
 
-    /// <summary>
-    /// The one machine and one input this surface loads, named once.
-    ///
-    /// A Keg `(BC)12` taking five coffee beans `(O)433`: a frozen contract, because the other thirty-eight machine rules
-    /// are content data with no live evidence behind them and expanding the surface would publish promises nobody
-    /// tested. Naming the pair here keeps the four call sites from each spelling it out, and lets a refusal say WHICH of
-    /// the two was wrong.
-    /// </summary>
-    internal const string SupportedMachineItemId = "(BC)12";
-    internal const string SupportedMachineInputItemId = "(O)433";
-    internal const int SupportedMachineInputStack = 5;
-    internal const string SupportedMachineOutputItemId = "(O)395";
-    /// <summary>
-    /// Executes machine_load against the current world, re-validating the bean stack and
-    /// the machine because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path.
-    /// </summary>
-    private LocalExecutionReceipt ExecuteLoadCoffeeIntoKeg(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
-    {
-        if (expectedQualifiedItemId != "(O)433" || slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not StardewValley.Object input || input.QualifiedItemId != "(O)433" || input.Stack != 5)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "coffee_beans_not_owned_in_exact_slot", $"slot={slot}");
+    /// <summary>What the machine's OWN data declares for one input: how many items it consumes, and the processing
+    /// window when the rows state one. Discovery and the load postcondition read this one derivation, so the stack the
+    /// snapshot publishes and the stack the action consumes cannot disagree.</summary>
+    private readonly record struct MachineLoadRequirement(int ConsumedCount, int? ProcessingMinutes);
 
+    /// <summary>
+    /// Why this machine cannot take this item as a load right now, or null when it can.
+    ///
+    /// <para>
+    /// THE ADMISSION IS THE MACHINE'S OWN. <c>Object.performObjectDropInAction(probe: true)</c> is the exact call
+    /// <c>GameLocation.checkAction</c> makes before it performs a drop-in (GameLocation.cs:7768-7772), so it walks the
+    /// machine's live <c>Data/Machines</c> rules through <c>MachineDataUtility.CanApplyOutput</c>
+    /// (MachineDataUtility.cs:65-102) instead of a copy of those rules kept in this source. <c>probe: true</c> returns
+    /// before <c>OutputMachine</c> (Object.cs:2472-2475), so nothing is consumed and no output is rolled.
+    /// </para>
+    /// <para>
+    /// What this method decides is only what the machine's data cannot: whether the object on the tile is a machine this
+    /// interaction path reaches at all, whether it is idle, and whether it names the tile the caller addressed. A refusal
+    /// for the INPUT comes from the probe, and it names the inputs the machine's data does accept.
+    /// </para>
+    /// </summary>
+    private static (string ReasonCode, string Detail)? MachineLoadRefusal(int targetX, int targetY, string expectedTargetId, StardewValley.Object input)
+    {
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != SupportedMachineItemId
-            || machine.GetMachineData() is null
-            || machine.heldObject.Value is not null
-            || machine.readyForHarvest.Value
-            || machine.MinutesUntilReady > 0
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
+            return ("machine_load_target_changed", $"target={targetX},{targetY}");
+        if (machine.GetMachineData() is null || !IsMachineInteractionObject(machine))
+            return ("machine_load_unsupported_machine", $"machine={machine.QualifiedItemId};accepts={UnavailableAcceptedInputs}");
+        if (machine.heldObject.Value is not null || machine.readyForHarvest.Value || machine.MinutesUntilReady > 0)
+            return ("machine_load_target_changed", $"machine={machine.QualifiedItemId};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};tile={targetX},{targetY}");
+        if (!machine.performObjectDropInAction(input, probe: true, Game1.player))
+            return ("machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={input.QualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)}");
+        return null;
+    }
 
-        // The processing window is derived from the LIVE machine data before the
-        // native call: the load consumes the exact input stack, so the machine's own
-        // data is the only remaining source for "how long this input should take".
-        // A content value hardcoded here would turn a legitimate native load into
-        // an Uncertain terminal as soon as the data is rebalanced or modded.
-        int? expectedMinutesUntilReady = TryDeriveMachineProcessingMinutes(machine, input, Game1.player, location);
+    /// <summary>
+    /// Whether the native player interaction path reaches this object as a machine at all: <c>GameLocation.checkAction</c>
+    /// performs <c>checkForAction</c>/drop-in only on an object whose <c>Type</c> is <c>Crafting</c> or <c>interactive</c>
+    /// (GameLocation.cs:7758), which is the one entry both machine actions use. A machine whose data accepts an item but
+    /// which that branch never reaches is refused by name rather than reported as an uncertain postcondition after a
+    /// native no-op.
+    /// </summary>
+    private static bool IsMachineInteractionObject(StardewValley.Object machine) => machine.Type is "Crafting" or "interactive";
+
+    /// <summary>The refusal token used when the machine's own data cannot state which inputs it takes.</summary>
+    private const string UnavailableAcceptedInputs = "unavailable_in_machine_data";
+
+    /// <summary>
+    /// The inputs the machine's own <c>Data/Machines</c> rows declare for an item drop-in, named for a refusal.
+    ///
+    /// This reads the same trigger rows the engine's matcher walks (<c>MachineDataUtility.CanApplyOutput</c>,
+    /// MachineDataUtility.cs:65-102) and decides nothing: the admission is the machine's <c>performObjectDropInAction</c>
+    /// probe. A refusal that says only "unsupported input" leaves the caller guessing which of the game's machine rules
+    /// it stands in front of; naming the accepted set turns it into something a plan can be rewritten from.
+    /// </summary>
+    private static string DescribeAcceptedMachineInputs(StardewValley.Object machine)
+    {
+        MachineData? machineData = machine.GetMachineData();
+        if (machineData?.OutputRules is null) return UnavailableAcceptedInputs;
+        List<string> accepted = new();
+        foreach (MachineOutputRule rule in machineData.OutputRules)
+        {
+            if (rule.Triggers is null) continue;
+            foreach (MachineOutputTriggerRule trigger in rule.Triggers)
+            {
+                if (!trigger.Trigger.HasFlag(MachineOutputTrigger.ItemPlacedInMachine)) continue;
+                string count = $"x{trigger.RequiredCount.ToString(CultureInfo.InvariantCulture)}";
+                if (trigger.RequiredItemId is { Length: > 0 } requiredItemId) accepted.Add($"{requiredItemId} {count}");
+                if (trigger.RequiredTags is { Count: > 0 } requiredTags) accepted.Add($"tag:{string.Join("+", requiredTags)} {count}");
+            }
+        }
+        // Bounded so one refusal cannot become an essay: the first twelve distinct entries name the shape of every
+        // machine rule in the game, and the count is what a caller needs to replan against.
+        return accepted.Count == 0 ? UnavailableAcceptedInputs : string.Join(",", accepted.Distinct().Take(12));
+    }
+
+    /// <summary>
+    /// The carried stack this load names, or null when the slot does not hold an object whose id is the one the caller
+    /// copied from the machine row. Shared by the entry point and the post-approach body, because the walk can take
+    /// several ticks and a stack can be moved in that time.
+    /// </summary>
+    private static StardewValley.Object? ResolveLoadInput(int slot, string expectedQualifiedItemId) =>
+        slot >= 0 && slot < Game1.player.Items.Count
+        && Game1.player.Items[slot] is StardewValley.Object input
+        && string.Equals(input.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+            ? input
+            : null;
+
+    /// <summary>
+    /// Executes machine_load against the current world, re-validating the input stack, the machine and the machine's own
+    /// admission because an approach leg may have taken several ticks. Shared by the in-range path and the
+    /// post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteLoadMachineInput(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
+    {
+        if (ResolveLoadInput(slot, expectedQualifiedItemId) is not StardewValley.Object input)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_input_not_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
+        if (MachineLoadRefusal(targetX, targetY, expectedTargetId, input) is { } machineRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, machineRefusal.ReasonCode, machineRefusal.Detail);
+
+        GameLocation location = Game1.player.currentLocation;
+        if (!location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? machine))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_target_changed", $"target={targetX},{targetY}");
+        // The machine's own rows state what this load consumes and how long it takes; the native call below is the one
+        // that decides whether it happens. When the rows cannot state the consumption, the probe should not have
+        // accepted the item either - refuse instead of running a native load whose size this action cannot check.
+        if (!TryReadMachineLoadRequirement(machine, input, Game1.player, location, out MachineLoadRequirement requirement))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_load_unsupported_input", $"machine={machine.QualifiedItemId};expected={expectedQualifiedItemId};accepts={DescribeAcceptedMachineInputs(machine)}");
+
+        int stackBefore = input.Stack;
         int previousSlot = Game1.player.CurrentToolIndex;
         bool nativeHandled;
         try
@@ -112,36 +175,48 @@ internal sealed partial class ExecutionManager
             Game1.player.CurrentToolIndex = previousSlot;
         }
 
-        bool sourceConsumed = Game1.player.Items[slot] is null;
-        bool machineAcceptedInput = machine.lastInputItem.Value?.QualifiedItemId == "(O)433";
-        bool machineHasCoffee = machine.heldObject.Value?.QualifiedItemId == "(O)395";
-        bool processing = !machine.readyForHarvest.Value
-            && expectedMinutesUntilReady is int expectedMinutes
-            && machine.MinutesUntilReady == expectedMinutes;
-        bool succeeded = nativeHandled && sourceConsumed && machineAcceptedInput && machineHasCoffee && processing;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;slot={slot};input=(O)433;input_stack_before=5;input_stack_after={(Game1.player.Items[slot]?.Stack.ToString(CultureInfo.InvariantCulture) ?? "removed")};last_input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(expectedMinutesUntilReady is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        int stackAfter = Game1.player.Items[slot] is StardewValley.Object remainingStack ? remainingStack.Stack : 0;
+        string? lastInput = machine.lastInputItem.Value?.QualifiedItemId;
+        string? held = machine.heldObject.Value?.QualifiedItemId;
+        bool consumedTheDeclaredCount = stackBefore - stackAfter == requirement.ConsumedCount;
+        bool machineRecordedTheInput = string.Equals(lastInput, expectedQualifiedItemId, StringComparison.Ordinal);
+        // Object.OutputMachine sets `readyForHarvest` exactly when the computed window is zero (Object.cs:2581-2585),
+        // so readiness and the window are one fact; a receipt that disagrees is not describing a native load.
+        bool windowAgrees = requirement.ProcessingMinutes is int expectedMinutes
+            ? machine.MinutesUntilReady == expectedMinutes
+            : machine.MinutesUntilReady >= 0;
+        bool readinessAgrees = machine.readyForHarvest.Value == (machine.MinutesUntilReady == 0);
+        bool succeeded = nativeHandled && consumedTheDeclaredCount && machineRecordedTheInput && held is not null && windowAgrees && readinessAgrees;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};slot={slot};input={expectedQualifiedItemId};input_stack_before={stackBefore};input_consumed={requirement.ConsumedCount};input_stack_after={stackAfter};last_input={lastInput ?? "none"};held={held ?? "none"};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};expected_minutes_until_ready={(requirement.ProcessingMinutes is int derivedMinutes ? derivedMinutes.ToString(CultureInfo.InvariantCulture) : "unavailable")};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_loaded" : "machine_coffee_load_postcondition_unavailable", evidence);
     }
 
     /// <summary>
-    /// The processing window the LIVE machine data declares for this exact input,
-    /// or null when the data cannot state one. Mirrors Object.OutputMachine's own
-    /// derivation (Object.cs:2571-2580): the matched ItemPlacedInMachine rule's
-    /// MinutesUntilReady (or DaysUntilReady), then the machine's
-    /// ReadyTimeModifiers and mode. Two cases deliberately fail closed:
-    /// no matching rule, and a rule whose output comes from a custom OutputMethod
-    /// (whose duration is code-owned, and MachineDataUtility.GetOutputItem is not
-    /// called here because it consumes Game1.random for rules that are not
-    /// UseFirstValidOutput).
+    /// The load which one input of this machine IS, read through the same lookup the engine's own admission performs
+    /// (<c>MachineDataUtility.TryGetMachineOutputRule</c>, the call Object.cs:2450 makes when it places an item in a
+    /// machine): which output rule and trigger rule match, how many items that trigger consumes, and the processing
+    /// window.
     /// </summary>
-    private static int? TryDeriveMachineProcessingMinutes(StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location)
+    private static bool TryReadMachineLoadRequirement(StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location, out MachineLoadRequirement requirement)
     {
+        requirement = default;
         MachineData? machineData = machine.GetMachineData();
         if (machineData?.OutputRules is null)
-            return null;
+            return false;
         if (!MachineDataUtility.TryGetMachineOutputRule(machine, machineData, MachineOutputTrigger.ItemPlacedInMachine, input, who, location,
-                out MachineOutputRule outputRule, out _, out _, out _))
-            return null;
+                out MachineOutputRule outputRule, out MachineOutputTriggerRule triggerRule, out _, out _))
+            return false;
+        requirement = new MachineLoadRequirement(triggerRule.RequiredCount, TryDeriveProcessingMinutes(machineData, outputRule, machine, input, who, location));
+        return true;
+    }
+
+    /// <summary>
+    /// The processing window the matched rule declares, mirroring Object.OutputMachine's own derivation
+    /// (Object.cs:2571-2581), or null when the duration is code-owned: an <c>OutputMethod</c> supplies its own minutes
+    /// through <c>overrideMinutesUntilReady</c> (MachineDataUtility.GetOutputItem), and this derivation must not run it.
+    /// </summary>
+    private static int? TryDeriveProcessingMinutes(MachineData machineData, MachineOutputRule outputRule, StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location)
+    {
         if (outputRule.OutputItem is not null
             && outputRule.OutputItem.Any(output => !string.IsNullOrEmpty(output.OutputMethod)))
             return null;
@@ -154,12 +229,10 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Collect the finite Coffee output only when the native machine time
-    /// lifecycle has already made it ready. Like loading, this enters through
-    /// GameLocation.checkAction; it never calls the downstream object helper
-    /// or mutates held output/inventory directly.
+    /// Collect a ready machine's output, when the native machine time lifecycle has already made it ready. Like loading,
+    /// this enters through GameLocation.checkAction; it never clears held output or adds to the inventory itself.
     /// </summary>
-    public LocalExecutionReceipt RequestLocalCollectCoffeeFromKeg(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalCollectMachineOutput(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
         this.revision++;
@@ -171,18 +244,8 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != SupportedMachineItemId
-            || machine.GetMachineData() is null
-            || !machine.readyForHarvest.Value
-            || machine.MinutesUntilReady != 0
-            || machine.heldObject.Value?.QualifiedItemId != SupportedMachineOutputItemId
-            || machine.lastInputItem.Value?.QualifiedItemId != SupportedMachineInputItemId
-            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
+        if (MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Detail);
         // 5.2: out of the native radius, walk in rather than refuse. The ready machine is
         // validated above; it is re-checked after the walk inside the closure, because a
         // harvest can be claimed by the world while the actor is still walking.
@@ -192,48 +255,73 @@ internal sealed partial class ExecutionManager
                 requestId,
                 executionId,
                 "machine_collect_output",
-                location,
+                Game1.player.currentLocation,
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectCoffeeFromKeg(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteCollectMachineOutput(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
                 nowMs,
                 requestedDeadlineMs);
         }
 
-        return this.ExecuteCollectCoffeeFromKeg(executionId, requestId, targetX, targetY, expectedTargetId);
+        return this.ExecuteCollectMachineOutput(executionId, requestId, targetX, targetY, expectedTargetId);
     }
 
     /// <summary>
-    /// Executes machine_collect_output against the current world, re-validating the ready
-    /// machine because an approach leg may have taken several ticks. Shared by the
-    /// in-range path and the post-approach path.
+    /// Why this machine's output cannot be collected right now, or null when it can. The ready state is the machine's own
+    /// (<c>readyForHarvest</c> is set only when the processing window reaches zero, Object.cs:2581-2585), and the identity
+    /// check is the same one loading uses, so both actions address the machine the same way.
     /// </summary>
-    private LocalExecutionReceipt ExecuteCollectCoffeeFromKeg(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    private static (string ReasonCode, string Detail)? MachineCollectRefusal(int targetX, int targetY, string expectedTargetId)
     {
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.QualifiedItemId != SupportedMachineItemId
-            || machine.GetMachineData() is null
-            || !machine.readyForHarvest.Value
-            || machine.MinutesUntilReady != 0
-            || machine.heldObject.Value?.QualifiedItemId != SupportedMachineOutputItemId
-            || machine.lastInputItem.Value?.QualifiedItemId != SupportedMachineInputItemId
             || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_not_ready", $"target={targetX},{targetY}");
+            return ("machine_collect_target_changed", $"target={targetX},{targetY}");
+        if (machine.GetMachineData() is not MachineData machineData || !IsMachineInteractionObject(machine))
+            return ("machine_collect_unsupported_machine", $"machine={machine.QualifiedItemId}");
+        if (machine.heldObject.Value is not StardewValley.Object heldObject || !machine.readyForHarvest.Value || machine.MinutesUntilReady != 0)
+            return ("machine_collect_target_not_ready", $"machine={machine.QualifiedItemId};held={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};tile={targetX},{targetY}");
+        // A machine that accepts a load while full takes the ACTOR'S held item through the drop-in branch before the
+        // collect branch can run (GameLocation.cs:7766-7787), so the hands must be free for exactly those machines.
+        if (machineData.AllowLoadWhenFull && Game1.player.ActiveObject is not null)
+            return ("machine_collect_hands_not_free", $"machine={machine.QualifiedItemId};carried={Game1.player.ActiveObject.QualifiedItemId};output={heldObject.QualifiedItemId}");
+        return null;
+    }
 
+    /// <summary>
+    /// Executes machine_collect_output against the current world, re-validating the ready machine because an approach leg
+    /// may have taken several ticks. Shared by the in-range path and the post-approach path.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteCollectMachineOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    {
+        if (MachineCollectRefusal(targetX, targetY, expectedTargetId) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Detail);
+
+        GameLocation location = Game1.player.currentLocation;
+        if (!location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? machine))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_collect_target_changed", $"target={targetX},{targetY}");
         StardewValley.Object output = machine.heldObject.Value;
         if (!Game1.player.couldInventoryAcceptThisItem(output))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_output_inventory_full", $"target={expectedTargetId};output=(O)395");
-        int coffeeBefore = Game1.player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == "(O)395").Sum(item => item.Stack);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_output_inventory_full", $"target={expectedTargetId};output={output.QualifiedItemId}");
+        int outputBefore = CountCarried(Game1.player, output.QualifiedItemId);
         bool nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, Game1.player);
 
-        int coffeeAfter = Game1.player.Items.OfType<StardewValley.Object>().Where(item => item.QualifiedItemId == "(O)395").Sum(item => item.Stack);
-        bool succeeded = nativeHandled && machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && coffeeAfter == coffeeBefore + 1;
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine=(BC)12;output=(O)395;input=(O)433;ready_before=true;minutes_until_ready_before=0;inventory_coffee_before={coffeeBefore};inventory_coffee_after={coffeeAfter};held_after={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_after={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
+        int outputAfter = CountCarried(Game1.player, output.QualifiedItemId);
+        bool succeeded = nativeHandled
+            && machine.heldObject.Value is null
+            && !machine.readyForHarvest.Value
+            && machine.MinutesUntilReady <= 0
+            && outputAfter == outputBefore + output.Stack;
+        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};output={output.QualifiedItemId};output_stack={output.Stack};input={(machine.lastInputItem.Value?.QualifiedItemId ?? "none")};ready_before=true;minutes_until_ready_before=0;inventory_output_before={outputBefore};inventory_output_after={outputAfter};held_after={(machine.heldObject.Value?.QualifiedItemId ?? "none")};ready_after={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};native_check_action={nativeHandled.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "machine_coffee_collected" : "machine_coffee_collect_postcondition_unavailable", evidence);
     }
+
+    /// <summary>How many of one qualified item id the actor carries, across every stack: the native collection adds to an
+    /// existing stack when it can, so counting stacks would misreport a merge as a lost output.</summary>
+    private static int CountCarried(Farmer who, string qualifiedItemId) =>
+        who.Items.OfType<StardewValley.Object>().Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal)).Sum(item => item.Stack);
 
     /// <summary>Published read-only machine inspection. It reads only the live machine object and never invokes the interaction menu or mutates machine state.</summary>
     public LocalExecutionReceipt RequestLocalInspectMachine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)

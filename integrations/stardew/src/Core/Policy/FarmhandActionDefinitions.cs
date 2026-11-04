@@ -273,14 +273,19 @@ public static class FarmhandActionCatalog
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
 // learned the precondition only by being refused. Declared here so `plan_shape` can say it instead.
 E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Transition(entersDoor: true), FarmhandActionLifecycle.Published, "warps"),
-        E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer")), FarmhandActionLifecycle.Published, "soilTiles"),
+        // till_soil drives the actor's own Hoe and refuses `hoe_not_equipped` when the hand holds anything else, so
+        // the hoe is an unconditional requirement - declared the way water_crop declares its can, and for the same
+        // reason: a planner cannot see a tool requirement the surface never states. Which hoe is NOT declared (the
+        // handler accepts any upgrade level). Its arguments stay {x,y}: the Mod derives the target identity it uses
+        // for the approach leg itself (`till_soil_x_y`), so there is no id for the caller to copy.
+        E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, A(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer")), FarmhandActionLifecycle.Published, "soilTiles"),
         E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, PickupForage() with { Approach = new FarmhandActionApproachRequirement("adjacent", 1) }, FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, TargetItem(), FarmhandActionLifecycle.Published, "itemTargets"),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
         // (`tool_not_owned:watering_can` when the pack holds none), so the can is an unconditional requirement.
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
         // the can's water, runtime state a planner cannot read from the surface).
         E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.Published, "cropTargets"), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.Published, "seedTargets"), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotItemTarget(), FarmhandActionLifecycle.Published, "fertilizerTargets"),
-        E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineInspect(), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget("(O)433"), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Published, "machineTargets"),
+        E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineInspect(), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, MachineLoad(), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Published, "machineTargets"),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget(ItemSlotMeaning), FarmhandActionLifecycle.Published, "animalProductTargets"), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotTarget(ItemSlotMeaning), FarmhandActionLifecycle.Published, "feedTroughTargets"), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, Described(new[] { new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string") }), FarmhandActionLifecycle.Published, "foodTargets"),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, TargetItem(), FarmhandActionLifecycle.Published, "harvestTargets"), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)322"), FarmhandActionLifecycle.Published, "woodFenceTargets"), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)710"), FarmhandActionLifecycle.Published, "crabPotTargets"), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SlotItemTarget("(O)685"), FarmhandActionLifecycle.Published, "baitCrabPotTargets"),
 
@@ -815,6 +820,36 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     {
         WatchdogMs = FarmhandActionCatalog.LifecycleWatchdogMs,
     };
+    /// <summary>
+    /// `machine_load`'s subject is a machine tile, a carried slot and the item that slot holds. The item is NOT pinned
+    /// here: which inputs a machine accepts is the machine's own content (`Data/Machines`), so the surface names the
+    /// machine row that answers it instead of restating one answer in this source.
+    ///
+    /// <para>
+    /// It used to be `SlotItemTarget("(O)433")` - one Keg rule (five coffee beans) published as a general machine
+    /// action, with the handler refusing every other machine by name. The pin was a boundary in the wrong place: the
+    /// game has a whole table of machine rules, and `Data/Machines` already states every one of them. Measured
+    /// 2026-10-31: a furnace, a preserves jar and a cheese press were all refused by an action whose name promised
+    /// machines generally.
+    /// </para>
+    /// </summary>
+    private static FarmhandActionDescriptor MachineLoad() => Described(new[]
+    {
+        new FarmhandActionArgument("x", "integer"),
+        new FarmhandActionArgument("y", "integer"),
+        new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning),
+        new FarmhandActionArgument("expectedQualifiedItemId", "string", null, MachineLoadItemMeaning),
+        new FarmhandActionArgument("expectedTargetId", "string"),
+    });
+
+    /// <summary>
+    /// Where `machine_load`'s item comes from: the machine, not this catalog. The body re-reads the machine's own
+    /// `Data/Machines` rows on the game thread and asks the machine itself whether it takes this item, so the value a
+    /// caller can copy is the one discovery published on that machine's row.
+    /// </summary>
+    private const string MachineLoadItemMeaning =
+        "The item to load into the machine, copied from `loadInputQualifiedItemId` of the machineTargets row. The machine's own Data/Machines rows decide which inputs it accepts and how many it consumes; the row publishes the item that machine takes. An input its data does not accept is refused `machine_load_unsupported_input`, and that refusal names the inputs the machine does take.";
+
     private static FarmhandActionDescriptor SlotItemTarget(string? exactQualifiedItemId = null) => exactQualifiedItemId is null
             ? Described(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") })
             : Described(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string", null, ExactItemPinMeaning(exactQualifiedItemId)), new FarmhandActionArgument("expectedTargetId", "string") }) with
@@ -825,15 +860,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// <summary>
     /// The sentence that publishes an exact item pin on the argument the pin narrows.
     ///
-    /// The pin itself is a real product boundary - `machine_load` accepts `(O)433` and nothing else, and that is a
-    /// FROZEN, hash-bound slice covering one of the game's 39 machine rules (see
-    /// `action-development/src/analysis/stardew-action-inventory-reconciliation.mjs`, ruling 1). It stays.
+    /// The pin is a real product boundary where an action takes exactly one item: `place_wood_fence` takes `(O)322`,
+    /// `place_crab_pot` `(O)710`, `bait_crab_pot` `(O)685`. What was wrong was that a caller could not SEE it: the
+    /// argument is a bare `string` and the only way to learn the restriction was to be refused. `plan_shape` answers
+    /// from these descriptions, so this is where a caller looks BEFORE writing a plan.
     ///
-    /// What was wrong is that a caller could not SEE it. The action is published under a general-looking id, its
-    /// argument is a bare `string`, and the only way to learn the restriction was to be refused - measured
-    /// 2026-10-31: a furnace, a preserves jar and a cheese press are all refused by `machine_load`, correctly, with
-    /// nothing on the surface saying the action covers one machine rule rather than every machine. `plan_shape`
-    /// answers from these descriptions, so this is where a caller looks BEFORE writing a plan.
+    /// `machine_load` used to be in this list and is not any more: the item a machine accepts is its own content row,
+    /// so it is published on the machine row (`loadInputQualifiedItemId`) rather than pinned here - see
+    /// <see cref="MachineLoadItemMeaning"/>.
     ///
     /// Derived from the SAME value that builds the acceptance fact, never a second spelling: the published sentence
     /// cannot promise something the enforcement does not do, and a new exact-pinned action inherits it by declaring

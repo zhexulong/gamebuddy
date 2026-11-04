@@ -5,8 +5,8 @@ namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
 /// Registry-owned execution-acceptance facts for one registered Farmhand
-/// action. Wire value bounds and product facts (for example the exact (O)433
-/// coffee-bean input of machine_load) are declared here, on the registration
+/// action. Wire value bounds and product facts (for example the exact (O)322
+/// wood fence of place_wood_fence) are declared here, on the registration
 /// descriptor, so execution acceptance always derives from the single registry
 /// instead of a parallel consumer-side chain.
 /// </summary>

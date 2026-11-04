@@ -790,13 +790,19 @@ internal sealed partial class ExecutionManager
         string minecartEvidence = specification.MinecartNetworkId is null || specification.MinecartDestinationId is null
             ? string.Empty
             : $";network={specification.MinecartNetworkId};destination={specification.MinecartDestinationId}";
+        // The same argument for the mine exit: `expected=…;actual=…` describes the aftermath and hides the DECISION, and
+        // the decision is the whole point of `use_mine_ladder` - the game asked its own question and this execution
+        // answered it. The keys are the constants the handler read off the live box, not a second spelling of them.
+        string mineExitDecisionEvidence = specification.Action == "use_mine_ladder"
+            ? $";question={MineExitQuestionKey};response={MineExitResponseKey}"
+            : string.Empty;
         LocalExecutionReceipt receipt = new(
             specification.ExecutionId,
             specification.RequestId,
             state,
             reasonCode,
             this.revision,
-            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}");
+            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}{mineExitDecisionEvidence}");
         this.activeTravel = null;
         this.Remember(receipt);
         this.AddTrace(receipt);

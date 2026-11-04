@@ -202,6 +202,19 @@ internal static class WorldModel
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;
 
     /// <summary>
+    /// WIA §4.2 owner arbitration, as the pure ruling the lease must satisfy: a modal belongs to an action only when the
+    /// lease names an execution that is STILL active.
+    ///
+    /// The activity half is not decoration. A lease left behind by a finished, refused, cancelled or unknown execution
+    /// would suppress `modal_interrupted` for every later modal in the run - the player's interruption would stop
+    /// arriving and the product policy that interruption and STOP are player authority would be broken silently. So an
+    /// unverifiable owner is `worldOwned`, which is the safe direction: the interruption fires exactly as it did before
+    /// the lease existed.
+    /// </summary>
+    internal static bool OwnsCurrentModal(string? ownerExecutionId, Func<string, bool> isExecutionActive) =>
+        ownerExecutionId is not null && isExecutionActive(ownerExecutionId);
+
+    /// <summary>
     /// How long a transient body lock is tolerated before it stops being "will pass on its own". The body
     /// loop's window and the retry window a refusal reports are THE SAME NUMBER, so an Agent told to wait
     /// waits exactly as long as the loop waits.

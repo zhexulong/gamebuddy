@@ -206,6 +206,7 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // have to register first, because this table rejects unregistered action ids
   // (see the unknown_action_id assertion).
   //
+  // [SUPERSEDED 2026-11-04 — `machine_load` is no longer pinned. See the replacement note below.]
   // SCOPE NOTE on machine_load, added by ruling 1 (2026-10-06): that action's acceptance pins
   // expectedQualifiedItemId to exactly "(O)433" via FarmhandActionDefinitions.cs:120
   // (SlotItemTarget), i.e. it covers ONE machine rule — Default_CoffeeBeans on (BC)12 — out of the
@@ -216,6 +217,16 @@ export const SELECTOR_VERDICTS = Object.freeze({
   // searching this table for "what does machine_load actually cover" previously found the phrase
   // "pinned to a specific machine", which understates the restriction and hides where the rest of the
   // record lives.
+  //
+  // REPLACEMENT NOTE (2026-11-04, owner-approved): the pin is GONE, and the reasoning above is kept
+  // only as the record of it. `machine_load` now asks the machine: the admission is
+  // Object.performObjectDropInAction(item, probe: true) — the call GameLocation.checkAction makes
+  // before it performs a drop-in (GameLocation.cs:7768-7772) — so the accepted inputs and the consumed
+  // count are read from the machine's own Data/Machines rows at execution time rather than restated
+  // here or in FarmhandActionDefinitions. The 39-rule table and its digest stay exactly as they were:
+  // they measure game CONTENT, and nothing in them depended on the Mod pinning one of those rules.
+  // The reason the pin was wrong is worth keeping too: it was invisible through the published surface
+  // (a bare `string` argument) and it refused four machines the action's own name promised.
   BuildingChest: {
     at: "GameLocation",
     group: "merge_into_existing",

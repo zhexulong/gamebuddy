@@ -38,6 +38,16 @@ public static class ExecutionStateWire
         ExecutionState.Uncertain => "uncertain",
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown execution state."),
     };
+
+    /// <summary>
+    /// Whether the state settles an execution. `Accepted`, `Running` and `MeaningfulProgress` are the three states
+    /// an execution still occupies; everything else has ended, by success, refusal, cancellation or expiry.
+    ///
+    /// This lives beside the enum because two very different readers ask it - the durable journal's receipt ranking and
+    /// the modal owner lease's "is the owner still active" - and a second copy is a disagreement scheduled for later.
+    /// </summary>
+    public static bool IsTerminal(this ExecutionState state) =>
+        state is not (ExecutionState.Accepted or ExecutionState.Running or ExecutionState.MeaningfulProgress);
 }
 
 public sealed record BridgeLocalObservation(
