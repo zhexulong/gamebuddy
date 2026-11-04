@@ -750,6 +750,8 @@ const en = {
   charactersUnavailable: "Character management is unavailable in this profile.",
   companionListTitle: "Companions",
   companionListEmpty: "No companions yet.",
+  companionListRefreshFailed:
+    "The companion was imported, but the list could not be refreshed. Reload the page to see them.",
   companionCurrent: "current",
   companionCreateTitle: "New companion",
   companionCreateHint: "A display name only; GameBuddy mints every identity.",
@@ -1663,6 +1665,7 @@ const zh: Messages = {
   charactersUnavailable: "当前配置不支持角色管理。",
   companionListTitle: "伙伴列表",
   companionListEmpty: "还没有伙伴。",
+  companionListRefreshFailed: "伙伴已导入，但列表没能刷新；重新加载页面就能看到。",
   companionCurrent: "当前",
   companionCreateTitle: "新建伙伴",
   companionCreateHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",

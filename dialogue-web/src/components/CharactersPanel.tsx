@@ -768,7 +768,9 @@ export function CharactersPanel({
                   const list = await api.listCompanions();
                   if (activeRef.current) setCompanionList(list);
                 } catch {
-                  // keep the already-rendered library
+                  // The card is imported and this read is one revision behind it, so without a sentence the
+                  // player watches their new companion fail to appear in the list they just added it to.
+                  if (activeRef.current) setCreateNotice({ failure: labels.companionListRefreshFailed });
                 }
               })();
             }}
