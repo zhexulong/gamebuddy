@@ -1324,6 +1324,10 @@ export function ComposedReferenceGameApp() {
       );
       await rereadChat();
     } catch (error) {
+      // Said out loud before the reread, the same rule every message mutation follows: the reread
+      // restores the turn the Host still holds, so without this line the Stop press reverts and the
+      // turn the player tried to end keeps running with nothing explaining it.
+      setMessageMutationNotice(problemView(error, messages(current.locale)).detail);
       try {
         await rereadChat();
       } catch {
