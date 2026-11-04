@@ -2005,9 +2005,21 @@ const MULTIDAY_POLL_INTERVAL_MS = 250;
  * SetForegroundWindow=refused while running in foreground mode.
  */
 function captureModLogFacts(runDir) {
-  const path = MOD_LOG_PATH();
+  // EVERY source, not one of them, and the archive says which files supplied it.
+  //
+  // This used to read a single path, and that path was the one the liveness meter read - which turned out to be the lane's
+  // CONSOLE capture while the Mod writes its markers into the SMAPI log FILE. A run whose observation layer reads the wrong
+  // stream does not merely lose a heartbeat: it loses the receipts, refusals and save-boundary facts this function exists to
+  // make durable, and the artifact then says "no evidence" about things that were logged.
   try {
-    const text = readFileSync(path, "utf8");
+    const sources = MOD_LOG_PATHS().filter((candidate) => {
+      try {
+        return readFileSync(candidate, "utf8").length > 0;
+      } catch {
+        return false;
+      }
+    });
+    const text = sources.map((candidate) => readFileSync(candidate, "utf8")).join("\n");
     const rows = text.split("\n");
     const tail = (pattern, count = 4) =>
       rows
@@ -2015,7 +2027,10 @@ function captureModLogFacts(runDir) {
         .slice(-count)
         .map((row) => row.trim().slice(0, 400));
     const archived = typeof runDir === "string" && runDir.length > 0;
-    if (archived) writeFileSync(join(runDir, "mod-log.txt"), text);
+    if (archived) {
+      writeFileSync(join(runDir, "mod-log.txt"), text);
+      writeFileSync(join(runDir, "mod-log-sources.json"), JSON.stringify(sources, null, 2));
+    }
     const lastWith = (needle) => (rows.filter((row) => row.includes(needle)).slice(-1)[0] ?? "").trim().slice(0, 400);
     return Object.freeze({
       path,
@@ -2068,6 +2083,17 @@ const MOD_HEARTBEAT_STALL_MS = 90_000;
 // So the meter reads the marker wherever it is written and reports WHICH file it came from, instead of inferring "the world
 // stopped" from "the file this code happens to prefer is quiet". The lane log stays in the list: under two concurrent lanes
 // it is the only per-lane source, and the global file is shared, so neither can be dropped.
+const readModLogText = () =>
+  MOD_LOG_PATHS()
+    .map((candidate) => {
+      try {
+        return readFileSync(candidate, "utf8");
+      } catch {
+        return "";
+      }
+    })
+    .join("\n");
+
 const MOD_LOG_PATHS = () => {
   const paths = [];
   const laneLog = process.env.GAMEBUDDY_STARDEW_LANE_LOG_PATH;
@@ -2309,7 +2335,7 @@ function sampleRefusalEvidence() {
   let markers;
   let rejected;
   try {
-    const rows = readFileSync(MOD_LOG_PATH(), "utf8")
+    const rows = readModLogText()
       .split("\n")
       .filter((line) => line.includes(MOD_RECEIPT_MARKER));
     markers = rows.length;
@@ -2492,7 +2518,7 @@ const readWorldClock = () => {
     });
   }
   try {
-    const lines = readFileSync(MOD_LOG_PATH(), "utf8")
+    const lines = readModLogText()
       .split("\n")
       .filter((line) => line.includes("DEBUG-native-local-readiness"));
     const last = lines.at(-1) ?? "";
@@ -3863,7 +3889,21 @@ try {
             // Scheduled by DAY rather than by game clock: the runner cannot pre-empt a turn mid-action, so a gate that
             // fired at exactly 12:00 would often be admitted after she had moved on. "Somewhere in day 1" is the
             // interval the runner can honour; the gate's own `atGameTime` stays in the record as intent.
-            void deliverDialogueGatesForDay(day).catch(() => undefined);
+            // The catch records WHY, because a silent one made three different failures look the same: a gate whose day had
+            // not arrived, a gate whose admission was refused, and a gate whose scheduler threw. Measured 2026-11-04: a
+            // seventeen-minute run crossed a night and its session contained ZERO of the four prompts, with nothing anywhere
+            // saying which of the three it was.
+            void deliverDialogueGatesForDay(day).catch((error) => {
+              dialogueDelivery.set(
+                "schedule",
+                Object.freeze({
+                  state: "not_delivered",
+                  day,
+                  atMs: Date.now(),
+                  reason: `delivery_threw:${String(error?.message ?? error).slice(0, 160)}`,
+                }),
+              );
+            });
             if (turns >= MAX_TURNS_PER_DAY) {
               process.stderr.write(`[multiday] day ${String(day)}: turn budget reached (${String(turns)})\n`);
               break;

@@ -379,7 +379,16 @@ test("the scheduled gates are delivered from ground truth the run observed, and 
   // 4. The refusal evidence is the game's own record of a refused action, read from this run's Mod log.
   assert.match(RUNNER_SOURCE, /const MOD_RECEIPT_MARKER = "\[receipt-publish-marker\]";/);
   assert.match(RUNNER_SOURCE, /line\.includes\("state=Rejected"\)/);
-  assert.match(RUNNER_SOURCE, /readFileSync\(MOD_LOG_PATH\(\), "utf8"\)/, "read where the Mod actually logs");
+  // The reader must read where the Mod ACTUALLY logs. That is not one path: the marker and the receipts are written to the
+  // SMAPI log FILE, while the lane log is the console capture - the split that made a 17-minute run report an empty last
+  // heartbeat and lose every receipt while the facts sat in the other stream. So the assertion pins the multi-source reader
+  // and the fact that it is built from MOD_LOG_PATHS, rather than a single hard-coded file.
+  assert.match(
+    RUNNER_SOURCE,
+    /const readModLogText = \(\) =>[\s\S]{0,200}MOD_LOG_PATHS\(\)/,
+    "read every source the Mod logs to",
+  );
+  assert.match(RUNNER_SOURCE, /const MOD_LOG_PATHS = \(\) => \{/);
   // 5. A gate is CLAIMED before the admission is awaited, so two turns cannot both speak the same line.
   const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day)");
   const deliverBody = RUNNER_SOURCE.slice(
