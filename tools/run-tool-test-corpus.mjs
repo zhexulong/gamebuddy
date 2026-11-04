@@ -32,24 +32,28 @@ const CORPUS_TIMEOUT_MS = 15 * 60_000;
 const QUARANTINE_PATH = "tools/tool-test-corpus-quarantine.json";
 const ENTRY_POINT_FILES = Object.freeze([".github/workflows/ci.yml", ".github/workflows/release-windows.yml"]);
 
-function readIfPresent(relative) {
-  try {
-    return readFileSync(resolve(ROOT, relative), "utf8");
-  } catch {
-    return "";
-  }
-}
-
 function invokedByAnEntryPoint(scriptName, entryPointBlob) {
   const escaped = scriptName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|[^\\w:-])${escaped}([^\\w:-]|$)`).test(entryPointBlob);
 }
 
-/** The `test:*` scripts that reach a `tools/` suite and that nothing else runs. */
-function corpusFiles() {
-  const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8"));
+/**
+ * The `test:*` scripts that reach a `tools/` suite and that nothing else runs.
+ *
+ * Exported because `tools/check-spec-reachability.mjs` asks the same question - which `tools/` suites a
+ * checkout runs - and a second derivation of the same population would be a second authority for it.
+ */
+export function corpusFiles({ root = ROOT } = {}) {
+  const readIn = (relative) => {
+    try {
+      return readFileSync(resolve(root, relative), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
   const entryPoints = [
-    ...ENTRY_POINT_FILES.map(readIfPresent),
+    ...ENTRY_POINT_FILES.map(readIn),
     pkg.scripts["quality:check"],
     pkg.scripts.test,
     pkg.scripts["test:all"],
@@ -100,4 +104,5 @@ function main() {
   return corpusStatus === 0 && unknown.length === 0 && stale.length === 0 ? 0 : 1;
 }
 
-process.exitCode = main();
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  process.exitCode = main();

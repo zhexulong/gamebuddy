@@ -444,6 +444,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-production-pack-load.mjs", reason: "loads the built production pack; falsifier in its test" },
   { gate: "check-publint.mjs", reason: "runs publint against the vendor baseline" },
   { gate: "check-scope-references.mjs", reason: "static source gate; falsifier in its test" },
+  {
+    gate: "check-spec-reachability.mjs",
+    reason:
+      "static wiring gate; its falsifier (tools/check-spec-reachability.test.mjs) drives a synthetic checkout through a\n" +
+      "       suite no reachable command names, a spec the config's testIgnore excludes, a deleted mounted step and a missing\n" +
+      "       config, and requires each to be named",
+  },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
   { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
