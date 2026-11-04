@@ -415,6 +415,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason: "judges a live `pnpm audit` against the assessment file; falsifier in check-dependency-audit.test.mjs",
   },
   { gate: "check-diff.mjs", reason: "runs git diff --check; no offline rule set" },
+  {
+    gate: "check-draft-declaration-coverage.mjs",
+    reason:
+      "drives the mounted zone in Chromium (`dialogue-web` test:mounted), so its default run needs an installed " +
+      "browser and the dev-server port rather than an offline rule set; its falsifier is the journey it runs - " +
+      "dialogue-web/tests/draft-declaration-coverage.spec.ts - which the gate's own `red-proof:` marker names, " +
+      "together with the declaration whose removal was seen to turn it red",
+  },
   { gate: "check-dist-runtime-exports.mjs", reason: "reads the built dist; no offline rule set" },
   { gate: "check-duplicated-authority.mjs", reason: "static source gate; no offline rule set" },
   {

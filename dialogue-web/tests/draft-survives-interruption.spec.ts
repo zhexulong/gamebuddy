@@ -1,5 +1,18 @@
-import { type Locator, type Page, expect, test } from "./frontend-coverage";
-import { messages } from "../src/i18n";
+import { type Locator, expect, test } from "./frontend-coverage";
+import {
+  CONTROL_EXEMPTIONS,
+  type DraftControl,
+  SURFACE_EXEMPTIONS,
+  WALKED_SURFACES,
+  enumerateControls,
+  openDisclosures,
+  openSurface,
+  prepareSurface,
+  revealEditors,
+  stubShell,
+  token,
+  TYPED_LANGUAGE,
+} from "./draft-surfaces";
 
 /**
  * Leaving a surface and coming back costs the player nothing they typed.
@@ -12,17 +25,24 @@ import { messages } from "../src/i18n";
  *   For every control a surface renders that carries the player's own input, put the player's own
  *   value into it, leave for another surface, come back, and require that value to still be there.
  *
- * The population is DISCOVERED, not listed. `discover()` reads the surface region and returns each
- * visible, enabled `textarea`, text-entry `input` and `select`; it repeats until nothing new
- * appears, so a control that only exists once another is answered - the connection form's base URL,
- * which appears once a provider is chosen - is inside the population rather than quietly outside
- * it. A sixth field added to any of these surfaces is covered the day it lands.
+ * The population is DISCOVERED, not listed. `enumerateControls()` reads the surface region and
+ * returns each visible, enabled `textarea`, text-entry `input` and `select`; the walk repeats until
+ * nothing new appears, so a control that only exists once another is answered - the connection
+ * form's base URL, which appears once a provider is chosen - is inside the population rather than
+ * quietly outside it. A sixth field added to any of these surfaces is covered the day it lands.
  *
  * An editor the player has to OPEN is the same question asked of a press, so the product answers it:
  * the control that opens an editor carrying the player's own fields is marked `data-draft-revealer`,
  * and the walk opens every one of them before it enumerates. That is how the two world book editors
  * came into the population - both are one press away from the surface, and neither was reachable by
- * an enumeration that only ever looked at what was already on screen.
+ * an enumeration that only ever looked at what was already on screen. A `<details>` disclosure is the
+ * other way a field hides and is opened too (`openDisclosures()`), because a summary stays on screen
+ * and so cannot be a revealer.
+ *
+ * The table of surfaces, the control population and the exemptions are NOT here: they live in
+ * `draft-surfaces.ts`, because `draft-declaration-coverage.spec.ts` asks the complementary question -
+ * whether this journey's population is the whole population the product renders - and two copies of
+ * the table would agree today and disagree the day one moved.
  *
  * Each control is then checked ON ITS OWN, on a fresh page, with only the steps that revealed it
  * replayed first. That matters more than it looks: answering one control can hide another (the
@@ -57,367 +77,6 @@ import { messages } from "../src/i18n";
  * such a field IN, and it remains for the two editors that predate the declaration (the companion's
  * performance directive and the notebook's authoring form).
  */
-
-const token = "A".repeat(43);
-const csrfToken = `${"C".repeat(42)}A`;
-const chatHandle = `${"B".repeat(42)}A`;
-const companionHandle = `${"D".repeat(42)}A`;
-/** The one settled reply the Chat surface renders, so its in-place editor is reachable. */
-const messageHandle = `${"E".repeat(42)}A`;
-const COMPANION_LINE = "The kettle is on and the sky has not decided yet.";
-const expiresAtMs = 1_900_000_000_000;
-const projectionRevision = `${"M".repeat(42)}A`;
-
-const catalogue = messages("en");
-
-/** The companion-language tag the Host already holds, so a draft that differs from it is visible. */
-const STORED_LANGUAGE = "zh-CN";
-/** What the player types instead: a tag the Host has never seen, so no projection can produce it. */
-const TYPED_LANGUAGE = "ja-JP";
-const STORED_ADDITION = "Old words the Host already holds.";
-
-const composedRoot = {
-  apiVersion: 1,
-  build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
-  chat: {
-    apiVersion: 1,
-    build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.chat-core.reference-pipeline" },
-    csrfToken,
-    browserSession: { expiresAtMs },
-    operations: [
-      { operationId: "chat.submit", labelKey: "tavern.operation.submit", availability: "available", routeId: "chat.submit" },
-    ],
-    navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
-    selection: { chatHandle, generation: 1, stateRevision: chatHandle },
-    chat: {
-      companion: { name: "Nova", handle: companionHandle },
-      title: null,
-      // One settled reply, because the row's own editor is only reachable from a row: a transcript
-      // this gate never renders is a surface walked with the player's newest field outside it.
-      transcript: [
-        { handle: messageHandle, role: "companion", text: COMPANION_LINE, locale: "und", order: 0, revision: 1 },
-      ],
-      draft: { revision: 0, present: false },
-      turn: null,
-      // The library's own revision, present and empty: an ABSENT projection makes the whole block
-      // read as "unavailable", with no authoring control in it at all - and the gate would be
-      // walking a surface whose library it never reached.
-      worldInfo: { state: "none", revision: chatHandle, items: [] },
-    },
-    memory: { readAvailable: true, mutationAvailable: true, projectionRevision },
-    eventStream: null,
-  },
-  game: null,
-};
-
-const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-
-/**
- * Two providers, because the connection form renders one field group per entry: the base URL, the
- * credential requirement and the model id only exist once an entry is chosen. Choosing it is part
- * of this gate's walk, not a hand-written field list.
- */
-const PROVIDERS = [
-  {
-    providerId: "deepseek",
-    label: "DeepSeek",
-    setupFields: ["apiKey", "modelId"],
-    allowedPlayerModels: [],
-    escapeHatch: false,
-    environmentManaged: false,
-  },
-  {
-    providerId: "local-openai",
-    label: "Local OpenAI-compatible",
-    setupFields: ["baseUrl", "apiShape", "apiKey", "apiKeyRequired", "modelId"],
-    allowedPlayerModels: [],
-    escapeHatch: true,
-    environmentManaged: false,
-  },
-];
-
-/**
- * Every route the four surfaces read, plus the one write this gate makes fail.
- *
- * The companion language save is refused with the Host's own conflict code and its re-read answers
- * the value the Host still holds - the exact shape in which the field replaced the player's
- * `ja-JP` with `zh-CN` and looked like it had been accepted.
- */
-async function stubShell(page: Page): Promise<{ languageWrites: () => number }> {
-  let languageWrites = 0;
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
-  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
-  await page.route("**/api/tavern/v1/settings/connection", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, revision: 3, active: null, connections: [], providers: PROVIDERS })),
-  );
-  await page.route("**/api/tavern/v1/settings/language", async (route) => {
-    if (route.request().method() === "PUT") {
-      languageWrites += 1;
-      await route.fulfill({
-        status: 409,
-        contentType: "application/json",
-        body: JSON.stringify({
-          type: "about:blank",
-          title: "Settings revision conflict",
-          status: 409,
-          code: "settings_revision_conflict",
-          requestId: csrfToken,
-          retryable: false,
-        }),
-      });
-      return;
-    }
-    await route.fulfill(jsonOk({ revision: 1, locale: STORED_LANGUAGE }));
-  });
-  await page.route("**/api/tavern/v1/settings/voice-preference", (route) =>
-    route.fulfill(
-      jsonOk({
-        revision: 1,
-        disclosureVersion: null,
-        consent: "undecided",
-        decidedAtMs: null,
-        outputDevice: null,
-        persona: null,
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
-    route.fulfill(jsonOk({ devices: [{ id: "waveout:1", name: "Speakers" }], defaultSelectable: true })),
-  );
-  await page.route("**/api/tavern/v1/settings/profiles", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        recommendedModels: [],
-        chat: { revision: 0, thinkingLevel: "high" },
-        game: { revision: 0, thinkingLevel: "high" },
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/settings/game-prompt", (route) =>
-    route.fulfill(jsonOk({ revision: 1, addition: STORED_ADDITION })),
-  );
-  // One row, so the notebook renders the search field as well as the authoring form: an empty
-  // notebook hides the search, and a surface whose fields depend on having something in it would
-  // otherwise be walked with half its controls absent.
-  await page.route("**/api/tavern/v1/memory", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        projectionRevision,
-        memories: [
-          {
-            handle: `${"R".repeat(42)}A`,
-            title: "Semantic memory",
-            content: "A stored memory the Host already holds.",
-            category: "semantic",
-            status: "active",
-            origin: "player",
-            pinned: false,
-          },
-        ],
-        chapters: [],
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/companions", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle: companionHandle, name: "Nova", isCurrent: true }] })),
-  );
-  await page.route("**/api/tavern/v1/companions/*/voice", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, profileRevision: 4, characterVoice: null })),
-  );
-  // The companion's OWN world book, present with one entry. Without a book the section renders no
-  // block at all, and with no entry its editor is a form with no rows: either way the gate would be
-  // measuring something other than the editor the player writes in.
-  await page.route("**/api/tavern/v1/companions/*/worldbook", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        present: true,
-        revision: 2,
-        entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
-      }),
-    ),
-  );
-  // The three authored records are PRESENT and non-empty: the stored value is what a silent
-  // re-seed puts back, so a field that returns holding the player's text is measurably a draft.
-  await page.route("**/api/tavern/v1/persona", (route) =>
-    route.fulfill(
-      jsonOk({ apiVersion: 1, present: true, revision: 2, name: "Stored name", description: "Stored description." }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/scenario", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        present: true,
-        revision: 2,
-        name: "Stored scenario",
-        description: "Stored scenario description.",
-        preview: null,
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/greeting", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        present: true,
-        revision: 2,
-        label: "Stored opening",
-        variants: [{ label: "Stored variant", text: "Stored variant text." }],
-      }),
-    ),
-  );
-  await page.route("**/api/tavern/v1/world-info", (route) =>
-    route.fulfill(jsonOk({ state: "none", revision: chatHandle, items: [] })),
-  );
-  await page.route("**/api/tavern/v1/import-history", (route) => route.fulfill(jsonOk({ apiVersion: 1, entries: [] })));
-  // ONE saved Chat, because the Chats surface opens one rename at a time: its editor takes the
-  // pencil's place, so a second row would open the second editor by closing the first and the walk
-  // would read that as an editor that never closed.
-  await page.route("**/api/tavern/v1/chats?*", (route) =>
-    route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        chats: [
-          {
-            handle: chatHandle,
-            title: "A Chat the Host already named",
-            status: "active",
-            managementRevision: 1,
-            isSelected: true,
-            updatedAtMs: 1_760_000_000_000,
-            preview: "A line the list already carries.",
-          },
-        ],
-      }),
-    ),
-  );
-  return { languageWrites: () => languageWrites };
-}
-
-/**
- * One control the surface rendered, addressed by an expression that survives its own remount.
- *
- * The address is the control's own stable identity - its `id`, else its accessible name, else its
- * `data-testid`, else its first class - so the same expression finds it again after the subtree was
- * destroyed and rebuilt. A control offering none of those cannot be found again at all, and
- * `enumerate()` says so instead of addressing "the third textarea" and silently measuring a field
- * the player never touched.
- */
-type DraftControl = Readonly<{ key: string; name: string; tag: "input" | "textarea" | "select" }>;
-
-/** Every `<input type>` that carries something a player typed. A file is not a draft the page holds. */
-const TEXT_ENTRY_TYPES = ["text", "search", "url", "email", "password", "tel", "number"];
-
-/** Every visible, enabled control inside `region` that carries the player's own input. */
-async function enumerate(region: Locator): Promise<DraftControl[]> {
-  return await region.evaluate((root, types) => {
-    const wanted = new Set(types as string[]);
-    const carriesInput = (element: Element): boolean => {
-      const tag = element.tagName.toLowerCase();
-      if (tag === "textarea" || tag === "select") return true;
-      if (tag !== "input") return false;
-      return wanted.has((element.getAttribute("type") ?? "text").toLowerCase());
-    };
-    const controls: { key: string; name: string; tag: "input" | "textarea" | "select" }[] = [];
-    for (const element of root.querySelectorAll("textarea, input, select")) {
-      if (!carriesInput(element)) continue;
-      // The browser's own answer to "can the player reach this?", which is the one that knows about
-      // a closed `<details>`: the box still measures there, but nobody can type into it.
-      if (
-        !element.checkVisibility({
-          contentVisibilityAuto: true,
-          opacityProperty: true,
-          visibilityProperty: true,
-          checkVisibilityCSS: true,
-        })
-      )
-        continue;
-      const field = element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-      if (field.disabled || (element instanceof HTMLInputElement && element.readOnly)) continue;
-      const id = element.getAttribute("id");
-      const aria = element.getAttribute("aria-label");
-      const testId = element.getAttribute("data-testid");
-      const className = element.classList.item(0);
-      const tag = element.tagName.toLowerCase() as "input" | "textarea" | "select";
-      /*
-       * A data hook wins over the accessible name: an `aria-label` is a sentence from the catalogue
-       * and moves with the locale, while the hook is the control's own frozen identity. Then `id`,
-       * then the first class - and only a control with none of those falls back to its name.
-       */
-      const hooks = [...element.attributes]
-        .map((attribute) => attribute.name)
-        .filter((name) => name.startsWith("data-"));
-      const key =
-        id !== null && id !== ""
-          ? `#${id}`
-          : hooks.length > 0
-            ? `${tag}[${hooks[0]}]`
-            : testId !== null && testId !== ""
-              ? `${tag}[data-testid=${JSON.stringify(testId)}]`
-              : aria !== null && aria !== ""
-                ? `${tag}[aria-label=${JSON.stringify(aria)}]`
-                : className !== null && className !== ""
-                  ? `${tag}.${className}`
-                  : "";
-      const name = aria ?? (id !== null && id !== "" ? id : (hooks[0] ?? className ?? tag));
-      if (key === "") {
-        throw new Error(`${name} has no id, aria-label, data-testid or class, so a draft in it cannot be found again`);
-      }
-      controls.push({ key, name, tag });
-    }
-    return controls;
-  }, TEXT_ENTRY_TYPES);
-}
-
-/**
- * Controls that genuinely must NOT keep a draft, each with the reason it must not.
- *
- * Asserted to be a subset of what the walk found, so an entry here that no longer names a real
- * control fails the run rather than quietly protecting nothing.
- */
-const EXCLUSIONS: Readonly<Record<string, string>> = {
-  "input[data-memory-search]":
-    "a filter over rows already in hand: it selects nothing and authors nothing, so re-typing it costs one keystroke rather than work",
-  "#connection-api-key":
-    "a write-only credential the product deliberately does not retain past the attempt; holding it across surfaces would keep a secret in page memory, which is not a decision this gate may make",
-  "#ui-language":
-    "the interface's own display language: choosing it takes effect immediately and the mount persists it, so there is no unsaved draft - and holding one would leave the interface in one language and the field in another",
-  "#voice-output-device":
-    "each choice commits through its own mutation the moment it is made, so the projection that comes back IS the draft",
-  "#voice-persona":
-    "each choice commits through its own mutation the moment it is made, so the projection that comes back IS the draft",
-};
-
-/**
- * Surfaces this gate does not walk, with the reason.
- *
- * Asserted to be a subset of the app bar's own entries, so a surface that disappears from the
- * product cannot leave a stale exemption behind.
- *
- * The Chats surface used to be listed here: its only text field is a one-shot rename of one existing
- * Chat, answered by Save or Close. What that reason missed is that the field outlives NEITHER the
- * row's own render nor a trip to another surface, and the player types a whole title into it - so
- * the premise moved and the surface is walked like the rest.
- */
-const EXCLUDED_SURFACES: Readonly<Record<string, string>> = {
-  [catalogue.gamePanel]:
-    "every field on the Game surface commits as it is changed (the thinking level, the co-op floor, the window mode), and the rest belongs to a creation form the player opens deliberately",
-};
-
-/** The five surfaces this gate walks, in the order it visits them. */
-const SURFACES = [
-  { name: "chat", label: catalogue.chatPanel, testId: "chat-surface" },
-  { name: "chats", label: catalogue.chatsPanel, testId: "chats-surface" },
-  { name: "characters", label: catalogue.charactersPanel, testId: "characters-surface" },
-  { name: "settings", label: catalogue.settingsPanel, testId: "settings-surface" },
-  { name: "memory", label: catalogue.memoryPanel, testId: "memory-surface" },
-] as const;
-
-type Surface = (typeof SURFACES)[number];
 
 /** One distinct value per control, so a restored neighbour's text can never pass for this one's. */
 const SENTINEL_PREFIX = "SENTINEL-of";
@@ -457,28 +116,6 @@ async function typeInto(region: Locator, control: DraftControl, position: number
 type Filled = Readonly<{ control: DraftControl; value: string }>;
 
 /**
- * Open every editor the product declares, so its fields are in the population before they are read.
- *
- * A field inside an editor the player has to open is invisible to an enumeration that never opens it,
- * and the walk would then report a surface as covered while the player's own editor sat outside the
- * population - the silent narrowing this file exists to avoid. The product marks the control that
- * opens such an editor with `data-draft-revealer`, so the set comes from the product's declaration
- * rather than from a list of locators somebody has to remember to extend.
- *
- * Opening an editor REPLACES the control that opened it. That is the premise the loop rests on: it
- * is why the count falls to zero, and why each press waits for its own control to go before the next
- * - pressing one whose editor has not rendered yet would open a fresh empty draft over the entries
- * the walk had already filled.
- */
-async function revealEditors(region: Locator): Promise<void> {
-  const revealers = region.locator("[data-draft-revealer]");
-  for (let open = await revealers.count(); open > 0; open -= 1) {
-    await revealers.first().click();
-    await expect(revealers).toHaveCount(open - 1);
-  }
-}
-
-/**
  * Fill every control the surface renders, to a fixed point.
  *
  * The walk repeats until nothing new appears: the connection form's base URL and its model field
@@ -491,9 +128,11 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
   const filled = new Map<string, Filled>();
   for (;;) {
     // The editors the product declares open first: their fields belong to the player, and a walk
-    // that never pressed the control that opens them would leave them outside the population.
+    // that never pressed the control that opens them would leave them outside the population. The
+    // disclosures open beside them, because a summary cannot declare itself a revealer.
     await revealEditors(region);
-    const fresh = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
+    await openDisclosures(region);
+    const fresh = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
     if (fresh.length === 0) {
       /*
        * Nothing new - but "nothing new YET" is not the same fact. A surface renders its authored
@@ -505,7 +144,8 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
       // An editor whose own entry control renders with that read is opened here rather than missed:
       // the declaration is on screen by the time the settle has passed, or the surface has none.
       await revealEditors(region);
-      const settled = [...(await enumerate(region)).filter((control) => !filled.has(control.key))];
+      await openDisclosures(region);
+      const settled = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
       if (settled.length === 0) return [...filled.values()];
       continue;
     }
@@ -513,7 +153,7 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
       // An excluded control is recorded (so the exclusion list can be checked against what really
       // exists) but never typed into: `#ui-language` would change the interface's language out from
       // under the walk, and the credential is a secret this gate does not keep.
-      if (EXCLUSIONS[control.key] !== undefined) {
+      if (CONTROL_EXEMPTIONS[control.key] !== undefined) {
         filled.set(control.key, { control, value: "" });
         continue;
       }
@@ -526,33 +166,9 @@ async function fillEverything(region: Locator): Promise<Filled[]> {
   }
 }
 
-async function open(page: Page, surface: Surface): Promise<Locator> {
-  await page.getByRole("button", { name: surface.label, exact: true }).click();
-  const region = page.getByTestId(surface.testId);
-  await expect(region).toBeVisible();
-  return region;
-}
-
-/** The state a surface needs before the fields this gate is about exist at all. */
-async function prepare(page: Page, surface: Surface, region: Locator): Promise<void> {
-  void page;
-  if (surface.name === "characters") {
-    // The companion's performance directive is absent until the player asks for an editor for it:
-    // a cleared directive reads as absent rather than as an empty box by design.
-    await region.locator("[data-character-voice-add]").click();
-    await expect(region.locator("#character-voice-text")).toBeVisible();
-  }
-  if (surface.name === "memory") {
-    // Manual authoring is the one control a player has to open, so the surface reads as the
-    // companion's notebook rather than as a form.
-    await region.locator("[data-memory-authoring-toggle]").click();
-    await expect(region.locator("[data-memory-authoring] textarea")).toBeVisible();
-  }
-}
-
 test.describe("a draft survives the player leaving its surface and coming back", () => {
-  for (const [index, surface] of SURFACES.entries()) {
-    const next = SURFACES[(index + 1) % SURFACES.length]!;
+  for (const [index, surface] of WALKED_SURFACES.entries()) {
+    const next = WALKED_SURFACES[(index + 1) % WALKED_SURFACES.length]!;
     test.setTimeout(180_000);
 
     test(`${surface.name}: every field the surface renders keeps what the player put there`, async ({ page }) => {
@@ -566,26 +182,28 @@ test.describe("a draft survives the player leaving its surface and coming back",
       const entries = await page
         .locator(".app-bar-actions .nav-button")
         .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? ""));
-      for (const [label, reason] of Object.entries(EXCLUDED_SURFACES)) {
+      for (const [label, reason] of Object.entries(SURFACE_EXEMPTIONS)) {
         expect(entries, `an excluded surface (${reason}) is still one the bar offers`).toContain(label);
       }
-      for (const walked of SURFACES) {
+      for (const walked of WALKED_SURFACES) {
         expect(entries, `the bar offers the ${walked.name} surface this gate walks`).toContain(walked.label);
       }
 
-      const region = await open(page, surface);
-      await prepare(page, surface, region);
+      const region = await openSurface(page, surface);
+      await prepareSurface(page, surface, region);
       // The declared editors open HERE as well as inside the walk: a surface whose only field sits
       // one press away (the Chats surface's rename, the transcript row's editor) renders none until
       // it is opened, and the population is what the player can reach, not what is already drawn.
       await revealEditors(region);
-      expect((await enumerate(region)).length, `${surface.name} renders fields this gate is about`).toBeGreaterThan(0);
-      const typed = (await fillEverything(region)).filter((entry) => EXCLUSIONS[entry.control.key] === undefined);      expect(typed.length, `${surface.name} has fields this gate requires a draft from`).toBeGreaterThan(0);
+      await openDisclosures(region);
+      expect((await enumerateControls(region)).length, `${surface.name} renders fields this gate is about`).toBeGreaterThan(0);
+      const typed = (await fillEverything(region)).filter((entry) => CONTROL_EXEMPTIONS[entry.control.key] === undefined);
+      expect(typed.length, `${surface.name} has fields this gate requires a draft from`).toBeGreaterThan(0);
 
       // The interruption, exactly as a player performs it: this surface is unmounted, another one
       // takes the region, and then this one comes back.
-      await open(page, next);
-      const returned = await open(page, surface);
+      await openSurface(page, next);
+      const returned = await openSurface(page, surface);
 
       const failures: string[] = [];
       const readings: { key: string; typed: string; back: string | null }[] = [];
@@ -636,21 +254,21 @@ test("the exclusion list names controls that really exist", async ({ page }) => 
   await expect(page.getByTestId("chat-surface")).toBeVisible();
 
   const found = new Set<string>();
-  for (const surface of SURFACES) {
-    const region = await open(page, surface);
-    await prepare(page, surface, region);
+  for (const surface of WALKED_SURFACES) {
+    const region = await openSurface(page, surface);
+    await prepareSurface(page, surface, region);
     for (const { control } of await fillEverything(region)) found.add(control.key);
   }
 
-  const stale = Object.keys(EXCLUSIONS).filter((key) => !found.has(key));
+  const stale = Object.keys(CONTROL_EXEMPTIONS).filter((key) => !found.has(key));
   console.log(
-    `MEASURE exclusions: found=${found.size} excluded=${Object.keys(EXCLUSIONS).length} stale=${JSON.stringify(stale)}`,
+    `MEASURE exclusions: found=${found.size} excluded=${Object.keys(CONTROL_EXEMPTIONS).length} stale=${JSON.stringify(stale)}`,
   );
   expect(
     stale,
     "every exclusion names a control the enumeration found - an exclusion for a control that no longer exists protects nothing",
   ).toEqual([]);
-  for (const [key, reason] of Object.entries(EXCLUSIONS)) {
+  for (const [key, reason] of Object.entries(CONTROL_EXEMPTIONS)) {
     expect(reason.length, `the exclusion for ${key} states a reason`).toBeGreaterThan(0);
   }
 });
