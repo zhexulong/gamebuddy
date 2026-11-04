@@ -780,6 +780,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
+  // `open_geode` is registered Experimental in the Mod catalog and has a native-local slice: one
+  // geode cracked at Clint's own counter through `GeodeMenu`'s own click, animation and delivery,
+  // with the menu closed before the receipt is written. The fixture supplies the geode and the
+  // exit that leads to the shop; reaching the counter and the crack are production actions.
+  open_geode: "run-stardew-native-local-player-open-geode-smoke.mjs",
 });
 
 /**

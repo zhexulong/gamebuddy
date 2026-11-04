@@ -171,6 +171,12 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "open_geode" => this.executions.RequestLocalOpenGeode(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
+                request.DeadlineMs),
+
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),
         };
     }

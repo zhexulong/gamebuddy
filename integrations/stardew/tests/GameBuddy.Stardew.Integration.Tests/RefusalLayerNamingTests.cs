@@ -44,6 +44,7 @@ public sealed class RefusalLayerNamingTests
     {
         "DescribeDeclaredToolRefusal",
         "DescribeApproachRange",
+        "GeodeRefusal",
     };
 
     /// <summary>

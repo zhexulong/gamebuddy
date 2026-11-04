@@ -2111,6 +2111,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // BOTH inventory slots and the opaque pair identity discovery published. There is no coordinate:
         // the subject is the actor's own backpack, not a world tile.
         "tailor_clothing" or "dye_clothing_with_item" => new[] { "leftSlot", "rightSlot", "expectedTargetId" },
+        // open_geode is a backpack transaction as well, but it names ONE slot: the geode carried to the
+        // blacksmith's counter. There is no coordinate - the counter is Clint's own dialogue case
+        // (GameLocation.cs:12345-12346) - and no opaque target id: the geode is named by the slot's own
+        // live item, which the Mod re-reads and refuses by name when it is not a geode.
+        "open_geode" => new[] { "slot", "expectedQualifiedItemId" },
         // The chest repaint: a world tile locates the chest and the palette index is the colour itself.
         // Only the 21 palette colours are writable, so no RGB value is accepted.
         "color_placed_object" => new[] { "x", "y", "expectedTargetId", "colorSelection" },
