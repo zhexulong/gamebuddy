@@ -4621,6 +4621,19 @@
     white-space: pre-wrap;
   }
 
+  /* The entry's own text in her library's read-only card. The name claims a body and no
+   rule implemented it, so the paragraph took the inherited 14px/21px and ordinary
+   wrapping while its twin in the inspector - the same `<p>`, one frame away - carried
+   the authored-text read above. Same paragraph, same declaration. */
+  .companion-world-book-body {
+    margin: var(--space-1) 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
   [data-import-history-entry] > span {
     display: block;
     font-size: 13px;
