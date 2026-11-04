@@ -559,8 +559,8 @@ export function buildCandidateToolSchema(
     );
   }
 
-  if (actionId === "pet_animal") {
-    // Identity-locked target: the opaque pet target id is copied verbatim from
+  if (actionId === "pet_animal" || actionId === "pet_farm_animal") {
+    // Identity-locked target: the opaque pet/animal target id is copied verbatim from
     // the most recent observation, while x/y are the observed geometry.
     return Type.Object(
       {
@@ -1194,14 +1194,20 @@ export function createStardewActionTools(
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_load,
-        label: "Load Coffee Beans into Keg",
+        label: "Load Machine Input",
         description:
-          "Load exactly five Coffee Beans into a live idle Keg through the normal native machine interaction. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the machineTargets entry of the MOST RECENT observe result for the current location (use the loadInputSlot/loadInputQualifiedItemId fields, never invent or guess coordinates, never reuse coordinates observed in a different location). A receipt proves native input consumption and Coffee processing start. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
+          "Load a carried item into a live idle machine through the normal native machine interaction. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the machineTargets entry of the MOST RECENT observe result for the current location (use that row's loadInputSlot/loadInputQualifiedItemId, never invent or guess coordinates, never reuse coordinates observed in a different location). Which inputs a machine takes, and how many it consumes, is that machine's own game data: the row only publishes a load when the machine accepts the stack the actor carries. A receipt proves native input consumption and the processing window the machine's data declares. requestId/idempotencyKey are optional request metadata, not ActionProgram node arguments; execution deadlines are absolute Unix epoch milliseconds, not durations.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
-          expectedQualifiedItemId: Type.Literal("(O)433"),
+          expectedQualifiedItemId: Type.String({
+            pattern: "^\\([A-Z]+\\)\\d+$",
+            minLength: 1,
+            maxLength: 128,
+            description:
+              "The machine's own accepted input, copied from loadInputQualifiedItemId on the same machineTargets row.",
+          }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
@@ -1222,9 +1228,9 @@ export function createStardewActionTools(
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES.machine_collect_output,
-        label: "Collect Coffee from Keg",
+        label: "Collect Machine Output",
         description:
-          "Collect ready Coffee from the exact live Keg through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery and cleared ready output.",
+          "Collect the ready output of a live machine through the normal native machine interaction. x, y and expectedTargetId must be copied exactly from the machineTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A receipt proves native inventory delivery, the held item and the stack that moved, and a cleared ready state.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -1599,6 +1605,28 @@ export function createStardewActionTools(
             "Pet a nearby pet. x, y and expectedTargetId must be copied exactly from the petTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The pet target is bound by identity: if it has moved away, the native interaction returns a rejection instead of petting a different pet. A pet that is stationary right now is the reliable target; a moving one may leave before dispatch returns. Returns pet_completed.",
           parameters: schema,
           action: "pet_animal",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "pet_farm_animal");
+    if (registration?.descriptor && isModDescriptorComplete("pet_farm_animal", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("pet_farm_animal", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.pet_farm_animal,
+          label: "Pet Farm Animal",
+          description:
+            "Pet one of your own farm animals - a cow, chicken, sheep, pig, duck, rabbit or dinosaur - in the barn, coop or pasture you are standing in. This is NOT stardew_pet_animal: that one pets the household cat/dog, this one pets barn and coop stock through the game's own FarmAnimal.pet, and the two read different day markers. x, y and expectedTargetId must be copied exactly from the farmAnimalPetTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates): x and y are only the tile the animal was published at, and the animal is named by the opaque id, so the Mod re-resolves it from its live tile and walks the actor into reach when it has wandered, while an animal that is no longer in the building is refused as farm_animal_target_gone instead of petting a different one. A second pet attempt in the same day is refused as farm_animal_already_petted_today, because the game's pet would open the animal menu and change no friendship at all. Also refused by name: farm_animal_cracker_would_be_consumed (a held Golden Animal Cracker would be spent instead of petting) and farm_animal_pet_requires_movement_after_1900 (after 19:00 only a moving animal answers a pet). Returns farm_animal_petted with the friendship before and after; an animal whose friendship and wasPet marker did not move comes back as farm_animal_pet_postcondition_not_observed rather than as a pet that never happened.",
+          parameters: schema,
+          action: "pet_farm_animal",
           toArgs: (params) => ({
             x: params.x,
             y: params.y,

@@ -5891,7 +5891,8 @@
                   "machine_collect_output",
                   "npc_relationship",
                   "talk_to_npc",
-                  "pet_animal"
+                  "pet_animal",
+                  "pet_farm_animal"
                 ]
               }
             }
@@ -6470,6 +6471,7 @@
             "npc_relationship",
             "talk_to_npc",
             "pet_animal",
+            "pet_farm_animal",
             "collect_animal_product",
             "feed_animal",
             "use_item",

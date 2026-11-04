@@ -12,7 +12,11 @@ param(
     [string]$Action = "move_to_tile",
     [string]$WindowMode = "visible",
     [switch]$BootstrapNativeSave,
-    [ValidateRange(30, 300)][int]$TimeoutSeconds = 120
+    [ValidateRange(30, 300)][int]$TimeoutSeconds = 120,
+    # PRELIVE ONLY: prove the fixture boots, arms its world, speaks over the bridge and leaves cleanly - no
+    # action is dispatched and no model is called. The run stops after four rungs and writes -PreliveResultFile.
+    [switch]$PreliveOnly,
+    [string]$PreliveResultFile
 )
 
 Set-StrictMode -Version Latest
@@ -26,7 +30,8 @@ $lifecycleResultPath = [IO.Path]::GetFullPath($LifecycleResultFile)
 $packageRoot = Join-Path (Join-Path $PSScriptRoot "..") "integrations/stardew/action-development"
 $equipToolChild = Join-Path $packageRoot "scenarios/equip-tool-live-child.mjs"
 $lifecycleResultWriter = Join-Path $packageRoot "scenarios/write-lifecycle-result.mjs"
-$clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"
+. (Join-Path $PSScriptRoot "lib/stardew-mod-config.ps1")
+$clientConfig = Get-GameBuddyStardewModConfigPath $ModsPath
 $backupName = "native-local-$($Action.Replace('_', '-'))-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"
@@ -34,12 +39,130 @@ $pipeReadinessHelper = Join-Path $PSScriptRoot "lib/stardew-named-pipe-readiness
 . $pipeReadinessHelper
 $runnerResolver = Join-Path $PSScriptRoot "resolve-stardew-action-gate-runner.mjs"
 $liveRunTool = Join-Path $PSScriptRoot "lib/stardew-live-run.mjs"
+$preliveLadderTool = Join-Path $PSScriptRoot "lib/stardew-prelive-ladder.mjs"
+$errorLogsDir = Join-Path $env:APPDATA "StardewValley\ErrorLogs"
+$preliveLadder = $null
+$preliveResultPath = $null
 
 function Publish-FailureLifecycleResult([string]$Phase) {
     try {
         if (Test-Path -LiteralPath $lifecycleResultPath) { Remove-Item -Force -LiteralPath $lifecycleResultPath -ErrorAction SilentlyContinue }
         node $lifecycleResultWriter --result-file $lifecycleResultPath --state failed --phase $Phase --code failed
     } catch {}
+}
+
+# PRELIVE LADDER STATE. The rung numbers and codes have ONE authority
+# (tools/lib/stardew-prelive-ladder.mjs) and the launcher reads them, so a renamed rung cannot survive here
+# as a stale second spelling.
+$prelive = [pscustomobject]@{
+    enabled = $PreliveOnly.IsPresent
+    rung = 0
+    code = $null
+    detail = $null
+    failure = $null
+    logPath = $null
+    logOffset = 0
+    launchedAtMs = 0
+    startedAtUtc = [DateTime]::UtcNow
+    timings = [ordered]@{}
+}
+
+function Get-PreliveLadder {
+    if ($null -eq $preliveLadder) {
+        $text = node $preliveLadderTool --mode ladder
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($text)) { throw "Prelive ladder contract could not be read from $preliveLadderTool." }
+        $preliveLadder = $text | ConvertFrom-Json
+    }
+    return $preliveLadder
+}
+
+function Get-PreliveFailureCode([string]$Name) {
+    $value = (Get-PreliveLadder).failureCodes.$Name
+    if ([string]::IsNullOrWhiteSpace([string]$value)) { throw "Prelive ladder has no failure code '$Name'." }
+    return [string]$value
+}
+
+function Set-PreliveRung([int]$Rung, [string]$Detail) {
+    if (-not $prelive.enabled) { return }
+    $row = @((Get-PreliveLadder).rungs | Where-Object { $_.rung -eq $Rung })
+    if ($row.Count -ne 1) { throw "Prelive ladder has no rung $Rung." }
+    $prelive.rung = $Rung
+    $prelive.code = [string]$row[0].passCode
+    $prelive.detail = $Detail
+    $prelive.timings[[string]$row[0].name] = [int]([DateTime]::UtcNow - $prelive.startedAtUtc).TotalMilliseconds
+}
+
+function Register-PreliveRungFailure([int]$Rung, [string]$Code, [string]$Detail) {
+    # First failure wins: a later rung cannot overwrite the cause of an earlier red, and the teardown that
+    # follows a red rung is not allowed to relabel it.
+    if (-not $prelive.enabled -or $null -ne $prelive.failure) { return }
+    $prelive.failure = [pscustomobject]@{ rung = $Rung; code = $Code; detail = $Detail }
+    $prelive.timings["failed_rung_$Rung"] = [int]([DateTime]::UtcNow - $prelive.startedAtUtc).TotalMilliseconds
+}
+
+function Register-PreliveUnreachedFailure([string]$Phase, $Failure) {
+    # Anything that stops the run before a rung could be judged is rung 1: the ladder never got past the
+    # profile the Mod has to accept.
+    if (-not $prelive.enabled -or $null -ne $prelive.failure) { return }
+    $message = if ($Failure -is [System.Management.Automation.ErrorRecord]) { [string]$Failure.Exception.Message } else { [string]$Failure }
+    Register-PreliveRungFailure 1 (Get-PreliveFailureCode 'launchFailed') ("{0}: {1}" -f $Phase, $message)
+}
+
+function Publish-PreliveResult {
+    if (-not $prelive.enabled) { return }
+    if ([string]::IsNullOrWhiteSpace($preliveResultPath)) { throw "Prelive result path was not established." }
+    if ($null -eq $prelive.failure) {
+        $state = "passed"
+        $rungNumber = $prelive.rung
+        $code = $prelive.code
+        $detail = $prelive.detail
+    } else {
+        $state = "failed"
+        $rungNumber = [int]$prelive.failure.rung
+        $code = [string]$prelive.failure.code
+        $detail = [string]$prelive.failure.detail
+    }
+    $prelive.timings["totalMs"] = [int]([DateTime]::UtcNow - $prelive.startedAtUtc).TotalMilliseconds
+    $payload = [ordered]@{
+        state = $state
+        rung = $rungNumber
+        code = $code
+        detail = $detail
+        timings = $prelive.timings
+    } | ConvertTo-Json -Depth 5
+    # UTF-8 WITHOUT a BOM and no trailing newline: `Set-Content` follows the console codepage (which mangles a
+    # non-ASCII location name) and PowerShell 5.1's `-Encoding UTF8` prepends a BOM that strict JSON readers
+    # reject. The result is read by tools, so it is written by explicit bytes.
+    [IO.File]::WriteAllText($preliveResultPath, $payload, (New-Object System.Text.UTF8Encoding($false)))
+    # ONE line, naming the rung that failed (or the last rung that passed).
+    Write-Output ("prelive {0} rung={1} code={2} detail={3}" -f $state, $rungNumber, $code, $detail)
+}
+
+function Invoke-PreliveSnapshotRung([string]$ClientConfig) {
+    # RUNG 3 dispatches nothing: it connects the way a smoke runner does, waits for an actionable snapshot,
+    # and then DISCONNECTS on purpose - that close is what rung 4 audits.
+    $phase = "prelive_rung_3_first_snapshot_actionable"
+    $arguments = @($preliveLadderTool, "--mode", "snapshot", "--client-config", $ClientConfig)
+    if (-not [string]::IsNullOrWhiteSpace($prelive.logPath)) { $arguments += @("--log", $prelive.logPath) }
+    $probeText = & node @arguments
+    if ([string]::IsNullOrWhiteSpace($probeText)) { throw "Prelive rung 3 produced no snapshot probe result." }
+    $probe = $probeText | ConvertFrom-Json
+    # The probe closes its client BEFORE it prints, so this capture is the exact log boundary of the
+    # deliberate disconnect - and re-resolving the file here means a rotation during the run cannot point
+    # rung 4 at the previous run's bytes.
+    $resolvedText = node $preliveLadderTool --mode log --error-logs $errorLogsDir --since-ms $prelive.launchedAtMs
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($resolvedText)) {
+        $resolved = $resolvedText | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace([string]$resolved.path)) {
+            $prelive.logPath = [string]$resolved.path
+            $prelive.logOffset = [long]$resolved.length
+        }
+    }
+    if (-not $probe.passed) {
+        Register-PreliveRungFailure 3 ([string]$probe.code) ([string]$probe.detail)
+        throw "Prelive rung 3 $($probe.code): $($probe.detail)"
+    }
+    Set-PreliveRung 3 ([string]$probe.detail)
 }
 
 function Get-StardewProcessIds() {
@@ -82,6 +205,19 @@ try {
     if ($Action -eq "equip_tool") {
         if ([string]::IsNullOrWhiteSpace($ScenarioIdentity)) { throw "equip_tool requires ScenarioIdentity." }
         try { $null = $ScenarioIdentity | ConvertFrom-Json } catch { throw "ScenarioIdentity must be valid JSON." }
+    }
+    if ($PreliveOnly) {
+        # The prelive result is the ONLY artefact this mode produces, so its path is validated before anything
+        # is prepared or launched - a run that cannot report its rungs must not boot a game to find out.
+        if ([string]::IsNullOrWhiteSpace($PreliveResultFile)) { throw "PreliveOnly requires PreliveResultFile." }
+        if (-not [IO.Path]::IsPathFullyQualified($PreliveResultFile)) { throw "PreliveResultFile must be an absolute private result path." }
+        $preliveResultPath = [IO.Path]::GetFullPath($PreliveResultFile)
+        if ($preliveResultPath -eq $actionResultPath -or $preliveResultPath -eq $lifecycleResultPath) { throw "Prelive results require their own result path." }
+        if ($BootstrapNativeSave) { throw "PreliveOnly cannot run the bootstrap lane: a title-screen bootstrap never loads a world, so rungs 3 and 4 have nothing to observe." }
+        if (Test-Path -LiteralPath $preliveResultPath) { Remove-Item -Force -LiteralPath $preliveResultPath -ErrorAction SilentlyContinue }
+        # Read the ladder contract ONCE, before the launch it is supposed to judge: a missing or broken ladder
+        # module would otherwise be discovered thirty seconds into a boot, in the teardown.
+        $null = Get-PreliveLadder
     }
     $phase = "runner_resolution"
     $smokeScript = node $runnerResolver --action $Action
@@ -305,6 +441,9 @@ try {
     if ($null -eq $windowEntry) { throw "Native-local fixture window mode '$WindowMode' is not in the single-authority window-mode contract." }
     $windowStyle = [string]$windowEntry.style
     $env:GAMEBUDDY_WINDOW_MODE = $WindowMode
+    # The launch clock is taken BEFORE the child exists, so a log file this launch writes can never read as
+    # older than the run (see resolvePreliveModLog).
+    $prelive.launchedAtMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     # Start-Process joins ArgumentList tokens itself. Quote the custom path so its
     # embedded `Stardew Valley` space cannot truncate SMAPI's --mods-path value.
     if (Test-IsIsolatedDesktop) {
@@ -314,13 +453,46 @@ try {
     }
     $pipeName = $bridgeConfig.PipeName
     if ([string]::IsNullOrWhiteSpace($pipeName)) { throw "Native-local fixture config has no pipe name." }
+    if ($prelive.enabled) {
+        # RUNG 1, BEFORE the pipe it precedes. A profile the Mod rejects is refused at launch and then idles
+        # at frame=1 until the pipe bound expires, which is how a missing Mod-side scenario cost a 303-second
+        # boot and reported `bridge_never_ready`. Read the Mod's own verdict here and quote the line.
+        $phase = "prelive_rung_1_config_accepted"
+        # Built as a token array, not a literal command line: an EMPTY `--scenario` value is dropped by
+        # PowerShell's argument marshalling, which would hand `--timeout-seconds` to `--scenario` and turn the
+        # ordinary world into a usage error. The ordinary world simply passes no scenario at all.
+        $configArguments = @(
+            $preliveLadderTool, "--mode", "config",
+            "--error-logs", $errorLogsDir,
+            "--since-ms", $prelive.launchedAtMs,
+            "--timeout-seconds", $TimeoutSeconds
+        )
+        $armedScenario = [string]$bridgeConfig.NativeLocalPlayerFixture.FixtureScenario
+        if (-not [string]::IsNullOrWhiteSpace($armedScenario)) { $configArguments += @("--scenario", $armedScenario) }
+        $configRungText = & node @configArguments
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($configRungText)) { throw "Prelive rung 1 could not read the Mod log ($preliveLadderTool --mode config)." }
+        $configRung = $configRungText | ConvertFrom-Json
+        if (-not [string]::IsNullOrWhiteSpace([string]$configRung.logPath)) { $prelive.logPath = [string]$configRung.logPath }
+        if (-not $configRung.passed) {
+            Register-PreliveRungFailure 1 ([string]$configRung.code) ([string]$configRung.detail)
+            throw "Prelive rung 1 $($configRung.code): $($configRung.detail)"
+        }
+        Set-PreliveRung 1 ([string]$configRung.detail)
+    }
     $phase = "pipe_readiness"
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     while (-not (Test-GameBuddyNamedPipeListening -PipeName $pipeName)) {
         Start-Sleep -Milliseconds 250
-        if ($process.HasExited) { throw "Native-local SMAPI process exited before bridge smoke." }
-        if ([DateTime]::UtcNow -ge $deadline) { throw "Native-local bridge pipe was not ready before timeout." }
+        if ($process.HasExited) {
+            Register-PreliveRungFailure 2 (Get-PreliveFailureCode 'bridgeNotListening') "the SMAPI process exited before the bridge pipe answered"
+            throw "Native-local SMAPI process exited before bridge smoke."
+        }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            Register-PreliveRungFailure 2 (Get-PreliveFailureCode 'bridgeNotListening') "the bridge pipe did not answer within $TimeoutSeconds s"
+            throw "Native-local bridge pipe was not ready before timeout."
+        }
     }
+    Set-PreliveRung 2 "pipe=$pipeName answered within $TimeoutSeconds s"
     if ($WindowMode -ne "hidden") {
         try {
             $evidenceScript = Join-Path $PSScriptRoot "lib\capture-stardew-window-evidence.ps1"
@@ -332,7 +504,15 @@ try {
     $phase = "launch_identity"
     Assert-LaunchedSmapiIdentity -ExpectedSmapi $smapi -ExpectedModsPath $ModsPath -ExpectedProcessId $process.Id
     $liveFixture = Get-Content -Raw -LiteralPath $clientConfig | ConvertFrom-Json
-    if ($BootstrapNativeSave) {
+    if ($prelive.enabled) {
+        $phase = "prelive_rung_3_first_snapshot_actionable"
+        Invoke-PreliveSnapshotRung $clientConfig
+        # The Mod handles the pipe EOF on its own game thread, so a disconnect-time exception is written a
+        # tick or two AFTER the close. One bounded settle (2 s at 60 fps is ~120 ticks) gives rung 4 the line
+        # it exists to find; the process is then torn down by the normal path below.
+        $settleDeadline = [DateTime]::UtcNow.AddSeconds(2)
+        while (-not $process.HasExited -and [DateTime]::UtcNow -lt $settleDeadline) { Start-Sleep -Milliseconds 100 }
+    } elseif ($BootstrapNativeSave) {
         if ($liveFixture.NativeLocalPlayerFixture.Bootstrap.Enable -or $liveFixture.NativeLocalPlayerFixture.LogicalSaveName -ne $SaveName) {
             throw "Native-local bootstrap did not disarm with its requested logical save name; no action smoke was sent."
         }
@@ -405,6 +585,29 @@ try {
         $cleanupFailure = $_
         $cleanupFailurePhase = $phase
     }
+    if ($prelive.enabled -and $null -eq $failure) {
+        # RUNG 4, on the way down and never before: the deliberate disconnect is what a teardown-time
+        # exception follows from, so the scan window STARTS at the log length captured when the probe closed
+        # its client. The process is already gone here, so no later line can enter the window.
+        try {
+            $phase = "prelive_rung_4_clean_teardown"
+            # A rung that cannot be judged is red, never absent: an unscanned teardown would otherwise read
+            # as a clean one.
+            if ([string]::IsNullOrWhiteSpace($prelive.logPath)) { throw "no Mod log was attributable to this launch, so the disconnect window cannot be scanned" }
+            $teardownText = node $preliveLadderTool --mode teardown --log $prelive.logPath --offset $prelive.logOffset
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($teardownText)) { throw "Prelive rung 4 could not read the Mod log tail." }
+            $teardown = $teardownText | ConvertFrom-Json
+            if (-not $teardown.passed) {
+                Register-PreliveRungFailure 4 ([string]$teardown.code) ([string]$teardown.detail)
+                throw "Prelive rung 4 $($teardown.code): $($teardown.detail)"
+            }
+            Set-PreliveRung 4 ([string]$teardown.detail)
+        } catch {
+            # A scan that could not run is not a clean teardown: report it red with the read error.
+            Register-PreliveRungFailure 4 (Get-PreliveFailureCode 'dirtyTeardown') $_.Exception.Message
+            if ($null -eq $failure) { $failure = $_; $failurePhase = $phase }
+        }
+    }
     if ($prepared) {
         try {
             $phase = "fixture_restore"
@@ -432,6 +635,15 @@ try {
     if ($null -ne $cleanupFailure -and $null -eq $failure) {
         $failure = $cleanupFailure
         $failurePhase = $cleanupFailurePhase
+    }
+    if ($prelive.enabled) {
+        # ONE terminal prelive result, written before the lifecycle claim so a later publication failure
+        # cannot lose the rung evidence that says what happened.
+        if ($null -ne $failure) { Register-PreliveUnreachedFailure $failurePhase $failure }
+        try { Publish-PreliveResult }
+        catch {
+            if ($null -eq $failure) { $failure = "Prelive result publication failed: $($_.Exception.Message)"; $failurePhase = "prelive_result_publication" }
+        }
     }
     if ($null -eq $failure) {
         $phase = "lifecycle_result_publication"

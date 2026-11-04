@@ -1,0 +1,96 @@
+{
+  "schema": "prelive-l3-baseline/v1",
+  "rule": "L3 rule (a): a runner may not base an assertion on a ONE-SHOT observeFresh({ actionable: true }). A warp in flight is not a world that cannot be acted on (it cost a live run), so the observation has to be waitForActionable.",
+  "ratchet": "An unlisted (file, fact) site is red immediately. A listed site that no longer violates, or a listed site whose count dropped, is red too - so this list can only shrink and cannot rot. Remove an entry by fixing the runner.",
+  "classification": {
+    "how": "For each one-shot actionable observe, take the statement that follows it. A site is a violation unless every field that statement can read is actionability-independent. The fields are derived from the code, not from the callee's name: a callee is resolved in the runner itself first, then in tools/lib/stardew-native-smoke-harness-v1.mjs, and the fields it reads on its first parameter are extracted from that body. An unresolved callee is treated as reading the whole snapshot, so a helper that passes the snapshot wholesale is red.",
+    "actionabilityIndependentFields": ["capabilities"],
+    "exemptBecause": "snapshot.capabilities is a property of the Mod's capability surface, which no warp, modal or in-flight execution can falsify. Asserting only that is not the defect this gate exists for.",
+    "measured": "11 rule-(a) sites in 10 runners, plus 5 rule-(b) unreachable runners that carry an inline `prelive-l3-opt-out b:` comment instead of a baseline entry.",
+    "consideredAndExcluded": [
+      {
+        "shape": "assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES) and `if (!snapshot.capabilities.includes(action)) throw`",
+        "runners": "about 58",
+        "why": "reads only capabilities (verified by resolving assertRequiredCapabilities in the harness lib: it touches snapshot.capabilities and nothing else)"
+      },
+      {
+        "shape": "one-shot actionable observe whose NEXT statement is not an assertion, e.g. `const settled = requireFarmTile(snapshot)` two statements after the observe",
+        "runners": "run-stardew-native-local-player-enter-exit-warp-action-smoke.mjs and others",
+        "why": "the approved rule is the IMMEDIATELY following statement; widening it to a window would be a different rule and a new decision"
+      },
+      {
+        "shape": "helpers that poll: waitForActionable, waitForFreshSnapshot({ requireActionable: true })",
+        "runners": "30",
+        "why": "already the required shape; the rule is satisfied by construction"
+      }
+    ]
+  },
+  "knownSites": [
+    {
+      "file": "run-stardew-native-local-player-enter-exit-smoke.mjs",
+      "fact": "tile",
+      "count": 1,
+      "reason": "asserts the actor's tile from one observation taken after the door phase"
+    },
+    {
+      "file": "run-stardew-native-local-player-feed-animal-smoke.mjs",
+      "fact": "tile",
+      "count": 1,
+      "reason": "`if (!validTile(snapshot.tile.x) || ...) throw` - the observed tile, which a warp in flight leaves stale"
+    },
+    {
+      "file": "run-stardew-native-local-player-harvest-crop-smoke.mjs",
+      "fact": "revision",
+      "count": 1,
+      "reason": "requireActionableHarvestSnapshot reads revision/tile/warps/harvestTargets"
+    },
+    {
+      "file": "run-stardew-native-local-player-machine-ab-smoke.mjs",
+      "fact": "tile",
+      "count": 1,
+      "reason": "`if (!Number.isInteger(snapshot.tile.x) || ...) throw` over a one-shot observation"
+    },
+    {
+      "file": "run-stardew-native-local-player-machine-collect-output-smoke.mjs",
+      "fact": "revision",
+      "count": 1,
+      "reason": "`if (!Number.isInteger(snapshot.revision) || !Array.isArray(snapshot.machineTargets)) throw`"
+    },
+    {
+      "file": "run-stardew-native-local-player-machine-load-smoke.mjs",
+      "fact": "machineTargets",
+      "count": 1,
+      "reason": "`if (!Array.isArray(snapshot.machineTargets)) throw` - the target projection, empty while the world settles"
+    },
+    {
+      "file": "run-stardew-native-local-player-ride-minecart-smoke.mjs",
+      "fact": "tile",
+      "count": 1,
+      "reason": "asserted immediately after the minecart ride, i.e. while the native transition may still be settling"
+    },
+    {
+      "file": "run-stardew-native-local-player-shake-tree-smoke.mjs",
+      "fact": "shakeTreeTargets",
+      "count": 1,
+      "reason": "`if ((snapshot.shakeTreeTargets ?? []).some(...)) throw target_still_advertised` on a one-shot re-read"
+    },
+    {
+      "file": "run-stardew-native-local-player-take-pedestal-item-smoke.mjs",
+      "fact": "pedestalTargets",
+      "count": 1,
+      "reason": "`if ((snapshot.pedestalTargets ?? []).some(...)) throw target_still_advertised` on a one-shot re-read"
+    },
+    {
+      "file": "run-stardew-native-local-player-travel-smoke.mjs",
+      "fact": "tile",
+      "count": 1,
+      "reason": "asserted immediately after travel, the warp-family action this rule exists for"
+    },
+    {
+      "file": "run-stardew-native-local-player-use-item-smoke.mjs",
+      "fact": "revision",
+      "count": 1,
+      "reason": "requireActionableUseItemSnapshot reads revision/stamina/health/foodTargets"
+    }
+  ]
+}
