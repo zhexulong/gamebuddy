@@ -31,7 +31,12 @@
  *     --source-root <decompiled-root> \
  *     --action-register <register.json> \
  *     --remaining <remaining-actions-report.json> \
- *     --catalog <catalog.json> [--out <file>] [--pretty]
+ *     --catalog <catalog.json> [--out <file>] [--pretty] [--fail-on-ungranted]
+ *
+ * 本产物同时是**观测缺口报告**（第四段）：collections / tileChannels / addressability /
+ * postconditionMutations / publicationGating / consumption 六个 section 在 `observationGaps` 键下追加，
+ * 人读部分写 stderr，stdout 的 JSON 不变。`--fail-on-ungranted` 只在新 section 有未登记缺口时置 exit 1；
+ * 默认仍然是「写产物即成功」，因为既有消费方依赖这个语义。
  *
  * **输入是 remaining report，不是 candidates artifact**：方法层的分档（`tiers`）只存在于
  * `stardew-remaining-actions-report` 的产物里。传错会在入口 fail fast（
@@ -44,11 +49,23 @@
  */
 
 import { REJECTED_LAYER_VERDICTS } from "./stardew-rejected-layer-verdicts.mjs";
+import { readFileSync, readdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeTileActionSelectorTree, createSelectorParser } from "./stardew-tile-action-selectors.mjs";
 import { memberNameOfSignature } from "../stardew-source-analysis-vocabulary.mjs";
+import {
+  collectionsRead,
+  matchingBracket,
+  methodBody,
+  parseDiscoveries,
+  readModSources,
+  REPOSITORY_ROOT,
+  withoutComments,
+} from "./stardew-mod-csharp-source.mjs";
+import { TARGET_FIELD } from "../../../../../tools/audit-stardew-discovery-channels.mjs";
+import { resolveStardewDecompileRoot } from "../../../../../tools/lib/stardew-decompile-root.mjs";
 
 // ---------------------------------------------------------------------------
 // 规则 3：分类级默认
@@ -1033,7 +1050,7 @@ export function groupMethodUnits({ remainingReport, methodVerdicts }) {
   return rows;
 }
 
-export function reconcile({ selectorArtifact, remainingReport, register, catalog, rules, methodResolution }) {
+export function reconcile({ selectorArtifact, remainingReport, register, catalog, rules, methodResolution, observation }) {
   assertRemainingReport(remainingReport, "remainingReport");
   const selectorVerdicts = rules?.selectorVerdicts ?? SELECTOR_VERDICTS;
   const methodVerdicts = rules?.methodVerdicts ?? METHOD_VERDICTS;
@@ -1195,7 +1212,1100 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
       "counts_are_bound_to_the_decompiled_tree_snapshot",
     ]),
   };
+  // The observation-gap sections are appended only when the caller measured them: the three-way
+  // reconciliation above is a pure function of its four inputs, and a caller that does not have the
+  // Mod sources or the decompiled assembly must still get the envelope it always got.
+  if (observation !== undefined) {
+    result.observationGaps = observation;
+    result.counts.observationCollectionNeverRead = observation.collections.neverRead.length;
+    result.counts.observationTileChannelNeverRead = observation.tileChannels.neverRead.length;
+    result.counts.observationTargetBearingActions = observation.addressability.targetBearingActions;
+    result.counts.observationActionsWithoutFamily = observation.addressability.withoutFamily.length;
+    result.counts.observationMutationPairs = observation.postconditionMutations.mutations.length;
+    result.counts.observationMutationNotObservable = observation.postconditionMutations.notObservable.length;
+    result.counts.observationPublicationGates = observation.publicationGating.gates.length;
+    result.counts.observationFamiliesGatedOff = observation.publicationGating.gatedOff.length;
+    result.counts.observationFamiliesWithoutConsumer = observation.consumption.withoutConsumer.length;
+    result.counts.observationFamiliesUnclassified = observation.consumption.unclassified.length;
+    result.counts.observationGapFindings = observation.findings.length;
+    result.counts.observationGapUngranted = observation.ungranted.length;
+    result.counts.observationBaselineEntries = observation.baseline.entries;
+    result.nonGuarantees = Object.freeze([
+      ...result.nonGuarantees,
+      "postcondition_mutation_matching_is_by_property_name_and_is_a_ratchet_not_a_hard_red",
+      "postcondition_mutations_are_read_one_call_hop_deep_from_the_request_method",
+      "native_mutator_calls_that_write_a_whole_collection_are_not_named_mutations",
+      "publication_gates_are_read_from_the_BridgeSnapshot_call_site_and_cross_checked_against_the_Discover_row_type",
+      "families_delivered_only_by_a_solicited_observe_are_not_a_consumption_gap_and_the_advisory_count_is_not_a_backlog",
+    ]);
+  }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// 观测缺口六段（observation gaps）
+// ---------------------------------------------------------------------------
+
+/**
+ * The observation-gap sections: the question the three-way reconciliation could not ask.
+ *
+ * "The engine holds something, an action needs it, and no snapshot family publishes it." Four real
+ * misses in one week, each a different shape, all the same defect class:
+ *
+ *   1. `location.furniture` - a `NetCollection<Furniture>` no `Discover*` read, so beds, chairs and
+ *      rugs did not exist in any snapshot while `place_owned_object` could write into the same
+ *      collection through the native placement path (fixed; this report is what keeps it fixed).
+ *   2. the mine's exit ladder - a TILE PROPERTY / Buildings-layer tile index `MineShaft.checkAction`
+ *      dispatches on, not an entity, so no collection scan could ever have seen it and the model was
+ *      trapped in a level it had entered.
+ *   3. `rotate_furniture` - the action turned a piece and nothing published the piece's rotation, so
+ *      turning was unobservable and the postcondition could only report `uncertain`.
+ *   4. watering-can refill - the family was scoped to radius 6 while ponds are 10-20 tiles away: an
+ *      addressable family that cannot address the world it describes.
+ *
+ * Each section is derived from an authority, never from a list in this file:
+ *
+ *   A collections        the population is the public instance members of `GameLocation` whose
+ *                        declared type is one of the engine's NETWORKED collection types, read from
+ *                        the decompiled assembly, plus `Game1.locations`. Plain `List`/`Dictionary`
+ *                        members (`critters`, `temporarySprites`, `backgroundLayers`, `modData`) are
+ *                        engine-local caches and visual state, not replicated world state a mod can
+ *                        address, so they are excluded by TYPE rather than by a name list.
+ *   B tile channels      the engine stores interaction in tile properties and layer indexes as well as
+ *                        in collections. Each channel declares the engine site that dispatches on it,
+ *                        and that declaration is verified against the decompiled source on every run
+ *                        (`tile_channel_not_in_engine`), so the table cannot outlive the engine.
+ *   C addressability     the population is the action surface's own `kind: "execution"` actions whose
+ *                        arguments name a target; the family comes from the discovery audit's
+ *                        `TARGET_FIELD` table (imported, never copied) and from the surface's own
+ *                        `targetFamily`. When the two authorities disagree the report says so.
+ *   D postconditions     for every action handler, the engine members its body ASSIGNS. Property-name
+ *                        matching is a heuristic, so this section is a ratchet, not a hard red - see
+ *                        `tools/stardew-observation-gap-baseline.json`.
+ *   E publication        a family is published only while certain actions are advertised. The gates are
+ *                        read out of the Mod's own `new BridgeSnapshot(...)` call site, the family name
+ *                        from `record BridgeSnapshot(...)`, and "who needs that family" from the same
+ *                        `TARGET_FIELD` table C uses. A family whose enabling set omits an action that
+ *                        targets it cannot be seen by that action, ever - the silence reinforces itself.
+ *   F consumption        for each published family, whether anything in the Host reads it at all: a HUD
+ *                        line, one of the Host's projections, or a tool description. `family_without_
+ *                        consumer` is ADVISORY and listed with everything else, because on-demand
+ *                        delivery by a solicited `stardew_observe` is the documented delivery policy;
+ *                        what is red is an unconsumed family an action also targets, and a family the
+ *                        Host's own inventory does not classify at all.
+ *
+ * THE HEURISTICS LIVE IN D, AND WHY A RATCHET IS THE HONEST INSTRUMENT THERE
+ *
+ * A, B and C are mechanical: a collection is read or it is not, a channel is consulted or it is not,
+ * a family exists or it does not. D is not. `X.Member = value` inside a handler is evidence of a
+ * mutation, but the NAME of the member is not the name of the snapshot row that publishes the same
+ * fact (`Game1.player.CurrentToolIndex` is published as `currentToolSlot`), and a native mutator call
+ * (`placementAction`) writes a whole collection and has no member name at all. A hard red on a name
+ * comparison would fail on every alias and on every native call, and a gate that is red at HEAD runs
+ * nowhere. So D records each unexplained mutation once in the baseline with the reading that
+ * explains it, and fails only on NEW ones. The ratchet only tightens: an entry whose mutation no
+ * longer appears - or whose member is now published - is `stale_baseline_entry` until it is deleted.
+ *
+ * The same ratchet excuses a collection or channel that is legitimately never read, with its reason.
+ * `collection_never_read:largeTerrainFeatures` was deliberately NOT baselined, and the report naming it on
+ * its first run is what closed it: the bush discovery walked `terrainFeatures`, where a bush cannot stand in a
+ * saved game, so `DiscoverBushTargets` and `TryGetHarvestableBush` now read `location.largeTerrainFeatures`
+ * (GameLocation.cs:17403-17421) and one bush reachable from both collections is published once.
+ */
+
+export const OBSERVATION_BASELINE_SCHEMA = "gamebuddy-stardew-observation-gap-baseline/v1";
+export const OBSERVATION_BASELINE_PATH = "tools/stardew-observation-gap-baseline.json";
+const OBSERVATION_SURFACE_PATH = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
+const OBSERVATION_MODELS_PATH = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
+
+/**
+ * The engine's replicated collection types. A `GameLocation` member of one of these types is world
+ * state every client sees; a plain `List`/`Dictionary`/`HashSet` member is a local cache.
+ */
+const NETWORKED_COLLECTION_TYPE =
+  /^(?:NetCollection|NetObjectList|NetList|NetLongDictionary|NetVector2Dictionary|NetPointDictionary|NetStringDictionary|NetVector2HashSet|NetMutexQueue|OverlaidDictionary|OverlayDictionary|InteriorDoorDictionary)\b/u;
+
+/** The game-wide location list, declared on `Game1` rather than on a location. */
+const GAME1_LOCATIONS = "Game1.locations";
+const READS_GAME1_LOCATIONS = /\bGame1\s*\??\s*\.\s*locations\b/u;
+
+/**
+ * The collection population, derived from the decompiled assembly.
+ *
+ * Two members whose names differ only in case are ONE collection: `animals` is the net field and
+ * `Animals` the property over it, so reporting `Animals` as never read while `animals` is read
+ * everywhere would be a finding about a spelling, not about the world.
+ */
+export function locationCollectionPopulation({ gameLocation, game1 }) {
+  const population = [];
+  const seen = new Set();
+  for (const line of gameLocation.split("\n")) {
+    const declared = declarationOf(line);
+    if (declared === null) continue;
+    if (!NETWORKED_COLLECTION_TYPE.test(declared.type)) continue;
+    const key = declared.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    population.push({ id: declared.name, type: declared.type });
+  }
+  if (/public\s+static\s+IList<GameLocation>\s+locations\b/u.test(game1))
+    population.push({ id: GAME1_LOCATIONS, type: "IList<GameLocation>" });
+  return population;
+}
+
+/**
+ * One `public <modifiers> <type> <name>;` declaration as `{ type, name }`, or null.
+ *
+ * The modifiers are stripped one at a time rather than matched as a prefix, because a generic type's
+ * argument list contains spaces (`NetLongDictionary<FarmAnimal, NetRef<FarmAnimal>>`) and a single
+ * `\S+` for the type would silently skip every multi-argument collection - which is how `animals`,
+ * `terrainFeatures` and `doors` would drop out of the population without a word.
+ */
+function declarationOf(line) {
+  const withoutVisibility = line.replace(/^\s*public\s+/u, "");
+  if (withoutVisibility === line) return null;
+  let rest = withoutVisibility;
+  for (;;) {
+    const modifier = /^(\w+)\s+/u.exec(rest);
+    if (modifier === null) break;
+    if (modifier[1] === "static" || modifier[1] === "const") return null;
+    if (!["readonly", "virtual", "override", "new", "sealed", "abstract", "event", "volatile", "unsafe", "extern", "partial", "required"].includes(modifier[1]))
+      break;
+    rest = rest.slice(modifier[0].length);
+  }
+  const declaration = /^(.+?)\s+(\w+)\s*(?:\{|;|=)/u.exec(rest);
+  return declaration === null ? null : { type: declaration[1].trim(), name: declaration[2] };
+}
+
+/** Which discovery reads which collection, and which collection nothing reads. */
+export function collectionCoverage({ discoveries, population }) {
+  const memberIds = population.map((entry) => entry.id).filter((id) => !id.includes("."));
+  const readers = new Map(population.map((entry) => [entry.id, []]));
+  for (const discovery of discoveries) {
+    const reads = new Set(collectionsRead(discovery.body, memberIds));
+    if (READS_GAME1_LOCATIONS.test(discovery.body)) reads.add(GAME1_LOCATIONS);
+    for (const collection of reads) readers.get(collection)?.push(discovery.name);
+  }
+  return population.map((entry) => ({
+    id: entry.id,
+    type: entry.type,
+    readBy: readers.get(entry.id).length,
+    readers: [...new Set(readers.get(entry.id))].sort(),
+  }));
+}
+
+/**
+ * The engine's tile channels: what it holds that is not a collection member.
+ *
+ * `engine` is the decompiled site that dispatches on the channel, and the report re-checks that the
+ * site is still there - a table of channels is only worth having if the engine still has them.
+ * `reads` are the shapes a Mod read takes; a WRITE to the same property is not a read, which is why
+ * the subscript form is followed by a not-an-assignment guard.
+ */
+export const TILE_CHANNELS = Object.freeze([
+  Object.freeze({
+    id: "Action",
+    engine: {
+      file: "GameLocation.cs",
+      site: "GameLocation.checkAction (doesTileHaveProperty(..., \"Action\", \"Buildings\"))",
+      evidence: /doesTileHaveProperty\([^;\n]{0,120}?"Action"/u,
+    },
+    reads: Object.freeze([
+      /(?:Properties|properties)\s*\??\s*\[\s*"Action"\s*\]\s*(?!=[^=])/u,
+      /\.\s*TryGetValue\(\s*"Action"/u,
+      /\.\s*ContainsKey\(\s*"Action"/u,
+      /doesTileHaveProperty\([^;\n]{0,160}?"Action"/u,
+    ]),
+  }),
+  Object.freeze({
+    id: "TouchAction",
+    engine: {
+      file: "GameLocation.cs",
+      site: "GameLocation.performTouchAction (doesTileHaveProperty(..., \"TouchAction\", \"Back\"))",
+      evidence: /doesTileHaveProperty\([^;\n]{0,120}?"TouchAction"/u,
+    },
+    reads: Object.freeze([
+      /(?:Properties|properties)\s*\??\s*\[\s*"TouchAction"\s*\]\s*(?!=[^=])/u,
+      /\.\s*TryGetValue\(\s*"TouchAction"/u,
+      /\.\s*ContainsKey\(\s*"TouchAction"/u,
+      /doesTileHaveProperty\([^;\n]{0,160}?"TouchAction"/u,
+    ]),
+  }),
+  Object.freeze({
+    id: "Buildings",
+    engine: {
+      file: "MineShaft.cs",
+      site: 'MineShaft.checkAction (switch (getTileIndexAt(tileLocation, "Buildings", "mine")))',
+      evidence: /getTileIndexAt\([^;\n]{0,80}?"Buildings"/u,
+    },
+    reads: Object.freeze([
+      /GetLayer\(\s*"Buildings"\s*\)/u,
+      /getTileIndexAt\([^;\n]{0,120}?"Buildings"/u,
+      /doesTileHaveProperty\([^;\n]{0,160}?"Buildings"/u,
+      /GetTilePropertySplitBySpaces\([^;\n]{0,120}?"Buildings"/u,
+    ]),
+  }),
+]);
+
+/** Which tile channel any Mod source consults, with the files that read it. */
+export function tileChannelCoverage({ sources, decompiled, channels = TILE_CHANNELS }) {
+  const findings = [];
+  const rows = channels.map((channel) => {
+    const engineSource = decompiled[channel.engine.file] ?? "";
+    if (!channel.engine.evidence.test(engineSource))
+      findings.push({
+        code: `tile_channel_not_in_engine:${channel.id}`,
+        kind: "channel",
+        id: channel.id,
+        detail: `${channel.id} declares ${channel.engine.site} as its engine site, and ${channel.engine.file} no longer contains it`,
+      });
+    const readers = sources
+      .filter((source) => channel.reads.some((pattern) => pattern.test(withoutComments(source.source))))
+      .map((source) => source.path);
+    return { id: channel.id, engineSite: channel.engine.site, readBy: readers.length, readers };
+  });
+  return { rows, findings };
+}
+
+/** The snapshot families the Mod publishes, and the property names their rows carry. */
+export function publishedSnapshotSurface(models) {
+  const families = [];
+  for (const match of models.matchAll(/IReadOnlyList<(Bridge\w+)>\??\s+(\w+)/gu))
+    families.push({ row: match[1], field: match[2] });
+  const vocabulary = new Set();
+  for (const row of new Set(families.map((entry) => entry.row))) {
+    const index = models.indexOf(`record ${row}(`);
+    if (index < 0) continue;
+    const open = models.indexOf("(", index);
+    let depth = 0;
+    let end = open;
+    for (; end < models.length; end++) {
+      if (models[end] === "(") depth++;
+      else if (models[end] === ")") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    for (const parameter of models.slice(open + 1, end).split(/,(?![^<>()]*[>)])/u)) {
+      const name = /^\s*(?:\[[^\]]*\]\s*)*[A-Za-z_][\w<>,\[\].?]*\s+(\w+)/u.exec(parameter);
+      if (name) vocabulary.add(name[1].toLowerCase());
+    }
+  }
+  return { families, vocabulary };
+}
+
+/** The target arguments an action surface entry can carry. */
+const TARGET_ARGUMENTS = Object.freeze(["expectedTargetId", "slot"]);
+
+/**
+ * Which target-bearing actions have a published family that carries their target.
+ *
+ * Two authorities name the family: the discovery audit's `TARGET_FIELD` (the snapshot field the
+ * action's opaque target is published under) and the surface's own `targetFamily`. They are one fact
+ * with two spellings, so a disagreement is reported instead of one silently winning.
+ */
+export function addressabilityCoverage({ surface, targetField = TARGET_FIELD, published }) {
+  const rows = [];
+  const findings = [];
+  for (const action of surface.actions) {
+    if (action.kind !== "execution") continue;
+    const args = Object.keys(action.argumentSchema ?? {});
+    const namesTarget = TARGET_ARGUMENTS.some((argument) => args.includes(argument)) || (args.includes("x") && args.includes("y"));
+    if (!namesTarget) continue;
+    const tableFamily = targetField[action.actionId] ?? null;
+    const surfaceFamily = action.targetFamily ?? null;
+    const family = tableFamily ?? surfaceFamily;
+    const row = { actionId: action.actionId, tableFamily, surfaceFamily, family, published: family === null ? null : published.has(family.toLowerCase()) };
+    rows.push(row);
+    if (family === null)
+      findings.push({
+        code: `action_without_addressable_family:${action.actionId}`,
+        kind: "addressability",
+        id: action.actionId,
+        detail: `${action.actionId} names a target (${args.join(",")}) and neither TARGET_FIELD nor the action surface publishes a snapshot family that carries it`,
+      });
+    else if (tableFamily !== null && surfaceFamily !== null && tableFamily.toLowerCase() !== surfaceFamily.toLowerCase())
+      findings.push({
+        code: `addressable_family_disagrees:${action.actionId}`,
+        kind: "addressability",
+        id: action.actionId,
+        detail: `${action.actionId} publishes its target through ${tableFamily} (TARGET_FIELD) but the surface declares ${surfaceFamily}`,
+      });
+    else if (!row.published)
+      findings.push({
+        code: `addressable_family_not_published:${action.actionId}`,
+        kind: "addressability",
+        id: action.actionId,
+        detail: `${action.actionId} names ${family} as its target family, which no snapshot field in ${OBSERVATION_MODELS_PATH} publishes`,
+      });
+  }
+  return { rows, findings };
+}
+
+/** The action -> request method map, from the handlers' own dispatch arms. */
+export function handlerDispatch(sources) {
+  const dispatch = new Map();
+  for (const source of sources) {
+    if (!source.path.startsWith("integrations/stardew/Handlers/")) continue;
+    for (const match of withoutComments(source.source).matchAll(/"([a-z0-9_]+)"\s*=>\s*this\.executions\.(\w+)\(/gu))
+      dispatch.set(match[1], match[2]);
+  }
+  return dispatch;
+}
+
+/**
+ * The engine members each action handler ASSIGNS, and whether any published row carries them.
+ *
+ * `this.<field>` is the controller's own bookkeeping, not engine state, so it is not a mutation of
+ * the world; `.Value` is the net wrapper, so the member is the wrapper's name. The body scanned is
+ * the request method plus the `Execute*` methods it calls - the Mod's own convention for "the body
+ * that touches the world" - which is one hop deep and no deeper (stated in the non-guarantees).
+ */
+export function postconditionMutationCoverage({ sources, vocabulary, dispatch = handlerDispatch(sources) }) {
+  const mutations = new Map();
+  for (const [actionId, request] of dispatch) {
+    const body = methodBody(sources, request);
+    if (body === null) continue;
+    const bodies = [body];
+    for (const name of new Set([...body.matchAll(/\b(Execute\w+)\s*\(/gu)].map((match) => match[1]))) {
+      const inner = methodBody(sources, name);
+      if (inner !== null) bodies.push(inner);
+    }
+    for (const text of bodies) {
+      for (const match of text.matchAll(/([A-Za-z_][\w.[\]()?]*?)\s*\.\s*(\w+)\s*(?:\.Value)?\s*=(?!=)/gu)) {
+        const receiver = match[1];
+        const member = match[2];
+        if (receiver === "this" || member === "Value") continue;
+        const id = `${actionId}:${member}`;
+        const entry = mutations.get(id) ?? { id, actionId, member, receivers: new Set(), count: 0 };
+        entry.receivers.add(receiver);
+        entry.count += 1;
+        mutations.set(id, entry);
+      }
+    }
+  }
+  return [...mutations.values()]
+    .map((entry) => ({
+      id: entry.id,
+      actionId: entry.actionId,
+      member: entry.member,
+      count: entry.count,
+      receivers: [...entry.receivers].sort(),
+      published: vocabulary.has(entry.member.toLowerCase()),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// ---------------------------------------------------------------------------
+// 观测缺口 E 段：publication gating
+// ---------------------------------------------------------------------------
+
+/**
+ * A snapshot family published only while a set of actions is ADVERTISED.
+ *
+ * The defect class: `WorldObjectTargets` is published while `place_owned_object`,
+ * `remove_placed_item` or ... is advertised. `move_placed_furniture` names a row from that same
+ * array, but it was not in the enabling set, so a companion that could ONLY move furniture got a
+ * snapshot with no world-object rows at all - the action is not advertised, so the family is not
+ * published, so the model cannot see a target, so the action is never used. Each step is a
+ * consequence of the previous one, and no existing section could see it: the family IS published
+ * (`publishedSnapshotSurface` finds it in the record) and the action IS addressable (`TARGET_FIELD`
+ * names it). Only the GATE made them incompatible.
+ *
+ * The gate is written one of three ways, and the family name is an authority in none of them:
+ *
+ *   positional   `new BridgeSnapshot(..., cond ? DiscoverFooTargets(player) : null, ...)` - the
+ *                family is the record parameter at that INDEX (`record BridgeSnapshot(...)`)
+ *   named        `Field: cond ? DiscoverFooTargets(player) : null`
+ *   via a local  `<type> foo = cond ? DiscoverFooTargets(player) : null;` referenced by name
+ *
+ * so every name is resolved from `record BridgeSnapshot(...)` - the same declaration
+ * `publishedSnapshotSurface` reads for the population - and then CROSS-CHECKED against the row type
+ * the `Discover*` method declares. A mis-counted argument list would bind a gate to the wrong
+ * family, and the two authorities disagreeing is the only way to see that from text. When they
+ * disagree, or the condition is not an advertisement chain, the gate is reported as unreadable
+ * instead of being dropped: a silently skipped gate is the defect, not the parse failure.
+ */
+
+/** One `<receiver>.Contains("<action id>", StringComparer.X)` term of an advertisement chain. */
+const ADVERTISEMENT = /^[A-Za-z_][\w.]*\s*\.\s*Contains\s*\(\s*"([a-z0-9_]+)"\s*,\s*StringComparer\.\w+\s*\)$/u;
+
+/** A `bool` local an advertisement chain can be lifted into, so a named gate stays readable. */
+const BOOLEAN_LOCAL = /\bbool\s+(\w+)\s*=\s*([^;]+);/gu;
+
+/**
+ * The ordered parameter list of `record BridgeSnapshot(...)`.
+ *
+ * `row` is the `Bridge*` row type when the parameter is a published family and null otherwise, so a
+ * caller can tell a family parameter from a scalar one without a second name list.
+ */
+export function snapshotParameterOrder(models) {
+  const code = withoutComments(models);
+  const declaration = /\brecord\s+BridgeSnapshot\s*\(/u.exec(code);
+  if (declaration === null) return [];
+  const open = declaration.index + declaration[0].length - 1;
+  const close = matchingBracket(code, open);
+  if (close < 0) return [];
+  return splitTopLevel(code.slice(open + 1, close)).map((parameter) => {
+    const declared = parameter.replace(/=[\s\S]*$/u, "").trim();
+    return {
+      name: /([A-Za-z_]\w*)\s*$/u.exec(declared)?.[1] ?? null,
+      row: /IReadOnlyList<(Bridge\w+)>\??/u.exec(declared)?.[1] ?? null,
+    };
+  });
+}
+
+/**
+ * A C# parameter or argument list split on its top-level commas.
+ *
+ * Generics are counted as nesting (`<`/`>`), because `NetLongDictionary<FarmAnimal,
+ * NetRef<FarmAnimal>>` is one argument and a naive split would silently shift every later index -
+ * and every later index here IS a family name.
+ */
+function splitTopLevel(text) {
+  const parts = [];
+  let depth = 0;
+  let angle = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === "(" || character === "[" || character === "{") depth++;
+    else if (character === ")" || character === "]" || character === "}") depth--;
+    else if (character === "<" && /[\w>?\]]/u.test(text[index - 1] ?? "")) angle++;
+    else if (character === ">" && angle > 0) angle--;
+    else if (character === "," && depth === 0 && angle === 0) {
+      parts.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+/** Where the expression ending at `question` starts, never before `floor`. */
+function conditionStart(code, question, floor) {
+  let depth = 0;
+  for (let index = question - 1; index >= floor; index--) {
+    const character = code[index];
+    if (character === ")") depth++;
+    else if (character === "(") {
+      if (depth === 0) return -1;
+      depth--;
+    } else if (
+      depth === 0 &&
+      (character === "," || character === ";" || character === "{" || character === "}" || character === ":" || character === "=")
+    )
+      return index + 1;
+  }
+  return floor;
+}
+
+/** The actions one gate admits, expanding a `bool` local the chain was lifted into. */
+function gatedActions(condition, booleanLocals, depth = 0) {
+  const operands = condition.trim().split("||");
+  // A chain can be parenthesised as a whole (`(A || B || C) ? ... : null`), which leaves the ternary's own
+  // grouping brackets on the first and last operand of the split. Exactly that many are removed - one more would
+  // eat the `)` that closes the last Contains call and no term would parse.
+  const wrapped = /^\s*(\(+)/u.exec(condition)?.[1].length ?? 0;
+  if (wrapped > 0 && operands.length > 0) {
+    let first = operands[0];
+    for (let count = 0; count < wrapped; count++) first = first.replace(/^\s*\(/u, "");
+    operands[0] = first;
+    const last = operands.length - 1;
+    const tail = operands[last].trimEnd();
+    operands[last] = tail.slice(0, Math.max(0, tail.length - wrapped));
+  }
+  const actions = new Set();
+  for (const operand of operands) {
+    const advertisement = ADVERTISEMENT.exec(operand.trim());
+    if (advertisement !== null) {
+      actions.add(advertisement[1]);
+      continue;
+    }
+    const lifted = booleanLocals.get(operand.trim());
+    if (lifted === undefined || depth >= 4) return null;
+    const nested = gatedActions(lifted, booleanLocals, depth + 1);
+    if (nested === null) return null;
+    for (const action of nested) actions.add(action);
+  }
+  return actions;
+}
+
+/**
+ * Every `<family> is published while <action set> is advertised` gate in the Mod sources.
+ *
+ * `findings` here are STRUCTURAL (a gate this reader could not resolve) and carry no baseline id:
+ * an unreadable gate would make its family look ungated, which is the same silence the section
+ * exists to remove, so it must stay red rather than be excused.
+ */
+export function publicationGates({ sources, parameters = [], discoveryRows = new Map() }) {
+  const findings = [];
+  const gates = [];
+  for (const source of sources) {
+    const code = withoutComments(source.source);
+    const booleanLocals = new Map([...code.matchAll(BOOLEAN_LOCAL)].map((match) => [match[1], match[2]]));
+    // A gated value held in a local, keyed by the local's name: the call site then just names it.
+    const locals = new Map();
+    for (const match of code.matchAll(/\?\s*(?:this\s*\.\s*)?(Discover\w+)\s*\(/gu)) {
+      const start = conditionStart(code, match.index, 0);
+      if (start < 0) continue;
+      const assignment = /([A-Za-z_]\w*)\s*=\s*$/u.exec(code.slice(0, start));
+      if (assignment === null) continue;
+      locals.set(assignment[1], { discovery: match[1], condition: code.slice(start, match.index) });
+    }
+    for (const call of code.matchAll(/new\s+BridgeSnapshot\s*\(/gu)) {
+      const open = call.index + call[0].length - 1;
+      const close = matchingBracket(code, open);
+      if (close < 0) continue;
+      let offset = open + 1;
+      for (const [index, argument] of splitTopLevel(code.slice(open + 1, close)).entries()) {
+        const argumentStart = offset;
+        offset = argumentStart + argument.length + 1;
+        const named = /^\s*([A-Za-z_]\w*)\s*:/u.exec(argument);
+        const inline = /\?\s*(?:this\s*\.\s*)?(Discover\w+)\s*\(/u.exec(argument);
+        let family = null;
+        let discovery = null;
+        let condition = null;
+        if (inline !== null) {
+          const question = argumentStart + inline.index;
+          const start = Math.max(conditionStart(code, question, argumentStart), argumentStart);
+          discovery = inline[1];
+          condition = code.slice(start, question);
+          family = named !== null ? named[1] : (parameters[index]?.name ?? null);
+        } else {
+          const bare = /^\s*([A-Za-z_]\w*)\s*$/u.exec(argument);
+          const local = bare === null ? undefined : locals.get(bare[1]);
+          if (local === undefined) continue;
+          family = parameters[index]?.name ?? null;
+          discovery = local.discovery;
+          condition = local.condition;
+        }
+        const declared = parameters.find((parameter) => parameter.name === family);
+        if (declared === undefined) {
+          findings.push({
+            code: `publication_gate_unparsed:${family ?? `argument_${index}`}`,
+            kind: "gating",
+            id: null,
+            detail: `${source.path} publishes ${discovery} behind an advertisement chain, and argument ${index + 1} of new BridgeSnapshot(...) is not a parameter of record BridgeSnapshot`,
+          });
+          continue;
+        }
+        const actions = gatedActions(condition, booleanLocals);
+        if (actions === null) {
+          findings.push({
+            code: `publication_gate_unparsed:${family}`,
+            kind: "gating",
+            id: null,
+            detail: `${source.path} publishes ${family} behind \`${condition.trim().replace(/\s+/gu, " ")}\`, which is not a chain of advertisedCapabilities.Contains("<action id>", ...) terms`,
+          });
+          continue;
+        }
+        const row = discoveryRows.get(discovery) ?? null;
+        if (row !== null && declared.row !== null && row !== declared.row) {
+          findings.push({
+            code: `publication_gate_unparsed:${family}`,
+            kind: "gating",
+            id: null,
+            detail: `${source.path} publishes ${discovery} (a ${row} list) at the position of BridgeSnapshot.${family} (a ${declared.row} list); the argument list and the record disagree, so no gate is claimed here`,
+          });
+          continue;
+        }
+        if (declared.row === null) continue;
+        gates.push({ path: source.path, family, discovery, gatedBy: [...actions].sort() });
+      }
+    }
+  }
+  return { gates, findings };
+}
+
+/**
+ * Which gated families a targeting action needs and cannot reach.
+ *
+ * `needs` comes from the discovery audit's `TARGET_FIELD` (imported, never copied): it is the one
+ * declaration of "this action's opaque target is published under this family", so an action that
+ * needs a family IS an action whose `TARGET_FIELD` row names it. A family published
+ * unconditionally has no gate and therefore no way to hide, so it is not measured here.
+ */
+export function publicationGateCoverage({ gates, targetField = TARGET_FIELD }) {
+  const enabling = new Map();
+  for (const gate of gates) {
+    const key = gate.family.toLowerCase();
+    const entry = enabling.get(key) ?? { family: gate.family, actions: new Set(), discoveries: new Set() };
+    for (const action of gate.gatedBy) entry.actions.add(action);
+    entry.discoveries.add(gate.discovery);
+    enabling.set(key, entry);
+  }
+  const needed = new Map();
+  for (const [action, family] of Object.entries(targetField)) {
+    if (typeof family !== "string") continue;
+    const key = family.toLowerCase();
+    const list = needed.get(key) ?? [];
+    list.push(action);
+    needed.set(key, list);
+  }
+  const rows = [];
+  const findings = [];
+  for (const [key, entry] of [...enabling].sort(([left], [right]) => left.localeCompare(right))) {
+    const actions = (needed.get(key) ?? []).sort();
+    const missing = actions.filter((action) => !entry.actions.has(action));
+    rows.push({
+      family: entry.family,
+      discoveries: [...entry.discoveries].sort(),
+      gatedBy: [...entry.actions].sort(),
+      needs: actions,
+      missing,
+    });
+    for (const action of missing)
+      findings.push({
+        code: `family_gated_off:${entry.family}:${action}`,
+        kind: "gating",
+        id: `${entry.family}:${action}`,
+        detail: `${entry.family} is published only while one of ${[...entry.actions].sort().join(", ")} is advertised, and ${action} names a ${entry.family} row as its target: an actor that cannot advertise ${action} never sees the target ${action} needs`,
+      });
+  }
+  return { rows, findings };
+}
+
+// ---------------------------------------------------------------------------
+// 观测缺口 F 段：consumption
+// ---------------------------------------------------------------------------
+
+/**
+ * A published family nothing reads is bytes the model pays for and a fact it never sees.
+ *
+ * THREE STATEMENTS THIS SECTION MAKES, AND THREE IT DELIBERATELY DOES NOT
+ *
+ * 1. ON-DEMAND DELIVERY IS NOT A GAP. The Host attaches `snapshot-projection.ts` to every turn
+ *    under a 4 KB cap, so a 64-row family cannot live there (measured 2026-11-02: `cropTargets`
+ *    alone is ~5.7 KB, over the whole cap). Every family is delivered verbatim by a solicited
+ *    `stardew_observe`, and `host/src/snapshot-projection-coverage.ts` is the authority for that
+ *    delivery policy: a wire field must be read by one of its five projections or be recorded in
+ *    `WITHHELD_SNAPSHOT_KEYS` with a reason. This report does not re-litigate that policy and a
+ *    family delivered only on demand is CORRECT.
+ *
+ * 2. THE ADVISORY COUNT IS NOT A TO-DO LIST. `family_without_consumer` names families no HUD line,
+ *    no projection reader and no tool description mentions. That is a description of where a fact
+ *    reaches the model as raw observation JSON and nowhere else. It going up is not by itself a
+ *    regression, and a reader who treats it as a backlog will re-derive the 64-family "red" this
+ *    section was written to avoid.
+ *
+ * 3. TWO THINGS ARE RED, and they are different questions:
+ *    - `family_without_consumer_and_targeted`: nobody consumes it AND an action targets a row from
+ *      it. That is the case where the model must spend an observe to learn something a line could
+ *      have said, about a family it also has to act through.
+ *    - `family_unclassified_by_consumer_inventory`: the Host's own inventory does not classify the
+ *      family at all - it is not read by a projection and not declared withheld. That is a DECISION
+ *      gap rather than a delivery-policy judgment, so it fails closed: someone has to write the
+ *      line. It is not baselinable, because excusing it would preserve the ambiguity.
+ *
+ * CONSUMER KINDS come from the Host, not from a taxonomy invented here. `PROJECTION_SOURCES`,
+ * `UNPROJECTED_OBSERVED_FAMILIES`, `REQUIRED_PROJECTED_KEYS` and `WITHHELD_SCALAR_KEYS` are read out
+ * of `host/src/snapshot-projection-coverage.ts` as text, because this tool is `.mjs` and cannot
+ * import a `.ts` module; the projection files those tables name are then read directly. The HUD is
+ * read through its own declaration (`SNAPSHOT_HUD_LINES[].fields`), and a tool-description mention
+ * is read from `host/src/game-tools.ts`. Nothing here restates the inventory: a rename in that
+ * module makes the tables unreadable, which is reported as `consumption_inventory_unreadable`
+ * instead of silently classifying nothing.
+ */
+
+export const CONSUMPTION_INVENTORY_PATH = "host/src/snapshot-projection-coverage.ts";
+export const GAME_TOOLS_PATH = "host/src/game-tools.ts";
+export const SNAPSHOT_HUD_PATH = "host/src/snapshot-hud.ts";
+
+/** The quoted strings of one `NAME = Object.freeze([...])` table, or null when the table is gone. */
+function inventoryList(inventory, name) {
+  const block = new RegExp(`${name}\\s*=\\s*Object\\.freeze\\(\\[([\\s\\S]*?)\\]\\)`, "u").exec(inventory);
+  return block === null ? null : [...block[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+}
+
+/** The keys of the `WITHHELD_SCALAR_KEYS` record, or null when the record is gone. */
+function inventoryRecordKeys(inventory, name) {
+  const block = new RegExp(`${name}[\\s\\S]*?Object\\.freeze\\(\\{([\\s\\S]*?)\\n\\}\\);`, "u").exec(inventory);
+  return block === null ? null : [...block[1].matchAll(/^\s*([A-Za-z_][\w]*)\s*:\s*\n?\s*"/gmu)].map((match) => match[1]);
+}
+
+/**
+ * Whether one projection source reads a snapshot key.
+ *
+ * This mirrors the Host's own `projectionReads` (`.key`, `"key"`, and a destructure binding), because a
+ * `.mjs` tool cannot import it. The population it is applied to comes from the Host's tables, so the
+ * two can only disagree about a spelling - which `snapshot-projection-coverage.test.ts` already gates
+ * on its own side.
+ */
+function projectionReads(source, key) {
+  const code = withoutComments(source);
+  return [
+    new RegExp(`\\.${key}\\b`, "u"),
+    new RegExp(`["']${key}["']`, "u"),
+    new RegExp(`\\{[^}]*\\b${key}\\b[^}]*\\}\\s*=`, "u"),
+  ].some((pattern) => pattern.test(code));
+}
+
+/**
+ * Where each published family is consumed, and which of those questions are red.
+ *
+ * `families` are the snapshot's own family parameters (from `record BridgeSnapshot(...)`), the HUD
+ * fields are its declared ones, and `targetField` is the discovery audit's table - so "an action
+ * targets a row from this family" has one authority, the same one sections C and E use.
+ */
+export function consumptionCoverage({
+  families = [],
+  inventory,
+  tools,
+  hud,
+  projectionSources = new Map(),
+  targetField = TARGET_FIELD,
+}) {
+  const findings = [];
+  const listed = {
+    PROJECTION_SOURCES: inventoryList(inventory, "PROJECTION_SOURCES"),
+    UNPROJECTED_OBSERVED_FAMILIES: inventoryList(inventory, "UNPROJECTED_OBSERVED_FAMILIES"),
+    REQUIRED_PROJECTED_KEYS: inventoryList(inventory, "REQUIRED_PROJECTED_KEYS"),
+    WITHHELD_SCALAR_KEYS: inventoryRecordKeys(inventory, "WITHHELD_SCALAR_KEYS"),
+  };
+  for (const [table, value] of Object.entries(listed))
+    if (value === null || value.length === 0)
+      findings.push({
+        code: `consumption_inventory_unreadable:${table}`,
+        kind: "consumption",
+        id: null,
+        detail: `${CONSUMPTION_INVENTORY_PATH} no longer declares ${table} in a form this reader can follow; the consumer classification would silently empty, so it is reported instead`,
+      });
+  const unclassified = [];
+  for (const path of projectionSources.keys())
+    if (listed.PROJECTION_SOURCES !== null && !listed.PROJECTION_SOURCES.includes(path))
+      findings.push({
+        code: `consumption_projection_not_in_inventory:${path}`,
+        kind: "consumption",
+        id: null,
+        detail: `${path} is read as a projection and ${CONSUMPTION_INVENTORY_PATH} does not name it in PROJECTION_SOURCES`,
+      });
+
+  const declaredWithheld = new Set([
+    ...(listed.UNPROJECTED_OBSERVED_FAMILIES ?? []),
+    ...(listed.WITHHELD_SCALAR_KEYS ?? []),
+  ]);
+  const requiredProjected = new Set(listed.REQUIRED_PROJECTED_KEYS ?? []);
+  const hudFields = new Set([...withoutComments(hud).matchAll(/fields:\s*\[([^\]]*)\]/gu)].flatMap((match) => [...match[1].matchAll(/"([^"]+)"/gu)].map((field) => field[1])));
+  const toolText = withoutComments(tools);
+  const sources = [...projectionSources]
+    .filter(([path]) => path !== SNAPSHOT_HUD_PATH)
+    .map(([path, text]) => ({ path, text }));
+  const targeted = new Set(Object.values(targetField).filter((family) => typeof family === "string"));
+
+  const rows = families.map((family) => {
+    const key = family[0].toLowerCase() + family.slice(1);
+    const reads = sources.filter((source) => projectionReads(source.text, key)).map((source) => source.path);
+    const row = {
+      family,
+      targeted: targeted.has(family),
+      hud: hudFields.has(key),
+      projections: reads,
+      toolDescription: new RegExp(`\\b${key}\\b`, "u").test(toolText),
+      declared: (listed.UNPROJECTED_OBSERVED_FAMILIES ?? []).includes(key)
+        ? "UNPROJECTED_OBSERVED_FAMILIES"
+        : (listed.WITHHELD_SCALAR_KEYS ?? []).includes(key)
+          ? "WITHHELD_SCALAR_KEYS"
+          : requiredProjected.has(key)
+            ? "REQUIRED_PROJECTED_KEYS"
+            : null,
+    };
+    row.consumed = row.hud || reads.length > 0 || row.toolDescription;
+    // The Host's own rule, in its own terms: read by one of its projections, or declared withheld.
+    row.classified = row.declared !== null || [...projectionSources].some(([, text]) => projectionReads(text, key));
+    if (!row.classified) unclassified.push(family);
+    return row;
+  });
+
+  for (const row of rows) {
+    if (!row.classified)
+      findings.push({
+        code: `family_unclassified_by_consumer_inventory:${row.family}`,
+        kind: "consumption",
+        id: null,
+        detail: `${row.family} is published by the snapshot and ${CONSUMPTION_INVENTORY_PATH} neither projects it nor declares it withheld; nobody has decided whether the model should see it outside a solicited observation, so the report stops rather than baselining the ambiguity`,
+      });
+    else if (!row.consumed && row.targeted)
+      findings.push({
+        code: `family_without_consumer_and_targeted:${row.family}`,
+        kind: "consumption",
+        id: null,
+        detail: `${row.family} is published, no HUD line, projection or tool description reads it, and an action targets a row from it: the model must spend an observe on a family it also acts through`,
+      });
+  }
+  return { rows, findings, unclassified };
+}
+
+/** The Host sources the consumption section reads, resolved from the inventory's own path list. */
+export function loadConsumptionSources({
+  inventory = readFileSync(path.join(REPOSITORY_ROOT, CONSUMPTION_INVENTORY_PATH), "utf8"),
+  tools = readFileSync(path.join(REPOSITORY_ROOT, GAME_TOOLS_PATH), "utf8"),
+  hud = readFileSync(path.join(REPOSITORY_ROOT, SNAPSHOT_HUD_PATH), "utf8"),
+  projectionSources = null,
+} = {}) {
+  const paths = inventoryList(inventory, "PROJECTION_SOURCES") ?? [];
+  return {
+    inventory,
+    tools,
+    hud,
+    projectionSources:
+      projectionSources ??
+      new Map(paths.map((relative) => [relative, readFileSync(path.join(REPOSITORY_ROOT, relative), "utf8")])),
+  };
+}
+
+/** The baseline as five lookup tables, plus the findings that make it self-maintaining. */
+export function readObservationBaseline(baseline) {
+  const findings = [];
+  const entries = new Map();
+  const kinds = new Set(["collection", "channel", "addressability", "mutation", "gating"]);
+  for (const entry of baseline?.entries ?? []) {
+    if (!kinds.has(entry?.kind) || typeof entry?.id !== "string" || entry.id.length === 0)
+      findings.push({
+        code: `baseline_entry_invalid:${entry?.kind ?? "unknown"}:${entry?.id ?? "unknown"}`,
+        kind: entry?.kind ?? "unknown",
+        id: entry?.id ?? "unknown",
+        detail: "a baseline entry needs kind (collection|channel|addressability|mutation|gating), id and reason",
+      });
+    else if (typeof entry.reason !== "string" || entry.reason.trim().length === 0)
+      findings.push({
+        code: `baseline_entry_unexplained:${entry.kind}:${entry.id}`,
+        kind: entry.kind,
+        id: entry.id,
+        detail: `${entry.kind} ${entry.id} is baselined with no reason; a silent exception is not a ratchet`,
+      });
+    else entries.set(`${entry.kind}:${entry.id}`, entry.reason);
+  }
+  return { entries, findings };
+}
+
+function findDecompiledSource(root, name) {
+  const stack = [root];
+  while (stack.length > 0) {
+    const directory = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) stack.push(absolute);
+      else if (entry.name === name) return absolute;
+    }
+  }
+  return null;
+}
+
+/** The decompiled sources the six sections read, resolved through the shared fail-closed guard. */
+export function loadDecompiledSources({ sourceRoot } = {}) {
+  const root = resolveStardewDecompileRoot({ repositoryRoot: REPOSITORY_ROOT, root: sourceRoot });
+  const decompiled = {};
+  for (const name of new Set(TILE_CHANNELS.map((channel) => channel.engine.file).concat(["GameLocation.cs", "Game1.cs"]))) {
+    const file = findDecompiledSource(root, name);
+    if (file === null) throw new Error(`stardew_observation_decompiled_source_missing:${name}:${root}`);
+    decompiled[name] = readFileSync(file, "utf8");
+  }
+  return decompiled;
+}
+
+/**
+ * The whole observation-gap report: six sections, one finding list, one ratchet.
+ *
+ * Pure over its inputs so the falsifier suite can inject a Mod that reads `location.objects` but not
+ * `location.furniture` instead of editing the real tree.
+ */
+export function observeActionGaps({
+  sources = readModSources(),
+  decompiled = loadDecompiledSources(),
+  surface = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SURFACE_PATH), "utf8")),
+  models = readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_MODELS_PATH), "utf8"),
+  baseline = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_BASELINE_PATH), "utf8")),
+  targetField = TARGET_FIELD,
+  channels = TILE_CHANNELS,
+  consumption = loadConsumptionSources(),
+} = {}) {
+  const ratified = readObservationBaseline(baseline);
+  const findings = [...ratified.findings];
+  const excused = (kind, id) => ratified.entries.has(`${kind}:${id}`);
+
+  // A - collections
+  const population = locationCollectionPopulation({
+    gameLocation: decompiled["GameLocation.cs"],
+    game1: decompiled["Game1.cs"],
+  });
+  const collectionRows = collectionCoverage({ discoveries: parseDiscoveries(sources), population });
+  for (const row of collectionRows)
+    if (row.readBy === 0 && !excused("collection", row.id))
+      findings.push({
+        code: `collection_never_read:${row.id}`,
+        kind: "collection",
+        id: row.id,
+        detail: `\`location.${row.id}\` (${row.type}) is a replicated location collection and no Discover* reads it; either a family is invisible or the collection belongs in the baseline with its reason`,
+      });
+  for (const row of collectionRows)
+    if (row.readBy > 0 && excused("collection", row.id))
+      findings.push({
+        code: `stale_baseline_entry:collection:${row.id}`,
+        kind: "collection",
+        id: row.id,
+        detail: `${row.id} is now read by ${row.readers.slice(0, 3).join(", ")}; delete its baseline entry`,
+      });
+
+  // B - tile channels
+  const channelCoverage = tileChannelCoverage({ sources, decompiled, channels });
+  findings.push(...channelCoverage.findings);
+  for (const row of channelCoverage.rows) {
+    if (row.readBy === 0 && !excused("channel", row.id))
+      findings.push({
+        code: `tile_channel_never_read:${row.id}`,
+        kind: "channel",
+        id: row.id,
+        detail: `no Mod source reads the ${row.id} tile channel (${row.engineSite}); whatever the engine dispatches there is invisible to the snapshot`,
+      });
+    if (row.readBy > 0 && excused("channel", row.id))
+      findings.push({
+        code: `stale_baseline_entry:channel:${row.id}`,
+        kind: "channel",
+        id: row.id,
+        detail: `${row.id} is now read by ${row.readers.slice(0, 3).join(", ")}; delete its baseline entry`,
+      });
+  }
+
+  // C - action addressability
+  const published = publishedSnapshotSurface(models);
+  const publishedFamilies = new Set(published.families.map((family) => family.field.toLowerCase()));
+  const addressability = addressabilityCoverage({ surface, targetField, published: publishedFamilies });
+  for (const finding of addressability.findings)
+    if (!excused("addressability", finding.id)) findings.push(finding);
+  for (const row of addressability.rows)
+    if (row.family !== null && excused("addressability", row.actionId))
+      findings.push({
+        code: `stale_baseline_entry:addressability:${row.actionId}`,
+        kind: "addressability",
+        id: row.actionId,
+        detail: `${row.actionId} now names ${row.family}; delete its baseline entry`,
+      });
+
+  // D - postcondition observability
+  const dispatch = handlerDispatch(sources);
+  const mutations = postconditionMutationCoverage({ sources, vocabulary: published.vocabulary, dispatch });
+  for (const mutation of mutations)
+    if (!mutation.published && !excused("mutation", mutation.id))
+      findings.push({
+        code: `mutation_not_observable:${mutation.id}`,
+        kind: "mutation",
+        id: mutation.id,
+        detail: `${mutation.actionId} assigns \`${mutation.receivers[0]}.${mutation.member}\`, and no published snapshot row carries \`${mutation.member}\``,
+      });
+  for (const id of ratified.entries.keys()) {
+    if (!id.startsWith("mutation:")) continue;
+    const mutationId = id.slice("mutation:".length);
+    const mutation = mutations.find((entry) => entry.id === mutationId);
+    if (mutation === undefined)
+      findings.push({
+        code: `stale_baseline_entry:mutation:${mutationId}`,
+        kind: "mutation",
+        id: mutationId,
+        detail: `no handler assigns \`${mutationId.split(":")[1]}\` for \`${mutationId.split(":")[0]}\` any more; delete its baseline entry`,
+      });
+    else if (mutation.published)
+      findings.push({
+        code: `stale_baseline_entry:mutation:${mutationId}`,
+        kind: "mutation",
+        id: mutationId,
+        detail: `\`${mutation.member}\` is published now; delete its baseline entry`,
+      });
+  }
+  // E - publication gating
+  const parameters = snapshotParameterOrder(models);
+  const gateScan = publicationGates({
+    sources,
+    parameters,
+    discoveryRows: new Map(parseDiscoveries(sources).map((discovery) => [discovery.name, discovery.row])),
+  });
+  findings.push(...gateScan.findings);
+  const gating = publicationGateCoverage({ gates: gateScan.gates, targetField });
+  for (const finding of gating.findings) if (!excused("gating", finding.id)) findings.push(finding);
+  const measuredGatingGaps = new Set(gating.rows.flatMap((row) => row.missing.map((action) => `${row.family}:${action}`)));
+  for (const id of ratified.entries.keys()) {
+    if (!id.startsWith("gating:")) continue;
+    const gap = id.slice("gating:".length);
+    if (measuredGatingGaps.has(gap)) continue;
+    findings.push({
+      code: `stale_baseline_entry:gating:${gap}`,
+      kind: "gating",
+      id: gap,
+      detail: `${gap.split(":")[1]} is admitted by the gate that publishes ${gap.split(":")[0]} now, or that gate is gone; delete its baseline entry`,
+    });
+  }
+  for (const id of ratified.entries.keys()) {
+    const kind = id.slice(0, id.indexOf(":"));
+    const subject = id.slice(id.indexOf(":") + 1);
+    const known =
+      (kind === "collection" && collectionRows.some((row) => row.id === subject)) ||
+      (kind === "channel" && channelCoverage.rows.some((row) => row.id === subject)) ||
+      (kind === "addressability" && addressability.rows.some((row) => row.actionId === subject)) ||
+      (kind === "gating" && gating.rows.some((row) => subject.startsWith(`${row.family}:`))) ||
+      kind === "mutation";
+    if (!known)
+      findings.push({
+        code: `baseline_entry_unknown_subject:${kind}:${subject}`,
+        kind,
+        id: subject,
+        detail: `the baseline names ${subject} as a ${kind}, and this run measured no such ${kind}; a ratchet entry that names nothing excuses nothing`,
+      });
+  }
+
+  // F - consumption
+  const consumptionRows = consumptionCoverage({
+    families: parameters.filter((parameter) => parameter.row !== null).map((parameter) => parameter.name),
+    ...consumption,
+    targetField,
+  });
+  findings.push(...consumptionRows.findings);
+
+  const ungranted = findings;
+  return {
+    schema: "gamebuddy-stardew-observation-gap/v1",
+    collections: {
+      population: collectionRows.map((row) => row.id),
+      read: collectionRows.filter((row) => row.readBy > 0).map((row) => row.id),
+      neverRead: collectionRows.filter((row) => row.readBy === 0).map((row) => row.id),
+      rows: collectionRows,
+    },
+    tileChannels: {
+      channels: channelCoverage.rows,
+      neverRead: channelCoverage.rows.filter((row) => row.readBy === 0).map((row) => row.id),
+    },
+    addressability: {
+      targetBearingActions: addressability.rows.length,
+      withoutFamily: addressability.rows.filter((row) => row.family === null).map((row) => row.actionId),
+      rows: addressability.rows,
+    },
+    postconditionMutations: {
+      handlers: dispatch.size,
+      rowVocabulary: published.vocabulary.size,
+      mutations,
+      notObservable: mutations.filter((mutation) => !mutation.published).map((mutation) => mutation.id),
+    },
+    publicationGating: {
+      gates: gateScan.gates,
+      families: gating.rows,
+      gatedOff: gating.findings.map((finding) => finding.id),
+    },
+    consumption: {
+      population: consumptionRows.rows.length,
+      rows: consumptionRows.rows,
+      withoutConsumer: consumptionRows.rows.filter((row) => !row.consumed).map((row) => row.family),
+      unclassified: consumptionRows.unclassified,
+    },
+    baseline: { entries: ratified.entries.size, path: OBSERVATION_BASELINE_PATH },
+    findings,
+    ungranted,
+    ok: ungranted.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,11 +2350,15 @@ function fail(code, message) {
  * 因此别名不会让 candidates artifact 蒙混过关。
  */
 function parseArgs(argv) {
-  const out = { pretty: false };
+  const out = { pretty: false, failOnUngranted: false };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--pretty") {
       out.pretty = true;
+      continue;
+    }
+    if (a === "--fail-on-ungranted") {
+      out.failOnUngranted = true;
       continue;
     }
     if (!["--source-root", "--action-register", "--remaining", "--candidates", "--catalog", "--method-resolution", "--out"].includes(a))
@@ -1268,6 +2382,48 @@ function parseArgs(argv) {
   return out;
 }
 
+/**
+ * The human-readable half of the one report: four section lines and every ungranted gap by name.
+ *
+ * It goes to stderr so the JSON on stdout stays a single parseable document for existing consumers,
+ * and it is printed from the SAME run that produced that JSON - never as a second opinion.
+ */
+export function writeObservationSummary(observation, write = (text) => process.stderr.write(text)) {
+  write(`observation gaps: ${observation.collections.population.length} replicated location collections\n`);
+  write(
+    `  A collections       ${observation.collections.read.length} read, ${observation.collections.neverRead.length} never read${
+      observation.collections.neverRead.length > 0 ? ` (${observation.collections.neverRead.join(", ")})` : ""
+    }\n`,
+  );
+  write(
+    `  B tile channels     ${observation.tileChannels.channels.filter((row) => row.readBy > 0).length} read, ${
+      observation.tileChannels.neverRead.length
+    } never read${observation.tileChannels.neverRead.length > 0 ? ` (${observation.tileChannels.neverRead.join(", ")})` : ""}\n`,
+  );
+  write(
+    `  C addressability    ${observation.addressability.targetBearingActions} target-bearing actions, ${observation.addressability.withoutFamily.length} without a published family\n`,
+  );
+  write(
+    `  D postconditions    ${observation.postconditionMutations.handlers} handlers, ${observation.postconditionMutations.mutations.length} mutation pairs, ${observation.postconditionMutations.notObservable.length} unexplained (${observation.baseline.entries} baselined)\n`,
+  );
+  write(
+    `  E publication       ${observation.publicationGating.gates.length} advertisement gates over ${observation.publicationGating.families.length} families, ${observation.publicationGating.gatedOff.length} family/action pair(s) gated off\n`,
+  );
+  const consumption = observation.consumption;
+  write(
+    `  F consumption       ${consumption.population} published families: ${consumption.rows.filter((row) => row.projections.length > 0).length} read by a projection, ${consumption.rows.filter((row) => row.hud).length} by a HUD line, ${consumption.rows.filter((row) => row.toolDescription).length} named in a tool description; ${consumption.withoutConsumer.length} with no consumer${consumption.withoutConsumer.length > 0 ? ` (${consumption.withoutConsumer.join(", ")})` : ""}, ${consumption.unclassified.length} unclassified by ${CONSUMPTION_INVENTORY_PATH}\n`,
+  );
+  write(
+    "    on-demand delivery is not a gap: the per-turn projection cap and the 'projected or explained' inventory are the delivery-policy authority, so the advisory count is not a to-do list and rising is not a regression by itself\n",
+  );
+  for (const finding of observation.findings) write(`  ${finding.code}: ${finding.detail}\n`);
+  write(
+    observation.ok
+      ? "  green: every replicated collection, tile channel, action target and handler mutation is published or recorded\n"
+      : `  ${observation.ungranted.length} ungranted observation gap(s)\n`,
+  );
+}
+
 const directRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (directRun) {
   const options = parseArgs(process.argv.slice(2));
@@ -1281,12 +2437,15 @@ if (directRun) {
       : null;
     const parser = await createSelectorParser();
     const selectorArtifact = await analyzeTileActionSelectorTree({ sourceRoot: options["source-root"], parser });
-    const artifact = reconcile({ selectorArtifact, remainingReport, register, catalog, methodResolution });
+    const observation = observeActionGaps({ decompiled: loadDecompiledSources({ sourceRoot: options["source-root"] }) });
+    const artifact = reconcile({ selectorArtifact, remainingReport, register, catalog, methodResolution, observation });
     const serialized = `${JSON.stringify(artifact, null, options.pretty ? 2 : 0)}\n`;
     if (options.out) {
       await writeFile(options.out, serialized);
       process.stdout.write(`${JSON.stringify({ state: "written", out: options.out, ...artifact.counts })}\n`);
     } else process.stdout.write(serialized);
+    writeObservationSummary(observation);
+    if (options.failOnUngranted && !observation.ok) process.exitCode = 1;
   } catch (error) {
     fail(error.code ?? "action_inventory_reconciliation_failed", error.message);
   }

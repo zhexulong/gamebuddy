@@ -1,0 +1,216 @@
+{
+  "schema": "gamebuddy-stardew-observation-gap-baseline/v1",
+  "note": "Every entry is a measured reading, not an accepted gap. An entry whose subject is now read (or whose mutation no longer exists) must be deleted or the report fails as stale_baseline_entry. collection_never_read:largeTerrainFeatures is absent for a different reason: the report named it on its first run, the bush discovery and TryGetHarvestableBush were made to read location.largeTerrainFeatures (where a bush actually stands), and the finding is therefore gone rather than excused.",
+  "entries": [
+    {
+      "kind": "collection",
+      "id": "interiorDoors",
+      "reason": "the interior door table (`InteriorDoorDictionary`). Transitions are published from `location.warps` and `location.doors` (`DiscoverDoorTargets`, `warps[]`), and no action addresses an interior door on its own. Recorded as debt, not as a decision that it can never matter"
+    },
+    {
+      "kind": "collection",
+      "id": "lightGlows",
+      "reason": "the glow overlay hash set the engine uses to blend light sprites; visual state with no world fact in it"
+    },
+    {
+      "kind": "collection",
+      "id": "mapSeats",
+      "reason": "where an NPC sits. No action addresses a seat: `talk_to_npc` targets the villager, `travel` targets a warp tile, and the seat holds only a standing position, so no snapshot family has a use for it"
+    },
+    {
+      "kind": "collection",
+      "id": "netObjects",
+      "reason": "the net-vector half of `location.objects` (an `OverlaidDictionary`): every read of `location.objects` reads through it, so a separate read would be a second spelling of one collection"
+    },
+    {
+      "kind": "collection",
+      "id": "overlayObjects",
+      "reason": "the overlay half of `location.objects`: same collection, same reason as `netObjects` - `DiscoverWorldObjectTargets` reads `location.objects`"
+    },
+    {
+      "kind": "collection",
+      "id": "projectiles",
+      "reason": "transient combat and animation objects, owned by the engine's own update loop; no action spawns, addresses or observes one"
+    },
+    {
+      "kind": "collection",
+      "id": "sharedLights",
+      "reason": "the location's ambient light sources. `toggle_tool_light` publishes the actor's OWN held light (`lanternSlots`); a location's shared lights are map ambience no action changes"
+    },
+    {
+      "kind": "channel",
+      "id": "TouchAction",
+      "reason": "the engine dispatches a Back-layer `TouchAction` when the player walks onto a tile (`GameLocation.performTouchAction`), and no Mod source reads it: transitions read `location.warps`, `location.doors` and the `Action` property, so a touch-only interaction is not modelled. Recorded as debt - closing it is a Mod change, not a baseline edit"
+    },
+    {
+      "kind": "addressability",
+      "id": "move_to_tile",
+      "reason": "its target IS the raw `x`/`y` pair, which is the address itself; there is no opaque id to publish and no family to read"
+    },
+    {
+      "kind": "mutation",
+      "id": "accept_daily_quest:canBeCancelled",
+      "reason": "`BridgeDailyQuestTarget` carries the quest's id, type and title; the acceptance counters the handler writes are quest bookkeeping the snapshot does not carry"
+    },
+    {
+      "kind": "mutation",
+      "id": "accept_daily_quest:dailyQuest",
+      "reason": "the quest object's own `dailyQuest` flag; the quest is published by identity (`dailyQuestTargets`)"
+    },
+    {
+      "kind": "mutation",
+      "id": "accept_daily_quest:dayQuestAccepted",
+      "reason": "`BridgeDailyQuestTarget` carries the quest's id, type and title; the day the quest was accepted is engine bookkeeping the snapshot does not carry"
+    },
+    {
+      "kind": "mutation",
+      "id": "accept_daily_quest:daysLeft",
+      "reason": "`BridgeDailyQuestTarget` carries the quest's id, type and title; the remaining days are not a published field"
+    },
+    {
+      "kind": "mutation",
+      "id": "bait_crab_pot:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "clear_debris:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "collect_animal_product:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "collect_animal_product:FacingDirection",
+      "reason": "the handler turns the actor toward the target before the native call; no snapshot family publishes the actor's facing direction"
+    },
+    {
+      "kind": "mutation",
+      "id": "collect_animal_product:lastClick",
+      "reason": "`player.lastClick` is the synthetic mouse position the native call reads; it is input state, not world state"
+    },
+    {
+      "kind": "mutation",
+      "id": "color_placed_object:playerChoiceColor",
+      "reason": "the repaint writes `chest.playerChoiceColor`; `colorTargets` rows carry the same fact as `color`"
+    },
+    {
+      "kind": "mutation",
+      "id": "cook_recipe:FacingDirection",
+      "reason": "the handler turns the actor toward the target before the native call; no snapshot family publishes the actor's facing direction"
+    },
+    {
+      "kind": "mutation",
+      "id": "cook_recipe:Quality",
+      "reason": "`BridgeFoodTarget` carries slot, item id, name, stack, edibility and drink-ness and no quality; the cooked stack's quality is not published"
+    },
+    {
+      "kind": "mutation",
+      "id": "cut_weeds:shakeTimer",
+      "reason": "`weed.shakeTimer` is the animation timer that makes the cut visible; it carries no world fact"
+    },
+    {
+      "kind": "mutation",
+      "id": "dress_mannequin:SHIRT",
+      "reason": "`mannequin.SHIRT` is the worn shirt, and `BridgeMannequinTarget` carries only id, location and tile, so a mannequin's outfit is not published"
+    },
+    {
+      "kind": "mutation",
+      "id": "equip_tool:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "feed_animal:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "fertilize_tile:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "interact_npc_with_item:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "load_building_chest:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "machine_load:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "place_crab_pot:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "place_owned_object:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "place_wood_fence:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "plant_sapling:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "plant_seed:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "respond_level_up:informationUp",
+      "reason": "the level-up menu's own rendering flag; `pendingLevelUpChoices` publishes the choices, not the menu"
+    },
+    {
+      "kind": "mutation",
+      "id": "respond_level_up:isActive",
+      "reason": "the level-up menu's own activation flag; `pendingLevelUpChoices` publishes the choices, not the menu"
+    },
+    {
+      "kind": "mutation",
+      "id": "respond_level_up:isProfessionChooser",
+      "reason": "the level-up menu's own mode flag; `pendingLevelUpChoices` publishes the choices, not the menu"
+    },
+    {
+      "kind": "mutation",
+      "id": "select_mine_elevator_floor:ridingMineElevator",
+      "reason": "the actor's elevator-riding flag. The floor and location are published through `mineElevatorFloorTargets` and `location`; the ride itself is a transition, not a state an action addresses"
+    },
+    {
+      "kind": "mutation",
+      "id": "shop_purchase:safetyTimer",
+      "reason": "the shop menu's input safety timer, which stops a purchase double-firing; UI state with no world fact"
+    },
+    {
+      "kind": "mutation",
+      "id": "use_item:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "mutation",
+      "id": "use_item:mostRecentlyGrabbedItem",
+      "reason": "`player.mostRecentlyGrabbedItem` is the engine's last-grab bookkeeping; the pack itself is published as `inventorySlots`"
+    },
+    {
+      "kind": "mutation",
+      "id": "use_warp_item:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    }
+  ]
+}

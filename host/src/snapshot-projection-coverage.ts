@@ -2,10 +2,11 @@
  * Which native fields the model is never shown, and why that is allowed.
  *
  * The defect this exists for is not one missing field - it is the SHAPE of how fields go missing.
- * `SNAPSHOT_KEYS` (`host/src/protocol.ts:1599`) declares what the Mod publishes. Four projections decide what
+ * `SNAPSHOT_KEYS` (`host/src/protocol.ts:1599`) declares what the Mod publishes. Five projections decide what
  * reaches the model: `snapshot-projection.ts` (the user-turn fact block),
  * `runtime-core.internal.ts` (the `<runtime-environment>` line), `stardew-observation-budget.ts` (the
- * `stardew_observe` payload) and `body-program-script.ts` (the plan builder's action set). When the native layer
+ * `stardew_observe` payload), `body-program-script.ts` (the plan builder's action set) and
+ * `snapshot-hud.ts` (the standing state block re-sent with every turn). When the native layer
  * grows a field, nothing forces any of them to notice.
  *
  * Measured 2026-10-28: `actorDispositionDetail` had been on the wire since the disposition work
@@ -44,6 +45,9 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   "weather",
   "catalogRevision",
   "capabilities",
+  // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
+  // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
+  "cookingStationTargets",
 ]);
 
 /**
@@ -93,10 +97,10 @@ const UNPROJECTED_OBSERVED_FAMILIES = Object.freeze([
   "harvestWhereabouts",
   "npcRelationshipTargets",
   "animalProductTargets",
+  "farmAnimalPetTargets",
   "feedTroughTargets",
   "inventoryItemFacts",
   "foodTargets",
-  "cookingStationTargets",
   "treeStumpTargets",
   "weedTargets",
   "grassTargets",
@@ -170,7 +174,7 @@ export const WITHHELD_SNAPSHOT_KEYS: Readonly<Record<string, string>> = Object.f
 });
 
 /**
- * The four projections, each read as source text.
+ * The five projections, each read as source text.
  *
  * Sources, not objects, because the question is "does this layer reference the key at all" - and importing the
  * projections would only answer it for the paths this test happens to construct.
@@ -180,6 +184,7 @@ export const PROJECTION_SOURCES = Object.freeze([
   "host/src/runtime-core.internal.ts",
   "host/src/stardew-observation-budget.ts",
   "host/src/body-program-script.ts",
+  "host/src/snapshot-hud.ts",
 ]);
 
 /** Whether a projection source mentions a snapshot key in a field-position read. */
