@@ -9,7 +9,20 @@
  * cross-file linkage, so no single gate owned it. This one does, and it fails loudly here instead of in the game.
  *
  * RUNGS (each stops the ladder on red, so the first line of a failure is the cause):
- *   L0  contract triad      - runs the existing gates as child processes and reports each exit code by name
+ *   L0  contract triad      - measured 5.3 s. The static gates that cost milliseconds, one child process each, every
+ *                             exit code reported by name. It ends with `tools/check-prelive-gate-registry.mjs`, which
+ *                             derives the population of every gate in the tree and fails when one of them neither runs
+ *                             here nor names where else it runs - so a gate added to this list, or left out of it, is a
+ *                             fact this rung states rather than a habit someone remembers.
+ *   L0b action tree         - measured 2026-11-05: 37.8 s + 29.4 s = 67 s under a concurrent Host build, ~40 s on an
+ *                             idle box. The two members that recompute the Stardew action inventory from
+ *                             `ref/external/StardewValleyDecompiled` and `design/`: the inventory reconciliation suite and
+ *                             the observation-gap report armed with `--fail-on-ungranted`. This is one of the two
+ *                             expensive rungs (L2's compile is the other, measured 84 s) - `--skip-compile` drops L2's
+ *                             half, and nothing yet drops this one, which is stated here rather than hidden. It is also
+ *                             the rung that needs an input a bare checkout has not got: the observation-gap member
+ *                             prints `observation_gap_skipped: needs ref/external/...` and is reported UNAVAILABLE -
+ *                             counted, named, never green.
  *   L1  linkage closure     - action ids x runner map x tools-side scenario x Mod-side scenario, DERIVED not listed
  *   L1b deploy isolation    - the launcher's resolved deploy root must not be inside the game installation
  *   L2  compile + agreement - the Host test artifact builds, and every action population names the same ids
@@ -17,8 +30,8 @@
  *   L4  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
  *
  * USAGE:
- *   node tools/prelive.mjs --no-game                       # L0 + L1 + L1b + L2 + L3 (L2 compiles)
- *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the expensive build
+ *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L3 (L0b and L2 are the slow rungs)
+ *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the Host build
  *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
  *   node tools/prelive.mjs --action <id> --game             # the same, then L4 for that action
  *
@@ -43,15 +56,54 @@ const TOOLS = path.join(REPO, "tools");
 export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
 
 /**
- * L0: the contract triad, delegated to the gates that already exist. Reimplementing any of them here would give the
- * same fact two spellings, and the copy would be the one that goes stale.
+ * L0: the static gates that cost milliseconds, DELEGATED - each is a child process whose exit code is reported by
+ * name. Reimplementing any of them here would give the same fact two spellings, and the copy would be the one that goes
+ * stale.
+ *
+ * The last member is the registry (`tools/check-prelive-gate-registry.mjs`): it derives the population of every gate in
+ * the tree, reads the two lists below through `PRELUDE_RUNGS`, and fails naming any gate that neither runs here nor
+ * declares where else it runs. It is in L0 because it costs milliseconds - and it must be, because a register nobody
+ * runs is the defect it exists to catch.
  */
-export const CONTRACT_TRIAD = Object.freeze([
+export const L0_GATES = Object.freeze([
   "tools/check-catalog-fact-ownership.mjs",
   "tools/audit-stardew-discovery-channels.mjs",
   "tools/check-stardew-fixture-action-coverage.mjs",
   "tools/check-harness-conformance.mjs",
+  "tools/check-stardew-task-action-coverage.mjs",
+  "tools/check-game-context-pressure.mjs",
+  "tools/check-live-run-verdict-guards.mjs",
+  "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
+  "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
+  "tools/check-prelive-gate-registry.mjs",
 ]);
+
+/**
+ * L0b: everything that recomputes the Stardew action inventory from the decompiled tree, which is the expensive input
+ * and the one a bare checkout has not got. Two members, ~40 s together, and both of them are measurements the ladder
+ * previously did not make at all: the projection drift tests are pure recomputation of checked-in artifacts, and the
+ * observation-gap report's `--fail-on-ungranted` flag was written and never armed.
+ */
+export const L0B_GATES = Object.freeze([
+  "integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",
+  "tools/check-stardew-observation-gap.mjs",
+]);
+
+/**
+ * The gate rungs as data. `tools/check-prelive-gate-registry.mjs` imports THIS, not a regex over this file: the ladder's
+ * own declaration is the authority for what prelive runs, so wiring a gate is one edit in one place.
+ */
+export const PRELUDE_RUNGS = Object.freeze([
+  { id: "l0", gates: L0_GATES },
+  { id: "l0b", gates: L0B_GATES },
+]);
+
+/**
+ * How a gate says it measured nothing, in the convention `tools/check-ci-coverage.mjs` already counts: a whole line whose
+ * marker ends in `_skipped`. A gate that prints one has exited cleanly without comparing anything, so this ladder reports
+ * it UNAVAILABLE and counts it apart from the gates that passed. The rule is the marker, not a list of gate names.
+ */
+export const NOT_MEASURED_MARKER = /^[a-z][a-z0-9_]*_skipped:/mu;
 
 const SURFACE = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
 const MOD_CONFIG = "integrations/stardew/ModConfig.cs";
@@ -115,34 +167,60 @@ function readScripts() {
 }
 
 /**
- * Run every L0 gate and report each exit code by name with its own wall time. All of them run (a gate that is red
- * must not hide the three that are also red), and the rung verdict is red when any is.
+ * Run one gate rung and report each exit code by name with its own wall time. All of them run (a gate that is red
+ * must not hide the three that are also red), and the rung verdict is red when any is. A gate that exits 0 having
+ * printed a `*_skipped:` marker is `not_measured`: it is listed as UNAVAILABLE and never folded into the pass count.
  */
-export function runContractTriad({
-  gates = CONTRACT_TRIAD,
+export function runGateRung({
+  id = "l0",
+  gates = L0_GATES,
   resolveCommand = resolveGateCommand,
   run = (command) => spawnSync(process.execPath, [command.replace(/^node\s+/, "")], { cwd: REPO, encoding: "utf8" }),
 } = {}) {
   const results = gates.map((gate) => {
     const resolved = resolveCommand(gate);
     if (resolved.command === null) {
-      return { gate, command: null, exitCode: null, missing: true, ms: 0, discovered: resolved.discovered };
+      return {
+        gate,
+        command: null,
+        exitCode: null,
+        missing: true,
+        ms: 0,
+        discovered: resolved.discovered,
+        outcome: "failed",
+        summary: "(no command found for this gate)",
+      };
     }
     const startedAt = Date.now();
     const outcome = run(resolved.command);
+    const stdout = outcome.stdout ?? "";
+    const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
     return {
       gate,
       command: resolved.command,
-      exitCode: typeof outcome.status === "number" ? outcome.status : 1,
+      exitCode,
       missing: false,
       discovered: resolved.discovered,
       ms: Date.now() - startedAt,
-      stdout: outcome.stdout ?? "",
+      stdout,
       stderr: outcome.stderr ?? "",
+      outcome: exitCode !== 0 ? "failed" : NOT_MEASURED_MARKER.test(stdout) ? "not_measured" : "passed",
+      summary: firstOutputLine(stdout),
     };
   });
-  const red = results.filter((entry) => entry.missing || entry.exitCode !== 0);
-  return { id: "l0", status: red.length === 0 ? "passed" : "failed", gates: results, red };
+  const red = results.filter((entry) => entry.outcome === "failed");
+  const unavailable = results.filter((entry) => entry.outcome === "not_measured");
+  return { id, status: red.length === 0 ? "passed" : "failed", gates: results, red, unavailable };
+}
+
+/** The first line of what a gate printed, so a green rung still says what it measured. Capped: some gates print JSON. */
+function firstOutputLine(stdout) {
+  const line = stdout
+    .split("\n")
+    .map((entry) => entry.trim())
+    .find((entry) => entry !== "");
+  if (line === undefined) return "";
+  return line.length > 200 ? `${line.slice(0, 197)}...` : line;
 }
 
 //
@@ -835,7 +913,7 @@ function main(argv) {
   const deploy = deployRung(options);
   const ladder = runLadder({
     rungs: [
-      () => runContractTriad(),
+      ...PRELUDE_RUNGS.map((rung) => () => runGateRung({ id: rung.id, gates: rung.gates })),
       () => linkageRung(),
       () => deploy,
       () => actionRegistryRung({ skipCompile: options.skipCompile }),
@@ -890,15 +968,28 @@ function populationRungLines(rung) {
 /** The report, as text: every rung's counts plus the member each violation names. */
 export function format(ladder, { elapsedMs, options, notice }) {
   const lines = [`prelive: static ladder${options.noGame ? " (--no-game)" : ""}`];
+  let unavailable = 0;
   for (const rung of ladder.rungs) {
-    if (rung.id === "l0") {
+    if (rung.id === "l0" || rung.id === "l0b") {
       for (const gate of rung.gates) {
         const where = gate.discovered ? " (discovered, not at the expected path)" : "";
         const outcome = gate.missing ? "missing" : `exit=${gate.exitCode}`;
-        lines.push(`  l0 ${path.basename(gate.gate)} ${outcome} ${gate.ms}ms${where}`);
+        lines.push(`  ${rung.id} ${path.basename(gate.gate)} ${outcome} ${gate.ms}ms${where}`);
         lines.push(`     command: ${gate.command ?? "(none found)"}`);
+        if (gate.summary !== "") lines.push(`     | ${gate.summary}`);
       }
-      lines.push(`  l0: ${rung.status} (${rung.gates.length} gates, ${rung.red.length} red)`);
+      unavailable += rung.unavailable.length;
+      lines.push(
+        `  ${rung.id}: ${rung.status} (${rung.gates.length} gates, ${rung.red.length} red, ${rung.unavailable.length} UNAVAILABLE)`,
+      );
+      for (const gate of rung.unavailable) {
+        lines.push(`    UNAVAILABLE: ${gate.gate} exit=0 but it printed a skip marker, so it measured nothing`);
+        for (const line of `${gate.stdout ?? ""}${gate.stderr ?? ""}`
+          .split("\n")
+          .filter((entry) => entry.trim() !== "")
+          .slice(0, 5))
+          lines.push(`      | ${line.trimEnd()}`);
+      }
       for (const gate of rung.red) {
         lines.push(`    red: ${gate.gate} exit=${gate.exitCode ?? "missing"}`);
         // The gate's own words, not a summary: the member it names is the whole point of running it here.
@@ -942,7 +1033,8 @@ export function format(ladder, { elapsedMs, options, notice }) {
   // run did NOT check.
   if (notice !== null) lines.push(`  ${notice}`);
   lines.push(
-    `prelive: ${ladder.status}${ladder.firstRed === null ? "" : ` (stopped at ${ladder.firstRed.id})`} in ${elapsedMs}ms`,
+    `prelive: ${ladder.status}${ladder.firstRed === null ? "" : ` (stopped at ${ladder.firstRed.id})`} in ${elapsedMs}ms` +
+      `${unavailable === 0 ? "" : ` (${unavailable} gate(s) UNAVAILABLE: measured nothing here, counted apart from the pass)`}`,
   );
   return `${lines.join("\n")}\n`;
 }
