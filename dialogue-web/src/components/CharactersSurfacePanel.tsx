@@ -291,10 +291,13 @@ function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: M
 /**
  * The companion's own world book, which the player reads AND edits.
  *
- * `absent` is both "she has no book" and "the read could not be served": neither is a
- * book, so neither renders a block - the surface never invents one, and a failed read
- * never reads as an empty book. A book that exists is editable even when it carries no
- * entries: an empty book is exactly the one a player has to be able to add to.
+ * `absent` is "she has no book" and renders no block: the surface never invents one, and an empty
+ * book it did not read would be a book it made up. `failed` is the OTHER fact - the read itself
+ * could not be served - and it renders its own line with the read again, because collapsing it into
+ * `absent` made a read the Host never answered look exactly like a companion who has no world book:
+ * the block simply was not there, and nothing on the surface said why. A book that exists is
+ * editable even when it carries no entries: an empty book is exactly the one a player has to be
+ * able to add to.
  *
  * The draft carries two different things with two different owners: the revision its save
  * CASes on, which follows the book (`submit` moves it to the revision a conflict re-read
@@ -309,6 +312,7 @@ function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: M
 type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "failed" }>
   | Readonly<{ kind: "ready"; handle: string; worldBook: CompanionWorldBookV1 }>;
 
 /**
@@ -317,9 +321,10 @@ type CompanionWorldBookView =
  * The two are separate because they are separate facts to the editor. `absent` projects as "she
  * has no book" and renders no block; a failed read is not a book state at all, and re-rendering
  * a ready surface as `absent` because one re-read failed would unmount the editor and the
- * player's unsigned entries with it.
+ * player's unsigned entries with it - which is why a re-read's failure leaves the view alone
+ * rather than taking the mount's `failed` branch.
  */
-type CompanionWorldBookRead = Readonly<{ kind: "read"; view: CompanionWorldBookView }> | Readonly<{ kind: "failed" }>;
+type CompanionWorldBookRead = CompanionWorldBookView;
 
 /** One entry being edited, with its trigger words as the player typed them. */
 type CompanionWorldBookEntryDraft = Readonly<{
@@ -446,6 +451,8 @@ function CompanionWorldBookSection({
   locale: Locale;
 }): ReactElement | null {
   const labels = characterLabels(locale);
+  // The retry's own words are the catalogue's, the same control the shell draws over a problem view.
+  const problemLabels = messages(locale);
   const [view, setView] = useState<CompanionWorldBookView>({ kind: "loading" });
   const bookDraft = useRecordDraft<CompanionWorldBookDraft>("characters.companion-world-book", null);
   const [saving, setSaving] = useState(false);
@@ -461,24 +468,26 @@ function CompanionWorldBookSection({
       // library entry's own book and no other companion's.
       const list = await api.listCompanions();
       const current = list.companions.find((entry) => entry.isCurrent);
-      if (current === undefined) return { kind: "read", view: { kind: "absent" } };
+      if (current === undefined) return { kind: "absent" };
       const worldBook = await api.readCompanionWorldBook(current.handle);
-      return {
-        kind: "read",
-        view: worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" },
-      };
+      return worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" };
     } catch {
       return { kind: "failed" };
     }
+  };
+
+  const reload = (): void => {
+    setView({ kind: "loading" });
+    void (async () => setView(await readOnce()))();
   };
 
   useEffect(() => {
     let active = true;
     void (async () => {
       const next = await readOnce();
-      // The mount has no earlier view to keep, so a failed first read renders no block rather
-      // than a book state it did not read.
-      if (active) setView(next.kind === "read" ? next.view : { kind: "absent" });
+      // The mount has no earlier view to keep, so a failed first read says so - it is not a book
+      // state, and rendering no block was indistinguishable from a companion who has no book.
+      if (active) setView(next);
     })();
     return () => {
       active = false;
@@ -534,7 +543,7 @@ function CompanionWorldBookSection({
         const reread = await readOnce();
         // A re-read that failed leaves the surface as it was: the editor and the player's
         // entries stay, and the refusal is reported on its own.
-        const rereadView = reread.kind === "read" ? reread.view : null;
+        const rereadView = reread.kind === "failed" ? null : reread;
         if (rereadView !== null) setView(rereadView);
         if (isCompanionWorldBookConflict(error) && rereadView !== null && rereadView.kind === "ready") {
           const revision = rereadView.worldBook.revision;
@@ -564,6 +573,18 @@ function CompanionWorldBookSection({
     bookDraft.type({ ...current, entries: current.entries.filter((entry) => entry.rowId !== rowId) });
   };
 
+  if (view.kind === "failed") {
+    return (
+      <section aria-label={labels.companionWorldBookTitle} data-companion-world-book data-companion-world-book-failed>
+        <h3>{labels.companionWorldBookTitle}</h3>
+        <p className="management-settings-hint">{labels.companionWorldBookHint}</p>
+        <p>{labels.companionWorldBookReadFailed}</p>
+        <button type="button" className="small-button" data-companion-world-book-retry onClick={reload}>
+          {problemLabels.problemRetryRead}
+        </button>
+      </section>
+    );
+  }
   if (view.kind !== "ready") return null;
   const entries = view.worldBook.entries;
   const draft = bookDraft.value;
@@ -1296,7 +1317,27 @@ function CharacterWorldBookPanel({
   };
 
   if (view.kind === "loading") return null;
-  if (view.kind === "error" || view.kind === "unavailable") {
+  if (view.kind === "error") {
+    return (
+      <section aria-label={labels.worldBookTitle} data-world-book data-world-book-read-failed>
+        <h3>{labels.worldBookTitle}</h3>
+        <p className="management-settings-hint">{labels.worldBookHint}</p>
+        <p>{labels.worldBookReadFailed}</p>
+        <button
+          type="button"
+          className="small-button"
+          data-world-book-retry
+          onClick={() => {
+            setView({ kind: "loading" });
+            void (async () => setView(await readOnce()))();
+          }}
+        >
+          {problemLabels.problemRetryRead}
+        </button>
+      </section>
+    );
+  }
+  if (view.kind === "unavailable") {
     return (
       <section aria-label={labels.worldBookTitle} data-world-book>
         <h3>{labels.worldBookTitle}</h3>

@@ -227,6 +227,8 @@ export type CharacterLabels = Readonly<{
   worldBookPending: string;
   worldBookUnavailable: string;
   worldBookFailed: string;
+  /** Said when the library read failed, as opposed to `worldBookUnavailable`: nothing was read. */
+  worldBookReadFailed: string;
 
   /**
    * The managed library's authoring surface: a fresh product's library is
@@ -294,6 +296,11 @@ export type CharacterLabels = Readonly<{
    */
   companionWorldBookTitle: string;
   companionWorldBookHint: string;
+  /**
+   * Said when the READ of her own book failed. Its own sentence rather than `companionWorldBookAbsent`
+   * ("she has none"): the two facts are different, and the read is the one the retry performs again.
+   */
+  companionWorldBookReadFailed: string;
   companionWorldBookCount: string;
   companionWorldBookTriggerWords: string;
   companionWorldBookKeySeparator: string;
@@ -562,6 +569,7 @@ const en: CharacterLabels = Object.freeze({
   worldBookPending: "Saved. It fully applies on the next turn.",
   worldBookUnavailable: "The world book is temporarily unavailable.",
   worldBookFailed: "The world book could not be updated.",
+  worldBookReadFailed: "The world book could not be read.",
 
   worldBookEmpty: "Your world book library is empty.",
   worldBookCreate: "Create a world book",
@@ -618,6 +626,7 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookTitle: "Your companion's own world book",
   companionWorldBookHint:
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
+  companionWorldBookReadFailed: "Her own world book could not be read.",
   companionWorldBookCount: "Entries in her own book: {{count}}",
   companionWorldBookTriggerWords: "Trigger words: {{keys}}",
   companionWorldBookKeySeparator: ", ",
@@ -846,6 +855,7 @@ const zh: CharacterLabels = Object.freeze({
   worldBookPending: "已保存，将在下一回合完全生效。",
   worldBookUnavailable: "世界书暂时不可用。",
   worldBookFailed: "无法更新世界书。",
+  worldBookReadFailed: "无法读取世界书。",
 
   worldBookEmpty: "你的世界书库还是空的。",
   worldBookCreate: "新建世界书",
@@ -900,6 +910,7 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookTitle: "伴侣自己的世界书",
   companionWorldBookHint:
     "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
+  companionWorldBookReadFailed: "无法读取她自己的世界书。",
   companionWorldBookCount: "她自己的世界书里有 {{count}} 条词条",
   companionWorldBookTriggerWords: "触发词：{{keys}}",
   companionWorldBookKeySeparator: "、",

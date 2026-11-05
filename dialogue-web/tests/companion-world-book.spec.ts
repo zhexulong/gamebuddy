@@ -1,4 +1,5 @@
 import { expect, test } from "./frontend-coverage";
+import { characterLabels } from "../src/components/character-domain-labels";
 
 /**
  * The companion's OWN world book on the Characters surface.
@@ -84,6 +85,12 @@ const composedRoot = {
 };
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+/** The Host's own problem envelope, for the reads under test that fail. */
+const problem = (status: number, code: string) => ({
+  status,
+  contentType: "application/problem+json",
+  body: JSON.stringify({ type: "about:blank", title: code, status, code, requestId: csrfToken, retryable: true }),
+});
 
 /**
  * Everything the Characters surface reads once on mount, with the companion's own
@@ -838,4 +845,71 @@ test("the trigger-words sentence sits under the field it describes, not under th
     toItsField,
     `the sentence belongs to the field above it (${toItsField} px away, the switch ${toTheSwitch} px)`,
   ).toBeLessThan(toTheSwitch);
+});
+
+/**
+ * Her own book that could not be READ is a fact of its own, with the read again beside it.
+ *
+ * The view collapsed a failed read into `absent` - "she has no book" - and `absent` renders no
+ * block, so a read the Host never answered looked exactly like a companion whose card carried no
+ * world book at all: the section was simply not there, and nothing said where it went. The two
+ * facts now render differently, and the retry performs the read that failed.
+ */
+test("her own world book that could not be read says so, and offers the read again", async ({ page }) => {
+  const labels = characterLabels("en");
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 3,
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+  };
+  await stubCharacters(page, book);
+  let failing = true;
+  // Registered after the stub, so it answers first; the retry falls through to the real projection.
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
+    failing ? route.fulfill(problem(503, "runtime_unavailable")) : route.fallback(),
+  );
+
+  const surface = await openCharacters(page, "Characters");
+  const failed = surface.locator("[data-companion-world-book-failed]");
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText(labels.companionWorldBookReadFailed);
+
+  failing = false;
+  const reread = page.waitForRequest((request) => request.url().includes(`/companions/${handle}/worldbook`));
+  await failed.locator("[data-companion-world-book-retry]").click();
+  await reread;
+  await expect(surface.locator("[data-companion-world-book-failed]")).toHaveCount(0);
+  await expect(surface.locator("[data-companion-world-book-count]")).toHaveText(
+    labels.companionWorldBookCount.replace("{{count}}", "1"),
+  );
+});
+
+/**
+ * The attachable World Info LIBRARY is the other list on this surface, and its failed read had the
+ * same defect pointing the other way: `error` and `unavailable` shared one sentence, so a read that
+ * failed was told to the player as "the world book is temporarily unavailable" with no way to ask
+ * again but reloading the page. The failed read says what failed and offers that read.
+ */
+test("a world book library that could not be read says so, and offers the read again", async ({ page }) => {
+  const labels = characterLabels("en");
+  await stubCharacters(page, null);
+  let failing = true;
+  // The panel reads the composed state for the library, so this is the read under test.
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    failing ? route.fulfill(problem(503, "runtime_unavailable")) : route.fallback(),
+  );
+
+  const surface = await openCharacters(page, "Characters");
+  const failed = surface.locator("[data-world-book-read-failed]");
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText(labels.worldBookReadFailed);
+  await expect(failed).not.toContainText(labels.worldBookUnavailable);
+
+  failing = false;
+  const reread = page.waitForRequest((request) => request.url().endsWith("/api/composed-reference-game/v1/state"));
+  await failed.locator("[data-world-book-retry]").click();
+  await reread;
+  await expect(surface.locator("[data-world-book-read-failed]")).toHaveCount(0);
+  await expect(surface.locator("[data-world-book]")).toBeVisible();
 });
