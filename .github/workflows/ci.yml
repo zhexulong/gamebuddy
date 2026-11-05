@@ -295,6 +295,11 @@ jobs:
       - run: pnpm --dir host build:test
         timeout-minutes: 15
       - run: node tools/check-ci-coverage.mjs
+      # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the
+      # checkout does not create. Without this the gate refuses with `playwright_browser_missing`, which reads in the
+      # summary exactly like a real finding - the shape this repo keeps paying for.
+      - run: pnpm --dir dialogue-web exec playwright install --with-deps chromium
+        timeout-minutes: 10
       - run: node tools/check-ci-coverage.mjs --run
       # The totality audit's full finding list, kept per run so "is this getting better?" has an answer that is not a
       # memory. `--verbose` prints every site (the default report prints counts with a bounded sample), and the step runs
@@ -481,6 +486,17 @@ jobs:
       - run: pnpm audit:stardew-native-local-runner-contract
       - run: pnpm test:stardew-native-local-runner-contract
       - run: pnpm test:stardew-native-local-runner-fixture-contract
+      # The discovery-coverage gate: a `Discover*` function that publishes some of a location's
+      # entities but never reads the collection they are stored in. Two live defects had this exact
+      # shape (mine stones in `objects` versus a `terrainFeatures`-only scan; furniture in
+      # `furniture`, a collection the discovery never opened), and neither was visible from any
+      # existing check. It parses the Mod's C# and compares every discovery against one declared
+      # table of the collections its family's entities live in, so it needs no game folder and no
+      # installed workspace - it runs here, beside the runner-contract gates, and its falsifier suite
+      # rides the derived `test:tool-corpus` step.
+      - name: Stardew discovery reads the collections its entities live in
+        if: ${{ !cancelled() }}
+        run: pnpm check:stardew-discovery-collection-coverage
       # The two suites above are immune to a failing step ahead of them; this keeps the THIRD reading
       # readable from the run itself, because "the job said failure" is exactly what let a never-run
       # compile gate pass for a whole commit. `steps.<id>.outcome` is empty for a step that never
