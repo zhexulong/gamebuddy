@@ -928,6 +928,41 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(panel(page)).toHaveAttribute("data-state", "error");
     await expect(sentenceOf(page)).toHaveText("The installation search failed.");
   });
+
+  /**
+   * An abandoned search stops offering what it found.
+   *
+   * Measured on the shipped panel: with a scan's installations on screen, pressing Cancel
+   * left `data-state="cancelled"` over the same candidate rows - "Search cancelled." above a
+   * list still inviting the player to confirm one of them, with a Confirm button enabled for a
+   * search the panel had just said it abandoned. The panel's own rule is one sentence per
+   * moment, and the list is that sentence's answer: it belongs to the states that say the
+   * answer (`candidates`, and the `confirming` that acts on one of its rows), not to a state
+   * whose sentence is something else.
+   */
+  test("a cancelled scan leaves its own sentence alone, not the rows it abandoned", async ({ page }) => {
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(everyCandidateStatus)));
+    await page.route(CANCEL_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, status: "cancelled" })));
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+    const setup = panel(page);
+    await expect(setup).toHaveAttribute("data-state", "candidates");
+    await expect(setup.locator(".installation-candidate")).toHaveCount(3);
+
+    await setup.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(setup).toHaveAttribute("data-state", "cancelled");
+    await expect(sentenceOf(page)).toHaveText("Search cancelled.");
+    await expect(
+      setup.locator(".installation-candidate"),
+      "the rows of the search the player abandoned are still offered under the cancelled sentence",
+    ).toHaveCount(0);
+    // The step out of the state is the panel's own and is untouched by the rule.
+    await expect(setup.getByRole("button", { name: "Choose game folder", exact: true })).toBeEnabled();
+    await expect(setup.getByRole("button", { name: "Find again", exact: true })).toBeEnabled();
+  });
 });
 
 test.describe("B2 composed topology evidence", () => {

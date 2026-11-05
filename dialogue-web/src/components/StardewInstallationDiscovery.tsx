@@ -264,6 +264,18 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
   // one state in which abandoning the panel is not offered.
   const cancelDisabled = state === "confirming";
   /**
+   * The scan's answer is shown in every state except the one the player ends the scan
+   * with: a cancel retires the search, so it retires the rows that search was offering
+   * as well - the panel used to state "Search cancelled." over three confirmable
+   * installations.
+   *
+   * A refusal is not that. `mod_loader_missing`, `not_stardew_installation`,
+   * `reparse_point` and `selection_unavailable` are sentences about the candidate or the
+   * folder the player chose, so the list they were chosen from stays: choosing another
+   * one is how that state is left.
+   */
+  const showsCandidates = state !== "cancelled";
+  /**
    * Copies the launch option into the player's clipboard.
    *
    * The clipboard belongs to the browser, not to the Host: a Host-side copy would need a
@@ -325,7 +337,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       <p className="installation-state" role="status">
         {installationStateLabel(labels, state)}
       </p>
-      {discovery !== null && discovery.candidates.length > 0 && (
+      {showsCandidates && discovery !== null && discovery.candidates.length > 0 && (
         // The list is the only region that scrolls itself (see
         // `.installation-candidates`), so it is the region that takes focus: a
         // scroll container a keyboard cannot reach is unscrollable for that player
