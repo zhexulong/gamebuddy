@@ -719,7 +719,26 @@ export function ChatsSurfacePanel({
     return (
       <>
         <SurfaceNotice notice={inline} />
-        <p className="empty-subtle">{list === "error" ? labels.failure : labels.loading}</p>
+        {list === "error" ? (
+          <div data-chat-list-unavailable>
+            <p className="empty-subtle">{labels.failure}</p>
+            {/* The read is the whole retry: a failed `chat.list` left one sentence and no way back
+                but reloading the page, which also discarded the surface's other read. */}
+            <button
+              type="button"
+              className="small-button"
+              data-chat-list-retry
+              onClick={() => {
+                setList("loading");
+                void reread();
+              }}
+            >
+              {labels.problemRetryRead}
+            </button>
+          </div>
+        ) : (
+          <p className="empty-subtle">{labels.loading}</p>
+        )}
       </>
     );
   }

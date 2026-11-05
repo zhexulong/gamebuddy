@@ -1688,18 +1688,24 @@ export function MemoryRow({
   onUpdate: (content: string) => Promise<MemoryMutationOutcome>;
   onArchive: () => void;
 }>): ReactElement {
-  const [editing, setEditing] = useState(false);
-  const [content, setContent] = useState(item.content);
-  // Why the last save of this row was refused, shown beside the text it is about.
+  /*
+   * The row's editor and the player's correction, both held by the shell.
+   *
+   * `MemoryPanel` is rendered only while Memory is the selected surface (`shownSurface === …` in
+   * `ComposedReferenceGameApp`), so the row's own `useState` went with it: a correction the player
+   * was part-way through came back CLOSED, which is not losing the words so much as making them
+   * unreachable. Both facts are keyed by the row's own handle, so a correction belongs to the memory
+   * it was typed on, and `false` is no editor, because a handle is never empty.
+   */
+  const editing = useOpenDraft(`memory.item-open.${item.handle}`, false);
+  const content = useDraft(`memory.item-content.${item.handle}`, item.content);
+  // Why the last save of this row was refused, shown beside the text it is about. A refusal is a
+  // fact about one request, not the player's words, so it stays with the mount.
   const [refusal, setRefusal] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const beginEditing = (): void => {
-    // A conflict replaces the item with the authoritative reread. Reset this
-    // local draft at the transition into edit mode so a previous rejected
-    // value can never be submitted against the fresh projection revision.
-    setContent(item.content);
     setRefusal(null);
-    setEditing(true);
+    editing.type(true);
   };
   return (
     <div className="memory-item-card" role="listitem" data-memory-handle={item.handle}>
@@ -1712,37 +1718,41 @@ export function MemoryRow({
         </span>
         <span className="memory-item-meta">{statusText}</span>
       </div>
-      {editing ? (
+      {editing.value ? (
         <textarea
           aria-label={`${labels.memoryContent}: ${item.title}`}
           className="form-textarea"
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
+          value={content.value}
+          onChange={(event) => content.type(event.target.value)}
           rows={2}
         />
       ) : (
         <p>{item.content}</p>
       )}
-      {editing && refusal !== null && (
+      {editing.value && refusal !== null && (
         <p role="status" className="error-banner" data-memory-item-refusal>
           {refusal}
         </p>
       )}
       {mutationAvailable && item.status !== "archived" && (
         <div className="composer-actions">
-          {editing ? (
+          {editing.value ? (
             <button
               type="button"
               className="small-button"
-              disabled={saving || content.trim().length === 0}
+              disabled={saving || content.value.trim().length === 0}
               onClick={() => {
+                const sent = content.value;
                 setSaving(true);
                 void (async () => {
-                  const outcome = await onUpdate(content.trim());
+                  const outcome = await onUpdate(sent.trim());
                   setSaving(false);
                   if (outcome.kind === "saved") {
                     setRefusal(null);
-                    setEditing(false);
+                    // Back to the projection - unless the player typed while this save was in
+                    // flight, in which case those words are theirs and the editor keeps them.
+                    content.release(sent);
+                    editing.clear();
                   } else setRefusal(outcome.text);
                 })();
               }}
@@ -1750,7 +1760,7 @@ export function MemoryRow({
               {labels.save}
             </button>
           ) : (
-            <button type="button" className="small-button" onClick={beginEditing}>
+            <button type="button" className="small-button" data-draft-revealer onClick={beginEditing}>
               {labels.editMemory}
             </button>
           )}
