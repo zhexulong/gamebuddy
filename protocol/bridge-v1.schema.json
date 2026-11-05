@@ -2007,14 +2007,21 @@
       }
     },
     "harvestWhereabouts": {
+      "description": "One loaded map's ready-for-harvest crop count. The nearest tile is published ONLY for the map the actor stands on: a coordinate on another map is not an address, so a row for any other map carries its count and neither coordinate. The pair is both-or-neither.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "location",
-        "readyForHarvestCount",
-        "nearestX",
-        "nearestY"
+        "readyForHarvestCount"
       ],
+      "dependentRequired": {
+        "nearestX": [
+          "nearestY"
+        ],
+        "nearestY": [
+          "nearestX"
+        ]
+      },
       "properties": {
         "location": {
           "type": "string",
@@ -8351,14 +8358,21 @@
       }
     },
     "wateringWhereaboutsRow": {
+      "description": "One loaded map's dry-crop count. The nearest tile is published ONLY for the map the actor stands on: a coordinate on another map is not an address, so a row for any other map carries its count and neither coordinate. The pair is both-or-neither.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "location",
-        "needsWaterCount",
-        "nearestX",
-        "nearestY"
+        "needsWaterCount"
       ],
+      "dependentRequired": {
+        "nearestX": [
+          "nearestY"
+        ],
+        "nearestY": [
+          "nearestX"
+        ]
+      },
       "properties": {
         "location": {
           "type": "string",

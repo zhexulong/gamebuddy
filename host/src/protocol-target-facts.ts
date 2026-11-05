@@ -1006,41 +1006,39 @@ export function isVillagerWhereaboutsFact(value: unknown): boolean {
 /**
  * One loaded location's ready-for-harvest crop summary. The count is bounded
  * to a safe non-negative integer (a full farm cannot exceed a few thousand
- * crops; 1_000_000 is a generous but still finite ceiling), and the nearest
- * tile must be a real in-map coordinate.
- */
-
-/**
- * One loaded location's ready-for-harvest crop summary. The count is bounded
- * to a safe non-negative integer (a full farm cannot exceed a few thousand
- * crops; 1_000_000 is a generous but still finite ceiling), and the nearest
- * tile must be a real in-map coordinate.
+ * crops; 1_000_000 is a generous but still finite ceiling).
+ *
+ * `nearestX`/`nearestY` are OPTIONAL AND A PAIR. A count is a fact every loaded map has; the nearest tile is a fact only
+ * the map the actor stands on has, so an off-map row publishes its count with neither coordinate. Requiring both when
+ * either is present is what keeps a half-address - one axis of a tile, which names no place at all - out of the snapshot.
  */
 export function isHarvestWhereaboutsFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["location", "readyForHarvestCount", "nearestX", "nearestY"]) &&
+    hasExactKeysOrOptional(value, ["location", "readyForHarvestCount"], ["nearestX", "nearestY"]) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
     value.location.length <= 256 &&
     isNonNegativeSafeInteger(value.readyForHarvestCount) &&
     value.readyForHarvestCount <= 1_000_000 &&
-    isTileCoordinate(value.nearestX) &&
-    isTileCoordinate(value.nearestY)
+    (value.nearestX === undefined
+      ? value.nearestY === undefined
+      : isTileCoordinate(value.nearestX) && isTileCoordinate(value.nearestY))
   );
 }
 
 export function isWateringWhereaboutsFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["location", "needsWaterCount", "nearestX", "nearestY"]) &&
+    hasExactKeysOrOptional(value, ["location", "needsWaterCount"], ["nearestX", "nearestY"]) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
     value.location.length <= 256 &&
     isNonNegativeSafeInteger(value.needsWaterCount) &&
     value.needsWaterCount <= 1_000_000 &&
-    isTileCoordinate(value.nearestX) &&
-    isTileCoordinate(value.nearestY)
+    (value.nearestX === undefined
+      ? value.nearestY === undefined
+      : isTileCoordinate(value.nearestX) && isTileCoordinate(value.nearestY))
   );
 }
 

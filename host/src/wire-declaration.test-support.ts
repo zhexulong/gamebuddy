@@ -176,18 +176,22 @@ export function hostValidators(): Map<string, HostValidator | null> {
   for (const match of ALL_TS.matchAll(/function (is\w+)\([^)]*\): boolean \{([\s\S]*?)\n\}/g)) {
     const name = captured(match, 1, "a Host snapshot validator name");
     const body = captured(match, 2, `the \`${name}\` validator body`);
-    // Two helpers, and both are honest field lists: `hasExactKeys` demands exact equality, `hasOnlyKeys` allows a key
-    // to be absent (an optional field) but never an unlisted one. Either way the list IS the published field set.
-    const keys = /has(?:Exact|Only)Keys(?:OrOptional)?\(\s*\w+\s*,\s*\[([\s\S]*?)\]/u.exec(body);
+    // Three helpers, and all three are honest field lists: `hasExactKeys` demands exact equality, `hasOnlyKeys` allows a
+    // key to be absent (an optional field) but never an unlisted one, and `hasExactKeysOrOptional` takes the required set
+    // and then names the keys it tolerates. The SECOND bracket is part of that naming: a key a row may omit is still a key
+    // the validator names, and reading only the required list reported every optional member as a wire break the other way
+    // (`harvestWhereabouts.nearestX: the Mod publishes it and the validator does not name it`).
+    const keys = /has(?:Exact|Only)Keys(?:OrOptional)?\(\s*\w+\s*,\s*\[([\s\S]*?)\](?:\s*,\s*\[([\s\S]*?)\])?/u.exec(
+      body,
+    );
     if (keys === null) {
       validators.set(name, null);
       continue;
     }
+    const named = `${captured(keys, 1, `the \`${name}\` key list`)} ${keys[2] ?? ""}`;
     validators.set(name, {
       body,
-      keys: [...captured(keys, 1, `the \`${name}\` key list`).matchAll(/"([^"]+)"/g)].map((entry) =>
-        captured(entry, 1, `a \`${name}\` key`),
-      ),
+      keys: [...named.matchAll(/"([^"]+)"/g)].map((entry) => captured(entry, 1, `a \`${name}\` key`)),
     });
   }
   return validators;

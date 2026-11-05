@@ -32,9 +32,10 @@ const baseSnapshot: Snapshot = {
     { targetId: "crop_1", x: 4, y: 10, cropId: "24", displayName: "Cauliflower" },
     { targetId: "crop_2", x: 5, y: 10, cropId: "24", displayName: "Cauliflower" },
   ],
-  // The whole-map row the Mod sends alongside the radius scan. A fixture without it describes a world the Mod cannot produce,
-  // and it is exactly the row the HUD line now reads.
+  // The whole-map rows the Mod sends alongside the radius scan. A fixture without them describes a world the Mod cannot
+  // produce, and they are exactly the rows the crop lines read.
   wateringWhereabouts: [{ location: "Farm", needsWaterCount: 2, nearestX: 4, nearestY: 10 }],
+  harvestWhereabouts: [{ location: "Farm", readyForHarvestCount: 3, nearestX: 12, nearestY: 20 }],
 };
 
 function lineValues(text: string): Map<string, string> {
@@ -76,6 +77,7 @@ test("the state block is byte-identical for two turns in the same world", () => 
       "- exhausted: no",
       "- held tool: Hoe in slot 1",
       "- unwatered crops: 2 on Farm (nearest 4,10)",
+      "- ripe crops: 3 on Farm (nearest 12,20)",
       "- mine ladders: none here",
       "- mailbox: none here",
       "]",
@@ -184,6 +186,9 @@ test("every printed field is a declared snapshot field, and no line reads an und
     // "read from this field" apart from "printed the figure" - the base row is already Farm, so replacing it with another
     // Farm row would change no bytes.
     ["wateringWhereabouts", [{ location: "Desert", needsWaterCount: 7, nearestX: 3, nearestY: 4 }]],
+    // The ripe-crop row, probed the same way and for the same reason: an off-map row is the only probe that can tell
+    // "read from this field" apart from "printed the base fixture's figure".
+    ["harvestWhereabouts", [{ location: "Desert", readyForHarvestCount: 7 }]],
     ["mineEntranceTargets", [{ targetId: "mine_entrance_0123456789abcdef", x: 12, y: 3 }]],
     ["mailboxTargets", [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }]],
   ]);
@@ -244,7 +249,126 @@ test("dry crops on another map are reported, never folded into a zero", () => {
     location: "Town",
     wateringWhereabouts: [{ location: "Farm", needsWaterCount: 12, nearestX: 30, nearestY: 8 }],
   });
-  assert.equal(lineValues(elsewhere).get("unwatered crops"), "0 here; 12 on Farm (nearest 30,8)");
+  // And a coordinate on ANOTHER map is never printed even when the row carries one: (30,8) is a tile on the Farm, not a
+  // place the companion standing in Town can walk to.
+  assert.equal(lineValues(elsewhere).get("unwatered crops"), "0 here; 12 on Farm");
+});
+
+test("a dry Greenhouse does not hide behind a dry Farm", () => {
+  // The line printed the FIRST other-map row, so one dry map was named and the rest were invisible - two dry maps read as
+  // one, and the number the model acted on was whichever the wire happened to list first.
+  const both = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "FarmHouse",
+    wateringWhereabouts: [{ location: "Farm", needsWaterCount: 12 }],
+    harvestWhereabouts: [],
+  });
+  const greenhouse = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "FarmHouse",
+    wateringWhereabouts: [
+      { location: "Farm", needsWaterCount: 12 },
+      { location: "Greenhouse", needsWaterCount: 4 },
+    ],
+    harvestWhereabouts: [],
+  });
+  assert.equal(lineValues(both).get("unwatered crops"), "0 here; 12 on Farm");
+  assert.equal(lineValues(greenhouse).get("unwatered crops"), "0 here; 12 on Farm; 4 on Greenhouse");
+});
+
+test("the crop lines name three other maps and count the rest", () => {
+  const many = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "Town",
+    wateringWhereabouts: [
+      { location: "Farm", needsWaterCount: 12 },
+      { location: "Greenhouse", needsWaterCount: 4 },
+      { location: "IslandWest", needsWaterCount: 2 },
+      { location: "Desert", needsWaterCount: 1 },
+      { location: "Forest", needsWaterCount: 6 },
+    ],
+    harvestWhereabouts: [],
+  });
+  const rendered = lineValues(many).get("unwatered crops") ?? "";
+  assert.match(rendered, /\(\+2 more maps\)$/u, "three named, two counted - never silently dropped");
+  assert.ok(
+    Buffer.byteLength(many, "utf8") <= MAX_SNAPSHOT_HUD_BYTES,
+    `the block must stay inside ${MAX_SNAPSHOT_HUD_BYTES} bytes`,
+  );
+});
+
+test("a whereabouts row without a coordinate renders without one, never as undefined or -1", () => {
+  // This is the shape the Mod publishes for every map the companion is NOT standing on. Its count is the fact; its tile is
+  // not an address, so it is ABSENT - and an absent number must never leak into the block as `undefined` or as the magic
+  // `-1` a reader would then treat as a place.
+  const offMap = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "FarmHouse",
+    wateringWhereabouts: [{ location: "Farm", needsWaterCount: 12 }],
+    harvestWhereabouts: [{ location: "Farm", readyForHarvestCount: 3 }],
+  });
+  assert.equal(lineValues(offMap).get("unwatered crops"), "0 here; 12 on Farm");
+  assert.equal(lineValues(offMap).get("ripe crops"), "0 here; 3 on Farm");
+  assert.doesNotMatch(offMap, /undefined|NaN|-1\)|nearest -1/u);
+});
+
+test("the whereabouts arrays are sorted, so the wire's own order cannot change the block", () => {
+  // The Mod orders these rows by location, and the block must not depend on that being true: a reordered array is the same
+  // world, so it must be the same bytes - otherwise the cached history prefix changes and the model reads it as movement.
+  const rows = {
+    wateringWhereabouts: [
+      { location: "Farm", needsWaterCount: 12 },
+      { location: "Greenhouse", needsWaterCount: 4 },
+      { location: "Desert", needsWaterCount: 1 },
+    ],
+    harvestWhereabouts: [
+      { location: "Farm", readyForHarvestCount: 3 },
+      { location: "Greenhouse", readyForHarvestCount: 8 },
+      { location: "Desert", readyForHarvestCount: 2 },
+    ],
+  };
+  const ordered = formatSnapshotHud({ ...baseSnapshot, location: "FarmHouse", ...rows });
+  const reversed = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "FarmHouse",
+    wateringWhereabouts: [...rows.wateringWhereabouts].reverse(),
+    harvestWhereabouts: [...rows.harvestWhereabouts].reverse(),
+  });
+  assert.equal(reversed, ordered);
+  assert.equal(formatSnapshotHud({ ...baseSnapshot, location: "FarmHouse", ...rows }), ordered);
+  assert.equal(lineValues(ordered).get("unwatered crops"), "0 here; 1 on Desert; 12 on Farm; 4 on Greenhouse");
+  assert.equal(lineValues(ordered).get("ripe crops"), "0 here; 2 on Desert; 3 on Farm; 8 on Greenhouse");
+});
+
+test("ripe crops are a per-turn fact, in the three shapes the dry-crop line already uses", () => {
+  const here = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "Farm",
+    harvestWhereabouts: [{ location: "Farm", readyForHarvestCount: 9, nearestX: 2, nearestY: 7 }],
+  });
+  assert.equal(lineValues(here).get("ripe crops"), "9 on Farm (nearest 2,7)");
+
+  const none = formatSnapshotHud({ ...baseSnapshot, harvestWhereabouts: [] });
+  assert.equal(lineValues(none).get("ripe crops"), "none on any map");
+
+  const both = formatSnapshotHud({
+    ...baseSnapshot,
+    location: "Farm",
+    harvestWhereabouts: [
+      { location: "Farm", readyForHarvestCount: 9, nearestX: 2, nearestY: 7 },
+      { location: "Greenhouse", readyForHarvestCount: 4 },
+    ],
+  });
+  assert.equal(lineValues(both).get("ripe crops"), "9 on Farm (nearest 2,7); 4 on Greenhouse");
+});
+
+test("a ripe crop count moves its own line and the dry-crop line stays where it was", () => {
+  const before = formatSnapshotHud(baseSnapshot);
+  const after = formatSnapshotHud({
+    ...baseSnapshot,
+    harvestWhereabouts: [{ location: "Farm", readyForHarvestCount: 4, nearestX: 12, nearestY: 20 }],
+  });
+  assert.deepEqual(changedLineNames(before, after), ["ripe crops"]);
 });
 
 test("no dry crops anywhere is stated as a fact, not left blank", () => {

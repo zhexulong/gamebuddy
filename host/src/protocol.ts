@@ -724,21 +724,24 @@ export type Snapshot = Readonly<{
    * Every loaded location's ready-for-harvest crop summary, across the loaded
    * world. The per-location harvestTargets array is Chebyshev-bounded to the
    * player's neighbourhood, so this is the only planning fact that tells the
-   * Agent a ripe crop exists elsewhere — same role as villagerWhereabouts. The
-   * nearest tile lets the Agent route to the location before the bounded
-   * discovery takes over.
+   * Agent a ripe crop exists elsewhere — same role as villagerWhereabouts.
+   *
+   * `nearestX`/`nearestY` are a BOTH-OR-NEITHER pair and are published only for
+   * the map the actor stands on: another map's coordinate is not an address, so
+   * an off-map row carries its count and no tile at all.
    */
   harvestWhereabouts?: readonly Readonly<{
     location: string;
     readyForHarvestCount: number;
-    nearestX: number;
-    nearestY: number;
+    nearestX?: number;
+    nearestY?: number;
   }>[];
+  /** The same row shape, for the crops that still need water. */
   wateringWhereabouts?: readonly Readonly<{
     location: string;
     needsWaterCount: number;
-    nearestX: number;
-    nearestY: number;
+    nearestX?: number;
+    nearestY?: number;
   }>[];
   /** Nearby native pets that have not been petted today. */
   petTargets?: readonly Readonly<{

@@ -2822,18 +2822,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Summarize every loaded location's ready-for-harvest crops.
-    ///
-    /// <para>
-    /// Per-location HarvestTargets are Chebyshev-bounded, so this is the only
-    /// planning fact that tells the companion a ripe crop exists elsewhere —
-    /// same role as VillagerWhereabouts. Countable crops only (the same predicate
-    /// the bounded discovery uses), nearest tile is the one closest to the
-    /// player's current tile, and the result is bounded like the other snapshot
-    /// lists (Host accepts up to 64).
-    /// </para>
-    /// </summary>
-    /// <summary>
     /// How many crops need water on each map, and the nearest one.
     ///
     /// <para>
@@ -2868,11 +2856,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || !dirt.needsWatering())
                     continue;
                 needsWaterCount++;
-                        // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to
-                // subtract an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as
-                // distance 0 and an off-map row could claim the nearest tile. The coordinate of a crop on another map
-                // is not an address the companion can walk to, so only the player's own map computes one; every other
-                // row publishes its count with the sentinel below.
+                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
+                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
+                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
+                // address the companion can walk to, so only the player's own map computes one.
                 if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
@@ -2881,13 +2868,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     nearest = pair.Key;
                 }
             }
-            if (needsWaterCount > 0 && nearest is not null)
+            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
+            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
+            if (needsWaterCount > 0)
             {
                 result.Add(new BridgeWateringWhereabouts(
                     location.NameOrUniqueName,
                     needsWaterCount,
-                    (int)nearest.Value.X,
-                    (int)nearest.Value.Y));
+                    nearest is null ? null : (int)nearest.Value.X,
+                    nearest is null ? null : (int)nearest.Value.Y));
             }
         }
         return result
@@ -2895,6 +2884,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ToArray();
     }
 
+    /// <summary>
+    /// Summarize every loaded location's ready-for-harvest crops.
+    ///
+    /// <para>
+    /// Per-location HarvestTargets are Chebyshev-bounded, so this is the only
+    /// planning fact that tells the companion a ripe crop exists elsewhere —
+    /// same role as VillagerWhereabouts. Countable crops only (the same predicate
+    /// the bounded discovery uses), nearest tile is the one closest to the
+    /// player's current tile, and the result is bounded like the other snapshot
+    /// lists (Host accepts up to 64).
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts()
     {
         List<BridgeHarvestWhereabouts> result = new();
@@ -2918,11 +2919,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
                     continue;
                 readyCount++;
-                        // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to
-                // subtract an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as
-                // distance 0 and an off-map row could claim the nearest tile. The coordinate of a crop on another map
-                // is not an address the companion can walk to, so only the player's own map computes one; every other
-                // row publishes its count with the sentinel below.
+                // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
+                // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
+                // and an off-map row could claim the nearest tile. The coordinate of a crop on another map is not an
+                // address the companion can walk to, so only the player's own map computes one.
                 if (!sameMap) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
@@ -2931,13 +2931,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     nearest = pair.Key;
                 }
             }
-            if (readyCount > 0 && nearest is not null)
+            // The row is published for its COUNT, which every loaded map can answer. The coordinate is a separate fact that
+            // only the player's own map has, so an absent one is left ABSENT rather than this row being dropped with it.
+            if (readyCount > 0)
             {
                 result.Add(new BridgeHarvestWhereabouts(
                     location.NameOrUniqueName,
                     readyCount,
-                    (int)nearest.Value.X,
-                    (int)nearest.Value.Y));
+                    nearest is null ? null : (int)nearest.Value.X,
+                    nearest is null ? null : (int)nearest.Value.Y));
             }
         }
         return result

@@ -376,8 +376,19 @@ public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayNam
 /// loaded location holds and where the nearest (Chebyshev) one is, so the
 /// companion can route to a location before the bounded discovery takes over.
 /// </para>
+/// <para>
+/// ANOTHER MAP'S COORDINATE IS NOT AN ADDRESS. The nearest tile is published only for the location the player stands in;
+/// a row for any other map carries its count and NO coordinate. `-1` would be a magic number, and the Host refuses a
+/// negative tile, so the two members are nullable and omitted on the wire (WhenWritingNull) - once this row was emitted
+/// only when a nearest tile existed, which dropped every other map's count and told a companion waking in the farmhouse
+/// that nothing on any map was ripe.
+/// </para>
 /// </summary>
-public sealed record BridgeHarvestWhereabouts(string Location, int ReadyForHarvestCount, int NearestX, int NearestY);
+public sealed record BridgeHarvestWhereabouts(
+    string Location,
+    int ReadyForHarvestCount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NearestX = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NearestY = null);
 
 /// <summary>
 /// How many crops on this map need water, and where the nearest one is.
@@ -389,8 +400,16 @@ public sealed record BridgeHarvestWhereabouts(string Location, int ReadyForHarve
 /// while standing in a field that did. A radius-bounded list cannot answer a whole-map question, so the whole-map answer is
 /// published beside it.
 /// </para>
+/// <para>
+/// The nearest tile has the same rule as <see cref="BridgeHarvestWhereabouts"/>: it is published only for the player's own
+/// map, and a row for any other map carries its count with both coordinates absent.
+/// </para>
 /// </summary>
-public sealed record BridgeWateringWhereabouts(string Location, int NeedsWaterCount, int NearestX, int NearestY);
+public sealed record BridgeWateringWhereabouts(
+    string Location,
+    int NeedsWaterCount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NearestX = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NearestY = null);
 
 /// <summary>
 /// One available minecart ride from a station on the current map (travel's

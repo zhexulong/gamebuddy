@@ -71,6 +71,15 @@ type SnapshotHudLine = Readonly<{
       render: (snapshot) => unwateredCropsOf(snapshot),
     },
     {
+      // THE SAME QUADRANT, ONE CROP LATER. `harvestWhereabouts` was already published and already validated, and this block
+      // never read it - so the only way to learn that anything was ripe was a full `stardew_observe`, and a companion who
+      // had just finished watering had no per-turn signal that the crop it walked past was ready. Nothing is added here:
+      // the count is the Mod's own whole-map scan, and the line has the same shape as the dry-crop one beside it.
+      name: "ripe crops",
+      fields: ["harvestWhereabouts", "location"],
+      render: (snapshot) => ripeCropsOf(snapshot),
+    },
+    {
       // THE WAY OUT OF A MINE LEVEL, read every turn because the fact does not move.
       //
       // `mineEntranceTargets` is published from a whole-layer scan of the level's own Buildings layer: the exit ladder
@@ -225,28 +234,68 @@ function heldToolOf(snapshot: Snapshot): string {
 }
 
 /**
+ * One whole-map crop row, with its count read from its own family's member name.
+ *
+ * `nearestX`/`nearestY` are OPTIONAL AND A PAIR: the Mod publishes them only for the map the actor stands on, because a
+ * coordinate on another map is not an address. An absent tile is therefore rendered as ABSENT - never as `-1`, which the
+ * Host refuses, and never as `undefined`.
+ */
+type CropWhereabouts = Readonly<{ location: string; count: number; nearestX?: number; nearestY?: number }>;
+
+/** How many other maps the line names before it counts the rest. Three keeps it a line, and the rest is named. */
+const MAX_NAMED_OTHER_MAPS = 3;
+
+/**
  * The dry-crop line, read from the whole-map fact rather than the radius scan.
  *
- * `wateringWhereabouts` carries one row per location that has dry crops, with the count and the nearest tile on the player's
- * own map. Three shapes, each said plainly:
+ * `wateringWhereabouts` carries one row per loaded location that has dry crops. Three shapes, each said plainly:
  *
- *   here and everywhere  `34 on Farm (nearest 12,20)`      - the count IS this map's
- *   elsewhere            `0 here; 12 on Farm (nearest 12,20)` - the count is another map's, and saying "0" alone would
- *                                                            report "nothing to do" in the one place the companion is not
- *   nowhere              `none on any map`                  - a fact, not an absence: every grown crop that needs water has it
+ *   somewhere        `34 on Farm (nearest 12,20); 12 on Greenhouse` - every map is named; this one carries its tile
+ *   only elsewhere   `0 here; 12 on Farm`                          - "0" alone would report "nothing to do" in the one
+ *                                                                    place the work is not, and another map's tile is not
+ *                                                                    an address the companion can walk to
+ *   nowhere          `none on any map`                             - a fact, not an absence
  *
- * Deterministic by construction: the rows are already ordered by location, and this reads the first one for this map and the
- * first one for any map, never a set or a map iteration of its own.
+ * Deterministic by construction: the rows are SORTED by location, never trusted in the wire array's own order, and a line
+ * whose order changed while nothing in the world did would be both a cache invalidation and a false signal.
  */
 function unwateredCropsOf(snapshot: Snapshot): string {
-  const rows = snapshot.wateringWhereabouts ?? [];
-  const here = rows.find((row) => row.location === snapshot.location);
-  const elsewhere = rows.find((row) => row.location !== snapshot.location);
-  const describe = (row: { location: string; needsWaterCount: number; nearestX: number; nearestY: number }): string =>
-    `${row.needsWaterCount} on ${row.location} (nearest ${row.nearestX},${row.nearestY})`;
-  if (here !== undefined) return describe(here);
-  if (elsewhere !== undefined) return `0 here; ${describe(elsewhere)}`;
-  return "none on any map";
+  return cropWhereaboutsOf(
+    snapshot,
+    (snapshot.wateringWhereabouts ?? []).map((row) => ({ ...row, count: row.needsWaterCount })),
+  );
+}
+
+/** The same line for the crops that are ready to pick. */
+function ripeCropsOf(snapshot: Snapshot): string {
+  return cropWhereaboutsOf(
+    snapshot,
+    (snapshot.harvestWhereabouts ?? []).map((row) => ({ ...row, count: row.readyForHarvestCount })),
+  );
+}
+
+function cropWhereaboutsOf(snapshot: Snapshot, rows: readonly CropWhereabouts[]): string {
+  const ordered = [...rows].sort((left, right) =>
+    left.location < right.location ? -1 : left.location > right.location ? 1 : 0,
+  );
+  const here = ordered.find((row) => row.location === snapshot.location);
+  const elsewhere = ordered.filter((row) => row.location !== snapshot.location);
+  if (here === undefined && elsewhere.length === 0) return "none on any map";
+
+  const named = elsewhere.slice(0, MAX_NAMED_OTHER_MAPS).map((row) => `${row.count} on ${row.location}`);
+  if (elsewhere.length > named.length) named.push(`(+${elsewhere.length - named.length} more maps)`);
+  return [here === undefined ? "0 here" : describeCropWhereabouts(here), ...named].join("; ");
+}
+
+/**
+ * One row: its count, its map, and - only for the map the actor stands on - the nearest tile.
+ *
+ * A coordinate for another map is deliberately never printed, even if one reaches this renderer: the Host accepts a
+ * both-or-neither pair on any row, and printing it would present a place the companion cannot walk to.
+ */
+function describeCropWhereabouts(row: CropWhereabouts): string {
+  if (row.nearestX === undefined || row.nearestY === undefined) return `${row.count} on ${row.location}`;
+  return `${row.count} on ${row.location} (nearest ${row.nearestX},${row.nearestY})`;
 }
 
 function composeHud(lines: readonly Readonly<{ name: string; value: string }>[], omitted: readonly string[]): string {
