@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A push can land without GitHub creating a run: on 2026-11-05 `git push` reported
+  # `[remote rejected] … fatal error in commit_refs_rules`, the retry succeeded, and no run was ever
+  # created for the new HEAD — so `main` carried no CI reading at all. Manual dispatch is the way to get
+  # one without inventing an empty commit.
+  workflow_dispatch:
 
 permissions:
   contents: read
