@@ -16,7 +16,7 @@ import { CharacterCardImport } from "./CharacterCardImport";
 import { CompanionAvatar } from "./CompanionAvatar";
 import { CompanionInspectorDrawer, type InspectedCompanion } from "./CompanionInspectorDrawer";
 import { characterLabels, type CharacterLabels } from "./character-domain-labels";
-import { useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
+import { useChoiceDraft, useDraft, useOpenDraft, useRowsDraft } from "./surface-drafts";
 
 /** A save's outcome: `saved`, or the refusal's own bounded reason, or none. */
 type SaveNotice = "saved" | Readonly<{ failure: string }> | null;
@@ -231,16 +231,20 @@ export function CharactersPanel({
 
   const activeRef = useRef(true);
   /*
-   * The companion whose choice this surface recorded, and the two facts a refused press leaves.
+   * The companion whose choice this surface recorded, and the row in flight's handle.
    *
-   * `chosenHandle` is the surface's own fact about THIS session: `companion.activate` answers
-   * `status: "recorded"` and nothing else, and no read anywhere projects a pending choice back
-   * (`CompanionActivationV1Schema` carries no revision and `companion.list` carries no
-   * pending flag), so a reload honestly forgets it rather than asking the player to trust a mark
-   * the Host does not hold. `choosingHandle` is the row in flight, so a second press anywhere on
-   * the roster is refused by this panel rather than by the Host.
+   * `chosenHandle` is the record of `companion.activate`'s answer: it replies with `status: "recorded"`
+   * and no read projects a pending choice back (`CompanionActivationV1Schema` carries no revision and
+   * `companion.list` carries no pending flag), so the remount a surface switch causes used to forget
+   * a choice the Host still holds - the roster came back offering to choose her again and the
+   * "applied at restart" line was gone. It lives in the shell's draft store for that reason: a fact
+   * about this session must outlive this mount, or it is not about the session. It is still not
+   * durable - a reload honestly forgets it rather than asking the player to trust a mark the Host
+   * does not hold. `choosingHandle` is the row in flight, which is a fact about a request, so it
+   * stays with the mount.
    */
-  const [chosenHandle, setChosenHandle] = useState<string | null>(null);
+  const chosenChoice = useChoiceDraft<string>("characters.chosen-handle", "");
+  const chosenHandle = chosenChoice.value === "" ? null : chosenChoice.value;
   const [choosingHandle, setChoosingHandle] = useState<string | null>(null);
   // A refusal about the whole installation rather than one row: the route is not served, so the
   // control is withdrawn everywhere, or a game session owns the companion so every unmarked row
@@ -249,18 +253,27 @@ export function CharactersPanel({
   const [activationSessionBlocked, setActivationSessionBlocked] = useState(false);
   // The one refusal line the roster reports: the sentence for whichever press was last refused.
   const [activationNotice, setActivationNotice] = useState<string | null>(null);
-  useEffect(() => {
-    activeRef.current = true;
+  /**
+   * The roster read, kept callable.
+   *
+   * A read that failed left one sentence on the surface and no way back but a page reload, which
+   * also threw away every other read on it. The same `companion.list` call is the whole retry, so it
+   * is a function of its own rather than the mount effect's inline body.
+   */
+  const readCompanionList = (): void => {
+    setCompanionList("loading");
     void (async () => {
       try {
         const list = await api.listCompanions();
-        if (!activeRef.current) return;
-        setCompanionList(list);
+        if (activeRef.current) setCompanionList(list);
       } catch {
-        if (!activeRef.current) return;
-        setCompanionList("unavailable");
+        if (activeRef.current) setCompanionList("unavailable");
       }
     })();
+  };
+  useEffect(() => {
+    activeRef.current = true;
+    readCompanionList();
     void (async () => {
       try {
         const value = await api.readPersona();
@@ -412,7 +425,7 @@ export function CharactersPanel({
       // this panel's success branch tied to the contract rather than to the absence of an error.
       if (recorded.status !== "recorded") throw new Error("companion_activation_not_recorded");
       if (activeRef.current) {
-        setChosenHandle(recorded.handle);
+        chosenChoice.type(recorded.handle);
         setActivationSessionBlocked(false);
       }
     } catch (error) {
@@ -603,7 +616,12 @@ export function CharactersPanel({
   return (
     <section className="management-settings-section" aria-label={labels.personaTitle} data-characters-panel>
       {companionList === "unavailable" ? (
-        <p>{labels.unavailable}</p>
+        <div data-companion-list-unavailable>
+          <p>{labels.companionsUnreadable}</p>
+          <button type="button" className="small-button" data-companion-list-retry onClick={readCompanionList}>
+            {problemLabels.problemRetryRead}
+          </button>
+        </div>
       ) : (
         <>
           {/* The companion library comes FIRST, above the card import, and that order is a

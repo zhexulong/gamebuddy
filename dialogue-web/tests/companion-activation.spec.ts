@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
+import { messages } from "../src/i18n";
 
 /**
  * Choosing which companion this installation plays, from the roster.
@@ -449,4 +450,76 @@ test("the row keeps its control after a game-session refusal, and says which ste
   await expect(blocked.locator("[data-companion-stop-game]")).toHaveText(characterLabels("en").companionStopGameBadge);
   // Stopping the game and pressing again is a step the player can take, so the control stays.
   await expect(blocked.locator("[data-companion-choose]")).toHaveCount(1);
+});
+
+/**
+ * The choice the Host recorded is still on the roster after the player looks at another surface.
+ *
+ * `chosenHandle` was this panel's own `useState`, and the shell renders every surface conditionally
+ * (`shownSurface === …`), so looking at Settings unmounted the roster and the record of
+ * `companion.activate`'s answer with it. The row came back offering the choice again and the
+ * sentence naming the restart that applies it was gone - for a choice the Host still holds, since
+ * `companion.activate` answers `recorded` and no read projects a pending choice back. A fact about
+ * this session cannot live in one mount of one surface.
+ */
+test("a recorded choice is still on the roster after a trip to another surface", async ({ page }) => {
+  const activations: Activation[] = [];
+  await stubCharacters(page, activations);
+  const section = await openCharacters(page, "en", "Characters");
+
+  await section.locator('[data-companion-phase="offer"] [data-companion-choose]').click();
+  await expect(section.locator("[data-companion-activation-recorded]")).toBeVisible();
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByTestId("settings-surface")).toBeVisible();
+  await page.getByRole("button", { name: "Characters", exact: true }).click();
+  await expect(page.getByTestId("characters-surface")).toBeVisible();
+
+  // The roster read again on the way back and it is the read that cannot carry this fact, so what
+  // survives is the shell's own record of the answer - and nothing was sent a second time.
+  await expect(section.locator("[data-companion-entry]")).toHaveCount(2);
+  await expect(section.locator("[data-companion-activation-recorded]")).toBeVisible();
+  await expect(section.locator('[data-companion-phase="chosen"]')).toHaveCount(1);
+  expect(activations).toHaveLength(1);
+});
+
+/**
+ * A roster that could not be read says WHICH read failed, and offers it again.
+ *
+ * The failed branch rendered `labels.unavailable` - "Character management is unavailable in this
+ * profile" - and nothing else: a false statement about the profile, and no way back but reloading
+ * the page, which also discarded every other read on the surface. A retry is the same
+ * `companion.list` call that failed, so the sentence names the list and the control beside it
+ * performs exactly that read.
+ */
+test("a roster that could not be read offers the read again, and does not blame the profile", async ({ page }) => {
+  const activations: Activation[] = [];
+  await stubCharacters(page, activations);
+  const labels = characterLabels("en");
+  // Registered after the stub, so it answers first; it fails the roster reads until the retry.
+  let failing = true;
+  await page.route("**/api/tavern/v1/companions", (route) => {
+    if (failing) return route.fulfill(problem(503, "service_unavailable"));
+    return route.fallback();
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
+  const surface = page.getByTestId("characters-surface");
+  await expect(surface).toBeVisible();
+
+  const failed = surface.locator("[data-companion-list-unavailable]");
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText(labels.companionsUnreadable);
+  await expect(failed).not.toContainText(labels.unavailable);
+  // The retry performs exactly the read that failed, and it is named for that read rather than for
+  // a general "retry" - the shell's own "read it again" vocabulary.
+  const retry = failed.locator("[data-companion-list-retry]");
+  await expect(retry).toHaveText(messages("en").problemRetryRead);
+  // The retry performs that read again, and what comes back is what the surface shows.
+  failing = false;
+  const reread = page.waitForRequest((request) => request.url().endsWith("/api/tavern/v1/companions"));
+  await retry.click();
+  await reread;
+  await expect(surface.locator("[data-companion-list-unavailable]")).toHaveCount(0);
+  await expect(surface.locator("[data-companion-entry]")).toHaveCount(2);
 });

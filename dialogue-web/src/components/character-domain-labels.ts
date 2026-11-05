@@ -15,7 +15,6 @@ import type { Locale } from "../i18n";
  * are selected by the mount's own locale.
  */
 export type CharacterLabels = Readonly<{
-  unavailable: string;
   loading: string;
   saving: string;
   saved: string;
@@ -92,6 +91,12 @@ export type CharacterLabels = Readonly<{
 
   companionsTitle: string;
   companionsEmpty: string;
+  /**
+   * Said when `companion.list` itself could not be read. Not `unavailable`: that sentence claims the
+   * PROFILE does not serve character management, which is a different fact from a read that failed
+   * - and the read is the one the retry beside this sentence performs again.
+   */
+  companionsUnreadable: string;
   /**
    * Said after a card import whose roster re-read failed: the card IS imported and the list on
    * screen is one revision behind it, so the player's new companion is missing for a reason that
@@ -403,7 +408,6 @@ export type CharacterLabels = Readonly<{
 }>;
 
 const en: CharacterLabels = Object.freeze({
-  unavailable: "Character management is unavailable in this profile.",
   loading: "Loading…",
   saving: "Saving…",
   saved: "Saved.",
@@ -468,6 +472,7 @@ const en: CharacterLabels = Object.freeze({
 
   companionsTitle: "Companions",
   companionsEmpty: "No companions yet.",
+  companionsUnreadable: "The companion list could not be read.",
   companionsRefreshFailed:
     "The companion was imported, but the list could not be refreshed. Reload the page to see them.",
   companionCurrent: "current",
@@ -696,7 +701,6 @@ const en: CharacterLabels = Object.freeze({
 });
 
 const zh: CharacterLabels = Object.freeze({
-  unavailable: "当前配置不支持角色管理。",
   loading: "加载中…",
   saving: "保存中…",
   saved: "已保存。",
@@ -759,6 +763,7 @@ const zh: CharacterLabels = Object.freeze({
 
   companionsTitle: "伙伴",
   companionsEmpty: "还没有伙伴。",
+  companionsUnreadable: "无法读取伙伴列表。",
   companionsRefreshFailed: "伙伴已导入，但列表没能刷新；重新加载页面就能看到。",
   companionCurrent: "当前",
   companionInPlay:
