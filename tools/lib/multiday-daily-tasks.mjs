@@ -20,11 +20,21 @@
  * EVERY TASK IS BUILT FROM PUBLISHED ACTIONS. Nothing here introduces a capability; the tasks only say which
  * already-published actions the companion should reach for. A task that named an action the Mod does not
  * publish would make the run measure a capability gap instead of the behaviour it was built to observe.
+ *
+ * THE SCENARIO LIST ABOVE WAS NOT ENOUGH, so it is now followed by SWEEP TASKS derived from the published surface
+ * itself. Measured when they were added: the eighteen scenario tasks named 50 of the 95 published execution
+ * actions, so 45 could be finished, gated, and never once asked for - and a run stays green through that, which is
+ * the same defect `enter_mine` was for months. The sweep is not a new capability and not a new list to maintain:
+ * it is the remainder of the artifact, grouped by the family the Mod's own registration catalog declares, and
+ * `tools/check-stardew-task-action-coverage.mjs` fails when a published action is named by no task and explained by
+ * no exclusion.
  */
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
-/** The published action ids each task expects the companion to reach for. Used by the run's own audit. */
-export const DAILY_TASK_ACTION_HINTS = Object.freeze({
+import { readStardewActionFamilies } from "./stardew-published-action-registry.mjs";
+
+/** The published action ids each SCENARIO task expects the companion to reach for. Used by the run's own audit. */
+const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
   // Home is not scenery. A companion that only ever works the fields is a farmhand; these are what make the house
   // somewhere a person lives - arranging it, then making it bigger.
   home_and_hearth: Object.freeze([
@@ -60,6 +70,35 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
     "select_mine_elevator_floor",
     "ride_minecart",
   ]),
+  // The way OUT, which is its own action and its own failure: round30 got into a shaft and could not leave, and no task had
+  // ever asked for the exit ladder because there was nothing to ask for. A task that only names `enter_mine` measures entry.
+  mine_ladder_to_depth: Object.freeze([
+    "travel",
+    "navigate_to_destination",
+    "enter_mine",
+    "use_mine_ladder",
+    "break_rock",
+    "break_container",
+  ]),
+  // Arranging beats placing. `place_owned_object` was exercised and `move_placed_furniture` was not, so the companion could
+  // put a chair down and never move it - and round30's stone sign in the doorway is what a task that only says "place"
+  // produces.
+  furnish_and_arrange: Object.freeze([
+    "place_owned_object",
+    "move_placed_furniture",
+    "remove_placed_item",
+    "color_placed_object",
+    "dress_mannequin",
+    "set_sign_display",
+  ]),
+  // Machines are now data-driven (any machine the game's own data admits), which is worth nothing if no task ever loads one.
+  run_the_machines: Object.freeze([
+    "machine_load",
+    "machine_collect_output",
+    "machine_inspect",
+    "craft_item",
+    "place_owned_object",
+  ]),
   till_and_sow: Object.freeze(["till_soil", "plant_seed", "water_crop", "fertilize_tile"]),
   store_and_sort: Object.freeze(["chest_store", "chest_retrieve", "pickup_item"]),
   tend_the_animals: Object.freeze(["pet_animal", "feed_animal", "collect_animal_product", "water_pet_bowl"]),
@@ -74,6 +113,159 @@ export const DAILY_TASK_ACTION_HINTS = Object.freeze({
     "water_crop",
   ]),
 });
+
+/**
+ * The published EXECUTION population, read from the Mod-owned generated surface artifact.
+ *
+ * Derived, not listed. `kind: "execution"` is the artifact's own statement of what the companion can be asked to
+ * DO - `read_only` actions are the ones a snapshot already answers - and the coverage gate reads the same field
+ * as its population, so the tasks and the gate cannot disagree about what "all of it" means.
+ */
+const SURFACE_ARTIFACT = new URL(
+  "../../integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
+  import.meta.url,
+);
+
+function readExecutionPopulation() {
+  const artifact = JSON.parse(readFileSync(SURFACE_ARTIFACT, "utf8"));
+  const actions = (artifact.actions ?? []).filter((action) => action.kind === "execution");
+  if (actions.length === 0) throw new Error("stardew_action_surface_has_no_execution_actions");
+  return Object.freeze(actions.map((action) => action.actionId));
+}
+
+/**
+ * The sweep tasks, as the Mod's own action FAMILIES gathered into a few groups.
+ *
+ * The families are read from the Mod's registration catalog (`FarmhandActionDefinitions.cs`, through
+ * `readStardewActionFamilies`), which `host/src/games/stardew/stardew-action-families.ts` already names as the
+ * authority for that vocabulary. No taxonomy is invented here: a group is a set of families the Mod declares.
+ *
+ * WHY GROUPS AND NOT ONE TASK PER ACTION. A prompt is one sentence a partner says, and a sentence that lists
+ * actions reads as a checklist - the shape the interaction-value gate penalises, because a companion handed a
+ * checklist reports steps instead of doing a job. Grouping by family is what keeps every prompt below speakable:
+ * a family is a PLACE or a KIND OF WORK (the yard's fixtures, the animals), so the sentence can be about that
+ * place and the actions stay the companion's decision. Each prompt names a place and no action, which is the same
+ * rule the scenario tasks follow.
+ *
+ * A family is absent from this table for one of two reasons, and the difference is visible in the gate: either every
+ * action it holds is already named by a scenario task (machines, world navigation), or the actions left in it are
+ * ones no single Farmhand can perform at all - a second player, a horse, an island that needs unlocking. The second
+ * kind is named with its blocker in `TASK_ACTION_EXCLUSIONS` in the coverage gate, and that gate fails if an
+ * exclusion ever turns out to be covered - so a family added here cannot leave a stale reason behind.
+ */
+const SWEEP_GROUPS = Object.freeze([
+  Object.freeze({
+    id: "sweep_yard_and_work",
+    families: Object.freeze([
+      "buildings_farm_management",
+      "facility_storage_lighting",
+      "resource_gathering",
+      "farming_crops",
+      "movement_navigation",
+      "world_lifecycle",
+    ]),
+    prompt: Object.freeze({
+      zh: "农场上的东西今天都用一用，能装能收的顺手收了，天黑就回屋睡。",
+      en: "put the farm's own fixtures to use today - whatever holds or yields something, work it - and turn in when it gets dark.",
+    }),
+    purpose: "the farm's own fixtures and the ground around them were all worked",
+    missingFact:
+      "no published fact says a fixture was used as a class: every receipt names one action and one target, and the grouping is a declaration in this repository, so a run can report which of these actions ran but never that the farm's fixtures were worked through.",
+  }),
+  Object.freeze({
+    id: "sweep_animals_and_company",
+    families: Object.freeze(["animals_pets", "expression", "modal_handling", "quests_journal"]),
+    prompt: Object.freeze({
+      zh: "去看看牲口，碰上人就聊两句，有人问话就答。",
+      en: "look in on the animals, and when you run into somebody have a word - answer whatever they ask.",
+    }),
+    purpose: "the animals were seen to and whoever was around was spoken to",
+    missingFact:
+      "the receipts name one action each - `pet_animal` reports the animal it touched and `talk_to_npc` the map the words happened on - and nothing publishes whether anyone was around to talk to, so 'the animals and the company were seen to' cannot be decided from them.",
+  }),
+  Object.freeze({
+    id: "sweep_carried_things",
+    families: Object.freeze(["body_tools", "crafting_cooking", "shops_economy", "inventory_items"]),
+    prompt: Object.freeze({
+      zh: "把随身带着的东西理一遍，能用的用掉、该卖的卖掉。",
+      en: "sort through what you are carrying - use what is worth using, sell what should be sold.",
+    }),
+    purpose: "what was carried was sorted and put to use",
+    missingFact:
+      "the receipts report one action and one item each, and nothing publishes what the backpack held before or after, so 'what was carried was sorted' has no fact behind it - only the individual uses it led to.",
+  }),
+]);
+
+/**
+ * The sweep tasks for one published population: the actions no scenario task names, grouped by declared family.
+ *
+ * Pure over its three inputs, so the falsifier can hand it a population the repository does not have. An action
+ * whose family belongs to no group comes out in NO task - which is not a silent drop: it is what the coverage gate
+ * then reports as uncovered, and it is why the excluded actions need no entry in this table.
+ */
+export function buildSweepTasks({ population, familyOf, named }) {
+  const groupOfFamily = new Map();
+  for (const group of SWEEP_GROUPS) {
+    for (const family of group.families) {
+      const claimed = groupOfFamily.get(family);
+      if (claimed !== undefined) {
+        throw new Error(`stardew_sweep_family_in_two_groups:${family}:${claimed}:${group.id}`);
+      }
+      groupOfFamily.set(family, group.id);
+    }
+  }
+  const remaining = population.filter((actionId) => !named.has(actionId));
+  const tasks = [];
+  for (const group of SWEEP_GROUPS) {
+    const actions = remaining.filter((actionId) => groupOfFamily.get(familyOf.get(actionId)) === group.id);
+    if (actions.length === 0) continue;
+    tasks.push(
+      Object.freeze({
+        id: group.id,
+        families: group.families,
+        actions: Object.freeze(actions),
+        prompt: group.prompt,
+        purpose: group.purpose,
+        missingFact: group.missingFact,
+      }),
+    );
+  }
+  return Object.freeze(tasks);
+}
+
+const SWEEP_TASKS = buildSweepTasks({
+  population: readExecutionPopulation(),
+  familyOf: readStardewActionFamilies(),
+  named: new Set(Object.values(SCENARIO_TASK_ACTION_HINTS).flat()),
+});
+
+/**
+ * Every published action id a task expects the companion to reach for - the scenario tasks and the sweep tasks.
+ *
+ * The coverage gate's population of COVERED actions is the union of these values, read from this module rather
+ * than parsed out of it, so a task added tomorrow is covered by construction.
+ */
+export const DAILY_TASK_ACTION_HINTS = Object.freeze({
+  ...SCENARIO_TASK_ACTION_HINTS,
+  ...Object.fromEntries(SWEEP_TASKS.map((task) => [task.id, task.actions])),
+});
+
+/** The sweep tasks themselves, in rotation order, with the purpose each one cannot decide from published facts. */
+export const SWEEP_DAILY_TASKS = SWEEP_TASKS;
+
+/**
+ * The sweep tasks' prompts, by locale and keyed by task id.
+ *
+ * The runner owns the player-facing framing, but it does not own the sweep tasks' sentences: writing them there as
+ * well would be a second list of the same ids, and the runner reads its prompt table BY KEY - so a key it does not
+ * have becomes the literal string "undefined" in the note the companion is handed. One authority, two locales.
+ */
+export function sweepTaskPrompts() {
+  return Object.freeze({
+    zh: Object.freeze(Object.fromEntries(SWEEP_TASKS.map((task) => [task.id, task.prompt.zh]))),
+    en: Object.freeze(Object.fromEntries(SWEEP_TASKS.map((task) => [task.id, task.prompt.en]))),
+  });
+}
 
 /**
  * The rotation, in the order a run walks it. Stable ids; the prompts live in the runner because they are
@@ -100,6 +292,13 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "clear_and_cultivate",
   "home_and_hearth",
   "home_upgrade",
+  "mine_ladder_to_depth",
+  "furnish_and_arrange",
+  "run_the_machines",
+  // The sweep tasks come LAST, deliberately. The eighteen above are a coverage plan somebody argued for, in an
+  // order that puts what a bare farm can satisfy first; appending rather than interleaving keeps that plan intact
+  // and makes the new days the tail of the rotation rather than a silent reordering of every run that came before.
+  ...SWEEP_TASKS.map((task) => task.id),
 ]);
 
 /**
