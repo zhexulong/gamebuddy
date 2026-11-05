@@ -33,11 +33,12 @@ import {
   assessMultiDayBaseline,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
+  NIGHT_CAUSE_PASS_OUT,
   nightCause,
   parseReceiptEvidence,
 } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
-import { judgeUncrossedNight, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
+import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import {
   countPriorMultidayRuns,
   dailyTaskFor,
@@ -424,6 +425,10 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
   till_and_sow: "把空地翻一翻，种上种子，浇上水。",
+  // ONE sentence, and the size is the point of the sentence: a plot twenty tiles long cannot fit in the 13x13 window
+  // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
+  // hers - and no instruction about how to plan it is appended, because the shape is the task.
+  clear_and_plant_long_patch: "门前横着开一条长地，三格宽、二十格长，清出来种上。",
   tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
   tend_the_animals: "去看看牲口，该摸的摸，该喂的喂，有东西就收。",
   dress_and_display: "给自己换身衣裳，把屋里摆出点样子来。",
@@ -449,6 +454,8 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
     "the woods on the east side are too thick - clear a patch of open ground, then plant and water something in it. Size is your call.",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
   till_and_sow: "turn the bare ground, put seeds in it, and water them. ",
+  clear_and_plant_long_patch:
+    "open up a long strip out front - three tiles wide, twenty long - clear it and plant it. ",
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
   tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",
   dress_and_display: "put on something else, and make the house look like somebody lives in it. ",
@@ -3002,8 +3009,33 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   const passOutFactThisNight = factLog
     .slice(factStart)
     .some((entry) => entry?.kind === "night_ended_pass_out" || entry?.semanticKind === "night_ended_pass_out");
+  /**
+   * HER OWN LIFECYCLE RECEIPT, whether or not it is the crossing.
+   *
+   * `crossingTerminal` above keeps only a `succeeded/day_advanced` terminal, because a refusal is not the night's
+   * terminal. But a night her own sleep ended can reach the calendar WITHOUT that receipt carrying the crossing, and
+   * then the record used to say `cause: "engine"` - "the day moved and nobody saw how" - while the receipt naming
+   * `entered_via=native_sleep_prompt` sat in the log. Measured 2026-11-05
+   * (`2026-11-05T15-02-34-974Z-multiday_routine`), day 1: `sleep` accepted at 23:14:37 with `target=own_bed`, the
+   * lifecycle walked to bed and answered the native Sleep prompt, the day crossed 5 -> 6 at 23:15:49 while it waited
+   * for a `day_started` it never observed, and its terminal arrived `blocked/lifecycle_deadline_exceeded` with
+   * `entered_via=native_sleep_prompt`. The record said `engine` with `passOutNights: 0`, and the baseline answered
+   * `night_mechanism_unobserved` for the one night of the run that ended exactly as intended.
+   *
+   * The shape is `night-verdict.mjs`'s own (`sleepReceiptOf`): the artifact already publishes her sleep witness that
+   * way for a night that never crossed, and this is the same receipt for a night that did.
+   */
+  const sleepReceipt = (() => {
+    const entered = sleepWitnesses().find(
+      (witness) => typeof parseReceiptEvidence(witness.terminal?.evidence).entered_via === "string",
+    );
+    return entered === undefined ? null : sleepReceiptOf(entered);
+  })();
   const cause = nightCause({
     enteredVia: parseReceiptEvidence(terminal?.evidence).entered_via ?? null,
+    // The night's OWN sleep receipt, read only when it is not the crossing above - which `nightCause` decides from the
+    // two values together rather than from either alone.
+    sleepEnteredVia: parseReceiptEvidence(sleepReceipt?.evidence).entered_via ?? null,
     passOutObserved: outcome.passOutObserved === true || passOutFactThisNight,
   });
   // Did the night actually pass? The calendar is the witness that no dispatch path can hide, and it is read even
@@ -3024,9 +3056,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return Number.isInteger(dayBefore) && Number.isInteger(now) && now !== dayBefore;
   })();
   if (dayAdvanced && terminal === null) {
-    // The calendar is the only witness this night has: no `sleep` receipt arrived in this window on either
-    // channel, and inventing one would be a receipt for something nothing observed. `release` says what actually
-    // closed the night, and `cause` stays `engine` - the crossing is a fact and its attribution is not.
+    // The calendar is the crossing's witness here: no `succeeded/day_advanced` receipt arrived in this window on either
+    // channel, so `release` says what actually closed the day. `cause` is NOT forced to `engine` - the night's own
+    // sleep receipt (read above) is published beside it, and when that receipt exists with
+    // `entered_via=native_sleep_prompt` the cause is `sleep_unsettled` rather than an unattributed crossing.
     return Object.freeze({
       terminal: null,
       after: Object.freeze({ ...afterNight, dayBefore }),
@@ -3036,6 +3069,8 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // The hour the night took the actor, as this watch saw the clock. A night the calendar alone witnessed still has
       // an hour: the observations kept coming while the day was current.
       bedTime: bedTimeBeforeCrossing,
+      // Her own lifecycle receipt, so the day record can be judged without the process's memory of this watch.
+      sleepReceipt,
       reasonCode: null,
     });
   }
@@ -3053,6 +3088,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       menus: outcome.menus,
       cause: null,
       bedTime: bedTimeBeforeCrossing,
+      sleepReceipt,
       reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,
     });
   }
@@ -3062,6 +3098,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     menus: outcome.menus,
     cause,
     bedTime: bedTimeBeforeCrossing,
+    sleepReceipt,
     reasonCode: outcome.reasonCode ?? null,
   });
 }
@@ -4006,11 +4043,14 @@ try {
           Object.freeze({
             day,
             bedTime: night.bedTime ?? null,
-            passedOut: night.cause === "pass_out",
+            passedOut: night.cause === NIGHT_CAUSE_PASS_OUT,
             cause: night.cause ?? null,
             // Which of the three uncrossed-night findings this was, when there was one - carried through to the day
             // record so the artifact states WHY a night is missing instead of only that it is.
             nightVerdict: night.nightVerdict ?? null,
+            // Her own `sleep` receipt for this night, crossing or not: the evidence the baseline attributes a night
+            // her sleep ended from when the CALENDAR carried the crossing (`NIGHT_CAUSE_SLEEP_UNSETTLED`).
+            sleepReceipt: night.sleepReceipt ?? null,
           }),
         );
         return night;
@@ -4023,6 +4063,7 @@ try {
         record.bedTime = night?.bedTime ?? null;
         record.passedOut = night?.passedOut ?? null;
         record.nightVerdict = night?.nightVerdict ?? null;
+        record.sleepReceipt = night?.sleepReceipt ?? null;
         console.error(
           "MULTIDAY_NIGHT",
           JSON.stringify({

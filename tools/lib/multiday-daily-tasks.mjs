@@ -112,6 +112,23 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "plant_seed",
     "water_crop",
   ]),
+  // THE ONE TASK WHOSE SHAPE IS LONGER THAN ONE VIEW. Target discovery is Chebyshev radius 6, so every snapshot is a
+  // 13x13 window and no snapshot contains this plot: 3x20 is twenty tiles long. Sixty tiles at three actions each keeps
+  // the day's cost beside `clear_and_cultivate`, and the question is one no task has ever asked - can she hold a
+  // boundary after walking out of the window she laid the far end of it in?
+  //
+  // `chop_tree`/`chop_stump` are deliberately absent, and that is the only pruning: this patch is a strip of open
+  // ground, and a tile a tree stands on is not a tile you till - `clear_and_cultivate` keeps both because its patch is
+  // cut out of the woods, which is the opposite ground. Weeds, loose debris and rocks are what a clearable strip in
+  // front of the house actually holds, and all three stand between her and the first tilled tile.
+  clear_and_plant_long_patch: Object.freeze([
+    "cut_weeds",
+    "clear_debris",
+    "break_rock",
+    "till_soil",
+    "plant_seed",
+    "water_crop",
+  ]),
 });
 
 /**
@@ -295,7 +312,11 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   "mine_ladder_to_depth",
   "furnish_and_arrange",
   "run_the_machines",
-  // The sweep tasks come LAST, deliberately. The eighteen above are a coverage plan somebody argued for, in an
+  // APPENDED after the farming tasks rather than interleaved: it is the last of the scenario days, and the sweep tasks
+  // stay the tail of the rotation. A day that has to till sixty tiles should not be what the first run of a series
+  // begins with, and `runOffsetFor` still walks the whole list one first-day per run.
+  "clear_and_plant_long_patch",
+  // The sweep tasks come LAST, deliberately. The nineteen above are a coverage plan somebody argued for, in an
   // order that puts what a bare farm can satisfy first; appending rather than interleaving keeps that plan intact
   // and makes the new days the tail of the rotation rather than a silent reordering of every run that came before.
   ...SWEEP_TASKS.map((task) => task.id),

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
 import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION } from "./multiday-daily-tasks.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
@@ -43,6 +45,55 @@ const ENTERED_MINE = receipt("enter_mine", {
   reasonCode: "mine_entered",
   evidence: { detail: "level=11;tile=6,6;from_level=10" },
 });
+// The tile-bearing terminals, in the producer's own shapes (`stardew-game-integration-adapter.test.ts`). A patch day's
+// evidence IS a coordinate: these three actions each name the tile they changed as part of their postcondition.
+const TILLED = (x, y, location = "Farm") =>
+  receipt("till_soil", {
+    reasonCode: "soil_tilled",
+    evidence: {
+      detail:
+        "location=" +
+        location +
+        ";target=" +
+        String(x) +
+        "," +
+        String(y) +
+        ";before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+    },
+  });
+const PLANTED = (x, y, location = "Farm") =>
+  receipt("plant_seed", {
+    reasonCode: "seed_planted",
+    evidence: {
+      detail:
+        "location=" +
+        location +
+        ";target=soil_01;tile=" +
+        String(x) +
+        "," +
+        String(y) +
+        ";item=(O)472;crop=Parsnip;inventory_before=2;inventory_after=1",
+    },
+  });
+const CUT_WEEDS = receipt("cut_weeds", {
+  reasonCode: "weeds_cut",
+  evidence: {
+    detail:
+      "target=weed_01;type=weed;tool=scythe;tool_selected=scythe;slot=1;tool_before=axe;slot_before=0;qualified_item_id=(O)313;health_before=2;health_after=removed;swings=2;removed=true;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_restored=axe",
+  },
+});
+
+/** A rectangle of tiles, as `[x, y]` pairs. */
+const rectangle = (width, height, originX = 12, originY = 4) => {
+  const points = [];
+  for (let x = 0; x < width; x += 1) {
+    for (let y = 0; y < height; y += 1) points.push([originX + x, originY + y]);
+  }
+  return points;
+};
+
+/** The receipts a patch day's own history would leave: every tile tilled, then a seed put in it. */
+const patchReceipts = (points) => points.flatMap(([x, y]) => [TILLED(x, y), PLANTED(x, y)]);
 
 test("every rotation task declares a purpose or names the fact that is missing", () => {
   const undeclared = ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task] === undefined);
@@ -58,7 +109,7 @@ test("no purpose is declared for a task the rotation never asks for", () => {
   assert.deepEqual(orphans, [], `these criteria describe tasks no run asks for: ${orphans.join(", ")}`);
 });
 
-test("a purpose is either a criterion of more than one fact, or a named gap", () => {
+test("a purpose is either a criterion of more than one fact, a declared shape, or a named gap", () => {
   for (const [task, entry] of Object.entries(TASK_PURPOSE_CRITERIA)) {
     if (entry.missingFact !== undefined) {
       assert.ok(
@@ -74,6 +125,32 @@ test("a purpose is either a criterion of more than one fact, or a named gap", ()
         typeof entry.purpose === "string" && entry.purpose.length > 0,
         `${task}: a gap states the purpose it cannot decide`,
       );
+      continue;
+    }
+    // A SHAPE is the third kind, and it declares the rectangle rather than a step list: the criterion is not "these
+    // actions happened" but "the tiles they changed form this rectangle". It must still name what proves a tile,
+    // because a shape nothing can fill is a purpose nothing can decide.
+    if (entry.patch !== undefined) {
+      assert.equal(entry.steps, undefined, `${task}: a declared shape is not a step list`);
+      for (const dimension of ["width", "height"])
+        assert.ok(
+          Number.isInteger(entry.patch[dimension]) && entry.patch[dimension] > 1,
+          `${task}: a declared patch needs an integer ${dimension} of more than one tile`,
+        );
+      assert.ok(
+        typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
+        `${task}: a shape criterion states its purpose`,
+      );
+      for (const kind of ["tilledBy", "croppedBy"])
+        assert.ok(
+          Array.isArray(entry[kind]) && entry[kind].length > 0,
+          `${task}: a declared patch must say which actions prove a tile is ${kind === "tilledBy" ? "tilled" : "crop-bearing"}`,
+        );
+      for (const proof of [...entry.tilledBy, ...entry.croppedBy])
+        assert.ok(
+          typeof proof.actionId === "string" && typeof proof.tileField === "string",
+          `${task}: every tile proof names an action and the evidence field that carries the tile`,
+        );
       continue;
     }
     assert.ok(
@@ -109,6 +186,15 @@ test("every action a criterion reads is published by the Mod", async () => {
             : `${task} reads ${actionId}, which the Mod does not publish`,
         );
       }
+    }
+    // A shape criterion reads its tile proofs instead of steps, and the same rule governs them.
+    for (const proof of [...(entry.tilledBy ?? []), ...(entry.croppedBy ?? [])]) {
+      if (published.has(proof.actionId)) continue;
+      drifting.push(
+        experimental.has(proof.actionId)
+          ? `${task} reads ${proof.actionId}, which the Mod registers Experimental - no run can dispatch it`
+          : `${task} reads ${proof.actionId}, which the Mod does not publish`,
+      );
     }
   }
   assert.deepEqual(drifting, [], drifting.join("; "));
@@ -212,4 +298,143 @@ test("an unregistered task is unproven and names itself", () => {
   const judged = judgeTaskPurpose("not_a_rotation_task", [BROKE_ROCK]);
   assert.equal(judged.state, "unproven");
   assert.match(judged.missingFact ?? "", /not_a_rotation_task/);
+});
+
+/**
+ * The shape criterion, and the four outcomes it must never confuse.
+ *
+ * red-proof: inject  `judgePatch` returning `achieved` whenever any tile was proved (drop the window count) ->
+ *                    `37 of the sixty tiles is a patch that is not finished` and
+ *                    `sixty tiles in another shape are named as another shape` both go red, because 37 tiles and a
+ *                    10x6 block would be reported as a finished 3x20 strip;
+ *                    and returning `not_achieved` for a set with no coordinates at all ->
+ *                    `a patch day whose receipts carry no tile is our gap, not her failure`
+ *                    (tools/lib/task-purpose.test.mjs)
+ */
+test("a declared patch is longer than the window one snapshot sees", () => {
+  // THE PREMISE OF THE TASK, not a size preference: target discovery is Chebyshev radius 6, so one snapshot is a
+  // 13x13 window. A declared patch that fits inside it would be provable from a single observation, and the day would
+  // measure nothing `till_and_sow` does not already measure. The radius is read from the Mod itself, so a change
+  // there either keeps the premise true or fails here.
+  const constants = modConstants([
+    {
+      file: "integrations/stardew/farmhandexecutioncontroller.cs",
+      text: readFileSync(new URL("../../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url), "utf8"),
+    },
+  ]);
+  const radius = constants.get("TargetDiscoveryRadius");
+  assert.ok(
+    Number.isInteger(radius),
+    "the Mod's discovery radius is not readable, so the premise a long patch rests on cannot be checked",
+  );
+  const window = radius * 2 + 1;
+  const declared = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.patch !== undefined);
+  assert.ok(declared.length > 0, "no task declares a shape, so nothing asks for a plot longer than one view");
+  for (const [task, entry] of declared)
+    assert.ok(
+      Math.max(entry.patch.width, entry.patch.height) > window,
+      `${task}: a ${String(entry.patch.width)}x${String(entry.patch.height)} patch fits inside the ${String(window)}x${String(window)} window one snapshot sees, so a single observation already answers it`,
+    );
+});
+
+test("a long strip proved tile by tile is the declared patch", () => {
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(3, 20)));
+  assert.equal(judged.state, "achieved");
+  assert.equal(judged.patchWindow?.count, 60, "all sixty tiles of the strip must be proved, tile by tile");
+  assert.equal(judged.location, "Farm");
+});
+
+test("the same strip laid the other way is the same work", () => {
+  // The player asked for a strip three wide and twenty long. A companion that laid it twenty wide and three deep did
+  // the same clearing, tilling and sowing, and a criterion that failed it would be grading the drawing.
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(20, 3)));
+  assert.equal(judged.state, "achieved");
+});
+
+test("37 of the sixty tiles is a patch that is not finished, and the count says so", () => {
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(3, 20).slice(0, 37)));
+  assert.equal(judged.state, "not_achieved");
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+  assert.match(judged.detail ?? "", /37\/60 tiles inside the best 3x20 window/u);
+});
+
+test("sixty tiles in another shape are named as another shape, not as a short patch", () => {
+  // Both are sixty tiles and neither is the patch - but "planted 37 of a 60-tile strip" and "planted sixty tiles that
+  // are not a strip" are different defects, and one sentence for both is how the second goes unnoticed.
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(10, 6)));
+  assert.equal(judged.state, "not_achieved");
+  assert.equal(judged.reasonCode, "tiles_do_not_form_the_declared_patch");
+  assert.deepEqual(judged.largestRectangle, { x: 12, y: 4, width: 10, height: 6, area: 60 });
+  assert.match(judged.detail ?? "", /largest rectangle found is 10x6 \(60 tiles\), not the declared 3x20/u);
+  const short = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(3, 20).slice(0, 37)));
+  assert.notEqual(
+    short.reasonCode,
+    judged.reasonCode,
+    "a strip that is not finished and a patch of the wrong shape must not read the same",
+  );
+});
+
+test("a patch day whose receipts carry no tile is our gap, not her failure", () => {
+  // `cut_weeds` is a real completion with a real postcondition and no coordinate at all: a day of clearing proves work
+  // and proves nothing about where it happened. Answering `not_achieved` there would report a plot that was never
+  // tilled as a plot she failed, and the coordinate is what this run did not record.
+  for (const receipts of [[], [CUT_WEEDS]]) {
+    const judged = judgeTaskPurpose("clear_and_plant_long_patch", receipts);
+    assert.equal(judged.state, "unproven");
+    assert.equal(judged.reasonCode, "task_purpose_has_no_tile_coordinates");
+    assert.match(judged.missingFact ?? "", /no receipt of this run carried a tile/u);
+  }
+});
+
+test("what the run saw counts beside what it proved, and only as each row describes itself", () => {
+  const strip = rectangle(3, 20);
+  // The receipts prove the tilling; the crops were observed rather than dispatched. The union is the plot, so this is
+  // the same strip - and it is the only way the observation half can contribute at all, because `cropTargets` is a
+  // radius-6 list that cannot hold twenty tiles in a row by itself. The receipts are the memory.
+  const union = judgeTaskPurpose(
+    "clear_and_plant_long_patch",
+    strip.map(([x, y]) => TILLED(x, y)),
+    { location: "Farm", cropTargets: strip.map(([x, y]) => ({ x, y, cropId: "24" })) },
+  );
+  assert.equal(union.state, "achieved");
+  // `soilTiles` is the Mod's `till_soil` TARGET list: `DiscoverSoilTiles` skips every tile that already has HoeDirt, so
+  // a row without the flag describes ground that is NOT tilled. Counting it as tilled would report untilled ground as
+  // a finished plot - the one thing a tile-counting criterion must never do.
+  const untilled = judgeTaskPurpose(
+    "clear_and_plant_long_patch",
+    strip.map(([x, y]) => PLANTED(x, y)),
+    { location: "Farm", soilTiles: strip.map(([x, y]) => ({ x, y, hoeDirt: false })) },
+  );
+  assert.equal(untilled.state, "not_achieved");
+  assert.match(untilled.detail ?? "", /0\/60/u);
+  // A row that DOES say hoeDirt is tilled ground, and it counts.
+  const tilled = judgeTaskPurpose(
+    "clear_and_plant_long_patch",
+    strip.map(([x, y]) => PLANTED(x, y)),
+    { location: "Farm", soilTiles: strip.map(([x, y]) => ({ x, y, hoeDirt: true })) },
+  );
+  assert.equal(tilled.state, "achieved");
+});
+
+test("two maps' tiles never add up to one strip", () => {
+  // Stardew's coordinates restart at (0, 0) in every location, so half a strip on the farm and half in the greenhouse
+  // name the same coordinates as the whole strip. An ungrouped union would report a plot that exists on no map.
+  const strip = rectangle(3, 20);
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", [
+    ...patchReceipts(strip.slice(0, 30)),
+    ...strip.slice(30).flatMap(([x, y]) => [TILLED(x, y, "Greenhouse"), PLANTED(x, y, "Greenhouse")]),
+  ]);
+  assert.notEqual(judged.state, "achieved", "thirty tiles on one map and thirty on another is not a strip");
+});
+
+test("a strip is the strip whether it is one tile short or one tile over", () => {
+  const strip = rectangle(3, 20);
+  // One tile short: the count says so rather than rounding up into the shape it nearly is.
+  const short = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(strip.slice(0, 59)));
+  assert.equal(short.state, "not_achieved");
+  assert.match(short.detail ?? "", /59\/60/u);
+  // One tile beyond the strip: the strip itself is there tile for tile, so this is not a failure. The criterion asks
+  // whether a full 3x20 is among the tiles proved, and it is.
+  const over = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts([...strip, [40, 40]]));
+  assert.equal(over.state, "achieved");
 });
