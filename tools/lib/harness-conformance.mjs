@@ -432,6 +432,7 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "a renamed owner through a synthetic tree, and its own red-proof marker names both",
   },
   { gate: "check-error-identity-classification.mjs", reason: "static source gate; falsifier in its test" },
+  { gate: "check-failure-reason-codes.mjs", reason: "static source gate; falsifier in its test" },
   {
     gate: "check-parser-agreement.mjs",
     reason:
@@ -541,6 +542,20 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
   { gate: "check-refusal-informativeness.mjs", reason: "static source scan; falsifier in its test" },
   { gate: "check-stardew-mod-folder-name.mjs", reason: "static three-file scan; falsifier in its test" },
+  { gate: "check-stardew-task-action-coverage.mjs", reason: "static artifact scan; falsifier in its test" },
+  {
+    gate: "check-prelive-gate-registry.mjs",
+    reason:
+      "the register itself; its falsifier is tools/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
+      "stale exemption, a dangling runsIn and a wired-but-absent gate and asserts each is named by file",
+  },
+  {
+    gate: "check-stardew-observation-gap.mjs",
+    reason:
+      "drives three analyzer CLIs over the decompiled tree; its falsifier is " +
+      "tools/check-stardew-observation-gap.test.mjs, which forces the skip, the failing step, a chain that exits 0 " +
+      "without the observation summary, and asserts the --fail-on-ungranted arming itself",
+  },
   {
     gate: "check-post-history-instructions-live.mjs",
     reason: "requires a live-run artifact and a mounted card; no offline rule set",
