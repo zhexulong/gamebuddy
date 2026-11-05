@@ -1331,6 +1331,37 @@
         "targetFamily": "debrisTargets"
       },
       {
+        "actionId": "break_resource_clump",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        },
+        "targetFamily": "debrisTargets"
+      },
+      {
         "actionId": "npc_relationship",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -3230,11 +3261,9 @@
     "experimentalActionIds": [
       "use_mine_ladder",
       "move_placed_furniture",
-<<<<<<< HEAD
-      "pet_farm_animal"
-=======
+      "break_resource_clump",
+      "pet_farm_animal",
       "open_geode"
->>>>>>> lane/gb-geode
     ]
   },
   "protocol": {
