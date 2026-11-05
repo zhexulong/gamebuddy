@@ -211,6 +211,36 @@
       "kind": "mutation",
       "id": "use_warp_item:CurrentToolIndex",
       "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
+    },
+    {
+      "kind": "quadrant",
+      "id": "MineElevatorFloorTargets",
+      "reason": "the elevator's floor list, and a per-turn line is the wrong instrument for it. The family is published only while the actor stands ON the elevator tile (`TryFindMineElevatorTile` scans the level's Buildings layer for tile 112, and the discovery returns nothing anywhere else), so the fact is available exactly where the action is; and the rows are every selectable floor - up to 25 ids (`mine_elevator_floor_<n>`), ~600 bytes - which a line would pay on every turn of the run for one call, while a capped line would hide the floors above the cap. Read on demand at the elevator"
+    },
+    {
+      "kind": "quadrant",
+      "id": "ShopTargets",
+      "reason": "shops whose owner is CURRENTLY present. This is the one family here a short line could in principle carry, and it is still not the fix: the set is derived from shop hours and NPC schedules (`ShopBuilder.GetCurrentOwners`), so a per-turn line would restate schedule state on every turn, and `shop_purchase` already names the counter tile in its `shop_counter_out_of_reach` refusal (`owner_tile=x,y;actor_tile=...`), which is the delivery - no observe is forced to find the tile. If a line is ever written it should carry owner, tile and shopId, and this entry is what would have to be deleted"
+    },
+    {
+      "kind": "field",
+      "id": "harvest_crop:crop:harvestTargets",
+      "reason": "`BridgeHarvestTarget` is a crop row: `crop` is the row's own subject and `cropId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
+    },
+    {
+      "kind": "field",
+      "id": "scythe_crop:crop:scytheCropTargets",
+      "reason": "`BridgeScytheCropTarget` is a crop row: `crop` is the row's own subject and `cropId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
+    },
+    {
+      "kind": "field",
+      "id": "water_crop:crop:cropTargets",
+      "reason": "`BridgeCropTarget` is a crop row: `crop` is the row's own subject and `cropId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
+    },
+    {
+      "kind": "field",
+      "id": "water_crop:needsWatering:cropTargets",
+      "reason": "`watered` publishes the same fact: a row is published only after `HoeDirt.needsWatering()` held, and `watered: false` states that half of it in the row itself, so the predicate's own name is the only thing missing"
     }
   ]
 }

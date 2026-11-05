@@ -33,8 +33,9 @@
  *     --remaining <remaining-actions-report.json> \
  *     --catalog <catalog.json> [--out <file>] [--pretty] [--fail-on-ungranted]
  *
- * 本产物同时是**观测缺口报告**（第四段）：collections / tileChannels / addressability /
- * postconditionMutations / publicationGating / consumption 六个 section 在 `observationGaps` 键下追加，
+ * 本产物同时是**观测缺口报告**：collections / tileChannels / addressability /
+ * postconditionMutations / publicationGating / consumption / quadrant / fieldLevel 八个 section 在
+ * `observationGaps` 键下追加，
  * 人读部分写 stderr，stdout 的 JSON 不变。`--fail-on-ungranted` 只在新 section 有未登记缺口时置 exit 1；
  * 默认仍然是「写产物即成功」，因为既有消费方依赖这个语义。
  *
@@ -56,6 +57,8 @@ import { fileURLToPath } from "node:url";
 import { analyzeTileActionSelectorTree, createSelectorParser } from "./stardew-tile-action-selectors.mjs";
 import { memberNameOfSignature } from "../stardew-source-analysis-vocabulary.mjs";
 import {
+  bodyAfterParameters,
+  codeOnly,
   collectionsRead,
   matchingBracket,
   methodBody,
@@ -1226,6 +1229,16 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
     result.counts.observationFamiliesGatedOff = observation.publicationGating.gatedOff.length;
     result.counts.observationFamiliesWithoutConsumer = observation.consumption.withoutConsumer.length;
     result.counts.observationFamiliesUnclassified = observation.consumption.unclassified.length;
+    result.counts.observationQuadrantMapFixed = observation.quadrant.counts.mapFixed;
+    result.counts.observationQuadrantActorOwned = observation.quadrant.counts.actorOwned;
+    result.counts.observationQuadrantRed = observation.quadrant.counts.red;
+    result.counts.observationQuadrantBaselined = observation.quadrant.counts.baselined;
+    result.counts.observationFieldReadMembers = observation.fieldLevel.counts.readMembers;
+    result.counts.observationFieldCarried = observation.fieldLevel.counts.carried;
+    result.counts.observationFieldAbsent = observation.fieldLevel.counts.absent;
+    result.counts.observationFieldRed = observation.fieldLevel.counts.red;
+    result.counts.observationFieldBaselined = observation.fieldLevel.counts.baselined;
+    result.counts.observationFieldUnparsed = observation.fieldLevel.unparsed.length;
     result.counts.observationGapFindings = observation.findings.length;
     result.counts.observationGapUngranted = observation.ungranted.length;
     result.counts.observationBaselineEntries = observation.baseline.entries;
@@ -1236,13 +1249,18 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
       "native_mutator_calls_that_write_a_whole_collection_are_not_named_mutations",
       "publication_gates_are_read_from_the_BridgeSnapshot_call_site_and_cross_checked_against_the_Discover_row_type",
       "families_delivered_only_by_a_solicited_observe_are_not_a_consumption_gap_and_the_advisory_count_is_not_a_backlog",
+      "quadrant_is_derived_from_the_discovery_body_and_a_three_deep_call_closure_of_the_Mods_own_methods",
+      "quadrant_also_has_documented_evidence_only_for_families_some_Discover_publishes",
+      "field_level_reads_are_extracted_from_if_while_switch_and_return_expressions_through_a_fixed_engine_type_vocabulary_and_are_a_ratchet_not_a_hard_red",
+      "field_level_presence_reads_are_named_by_the_call_that_is_null_tested_not_by_a_resolved_return_type",
+      "field_level_row_fields_come_from_the_wire_schema_and_are_cross_checked_against_the_Mod_record",
     ]);
   }
   return result;
 }
 
 // ---------------------------------------------------------------------------
-// 观测缺口六段（observation gaps）
+// 观测缺口八段（observation gaps）
 // ---------------------------------------------------------------------------
 
 /**
@@ -1292,6 +1310,10 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
  *                        delivery by a solicited `stardew_observe` is the documented delivery policy;
  *                        what is red is an unconsumed family an action also targets, and a family the
  *                        Host's own inventory does not classify at all.
+ *   H field level        every action handler's DECISION READS (section H's header states the extraction
+ *                        rule) against the fields of the row its target family publishes. The row type
+ *                        comes from the schema's own `items.$ref` and the field list is cross-checked
+ *                        against the Mod's `record Bridge*`; a read the row does not carry is the defect.
  *
  * THE HEURISTICS LIVE IN D, AND WHY A RATCHET IS THE HONEST INSTRUMENT THERE
  *
@@ -1917,6 +1939,15 @@ function inventoryList(inventory, name) {
   return block === null ? null : [...block[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
 }
 
+/** The snapshot keys the per-turn state block declares, read from the block's own line table. */
+export function hudFieldKeys(hud) {
+  return new Set(
+    [...withoutComments(hud).matchAll(/fields:\s*\[([^\]]*)\]/gu)].flatMap((match) =>
+      [...match[1].matchAll(/"([^"]+)"/gu)].map((field) => field[1]),
+    ),
+  );
+}
+
 /** The keys of the `WITHHELD_SCALAR_KEYS` record, or null when the record is gone. */
 function inventoryRecordKeys(inventory, name) {
   const block = new RegExp(`${name}[\\s\\S]*?Object\\.freeze\\(\\{([\\s\\S]*?)\\n\\}\\);`, "u").exec(inventory);
@@ -1985,7 +2016,7 @@ export function consumptionCoverage({
     ...(listed.WITHHELD_SCALAR_KEYS ?? []),
   ]);
   const requiredProjected = new Set(listed.REQUIRED_PROJECTED_KEYS ?? []);
-  const hudFields = new Set([...withoutComments(hud).matchAll(/fields:\s*\[([^\]]*)\]/gu)].flatMap((match) => [...match[1].matchAll(/"([^"]+)"/gu)].map((field) => field[1])));
+  const hudFields = hudFieldKeys(hud);
   const toolText = withoutComments(tools);
   const sources = [...projectionSources]
     .filter(([path]) => path !== SNAPSHOT_HUD_PATH)
@@ -2053,18 +2084,541 @@ export function loadConsumptionSources({
   };
 }
 
-/** The baseline as five lookup tables, plus the findings that make it self-maintaining. */
+// ---------------------------------------------------------------------------
+// 观测缺口 G 段：quadrant（local / map_fixed / actor_owned）
+// ---------------------------------------------------------------------------
+
+/**
+ * Which quadrant a published family lives in, derived from the Mod's own discovery code.
+ *
+ * THE DEFECT THIS SECTION EXISTS FOR, measured 2026-11-05: `mineEntranceTargets` is published whole-map (the
+ * mine level's own Buildings layer is scanned for the exit ladder at tile 115 and the descent ladder at 173),
+ * validated, in `SNAPSHOT_KEYS` - and no per-turn line read it. A companion standing in a mine shaft had to
+ * spend a `stardew_observe` (~6.9k tokens, the largest tool result in a run) to learn where the way out was,
+ * in exactly the place it gets lost. The same shape appeared earlier with the watering-can refill: the family
+ * existed but was scoped to radius 6 while ponds are 10-20 tiles away.
+ *
+ * Both are QUADRANT ERRORS: a MAP-FIXED thing delivered as if it were a LOCAL one. The quadrant is a property
+ * of the discovery, so it is read out of the discovery rather than remembered here:
+ *
+ *   local        every discovery bounds its rows around the actor's own tile - `IsTileWithinChebyshevRadius`,
+ *                the engine's `Utility.tileWithinRadiusOfPlayer`, an adjacency helper, or a scan window whose
+ *                lower bound is something minus a `*Radius*` symbol.
+ *   map_fixed    some discovery publishes rows that do NOT depend on where the actor stands: a whole-layer
+ *                scan (`for (x = 0; x < LayerWidth; ...)`, directly or through one of the Mod's own helpers)
+ *                or a read of a location-wide collection. THIS WINS OVER `local`: a family with one
+ *                actor-bounded branch and one whole-map branch publishes rows the actor cannot reach by
+ *                walking, and calling that family local is exactly how the mine ladder stayed invisible.
+ *   actor_owned  the discovery reads no location and no map content at all - the actor's pack, its body
+ *                slots, the quest log, the content catalogs. There is no quadrant to get wrong, so the red
+ *                rule does not touch it; naming it map_fixed would be a false claim about the world.
+ *   undeclared   the family has no `Discover*` at all (two do: `Warps` and `PendingLevelUpChoices`), so the
+ *                derivation has no evidence and says so instead of guessing.
+ *
+ * THE RED RULE is the quadrant error itself: `map_fixed` AND an action targets a row from it AND no line of
+ * the per-turn block reads it. That is a family the model must spend an observe on, about a fact that does not
+ * move, to act on something it also has to act through. It is a ratchet like D, with the same two rules: a red
+ * that is not in the baseline fails, and an entry whose family is now read by the HUD - or is no longer
+ * map_fixed and targeted - fails as stale rather than excusing the next one.
+ *
+ * WHAT EACH ROW CARRIES, and why the evidence is printed: every classification names the discovery that
+ * decided it and the branch the evidence was found in (or the helper it was found through), so a
+ * misclassification is arguable from the report instead of mysterious.
+ */
+
+/** A distance check against the actor's own tile: the Mod's helper, the engine's, or adjacency. */
+const QUADRANT_RADIUS = /\bIsTileWithinChebyshevRadius\s*\(|\btileWithinRadiusOfPlayer\s*\(|\b\w*Adjacent\w*\s*\(/u;
+/** A scan window centred on the actor: `for (int x = player.TilePoint.X - TargetDiscoveryRadius; ...)`. */
+const QUADRANT_WINDOW = /-\s*\w*[Rr]adius\b/u;
+/** A whole-layer scan: a loop from zero bounded by the layer's own size. */
+const QUADRANT_LAYER = /\bLayerWidth\b|\bLayerHeight\b/u;
+const QUADRANT_ORIGIN_LOOP = /for\s*\(\s*(?:int\s+)?[A-Za-z_]\w*\s*=\s*0\s*;/u;
+/** A read of the map the actor stands on. */
+const QUADRANT_LOCATION =
+  /\blocation\s*(?:\?|!)?\s*\.\s*[A-Za-z_]|\bdoesTileHaveProperty\s*\(|\bGame1\s*\.\s*locations\b/u;
+
+/** C# keywords followed by `(` that are not calls into the Mod's own methods. */
+const CSHARP_KEYWORDS = new Set([
+  "as",
+  "await",
+  "base",
+  "case",
+  "catch",
+  "checked",
+  "default",
+  "do",
+  "else",
+  "finally",
+  "fixed",
+  "for",
+  "foreach",
+  "goto",
+  "if",
+  "in",
+  "is",
+  "lock",
+  "nameof",
+  "new",
+  "out",
+  "ref",
+  "return",
+  "sizeof",
+  "stackalloc",
+  "switch",
+  "throw",
+  "try",
+  "typeof",
+  "unchecked",
+  "using",
+  "when",
+  "while",
+  "yield",
+]);
+
+/**
+ * The Mod's own method bodies by name, for the radius and layer-scan closure.
+ *
+ * A discovery is usually two calls away from the bound that decides its quadrant (`DiscoverChestStates` ->
+ * `OrderedStorageContainers` -> `IsChestTargetInRange` -> `IsTileWithinChebyshevRadius`), so a reader that
+ * only looked at the discovery's own text would classify half the tree by accident.
+ */
+export function modMethodBodies(sources) {
+  const bodies = new Map();
+  for (const { source } of sources) {
+    const code = codeOnly(source);
+    for (const match of code.matchAll(/\b([A-Za-z_]\w*)\s*(?:<[^<>()]{0,80}>)?\s*\(/gu)) {
+      const name = match[1];
+      if (CSHARP_KEYWORDS.has(name) || bodies.has(name)) continue;
+      const open = code.indexOf("(", match.index + match[0].length - 1);
+      const close = matchingBracket(code, open);
+      if (close < 0) continue;
+      const body = bodyAfterParameters(code, close);
+      if (body !== null) bodies.set(name, body);
+    }
+  }
+  return bodies;
+}
+
+/** The Mod methods a body calls that satisfy `predicate`, three calls deep, by name. */
+function callsReaching(body, bodies, predicate, depth = 3, seen = new Set()) {
+  if (depth === 0) return [];
+  const reached = [];
+  for (const match of body.matchAll(/\b([A-Za-z_]\w*)\s*(?:<[^<>()]{0,60}>)?\s*\(/gu)) {
+    const name = match[1];
+    if (CSHARP_KEYWORDS.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    const nested = bodies.get(name);
+    if (nested === undefined) continue;
+    if (predicate(nested)) reached.push(name);
+    else reached.push(...callsReaching(nested, bodies, predicate, depth - 1, seen));
+  }
+  return reached;
+}
+
+const isWholeLayerScan = (body) => QUADRANT_LAYER.test(body) && QUADRANT_ORIGIN_LOOP.test(body);
+const isActorBounded = (body) => QUADRANT_RADIUS.test(body) || QUADRANT_WINDOW.test(body);
+
+/** What one discovery's own text - and the Mod helpers it calls - says about its quadrant. */
+function discoveryQuadrantEvidence(body, bodies) {
+  const radius = [];
+  if (QUADRANT_RADIUS.test(body)) radius.push("an actor-radius helper");
+  if (QUADRANT_WINDOW.test(body)) radius.push("a scan window around the actor");
+  radius.push(...callsReaching(body, bodies, isActorBounded).map((name) => `an actor bound inside ${name}`));
+  const mapFixed = [];
+  if (isWholeLayerScan(body)) mapFixed.push("a whole-layer scan");
+  mapFixed.push(...callsReaching(body, bodies, isWholeLayerScan).map((name) => `a whole-layer scan inside ${name}`));
+  const location = [];
+  if (QUADRANT_LOCATION.test(body)) location.push("the location's own contents");
+  location.push(
+    ...callsReaching(body, bodies, (nested) => QUADRANT_LOCATION.test(nested)).map(
+      (name) => `the location's contents inside ${name}`,
+    ),
+  );
+  return { radius, mapFixed, location };
+}
+
+/** One published family's quadrant, its evidence, and whether the per-turn block and an action reach it. */
+export function quadrantRow({ family, row, discoveries, bodies, hudFields, targetField = TARGET_FIELD }) {
+  const owned = discoveries.filter((discovery) => discovery.row === row);
+  const evidence = owned.map((discovery) => ({
+    discovery: discovery.name,
+    ...discoveryQuadrantEvidence(discovery.body, bodies),
+  }));
+  const key = family[0].toLowerCase() + family.slice(1);
+  const quadrant =
+    evidence.length === 0
+      ? "undeclared"
+      : evidence.some((entry) => entry.mapFixed.length > 0)
+        ? "map_fixed"
+        : evidence.some((entry) => entry.radius.length > 0)
+          ? "local"
+          : evidence.some((entry) => entry.location.length > 0)
+            ? "map_fixed"
+            : "actor_owned";
+  return {
+    family,
+    key,
+    quadrant,
+    targeted: Object.values(targetField).includes(family),
+    hud: hudFields.has(key),
+    discoveries: owned.map((discovery) => discovery.name),
+    evidence: evidence.map((entry) => {
+      const found = [
+        ...entry.mapFixed.map((part) => `map-fixed: ${part}`),
+        ...entry.radius.map((part) => `actor-bounded: ${part}`),
+        ...entry.location.map((part) => `location-wide: ${part}`),
+      ];
+      return `${entry.discovery}: ${
+        found.length > 0 ? found.join("; ") : "no location and no map read (the actor's own state)"
+      }`;
+    }),
+  };
+}
+
+/**
+ * Every published family's quadrant, plus the one red this section can raise.
+ *
+ * `families` are the snapshot's own parameters (name and row type), `discoveries` the parsed `Discover*`
+ * bodies, `bodies` the Mod's method table for the call closure, and the HUD keys come from the block's own
+ * declaration - so "is it read every turn" has one authority and a rename upstream empties nothing silently.
+ */
+export function observationQuadrants({
+  families = [],
+  discoveries = [],
+  bodies = new Map(),
+  hudFields = new Set(),
+  targetField = TARGET_FIELD,
+}) {
+  const rows = families.map((family) =>
+    quadrantRow({ family: family.name, row: family.row, discoveries, bodies, hudFields, targetField }),
+  );
+  const findings = [];
+  for (const row of rows) {
+    if (row.quadrant !== "map_fixed" || !row.targeted || row.hud) continue;
+    findings.push({
+      code: `map_fixed_family_not_in_hud:${row.family}`,
+      kind: "quadrant",
+      id: row.family,
+      detail: `${row.family} is map-fixed (${row.evidence.join(" | ")}), an action targets a row from it, and no line of ${SNAPSHOT_HUD_PATH} reads it: the model must spend an observe on a fact that does not move, about a family it also acts through`,
+    });
+  }
+  const counts = {
+    local: rows.filter((row) => row.quadrant === "local").length,
+    mapFixed: rows.filter((row) => row.quadrant === "map_fixed").length,
+    actorOwned: rows.filter((row) => row.quadrant === "actor_owned").length,
+    undeclared: rows.filter((row) => row.quadrant === "undeclared").length,
+    mapFixedUntargeted: rows.filter((row) => row.quadrant === "map_fixed" && !row.targeted).length,
+    red: findings.length,
+  };
+  return { rows, findings, counts };
+}
+
+// ---------------------------------------------------------------------------
+// 观测缺口 H 段：field-level coverage
+// ---------------------------------------------------------------------------
+
+/**
+ * THE DEFECT THIS SECTION EXISTS FOR, measured 2026-11-05: section D asks only whether the member an action
+ * handler MUTATES is carried by SOME family, so it is green while the actual row is too thin to act on.
+ * `water_crop` decides from `HoeDirt.needsWatering()` / `isWatered()`, and the row it is handed
+ * (`BridgeCropTarget`) carries target id, tile, crop id and display name - so the companion learns "there is a
+ * crop at 12,7" and not "it needs water", the single fact the action exists for. Same shape for the tillable
+ * tile that is only published as `{ x, y }`.
+ *
+ * THE EXTRACTION RULE, deliberately narrow, and the reason its counts are printed separately from its verdicts:
+ *
+ *   1. BODIES. The body set is section D's: the request method the handler dispatch maps the action to, plus
+ *      every `Execute*` method that body calls, one hop.
+ *   2. ENGINE BINDINGS. A name a body binds to one of the engine's world-object types by pattern or declarator:
+ *      `<expr> is [not] [ns.]HoeDirt dirt`, `HoeDirt? dirt = ...`, `<name> = <expr> as HoeDirt`,
+ *      `out [ns.]Object? machine`. The binding counts ONLY when the statement that produced it reads the
+ *      location: a value taken out of the actor's pack is not the row's subject, and counting it would report
+ *      a target family for a decision about something else. The type names are one vocabulary below, not a
+ *      per-action list; a target read through a type outside it is invisible here, which is what `unparsed`
+ *      counts.
+ *   3. DECISION READS. A member read through an engine binding that appears inside an `if`, `while` or `switch`
+ *      selector, or in a `return` expression. `dirt.crop.netSeedIndex` reads `crop` then `netSeedIndex`; `.Value`
+ *      is the net wrapper and `this.<field>` is controller bookkeeping, exactly as in section D. The arguments
+ *      of the Mod's own `Build*TargetId(...)` are excluded: they NAME the row the caller must echo and decide
+ *      nothing.
+ *   4. PRESENCE READS. A call whose result is null-tested in a decision expression and whose NAME carries one of
+ *      those engine type names (`location.GetHoeDirtAtTile(tile) is not null`) reads that type's presence in the
+ *      target.
+ *   5. CARRIED. A read is carried when its field spelling is a field of the row type the action's target family
+ *      publishes. The spelling is camelCase, plus the `is` prefix stripped when a capital follows it
+ *      (`isWatered` -> `watered`), which is the convention the engine's own predicates use. The row type is the
+ *      schema `$defs` entry the family's `items.$ref` names - the wire authority - and its field list is
+ *      CROSS-CHECKED against the Mod's `record Bridge<Row>` declaration, so a field added to one side and not
+ *      the other is a finding rather than a silent half-fact.
+ *   6. Everything else is `field_unobservable:<action>:<member>:<family>`, ratcheted like D: a red not in the
+ *      baseline fails, and a baselined entry that is now carried - or no longer measured - fails as stale.
+ *   7. A handler whose body cannot be located, or that yields no decision read at all, is counted `unparsed` and
+ *      printed. An action that names no family, or a family the schema has no row for, is counted `noFamily` /
+ *      `noRow` and printed. None of the three is ever treated as clean.
+ */
+
+export const OBSERVATION_SCHEMA_PATH = "protocol/bridge-v1.schema.json";
+
+/** The engine's world-object types a handler casts its target to (a vocabulary, not a population). */
+export const ENGINE_TARGET_TYPES = Object.freeze(["HoeDirt", "Crop", "Object", "TerrainFeature"]);
+
+const ENGINE_TYPE_ALTERNATION = ENGINE_TARGET_TYPES.join("|");
+
+/** Every shape that binds a name to one of the engine types, each capturing `type` then `name`. */
+const ENGINE_BINDING_PATTERNS = Object.freeze([
+  new RegExp(`\\bis\\s+(?:not\\s+)?(?:[\\w.]+\\.)?(${ENGINE_TYPE_ALTERNATION})\\s+([A-Za-z_]\\w*)`, "gu"),
+  new RegExp(`(?:[\\w.]+\\.)?(${ENGINE_TYPE_ALTERNATION})\\??\\s+([A-Za-z_]\\w*)\\s*=`, "gu"),
+  new RegExp(`\\bout\\s+(?:[\\w.]+\\.)?(${ENGINE_TYPE_ALTERNATION})\\??\\s+([A-Za-z_]\\w*)`, "gu"),
+  new RegExp(`\\b([A-Za-z_]\\w*)\\s*=\\s*[^;=]*?\\bas\\s+(?:[\\w.]+\\.)?(${ENGINE_TYPE_ALTERNATION})\\b`, "gu"),
+]);
+
+/** The Mod's own identity builder: its arguments NAME the row, so reading them decides nothing. */
+const TARGET_ID_CALL = /\bBuild\w*TargetId\s*\([^()]*\)/gu;
+
+/** A call whose result is tested against null: the presence read of an engine type named by the call. */
+const PRESENCE_NULL_TEST = /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:is\s+(?:not\s+)?null|[!=]=\s*null)/gu;
+
+/** The deciding expressions of one body: what `if`, `while` and `switch` test, and what a `return` states. */
+function decisionExpressions(body) {
+  const expressions = [];
+  for (const match of body.matchAll(/\b(?:if|while|switch)\s*\(/gu)) {
+    const open = body.indexOf("(", match.index + match[0].length - 1);
+    const close = matchingBracket(body, open);
+    if (close > open) expressions.push(body.slice(open + 1, close));
+  }
+  for (const match of body.matchAll(/\breturn\b([^;]*);/gu)) expressions.push(match[1]);
+  return expressions;
+}
+
+/** The members one selector reads through `name`, one member at a time along the chain. */
+function membersReadThrough(selector, name) {
+  const members = new Set();
+  const chain = new RegExp(`\\b${name}((?:\\s*[!?]?\\s*\\.\\s*[A-Za-z_]\\w*)+)`, "gu");
+  for (const match of selector.matchAll(chain))
+    for (const segment of match[1].replace(/[!?]/gu, "").split(".")) {
+      const member = segment.trim();
+      if (member.length > 0 && member !== "Value") members.add(member);
+    }
+  return members;
+}
+
+/** A statement that reads the world: the receiver a target value has to come from. */
+const LOCATION_RECEIVER =
+  /\b(?:location|farm|currentLocation|terrainFeatures|largeTerrainFeatures|objects)\b/u;
+
+/**
+ * The engine members one handler reads to decide, or `parsed: false` when its request body is missing.
+ *
+ * Bindings are collected from the whole body (a cast can sit above the selector that uses it) and the reads only
+ * from the selectors, so a member that merely appears in an evidence string is not a decision read. A binding
+ * counts only when the statement that produced it reads the LOCATION: a value taken out of the actor's pack
+ * (`out Object? carried` from a pack search) is not the row's subject, and counting it would report a family for
+ * a decision about something else.
+ */
+export function handlerFieldReads(sources, request) {
+  const body = methodBody(sources, request);
+  if (body === null) return { parsed: false, bindings: new Map(), members: [] };
+  const bodies = [body];
+  for (const name of new Set([...body.matchAll(/\b(Execute\w+)\s*\(/gu)].map((match) => match[1]))) {
+    const inner = methodBody(sources, name);
+    if (inner !== null) bodies.push(inner);
+  }
+  const bindings = new Map();
+  for (const text of bodies) {
+    // A pattern cast of a location-bound name is location-bound too (`feature is not HoeDirt dirt`), so the
+    // set is grown until it stops growing.
+    let grown = true;
+    while (grown) {
+      grown = false;
+      for (const pattern of ENGINE_BINDING_PATTERNS)
+        for (const match of text.matchAll(pattern)) {
+          const type = ENGINE_TARGET_TYPES.includes(match[1]) ? match[1] : match[2];
+          const name = ENGINE_TARGET_TYPES.includes(match[1]) ? match[2] : match[1];
+          if (bindings.has(name)) continue;
+          const boundary = Math.max(text.lastIndexOf(";", match.index), text.lastIndexOf("{", match.index), text.lastIndexOf("}", match.index));
+          const statement = text.slice(boundary + 1, match.index);
+          const root = /([A-Za-z_]\w*)\s*[!?]?\s*\.?[^.;]*$/u.exec(statement)?.[1];
+          if (!LOCATION_RECEIVER.test(statement) && !(root !== undefined && bindings.has(root))) continue;
+          bindings.set(name, type);
+          grown = true;
+        }
+    }
+  }
+  const members = new Set();
+  for (const text of bodies)
+    for (const raw of decisionExpressions(text)) {
+      // Identity arguments name the row the caller must echo; they are not a decision about its state.
+      const expression = raw.replace(TARGET_ID_CALL, "BuildTargetId");
+      for (const name of bindings.keys()) for (const member of membersReadThrough(expression, name)) members.add(member);
+      for (const call of expression.matchAll(PRESENCE_NULL_TEST)) {
+        const type = ENGINE_TARGET_TYPES.find((candidate) => call[1].includes(candidate));
+        if (type !== undefined) members.add(type);
+      }
+    }
+  return { parsed: true, bindings, members: [...members].sort() };
+}
+
+/**
+ * Every published family's row type and its wire fields, resolved through the schema's own `$ref`.
+ *
+ * The family name is the schema's own camelCase key, so nothing here singularises a name by hand: `cropTargets`
+ * names `$defs/cropTarget`, and that definition's `properties` ARE the fields the wire publishes.
+ */
+export function publishedRowFields(schema) {
+  const definitions = schema?.$defs;
+  const properties = definitions?.snapshot?.properties;
+  if (properties === undefined) return new Map();
+  const rows = new Map();
+  for (const [family, declaration] of Object.entries(properties)) {
+    const reference = declaration?.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const definition = reference.slice(reference.lastIndexOf("/") + 1);
+    const declared = definitions[definition];
+    if (declared?.properties === undefined) continue;
+    rows.set(family, { definition, fields: Object.keys(declared.properties) });
+  }
+  return rows;
+}
+
+/** The parameter names of the Mod's `record Bridge<Row>(...)`, or null when it declares no such record. */
+export function modRowFields(models, definition) {
+  const record = `Bridge${definition[0].toUpperCase()}${definition.slice(1)}`;
+  const code = withoutComments(models);
+  const declaration = new RegExp(`\\brecord\\s+${record}\\s*\\(`, "u").exec(code);
+  if (declaration === null) return null;
+  const open = code.indexOf("(", declaration.index + declaration[0].length - 1);
+  const close = matchingBracket(code, open);
+  if (close < 0) return null;
+  return splitTopLevel(code.slice(open + 1, close))
+    .map((parameter) => parameter.replace(/\[[^\]]*\]/gu, "").replace(/=[\s\S]*$/u, "").trim())
+    .map((parameter) => /([A-Za-z_]\w*)\s*$/u.exec(parameter)?.[1] ?? null)
+    .filter((name) => name !== null);
+}
+
+const lowerFirst = (name) => name[0].toLowerCase() + name.slice(1);
+
+/**
+ * The spellings a read member and a row field may share.
+ *
+ * `lowerFirst` is the serializer's own crossing. The `is` prefix is stripped only when a capital letter follows it
+ * (`isWatered` -> `watered`, `IsOpen` -> `open`), which is the convention every boolean predicate in the engine
+ * and in the Mod already follows - a word that merely starts with those letters (`island`) is untouched.
+ */
+function memberSpellings(member) {
+  const spellings = new Set([lowerFirst(member)]);
+  if (/^[Ii]s[A-Z]/u.test(member)) spellings.add(lowerFirst(member.slice(2)));
+  return spellings;
+}
+
+/**
+ * Every action handler's decision reads, checked against the row its target family publishes.
+ *
+ * Pure over `sources`, `surface`, `models` and `schema`, so the falsifier suite can inject a handler that reads a
+ * member its row does not carry instead of editing the real Mod.
+ */
+export function fieldLevelCoverage({
+  sources,
+  surface,
+  models,
+  schema,
+  targetField = TARGET_FIELD,
+  dispatch = handlerDispatch(sources),
+}) {
+  const rows = publishedRowFields(schema);
+  const actions = new Map((surface?.actions ?? []).map((action) => [action.actionId, action]));
+  const findings = [];
+  const readings = [];
+  const unparsed = [];
+  const noFamily = [];
+  const noRow = [];
+  const checkedRows = new Set();
+  for (const [actionId, request] of [...dispatch].sort(([left], [right]) => left.localeCompare(right))) {
+    const read = handlerFieldReads(sources, request);
+    if (!read.parsed || read.members.length === 0) {
+      unparsed.push({
+        actionId,
+        reason: read.parsed
+          ? read.bindings.size === 0
+            ? "no_location_bound_engine_value"
+            : "no_decision_read_through_a_location_bound_value"
+          : "request_method_body_not_found",
+      });
+      continue;
+    }
+    const family = targetField[actionId] ?? actions.get(actionId)?.targetFamily ?? null;
+    if (family === null) {
+      noFamily.push(actionId);
+      continue;
+    }
+    const key = lowerFirst(family);
+    const row = rows.get(key);
+    if (row === undefined) {
+      noRow.push({ actionId, family: key });
+      continue;
+    }
+    if (!checkedRows.has(key)) {
+      checkedRows.add(key);
+      const declared = modRowFields(models, row.definition);
+      if (declared === null)
+        findings.push({
+          code: `field_row_missing_record:${key}`,
+          kind: "field",
+          id: null,
+          detail: `${OBSERVATION_SCHEMA_PATH} publishes ${key} rows as Bridge${row.definition[0].toUpperCase()}${row.definition.slice(1)}, and ${OBSERVATION_MODELS_PATH} declares no such record`,
+        });
+      else {
+        const wired = new Set(row.fields);
+        const modded = new Set(declared.map(lowerFirst));
+        const onlyWire = [...wired].filter((field) => !modded.has(field)).sort();
+        const onlyMod = [...modded].filter((field) => !wired.has(field)).sort();
+        if (onlyWire.length > 0 || onlyMod.length > 0)
+          findings.push({
+            code: `field_row_disagrees:${key}`,
+            kind: "field",
+            id: null,
+            detail: `${key} rows differ between the wire and the Mod's record: only in ${OBSERVATION_SCHEMA_PATH} [${onlyWire.join(", ")}], only in the record [${onlyMod.join(", ")}]`,
+          });
+      }
+    }
+    const members = read.members.map((member) => {
+      const spellings = memberSpellings(member);
+      const field = row.fields.find((candidate) => spellings.has(candidate)) ?? null;
+      return { member, field, carried: field !== null, id: `${actionId}:${member}:${key}` };
+    });
+    readings.push({ actionId, family: key, row: row.definition, members });
+  }
+  const all = readings.flatMap((reading) => reading.members);
+  return {
+    handlers: dispatch.size,
+    rows: readings,
+    unparsed: unparsed.sort((left, right) => left.actionId.localeCompare(right.actionId)),
+    noFamily: noFamily.sort(),
+    noRow,
+    findings,
+    counts: {
+      readMembers: all.length,
+      carried: all.filter((member) => member.carried).length,
+      absent: all.filter((member) => !member.carried).length,
+      unparsed: unparsed.length,
+      noFamily: noFamily.length,
+      noRow: noRow.length,
+      handlersWithReads: readings.length,
+    },
+  };
+}
+
+/** The baseline as six lookup tables, plus the findings that make it self-maintaining. */
 export function readObservationBaseline(baseline) {
   const findings = [];
   const entries = new Map();
-  const kinds = new Set(["collection", "channel", "addressability", "mutation", "gating"]);
+  const kinds = new Set(["collection", "channel", "addressability", "mutation", "gating", "quadrant", "field"]);
   for (const entry of baseline?.entries ?? []) {
     if (!kinds.has(entry?.kind) || typeof entry?.id !== "string" || entry.id.length === 0)
       findings.push({
         code: `baseline_entry_invalid:${entry?.kind ?? "unknown"}:${entry?.id ?? "unknown"}`,
         kind: entry?.kind ?? "unknown",
         id: entry?.id ?? "unknown",
-        detail: "a baseline entry needs kind (collection|channel|addressability|mutation|gating), id and reason",
+        detail: "a baseline entry needs kind (collection|channel|addressability|mutation|gating|quadrant), id and reason",
       });
     else if (typeof entry.reason !== "string" || entry.reason.trim().length === 0)
       findings.push({
@@ -2110,7 +2664,7 @@ export function loadDecompiledSources({ sourceRoot } = {}) {
 }
 
 /**
- * The whole observation-gap report: six sections, one finding list, one ratchet.
+ * The whole observation-gap report: eight sections, one finding list, one ratchet.
  *
  * Pure over its inputs so the falsifier suite can inject a Mod that reads `location.objects` but not
  * `location.furniture` instead of editing the real tree.
@@ -2120,6 +2674,7 @@ export function observeActionGaps({
   decompiled = loadDecompiledSources(),
   surface = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SURFACE_PATH), "utf8")),
   models = readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_MODELS_PATH), "utf8"),
+  schema = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SCHEMA_PATH), "utf8")),
   baseline = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_BASELINE_PATH), "utf8")),
   targetField = TARGET_FIELD,
   channels = TILE_CHANNELS,
@@ -2239,6 +2794,78 @@ export function observeActionGaps({
       detail: `${gap.split(":")[1]} is admitted by the gate that publishes ${gap.split(":")[0]} now, or that gate is gone; delete its baseline entry`,
     });
   }
+  // F - consumption
+  const publishedParameters = parameters.filter((parameter) => parameter.row !== null);
+  const consumptionRows = consumptionCoverage({
+    families: publishedParameters.map((parameter) => parameter.name),
+    ...consumption,
+    targetField,
+  });
+  findings.push(...consumptionRows.findings);
+
+  // G - quadrants
+  const quadrantScan = observationQuadrants({
+    families: publishedParameters,
+    discoveries: parseDiscoveries(sources),
+    bodies: modMethodBodies(sources),
+    hudFields: hudFieldKeys(consumption.hud),
+    targetField,
+  });
+  for (const finding of quadrantScan.findings) if (!excused("quadrant", finding.id)) findings.push(finding);
+  const quadrantRows = new Map(quadrantScan.rows.map((row) => [row.family, row]));
+  let quadrantBaselined = 0;
+  for (const id of ratified.entries.keys()) {
+    if (!id.startsWith("quadrant:")) continue;
+    const family = id.slice("quadrant:".length);
+    const row = quadrantRows.get(family);
+    if (row === undefined) continue;
+    if (row.quadrant === "map_fixed" && row.targeted && !row.hud) {
+      quadrantBaselined += 1;
+      continue;
+    }
+    findings.push({
+      code: `stale_baseline_entry:quadrant:${family}`,
+      kind: "quadrant",
+      id: family,
+      detail: row.hud
+        ? `${family} is read by a line in ${SNAPSHOT_HUD_PATH} now; delete its baseline entry`
+        : `${family} is ${row.quadrant}${row.targeted ? "" : " and untargeted"} now, so it is not a quadrant error; delete its baseline entry`,
+    });
+  }
+  // H - field-level coverage
+  const fieldScan = fieldLevelCoverage({ sources, surface, models, schema, targetField, dispatch });
+  findings.push(...fieldScan.findings);
+  const fieldReadings = new Map(fieldScan.rows.flatMap((row) => row.members.map((member) => [member.id, member])));
+  let fieldBaselined = 0;
+  for (const member of fieldReadings.values()) {
+    if (member.carried) continue;
+    if (excused("field", member.id)) {
+      fieldBaselined += 1;
+      continue;
+    }
+    const [actionId, memberName, family] = member.id.split(":");
+    findings.push({
+      code: `field_unobservable:${member.id}`,
+      kind: "field",
+      id: member.id,
+      detail: `${actionId} reads \`${memberName}\` to decide, and the ${family} row publishes no such field: the fact the action exists for is not on the row it is handed`,
+    });
+  }
+  for (const id of ratified.entries.keys()) {
+    if (!id.startsWith("field:")) continue;
+    const gap = id.slice("field:".length);
+    const member = fieldReadings.get(gap);
+    if (member !== undefined && !member.carried) continue;
+    findings.push({
+      code: `stale_baseline_entry:field:${gap}`,
+      kind: "field",
+      id: gap,
+      detail:
+        member === undefined
+          ? `${gap} is no longer a read no published row carries (the handler, the member or the family is gone); delete its baseline entry`
+          : `the ${gap.split(":")[2]} row carries \`${gap.split(":")[1]}\` now; delete its baseline entry`,
+    });
+  }
   for (const id of ratified.entries.keys()) {
     const kind = id.slice(0, id.indexOf(":"));
     const subject = id.slice(id.indexOf(":") + 1);
@@ -2247,6 +2874,8 @@ export function observeActionGaps({
       (kind === "channel" && channelCoverage.rows.some((row) => row.id === subject)) ||
       (kind === "addressability" && addressability.rows.some((row) => row.actionId === subject)) ||
       (kind === "gating" && gating.rows.some((row) => subject.startsWith(`${row.family}:`))) ||
+      (kind === "quadrant" && quadrantRows.has(subject)) ||
+      (kind === "field" && fieldReadings.has(subject)) ||
       kind === "mutation";
     if (!known)
       findings.push({
@@ -2256,14 +2885,6 @@ export function observeActionGaps({
         detail: `the baseline names ${subject} as a ${kind}, and this run measured no such ${kind}; a ratchet entry that names nothing excuses nothing`,
       });
   }
-
-  // F - consumption
-  const consumptionRows = consumptionCoverage({
-    families: parameters.filter((parameter) => parameter.row !== null).map((parameter) => parameter.name),
-    ...consumption,
-    targetField,
-  });
-  findings.push(...consumptionRows.findings);
 
   const ungranted = findings;
   return {
@@ -2299,6 +2920,38 @@ export function observeActionGaps({
       rows: consumptionRows.rows,
       withoutConsumer: consumptionRows.rows.filter((row) => !row.consumed).map((row) => row.family),
       unclassified: consumptionRows.unclassified,
+    },
+    quadrant: {
+      population: quadrantScan.rows.length,
+      rows: quadrantScan.rows,
+      mapFixed: quadrantScan.rows.filter((row) => row.quadrant === "map_fixed").map((row) => row.family),
+      actorOwned: quadrantScan.rows.filter((row) => row.quadrant === "actor_owned").map((row) => row.family),
+      undeclared: quadrantScan.rows.filter((row) => row.quadrant === "undeclared").map((row) => row.family),
+      counts: {
+        local: quadrantScan.counts.local,
+        mapFixed: quadrantScan.counts.mapFixed,
+        actorOwned: quadrantScan.counts.actorOwned,
+        undeclared: quadrantScan.counts.undeclared,
+        mapFixedUntargeted: quadrantScan.counts.mapFixedUntargeted,
+        red: quadrantScan.counts.red,
+        baselined: quadrantBaselined,
+        ungranted: quadrantScan.findings.filter((finding) => !excused("quadrant", finding.id)).length,
+      },
+    },
+    fieldLevel: {
+      handlers: fieldScan.handlers,
+      handlersWithReads: fieldScan.counts.handlersWithReads,
+      rows: fieldScan.rows,
+      unparsed: fieldScan.unparsed,
+      noFamily: fieldScan.noFamily,
+      noRow: fieldScan.noRow,
+      counts: {
+        readMembers: fieldScan.counts.readMembers,
+        carried: fieldScan.counts.carried,
+        absent: fieldScan.counts.absent,
+        red: fieldScan.counts.absent - fieldBaselined,
+        baselined: fieldBaselined,
+      },
     },
     baseline: { entries: ratified.entries.size, path: OBSERVATION_BASELINE_PATH },
     findings,
@@ -2382,7 +3035,7 @@ function parseArgs(argv) {
 }
 
 /**
- * The human-readable half of the one report: four section lines and every ungranted gap by name.
+ * The human-readable half of the one report: one line per section, and every ungranted gap by name.
  *
  * It goes to stderr so the JSON on stdout stays a single parseable document for existing consumers,
  * and it is printed from the SAME run that produced that JSON - never as a second opinion.
@@ -2414,6 +3067,20 @@ export function writeObservationSummary(observation, write = (text) => process.s
   );
   write(
     "    on-demand delivery is not a gap: the per-turn projection cap and the 'projected or explained' inventory are the delivery-policy authority, so the advisory count is not a to-do list and rising is not a regression by itself\n",
+  );
+  const quadrant = observation.quadrant.counts;
+  write(
+    `  G quadrants         ${quadrant.local} local, ${quadrant.mapFixed} map-fixed (${quadrant.mapFixedUntargeted} untargeted), ${quadrant.actorOwned} actor-owned, ${quadrant.undeclared} undeclared: ${quadrant.red} map-fixed family/action pair(s) with no per-turn line, ${quadrant.baselined} baselined with a reason, ${quadrant.ungranted} ungranted\n`,
+  );
+  write(
+    "    a map-fixed family an action targets and no HUD line reads is a quadrant error: the model spends an observe on a fact that does not move, in the one place a line could have said it\n",
+  );
+  const fields = observation.fieldLevel;
+  write(
+    `  H field coverage    read ${fields.counts.readMembers} members across ${fields.handlersWithReads} handlers; carried ${fields.counts.carried}; absent ${fields.counts.absent} (${fields.counts.red} red, ${fields.counts.baselined} baselined); unparsed ${fields.unparsed.length}, no family ${fields.noFamily.length}, no schema row ${fields.noRow.length}\n`,
+  );
+  write(
+    "    a member a handler decides from must be a field of the row its target family publishes; member extraction is heuristic, which is why the unparsed count is printed beside the verdicts\n",
   );
   for (const finding of observation.findings) write(`  ${finding.code}: ${finding.detail}\n`);
   write(

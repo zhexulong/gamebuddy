@@ -4,11 +4,17 @@ import {
   addressabilityCoverage,
   collectionCoverage,
   consumptionCoverage,
+  fieldLevelCoverage,
+  handlerFieldReads,
   locationCollectionPopulation,
+  modMethodBodies,
+  modRowFields,
+  observationQuadrants,
   observeActionGaps,
   postconditionMutationCoverage,
   publicationGateCoverage,
   publicationGates,
+  publishedRowFields,
   publishedSnapshotSurface,
   reconcile,
   snapshotParameterOrder,
@@ -112,6 +118,22 @@ const SURFACE = Object.freeze({
 const EMPTY_BASELINE = Object.freeze({ schema: "gamebuddy-stardew-observation-gap-baseline/v1", entries: [] });
 
 /**
+ * The wire schema, fabricated to match the fabricated Mod: one family per case, and the row fields the
+ * section reads its verdict from. `publishedRowFields` resolves a family through its own `items.$ref`, so
+ * this fixture is the same shape the real `protocol/bridge-v1.schema.json` has.
+ */
+const SCHEMA = Object.freeze({
+  $defs: {
+    snapshot: {
+      properties: {
+        worldObjectTargets: { type: "array", items: { $ref: "#/$defs/worldObjectTarget" }, maxItems: 48 },
+      },
+    },
+    worldObjectTarget: { properties: { targetId: {}, location: {}, x: {}, y: {} } },
+  },
+});
+
+/**
  * The Host's consumer inventory, fabricated: one family read only through a tool description.
  *
  * The cases below measure collections, channels, addressability, postconditions or gates, so the
@@ -153,6 +175,7 @@ function observe(overrides = {}) {
     decompiled: DECOMPILED,
     surface: SURFACE,
     models: MODELS,
+    schema: SCHEMA,
     baseline: EMPTY_BASELINE,
     targetField: { place_owned_object: "WorldObjectTargets" },
     consumption: CONSUMPTION_FIXTURE,
@@ -486,6 +509,10 @@ test("the human summary names each section and every ungranted gap, on the same 
     /F consumption\s+1 published families: 0 read by a projection, 0 by a HUD line, 1 named in a tool description; 0 with no consumer/,
   );
   assert.match(text, /on-demand delivery is not a gap/);
+  assert.match(
+    text,
+    /G quadrants\s+0 local, 0 map-fixed \(0 untargeted\), 0 actor-owned, 1 undeclared: 0 map-fixed family\/action pair\(s\) with no per-turn line, 0 baselined with a reason, 0 ungranted/,
+  );
   assert.match(text, /collection_never_read:furniture:/);
   assert.match(text, /ungranted observation gap\(s\)/);
 });
@@ -521,13 +548,54 @@ test("the real tree is measured, and every red it reports is named", () => {
   assert.ok(report.consumption.rows.some((row) => row.projections.length > 0));
   assert.ok(report.consumption.rows.some((row) => row.hud));
   assert.deepEqual(report.publicationGating.gatedOff, []);
-  assert.deepEqual(report.ungranted.map((finding) => finding.code), [
-    "family_unclassified_by_consumer_inventory:FarmAnimalPetTargets",
-  ]);
+  // Measured, not floored. `FarmAnimalPetTargets` is declared withheld by `snapshot-projection-coverage.ts` now
+  // (`UNPROJECTED_OBSERVED_FAMILIES`), so the F section classifies it and no finding is left there; the G section's two
+  // remaining map-fixed gaps carry baseline entries with their reasons. This pins F and G by their own kinds, because the
+  // whole `ungranted` list is now shared with the field-level section that other work is landing in this same report.
+  assert.deepEqual(
+    report.findings.filter((finding) => finding.kind === "consumption" || finding.kind === "quadrant"),
+    [],
+  );
   // The advisory half is printed and counted, never red - `PendingLevelUpChoices` is exactly the shape of fact
   // that belongs there: published, delivered on demand, read by no line and targeted by no action.
   assert.ok(report.consumption.withoutConsumer.includes("PendingLevelUpChoices"));
-  assert.deepEqual(report.consumption.unclassified, ["FarmAnimalPetTargets"]);
+  assert.deepEqual(report.consumption.unclassified, []);
+
+  // G - quadrants, measured on the real tree. Every family is classified from its own discovery, so the population is
+  // 81 (not a list here): 56 actor-bounded, 9 map-fixed, 14 the actor's own state, 2 with no discovery at all.
+  assert.deepEqual(report.quadrant.counts, {
+    local: 56,
+    mapFixed: 9,
+    actorOwned: 14,
+    undeclared: 2,
+    mapFixedUntargeted: 5,
+    red: 2,
+    baselined: 2,
+    ungranted: 0,
+  });
+  assert.equal(report.quadrant.population, 81);
+  assert.deepEqual(report.quadrant.undeclared, ["Warps", "PendingLevelUpChoices"]);
+  assert.deepEqual(report.quadrant.mapFixed, [
+    "DoorTargets",
+    "VillagerWhereabouts",
+    "HarvestWhereabouts",
+    "WateringWhereabouts",
+    "CookingStationTargets",
+    "MineElevatorFloorTargets",
+    "ShopTargets",
+    "MineEntranceTargets",
+    "MailboxTargets",
+  ]);
+  // The two the HUD lines closed (the mine ladders and the mailbox) are read every turn now, and the two that are left
+  // carry a baseline entry with its reason - so the red list itself is the F finding only, as before.
+  const hudRead = report.quadrant.rows.filter((row) => row.hud).map((row) => row.key);
+  assert.ok(hudRead.includes("mineEntranceTargets"), "the way out of a mine level is in the per-turn block now");
+  assert.ok(hudRead.includes("mailboxTargets"));
+  assert.deepEqual(
+    report.quadrant.rows.filter((row) => row.quadrant === "map_fixed" && row.targeted && !row.hud).map((row) => row.family),
+    ["MineElevatorFloorTargets", "ShopTargets"],
+    "both are baselined; a new one here has to be read and explained rather than absorbed",
+  );
 });
 
 const GATED_MODELS = `
@@ -759,4 +827,469 @@ test("an inventory whose tables cannot be read is reported instead of classifyin
   // so every published family is unclassified and red until the tables are readable again.
   assert.deepEqual(coverage.unclassified, ["WorldObjectTargets"]);
   assert.ok(coverage.findings.some((finding) => finding.code === "family_unclassified_by_consumer_inventory:WorldObjectTargets"));
+});
+
+/**
+ * G - quadrants, as a gate.
+ *
+ * The defect: a fact that belongs to the MAP was delivered as if it belonged to a radius around the actor, so the only
+ * way to ask was an observe - and `mineEntranceTargets` published the way out of a mine level whole-map while no per-turn
+ * line read it. Each case below is one way the derivation could lie: a whole-layer scan called local, a radius scan
+ * called map-fixed, an actor-owned family called map-fixed, or a ratchet entry that outlived its gap.
+ */
+const QUADRANT_SOURCES = `
+    private static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(Farmer player)
+    {
+        List<BridgeMineEntranceTarget> result = new();
+        for (int x = player.TilePoint.X - TargetDiscoveryRadius; x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
+        {
+            result.Add(new BridgeMineEntranceTarget("mine_entrance_0", x, 0));
+        }
+        if (player.currentLocation is MineShaft shaft && TryFindMineTileWithIndex(shaft, 115, out int exitX, out int exitY))
+        {
+            result.Add(new BridgeMineEntranceTarget("mine_entrance_1", exitX, exitY));
+        }
+        return result;
+    }
+
+    private static bool TryFindMineTileWithIndex(GameLocation location, int tileIndex, out int tileX, out int tileY)
+    {
+        tileX = 0;
+        tileY = 0;
+        for (int y = 0; y < buildings.LayerHeight; y++)
+        {
+            for (int x = 0; x < buildings.LayerWidth; x++)
+            {
+                if (buildings.Tiles[x, y].TileIndex == tileIndex) return true;
+            }
+        }
+        return false;
+    }
+
+    private static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player)
+    {
+        return location.objects.Pairs.Where(pair => Utility.tileWithinRadiusOfPlayer(0, 0, TargetDiscoveryRadius, player))
+            .Select(pair => new BridgeCropTarget("crop_1", 0, 0)).ToArray();
+    }
+
+    private static IReadOnlyList<BridgeFoodTarget> DiscoverFoodTargets(Farmer player)
+    {
+        return player.Items.Select((item, slot) => new BridgeFoodTarget(slot)).ToArray();
+    }
+`;
+
+const QUADRANT_FAMILIES = Object.freeze([
+  { name: "MineEntranceTargets", row: "BridgeMineEntranceTarget" },
+  { name: "CropTargets", row: "BridgeCropTarget" },
+  { name: "FoodTargets", row: "BridgeFoodTarget" },
+]);
+
+const QUADRANT_TARGET_FIELD = Object.freeze({
+  use_mine_ladder: "MineEntranceTargets",
+  enter_mine: "MineEntranceTargets",
+  water_crop: "CropTargets",
+  use_item: "FoodTargets",
+});
+
+function quadrants({ hudFields = new Set() } = {}) {
+  const sources = fixture([QUADRANT_SOURCES]);
+  return observationQuadrants({
+    families: QUADRANT_FAMILIES,
+    discoveries: parseDiscoveries(sources),
+    bodies: modMethodBodies(sources),
+    hudFields,
+    targetField: QUADRANT_TARGET_FIELD,
+  });
+}
+
+test("a map-fixed family an action targets and no line reads is red, and a HUD line closes it", () => {
+  const before = quadrants();
+  assert.deepEqual(
+    before.rows.map((row) => [row.family, row.quadrant]),
+    [
+      ["MineEntranceTargets", "map_fixed"],
+      ["CropTargets", "local"],
+      ["FoodTargets", "actor_owned"],
+    ],
+    "the ladder family publishes a whole-map branch; the crop scan is actor-bounded; the pack is neither",
+  );
+  assert.deepEqual(before.findings.map((finding) => finding.code), [
+    "map_fixed_family_not_in_hud:MineEntranceTargets",
+  ]);
+  // The evidence names BOTH branches, because that mixed shape is the reason the rule exists: the entrance window alone
+  // would have classified this family local, and the ladder - the one fact the companion needs - would have stayed hidden.
+  const ladder = before.rows[0];
+  assert.match(ladder.evidence[0], /map-fixed: a whole-layer scan inside TryFindMineTileWithIndex/u);
+  assert.match(ladder.evidence[0], /actor-bounded: a scan window around the actor/u);
+
+  const after = quadrants({ hudFields: new Set(["mineEntranceTargets"]) });
+  assert.deepEqual(after.findings, [], "the line reads the family now, so the observe is no longer the only way to ask");
+  assert.deepEqual(after.counts, {
+    local: 1,
+    mapFixed: 1,
+    actorOwned: 1,
+    undeclared: 0,
+    mapFixedUntargeted: 0,
+    red: 0,
+  });
+});
+
+test("a radius-bounded or actor-owned family is never reported by the quadrant rule", () => {
+  const report = quadrants();
+  const reported = report.findings.map((finding) => finding.id);
+  // The crop scan calls the engine's radius helper, so its rows are already around the actor: an observe is the delivery
+  // policy the Host documents, not a gap. The pack is not map content at all, so there is no quadrant to get wrong.
+  assert.ok(!reported.includes("CropTargets"));
+  assert.ok(!reported.includes("FoodTargets"));
+  assert.match(report.rows[1].evidence[0], /actor-bounded: an actor-radius helper/u);
+  assert.match(report.rows[2].evidence[0], /no location and no map read/u);
+});
+
+test("a family nothing discovers is undeclared rather than guessed", () => {
+  const report = observationQuadrants({
+    families: [{ name: "Warps", row: "BridgeWarp" }],
+    discoveries: [],
+    bodies: new Map(),
+    hudFields: new Set(),
+    targetField: { travel: "Warps" },
+  });
+  assert.equal(report.rows[0].quadrant, "undeclared");
+  assert.deepEqual(report.findings, [], "no evidence is not evidence of a quadrant error");
+  assert.deepEqual(report.rows[0].evidence, []);
+});
+
+const MAP_FIXED_OBJECTS = `
+    private static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player)
+    {
+        for (int y = 0; y < buildings.LayerHeight; y++)
+        {
+            for (int x = 0; x < buildings.LayerWidth; x++)
+            {
+                if (location.objects.ContainsKey(new Vector2(x, y))) return new[] { new BridgeWorldObjectTarget("o", 1, x, y) };
+            }
+        }
+        return Array.Empty<BridgeWorldObjectTarget>();
+    }
+`;
+
+test("a quadrant gap can be baselined once, and an entry whose family is now in the HUD fails as stale", () => {
+  const sources = fixture([MAP_FIXED_OBJECTS]);
+  const baseline = {
+    schema: "gamebuddy-stardew-observation-gap-baseline/v1",
+    entries: [{ kind: "quadrant", id: "WorldObjectTargets", reason: "measured: the family is whole-map and no line reads it" }],
+  };
+
+  const red = observe({ sources });
+  assert.deepEqual(
+    red.findings.filter((finding) => finding.kind === "quadrant").map((finding) => finding.code),
+    ["map_fixed_family_not_in_hud:WorldObjectTargets"],
+  );
+
+  const excused = observe({ sources, baseline });
+  assert.deepEqual(excused.findings.filter((finding) => finding.kind === "quadrant"), []);
+  assert.equal(excused.quadrant.counts.baselined, 1);
+
+  const inHudNow = observe({
+    sources,
+    baseline,
+    consumption: { ...CONSUMPTION_FIXTURE, hud: `{ name: "objects", fields: ["worldObjectTargets"], render: () => "" }` },
+  });
+  const stale = inHudNow.findings.find(
+    (finding) => finding.code === "stale_baseline_entry:quadrant:WorldObjectTargets",
+  );
+  assert.ok(stale, "a line reads the family now, so the baseline entry must be deleted rather than excusing the next one");
+  assert.match(stale.detail, /read by a line in host\/src\/snapshot-hud\.ts/u);
+});
+
+test("a quadrant baseline entry that names no published family is neither stale nor silently accepted", () => {
+  const report = observe({
+    baseline: {
+      schema: "gamebuddy-stardew-observation-gap-baseline/v1",
+      entries: [{ kind: "quadrant", id: "NoSuchTargets", reason: "recorded against a family that was renamed" }],
+    },
+  });
+  assert.ok(
+    report.findings.some((finding) => finding.code === "baseline_entry_unknown_subject:quadrant:NoSuchTargets"),
+    "an entry that names nothing excuses nothing",
+  );
+  assert.ok(!report.findings.some((finding) => finding.code.startsWith("stale_baseline_entry:quadrant:")));
+});
+
+/* ------------------------------------------------------------------------------------------------ *
+ * H - field-level coverage.
+ *
+ * Section D asks whether the member a handler MUTATES is carried by some family, so it stayed green while
+ * `water_crop` decided from `HoeDirt.isWatered()` and the row it was handed (`BridgeCropTarget`) carried no
+ * water state at all. Each case below is one way the section could lie: a read reported against the wrong
+ * family, a member called carried because a field is merely present, a carried member silently excusing a
+ * baselined gap, and a handler whose reads could not be extracted counted as clean.
+ * ------------------------------------------------------------------------------------------------ */
+
+const CROP_ROW_FIELDS = Object.freeze({ targetId: {}, x: {}, y: {}, cropId: {}, displayName: {} });
+
+/** The wire schema for one crop family, with exactly the fields the case gives it. */
+function cropSchema(fields) {
+  return {
+    $defs: {
+      snapshot: {
+        properties: { cropTargets: { type: "array", items: { $ref: "#/$defs/cropTarget" }, maxItems: 64 } },
+      },
+      cropTarget: { properties: fields },
+    },
+  };
+}
+
+const WATER_HANDLER = `internal sealed class FieldActionHandler
+{
+    private LocalExecutionReceipt? Resolve(FarmhandActionRequest request) => request.ActionId switch
+    {
+        "water_crop" => this.executions.RequestLocalWaterCrop(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0)),
+        _ => null,
+    };
+}
+`;
+
+/** The shipped shape: the target is the HoeDirt at the tile, and the decision is its water state. */
+const WATER_CONTROLLER = `internal sealed partial class FarmhandExecutionController
+{
+    public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+            || !dirt.isWatered())
+            return null;
+        return null;
+    }
+}
+`;
+
+const CROP_MODELS = `
+public sealed record BridgeSnapshot(
+    IReadOnlyList<BridgeCropTarget>? CropTargets = null
+);
+
+public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName);
+`;
+
+/** The same record after the fix: the row states the water state the handler decides from. */
+const CROP_MODELS_WITH_WATERED = CROP_MODELS.replace(
+  "string CropId, string DisplayName);",
+  "string CropId, string DisplayName, bool Watered);",
+);
+
+function fieldSources(controller = WATER_CONTROLLER, handler = WATER_HANDLER) {
+  return [
+    ...fixture([handler], "integrations/stardew/Handlers/FieldActionHandler.cs"),
+    ...fixture([controller], "integrations/stardew/farmhandexecutioncontroller.field.cs"),
+  ];
+}
+
+const FIELD_TARGET_FIELD = Object.freeze({ water_crop: "CropTargets" });
+
+test("a handler that decides from a member its row does not carry is red, naming action, member and family", () => {
+  const sources = fieldSources();
+  const scan = fieldLevelCoverage({
+    sources,
+    surface: SURFACE,
+    models: CROP_MODELS,
+    schema: cropSchema(CROP_ROW_FIELDS),
+    targetField: FIELD_TARGET_FIELD,
+  });
+
+  assert.deepEqual(
+    scan.rows.map((row) => [row.actionId, row.family, row.members.map((member) => [member.member, member.carried])]),
+    [["water_crop", "cropTargets", [["isWatered", false]]]],
+    "the read is the HoeDirt's own water state, checked against the family the surface declares",
+  );
+  assert.deepEqual(scan.counts, {
+    readMembers: 1,
+    carried: 0,
+    absent: 1,
+    unparsed: 0,
+    noFamily: 0,
+    noRow: 0,
+    handlersWithReads: 1,
+  });
+
+  const report = observe({
+    sources,
+    models: CROP_MODELS,
+    schema: cropSchema(CROP_ROW_FIELDS),
+    targetField: FIELD_TARGET_FIELD,
+  });
+  assert.deepEqual(
+    report.findings.filter((finding) => finding.kind === "field").map((finding) => finding.code),
+    ["field_unobservable:water_crop:isWatered:cropTargets"],
+  );
+});
+
+test("the same member is carried once the row publishes it, which is the water-crop fix", () => {
+  const sources = fieldSources();
+  const schema = cropSchema({ ...CROP_ROW_FIELDS, watered: {} });
+  const scan = fieldLevelCoverage({
+    sources,
+    surface: SURFACE,
+    models: CROP_MODELS_WITH_WATERED,
+    schema,
+    targetField: FIELD_TARGET_FIELD,
+  });
+
+  // `isWatered` and the published `watered` are one fact under two spellings, so the record/schema cross-check
+  // stays silent and the read is carried by the FIELD, not merely by the member's name appearing nearby.
+  assert.deepEqual(scan.rows[0].members, [
+    { member: "isWatered", field: "watered", carried: true, id: "water_crop:isWatered:cropTargets" },
+  ]);
+  assert.deepEqual(scan.findings, []);
+  assert.equal(scan.counts.carried, 1);
+  assert.equal(scan.counts.absent, 0);
+
+  const report = observe({
+    sources,
+    models: CROP_MODELS_WITH_WATERED,
+    schema,
+    targetField: FIELD_TARGET_FIELD,
+  });
+  assert.deepEqual(report.findings.filter((finding) => finding.kind === "field"), []);
+});
+
+test("a field baseline entry whose member the row now carries fails as stale", () => {
+  const sources = fieldSources();
+  const baseline = {
+    schema: "gamebuddy-stardew-observation-gap-baseline/v1",
+    entries: [
+      { kind: "field", id: "water_crop:isWatered:cropTargets", reason: "recorded before the row carried the water state" },
+    ],
+  };
+
+  const beforeFix = observe({ sources, models: CROP_MODELS, schema: cropSchema(CROP_ROW_FIELDS), targetField: FIELD_TARGET_FIELD, baseline });
+  assert.deepEqual(
+    beforeFix.findings.filter((finding) => finding.kind === "field"),
+    [],
+    "a baselined read is excused while the row still does not carry it",
+  );
+  assert.equal(beforeFix.fieldLevel.counts.baselined, 1);
+
+  const afterFix = observe({
+    sources,
+    models: CROP_MODELS_WITH_WATERED,
+    schema: cropSchema({ ...CROP_ROW_FIELDS, watered: {} }),
+    targetField: FIELD_TARGET_FIELD,
+    baseline,
+  });
+  const stale = afterFix.findings.find(
+    (finding) => finding.code === "stale_baseline_entry:field:water_crop:isWatered:cropTargets",
+  );
+  assert.ok(stale, "the row carries `watered` now, so the entry must be deleted rather than excusing the next gap");
+  assert.match(stale.detail, /carries `isWatered` now/u);
+});
+
+const UNPARSED_HANDLER = `internal sealed class UnparsedActionHandler
+{
+    private LocalExecutionReceipt? Resolve(FarmhandActionRequest request) => request.ActionId switch
+    {
+        "till_soil" => this.executions.RequestLocalTillSoil(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0)),
+        "chest_store" => this.executions.RequestLocalChestStore(request.RequestId),
+        _ => null,
+    };
+}
+`;
+
+/**
+ * Two handlers the extraction rule cannot reduce to a member: one reads no location value at all, and one
+ * binds the target and then uses it only inside an evidence string.
+ */
+const UNPARSED_CONTROLLER = `internal sealed partial class FarmhandExecutionController
+{
+    public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY)
+    {
+        if (Game1.player.Items.Count == 0) return null;
+        return null;
+    }
+
+    public LocalExecutionReceipt RequestLocalChestStore(string requestId)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!location.objects.TryGetValue(new Vector2(1, 1), out StardewValley.Object? chest)) return null;
+        string evidence = $"chest={chest.QualifiedItemId}";
+        return null;
+    }
+}
+`;
+
+test("a handler whose reads cannot be extracted is counted unparsed, printed, and never treated as clean", () => {
+  const sources = fieldSources(UNPARSED_CONTROLLER, UNPARSED_HANDLER);
+  const scan = fieldLevelCoverage({
+    sources,
+    surface: SURFACE,
+    models: CROP_MODELS,
+    schema: cropSchema(CROP_ROW_FIELDS),
+    targetField: FIELD_TARGET_FIELD,
+  });
+
+  assert.deepEqual(scan.unparsed, [
+    { actionId: "chest_store", reason: "no_decision_read_through_a_location_bound_value" },
+    { actionId: "till_soil", reason: "no_location_bound_engine_value" },
+  ]);
+  assert.deepEqual(scan.rows, [], "an unparsed handler contributes no reading and no verdict");
+  assert.equal(scan.counts.handlersWithReads, 0);
+  assert.equal(scan.counts.readMembers, 0);
+  assert.equal(scan.counts.carried, 0);
+
+  // And the report prints it rather than reporting a clean section.
+  const lines = [];
+  writeObservationSummary(
+    observe({ sources, models: CROP_MODELS, schema: cropSchema(CROP_ROW_FIELDS), targetField: FIELD_TARGET_FIELD }),
+    (text) => lines.push(text),
+  );
+  assert.match(lines.join(""), /H field coverage\s+read 0 members across 0 handlers; carried 0; absent 0 \(0 red, 0 baselined\); unparsed 2, no family 0, no schema row 0/u);
+});
+
+test("the field-level section on the real tree: the water state is a row field now, and every other gap is named", () => {
+  const report = observeActionGaps({});
+
+  // Printed separately from the verdicts because member extraction is heuristic: 21 reads across 10 handlers,
+  // 84 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary.
+  assert.deepEqual(report.fieldLevel.counts, { readMembers: 21, carried: 3, absent: 18, red: 14, baselined: 4 });
+  assert.equal(report.fieldLevel.handlers, report.postconditionMutations.handlers);
+  assert.equal(report.fieldLevel.handlersWithReads, 10);
+  assert.equal(report.fieldLevel.unparsed.length, 84);
+  assert.ok(report.fieldLevel.unparsed.every((entry) => entry.reason.length > 0));
+  assert.ok(
+    !report.fieldLevel.unparsed.some((entry) => report.fieldLevel.rows.some((row) => row.actionId === entry.actionId)),
+    "a handler is either measured or unparsed, never both",
+  );
+
+  // THE FIX THIS SECTION FOUND: `water_crop` reads the HoeDirt's water state and the row carries it as `watered`.
+  const waterCrop = report.fieldLevel.rows.find((row) => row.actionId === "water_crop");
+  assert.deepEqual(waterCrop.members, [
+    { member: "crop", field: null, carried: false, id: "water_crop:crop:cropTargets" },
+    { member: "isWatered", field: "watered", carried: true, id: "water_crop:isWatered:cropTargets" },
+    { member: "needsWatering", field: null, carried: false, id: "water_crop:needsWatering:cropTargets" },
+  ]);
+  // `till_soil` is the other half of the same defect and is still open: the tile row is `{x, y}` and the handler
+  // asks the engine whether a HoeDirt stands there, so the published row cannot answer for itself.
+  const tillSoil = report.fieldLevel.rows.find((row) => row.actionId === "till_soil");
+  assert.deepEqual(tillSoil.members, [{ member: "HoeDirt", field: null, carried: false, id: "till_soil:HoeDirt:soilTiles" }]);
+
+  assert.deepEqual(
+    report.ungranted.filter((finding) => finding.kind === "field").map((finding) => finding.code),
+    [
+      "field_unobservable:cut_weeds:IsWeeds:weedTargets",
+      "field_unobservable:fertilize_tile:CanApplyFertilizer:fertilizerTargets",
+      "field_unobservable:harvest_crop:GetHarvestMethod:harvestTargets",
+      "field_unobservable:harvest_crop:forageCrop:harvestTargets",
+      "field_unobservable:harvest_crop:readyForHarvest:harvestTargets",
+      "field_unobservable:machine_inspect:GetMachineData:machineTargets",
+      "field_unobservable:pickup_forage:isForage:forageTargets",
+      "field_unobservable:plant_seed:canPlantThisSeedHere:seedTargets",
+      "field_unobservable:plant_seed:crop:seedTargets",
+      "field_unobservable:scythe_crop:GetHarvestMethod:scytheCropTargets",
+      "field_unobservable:scythe_crop:dead:scytheCropTargets",
+      "field_unobservable:scythe_crop:forageCrop:scytheCropTargets",
+      "field_unobservable:scythe_crop:readyForHarvest:scytheCropTargets",
+      "field_unobservable:till_soil:HoeDirt:soilTiles",
+    ],
+    "an equality in both directions: a fix must delete its entry, and a new gap has to be read rather than absorbed",
+  );
 });

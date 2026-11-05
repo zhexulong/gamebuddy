@@ -76,6 +76,8 @@ test("the state block is byte-identical for two turns in the same world", () => 
       "- exhausted: no",
       "- held tool: Hoe in slot 1",
       "- unwatered crops: 2 on Farm (nearest 4,10)",
+      "- mine ladders: none here",
+      "- mailbox: none here",
       "]",
     ].join("\n"),
   );
@@ -131,6 +133,8 @@ test("every printed field is a declared snapshot field, and no line reads an und
     // "read from this field" apart from "printed the figure" - the base row is already Farm, so replacing it with another
     // Farm row would change no bytes.
     ["wateringWhereabouts", [{ location: "Desert", needsWaterCount: 7, nearestX: 3, nearestY: 4 }]],
+    ["mineEntranceTargets", [{ targetId: "mine_entrance_0123456789abcdef", x: 12, y: 3 }]],
+    ["mailboxTargets", [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }]],
   ]);
   // The fixture carries no `actorDispositionKind`, so `actionable` is the field that decides the body line. A
   // disposition would shadow it, and the gate would then be silent about a declared field that stopped being read.
@@ -210,4 +214,89 @@ test("the dry-crop line ignores the cropTargets count when the whole-map fact di
   const rendered = lineValues(both).get("unwatered crops") ?? "";
   assert.match(rendered, /34/u);
   assert.doesNotMatch(rendered, /in reach/u, "the radius answer must not survive beside the whole-map one");
+});
+
+/**
+ * The two map-fixed lines, and the three constraints every line here obeys: bounded, fixed order, byte-identical while
+ * the world is unchanged.
+ *
+ * The defect they pin is one quadrant error, twice: a fact that belongs to the MAP was delivered as if it belonged to a
+ * radius around the actor, so the only way to ask was a 6.9k-token `stardew_observe` - in a mine shaft, at 01:00, which is
+ * precisely where the companion gets lost.
+ */
+const mineSnapshot: Snapshot = {
+  ...baseSnapshot,
+  location: "UndergroundMine",
+  mineEntranceTargets: [
+    { targetId: "mine_entrance_ffffffffffffffff", x: 15, y: 9 },
+    { targetId: "mine_entrance_0123456789abcdef", x: 12, y: 3 },
+  ],
+};
+
+test("a mine's ladders are named every turn, sorted by tile rather than by array order", () => {
+  const rendered = lineValues(formatSnapshotHud(mineSnapshot)).get("mine ladders");
+  assert.equal(
+    rendered,
+    "mine_entrance_0123456789abcdef at (12, 3), mine_entrance_ffffffffffffffff at (15, 9)",
+    "the ids are what `use_mine_ladder` takes, and the order is the tile's, not the wire array's",
+  );
+
+  // Same two ladders, the other way round on the wire: one unchanged world must render one unchanged block.
+  const reordered = formatSnapshotHud({
+    ...mineSnapshot,
+    mineEntranceTargets: [...(mineSnapshot.mineEntranceTargets ?? [])].reverse(),
+  });
+  assert.equal(reordered, formatSnapshotHud(mineSnapshot));
+});
+
+test("the ladder line is bounded at the source, and counts what it does not print", () => {
+  const many = formatSnapshotHud({
+    ...mineSnapshot,
+    mineEntranceTargets: Array.from({ length: 9 }, (_, index) => ({
+      targetId: `mine_entrance_${String(index).padStart(16, "0")}`,
+      x: index,
+      y: 0,
+    })),
+  });
+  const rendered = lineValues(many).get("mine ladders") ?? "";
+  assert.match(rendered, /\+5 more$/u, "four rows printed, five counted - never silently dropped");
+  assert.ok(
+    Buffer.byteLength(rendered, "utf8") < 260,
+    `the ladder line must stay small, got ${Buffer.byteLength(rendered, "utf8")} bytes`,
+  );
+  assert.ok(Buffer.byteLength(many, "utf8") <= MAX_SNAPSHOT_HUD_BYTES);
+});
+
+test("outside a mine the ladder line says so, and the mailbox line names only this location's box", () => {
+  assert.equal(lineValues(formatSnapshotHud(baseSnapshot)).get("mine ladders"), "none here");
+
+  const here = lineValues(
+    formatSnapshotHud({
+      ...baseSnapshot,
+      mailboxTargets: [
+        { targetId: "mailbox_ffffffffffffffff", location: "Town", x: 9, y: 9, pendingCount: 1 },
+        { targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 },
+      ],
+    }),
+  ).get("mailbox");
+  assert.equal(here, "2 pending at (3, 4) mailbox_0123456789abcdef");
+  assert.equal(lineValues(formatSnapshotHud(baseSnapshot)).get("mailbox"), "none here");
+});
+
+test("the mailbox line changes when mail arrives and not before", () => {
+  const one = formatSnapshotHud({
+    ...baseSnapshot,
+    mailboxTargets: [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }],
+  });
+  const again = formatSnapshotHud({
+    ...baseSnapshot,
+    mailboxTargets: [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }],
+  });
+  assert.equal(one, again);
+  const more = formatSnapshotHud({
+    ...baseSnapshot,
+    // The id is hashed from the pending count and the head letter, so new mail is a new id: the line follows the world.
+    mailboxTargets: [{ targetId: "mailbox_ffffffffffffffff", location: "Farm", x: 3, y: 4, pendingCount: 3 }],
+  });
+  assert.deepEqual(changedLineNames(one, more), ["mailbox"]);
 });

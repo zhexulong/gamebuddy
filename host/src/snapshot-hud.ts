@@ -61,6 +61,32 @@ type SnapshotHudLine = Readonly<{
       fields: ["wateringWhereabouts", "location"],
       render: (snapshot) => unwateredCropsOf(snapshot),
     },
+    {
+      // THE WAY OUT OF A MINE LEVEL, read every turn because the fact does not move.
+      //
+      // `mineEntranceTargets` is published from a whole-layer scan of the level's own Buildings layer: the exit ladder
+      // (tile 115) and the descent ladder (tile 173) are one family with one row shape, so a companion that had to
+      // discover them by observation was trapped at 01:00 with a 6.9k-token observe as its only way to ask. A ladder does
+      // not move while the level is unchanged, which is exactly the shape a per-turn line is for - the same quadrant error
+      // as the dry-crop line above, one map over.
+      //
+      // The kind (exit or descent) is NOT on the wire: the id is hashed from kind + tile and the row carries only the id
+      // and the tile. This line therefore names the ladders and never claims which is which - the action re-reads the live
+      // tile and refuses a tile that is neither.
+      name: "mine ladders",
+      fields: ["mineEntranceTargets"],
+      render: mineLaddersOf,
+    },
+    {
+      // The location's mailbox: one map-fixed point, the same quadrant and the same reason as the ladders.
+      //
+      // `claim_mail_attachment` needs the mailbox's own opaque id, and the id is hashed from location, tile, the pending
+      // count and the head letter - so it changes when mail arrives and is stable while nothing does. That is a per-turn
+      // line: the alternative is an observe to find out whether there is a mailbox here at all.
+      name: "mailbox",
+      fields: ["mailboxTargets", "location"],
+      render: mailboxOf,
+    },
   ]);
 
 /**
@@ -107,6 +133,51 @@ function bodyStateOf(snapshot: Snapshot): string {
   const disposition = snapshot.actorDispositionKind;
   if (disposition !== undefined && disposition !== "idle") return `busy (${disposition})`;
   return snapshot.actionable ? "free" : "busy (not actionable)";
+}
+
+/**
+ * How many ladder rows the mine line prints before it counts the rest.
+ *
+ * A mine level publishes at most two (the exit and the descent), but the mine ENTRANCE map publishes up to sixteen
+ * `Mine` Action tiles, and sixteen ids of 38 bytes each would push the whole block past its byte budget. Four keeps the
+ * line under ~200 bytes and the remainder is named, never dropped silently.
+ */
+const MAX_MINE_LADDER_ROWS = 4;
+
+/**
+ * The mine-ladder line: where the level's ladders are, and the ids the action needs to take one.
+ *
+ * Three shapes, each said plainly:
+ *
+ *   in a level    `mine_entrance_1a2b... at (12, 3), mine_entrance_9c8d... at (15, 9)`
+ *   not in one    `none here`
+ *   more than the cap   the first few by tile, then `+N more` - never silently truncated
+ *
+ * Deterministic by construction: the rows are sorted by tile, never trusted in the array's own order, and nothing here
+ * reads a clock. The Mod's own order puts the exit ladder first, but the row shape does not carry the kind, so sorting by
+ * tile is the only order this line can justify.
+ */
+function mineLaddersOf(snapshot: Snapshot): string {
+  const rows = snapshot.mineEntranceTargets ?? [];
+  if (rows.length === 0) return "none here";
+  const ordered = [...rows].sort((left, right) => left.x - right.x || left.y - right.y);
+  const shown = ordered.slice(0, MAX_MINE_LADDER_ROWS).map((row) => `${row.targetId} at (${row.x}, ${row.y})`);
+  if (ordered.length > shown.length) shown.push(`+${ordered.length - shown.length} more`);
+  return shown.join(", ");
+}
+
+/**
+ * The mailbox line: this location's mailbox, its pending count, and the id `claim_mail_attachment` takes.
+ *
+ * The Mod publishes the mailbox of the location the actor stands in, and its id is hashed from the location, the tile,
+ * the pending count and the head letter. "No mailbox here" is a fact, not an absence, so it is stated rather than left
+ * blank; a row from another location is never rendered, because the action only accepts the one under the actor's feet.
+ */
+function mailboxOf(snapshot: Snapshot): string {
+  const rows = snapshot.mailboxTargets ?? [];
+  const here = rows.find((row) => row.location === snapshot.location);
+  if (here === undefined) return "none here";
+  return `${here.pendingCount} pending at (${here.x}, ${here.y}) ${here.targetId}`;
 }
 
 function heldToolOf(snapshot: Snapshot): string {
