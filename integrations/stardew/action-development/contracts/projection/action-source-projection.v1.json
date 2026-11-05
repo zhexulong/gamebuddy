@@ -1767,6 +1767,44 @@
         "handlerGroup": null
       },
       {
+        "actionId": "pet_farm_animal",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "pet_farm_animal",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          },
+          "targetFamily": "farmAnimalPetTargets"
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "water_pet_bowl",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -4011,7 +4049,8 @@
     ],
     "experimentalActionIds": [
       "use_mine_ladder",
-      "move_placed_furniture"
+      "move_placed_furniture",
+      "pet_farm_animal"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -4076,6 +4115,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4172,6 +4212,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4268,6 +4309,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4364,6 +4406,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4460,6 +4503,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4556,6 +4600,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4748,6 +4793,7 @@
       "npc_relationship",
       "pan_ore",
       "pet_animal",
+      "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
@@ -4856,6 +4902,7 @@
       "name_entity",
       "npc_relationship",
       "pet_animal",
+      "pet_farm_animal",
       "ship_item",
       "shop_purchase",
       "take_pedestal_item",

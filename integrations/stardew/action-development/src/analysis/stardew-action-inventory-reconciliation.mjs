@@ -493,10 +493,9 @@ export const METHOD_VERDICTS = Object.freeze({
   "IslandSouthEastCave.performAction@124": contentFromSelector("selector `Bartender`/`DartsGame`: story dialogue", "4.4"),
   "IslandWestCave1.performAction@212": contentFromSelector("selector `Crystal`/`CrystalCaveActivate`: netPhase state machine", "4.4"),
   "IslandSecret.checkAction@112": contentFromSelector("birdieQuestBegun/Finished quest line + Event", "4.4"),
-  "MineShaft.checkAction@3053": contentFromSelector(
-    "calico statue: the real effect is in the fieldChangeEvent callback with Utility.CreateDaySaveRandom",
-    "4.4",
-  ),
+  // MineShaft.checkAction@3053 left the candidate pool when use_mine_ladder registered that method as a
+  // native seam (98cd154c, retired 2026-11-05): a registered unit retires here, and the calico statue it used
+  // to cover is decided by the selector layer instead.
   "Railroad.checkAction@130": contentFromSelector("witchStatueGone + xPeriodic animation", "4.4"),
   "GameLocation.performAction@8695": {
     group: "decomposed_by_selector_layer",
