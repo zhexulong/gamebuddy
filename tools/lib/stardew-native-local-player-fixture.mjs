@@ -771,6 +771,12 @@ export function fixtureActions(action) {
   // farmhandexecutioncontroller.cs, the `WorldObjectTargets:` row of the snapshot projection). The
   // runner never invokes it.
   if (action === "move_placed_furniture") return ["move_placed_furniture", "remove_placed_item"];
+  // The rotation slice names a PIECE, and its target comes from the same shared `worldObjectTargets`
+  // projection - which the Mod now publishes for `rotate_furniture` itself, so no sibling action is
+  // advertised to drag the projection in. The fixture arms one turnable piece and one the engine will
+  // not turn (`ModEntry.Fixtures.RotateFurniture.cs`); the run proves both.
+  if (action === "rotate_furniture") return ["rotate_furniture"];
+  if (action === "remove_fence") return ["remove_fence"];
   if (action === "enter_mine") return ["enter_mine"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
@@ -839,6 +845,10 @@ export function fixtureScenario(actions, action) {
   // world-object fallback below - a world whose actor is warped to the Farm, where no furniture
   // stands at all.
   if (action === "move_placed_furniture") return "";
+  // The rotation slice owns a world of its own: two pieces of the game's own furniture beside the
+  // actor, one whose `rotations` allows a turn and one whose does not.
+  if (action === "rotate_furniture") return "native_rotate_furniture_v1";
+  if (action === "remove_fence") return "native_remove_fence_v1";
 
   // The requested harness action can select a distinct scenario for the SAME
   // action set: the built-in kitchen fridge is the chest store/take intent over a

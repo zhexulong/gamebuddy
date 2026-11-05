@@ -72,6 +72,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.tailoringactions.cs"] = 2,
         ["farmhandexecutioncontroller.colorobjectactions.cs"] = 1,
         ["farmhandexecutioncontroller.geodeactions.cs"] = 1,
+        ["farmhandexecutioncontroller.furnituredecorationactions.cs"] = 4,
     };
 
     private static string RepositoryRoot()

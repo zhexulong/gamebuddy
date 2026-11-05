@@ -2161,6 +2161,18 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // GameLocation.cs:8084-8093, takes the first free one), so a caller-supplied slot would be a value
         // nothing reads.
         "move_placed_furniture" => new[] { "x", "y", "expectedTargetId" },
+        // Turning a placed piece names the same tile and the same `placed_furniture` id, and nothing else: the
+        // rotation it ends up with is the action's own cycle, not a caller-supplied angle. A free-form angle would
+        // have to pretend to accept orientations the game does not have (`Furniture.rotate`, Furniture.cs:1153-1162,
+        // advances by 1 or 2 and wraps at 4, and refuses to run at all below `rotations >= 2`).
+        "rotate_furniture" => new[] { "x", "y", "expectedTargetId" },
+        // The fence removal names the tile, the tool slot the swing goes through, and the fence's own object target id -
+        // the same id `remove_placed_item` publishes for it, because it is the same physical thing.
+        "remove_fence" => new[] { "x", "y", "slot", "expectedTargetId" },
+        // The tank deposit names the tile, the pack slot holding the item, that item's own identity and the tank's
+        // `placed_furniture` id: the native method reads the HELD item, so the slot is what selects the stack and the id
+        // is what proves the stack is still the one the caller saw.
+        "put_item_in_fish_tank" or "place_item_on_pedestal" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
     "answer_dialogue" => new[] { "responseKey" },
 
         // The actor's own attachment state. dismount_transport carries NO arguments: its subject

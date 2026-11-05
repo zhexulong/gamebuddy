@@ -307,6 +307,68 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // by the parent.
         E("move_placed_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_furniture_picked_up", "GameLocation.removeQueuedFurniture"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
         E("break_container", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "container_source_broken", "BreakableContainer.performToolAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
+        // TURNING A PLACED PIECE IS THE MISSING HALF OF PLACEMENT. The lane can put a piece down
+        // (`place_owned_object`), pick it up (`move_placed_furniture`) and repaint a chest
+        // (`color_placed_object`), but nothing could turn what is already standing, so every layout the
+        // companion built stayed the way the first tile happened to orient it.
+        //
+        // It is NOT `place_owned_object` with an extra argument: that action's subject is a placement
+        // CANDIDATE (a tile plus a backpack slot, the object does not exist yet), and this one's subject is
+        // a piece ALREADY in `location.furniture`, named by the same opaque `placed_furniture` id
+        // `move_placed_furniture` takes. No slot is declared, because no item is involved.
+        //
+        // `furniture_rotated` is the observed postcondition: the piece's own `currentRotation` read AFTER the
+        // native call differs from the value read before it, the rotated footprint is the one the game's own
+        // `Furniture.canBePlacedHere` accepts, and the piece is still standing on the tile it was named on.
+        // A rotation that would push the piece into a neighbour is put BACK and refused by name
+        // (`furniture_rotation_blocked_by_occupant`), never reported as a success the world does not show.
+        //
+        // Registered `Experimental` for the same reason as its sibling: it stays off the Agent surface until
+        // it passes its own native-local live gate, and promotion is a separate catalog edit.
+        E("rotate_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "furniture_rotated", "Furniture.rotate"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // TAKING A FENCE DOWN IS NOT `remove_placed_item` WITH A FENCE IN FRONT OF IT. The fence's own write is
+        // `Fence.performToolAction` (Fence.cs:436-474), which overrides the Object-shaped guards that action mirrors:
+        // the question "can this tool break THIS fence" is answered by `Fence.IsValidRemovalTool` (Fence.cs:478-513)
+        // from `Data/Fences`, and a GATE is a separate branch that only an Axe or a Pickaxe reaches (:447-454).
+        // `remove_placed_item`'s `RemovesThisObject` knows none of that, so it would admit a tool the fence refuses and
+        // report an uncertain postcondition twelve swings later instead of naming the reason.
+        //
+        // The native method ALSO returns false on every branch, including the one that destroyed the fence (:473), so
+        // success can only be the fence being GONE from `location.objects` plus the drops it produced.
+        //
+        // The target id is the object identity `remove_placed_item` already publishes for the same fence
+        // (`BuildPlacedItemTargetId`): one fence, one id, whichever action takes it down.
+        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // A FISH TANK IS FURNITURE, and it is the only thing that decides what it will hold. `FishTankFurniture`
+        // lives in `location.furniture` (GameLocation.cs:452), so the target id is the same `placed_furniture` id the
+        // pickup and the rotation take - one piece, one id. The deposit itself is the tank's own
+        // `checkForAction` (FishTankFurniture.cs:220-268), whose acceptance rule (`CanBeDeposited`, :270-309) reads
+        // `Data/Aquarium` for the normal case and a closed vanilla id list plus a hat branch for the rest; this action
+        // does not restate any of it.
+        //
+        // The item is named by the SLOT it occupies, because the native method reads the HELD item
+        // (`who.ActiveObject`/`who.CurrentItem`, :235). `expectedQualifiedItemId` binds the stack, so a slot whose
+        // contents changed under a waiting request is refused rather than depositing something the caller never named.
+        //
+        // `fish_tank_item_deposited` is the observed postcondition: the tank's own `heldItems` grew by exactly one with
+        // this item at the end, and the pack lost exactly one. A deposit the engine took the item for but never
+        // completed is put back the way the native failure callback does it (:255-263) and reported as
+        // `fish_tank_deposit_not_observed`, never as a success.
+        E("put_item_in_fish_tank", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fish_tank_item_deposited", "FishTankFurniture.checkForAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // PUTTING SOMETHING ON A PEDESTAL IS THE PEDESTAL'S OWN DECISION, and its seam has one branch a caller must never
+        // reach: while it already holds an item, `performObjectDropInAction` KNOCKS THAT ITEM OFF and answers false
+        // (ItemPedestal.cs:97-101). So an occupied pedestal is refused BY NAME before the call, and the remaining
+        // acceptance is the pedestal's own two guards asked through `probe: true` - the item must be trashable (:93-96) and
+        // must be EXACTLY a plain `Object` (:102), which excludes hats, clothing and furniture.
+        //
+        // The pedestal is an OBJECT in `location.objects`, not furniture, and its identity here is published as
+        // `worldObjectTargets` kind `empty_pedestal`. `pedestalTargets` cannot supply it: that family is the TAKE
+        // projection and carries only a pedestal that already holds something.
+        //
+        // `pedestal_item_placed` is the observed postcondition: the pedestal's own `heldObject` is this item and the pack
+        // lost exactly one. `match`/`locked` are reported because the pedestal writes them itself when the item it wants
+        // lands, so the caller can see it just satisfied a shrine rather than merely decorating.
+        E("place_item_on_pedestal", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "pedestal_item_placed", "ItemPedestal.performObjectDropInAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
         // Declares the axe its handler requires, like break_rock declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.

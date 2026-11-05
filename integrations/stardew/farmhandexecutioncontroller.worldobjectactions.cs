@@ -978,7 +978,7 @@ internal sealed partial class ExecutionManager
     /// slot: the same object can be named with either seam tool, and which tool really
     /// removes it is decided on the game thread, not by the identity.
     /// </summary>
-    private static string BuildPlacedItemTargetId(GameLocation location, int x, int y, StardewValley.Object target)
+    internal static string BuildPlacedItemTargetId(GameLocation location, int x, int y, StardewValley.Object target)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{target.QualifiedItemId}:{target.Type ?? "none"}:{target.Fragility.ToString(CultureInfo.InvariantCulture)}:placed-item";
         return $"placed_item_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1051,7 +1051,9 @@ internal sealed partial class ExecutionManager
                         y,
                         slot,
                         owned.QualifiedItemId,
-                        RequireDisplayName(owned.QualifiedItemId)));
+                        RequireDisplayName(owned.QualifiedItemId),
+                        null,
+                        null));
                     placementCount++;
                 }
             }
@@ -1094,7 +1096,9 @@ internal sealed partial class ExecutionManager
                     (int)tile.Y,
                     actionable ? slot : -1,
                     placed.QualifiedItemId,
-                    string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName));
+                    string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName,
+                    null,
+                    null));
                 objectCount++;
             }
         }
@@ -1111,6 +1115,11 @@ internal sealed partial class ExecutionManager
         // slot would promise one. The removal action refuses a furniture tile by name (see
         // `remove_placed_item_furniture_move_unsupported`) rather than `target_not_found`, so the companion learns the
         // difference between "not there" and "there, but I cannot move it".
+        //
+        // The piece also carries its own `currentRotation` and `rotations`, because those are the two facts an action on
+        // it needs and the only place they exist: `rotations < 2` is why `rotate_furniture` refuses by name instead of
+        // turning nothing, and `currentRotation` before/after is the only witness that a turn happened. A caller cannot
+        // derive either - the target id deliberately excludes anything the piece's own use changes.
         int furnitureCount = 0;
         foreach (Furniture piece in location.furniture)
         {
@@ -1130,8 +1139,43 @@ internal sealed partial class ExecutionManager
                 (int)tile.Y,
                 -1,
                 piece.QualifiedItemId,
-                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName));
+                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName,
+                piece.currentRotation.Value,
+                piece.rotations.Value));
             furnitureCount++;
+        }
+        // EMPTY PEDESTALS, because nothing published them. `pedestalTargets` is the TAKE projection and carries only a
+        // pedestal that already HOLDS something (DiscoverPedestalTargets requires a held item, and its identity binds that
+        // item and its stack), so the one state `place_item_on_pedestal` can address - an empty pedestal - was invisible.
+        //
+        // Published as `empty_pedestal` with `Slot: -1`: the action names the ITEM's backpack slot, not a tool, and this
+        // lane never advertises a slot the actor does not have. The id is its own namespace because the pedestal already
+        // has a row here (as `removable_object`, when an axe can break it), and two actions on one tile must not collide
+        // in the dedupe set.
+        int pedestalCount = 0;
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
+        {
+            if (pedestalCount >= WorldObjectTargetLimit)
+                break;
+            if (pair.Value is not StardewValley.Objects.ItemPedestal pedestal || pedestal.heldObject.Value is not null)
+                continue;
+            Vector2 tile = pair.Key;
+            if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+                continue;
+            string targetId = BuildPedestalDepositTargetId(location, (int)tile.X, (int)tile.Y, pedestal);
+            if (!publishedTargetIds.Add(targetId)) continue;
+            result.Add(new BridgeWorldObjectTarget(
+                targetId,
+                "empty_pedestal",
+                location.NameOrUniqueName,
+                (int)tile.X,
+                (int)tile.Y,
+                -1,
+                pedestal.QualifiedItemId,
+                string.IsNullOrEmpty(pedestal.DisplayName) ? pedestal.QualifiedItemId : pedestal.DisplayName,
+                null,
+                null));
+            pedestalCount++;
         }
         return result;
     }

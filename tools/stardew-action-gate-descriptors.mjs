@@ -707,6 +707,12 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // resolve. The fixture world is the ordinary one - the piece is the game's own starter furniture,
   // not something the fixture placed.
   move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
+  // The turn is the piece's own `Furniture.rotate`, and a piece whose data allows fewer than two
+  // rotations is refused by name rather than turned into a silent no-op.
+  rotate_furniture: "run-stardew-native-local-player-rotate-furniture-smoke.mjs",
+  // The fence's own `performToolAction` returns false on every branch, so success can only be the
+  // fence GONE from the location's objects plus the drops it produced.
+  remove_fence: "run-stardew-native-local-player-remove-fence-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under

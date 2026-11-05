@@ -47,6 +47,9 @@ public sealed class RefusalLayerNamingTests
         "DescribeClumpToolRefusal",
         "DescribeClumpTargetRefusal",
         "GeodeRefusal",
+        // The furniture-and-decoration lane's one renderer: two of its refusals are produced by a shared
+        // `TryDescribe*` predicate, so the field has to be rendered where the CALL is for the gate to see it.
+        "DescribeRefusalLayer",
     };
 
     /// <summary>

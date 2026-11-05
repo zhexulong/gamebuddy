@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace GameBuddy.Stardew.Core.Models;
 
 /// <summary>
@@ -24,8 +26,23 @@ namespace GameBuddy.Stardew.Core.Models;
 /// actor owns no tool this lane can act with (a placed furniture piece is always -1:
 /// no tool in this lane lifts one). It is a fact about the actor's own
 /// backpack, not an instruction: the action still requires that slot to be EQUIPPED and
-/// refuses with a named code when it is not. The Mod's serializer omits null members, so
-/// every field here is always written and never null.
+/// refuses with a named code when it is not.
+/// </para>
+/// <para>
+/// <c>Rotation</c> and <c>Rotations</c> are the piece's live <c>currentRotation</c> and the
+/// size of its own rotation cycle, and they are <c>null</c> for every kind that is not a
+/// piece of furniture - <c>null</c>, not 0, because 0 is a legal rotation and a sentinel
+/// that reads as a value will eventually be compared as one. Both are written even when
+/// null (<c>JsonIgnoreCondition.Never</c>): the serializer's default drops null members, and
+/// a dropped member is a snapshot the Host refuses wholesale as
+/// <c>invalid_snapshot:worldObjectTargets</c>. Without <c>Rotations</c> a caller cannot tell a
+/// piece that will turn from one that will not and would have to attempt in order to find out;
+/// without <c>Rotation</c> a successful turn is unobservable, which is the whole reason
+/// <c>furniture_rotation_unsupported</c> exists.
+/// </para>
+/// <para>
+/// The Mod's serializer omits null members by default, so every field here is written
+/// explicitly and never omitted.
 /// </para>
 /// </summary>
 public sealed record BridgeWorldObjectTarget(
@@ -36,4 +53,6 @@ public sealed record BridgeWorldObjectTarget(
     int Y,
     int Slot,
     string QualifiedItemId,
-    string DisplayName);
+    string DisplayName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Rotation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? Rotations);

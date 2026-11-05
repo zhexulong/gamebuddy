@@ -6710,6 +6710,10 @@
             "place_owned_object",
             "remove_placed_item",
             "move_placed_furniture",
+            "rotate_furniture",
+            "remove_fence",
+            "put_item_in_fish_tank",
+            "place_item_on_pedestal",
             "use_mine_ladder",
             "break_container",
             "toggle_animal_door",
@@ -7871,7 +7875,9 @@
         "y",
         "slot",
         "qualifiedItemId",
-        "displayName"
+        "displayName",
+        "rotation",
+        "rotations"
       ],
       "properties": {
         "targetId": {
@@ -7880,14 +7886,15 @@
           "maxLength": 128
         },
         "kind": {
-          "description": "What the live thing IS for this lane, in the Mod's own words. `placed_furniture` is a piece in `location.furniture` - the room's own bed, sofa or rug - which `place_owned_object` can add to but no object kind can describe, because furniture never sits in `location.objects`.",
+          "description": "What the live thing IS for this lane, in the Mod's own words. `placed_furniture` is a piece in `location.furniture` - the room's own bed, sofa or rug - which `place_owned_object` can add to but no object kind can describe, because furniture never sits in `location.objects`. `empty_pedestal` is a pedestal in `location.objects` that holds nothing, which is the only state `place_item_on_pedestal` can address.",
           "type": "string",
           "enum": [
             "placement_candidate",
             "removable_object",
             "non_removable_object",
             "breakable_container",
-            "placed_furniture"
+            "placed_furniture",
+            "empty_pedestal"
           ]
         },
         "location": {
@@ -7912,6 +7919,18 @@
         "displayName": {
           "type": "string",
           "maxLength": 128
+        },
+        "rotation": {
+          "description": "The piece's live `Furniture.currentRotation`: one quarter-turn of its own cycle. `null` for every kind that is not a piece of furniture - never 0 or -1, because 0 is a legal rotation and a sentinel that reads as a value gets compared as one.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 3
+        },
+        "rotations": {
+          "description": "The size of the piece's own rotation cycle, from Data/Furniture (`Furniture.rotations`). Below 2 the engine's `rotate()` is a no-op, which is why `rotate_furniture` refuses such a piece by name instead of turning nothing. `null` for every kind that is not furniture.",
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 4
         }
       }
     },
