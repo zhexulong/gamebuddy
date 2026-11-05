@@ -1,5 +1,5 @@
 /*
- * red-proof: these tests were run against a deliberately broken proxy before they were accepted.
+ * red-proof: inject  these tests were run against a deliberately broken proxy before they were accepted.
  *
  *   attribution by arrival order   keying each record by its index instead of its own headers reddens
  *                                  "two turns are recorded under their own ids, in arrival order" and
