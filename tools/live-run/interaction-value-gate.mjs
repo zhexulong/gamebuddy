@@ -48,11 +48,17 @@
  *   <li><b>obstacle</b> - names a concrete setback or refusal (卡/挡/堵/够不着/搬不动/太重/没水/坏了/来不及/天黑/下雨
  *   …).</li>
  *   <li><b>choice</b> - hands a decision to the player (要不要/还是/你定/你说/听你的/选哪/你觉得 …).</li>
- *   <li><b>player_or_day</b> - an unprompted remark about the PLAYER or the day, not about the task: a second person
- *   collocated with care or rest (你累/你困/你先歇/你昨晚), or a day word in a day-shaped phrase (天亮/天黑/早点睡/晚安
- *   /今天真/这日子).</li>
- *   <li><b>other</b> - the residual. The four patterns above are a closed vocabulary, so this module is high-precision
- *   and LOW-RECALL: a line in `other` is a line the classifier does not recognise, never a line that is fine.</li>
+ *   <li><b>player_or_day</b> - an unprompted remark about the PLAYER or the day, not about the task. Two structural
+ *   asks, either one enough: the line <b>addresses the player</b> (a 你/您 that is not the plural 你们 or the greeting
+ *   你好/您早), or it <b>locates the day</b> - a named part of it (清早/中午/傍晚/半夜), a clock reading with its own
+ *   suffix (十点了/六点半), the state of the light (天亮/擦黑/天色/入夜), or bedtime itself (晚安/早点睡). A day word
+ *   only counts in a clause
+ *   that is not itself a finished action, so "擦黑前我把草清了" stays the chore it is. This rule used to be a list of
+ *   care collocations with the player (你累/你先歇/晚安/早点睡), and the 2026-11-05 multiday run - ten lines to the
+ *   player, not one of them a collocation - was measured as a single remark. The lesson is the same one the rule above
+ *   already encodes: second person is proof a line is not a report, so it is proof it is speaking to someone.</li>
+ *   <li><b>other</b> - the residual: a line that neither reports, nor names a setback, nor hands over a decision, nor
+ *   speaks to the player. It is a line the classifier does not recognise, never a line that is fine.</li>
  * </ol>
  *
  * <h2>Clauses: `not_exercised` is not a pass</h2>
@@ -119,9 +125,23 @@ const STEP_REPORT_DISQUALIFIER =
 const OBSTACLE =
   /卡住|卡在|卡了|挡住|堵|过不去|够不着|走不到|搬不动|砍不动|敲不动|弄不动|太重|进不去|满了|被占|没(?:水|钱|地方|位置|路|空|时间)|空着|坏了|来不及|天黑|下雨|太远|失败|不行|不够|没法/u;
 const CHOICE = /要不要|还是|你定|你说|听你的|选哪|哪个|哪块|哪边|你想|你觉得|拿个主意|你挑|行不行|好不好/u;
-const PLAYER_OR_DAY =
-  /你(?:累|困|饿|冷|热|还好|没事|昨晚|睡得|先歇|去歇|歇会|歇歇|辛苦)|咱(?:俩|们)|我们|早点(?:睡|歇)|天(?:亮|黑)了|晚安|早上好|这日子|今天(?:累|辛|真|就)|明天(?:再|还|见)/u;
 const PLAN = /先|然后|接着|再|换个|绕|去拿|回头|一会儿|待会|明早|等会|试试|要不/u;
+
+/**
+ * A word that locates the day rather than the task: a named part of it, a clock reading, or the state of the light.
+ *
+ * The clock form requires its own suffix (`了`/`半`/`钟`/`整`), so "a bit faster" (快一点) is not a time of day. `天黑`
+ * is deliberately absent: it is an obstacle word, checked before this rule, and a second spelling of one fact is how the
+ * two drift apart.
+ */
+const DAY_REFERENCE =
+  /清早|早上|早晨|上午|中午|下午|傍晚|夜里|半夜|深夜|凌晨|今晚|昨儿晚|昨晚|明早|天亮|擦黑|天色|入夜|晚安|早点(?:睡|歇|休息)|(?:十|十一|十二|[一二三四五六七八九两])点(?:了|半|钟|整)/u;
+
+/** The clause boundary every rule in this file splits on. */
+const CLAUSE_SEPARATOR = /[，,、。；;！!？?\n]+/u;
+
+/** Words that carry 你/您 without addressing the player as a person: a plural, and two bare greetings. */
+const NOT_A_PLAYER_ADDRESS = ["你们", "你好", "您早"];
 
 const CJK_RUN = /[\u4e00-\u9fff]{2,}/gu;
 const SELF_TAG = /^§\d+§\s*/u;
@@ -150,6 +170,29 @@ const STOP_TOKENS = new Set([
   "时候",
   "东西",
 ]);
+
+/** The register tally, empty: the counts, and the two kinds of `player_or_day` remark kept apart. */
+function emptyRegister() {
+  return {
+    counts: { step_report: 0, obstacle: 0, choice: 0, player_or_day: 0, other: 0 },
+    player_or_day: { addressed_to_player: 0, day_only: 0 },
+  };
+}
+
+/**
+ * Every spoken line counted by register, and the `player_or_day` remarks split by which structural ask found them.
+ *
+ * The split is not gated: it is what tells a reader whether the run talked to the player or merely narrated the clock.
+ */
+function tallyRegisters(lines) {
+  const register = emptyRegister();
+  for (const line of lines) {
+    register.counts[line.register] += 1;
+    if (line.basis === "addressed_to_player") register.player_or_day.addressed_to_player += 1;
+    if (line.basis === "day_only") register.player_or_day.day_only += 1;
+  }
+  return register;
+}
 
 const isTime = (value) => typeof value === "number" && Number.isFinite(value);
 
@@ -308,26 +351,62 @@ export function classifySpokenLine(text) {
   const line = String(text ?? "")
     .replace(SELF_TAG, "")
     .trim();
-  if (line.length === 0) return { register: "other", matched: null };
-  if (isStepReport(line)) return { register: "step_report", matched: "every_clause_is_a_completed_action" };
+  if (line.length === 0) return { register: "other", matched: null, basis: null };
+  if (isStepReport(line))
+    return { register: "step_report", matched: "every_clause_is_a_completed_action", basis: null };
   const obstacle = OBSTACLE.exec(line);
-  if (obstacle !== null) return { register: "obstacle", matched: obstacle[0] };
+  if (obstacle !== null) return { register: "obstacle", matched: obstacle[0], basis: null };
+  // Before the player-or-day rule: a decision handed over is a choice even when it is also addressed to the player.
   const choice = CHOICE.exec(line);
-  if (choice !== null) return { register: "choice", matched: choice[0] };
-  const playerOrDay = PLAYER_OR_DAY.exec(line);
-  if (playerOrDay !== null) return { register: "player_or_day", matched: playerOrDay[0] };
-  return { register: "other", matched: null };
+  if (choice !== null) return { register: "choice", matched: choice[0], basis: null };
+  const address = playerAddress(line);
+  if (address !== null) return { register: "player_or_day", matched: address, basis: "addressed_to_player" };
+  const day = dayReference(line);
+  if (day !== null) return { register: "player_or_day", matched: day, basis: "day_only" };
+  return { register: "other", matched: null, basis: null };
+}
+
+function clausesOf(line) {
+  return line
+    .split(CLAUSE_SEPARATOR)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
 }
 
 function isStepReport(line) {
   if (STEP_REPORT_DISQUALIFIER.test(line)) return false;
   if (STEP_IN_PROGRESS.test(line)) return false;
-  const clauses = line
-    .split(/[，,、。；;！!？?\n]+/u)
-    .map((clause) => clause.trim())
-    .filter((clause) => clause.length > 0);
+  const clauses = clausesOf(line);
   if (clauses.length === 0) return false;
   return clauses.every((clause) => STEP_ACTION_COMPLETION.test(clause));
+}
+
+/**
+ * The pronoun that addresses the player, or null when the line does not speak to them.
+ *
+ * 你们 is a plural and 你好/您早 are greetings: all three carry the character without turning the line into a remark
+ * about the person in front of the companion.
+ */
+function playerAddress(line) {
+  if (!/[你您]/u.test(line)) return null;
+  let bare = line;
+  for (const word of NOT_A_PLAYER_ADDRESS) bare = bare.replaceAll(word, "");
+  const pronoun = /[你您]/u.exec(bare);
+  return pronoun === null ? null : pronoun[0];
+}
+
+/**
+ * The day word that locates the time, or null when the line is about the task.
+ *
+ * Only a clause that is not itself a finished action counts: "擦黑前我把草清了" is a report of a chore that happens
+ * to name the hour, and counting it would let a run of pure narration pass the clause it exists to fail.
+ */
+function dayReference(line) {
+  for (const clause of clausesOf(line)) {
+    const match = DAY_REFERENCE.exec(clause);
+    if (match !== null && !STEP_ACTION_COMPLETION.test(clause)) return match[0];
+  }
+  return null;
 }
 
 /**
@@ -396,8 +475,8 @@ function collectSpokenLines(messages) {
   for (const message of messages) {
     if (message.role !== "assistant") continue;
     for (const text of textParts(message.content)) {
-      const { register, matched } = classifySpokenLine(text);
-      lines.push({ atMs: message.atMs, text, register, matched });
+      const { register, matched, basis } = classifySpokenLine(text);
+      lines.push({ atMs: message.atMs, text, register, matched, basis });
     }
   }
   return lines.sort((left, right) => (left.atMs ?? 0) - (right.atMs ?? 0));
@@ -885,7 +964,7 @@ export function assessInteractionValue(input = {}) {
       firstAtMs: null,
       lastAtMs: null,
     },
-    register: { counts: { step_report: 0, obstacle: 0, choice: 0, player_or_day: 0, other: 0 } },
+    register: emptyRegister(),
     playerAgency: { inputs: [], withConsequence: 0, noConsequence: 0 },
     longestSilence: { longest: null, measuredBetweenLines: false, headMs: null, tailMs: null },
     // Why this file and no other: the window the population was filtered by, how many were seen, how many the name
@@ -948,8 +1027,7 @@ export function assessInteractionValue(input = {}) {
     isTime(runWindow.startMs) && isTime(runWindow.endMs) ? (runWindow.endMs - runWindow.startMs) / 60_000 : 0;
   const rateWindowMinutes = Math.max(speechSpanMinutes, runMinutes);
 
-  const registerCounts = { step_report: 0, obstacle: 0, choice: 0, player_or_day: 0, other: 0 };
-  for (const line of lines) registerCounts[line.register] += 1;
+  const register = tallyRegisters(lines);
 
   const firstGame = timed.length === 0 ? null : clock.minutesAt(timed[0].atMs);
   const lastGame = timed.length === 0 ? null : clock.minutesAt(timed[timed.length - 1].atMs);
@@ -970,7 +1048,7 @@ export function assessInteractionValue(input = {}) {
     firstAtMs: timed.length === 0 ? null : timed[0].atMs,
     lastAtMs: timed.length === 0 ? null : timed[timed.length - 1].atMs,
   };
-  measurements.register = { counts: registerCounts };
+  measurements.register = register;
   measurements.longestSilence = measureSilence({
     lines,
     runStartMs: runWindow.startMs,
@@ -1010,10 +1088,12 @@ export function assessInteractionValue(input = {}) {
     refusals: measurements.timeline.refusals,
   });
 
-  const passed = clauses.every((entry) => entry.state === "pass");
+  const failed = clauses.some((entry) => entry.state === "fail");
+  const allPassed = clauses.every((entry) => entry.state === "pass");
   return Object.freeze({
     schema: SCHEMA,
-    verdict: passed ? "passed" : "failed",
+    verdict: failed ? "failed" : allPassed ? "passed" : "not_established",
+    unestablished: failed ? [] : clauses.filter((entry) => entry.state === "not_exercised").map((entry) => entry.id),
     clauses,
     measurements: Object.freeze(measurements),
     establishment: Object.freeze(established),
@@ -1086,6 +1166,13 @@ export function formatInteractionValueTable(report) {
     )
       .map(([register, count]) => `${register}=${count}`)
       .join(" ")}`,
+  );
+  // The rate clause counts both kinds; a reader deciding whether the companion accompanied anyone needs them apart.
+  const remarks = report.measurements.register.player_or_day;
+  rows.push(
+    `remarks ${remarks.addressed_to_player + remarks.day_only} player_or_day | ${
+      remarks.addressed_to_player
+    } addressed to the player | ${remarks.day_only} day only`,
   );
   return rows.join("\n");
 }

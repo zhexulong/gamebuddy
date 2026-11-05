@@ -89,6 +89,11 @@ const milestone = (minute, gameTime) => ({
 });
 const lifecycle = (minute) => ({ type: "lifecycle", atMs: at(minute), reasonCode: "session_ready" });
 
+// The retired classifier, kept here as the red case the structural rule replaces: a care collocation or a fixed day
+// phrase. Every line in the tests below was spoken to the player and none of them contains one of its alternatives.
+const RETIRED_PLAYER_OR_DAY =
+  /你(?:累|困|饿|冷|热|还好|没事|昨晚|睡得|先歇|去歇|歇会|歇歇|辛苦)|咱(?:俩|们)|我们|早点(?:睡|歇)|天(?:亮|黑)了|晚安|早上好|这日子|今天(?:累|辛|真|就)|明天(?:再|还|见)/u;
+
 /** The directory shape the runtime writes its session records into. */
 function sessionsDir(runDir) {
   return join(runDir, "runtime-root", "contexts", "hash", "surface-sessions", "game-1", "sessions");
@@ -518,8 +523,8 @@ test("the register classifier stays narrow: a report with an obstacle in it is n
   assert.equal(classifySpokenLine("草浇完了，不过石头太多搬不动。").register, "obstacle");
   assert.equal(
     classifySpokenLine("我把草清了，你去浇水吧。").register,
-    "other",
-    "a second person makes it a conversation",
+    "player_or_day",
+    "a second person makes it a conversation, and a conversation is one of the two things this clause counts",
   );
   assert.equal(classifySpokenLine("要不要先把草清了？").register, "choice");
   assert.equal(classifySpokenLine("你昨晚睡得还好吗？").register, "player_or_day");
@@ -533,6 +538,98 @@ test("the register classifier stays narrow: a report with an obstacle in it is n
     classifySpokenLine("今天天气不错。").register,
     "other",
     "a closed vocabulary misses lines; it never guesses",
+  );
+});
+
+// The rule is structural: a line addresses the player, or it locates the day. Neither asks for a collocation, which is
+// why every line here - all five spoken in the 2026-11-05 multiday run - counts without one.
+test("a second person or a day reference makes a line player_or_day, and neither is a phrase bag", () => {
+  const spokeToThePlayer = [
+    "你去镇上把事办妥，矿里别硬往深处钻",
+    "天已经擦黑了，我把门口这几棵杂草和石头收拾了",
+    "你要是还在矿里，别贪深，梯子顺着找就行",
+    "你那边要是被困住，记得别硬撑",
+    "十点了。我先不躺下，你要是摸黑回来，屋里好歹有个活人",
+  ];
+  for (const text of spokeToThePlayer) {
+    const { register, matched } = classifySpokenLine(text);
+    assert.equal(
+      register,
+      "player_or_day",
+      `${text} speaks to the player or names the time of day, matched ${matched}`,
+    );
+    assert.ok(
+      matched !== null && text.includes(matched),
+      `the matched evidence is the pronoun or the day word it found, got ${String(matched)}`,
+    );
+  }
+
+  // The smallest evidence, and which of the two asked it: an address can also name the day ("十点了…你要是"), and the
+  // pronoun is the fact recorded then, because the sub-count must say whether the run talked to the player at all.
+  assert.equal(classifySpokenLine("你去镇上把事办妥").matched, "你");
+  assert.equal(classifySpokenLine("你去镇上把事办妥").basis, "addressed_to_player");
+  assert.equal(classifySpokenLine("天已经擦黑了，石头也收拾了").matched, "擦黑");
+  assert.equal(classifySpokenLine("天已经擦黑了，石头也收拾了").basis, "day_only");
+  assert.equal(classifySpokenLine("十点了。你要是摸黑回来，屋里有个活人").basis, "addressed_to_player");
+
+  // The companion's own chores are not remarks about the player, and neither of these addresses anyone.
+  for (const text of ["三颗花椰菜都熟了，我先摘了", "石头也清完了，我先进屋"]) {
+    const register = classifySpokenLine(text).register;
+    assert.notEqual(register, "player_or_day", `${text} reports the companion's work, not the player`);
+    assert.ok(["step_report", "other"].includes(register), `${text} is a report or unrecognised, got ${register}`);
+  }
+
+  assert.equal(classifySpokenLine("要不要我先把水浇了").register, "choice", "a decision handed over stays a choice");
+  // 你们 is a plural and 几点 asks a question rather than reading a clock: neither is an address to the player.
+  assert.equal(classifySpokenLine("你们这儿几点开门").basis, null);
+  assert.equal(classifySpokenLine("你们这儿几点开门").register, "other");
+
+  // A day word inside a clause that is itself a finished action does not turn a chore into a remark about the day.
+  assert.equal(classifySpokenLine("擦黑前我把草清了，石头还堆在那儿").register, "other");
+  assert.equal(classifySpokenLine("擦黑前我把草清了，石头还堆在那儿").basis, null);
+});
+
+// The measurement that failed the 2026-11-05 multiday run - `1 remarks in 14.64 min` - was this classifier's, not the
+// companion's: it spoke to the player ten times and the bag recognised one. Both counts are asserted from the same run.
+test("a run that talks to the player at ordinary moments clears the rate clause the retired bag failed", (t) => {
+  const spoken = [
+    "你去镇上把事办妥，矿里别硬往深处钻",
+    "天已经擦黑了，我把门口这几棵杂草和石头收拾了",
+    "你要是还在矿里，别贪深，梯子顺着找就行",
+    "你那边要是被困住，记得别硬撑",
+    "十点了。我先不躺下，你要是摸黑回来，屋里好歹有个活人",
+  ];
+  const minutes = [2, 6, 10, 15, 22];
+  const runDir = writeRun(t, {
+    timeline: [lifecycle(0), milestone(0, "1200"), milestone(25, "2600")],
+    session: [header(0), ...spoken.map((text, index) => assistant(text, minutes[index])), toolResult(23)],
+  });
+
+  const report = assessInteractionValue({ runDir });
+  const clause = clauseFor(report, "player_or_day_rate");
+
+  assert.equal(clause.state, "pass");
+  assert.equal(clause.observed.remarks, 5);
+  assert.equal(clause.observed.rateWindowMinutes, 25, "the denominator is still the run's window, unchanged");
+  assert.equal(clause.observed.perFiveMinutes, 1);
+  assert.deepEqual(
+    report.measurements.register.player_or_day,
+    { addressed_to_player: 4, day_only: 1 },
+    "the sub-count separates a companion that talks to you from one that narrates the clock",
+  );
+  assert.deepEqual(
+    clause.evidence.map((entry) => entry.text),
+    spoken,
+  );
+  assert.match(formatInteractionValueTable(report), /4 addressed to the player \| 1 day only/u);
+
+  // The same run under the rule this replaces: zero remarks, and the clause it failed.
+  const retiredRemarks = spoken.filter((text) => RETIRED_PLAYER_OR_DAY.test(text)).length;
+  assert.equal(retiredRemarks, 0, "the retired phrase bag recognised none of the five lines");
+  assert.equal(retiredRemarks, clause.observed.remarks - 5, "every remark counted here is one it missed");
+  assert.ok(
+    retiredRemarks * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES < clause.observed.rateWindowMinutes,
+    "so the retired rule failed this clause on this run (0 * 5 < 25) while the structural rule passes it (5 * 5 >= 25)",
   );
 });
 
@@ -574,4 +671,29 @@ test("the runner publishes the gate on the run's own result, from the run's own 
     "the session is the one bound to this run",
   );
   assert.match(source, /^\s+interactionValue,$/mu, "the gate must reach result.json beside dialogueGates");
+});
+
+test("a clause the run never exercised makes the verdict not_established, never failed", (t) => {
+  // The world refused nothing all run, so `obstacle_with_plan` has no verdict to give. Reporting that as `failed`
+  // would blame the companion for an absence of evidence - the defect `424d79a6` fixed in the task criteria.
+  const runDir = writeRun(t, {
+    timeline: [lifecycle(0), milestone(0, "0800"), receipt(4, "succeeded", "moved")],
+    session: [
+      header(0),
+      playerLine("我去镇上了。", 1),
+      assistant("你路上小心，我把院子清一清。", 2),
+      assistant("草清完了，你先去忙你的。", 9),
+    ],
+  });
+
+  const report = assessInteractionValue({ runDir });
+
+  assert.equal(report.verdict, "not_established");
+  assert.deepEqual(report.unestablished, ["obstacle_with_plan"]);
+  const cli = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./interaction-value-gate.mjs", import.meta.url)), "--run", runDir],
+    { encoding: "utf8" },
+  );
+  assert.equal(cli.status, 2, cli.stdout + cli.stderr);
 });
