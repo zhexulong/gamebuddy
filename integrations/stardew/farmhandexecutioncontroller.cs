@@ -4599,6 +4599,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCropTarget>();
+        // `water_crop` refuses a row that is watered and `harvest_crop` needs the ready flag, so the row states both
+        // from the engine's own predicates on this dirt instead of leaving the reader to infer them from the filter.
         return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
                 && dirt.needsWatering()
@@ -4609,7 +4611,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
                 string cropId = dirt.crop!.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown";
-                return new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"));
+                return new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"), dirt.isWatered(), dirt.readyForHarvest());
             })
             .ToArray();
     }

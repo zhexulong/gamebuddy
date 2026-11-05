@@ -1309,6 +1309,44 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             e.friendship_callback === "true",
         )
       );
+    case "pet_farm_animal":
+      // ExecutePetFarmAnimal: `animal.pet(Game1.player)` mutates synchronously, and the terminal reads the engine's own
+      // `wasPet` marker plus the friendship delta before it answers `farm_animal_petted`.
+      return (
+        receipt.reasonCode === "farm_animal_petted" &&
+        exactEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "animal",
+            "type",
+            "tile",
+            "friendship_before",
+            "friendship_after",
+            "friendship_floor",
+            "happiness_before",
+            "happiness_after",
+            "was_auto_pet_before",
+            "was_pet",
+            "time_of_day",
+          ],
+          (e) =>
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueIdEvidenceValue(e.target) &&
+            integerEvidenceValue(e.animal) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.type) &&
+            hasTileEvidenceValue(e.tile) &&
+            integerEvidenceValue(e.friendship_before) !== null &&
+            integerEvidenceValue(e.friendship_after) !== null &&
+            integerEvidenceValue(e.friendship_floor) !== null &&
+            integerEvidenceValue(e.happiness_before) !== null &&
+            integerEvidenceValue(e.happiness_after) !== null &&
+            (e.was_auto_pet_before === "true" || e.was_auto_pet_before === "false") &&
+            e.was_pet === "true" &&
+            integerEvidenceValue(e.time_of_day) !== null,
+        )
+      );
     case "sleep":
       // SleepAndAdvanceDayLifecycle.cs:835-853 Finish("passed", "day_advanced", settlement).
       // This terminal is read by field membership, not by the shared key/value parser: the
@@ -3594,6 +3632,16 @@ function hasMachineInspectCompletionEvidence(detail: string): boolean {
   );
 }
 
+/**
+ * A machine load is proved by what the MACHINE did with the input, not by which machine it was: the game's own
+ * `Data/Machines` rows decide both the accepted input and the consumption count, so pinning a Keg and five coffee beans
+ * here would only re-state one row of that table and refuse every other machine the Mod loaded.
+ *
+ * The equalities the pin used to encode are kept as INVARIANTS: the item consumed and the item the machine recorded are
+ * the same item, the stack difference is exactly the count the machine's data declared, something is held afterwards,
+ * the observed processing window equals the window the Mod derived from the same data, and readiness agrees with that
+ * window (Object.OutputMachine sets `readyForHarvest` exactly when the window is zero, Object.cs:2581-2585).
+ */
 function hasMachineLoadCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
@@ -3605,6 +3653,7 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     "slot",
     "input",
     "input_stack_before",
+    "input_consumed",
     "input_stack_after",
     "last_input",
     "held",
@@ -3616,29 +3665,35 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
   const slot = integerEvidenceValue(evidence.slot);
-  // The processing window is NOT a content constant: the Mod derives it from the
-  // live machine data (the matched ItemPlacedInMachine rule plus the machine's
-  // ReadyTimeModifiers) and reports the derived expectation next to the observed
-  // value, so a content rebalance cannot turn a legitimate native load into
-  // either a false success or a false failure. Host only proves the two agree.
-  const observedMinutes = positiveIntegerEvidence(evidence.minutes_until_ready);
-  const expectedMinutes = positiveIntegerEvidence(evidence.expected_minutes_until_ready);
+  const stackBefore = integerEvidenceValue(evidence.input_stack_before);
+  const stackAfter = integerEvidenceValue(evidence.input_stack_after);
+  const consumed = positiveIntegerEvidence(evidence.input_consumed);
+  const observedMinutes = integerEvidenceValue(evidence.minutes_until_ready);
+  // The window is NOT a content constant: the Mod derives it from the matched machine rule plus the machine's
+  // ReadyTimeModifiers and reports the derived expectation next to the observed value, so a rebalance cannot turn a
+  // legitimate native load into either a false success or a false failure. A rule whose duration a custom output method
+  // owns states `unavailable_in_machine_data`; there is then nothing to compare, and the observed window must still be
+  // a real one.
+  const windowDerived = evidence.expected_minutes_until_ready !== MACHINE_WINDOW_UNAVAILABLE;
+  const expectedMinutes = windowDerived ? integerEvidenceValue(evidence.expected_minutes_until_ready) : null;
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
-    evidence.machine === "(BC)12" &&
+    isQualifiedItemIdEvidenceValue(evidence.machine) &&
     slot !== null &&
     slot <= 36 &&
-    evidence.input === "(O)433" &&
-    evidence.input_stack_before === "5" &&
-    evidence.input_stack_after === "removed" &&
-    evidence.last_input === "(O)433" &&
-    evidence.held === "(O)395" &&
-    evidence.ready_for_harvest === "false" &&
+    isQualifiedItemIdEvidenceValue(evidence.input) &&
+    stackBefore !== null &&
+    stackBefore >= 1 &&
+    consumed !== null &&
+    stackAfter !== null &&
+    stackBefore - stackAfter === consumed &&
+    evidence.last_input === evidence.input &&
+    isQualifiedItemIdEvidenceValue(evidence.held) &&
     observedMinutes !== null &&
-    expectedMinutes !== null &&
-    observedMinutes === expectedMinutes &&
+    evidence.ready_for_harvest === (observedMinutes === 0 ? "true" : "false") &&
+    (!windowDerived || (expectedMinutes !== null && expectedMinutes === observedMinutes)) &&
     evidence.native_check_action === "true"
   );
 }
@@ -3652,31 +3707,36 @@ function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
     "tile",
     "machine",
     "output",
+    "output_stack",
     "input",
     "ready_before",
     "minutes_until_ready_before",
-    "inventory_coffee_before",
-    "inventory_coffee_after",
+    "inventory_output_before",
+    "inventory_output_after",
     "held_after",
     "ready_after",
     "native_check_action",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
-  const before = integerEvidenceValue(evidence.inventory_coffee_before);
-  const after = integerEvidenceValue(evidence.inventory_coffee_after);
+  const before = integerEvidenceValue(evidence.inventory_output_before);
+  const after = integerEvidenceValue(evidence.inventory_output_after);
+  const outputStack = positiveIntegerEvidence(evidence.output_stack);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
-    evidence.machine === "(BC)12" &&
-    evidence.output === "(O)395" &&
-    evidence.input === "(O)433" &&
+    isQualifiedItemIdEvidenceValue(evidence.machine) &&
+    isQualifiedItemIdEvidenceValue(evidence.output) &&
+    (evidence.input === "none" || isQualifiedItemIdEvidenceValue(evidence.input)) &&
+    outputStack !== null &&
     evidence.ready_before === "true" &&
     evidence.minutes_until_ready_before === "0" &&
     before !== null &&
     after !== null &&
-    after === before + 1 &&
+    // The pack gained exactly the stack the machine was holding - not "one item", which is what a Keg happens to
+    // produce and what a machine producing a stack would have been misreported as.
+    after === before + outputStack &&
     evidence.held_after === "none" &&
     evidence.ready_after === "false" &&
     evidence.native_check_action === "true"
@@ -3888,6 +3948,17 @@ function hasOpaqueIdEvidenceValue(value: string | undefined): value is string {
   // Preserve the stricter identity grammar, while rejecting every protocol
   // scalar/sentinel spelling already rejected for opaque non-ID evidence.
   return hasOpaqueEvidenceValue(value) && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+/**
+ * The producer's `expected_minutes_until_ready` when the machine's own rule cannot state a duration because a custom
+ * output method owns it. Nothing is compared in that case; the observed window must still be real.
+ */
+const MACHINE_WINDOW_UNAVAILABLE = "unavailable_in_machine_data";
+
+/** A qualified item id as the Mod reports it: `(BC)12`, `(O)395`. */
+function isQualifiedItemIdEvidenceValue(value: string | undefined): value is string {
+  return typeof value === "string" && /^\([A-Z]+\)[0-9]+$/.test(value);
 }
 
 /** Stardew multiplayer IDs can exceed JavaScript's safe integer range. */

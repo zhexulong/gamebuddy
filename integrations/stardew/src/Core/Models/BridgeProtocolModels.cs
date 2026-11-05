@@ -259,7 +259,7 @@ public sealed record BridgeForageTarget(string TargetId, int X, int Y, string Qu
 
 public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
-public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName);
+public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName, bool Watered, bool Harvestable);
 
 public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest);
 

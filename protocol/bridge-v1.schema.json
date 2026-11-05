@@ -1554,6 +1554,14 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "watered": {
+          "type": "boolean",
+          "description": "`HoeDirt.isWatered()` for this tile, read when the row was published. Optional at the wire so a Mod older than this field still validates; current Mods always publish it. Added 2026-11-05 because `water_crop` decides from it and the row carried no such fact."
+        },
+        "harvestable": {
+          "type": "boolean",
+          "description": "`HoeDirt.readyForHarvest()` for this tile, read when the row was published. Optional at the wire for the same reason as `watered`."
         }
       }
     },

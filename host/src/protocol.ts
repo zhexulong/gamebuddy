@@ -367,8 +367,16 @@ export type Snapshot = Readonly<{
   }>[];
   /** Adjacent legal native Watering Can refill sources. */
   refillWateringCanTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
-  /** Nearby unwatered crops available through the native WateringCan path. */
-  cropTargets?: readonly Readonly<{ targetId: string; x: number; y: number; cropId: string; displayName: string }>[];
+  /** Nearby unwatered crops available through the native WateringCan path, each stating whether its tile is watered and whether the crop is ready to harvest (`water_crop`/`harvest_crop` decide from these). */
+  cropTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    cropId: string;
+    displayName: string;
+    watered?: boolean;
+    harvestable?: boolean;
+  }>[];
   /** The current location's completed, unwatered native Pet Bowl (water_pet_bowl). */
   petBowlTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /** The current Slime Hutch's unwatered trough tiles (water_slime_hutch_trough). */
