@@ -17,10 +17,12 @@ public interface ISalientEventFilter
     bool IsDayStartedSalient(int totalDays, out string deduplicationKey, string? scope = null);
 
     /// <summary>
-    /// Checks if a TimeChanged event is salient (0600, 1200, 1800, 2200) and has not yet been emitted for this day and milestone in the current loaded scope.
+    /// Checks if a TimeChanged event is salient - 0600, 1200, 1800, 2200 or 2400, and only while the companion is awake
+    /// - and has not yet been emitted for this day and milestone in the current loaded scope.
+    /// <paramref name="companionInBed"/> is the companion's OWN bed state; no state of the host player is an input.
     /// Deduplication key format: time_milestone_day_&lt;TotalDays&gt;_&lt;HHmm&gt;
     /// </summary>
-    bool IsTimeMilestoneSalient(int totalDays, int timeOfDay, out string deduplicationKey, out string formattedTime, string? scope = null);
+    bool IsTimeMilestoneSalient(int totalDays, int timeOfDay, bool companionInBed, out string deduplicationKey, out string formattedTime, string? scope = null);
 
     /// <summary>
     /// Convenience alias for IsDayStartedSalient.
@@ -30,7 +32,7 @@ public interface ISalientEventFilter
     /// <summary>
     /// Convenience alias for IsTimeMilestoneSalient.
     /// </summary>
-    bool TryFilterTimeMilestone(int totalDays, int timeOfDay, out string deduplicationKey, out string formattedTime, string? scope = null);
+    bool TryFilterTimeMilestone(int totalDays, int timeOfDay, bool companionInBed, out string deduplicationKey, out string formattedTime, string? scope = null);
 
     /// <summary>
     /// Resets all recorded deduplication state (e.g. on world unload/reload).
@@ -43,7 +45,21 @@ public interface ISalientEventFilter
 /// </summary>
 public sealed class SalientEventFilter : ISalientEventFilter
 {
-    private static readonly HashSet<int> AllowedMilestones = new() { 600, 1200, 1800, 2200 };
+    /// <summary>
+    /// The hours a person notices on their own: morning, noon, evening, ten, and midnight.
+    ///
+    /// <para>
+    /// Midnight is here because the night does not end at 22:00. A companion who chose to stay up at ten heard NOTHING
+    /// until the engine passed her out at 26:00 - 175 s of silence, run
+    /// `.live-runs/game-ladder/2026-11-05T11-37-35-764Z-multiday_routine`, judged `companion_did_not_sleep` - so she was
+    /// never given the fact that the night she was staying up in had moved on.
+    /// </para>
+    /// <para>
+    /// 2600 is deliberately absent: the engine's own pass-out is published as `night_ended_pass_out` at exactly that
+    /// threshold (`StardewSalientEventHooks.OnUpdateTicked`), so a milestone there would tell the same moment twice.
+    /// </para>
+    /// </summary>
+    private static readonly HashSet<int> AllowedMilestones = new() { 600, 1200, 1800, 2200, 2400 };
     private readonly object syncLock = new();
     private readonly HashSet<(string Scope, string Key)> emittedEvents = new();
 
@@ -65,9 +81,22 @@ public sealed class SalientEventFilter : ISalientEventFilter
         }
     }
 
-    public bool IsTimeMilestoneSalient(int totalDays, int timeOfDay, out string deduplicationKey, out string formattedTime, string? scope = null)
+    /// <summary>
+    /// Whether this hour is a fact about the world the companion is actually in.
+    ///
+    /// <para>
+    /// INVARIANT: a clock fact is emitted only while the companion is awake; being in bed is the reason to stay silent,
+    /// not the hour. The hour alone cannot decide it - a companion who has already gone to bed must not be woken with
+    /// news about a night she is not standing in, and one who is still up must hear that the night is advancing.
+    /// </para>
+    /// <para>
+    /// `companionInBed` is HER bed state, never the host player's. In a shared save her sleeping does not cut the host's
+    /// day, so the host lying down or still playing is not the question and must not silence her clock.
+    /// </para>
+    /// </summary>
+    public bool IsTimeMilestoneSalient(int totalDays, int timeOfDay, bool companionInBed, out string deduplicationKey, out string formattedTime, string? scope = null)
     {
-        if (totalDays < 0 || !AllowedMilestones.Contains(timeOfDay))
+        if (totalDays < 0 || companionInBed || !AllowedMilestones.Contains(timeOfDay))
         {
             deduplicationKey = string.Empty;
             formattedTime = string.Empty;
@@ -88,8 +117,8 @@ public sealed class SalientEventFilter : ISalientEventFilter
     public bool TryFilterDayStarted(int totalDays, out string deduplicationKey, string? scope = null)
         => this.IsDayStartedSalient(totalDays, out deduplicationKey, scope);
 
-    public bool TryFilterTimeMilestone(int totalDays, int timeOfDay, out string deduplicationKey, out string formattedTime, string? scope = null)
-        => this.IsTimeMilestoneSalient(totalDays, timeOfDay, out deduplicationKey, out formattedTime, scope);
+    public bool TryFilterTimeMilestone(int totalDays, int timeOfDay, bool companionInBed, out string deduplicationKey, out string formattedTime, string? scope = null)
+        => this.IsTimeMilestoneSalient(totalDays, timeOfDay, companionInBed, out deduplicationKey, out formattedTime, scope);
 
     public void Reset()
     {

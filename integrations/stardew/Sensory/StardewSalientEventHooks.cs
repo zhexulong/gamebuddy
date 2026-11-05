@@ -123,8 +123,27 @@ internal sealed class StardewSalientEventHooks : IDisposable
     {
         int totalDays = Game1.Date?.TotalDays ?? 1;
         long observedTick = Game1.ticks;
-        this.TryEmitTimeMilestone(totalDays, e.NewTime, observedTick);
+        this.TryEmitTimeMilestone(totalDays, e.NewTime, observedTick, CompanionInBed());
     }
+
+    /// <summary>
+    /// Whether the companion HERSELF is in bed - the only player whose bed decides whether an hour is news to her.
+    ///
+    /// <para>
+    /// `Game1.player` is this client's own farmer, and these hooks publish only on the configured AI Farmhand's screen
+    /// (`ModEntry.IsConfiguredAiScreen` refuses every screen whose `Game1.player.UniqueMultiplayerID` is not the
+    /// configured farmhand), so the farmer read here is her. The host player is a DIFFERENT `Farmer`, reached through
+    /// `Game1.MasterPlayer` or `Game1.otherFarmers`, and its bed state answers a question nobody asked: in a shared save
+    /// her going to bed leaves the host playing and the day unadvanced, so the host lying down or staying up says
+    /// nothing about whether she is awake.
+    /// </para>
+    /// <para>
+    /// `Farmer.isInBed` is the engine's own flag, derived from the tile the farmer occupies carrying the "Bed" property
+    /// (`Farmer.cs:7478`). It goes true as she reaches her bed and stays true through the multiplayer ready barrier
+    /// while she waits for the host - exactly the state in which a clock fact must stay silent.
+    /// </para>
+    /// </summary>
+    internal static bool CompanionInBed() => Game1.player.isInBed.Value;
 
     public bool TryEmitDayStarted(int totalDays, long observedTick, string gameTime = "0600")
     {
@@ -161,7 +180,7 @@ internal sealed class StardewSalientEventHooks : IDisposable
         return true;
     }
 
-    public bool TryEmitTimeMilestone(int totalDays, int timeOfDay, long observedTick)
+    public bool TryEmitTimeMilestone(int totalDays, int timeOfDay, long observedTick, bool companionInBed)
     {
         BridgeSession? session = this.sessionProvider();
         if (session is null)
@@ -171,7 +190,7 @@ internal sealed class StardewSalientEventHooks : IDisposable
         }
 
         string? scopeId = this.scopeProvider?.Invoke()?.SaveId ?? session.Scope?.SaveId;
-        if (!this.filter.IsTimeMilestoneSalient(totalDays, timeOfDay, out string eventId, out string formattedTime, scopeId))
+        if (!this.filter.IsTimeMilestoneSalient(totalDays, timeOfDay, companionInBed, out string eventId, out string formattedTime, scopeId))
             return false;
 
         string payloadJson = $"{{\"milestone\":\"{formattedTime}\"}}";
