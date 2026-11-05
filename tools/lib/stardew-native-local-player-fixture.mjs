@@ -475,6 +475,9 @@ export function fixtureActions(action) {
   // The fixture already puts the actor beside the shop owner inside trading hours, so
   // the whole contract is the purchase itself.
   if (action === "shop_purchase") return ["shop_purchase"];
+  // The geode slice supplies the pack fact (one geode) and the exit that leads to Clint's counter;
+  // reaching the counter and cracking the geode remain typed production actions.
+  if (action === "open_geode") return ["move_to_tile", "travel", "open_geode"];
   // The elevator fixture already leaves the actor on a mine floor that carries the
   // elevator tile, so the whole contract is the floor selection.
   if (action === "select_mine_elevator_floor") return ["select_mine_elevator_floor"];
@@ -856,6 +859,9 @@ export function fixtureScenario(actions, action) {
   // Action-keyed, before every includes() fallback: the farm-animal pet needs its own Given (one coop, exactly one animal,
   // the actor in its ring), which no other action's world carries.
   if (action === "pet_farm_animal") return "native_pet_farm_animal_v1";
+  // Action-keyed, before every includes() fallback: the geode world is its own Given (one geode in
+  // the pack plus the shop exit), and no other action's world carries either fact.
+  if (action === "open_geode") return "native_open_geode_v1";
   if (action === "select_mine_elevator_floor") return "native_mine_elevator_v1";
   // The building-chest pair needs its own world: a finished building whose DATA declares a Load
   // and a Collect chest, with the Load chest empty, the Collect chest stocked, and the actor

@@ -4729,6 +4729,26 @@
         }
       }
     },
+    "openGeodeArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "expectedQualifiedItemId"
+      ],
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 36
+        },
+        "expectedQualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
     "refillWateringCanArgs": {
       "type": "object",
       "additionalProperties": false,
@@ -5764,6 +5784,25 @@
             ],
             "properties": {
               "action": {
+                "const": "open_geode"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "args": {
+                "$ref": "#/$defs/openGeodeArgs"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
                 "const": "refill_watering_can"
               }
             }
@@ -6690,6 +6729,7 @@
             "claim_museum_reward",
             "tailor_clothing",
             "dye_clothing_with_item",
+            "open_geode",
             "name_entity",
             "redeem_prize_ticket",
             "color_placed_object"

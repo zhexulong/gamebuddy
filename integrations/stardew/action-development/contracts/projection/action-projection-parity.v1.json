@@ -3091,6 +3091,34 @@
           "name": "clothing_dyed"
         },
         "targetFamily": "tailoringTargets"
+      },
+      {
+        "actionId": "open_geode",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "slot": {
+            "type": "integer",
+            "description": "The backpack slot holding the geode, taken from the observation inventory row."
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
       }
     ]
   },
@@ -3202,7 +3230,11 @@
     "experimentalActionIds": [
       "use_mine_ladder",
       "move_placed_furniture",
+<<<<<<< HEAD
       "pet_farm_animal"
+=======
+      "open_geode"
+>>>>>>> lane/gb-geode
     ]
   },
   "protocol": {

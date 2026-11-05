@@ -550,6 +550,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // parent. See farmhandexecutioncontroller.tailoringactions.cs.
         E("tailor_clothing", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_tailored", "TailoringMenu.CraftItem"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
         E("dye_clothing_with_item", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_dyed", "TailoringMenu.DyeItems"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
+        // The blacksmith's geode counter. The geode is NOT a menu slot: `GeodeMenu` holds it as the CURSOR
+        // item (`heldItem`, GeodeMenu.cs:133) and mints the treasure from it inside its own update
+        // (:373-385, delivered at :230). So the request names the BACKPACK slot the geode comes from plus
+        // the id it expects to find there, and no coordinate: the counter is Clint's own dialogue case
+        // (GameLocation.cs:12345-12346, `Game1.activeClickableMenu = new GeodeMenu()`), not a world tile.
+        // Experimental: no live gate yet, and promotion to LiveVerified is a separate catalog edit owned
+        // by the parent. See farmhandexecutioncontroller.geodeactions.cs.
+        E("open_geode", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "The backpack slot holding the geode, taken from the observation inventory row."), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "GeodeMenu.receiveLeftClick"), FarmhandActionLifecycle.Experimental),
     });
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });

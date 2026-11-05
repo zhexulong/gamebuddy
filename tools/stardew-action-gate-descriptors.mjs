@@ -789,6 +789,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // selected from the CLUMP's own switch and restored afterwards. Its Given is the clump world
   // the `clear_debris` fixture already owns, so this entry adds a route, not a capability.
   break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
+  // `open_geode` is registered Experimental in the Mod catalog and has a native-local slice: one
+  // geode cracked at Clint's own counter through `GeodeMenu`'s own click, animation and delivery,
+  // with the menu closed before the receipt is written. The fixture supplies the geode and the
+  // exit that leads to the shop; reaching the counter and the crack are production actions.
+  open_geode: "run-stardew-native-local-player-open-geode-smoke.mjs",
 });
 
 /**

@@ -1115,6 +1115,7 @@ export type ExecutionRequest = Readonly<{
     | "redeem_prize_ticket"
     | "tailor_clothing"
     | "dye_clothing_with_item"
+    | "open_geode"
     | "color_placed_object"
     | "send_multiplayer_chat"
     | "name_entity"
@@ -2722,6 +2723,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "redeem_prize_ticket" &&
     value.action !== "tailor_clothing" &&
     value.action !== "dye_clothing_with_item" &&
+    value.action !== "open_geode" &&
     value.action !== "color_placed_object" &&
     value.action !== "build_farm_building" &&
     value.action !== "send_multiplayer_chat" &&
@@ -3012,6 +3014,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["leftSlot", "rightSlot", "expectedTargetId"])) return "invalid_execution_request";
     if (!isNonNegativeSafeInteger(value.args.leftSlot) || !isNonNegativeSafeInteger(value.args.rightSlot))
       return "invalid_execution_request";
+  } else if (value.action === "open_geode") {
+    // The geode travels to the blacksmith's counter as the CURSOR item, so the request names the one
+    // backpack slot it comes from and the id it expects to find there. No coordinate: the counter is
+    // Clint's own dialogue case (`Game1.activeClickableMenu = new GeodeMenu()`,
+    // GameLocation.cs:12345-12346), and no opaque target id: the slot's own live item identifies it.
+    // The Mod's own wire parser pins exactly this shape (BridgeProtocol.ExecutionArgumentProperties).
+    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
+    if (!isNonNegativeSafeInteger(value.args.slot)) return "invalid_execution_request";
+    if (!isBoundedNonEmptyString(value.args.expectedQualifiedItemId, 128)) return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -3918,6 +3929,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     value.action === "redeem_prize_ticket" ||
     value.action === "tailor_clothing" ||
     value.action === "dye_clothing_with_item" ||
+    value.action === "open_geode" ||
     value.action === "color_placed_object" ||
     value.action === "place_owned_object" ||
     value.action === "remove_placed_item" ||

@@ -46,6 +46,7 @@ public sealed class RefusalLayerNamingTests
         "DescribeApproachRange",
         "DescribeClumpToolRefusal",
         "DescribeClumpTargetRefusal",
+        "GeodeRefusal",
     };
 
     /// <summary>
