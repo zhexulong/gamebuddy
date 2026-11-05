@@ -22,6 +22,14 @@
  *
  * THE POPULATION, derived from the source
  *
+ * This gate answers a FAMILY-SPECIFIC question: does this `Discover*` read the collection its own
+ * published entities live in? The complementary question - which replicated location collections exist
+ * at all, and which of them NOTHING reads - is owned by the observation-gap sections of
+ * `integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs`,
+ * which derives that population from the decompiled `GameLocation` instead of declaring it. The two
+ * live in one report each because they measure different things over the same files; the C# reader
+ * they share is `stardew-mod-csharp-source.mjs`, so neither has its own scan.
+ *
  * A discovery is any method returning `IReadOnlyList<Bridge<...>>` whose name starts with `Discover`,
  * in any `.cs` file under `integrations/stardew` (tests, `bin` and `obj` are not source). That is a
  * directory scan plus the return-type declaration the Mod already owns - not a list of names - so a
@@ -64,7 +72,10 @@
  * recorded in `KNOWN_DISCOVERY_GAPS` with the measurement that establishes it, printed on every run
  * under `known gap`, and counted. The ratchet only tightens: an entry whose collection IS read now
  * is `stale_known_gap` until someone deletes it and moves the requirement into the row. Measured at
- * this commit: one entry (`DiscoverBushTargets` / `largeTerrainFeatures`).
+ * this commit: NO entries. The list's only member was `DiscoverBushTargets` / `largeTerrainFeatures`,
+ * closed on 2026-11-04 by making the discovery and `TryGetHarvestableBush` read
+ * `location.largeTerrainFeatures` - where a bush actually lives - so the row's requirement is now
+ * satisfied rather than recorded.
  *
  * red-proof: inject  deleting the `location.objects` scan from `DiscoverRockSourceTargets` in a copy of
  *                    the real sources -> `discovery_collection_missing: DiscoverRockSourceTargets does
@@ -73,15 +84,28 @@
  *                    the run prints that line and exits 1; restored, it prints `green` and exits 0
  *                    (measured 2026-11-04, pasted in the lane report)
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  MOD_ROOT,
+  methodBody,
+  parseDiscoveries,
+  collectionsRead as readCollections,
+  readModSources,
+} from "../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
 
-const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const MOD_ROOT = "integrations/stardew";
-const SOURCE_EXTENSION = ".cs";
-/** Not source: the suite tree, the published artifacts of a dotnet build, and the node package. */
-const EXCLUDED_DIRECTORIES = Object.freeze(["bin", "obj", "tests", "action-development"]);
+/**
+ * The C# reader itself lives in the analysis layer: the action-inventory reconciliation's
+ * observation-gap sections ask the same questions of the same files, and a second reader would be
+ * two answers to one question. Re-exported here so this gate's callers and its falsifier suite keep
+ * one import site.
+ */
+export {
+  codeOnly,
+  methodBody,
+  parseDiscoveries,
+  readModSources,
+} from "../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
 
 /**
  * The game's per-location entity collections a discovery can publish from.
@@ -159,6 +183,9 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
     via: ["ResolveShippingBin", "FindShippingBinBuilding"],
   },
 
+  // Animals, which live in `animals` on an `AnimalHouse` and in no other collection.
+  DiscoverFarmAnimalPetTargets: { mustRead: ["animals"] },
+
   // Placed objects (`Object` rows in the object layer), including the many subclasses that live there.
   DiscoverColorTargets: { mustRead: ["objects"] },
   DiscoverCookingStationTargets: { mustRead: ["objects"] },
@@ -203,8 +230,9 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
   DiscoverFruitTreeTargets: { mustRead: ["terrainFeatures"] },
   DiscoverShakeTreeTargets: { mustRead: ["terrainFeatures"] },
   // A wild bush is `Bush : LargeTerrainFeature` and the game inserts it into
-  // `location.largeTerrainFeatures`, never into `terrainFeatures`. Declared here as the correct
-  // requirement; the current body reads `terrainFeatures` instead, which is `KNOWN_DISCOVERY_GAPS`.
+  // `location.largeTerrainFeatures`, never into `terrainFeatures` (GameLocation.cs:17403-17421).
+  // `location.terrainFeatures` is read as well, because a world can hold a bush there and one bush must not
+  // be published twice; the published collection is the one a saved game actually carries.
   DiscoverBushTargets: { mustRead: ["largeTerrainFeatures"] },
 
   // Resource clumps (the large boulders and hollow logs `clear_debris` breaks).
@@ -216,6 +244,9 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
   DiscoverHorseTargets: { mustRead: ["characters"] },
   DiscoverShopTargets: { mustRead: ["characters"] },
   DiscoverAnimalProductTargets: { mustRead: ["animals"] },
+  // The farm animals themselves, read from the same `location.animals` collection the produce family walks - a barn's
+  // stock lives there, not in `characters` (that is the household Pet's collection, which `pet_animal` publishes).
+  DiscoverFarmAnimalPetTargets: { mustRead: ["animals"] },
   DiscoverVillagerWhereabouts: {
     mustRead: [],
     why: "enumerates villagers through the game's own villager index (`Utility.ForEachVillager`), which spans every location's `characters` instead of reading one location's collection",
@@ -277,14 +308,12 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
  * Declarations this gate cannot satisfy without changing Mod behaviour. Each entry is a measured
  * defect, not an accepted one: it is printed on every run, and it fails as `stale_known_gap` the
  * moment the collection IS read, so it cannot outlive the fix.
+ *
+ * Empty: the bush gap this list was created for is closed in the Mod, and its requirement is satisfied
+ * by `DiscoverBushTargets`'s own row above. The mechanism stays because the next measured gap belongs
+ * here rather than in a loosened declaration.
  */
-export const KNOWN_DISCOVERY_GAPS = Object.freeze([
-  Object.freeze({
-    discovery: "DiscoverBushTargets",
-    collection: "largeTerrainFeatures",
-    why: "`harvest_bush` publishes `TerrainFeatures.Bush` rows, and in this target version a Bush IS a LargeTerrainFeature: `Bush : LargeTerrainFeature` (Bush.cs:15), and the game inserts bushes into `location.largeTerrainFeatures` (GameLocation.cs:17403-17421, IslandNorth/IslandSouth:278-285, SaveMigrator_1_6:843-892). This discovery walks `location.terrainFeatures`, where a bush never appears, so `harvest_bush` publishes nothing in a real save. The lane reads green only because the fixture puts its bush in `farm.terrainFeatures` (ModEntry.Fixtures.cs:1899-1902), a state the engine cannot produce. Closing it is a Mod change - the discovery AND `TryGetHarvestableBush` - so it is recorded here instead of fixed by a gate lane; delete this entry when both read `largeTerrainFeatures`.",
-  }),
-]);
+export const KNOWN_DISCOVERY_GAPS = Object.freeze([]);
 
 /** A scan that found less than this measured nothing, and must not read as green. */
 export const MINIMUM_DISCOVERY_FUNCTIONS = 60;
@@ -292,150 +321,17 @@ export const MINIMUM_DIRECT_READ_FUNCTIONS = 30;
 export const MINIMUM_COLLECTIONS = 6;
 
 /**
- * The source with comments and string/char literals removed, so a collection named in prose or in a
- * message is not counted as a read. Newlines are preserved: positions stay comparable.
+ * The per-location collections a body reads, e.g. `location.objects`. The scan itself is shared with
+ * the action-inventory reconciliation's observation-gap sections; the default universe here is this
+ * gate's entity vocabulary.
  */
-function codeOnly(source) {
-  let out = "";
-  for (let index = 0; index < source.length; index++) {
-    const character = source[index];
-    const next = source[index + 1];
-    if (character === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") index++;
-      out += "\n";
-      continue;
-    }
-    if (character === "/" && next === "*") {
-      index += 2;
-      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index++;
-      index++;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      const quote = character;
-      index++;
-      while (index < source.length) {
-        if (source[index] === "\\") {
-          index += 2;
-          continue;
-        }
-        if (source[index] === quote) break;
-        index++;
-      }
-      out += '""';
-      continue;
-    }
-    out += character;
-  }
-  return out;
-}
-
-/** The index of the bracket that closes the one at `open`, or -1. */
-const CLOSING_BRACKET = Object.freeze({ "{": "}", "(": ")", "[": "]" });
-
-function matchingBracket(code, open) {
-  const opener = code[open];
-  const closer = CLOSING_BRACKET[opener];
-  let depth = 0;
-  for (let index = open; index < code.length; index++) {
-    if (code[index] === opener) depth++;
-    else if (code[index] === closer) {
-      depth--;
-      if (depth === 0) return index;
-    }
-  }
-  return -1;
-}
-
-/**
- * The body that follows the parameter list ending at `close`, or null when this occurrence is a call
- * rather than a declaration. A declaration is followed by `{` or `=>`; a call by an operator, a
- * bracket or a terminator.
- */
-function bodyAfterParameters(code, close) {
-  let index = close + 1;
-  while (index < code.length && /\s/.test(code[index])) index++;
-  if (code.startsWith("=>", index)) {
-    let depth = 0;
-    for (let cursor = index; cursor < code.length; cursor++) {
-      const character = code[cursor];
-      if (character === "(" || character === "{" || character === "[") depth++;
-      else if (character === ")" || character === "}" || character === "]") depth--;
-      else if (character === ";" && depth === 0) return code.slice(index, cursor + 1);
-    }
-    return null;
-  }
-  if (code[index] !== "{") return null;
-  const end = matchingBracket(code, index);
-  return end < 0 ? null : code.slice(index, end + 1);
-}
-
-/** Every `Discover*` declaration in `sources`, with the body the reads are collected from. */
-export function parseDiscoveries(sources) {
-  const discoveries = [];
-  for (const { path, source } of sources) {
-    const code = codeOnly(source);
-    for (const match of code.matchAll(/IReadOnlyList<Bridge\w+>\s+(Discover\w+)\s*\(/gu)) {
-      const open = code.indexOf("(", match.index + match[0].length - 1);
-      const close = matchingBracket(code, open);
-      if (close < 0) continue;
-      const body = bodyAfterParameters(code, close);
-      if (body === null) continue;
-      discoveries.push({ path, name: match[1], body });
-    }
-  }
-  return discoveries;
-}
-
-/** The declared body of the method named `name`, or null when no declaration of it exists. */
-export function methodBody(sources, name) {
-  const pattern = new RegExp(`\\b${name}\\s*(?:<[^<>]{0,80}>)?\\s*\\(`, "gu");
-  for (const { source } of sources) {
-    const code = codeOnly(source);
-    for (const match of code.matchAll(pattern)) {
-      const open = code.indexOf("(", match.index + match[0].length - 1);
-      const close = matchingBracket(code, open);
-      if (close < 0) continue;
-      const body = bodyAfterParameters(code, close);
-      if (body !== null) return body;
-    }
-  }
-  return null;
-}
-
-/** The per-location collections a body reads, e.g. `location.objects`, `location?.furniture`. */
 export function collectionsRead(body, collections = LOCATION_COLLECTIONS) {
-  const reads = new Set();
-  for (const collection of collections) {
-    const pattern = new RegExp(`[A-Za-z_][\\w.]*\\s*\\??\\s*\\.\\s*${collection}\\b`, "u");
-    if (pattern.test(body)) reads.add(collection);
-  }
-  return reads;
+  return readCollections(body, collections);
 }
 
 function isCalled(name, bodies) {
   const pattern = new RegExp(`\\b${name}\\s*(?:<[^<>]{0,80}>)?\\s*\\(`, "u");
   return bodies.some((body) => pattern.test(body));
-}
-
-/** The `.cs` files under the Mod root, relative to the repository root, sorted for a stable report. */
-export function readModSources({ root = REPOSITORY_ROOT, modRoot = MOD_ROOT } = {}) {
-  const sources = [];
-  const walk = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.includes(entry.name)) continue;
-        walk(join(directory, entry.name));
-        continue;
-      }
-      if (!entry.name.endsWith(SOURCE_EXTENSION)) continue;
-      const absolute = join(directory, entry.name);
-      if (!statSync(absolute).isFile()) continue;
-      sources.push({ path: relative(root, absolute).replaceAll("\\", "/"), source: readFileSync(absolute, "utf8") });
-    }
-  };
-  walk(join(root, modRoot));
-  return sources;
 }
 
 /**
@@ -538,7 +434,8 @@ export function checkDiscoveryCollectionCoverage({
 
     const required = declaration.mustRead ?? [];
     for (const collection of required) {
-      if (!known.has(collection))
+      if (known.has(collection)) requiredBy.set(collection, (requiredBy.get(collection) ?? 0) + 1);
+      else
         report(
           "unknown_collection",
           `${discovery.name} requires \`${collection}\`, which is not a declared location collection`,
@@ -547,7 +444,6 @@ export function checkDiscoveryCollectionCoverage({
             collection,
           },
         );
-      else requiredBy.set(collection, (requiredBy.get(collection) ?? 0) + 1);
     }
     if (required.length === 0 && !declaration.why)
       report(
