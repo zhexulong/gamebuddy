@@ -536,6 +536,25 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("tailor_clothing", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_tailored", "TailoringMenu.CraftItem"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
         E("dye_clothing_with_item", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_dyed", "TailoringMenu.DyeItems"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
     });
+
+    /// <summary>
+    /// Every registered action whose WORKING PRECONDITION is an open modal - the set the registration's own
+    /// handler group already declares (<see cref="FarmhandActionHandlerGroup.Modal"/>).
+    ///
+    /// It is derived here rather than written out beside each gate that needs it, because two gates DO need it and
+    /// they have to agree: the flat admission decides which actions may be admitted while a menu is up, and the
+    /// Body Program pump decides which nodes may be dispatched while one is up. A hand-written second list would let
+    /// the pump refuse the very node that exists to close the menu the pump is waiting for - which is what it did:
+    /// `dismiss_modal` parked for the whole cadence window whenever a modal was open. Deriving from the catalog means
+    /// registering an action as modal-resolving is ONE edit, and both gates move together.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ModalResolvingActionIds = new HashSet<string>(
+        Registrations.Where(registration => registration.HandlerGroup == FarmhandActionHandlerGroup.Modal).Select(registration => registration.ActionId),
+        StringComparer.Ordinal);
+
+    /// <summary>Whether an action's working precondition is an open modal. Unknown ids are not.</summary>
+    public static bool IsModalResolving(string? actionId) => actionId is not null && ModalResolvingActionIds.Contains(actionId);
+
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));

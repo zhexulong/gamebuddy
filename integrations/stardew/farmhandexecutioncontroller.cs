@@ -599,8 +599,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// by a request arriving while the cross-day lifecycle owns the body (measured 2026-10-17, run g18: the
     /// companion walked to its bed, the night was saved, the lifecycle waited in `AwaitingDayStart`, and every
     /// `respond_level_up` was refused because the family still listed only the two 7.4.2 placeholders).
+    ///
+    /// DERIVED, not listed. This was a hand-written array of the same three ids the catalog already marks with
+    /// <see cref="FarmhandActionHandlerGroup.Modal"/>; two spellings of one fact meant the pump's own gate could
+    /// (and did) stay blind to a member added to the catalog. The order is the catalog's, sorted, so the frozen
+    /// equality pin still names every member and still fails when one appears or disappears.
     /// </summary>
-    internal static readonly string[] ModalActionFamily = { "answer_dialogue", "dismiss_modal", "respond_level_up" };
+    internal static readonly string[] ModalActionFamily = FarmhandActionCatalog.ModalResolvingActionIds
+        .OrderBy(actionId => actionId, StringComparer.Ordinal)
+        .ToArray();
 
     /// <summary>
     /// WIA disposition projection for admission (§4.2). Local stand-in for Lane
