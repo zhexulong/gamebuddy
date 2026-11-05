@@ -259,6 +259,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["pet"],
   ),
   actionAdapter(
+    "pet_farm_animal",
+    "Pet a farm animal",
+    "Pet one farm animal - a cow, chicken, sheep, pig, duck, rabbit or dinosaur - in the barn, coop or farm you are standing in. Read the opaque target id, its tile and its current friendship from the `farmAnimalPetTargets` entries of the MOST RECENT observation for the current location (never invent coordinates), and walk into reach first if it is far away. The Mod re-resolves the animal from its live tile and calls the game's own `FarmAnimal.pet`, so the +15 friendship, the happiness and the daily `wasPet` marker are the engine's own. Refused by name when a pet would change nothing: `farm_animal_already_petted_today`, `farm_animal_cracker_would_be_consumed` (a held Golden Animal Cracker would be spent instead of petting), `farm_animal_pet_requires_movement_after_1900` (after 19:00 only an animal that is moving can be petted), `farm_animal_target_gone`, `target_out_of_reach`. Returns `farm_animal_petted` with the friendship before and after.",
+    ["farm_animal"],
+  ),
+  actionAdapter(
     "sleep",
     "Sleep and advance the day",
     "Walk the Farmhand to its own bed, let the native sleep path run, declare local sleep-ready through that same native path, and observe the native save/new-day pipeline. In a shared world the night completes only when every required player is ready, so a barrier that never completes is reported honestly rather than forced.",
@@ -629,6 +635,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   load_building_chest: "stardew_load_building_chest",
   collect_building_chest_output: "stardew_collect_building_chest_output",
   pet_animal: "stardew_pet_animal",
+  pet_farm_animal: "stardew_pet_farm_animal",
   sleep: "stardew_sleep",
   clear_debris: "stardew_clear_debris",
   npc_relationship: "stardew_npc_relationship",
@@ -785,6 +792,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "interact_npc_with_item",
   "talk_to_npc",
   "pet_animal",
+  "pet_farm_animal",
   "sleep",
   "ride_minecart",
   "dismiss_modal",
@@ -952,6 +960,15 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     // An animal moves between observation and dispatch, so the pet target is
     // bound by identity (expectedTargetId) with live coordinates as geometry,
     // matching the Mod's identity-locked admission.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (!descriptor.postcondition) return false;
+    return true;
+  }
+  if (actionId === "pet_farm_animal") {
+    // A farm animal wanders inside its building, so the same identity binding applies:
+    // expectedTargetId names the animal, and x/y is only the tile it was published at,
+    // which the Mod uses as the approach destination and never as the petting address.
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (!descriptor.postcondition) return false;
