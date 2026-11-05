@@ -62,6 +62,9 @@ export const TARGET_FIELD = Object.freeze({
   dig_artifact_spot: "ArtifactSpotTargets",
   refill_watering_can: "RefillWateringCanTargets",
   clear_debris: "DebrisTargets",
+  // The same ResourceClump rows: this action reads the clump's own parentSheetIndex to decide which tool it
+  // demands, so its target is the clump entity exactly as clear_debris's is.
+  break_resource_clump: "DebrisTargets",
   npc_relationship: "NpcRelationshipTargets",
   interact_npc_with_item: "NpcRelationshipTargets",
   // talk_to_npc names the villager through the same published family target list

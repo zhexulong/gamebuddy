@@ -277,6 +277,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["debris", "tool"],
   ),
   actionAdapter(
+    "break_resource_clump",
+    "Break a large stump, log or boulder",
+    "Use the Axe or Pickaxe this clump's own native requirement demands on a live large stump, hollow log, boulder or meteorite. x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result (never invent or guess coordinates). The handler selects that tool and restores the actor's own selection, so the request names no slot and the actor need not be holding it; a pack that cannot supply the level the clump needs is refused clump_tool_too_weak. One call swings until the clump is gone and returns succeeded/clump_broken, or uncertain/postcondition_not_observed when the clump survived.",
+    ["debris", "tool"],
+  ),
+  actionAdapter(
     "npc_relationship",
     "Inspect an NPC relationship",
     "Read one adjacent villager's live relationship facts without changing them.",
@@ -638,6 +644,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   pet_farm_animal: "stardew_pet_farm_animal",
   sleep: "stardew_sleep",
   clear_debris: "stardew_clear_debris",
+  break_resource_clump: "stardew_break_resource_clump",
   npc_relationship: "stardew_npc_relationship",
   water_pet_bowl: "stardew_water_pet_bowl",
   dismiss_modal: "stardew_dismiss_modal",

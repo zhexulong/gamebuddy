@@ -1691,6 +1691,44 @@
         "handlerGroup": null
       },
       {
+        "actionId": "break_resource_clump",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "break_resource_clump",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          },
+          "targetFamily": "debrisTargets"
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "npc_relationship",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -4050,6 +4088,7 @@
     "experimentalActionIds": [
       "use_mine_ladder",
       "move_placed_furniture",
+      "break_resource_clump",
       "pet_farm_animal"
     ],
     "helloAdvertisement": "catalog_projection",
@@ -4065,6 +4104,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4162,6 +4202,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4356,6 +4397,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4453,6 +4495,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4550,6 +4593,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4743,6 +4787,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4915,6 +4960,7 @@
     "ResourceTools": [
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chop_stump",

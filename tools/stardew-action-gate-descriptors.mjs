@@ -784,6 +784,11 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // through `FarmAnimal.pet`, the +15 friendship and the `wasPet` marker read straight from the engine, and a second
   // attempt on the same animal refused by name. The fixture supplies one coop and one animal; the pet is production's.
   pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+  // `break_resource_clump` is registered Experimental in the Mod catalog and has a native-local
+  // slice: one ResourceClump cleared through `ResourceClump.performToolAction`, with the tool
+  // selected from the CLUMP's own switch and restored afterwards. Its Given is the clump world
+  // the `clear_debris` fixture already owns, so this entry adds a route, not a capability.
+  break_resource_clump: "run-stardew-native-local-player-break-resource-clump-smoke.mjs",
 });
 
 /**

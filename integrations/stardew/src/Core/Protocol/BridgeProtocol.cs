@@ -2059,7 +2059,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
-            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" => new[] { "x", "y", "expectedTargetId" },
+            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" or "break_resource_clump" => new[] { "x", "y", "expectedTargetId" },
         // talk_to_npc names the villager through the NPC family's opaque target id
         // (the same one npc_relationship/interact_npc_with_item publish) plus the tile
         // it was published at, which is only the approach leg's destination: the Mod
