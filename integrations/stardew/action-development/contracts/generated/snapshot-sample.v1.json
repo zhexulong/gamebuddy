@@ -153,6 +153,10 @@
       "reason": "the headless sample world does not construct this family"
     },
     {
+      "field": "farmAnimalPetTargets",
+      "reason": "the headless sample world does not construct this family"
+    },
+    {
       "field": "animalProductTargets",
       "reason": "the headless sample world does not construct this family"
     },
@@ -395,7 +399,8 @@
         "location": "ProbeFarm",
         "x": 2,
         "y": 3,
-        "health": 1
+        "health": 1,
+        "isWeeds": true
       }
     ]
   },
