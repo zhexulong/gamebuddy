@@ -17,6 +17,9 @@ import { PRELUDE_RUNGS } from "./prelive.mjs";
  * Falsifiers for the register. Each case is one way the claim "every gate either runs in prelive or says where else
  * it runs" can be false, and the assertion is on the FILE the finding names - a register that reports a count without
  * naming the gate is the silence it exists to remove.
+ *
+ * red-proof: inject  with the `elsewhere`-claims-must-run-in-CI check disabled in the gate, this suite failed on
+ *   "an elsewhere claim that the CI coverage gate says runs nowhere is red, quoting that gate's reason"
  */
 
 const CLEAN = () => ({

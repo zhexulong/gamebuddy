@@ -17,6 +17,9 @@ import {
  *
  * The real tree is not measured here - that costs ~21 s and the ladder's L0b rung is where it runs. What is asserted
  * here is the wiring, which is the part that was missing: three grep hits for the flag, all inside the analyzer.
+ *
+ * red-proof: inject  with `--fail-on-ungranted` removed from the reconciliation step, this suite failed on
+ *   "the chain arms --fail-on-ungranted on the reconciliation step, which is the whole point"
  */
 
 const SUMMARY = [

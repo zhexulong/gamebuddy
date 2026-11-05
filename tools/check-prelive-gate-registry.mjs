@@ -42,6 +42,9 @@
  *     `exempt_elsewhere_not_in_ci`.
  *
  * `wired N of M; exempt K` is the verdict line; `node tools/check-prelive-gate-registry.mjs` exits 1 on any finding.
+ *
+ * red-proof: inject  with the `elsewhere`-claims-must-run-in-CI check disabled, the falsifier failed on
+ *   "an elsewhere claim that the CI coverage gate says runs nowhere is red, quoting that gate's reason"
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";

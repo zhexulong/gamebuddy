@@ -28,6 +28,9 @@
  * exists for.
  *
  *   node tools/check-stardew-observation-gap.mjs      # the verdict; exit 1 on an ungranted gap
+ *
+ * red-proof: inject  with `--fail-on-ungranted` removed from the reconciliation step, the falsifier failed on
+ *   "the chain arms --fail-on-ungranted on the reconciliation step, which is the whole point"
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
