@@ -23,8 +23,101 @@ export const FACING_NAMES = Object.freeze(["up", "right", "down", "left"]);
 /** The single-step replay entry point, relative to the repository root. */
 export const SINGLE_STEP_ENTRY = "tools/live-run/game/run-single-step.mjs";
 
+/**
+ * The error classes that mean THIS CODE is wrong rather than that the run went wrong.
+ *
+ * They are separated because their messages are prose written by the runtime for a developer (`path is not defined`),
+ * and prose in a `reasonCode` slot breaks every consumer that switches on the code. The class is a closed fact; the
+ * message is not.
+ */
+export const PROGRAMMING_ERROR_CLASSES = Object.freeze(["RangeError", "ReferenceError", "SyntaxError", "TypeError"]);
+
+/** What a programming error - or an unrecognisable throw - is published under. */
+export const RUNNER_INTERNAL_ERROR_CODE = "runner_internal_error";
+
+/** What a thrown non-Error (a rejected string, a number) is published under. */
+export const RUNNER_ERROR_CODE = "runner_error";
+
+/**
+ * How many stack frames a failure record keeps.
+ *
+ * V8's own default `Error.stackTraceLimit` is 10 (measured on this tree's Node: a 40-deep recursion published 10
+ * frames), so 20 is a ceiling that never truncates what the runtime produced - and it still bounds the record when a
+ * caller has raised that limit.
+ */
+export const FAILURE_STACK_FRAMES = 20;
+
+/** A whole code, including the qualifiers this tree's own codes carry (`menu_not_dismissed:ShippingMenu`). */
+const REASON_CODE_SEQUENCE = /^[a-z][a-z0-9_]*(?::[a-z0-9_./-]+)*$/;
+const STACK_FRAME = /^at\s/;
+/**
+ * A V8 stack frame's `file:line:column`, with a `file:///` scheme stripped so the value is a path a reader can open.
+ * The optional `(` is the "(location)" form; the optional `)` closes it.
+ */
+const STACK_LOCATION = /(?:file:\/\/\/)?\(?([^()\s]+?):(\d+):(\d+)\)?$/;
+
 const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
+function stackFrames(stack) {
+  if (typeof stack !== "string") return Object.freeze([]);
+  return Object.freeze(
+    stack
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => STACK_FRAME.test(line))
+      .slice(0, FAILURE_STACK_FRAMES),
+  );
+}
+
+/** The first frame that names a file and a line, as `file:line`: the site a reader has to be able to open. */
+function firstFrameLocation(frames) {
+  for (const frame of frames) {
+    const match = STACK_LOCATION.exec(frame);
+    if (match !== null) return `${match[1]}:${match[2]}`;
+  }
+  return null;
+}
+
+/**
+ * A thrown value, classified: what a failure record publishes instead of the exception's own text.
+ *
+ * `reasonCode` has exactly three arms, and every one of them is closed:
+ *
+ *   1. a programming error (`PROGRAMMING_ERROR_CLASSES`) -> `runner_internal_error`, because a defect in this code is
+ *      not a run outcome and its message is developer prose;
+ *   2. any other `Error` whose message is ENTIRELY a code - the repository's own throw-with-a-code style
+ *      (`throw new Error("unknown_run_scenario:...")`, `throw new Error("dialogue_exited_before_ready:1")`) -> that
+ *      message, so a run that named its own refusal keeps its name;
+ *   3. everything else - a thrown string or number (`runner_error`), or a message that is not a code
+ *      (`runner_internal_error`).
+ *
+ * The test is "is this message NOTHING BUT a code", not "does its first word look like one": a message with a space, a
+ * capital, or a quote in it is prose, and prose belongs in `errorMessage`.
+ *
+ * Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): a `ReferenceError` in the runner's own exit path
+ * published `reasonCode: "path is not defined"` with no class, no stack and no site - an exception message in a code
+ * slot, and an unsolvable artifact. The message still travels, in `errorMessage`; what it may no longer be is the code.
+ */
+export function classifyFailure(thrown) {
+  const error = thrown instanceof Error ? thrown : null;
+  const errorClass = error === null ? typeof thrown : error.name || "Error";
+  const errorMessage = String(error === null ? thrown : error.message).slice(0, 1000);
+  const errorStack = stackFrames(error?.stack);
+  return Object.freeze({
+    reasonCode: reasonCodeFor(error, errorClass, errorMessage),
+    errorClass,
+    errorMessage,
+    errorStack,
+    errorFrame: firstFrameLocation(errorStack),
+  });
+}
+
+function reasonCodeFor(error, errorClass, errorMessage) {
+  if (error === null) return RUNNER_ERROR_CODE;
+  if (PROGRAMMING_ERROR_CLASSES.includes(errorClass)) return RUNNER_INTERNAL_ERROR_CODE;
+  return REASON_CODE_SEQUENCE.test(errorMessage) ? errorMessage : RUNNER_INTERNAL_ERROR_CODE;
+}
 
 /**
  * The failure moment, in the shape the bundle validates.
@@ -36,6 +129,9 @@ const isPlainObject = (value) => typeof value === "object" && value !== null && 
  * Reading only the second one turned a real failure dump into "no tile, no facing" and the contract refused it
  * (measured 2026-10-16). Anything the bridge did not supply stays null and is reported as missing by the validator
  * rather than invented - a plausible default here is exactly how a replay ends up reproducing the wrong morning.
+ *
+ * `thrown` is the classified error (`classifyFailure`) for a run that CRASHED; a refused run passes none, and the four
+ * error fields then say `null` rather than posing as a crash nobody saw.
  */
 export function buildFailureSnapshot({
   reasonCode,
@@ -46,6 +142,9 @@ export function buildFailureSnapshot({
   atMs = Date.now(),
   blockingProperties = [],
   collisionLayers = [],
+  // The classified thrown error, when the run ended on one (`classifyFailure`). Its `reasonCode` IS the failure's code,
+  // and the class/message/stack beside it are what make the site nameable from the artifact alone.
+  thrown = null,
 } = {}) {
   const observed = isPlainObject(snapshot) ? snapshot : null;
   const tile = (() => {
@@ -64,7 +163,9 @@ export function buildFailureSnapshot({
       ? observed.facing
       : null;
   return Object.freeze({
-    reasonCode: typeof reasonCode === "string" && reasonCode.length > 0 ? reasonCode : null,
+    // A classified throw OWNS the code: it was derived from the error that ended the run, so a caller cannot state a
+    // code beside it and have the two disagree.
+    reasonCode: thrown?.reasonCode ?? (typeof reasonCode === "string" && reasonCode.length > 0 ? reasonCode : null),
     component: typeof component === "string" && component.length > 0 ? component : null,
     step: Number.isInteger(step) && step >= 0 ? step : null,
     playerTile: tile,
@@ -84,6 +185,12 @@ export function buildFailureSnapshot({
     // layers that make them block. NPC micro-drift is deliberately NOT here (see the plan's tolerance rule).
     blockingProperties: Object.freeze([...blockingProperties]),
     collisionLayers: Object.freeze([...collisionLayers]),
+    // Flat, so a reader needs no second lookup: what threw, what it said, and where the first frame is. `null` means
+    // the run was refused rather than crashed, which is a different failure and is not dressed up as one.
+    errorClass: thrown?.errorClass ?? null,
+    errorMessage: thrown?.errorMessage ?? null,
+    errorStack: thrown?.errorStack ?? null,
+    errorFrame: thrown?.errorFrame ?? null,
     atMs: isFiniteNumber(atMs) ? atMs : null,
   });
 }
