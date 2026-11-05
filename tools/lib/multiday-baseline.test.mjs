@@ -10,6 +10,10 @@ import {
   DISMISSIBLE_ROLLOVER_MENUS,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
+  NIGHT_CAUSE_ENGINE,
+  NIGHT_CAUSE_PASS_OUT,
+  NIGHT_CAUSE_SLEEP,
+  NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
   WAIT_ROLLOVER_MENUS,
@@ -281,6 +285,20 @@ test("how a night ended is the witness that names it, and never a default", () =
   // `engine` is a value in its own right and survives being written back through the record unread - so a re-judged run
   // does not silently promote it to a sleep on the next pass.
   assert.equal(nightCause({ recorded: "engine" }), "engine");
+  // HER OWN SLEEP WITHOUT THE CROSSING IS ITS OWN NAME (measured 2026-11-05): the lifecycle receipt exists and says how
+  // the night was entered, while the calendar carries the crossing. It is neither `sleep` (that claim is the receipt's)
+  // nor `engine` (somebody did see how).
+  assert.equal(nightCause({ sleepEnteredVia: "native_sleep_prompt" }), NIGHT_CAUSE_SLEEP_UNSETTLED);
+  // The receipt that CLAIMS the crossing outranks the one that does not.
+  assert.equal(
+    nightCause({ enteredVia: "native_sleep_prompt", sleepEnteredVia: "native_sleep_prompt" }),
+    NIGHT_CAUSE_SLEEP,
+  );
+  // A pass-out the Mod published outranks a sleep receipt that never carried the crossing: if the clock reached 26:00,
+  // the engine's pass-out is how the day ended, whatever her lifecycle had been waiting for.
+  assert.equal(nightCause({ sleepEnteredVia: "native_sleep_prompt", passOutObserved: true }), NIGHT_CAUSE_PASS_OUT);
+  // And the word is never accepted as its own witness.
+  assert.equal(nightCause({ recorded: NIGHT_CAUSE_SLEEP_UNSETTLED }), NIGHT_CAUSE_ENGINE);
 });
 
 test("a record may not claim a sleep it has no receipt for", () => {
@@ -317,6 +335,126 @@ test("a record may not claim a sleep it has no receipt for", () => {
   // And the crossing is STILL recorded as a crossing - the fix changes the verdict, not the fact.
   const unclaimedResult = unclaimed.nights ?? [];
   assert.equal(unclaimedResult.length >= 0, true, "the calendar witness must still report the night as advanced");
+});
+
+/**
+ * Night 1 of `2026-11-05T15-02-34-974Z-multiday_routine`, as its own artifact holds it.
+ *
+ * The run crossed both nights it was asked for, nobody passed out, and day 1 was still judged
+ * `night_mechanism_unobserved`. What its receipt bridge held for that night, verbatim: `sleep` accepted with
+ * `target=own_bed`, then this terminal - `blocked`, because the lifecycle waited for a `day_started` the rollover had
+ * already given the calendar, with `entered_via=native_sleep_prompt` naming what ended the night. The Mod log for the
+ * same window: `sleep lifecycle started` at 23:14:37, `WalkingToBed`, `answered the native Sleep prompt` at 23:14:39,
+ * and the day 5 -> 6 crossing at 23:15:49.
+ */
+const SLEEP_LIFECYCLE_RECEIPT = Object.freeze({
+  requestId: "7b73b4de8a1e442d939503fdb580825c",
+  target: "own_bed",
+  state: "blocked",
+  reasonCode: "lifecycle_deadline_exceeded",
+  evidence: Object.freeze({
+    detail:
+      "state=blocked;reason=lifecycle_deadline_exceeded;topology=single_player;entered_via=native_sleep_prompt;" +
+      "saving_observed=false;saved_observed=false;day_started_observed=false;save_boundary_not_observed=true;" +
+      "shipping_summary_settled=committed;day_before=4;days_before=5;day_after=5;days_after=6",
+  }),
+});
+
+/**
+ * Day 1 of that run: crossed by the CALENDAR, with her own sleep receipt on the record.
+ *
+ * `sleepReceipt` is the evidence this night's mechanism is decided from, so a case that wants the mechanism ABSENT
+ * removes that field rather than rewording `cause`.
+ */
+const SLEEPING_CALENDAR_NIGHT = (overrides = {}) => ({
+  day: overrides.day ?? 1,
+  terminal: null,
+  after: overrides.after ?? { dayBefore: 5, dayOfMonth: 6, seasonIndex: 0, timeOfDay: 600 },
+  menus: overrides.menus ?? [{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1793892226449 }],
+  nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["cut_weeds"],
+  cause: overrides.cause ?? NIGHT_CAUSE_SLEEP_UNSETTLED,
+  ...("sleepReceipt" in overrides
+    ? { sleepReceipt: overrides.sleepReceipt }
+    : { sleepReceipt: SLEEP_LIFECYCLE_RECEIPT }),
+});
+
+/** Day 2 of that run: crossed by her own receipt, which says `succeeded/day_advanced`. */
+const SLEEP_RECEIPT_NIGHT = Object.freeze({
+  day: 2,
+  terminal: Object.freeze({
+    requestId: "c5aa7c5b681143d78a23566879c987b2",
+    state: "succeeded",
+    reasonCode: "day_advanced",
+    evidence: Object.freeze({
+      detail:
+        "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+        "saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=false;" +
+        "shipping_summary_settled=none;day_before=5;days_before=6;day_after=6;days_after=7",
+    }),
+  }),
+  after: Object.freeze({ dayOfMonth: 7, seasonIndex: 0, timeOfDay: 600 }),
+  menus: Object.freeze([
+    { menuType: "DialogueBox", decision: "wait", clearedAt: 1793892835243 },
+    { menuType: "SaveGameMenu", decision: "wait", clearedAt: 1793892838638 },
+  ]),
+  nextDayAccomplishedActionIds: Object.freeze([]),
+  cause: NIGHT_CAUSE_SLEEP,
+  sleepReceipt: SLEEP_LIFECYCLE_RECEIPT,
+});
+
+test("a night her own sleep ended is attributed, not called unobserved (2026-11-05)", () => {
+  // The record's cause was `engine` in the artifact, and `engine` is right for a night nobody can explain. This night
+  // CAN be explained: her own sleep started it and the calendar carried the crossing, and the receipt saying so was in
+  // the run's own bridge log. The baseline reads that receipt off the record instead of calling the night unobserved.
+  const result = assessMultiDayBaseline({
+    dayRecords: [SLEEPING_CALENDAR_NIGHT(), { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.ok(
+    !codes(result).includes("night_mechanism_unobserved"),
+    `a night her own sleep ended is attributed; got ${JSON.stringify(result.violations)}`,
+  );
+  assert.equal(result.unobservedNights, 0);
+  // It is not a pass-out either: the engine did not take this night, she ended it.
+  assert.equal(result.passOutNights, 0);
+  // And the crossing is still a crossing.
+  assert.equal(result.daysCrossed, 2);
+});
+
+test("the same night with her sleep receipt removed is still an unobserved night", () => {
+  // The rule's force, kept: `sleep_unsettled` is DERIVED from the receipt on the record, so a record that names it
+  // without one is re-judged as `engine` and fails. Nothing here may promote a word into a mechanism.
+  const result = assessMultiDayBaseline({
+    dayRecords: [SLEEPING_CALENDAR_NIGHT({ sleepReceipt: null }), { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.ok(
+    codes(result).includes("night_mechanism_unobserved"),
+    `a night nothing explains must stay red; got ${JSON.stringify(result.violations)}`,
+  );
+  assert.equal(result.unobservedNights, 1);
+  // The same force at the classifier: the word alone is not a witness.
+  assert.equal(nightCause({ recorded: NIGHT_CAUSE_SLEEP_UNSETTLED }), NIGHT_CAUSE_ENGINE);
+});
+
+test("two nights she slept through pass, and a day with no farm work after them still does not", () => {
+  // The measured run, with the one fact it legitimately lacked supplied: the day after night 1 did some work.
+  const passed = assessMultiDayBaseline({
+    dayRecords: [SLEEPING_CALENDAR_NIGHT(), { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.equal(passed.ok, true, `two sleeping nights must pass; got ${JSON.stringify(passed.violations)}`);
+  assert.equal(passed.state, "passed");
+  assert.equal(passed.passOutNights, 0);
+  assert.equal(passed.unobservedNights, 0);
+
+  // THE SEPARATE RULE IS NOT SILENCED: the measured run's own `nextDayAccomplishedActionIds: []` is still red, and it
+  // is the only thing left red about that record.
+  const idle = assessMultiDayBaseline({
+    dayRecords: [SLEEPING_CALENDAR_NIGHT({ nextDayAccomplishedActionIds: [] }), { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.deepEqual(codes(idle), ["next_day_produced_no_farm_work"]);
 });
 
 test("the Mod's own night edges are required, not inferred", () => {

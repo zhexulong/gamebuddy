@@ -63,8 +63,14 @@ function targetOf(witness) {
   return typeof target === "string" && target.length > 0 ? target : null;
 }
 
-/** The receipt that carries a witness's own reason, in the shape the run artifact publishes. */
-function receiptOf(witness) {
+/**
+ * The receipt that carries a witness's own reason, in the shape the run artifact publishes.
+ *
+ * Exported because it is the run's ONE spelling of "her own sleep dispatch, and what came of it" - published here for a
+ * night that never crossed, and on the day record for a night whose crossing the calendar carried instead
+ * (`multiday-baseline.mjs`'s `sleepReceipt`). The evidence is kept whole, so `entered_via` can be read back off it.
+ */
+export function sleepReceiptOf(witness) {
   return Object.freeze({
     requestId: witness.requestId,
     target: targetOf(witness),
@@ -93,7 +99,7 @@ export function judgeUncrossedNight({ witnesses = [] } = {}) {
   if (waiting !== undefined) {
     return Object.freeze({
       reasonCode: COMPANION_SLEPT_HOST_PLAYER_DID_NOT,
-      sleepReceipt: receiptOf(waiting),
+      sleepReceipt: sleepReceiptOf(waiting),
       refusal: null,
     });
   }
@@ -106,7 +112,7 @@ export function judgeUncrossedNight({ witnesses = [] } = {}) {
     const code = declined.terminal.reasonCode;
     return Object.freeze({
       reasonCode: `${COMPANION_SLEEP_REFUSED}:${code}`,
-      sleepReceipt: receiptOf(declined),
+      sleepReceipt: sleepReceiptOf(declined),
       refusal: Object.freeze({ code, target: targetOf(declined) }),
     });
   }
@@ -115,7 +121,7 @@ export function judgeUncrossedNight({ witnesses = [] } = {}) {
   const state = other.terminal === null ? "in_flight" : `${other.terminal.state}/${other.terminal.reasonCode}`;
   return Object.freeze({
     reasonCode: `${COMPANION_SLEEP_UNRESOLVED}:${state}`,
-    sleepReceipt: receiptOf(other),
+    sleepReceipt: sleepReceiptOf(other),
     refusal: null,
   });
 }

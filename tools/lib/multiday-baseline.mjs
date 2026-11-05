@@ -23,6 +23,9 @@
  *     The 2:00 AM pass-out is normal play: `Game1.PassOutNewDay()` calls `NewDay(0f)` itself and the player
  *     wakes in bed on the next day, so the calendar crosses exactly as it does after a sleep. It is reported
  *     (`passOutNights`) rather than judged, because it is how the day ended and not whether it did.
+ *   - a night the COMPANION ended by going to her own bed is the same: recorded by its cause, judged on whether the
+ *     night crossed. Her `sleep` receipt can end without carrying the crossing (`NIGHT_CAUSE_SLEEP_UNSETTLED`) while
+ *     the calendar crosses it, and the receipt she did mint travels on the record so that verdict is checkable.
  */
 
 /** The season index the world reported after this night, whichever of the two shapes carried it. */
@@ -107,16 +110,42 @@ export function dayOfMonthForTotalDays(totalDays) {
   return (Math.trunc(totalDays) % DAYS_PER_SEASON) + 1;
 }
 
+/** The ENGINE took the night: `Game1.PassOutNewDay()` calls `NewDay(0f)` itself. */
+export const NIGHT_CAUSE_PASS_OUT = "pass_out";
+
+/** Her own `sleep` crossed the night, and that is the receipt's own claim: `succeeded/day_advanced`. */
+export const NIGHT_CAUSE_SLEEP = "sleep";
+
+/**
+ * Her own `sleep` started the night and the CALENDAR carried the crossing.
+ *
+ * The distinction from `sleep` is not a weaker version of it - it is which witness reported the crossing. Her
+ * lifecycle receipt ends without `day_advanced` (it can be `blocked/lifecycle_deadline_exceeded` while the day it was
+ * waiting for has already begun), so the calendar is the night's crossing witness, and the receipt is the report of
+ * HOW the night started. Measured 2026-11-05 (`2026-11-05T15-02-34-974Z-multiday_routine`, night 1): accepted
+ * `target=own_bed` at 23:14:37, `WalkingToBed` -> `answered the native Sleep prompt`, day 5 -> 6 at 23:15:49 while
+ * the lifecycle still waited for a `day_started` it never observed, terminal `blocked/lifecycle_deadline_exceeded`
+ * with `entered_via=native_sleep_prompt`. The record said `engine` - "the day moved and nobody saw how" - for the one
+ * night of that run that ended exactly as intended, and the baseline called it `night_mechanism_unobserved`.
+ */
+export const NIGHT_CAUSE_SLEEP_UNSETTLED = "sleep_unsettled";
+
+/** The night was taken and no receipt says how: the crossing is a fact and its attribution is not. */
+export const NIGHT_CAUSE_ENGINE = "engine";
+
 /**
  * HOW a night ended, from the witnesses that can actually answer it. A night that crossed always gets an answer.
  *
- * The two attributions are not interchangeable, and only one of them can be faked:
+ * The attributions are not interchangeable, and only one of them can be faked:
  *   - `pass_out` means the ENGINE took the night, and `Game1.PassOutNewDay()` calls `NewDay(0f)` itself. Two things
  *     witness it - the Mod's `entered_via=native_pass_out` on a receipt, or the runner's own watch seeing the actor
  *     held - and either alone is enough.
  *   - `sleep` means the COMPANION's own `advance_day` crossed it, and ONLY the lifecycle receipt's
  *     `entered_via=native_sleep_prompt` shows that. There is no observation that substitutes: `advance_day` is the
  *     only thing that starts a lifecycle, so no receipt means no sleep.
+ *   - `sleep_unsettled` means that same lifecycle receipt exists and did NOT carry the crossing, which the calendar
+ *     did. `sleepEnteredVia` is read from the record's own published `sleepReceipt`, so "she ended the day herself"
+ *     is checkable from the artifact rather than asserted by a word.
  *   - `engine` is what is left when the night WAS taken and nobody saw how.
  *
  * Measured 2026-10-30: the record's cause was `passOutObserved ? "pass_out" : "sleep"`, and both of that run's nights
@@ -128,13 +157,29 @@ export function dayOfMonthForTotalDays(totalDays) {
  * save ran, the day started. `engine` says the crossing is a fact and its attribution is not, which is what a reader
  * needs in order to distrust the attribution rather than the crossing. A night with no witness to the CROSSING never
  * reaches this function: `classifyNight` has already refused it as `night_terminal_missing`.
+ *
+ * PRECEDENCE, and why the new witness is last: a receipt that CLAIMS the crossing outranks everything, and a
+ * pass-out the Mod published outranks a sleep receipt that did not - if the clock reached 26:00 the engine's pass-out
+ * is how the day actually ended, whatever her lifecycle had been waiting for. `entered_via` is the crossing
+ * receipt's, `sleepEnteredVia` is the night's own sleep receipt's.
+ *
+ * `recorded` is the word the record already carried, and it is trusted ONLY for the three answers that existed before
+ * `sleep_unsettled`: that claim needs a receipt, so it is never read back off the record - a record naming it without
+ * one re-derives as `engine` and is judged `night_mechanism_unobserved`, which is the rule's force.
  */
-export function nightCause({ enteredVia = null, passOutObserved = false, recorded = null } = {}) {
-  if (enteredVia === "native_pass_out") return "pass_out";
-  if (enteredVia === "native_sleep_prompt") return "sleep";
-  if (passOutObserved === true) return "pass_out";
-  if (recorded === "sleep" || recorded === "pass_out" || recorded === "engine") return recorded;
-  return "engine";
+export function nightCause({
+  enteredVia = null,
+  sleepEnteredVia = null,
+  passOutObserved = false,
+  recorded = null,
+} = {}) {
+  if (enteredVia === "native_pass_out") return NIGHT_CAUSE_PASS_OUT;
+  if (enteredVia === "native_sleep_prompt") return NIGHT_CAUSE_SLEEP;
+  if (passOutObserved === true) return NIGHT_CAUSE_PASS_OUT;
+  if (sleepEnteredVia === "native_sleep_prompt") return NIGHT_CAUSE_SLEEP_UNSETTLED;
+  if (recorded === NIGHT_CAUSE_SLEEP || recorded === NIGHT_CAUSE_PASS_OUT || recorded === NIGHT_CAUSE_ENGINE)
+    return recorded;
+  return NIGHT_CAUSE_ENGINE;
 }
 
 /**
@@ -277,8 +322,9 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
       // `where` NAMES A FIELD THE RECORD ACTUALLY HAS.
       //
       // It used to say `${where}.night`, and no day record has ever carried a `night` field - `runMultiDayLoop`
-      // writes `{ day, terminal, after, menus, nextDayAccomplishedActionIds }` and `onDay` adds `cause`
-      // (`multiday-loop.mjs:313-320`). Measured 2026-11-01: all three of round18/19/20's `result.json` files were read
+      // writes `{ day, terminal, after, menus, nextDayAccomplishedActionIds }` and `onDay` adds `cause`, `bedTime`,
+      // `passedOut`, `nightVerdict` and `sleepReceipt` (`multiday-loop.mjs:313-320`). Measured 2026-11-01: all three of
+      // round18/19/20's `result.json` files were read
       // as reporting `dayRecords[N].night.terminal = null`, and a reader who went looking for that field found it
       // absent in every run - the verdict was pointing at a path that does not exist. A violation a reader cannot
       // navigate to is a violation that gets argued with instead of fixed.
@@ -289,15 +335,29 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     // HOW the night ended: the product's own receipt first (`entered_via=native_sleep_prompt` / `native_pass_out` are
     // what the Mod mints), the runner's observation second. Published so a run whose nights were pass-outs is readable
     // as such - and it is a description, never a verdict about the night.
+    //
+    // THE NIGHT'S OWN SLEEP RECEIPT is the second witness, and it is read from the RECORD rather than inferred here:
+    // a night her own sleep ended can cross through the CALENDAR while her lifecycle receipt ends without the crossing
+    // (`NIGHT_CAUSE_SLEEP_UNSETTLED`), and then the receipt is the only thing that says how it began. It travels on the
+    // day record as `sleepReceipt` in the shape `night-verdict.mjs` publishes, so this judgement and the gate that
+    // re-judges a run from its artifact (`check-live-run-multiday-baseline.mjs --run-dir`) see the same facts.
     const enteredVia = typeof night.facts.entered_via === "string" ? night.facts.entered_via : null;
-    const cause = nightCause({ enteredVia, recorded: record.cause ?? null });
-    if (cause === "pass_out") passOutNights += 1;
+    const sleepReceipt = isPlainObject(record.sleepReceipt) ? record.sleepReceipt : null;
+    const sleepEnteredVia = sleepReceipt === null ? null : parseReceiptEvidence(sleepReceipt.evidence).entered_via;
+    const cause = nightCause({
+      enteredVia,
+      sleepEnteredVia: typeof sleepEnteredVia === "string" ? sleepEnteredVia : null,
+      recorded: record.cause ?? null,
+    });
+    if (cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
     // `sleep` is a claim that the COMPANION's own `advance_day` crossed the night, and only the lifecycle receipt that
     // `advance_day` starts can show it. A record claiming one while the ONLY witness is the calendar (no receipt at all,
     // so no lifecycle existed) is stating an event nobody observed - which is exactly the shape that read as "the
     // companion slept" for two nights the engine had taken (measured 2026-10-30). `pass_out` needs no such proof: the
     // runner's own observation of the hold is a witness, and the engine taking the night needs none, as recorded.
-    if (cause === "sleep" && night.witness === "calendar") {
+    //
+    // `sleep_unsettled` is NOT this claim: it is derived from a receipt, so reaching it means the receipt is in hand.
+    if (cause === NIGHT_CAUSE_SLEEP && night.witness === "calendar") {
       violations.push(violation("night_cause_claims_a_sleep_without_a_receipt", `${where}.cause`));
     }
     // A CALENDAR WITNESS SAYS THE DAY CHANGED. IT CANNOT SAY HOW, AND "nobody recorded how" IS NOT A PASS.
@@ -310,7 +370,11 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     //
     // The fix is not to infer "engine therefore pass-out" - that is the guess `b27f75ca` removed. It is to say that a night
     // whose mechanism nobody observed did not pass verification.
-    if (cause === "engine" && night.witness === "calendar") {
+    //
+    // "NOBODY OBSERVED" NOW MEANS NOBODY, INCLUDING HER OWN RECEIPT: a night her sleep ended is attributed from that
+    // receipt when the record carries it, and stays red when it does not. The rule therefore still fails on a night
+    // nothing explains - which is the fixture below, and was the measured shape of round17.
+    if (cause === NIGHT_CAUSE_ENGINE && night.witness === "calendar") {
       unobservedNights += 1;
       violations.push(violation("night_mechanism_unobserved", `${where}.cause`));
     }
