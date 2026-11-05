@@ -42,6 +42,7 @@ import {
   dailyTaskFor,
   overriddenFirstDayTask,
   runOffsetFor,
+  sweepTaskPrompts,
 } from "../../lib/multiday-daily-tasks.mjs";
 import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
@@ -51,6 +52,7 @@ import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubr
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { assessMorningLiveness } from "../../lib/morning-liveness.mjs";
 import { SCHEDULED_DIALOGUE_GATES, assessDialogueGates, planGateDeliveries } from "../dialogue-gates.mjs";
+import { assessInteractionValue } from "../interaction-value-gate.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 import { LocalStardewBridgeClient } from "../../../host/dist-test/local-stardew-bridge.js";
@@ -111,7 +113,7 @@ import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop
 import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
-import { buildFailureSnapshot, buildReproPlan } from "../../lib/failure-dump.mjs";
+import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
@@ -242,8 +244,8 @@ const SCENARIO = (() => {
  * has nothing to assemble, and that case names itself rather than posing as a result.
  */
 async function writeFailureDump(reason) {
-  const errorMessage = String(reason instanceof Error ? reason.message : reason);
-  console.error("RUNNER_FAILED", errorMessage);
+  const thrown = classifyFailure(reason);
+  console.error("RUNNER_FAILED", thrown.reasonCode, thrown.errorMessage, thrown.errorFrame ?? "no_frame_published");
   try {
     // The evidence is BEST-EFFORT, and this is the one place a guard is the right answer rather than a way of hiding a bug.
     //
@@ -261,22 +263,24 @@ async function writeFailureDump(reason) {
     // failure, so the death keeps its name.
     let evidence;
     try {
-      evidence = failureDumpEvidence(errorMessage);
+      evidence = failureDumpEvidence(thrown);
     } catch (error) {
       evidence = Object.freeze({
-        settlement: Object.freeze({ reasonCode: errorMessage, component: "runner" }),
-        evidenceUnavailable: String(error?.message ?? error).slice(0, 200),
+        settlement: Object.freeze({ reasonCode: thrown.reasonCode, component: "runner" }),
+        evidenceUnavailable: classifyFailure(error),
       });
     }
     const result = await buildRunResult({
       state: "blocked",
-      error: errorMessage,
+      error: thrown.reasonCode,
+      errorDetail: thrown,
       ...evidence,
     });
     console.error(
       "RUNNER_FAILED dump published",
       JSON.stringify({
         error: result.error,
+        errorFrame: result.failure?.errorFrame ?? null,
         attemptedActionIds: result.attemptedActionIds,
         executionTrace: result.executionTrace,
         bundle: result.bundle?.state ?? null,
@@ -284,7 +288,7 @@ async function writeFailureDump(reason) {
     );
     return result;
   } catch (assemblyError) {
-    writeUnassembledFailure(errorMessage, assemblyError);
+    writeUnassembledFailure(thrown, assemblyError);
     return null;
   }
 }
@@ -294,8 +298,9 @@ async function writeFailureDump(reason) {
  * the root error beside the assembly error, so the run is still analysable — and this record can never be mistaken for
  * the run's result, which is what the stub it replaces got wrong.
  */
-function writeUnassembledFailure(errorMessage, assemblyError) {
-  console.error("RUNNER_FAILED assembly failed", assemblyError);
+function writeUnassembledFailure(thrown, assemblyError) {
+  const assembly = classifyFailure(assemblyError);
+  console.error("RUNNER_FAILED assembly failed", assembly.reasonCode, assembly.errorMessage, assembly.errorFrame);
   try {
     const path = process.env.GAMEBUDDY_RESULT_FILE;
     if (typeof path !== "string" || path.length === 0) return;
@@ -304,8 +309,9 @@ function writeUnassembledFailure(errorMessage, assemblyError) {
       scenario: SCENARIO,
       legacyLadder: LEGACY_LADDER,
       reason: "failure_dump_assembly_failed",
-      error: errorMessage,
-      assemblyError: String(assemblyError instanceof Error ? assemblyError.message : assemblyError),
+      // The SAME record the assembled path publishes: this floor must not be the one path that loses the site.
+      ...thrown,
+      assemblyError: assembly,
       providerReadiness,
       at: new Date().toISOString(),
     };
@@ -324,14 +330,14 @@ function writeUnassembledFailure(errorMessage, assemblyError) {
  * block's own scope owns threw inside this path once and destroyed the artifact of a real failed session
  * (runs N, O and P produced none).
  */
-function failureDumpEvidence(errorMessage) {
+function failureDumpEvidence(thrown) {
   const receiptWith = (reasonCodes) =>
     factLog.find((fact) => fact.type === "execution_receipt" && reasonCodes.includes(fact.reasonCode)) ?? null;
   return {
     capture,
     runtimeRoot,
     providerReadiness,
-    settlement: { snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" },
+    settlement: { snapshot: lastObservedSnapshot, reasonCode: thrown.reasonCode, component: "runner" },
     tillReceipt: receiptWith(["soil_tilled"]),
     plantReceipt: receiptWith(["seed_planted"]),
     waterReceipt: receiptWith(["crop_watered"]),
@@ -424,6 +430,9 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   mine_ladder_to_depth: "下矿去看看，往深处走走，回来的时候自己找梯子上来。",
   furnish_and_arrange: "屋里东西摆得别扭。把家具挪一挪、换换颜色，重新归置一下。",
   run_the_machines: "把机器都用起来：装料、等它出东西、收回来。",
+  // The sweep tasks' sentences are owned by the task definitions, not by this table: they are derived from the
+  // published surface, and a second list of the same ids here would go stale the moment a group changed.
+  ...sweepTaskPrompts().zh,
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
@@ -446,6 +455,7 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   furnish_and_arrange:
     "the furniture in the house is in the wrong places - move it about, change a colour, put it right.",
   run_the_machines: "put the machines to work: load them, wait for the output, collect it. ",
+  ...sweepTaskPrompts().en,
 });
 
 const SCENARIO_PROMPTS = Object.freeze({
@@ -1560,7 +1570,7 @@ function dialogueGateContext(gate) {
  * refusal-triggered obstacle gate, which was skipped here by kind and therefore could never be spoken at all. Every
  * decision, spoken or not, is recorded with the fact behind it, so an untriggered gate stops reading like an unwired one.
  */
-async function deliverDialogueGatesForDay(day) {
+async function deliverDialogueGatesForDay(day, tools) {
   // A refusal is the obstacle gate's only ground truth, and the boundary is where that gate is decided on: re-read it
   // here so the age judged is the age now, not the age at the last in-turn sample.
   sampleRefusalEvidence();
@@ -2033,7 +2043,11 @@ function captureModLogFacts(runDir) {
     }
     const lastWith = (needle) => (rows.filter((row) => row.includes(needle)).slice(-1)[0] ?? "").trim().slice(0, 400);
     return Object.freeze({
-      path,
+      // `sources` rather than a `path`: there is more than one source now, and the list is archived beside the text
+      // (`mod-log-sources.json`). Measured 2026-11-05: this read a bare `path` that no enclosing scope declared, so
+      // EVERY call threw `ReferenceError: path is not defined` - and the catch threw the same one, which ended the run
+      // at the very line that assembles its result.
+      sources,
       bytes: text.length,
       archived,
       setForegroundWindow: tail(/SetForegroundWindow/i),
@@ -2050,7 +2064,7 @@ function captureModLogFacts(runDir) {
       lastSavingState: lastWith("saving="),
     });
   } catch (error) {
-    return Object.freeze({ path, archived: false, error: String(error?.message ?? error).slice(0, 240) });
+    return Object.freeze({ archived: false, error: String(error?.message ?? error).slice(0, 240) });
   }
 }
 
@@ -2820,7 +2834,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
         receipt: null,
         choice: "confirm",
         levelUp,
-        reasonCode: `level_up_not_resolved:${String(error?.message ?? error).slice(0, 160)}`,
+        // The code stays closed; the exception's own text travels in `thrown`, where a reader can see it without a
+        // consumer of `reasonCode` having to parse it.
+        reasonCode: "level_up_not_resolved:dispatch_threw",
+        thrown: classifyFailure(error),
       });
     }
   };
@@ -2877,7 +2894,8 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       } catch (error) {
         return Object.freeze({
           receipt: null,
-          reasonCode: `menu_not_dismissed:${menuType}:${String(error?.message ?? error).slice(0, 160)}`,
+          reasonCode: `menu_not_dismissed:${menuType}:dispatch_threw`,
+          thrown: classifyFailure(error),
         });
       }
     },
@@ -3893,7 +3911,7 @@ try {
             // not arrived, a gate whose admission was refused, and a gate whose scheduler threw. Measured 2026-11-04: a
             // seventeen-minute run crossed a night and its session contained ZERO of the four prompts, with nothing anywhere
             // saying which of the three it was.
-            void deliverDialogueGatesForDay(day).catch((error) => {
+            void deliverDialogueGatesForDay(day, tools).catch((error) => {
               dialogueDelivery.set(
                 "schedule",
                 Object.freeze({
@@ -4232,6 +4250,18 @@ try {
     replies: Object.fromEntries(dialogueReplies),
     context: dialogueGateContext,
   });
+  // Whether the run reads as a companion or as a screensaver, from the same artifacts this result describes: the fact
+  // log in memory (the timeline is written from it) and the one session record bound to THIS run's surface session. The
+  // gate is published beside the mechanical verdict rather than folded into it - a run whose actions are all green and
+  // whose companion said four lines in twenty-five minutes has to be able to say both things at once, and it must not be
+  // able to read as a success either. A record that could not be bound is reported with its reason, never substituted
+  // with a neighbour's numbers.
+  const interactionValue = assessInteractionValue({
+    timelineFacts: factLog,
+    sessionPath: sessionSearch.path ?? null,
+    sessionUnboundReason: sessionSearch.reason ?? null,
+    runStartedAtMs: phaseTimings.runStartedAtMs,
+  });
   // What happened to each scheduled line, from the same population the judgement walks: delivered (with the moment,
   // the admission answer and the refusal it was spoken against) or not delivered with the fact that stopped it. Without
   // this, a gate the run never reached and a gate that was delivered and went unanswered publish identically.
@@ -4524,6 +4554,8 @@ try {
     // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).
     dialogueGates,
     dialogueGateDelivery,
+    // The 30-minute interaction-value gate, clause by clause, from this run's own session record and timeline.
+    interactionValue,
     capabilityAudit,
     presenceProjection,
     // The three assembly/content gates publish their OUTCOME vocabulary, not just a
@@ -4803,7 +4835,8 @@ function judgeRunHistorianRubric(runtimeRoot) {
   } catch (error) {
     return Object.freeze({
       state: "unmeasured",
-      reasonCode: `historian_rubric_unreadable:${String(error?.message ?? error).slice(0, 120)}`,
+      reasonCode: "historian_rubric_unreadable:read_threw",
+      thrown: classifyFailure(error),
       compartmentsChecked: 0,
       violations: [],
     });
@@ -4851,6 +4884,9 @@ function bundleCrossingRecord(outcome) {
 async function buildRunResult({
   state,
   error = null,
+  // The classified throw when the run CRASHED (`classifyFailure`), so the failure record names the class, the message
+  // and the first frame. A run that was refused rather than crashed passes none and publishes `null` in those fields.
+  errorDetail = null,
   capture,
   runtimeRoot,
   settlement,
@@ -4861,11 +4897,14 @@ async function buildRunResult({
   // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
   const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
   const pose = lastObservedPose;
+  // ONE derivation for the reason a run is not passed, so a code that came from a crash and a code a caller decided on
+  // cannot both be written. A refused run names its own code; a crashed run is named by its classified throw.
+  const failureReasonCode = errorDetail?.reasonCode ?? error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`;
   const failure =
     state === "passed"
       ? null
       : buildFailureSnapshot({
-          reasonCode: error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`,
+          reasonCode: failureReasonCode,
           component: settlement?.component ?? "runner",
           step: actionTrace.length,
           // Prefer the pose for tile/location (it is the actor's own last observation), falling back to the
@@ -4882,6 +4921,7 @@ async function buildRunResult({
                   timeOfDay: snapshot?.timeOfDay ?? Number(pose.inGameTime),
                 },
           atMs: Date.now(),
+          thrown: errorDetail,
         });
   // Read the Mod's own journal NOW, once per run: this is assembly time, so the per-program execution facts are
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
