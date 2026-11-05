@@ -1941,3 +1941,32 @@ test("an imported card's secondary trigger words and selective logic survive the
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a block where she speaks twice in a row keeps both lines instead of losing the block", () => {
+  // Real cards teach register this way: an action beat on its own line, then the line she says. The
+  // old pairing read the second companion line as "the block stopped alternating" and returned the
+  // block as lost, so the whole register sample disappeared from a card that had written it correctly.
+  const report = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "琥珀",
+        description: "calm",
+        mes_example: "<START>\n{{char}}: *拉开门*\n{{char}}: 进来坐吧\n{{user}}: 好",
+      },
+    }),
+  );
+  assert.deepEqual(report.candidate?.profileCandidate.examples, [{ user: "好", companion: "*拉开门*\n进来坐吧" }]);
+  assert.deepEqual(report.losses, []);
+
+  // The player's two lines in a row are still a loss: her repeats are one utterance, his are two
+  // messages, and this pair shape has no boundary to put between them.
+  const playerTwice = decodeStCard(
+    JSON.stringify({
+      spec: "chara_card_v3",
+      data: { name: "琥珀", description: "calm", mes_example: "<START>\n{{user}}: 一\n{{user}}: 二\n{{char}}: 甲" },
+    }),
+  );
+  assert.deepEqual(playerTwice.candidate?.profileCandidate.examples, []);
+  assert.deepEqual(playerTwice.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
+});

@@ -969,19 +969,46 @@ function exampleTurns(part: string, pattern: RegExp): readonly ExampleTurn[] {
  * Turns are paired two at a time in the order the block wrote them, and a pair takes
  * whichever speaker came first, so a block that opens with her line - the shape real cards
  * ship (`琥珀: "早安"\nYou: 嗯。`) - pairs her line with the player's answer instead of
- * losing it. A block that stops alternating, that ends mid-exchange, or that carries no
- * accepted speaker at all is reported by `parseExamples` as lost: repairing it into an
- * exchange the author never wrote is the silent reshaping the loss ledger exists to prevent.
+ * losing it.
+ *
+ * Consecutive lines by the COMPANION are one utterance, and are joined before pairing. A card that
+ * writes
+ *
+ *     {{char}}: *拉开门*
+ *     {{char}}: 进来坐吧
+ *     You: 好
+ *
+ * is teaching her register across two lines of the same speech - an action beat, then the line. Reading
+ * the second line as "the block stopped alternating" threw the whole block away, which is the sample a
+ * card exists to teach, and the opposite of what the loss ledger is for. Joining keeps every character
+ * the author wrote and adds only the line break between them.
+ *
+ * Two lines by the PLAYER in a row stay a loss, deliberately. Her two lines are one utterance; his two
+ * lines are two separate messages, and the (user, companion) pair this decoder produces has no boundary
+ * to put between them - inventing one would be the silent reshaping the ledger exists to prevent.
+ *
+ * A block that ends mid-exchange, or that carries no accepted speaker at all, is still reported by
+ * `parseExamples` as lost.
  */
 function pairExampleTurns(turns: readonly ExampleTurn[]): Readonly<{
   exchanges: readonly Readonly<{ user: string; companion: string }>[];
   complete: boolean;
 }> {
+  const merged: ExampleTurn[] = [];
+  for (const turn of turns) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && last.speaker === "companion" && turn.speaker === "companion")
+      merged[merged.length - 1] = Object.freeze({ speaker: "companion", text: `${last.text}\n${turn.text}` });
+    else merged.push(turn);
+  }
   const exchanges: Readonly<{ user: string; companion: string }>[] = [];
   let index = 0;
-  while (index + 1 < turns.length) {
-    const first = turns[index]!;
-    const second = turns[index + 1]!;
+  while (index + 1 < merged.length) {
+    const first = merged[index]!;
+    const second = merged[index + 1]!;
+    // Only the player's repeated line can still reach this after the join above; her repeats were
+    // merged, so a block that stops alternating is a block whose player spoke twice with no answer
+    // between, and there is nothing honest to pair it with.
     if (first.speaker === second.speaker)
       return Object.freeze({ exchanges: Object.freeze(exchanges), complete: false });
     const user = first.speaker === "user" ? first : second;
@@ -991,7 +1018,7 @@ function pairExampleTurns(turns: readonly ExampleTurn[]): Readonly<{
   }
   // No turn at all is the one shape with nothing to read, so it is not "complete"; a
   // leftover turn is a block that ended mid-exchange.
-  return Object.freeze({ exchanges: Object.freeze(exchanges), complete: turns.length > 0 && index === turns.length });
+  return Object.freeze({ exchanges: Object.freeze(exchanges), complete: merged.length > 0 && index === merged.length });
 }
 
 function parseExamples(
