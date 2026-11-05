@@ -83,6 +83,57 @@ test("the state block is byte-identical for two turns in the same world", () => 
   );
 });
 
+test("two different worlds render two different blocks, so a stale rebuild is detectable", () => {
+  // The block is composed once per snapshot and re-sent verbatim into every later turn, so the question this pins is
+  // whether a block built from a snapshot the companion has left can be told apart from one built from the world it
+  // stands in now. Two snapshots, one clock line and one where line apart, must not render the same bytes.
+  const before = formatSnapshotHud(baseSnapshot);
+  const after = formatSnapshotHud({
+    ...baseSnapshot,
+    timeOfDay: 2_200,
+    location: "FarmHouse",
+    tile: { x: 9, y: 9 },
+  });
+
+  assert.notEqual(after, before);
+  assert.equal(lineValues(after).get("time"), "22:00");
+  assert.equal(lineValues(after).get("where"), "FarmHouse at (9, 9)");
+});
+
+/**
+ * The defect: a block printed from a snapshot nobody refreshed.
+ *
+ * Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): six consecutive turns were handed the same
+ * `time: 18:00` / `where: Farm at (70, 13)` block. A warp into the FarmHouse had already been receipted and the 22:00
+ * milestone had arrived - the model's own reasoning read "It's 22:00 now" in the same turn the block said 18:00 - so
+ * it waited instead of sleeping and the run ended `companion_did_not_sleep`. Nothing refreshes a snapshot between
+ * turns (`local-stardew-bridge.ts#acceptSnapshot`: the protocol has no unsolicited push), so the block has to say how
+ * old the reading it prints is.
+ */
+test("a block printed from an older snapshot names the clock it is speaking about", () => {
+  const current = formatSnapshotHud(baseSnapshot);
+  const aged = formatSnapshotHud(baseSnapshot, 3);
+
+  assert.equal(lineValues(aged).get("time"), "06:20 (observed 3 turns ago - not the current world)");
+  assert.equal(lineValues(aged).get("where"), "Farm at (5, 10) (observed 3 turns ago - not the current world)");
+  // The unqualified line is exactly what let a three-turn-old clock be read as now.
+  assert.doesNotMatch(aged, /^- time: \d\d:\d\d$/mu);
+  // Age zero IS the current reading, and it stays the bare line.
+  assert.equal(lineValues(current).get("time"), "06:20");
+  assert.doesNotMatch(current, /turns? ago/u);
+});
+
+test("the same snapshot at the same age renders byte-identically", () => {
+  const first = formatSnapshotHud(baseSnapshot, 3);
+  const clone = formatSnapshotHud(JSON.parse(JSON.stringify(baseSnapshot)) as Snapshot, 3);
+
+  assert.equal(first, clone);
+  // Only the age separates two renderings of one snapshot: the clause is a function of the snapshot and the turn
+  // count, never of a wall clock or of how long the process has been up.
+  assert.notEqual(formatSnapshotHud(baseSnapshot, 4), first);
+  assert.match(formatSnapshotHud(baseSnapshot, 1), /\(observed 1 turn ago/u);
+});
+
 test("a spent stamina moves exactly one line and nothing else", () => {
   const before = formatSnapshotHud(baseSnapshot);
   const after = formatSnapshotHud({ ...baseSnapshot, stamina: 12 });

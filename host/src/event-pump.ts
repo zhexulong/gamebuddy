@@ -189,6 +189,14 @@ export class CompanionEventPump {
    */
   readonly #deliveredProgress = new Map<string, string>();
   #retryBatch: PendingBatch | undefined;
+  /**
+   * How many batches this pump has handed to a turn that accepted them.
+   *
+   * The one age the Host can put on state it re-states: a snapshot is not refreshed between turns, so "how many
+   * turns have been delivered since this reading arrived" is the only honest measure of how old the block is. A
+   * batch the sink rejected is not counted - the model never read it.
+   */
+  #deliveredBatches = 0;
   /** Facts the bounds dropped instead of closing the bridge (see the full-queue branch of `enqueueFact`). */
   #droppedFacts = 0;
   #delivering = false;
@@ -312,6 +320,11 @@ export class CompanionEventPump {
     return this.#droppedFacts;
   }
 
+  /** How many batches have been delivered to a turn (see `#deliveredBatches`). */
+  public get deliveredBatches(): number {
+    return this.#deliveredBatches;
+  }
+
   /** Dispose-time cancellation boundary; pending facts are never replayed into a closed runtime. */
   public clear(): void {
     this.#generation++;
@@ -431,7 +444,9 @@ export class CompanionEventPump {
     const pending = this.#retryBatch ?? this.takeBatch();
     this.#retryBatch = undefined;
     try {
-      return (await sink.deliver(pending.serialized, pending.disposition)) ?? undefined;
+      const outcome = (await sink.deliver(pending.serialized, pending.disposition)) ?? undefined;
+      this.#deliveredBatches += 1;
+      return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.

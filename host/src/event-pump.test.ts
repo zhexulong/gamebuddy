@@ -213,6 +213,32 @@ test("event pump follows up ordinary facts and preserves an exact failed batch r
   );
 });
 
+test("only a delivery a turn accepted ages the state the Host re-states", async () => {
+  // This count is the age a re-stated block reports, so a batch the sink rejected must not advance it: the model
+  // never read that batch, and counting it would claim the reading is older than the turn it was actually shown in.
+  const pump = new CompanionEventPump();
+  pump.enqueueFact({ source: "stardew_mod", kind: "snapshot", correlationId: "s", revision: 1, payload: {} });
+  pump.enqueuePlayerInput({ source: "player_text", inputId: "input", text: "继续", locale: "zh-CN", timestampMs: 1 });
+  assert.equal(pump.deliveredBatches, 0);
+
+  await assert.rejects(
+    () =>
+      pump.flush({
+        async deliver() {
+          throw new Error("sink_down");
+        },
+      }),
+    /sink_down/,
+  );
+  assert.equal(pump.deliveredBatches, 0, "a rejected batch was never read by a turn");
+
+  await pump.flush({ async deliver() {} });
+  assert.equal(pump.deliveredBatches, 1);
+  // A flush with nothing to deliver composes no turn, so it ages nothing either.
+  await pump.flush({ async deliver() {} });
+  assert.equal(pump.deliveredBatches, 1);
+});
+
 test("event pump retries the exact serialized batch without replaying a newer or mutated payload", async () => {
   const pump = new CompanionEventPump();
   const payload = { nested: { value: "original" } };

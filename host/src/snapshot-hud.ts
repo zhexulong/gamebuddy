@@ -20,12 +20,20 @@ type SnapshotHudLine = Readonly<{
   /** The line's key in the block, and the name the size bound reports when this line is what grew. */
   name: string;
   fields: readonly (keyof Snapshot)[];
-  render: (snapshot: Snapshot) => string;
+  /**
+   * `ageTurns` is how many delivered turns ago the snapshot was observed; 0 is the current reading. Only the lines
+   * whose value a later turn falsifies read it (see `aged`).
+   */
+  render: (snapshot: Snapshot, ageTurns: number) => string;
 }>;
 
 /** Fixed order, because the block is re-sent every turn and a reordered block is a changed cache prefix. */ export const SNAPSHOT_HUD_LINES: readonly SnapshotHudLine[] =
   Object.freeze([
-    { name: "time", fields: ["timeOfDay"], render: (snapshot) => formatGameClock(snapshot.timeOfDay) },
+    {
+      name: "time",
+      fields: ["timeOfDay"],
+      render: (snapshot, ageTurns) => aged(formatGameClock(snapshot.timeOfDay), ageTurns),
+    },
     {
       name: "calendar",
       fields: ["seasonIndex", "dayOfMonth", "year"],
@@ -35,7 +43,8 @@ type SnapshotHudLine = Readonly<{
     {
       name: "where",
       fields: ["location", "tile"],
-      render: (snapshot) => `${snapshot.location} at (${snapshot.tile.x}, ${snapshot.tile.y})`,
+      render: (snapshot, ageTurns) =>
+        aged(`${snapshot.location} at (${snapshot.tile.x}, ${snapshot.tile.y})`, ageTurns),
     },
     {
       name: "body",
@@ -100,14 +109,21 @@ type SnapshotHudLine = Readonly<{
  * Events stay deltas: a receipt or a semantic event happened once and is delivered once.
  * </p>
  * <p>
+ * WHAT THE BLOCK CANNOT DO IS BE CURRENT ON ITS OWN. Nothing refreshes a snapshot between turns - the protocol has no
+ * unsolicited push (`local-stardew-bridge.ts#acceptSnapshot`), so the newest reading is the last one the model or the
+ * attach asked for - and a block re-stated from it therefore describes a moment that has already passed. A reading
+ * that is not this turn's says so; the wording and the measurement behind it live in `aged`.
+ * </p>
+ * <p>
  * Determinism is a requirement, not a courtesy. The fact batch is folded into the session's cached history, and
  * the model reads the block to decide what to do next: a block that changes when nothing happened is both a
- * cache invalidation and a false signal that something did. So: fixed line order, no clock of our own, no sampled
- * age, no map iteration, no field rendered twice.
+ * cache invalidation and a false signal that something did. So: fixed line order, no clock of our own, no map
+ * iteration, no field rendered twice, and the one age it may print is `ageTurns` - a count of delivered turns the
+ * caller owns, never a sampled wall-clock reading.
  * </p>
  */
-export function formatSnapshotHud(snapshot: Snapshot): string {
-  const kept = SNAPSHOT_HUD_LINES.map((line) => ({ name: line.name, value: line.render(snapshot) }));
+export function formatSnapshotHud(snapshot: Snapshot, ageTurns = 0): string {
+  const kept = SNAPSHOT_HUD_LINES.map((line) => ({ name: line.name, value: line.render(snapshot, ageTurns) }));
   const omitted: string[] = [];
   let text = composeHud(kept, omitted);
   // Over budget means one value carried more than a HUD line should. Drop the widest line first and NAME it:
@@ -119,6 +135,28 @@ export function formatSnapshotHud(snapshot: Snapshot): string {
     text = composeHud(kept, omitted);
   }
   return text;
+}
+
+/**
+ * Qualifies a value that came from a snapshot older than the turn it is printed in.
+ *
+ * <p>
+ * Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): six consecutive turns were handed the same
+ * `time: 18:00` / `where: Farm at (70, 13)` block. A warp into the FarmHouse had been receipted three turns earlier
+ * and the 22:00 `time_milestone` had arrived - the model's own reasoning read "It's 22:00 now" in the same turn the
+ * block said 18:00 - so it decided to wait rather than sleep, and the run ended `companion_did_not_sleep`.
+ * </p>
+ * <p>
+ * The age is in TURNS, and that is the only unit the Host may use. It has no current game clock (that is the very
+ * thing it is missing) and a wall-clock age says nothing about a world that advances only when someone acts: a
+ * 40-second turn can pass an in-game hour while a 40-minute one passes none. A count of delivered turns is the one
+ * age the Host can state without inventing a fact.
+ * </p>
+ */
+function aged(value: string, ageTurns: number): string {
+  if (ageTurns < 1) return value;
+  const turns = ageTurns === 1 ? "1 turn" : `${String(ageTurns)} turns`;
+  return `${value} (observed ${turns} ago - not the current world)`;
 }
 
 /**
