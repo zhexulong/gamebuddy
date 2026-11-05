@@ -2807,14 +2807,16 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "travel") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
-    // A WARP TILE the actor stands on, so it is an ORDINARY MAP CELL: `isTileCoordinate`, not the release below.
+    // A WARP SOURCE tile, so the range is the one the snapshot publishes edge exits in - NOT `isTileCoordinate`.
     //
-    // A map may declare an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), but that coordinate is the
-    // BOUNDARY EVENT, not a tile anyone occupies - the actor walks to a legal cell beside it and the engine warps on the
-    // edge. `SelectSafeApproachTarget` is what resolves that neighbour, so the model still names a real tile here. The
-    // snapshot release below exists so the model can SEE the edge exits at all; this validator is about what it may ask
-    // for, and `-1` is not something it can stand on.
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
+    // A map declares an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), and `snapshot.warps[]`
+    // publishes exactly that source because that is what the location's warp table holds. `travel` names the tile the
+    // actor leaves FROM and the Mod resolves the warp by exact source match
+    // (`farmhandexecutioncontroller.movementactions.cs`, `ResolveLocationWarp`), so requiring an in-map tile here
+    // refused the very exit the snapshot had just advertised: the model copied `{sourceX, sourceY}` and the Host
+    // answered `invalid_warp_source`. `isWarpSourceCoordinate` is this side's one declaration of that range and is
+    // already what the `warps` rows are validated with, so reading and asking now agree.
+    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "use_raft") {
     const args = value.args;
     if (!hasExactKeys(args, ["slot", "x", "y"])) return "invalid_args";
@@ -2981,7 +2983,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "enter_exit") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_door_target";
+    // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit
+    // lives at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a
+    // transition leaves from.
+    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_door_target";
   } else if (value.action === "till_soil") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 

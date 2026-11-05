@@ -2250,11 +2250,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 .Where(warp => !warp.npcOnly.Value
                     && !string.IsNullOrWhiteSpace(warp.TargetName)
                     // The SOURCE may be `-1` on one axis: that is how a map declares an edge exit (walking off the west
-                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares six of its nine exits
-                    // that way. Requiring both axes non-negative published only the south Beach warps, so the snapshot
-                    // the model read named a single exit and every route home looked impossible.
-                    && warp.X >= -1 && warp.Y >= -1 && warp.X <= 1000 && warp.Y <= 1000
-                    && warp.TargetX >= 0 && warp.TargetY >= 0 && warp.TargetX <= 1000 && warp.TargetY <= 1000)
+                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares three of its exits
+                    // that way. The range is the ONE declaration of that fact (`FarmhandWarpCoordinateRange`), shared
+                    // with the navigation topology and with execution acceptance, so a warp published here is a warp
+                    // `travel`/`enter_exit` will admit.
+                    && FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
+                    && FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
                 // The leg's accessibility, from the SAME authority the navigation topology filters its edges with
                 // (`Game1NavigationWorldSource.IsLocationAccessible`, fail-closed), so an agent can tell a usable exit
                 // from a locked door instead of probing. `null` is never produced: an unmeasurable leg fails closed to
