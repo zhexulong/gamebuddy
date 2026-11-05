@@ -987,6 +987,32 @@ export function isPetTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One published farm-animal pet target: the opaque identity `FarmAnimal.pet` is addressed by, the animal's live tile,
+ * its native type, and the friendship the pet itself raises.
+ *
+ * There is deliberately no `pettedToday` field. Discovery omits every animal this farmer has already petted today
+ * (`FarmAnimal.wasPet`), exactly as `petTargets` omits an already-petted Pet, so the rows this validator sees are the
+ * ones still pettable. A stale id for an animal petted after the observation is refused by the Mod with
+ * `farm_animal_already_petted_today`, which names the real reason instead of pretending the animal is gone.
+ */
+export function isFarmAnimalPetTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["targetId", "x", "y", "animalType", "friendship"]) &&
+    isOpaqueId(value.targetId) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.animalType === "string" &&
+    value.animalType.length > 0 &&
+    value.animalType.length <= 64 &&
+    typeof value.friendship === "number" &&
+    Number.isSafeInteger(value.friendship) &&
+    value.friendship >= 0 &&
+    value.friendship <= 1000
+  );
+}
+
 export function isAnimalProductTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&

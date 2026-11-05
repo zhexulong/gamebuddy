@@ -25,6 +25,7 @@ import {
   isDailyQuestTargetFact,
   isDebrisTargetFact,
   isFacilityTargetFact,
+  isFarmAnimalPetTargetFact,
   isFarmBuildingTargetFact,
   isFeedTroughTargetFact,
   isFenceGateTargetFact,
@@ -734,6 +735,16 @@ export type Snapshot = Readonly<{
      */
     stationary: boolean;
   }>[];
+  /** Nearby farm animals (barn/coop stock) this actor has NOT petted today. */
+  farmAnimalPetTargets?: readonly Readonly<{
+    targetId: string;
+    x: number;
+    y: number;
+    /** The animal's native `type` (e.g. "White Chicken"), straight from `FarmAnimal.type`. */
+    animalType: string;
+    /** `FarmAnimal.friendshipTowardFarmer`, the field the pet itself raises (capped at 1000). */
+    friendship: number;
+  }>[];
   /** Nearby adult farm animals with a specific native MilkPail/Shears target and capacity for their current produce. */
   animalProductTargets?: readonly Readonly<{
     targetId: string;
@@ -1076,6 +1087,7 @@ export type ExecutionRequest = Readonly<{
     | "unequip_wearable"
     | "dismount_transport"
     | "pet_animal"
+    | "pet_farm_animal"
     | "collect_animal_product"
     | "feed_animal"
     | "use_item"
@@ -1716,6 +1728,10 @@ const BRIDGE_MESSAGE_TYPES = [
   "world_fact",
 ] as const;
 
+/**
+ * Every key a Mod snapshot may carry: the bridge's admission boundary, and the population any consumer of a
+ * snapshot must be checked against.
+ */
 export const SNAPSHOT_KEYS = [
   "revision",
   "location",
@@ -1788,6 +1804,7 @@ export const SNAPSHOT_KEYS = [
   "harvestWhereabouts",
   "wateringWhereabouts",
   "petTargets",
+  "farmAnimalPetTargets",
   "animalProductTargets",
   "feedTroughTargets",
   "chests",
@@ -2686,6 +2703,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "unequip_wearable" &&
     value.action !== "dismount_transport" &&
     value.action !== "pet_animal" &&
+    value.action !== "pet_farm_animal" &&
     value.action !== "collect_animal_product" &&
     value.action !== "feed_animal" &&
     value.action !== "use_item" &&
@@ -3213,6 +3231,20 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_pet_target";
+  } else if (value.action === "pet_farm_animal") {
+    // The farm-animal family's shape: the tile the animal was published at (only the approach leg's destination), and
+    // the opaque `farmAnimalPetTargets` id. The Mod re-resolves the animal from its CURRENT location and measures reach
+    // against its live tile, so a barn animal that wandered is refused by name rather than petted through a stale
+    // coordinate.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_farm_animal_pet_target";
   } else if (value.action === "collect_animal_product") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
@@ -3560,6 +3592,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "harvestWhereabouts", maxItems: 64, accepts: isHarvestWhereaboutsFact },
   { field: "wateringWhereabouts", maxItems: 64, accepts: isWateringWhereaboutsFact },
   { field: "petTargets", maxItems: 16, accepts: isPetTargetFact },
+  { field: "farmAnimalPetTargets", maxItems: 16, accepts: isFarmAnimalPetTargetFact },
   { field: "animalProductTargets", maxItems: 32, accepts: isAnimalProductTargetFact },
   { field: "feedTroughTargets", maxItems: 32, accepts: isFeedTroughTargetFact },
   // One container row carries its own contents, so this cap bounds CONTAINERS, not items: `items` is the complete
@@ -3845,6 +3878,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "npc_relationship" ||
       value.action === "talk_to_npc" ||
       value.action === "pet_animal" ||
+      value.action === "pet_farm_animal" ||
       value.action === "collect_animal_product" ||
       value.action === "feed_animal" ||
       value.action === "use_item" ||
