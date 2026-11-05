@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+
+import { isMachineTargetFact } from "./protocol-target-facts.js";
 
 import {
   MAX_BODY_PROGRAM_NODES,
@@ -4318,4 +4321,56 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     ),
     "invalid_snapshot:minecartTargets",
   );
+});
+
+/**
+ * A machine target row publishes what its own `Data/Machines` rows declare it takes, and its three states are distinct: a
+ * bounded list, an EMPTY list (the machine data was read and declares no load input) and an explicit `null` (the data
+ * could not answer). Collapsing any two of those is the defect the field exists to prevent - a furnace published as a
+ * loadable target with no statement of inputs is how coffee beans were aimed at one (measured 2026-10-31).
+ *
+ * The cap is not restated here: it is read out of the language-neutral wire schema, so this test fails when the schema
+ * and the Host validator drift apart instead of pinning today's number twice.
+ */
+test("a machine row's published acceptance is bounded by the wire schema and keeps unknown apart from nothing", async () => {
+  const schema = JSON.parse(
+    await readFile(new URL("../../protocol/bridge-v1.schema.json", import.meta.url), "utf8"),
+  ) as { $defs: { machineAcceptance: { properties: { inputs: { maxItems: number } } } } };
+  const maxItems = schema.$defs.machineAcceptance.properties.inputs.maxItems;
+  assert.ok(maxItems > 0, "the schema must cap the acceptance list, or an unbounded frame is admissible");
+
+  const row = {
+    targetId: "machine_0123456789abcdef",
+    x: 5,
+    y: 6,
+    qualifiedItemId: "(BC)13",
+    displayName: "Furnace",
+    readyForHarvest: false,
+    minutesUntilReady: 0,
+    accepts: { inputs: ["(O)378 x5", "(O)380 x5"], omitted: 0 },
+  };
+
+  assert.equal(isMachineTargetFact(row), true, "the furnace row states its own inputs");
+  assert.equal(isMachineTargetFact({ ...row, accepts: null }), true, "unknown is a published fact");
+  assert.equal(
+    isMachineTargetFact({ ...row, accepts: { inputs: [], omitted: 0 } }),
+    true,
+    "a machine that declares no load input publishes an empty list, which is not the same fact as null",
+  );
+  assert.equal(
+    isMachineTargetFact({
+      ...row,
+      accepts: { inputs: Array.from({ length: maxItems }, () => "(O)378 x5"), omitted: 3 },
+    }),
+    true,
+    "the schema's cap is the validator's cap",
+  );
+
+  for (const bad of [
+    { ...row, accepts: { inputs: Array.from({ length: maxItems + 1 }, () => "(O)378 x5"), omitted: 0 } },
+    { ...row, accepts: { inputs: [""], omitted: 0 } },
+    { ...row, accepts: { inputs: [], omitted: -1 } },
+    { ...row, accepts: { inputs: [], omitted: 0, extra: 1 } },
+  ])
+    assert.equal(isMachineTargetFact(bad), false, `refused: ${JSON.stringify(bad.accepts).slice(0, 80)}`);
 });

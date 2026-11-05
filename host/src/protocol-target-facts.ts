@@ -574,6 +574,30 @@ export function isRockSourceTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * What one machine's rows declare it takes: the derived entries, and how many the cap withheld.
+ *
+ * `inputs` is the machine's own `Data/Machines` `ItemPlacedInMachine` trigger rows in the machine's order (an item id, a
+ * `tag:` selector, or `any`), each with the count the row consumes; `omitted` counts what the cap withheld. Empty
+ * `inputs` means the machine declares no load input - which is NOT the same fact as a `null` acceptance beside it.
+ *
+ * The cap is the language-neutral wire cap (`protocol/bridge-v1.schema.json`
+ * `$defs.machineAcceptance.properties.inputs.maxItems`) and the Mod's `MachineInputAcceptance.InputLimit`; this validator
+ * is bound to the same number, and `protocol.test.ts` reads it out of the schema rather than trusting this comment.
+ */
+export const MACHINE_ACCEPTANCE_INPUT_LIMIT = 8;
+
+export function isMachineAcceptanceFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["inputs", "omitted"]) &&
+    Array.isArray(value.inputs) &&
+    value.inputs.length <= MACHINE_ACCEPTANCE_INPUT_LIMIT &&
+    value.inputs.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 64) &&
+    isNonNegativeSafeInteger(value.omitted)
+  );
+}
+
 export function isMachineTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -590,6 +614,7 @@ export function isMachineTargetFact(value: unknown): boolean {
       "loadInputQualifiedItemId",
       "loadInputStack",
       "collectOutputReady",
+      "accepts",
       "displayName",
       "machineData",
     ]) &&
@@ -622,6 +647,10 @@ export function isMachineTargetFact(value: unknown): boolean {
       typeof value.collectOutputReady === "boolean") &&
     // Optional at the wire: `Object.GetMachineData() is not null`, the answer that makes this object a machine.
     (value.machineData === undefined || typeof value.machineData === "boolean") &&
+    // What the machine's own Data/Machines rows declare it takes. ABSENT is not a fourth state here: the Mod writes the
+    // key even when it cannot answer, so `null` is "the data could not answer" and `{"inputs": []}` is "it takes
+    // nothing" - two facts a reader must be able to tell apart. Absent only means a Mod build older than the field.
+    (value.accepts === undefined || value.accepts === null || isMachineAcceptanceFact(value.accepts)) &&
     // The three load fields are one fact: the slot that holds the input, the item it holds, and the count the machine's
     // own rows consume. Half a load is not a smaller promise, it is an unusable one, so all three appear together.
     ((value.loadInputSlot === undefined &&

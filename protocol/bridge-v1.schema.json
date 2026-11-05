@@ -1772,6 +1772,30 @@
         }
       }
     },
+    "machineAcceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputs",
+        "omitted"
+      ],
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        }
+      }
+    },
     "machineTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -1835,24 +1859,20 @@
           "maximum": 36
         },
         "loadInputQualifiedItemId": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "const": "(O)433"
-            }
-          ]
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128,
+          "pattern": "^\\([A-Z]+\\)[0-9]+$"
         },
         "loadInputStack": {
-          "anyOf": [
-            {
-              "type": "null"
-            },
-            {
-              "const": 5
-            }
-          ]
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 9999
         },
         "collectOutputReady": {
           "type": [
@@ -1863,6 +1883,16 @@
         "machineData": {
           "type": "boolean",
           "description": "`Object.GetMachineData() is not null` read when the row was published: whether the object carries its own `Data/Machines` rows, which is what makes it a machine `machine_inspect`/`machine_load`/`machine_collect_output` can address rather than an ordinary placed object. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "accepts": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/machineAcceptance"
+            }
+          ]
         }
       }
     },
@@ -5129,7 +5159,9 @@
           "$ref": "#/$defs/tile"
         },
         "expectedQualifiedItemId": {
-          "const": "(O)433"
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^\\([A-Z]+\\)[0-9]+$"
         },
         "expectedTargetId": {
           "$ref": "#/$defs/opaqueId"

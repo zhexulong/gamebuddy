@@ -3054,7 +3054,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     // reaches zero (Object.cs:2581-2585), so a ready machine that holds something is collectable whatever
                     // it is - the state, not a Keg id, is what the collect action needs.
                     machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null,
-                    machine.GetMachineData() is not null);
+                    machine.GetMachineData() is not null,
+                    // What THIS machine takes, from its own Data/Machines rows - the same derivation the load refusal
+                    // names. Every object with machine data used to be published as a load target with no statement of
+                    // its inputs, so a furnace reached the model looking like it took coffee beans (measured 2026-10-31).
+                    // null here means the machine's data could not answer, which is not the same fact as "takes nothing".
+                    Accepts: ReadMachineInputAcceptance(machine));
                 if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
                 {
                     for (int slot = 0; slot < player.Items.Count; slot++)

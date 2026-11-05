@@ -339,8 +339,18 @@ public sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, 
 /// its own <c>Data/Machines</c> rows, which is what makes it a machine `machine_inspect`/`machine_load` can address
 /// rather than an ordinary placed object.
 /// </para>
+///
+/// <para>
+/// <see cref="Accepts"/> is what the machine's own <c>Data/Machines</c> rows declare it takes, derived from the same
+/// trigger rows the load refusal names. It is published because the row otherwise promised only "this is a machine":
+/// measured 2026-10-31, a furnace reached the model as a load target with no statement of inputs and the model loaded
+/// coffee beans into it. It is written even when null, because <c>null</c> means the machine data could not answer -
+/// which is a different fact from an empty list (the data was read and declares no load input), and the pipeline's
+/// default is to omit nulls, which would collapse the two into one absent key.
+/// </para>
 /// </summary>
-public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady, bool MachineData);
+public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady, bool MachineData,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] MachineInputAcceptance? Accepts = null);
 
 public sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
 
