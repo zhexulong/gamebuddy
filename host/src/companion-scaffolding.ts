@@ -23,6 +23,13 @@
  *    tags is the model talking to itself; a literal block is never dialogue.
  *  - `（思考：...）`, `（内心：...）`, `（脑内：...）` and the `【...】` forms - the
  *    same private reasoning in the full-width frames the companion prompt uses.
+ *  - a frame the message opened and never closed (`<thinking>...` and the rest of a
+ *    reply truncated at the provider's token limit) - everything after a dangling
+ *    opening is the model talking to itself. The streaming projection drops it because
+ *    it saw the frame open, and a message is the longest prefix of itself, so the
+ *    whole-text rule identifies the same frame: a durable row that kept this text would
+ *    carry the reasoning the live bubble withheld. Open question: a reply that *quotes*
+ *    a bare opening tag loses its tail.
  *  - `**emphasis**` - markdown rendering markers. Only the two markers go; the
  *    emphasised words are prose and stay.
  *  - `---` on a line of its own - a markdown horizontal rule, a section divider
@@ -33,11 +40,6 @@
  *  - every `*...*` beat - performance, the companion's only expression channel.
  *  - `(...)`, `（...）`, `[...]`, `【...】` in general - ordinary parenthetical
  *    prose, or a MiMo audio tag (`（轻声）`, `[pause]`) the voice performs.
- *  - an unclosed `<thinking>` with no matching close tag: the block cannot be
- *    identified, so nothing is removed. Open question: a truncated reply would
- *    leak the reasoning text rather than the tag pair. The streaming projection
- *    below does not have that hole - it saw the frame open, so it drops what it
- *    never saw closed - but a durable row still keeps it.
  *  - ASCII `(thinking...)` / `[thinking...]` frames: `(thinking aloud)` is
  *    ordinary English, so only the tag-keyed forms above are removed. Open
  *    question: the in-game dehydrator does remove them, which leaves the two
@@ -49,7 +51,8 @@
  *    listed as scaffolding today.
  *
  * The transform removes a scaffolding span exactly where it sits: every `*...*`
- * beat comes back byte for byte, and no word of prose is dropped. It is not a
+ * beat comes back byte for byte, and no word of prose is dropped - the one exception
+ * is a frame the message never closed, which takes its own tail with it. It is not a
  * re-flow - nothing inside the text is collapsed, joined or re-wrapped. The two
  * bytes it does take beyond the spans themselves are leading and trailing
  * whitespace, because a durable Chat row that begins with the blank lines a
@@ -60,6 +63,9 @@
 export function removeModelScaffolding(input: string): string {
   let text = input;
   for (const frames of REASONING_REMOVALS) text = text.replace(frames, "");
+  // A complete frame is gone by now, so an opening still in the text is one the
+  // message never closed.
+  for (const frames of REASONING_TAIL_REMOVALS) text = text.replace(frames, "");
   return text.replace(EMPHASIS_MARKERS, "$1").replace(HORIZONTAL_RULE, "").trim();
 }
 
@@ -128,6 +134,22 @@ const REASONING_REMOVALS: readonly RegExp[] = Object.freeze(
         `(?:${family.openings.map(escapeLiteral).join("|")})[\\s\\S]*?(?:${family.closings.map(escapeLiteral).join("|")})`,
         family.ignoreCase ? "gi" : "g",
       ),
+  ),
+);
+
+/**
+ * The frames a message opened and never closed, each taking the rest of the text.
+ *
+ * `REASONING_REMOVALS` needs both ends to match, so an opening left dangling at the
+ * end of a truncated reply survives it. Run after that pass, this pair of patterns is
+ * the whole-text half of what the stream's projection already does when it drops a
+ * frame it never saw closed - derived from the same declaration, so the two cannot
+ * drift apart about which frames are private.
+ */
+const REASONING_TAIL_REMOVALS: readonly RegExp[] = Object.freeze(
+  REASONING_FAMILIES.map(
+    (family) =>
+      new RegExp(`(?:${family.openings.map(escapeLiteral).join("|")})[\\s\\S]*$`, family.ignoreCase ? "i" : ""),
   ),
 );
 

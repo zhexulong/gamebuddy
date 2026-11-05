@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { removeModelScaffolding } from "./companion-scaffolding.js";
+import { REASONING_FRAMES, removeModelScaffolding } from "./companion-scaffolding.js";
 
 /** One form, the text that carries it, and what the durable Chat row must hold. */
 type ScaffoldingCase = readonly [name: string, input: string, stored: string];
@@ -21,11 +21,9 @@ const SCAFFOLDING: readonly ScaffoldingCase[] = [
   ["a full-width inner-monologue frame", "【内心：别催她。】早安。", "早安。"],
   ["a reasoning frame in DeepSeek's own spelling", "<think> 她刚醒，先接一句。 </think>早安。", "早安。"],
   ["the shorter tag does not swallow the longer one", "<thinking>a</thinking>早", "早"],
-  [
-    "a reasoning frame the model never closed is left for the stream to drop",
-    "早安。<think>还没想完",
-    "早安。<think>还没想完",
-  ],
+  ["a reasoning frame the model never closed runs to the end of the message", "早安。<think>还没想完", "早安。"],
+  ["a truncated reply that is nothing but an unclosed frame", "<thinking>玩家刚醒，先接一句", ""],
+  ["an unclosed full-width frame", "早安。（思考：她还没吃早饭", "早安。"],
   ["a full-width inner-monologue paren frame", "（脑内：别催她。）早安。", "早安。"],
   ["markdown emphasis, keeping its words", "**今日提醒**：锅里有汤。", "今日提醒：锅里有汤。"],
   ["a divider rule on its own line", "早安。\n\n---\n\n晚上好。", "早安。\n\n\n\n晚上好。"],
@@ -52,6 +50,7 @@ const KEPT: readonly ScaffoldingCase[] = [
   ["the ASCII bracket spelling of a thought", "[thinking] 早安。", "same"],
   ["bold italic, which unwrapping would turn into a beat", "***强调*** 早安。", "same"],
   ["a markdown heading", "# 今日提醒\n早安。", "same"],
+  ["a closing tag with no frame it could close", "嗯</thinking>早安。", "same"],
   ["a divider that is not alone on its line", "早安---晚上好。", "same"],
   ["plain prose with no scaffolding at all", "早安。今天天气不错，锅里有汤。", "same"],
   ["the ordinary punctuation a removed beat leaves behind", "“嗯？醒啦。”\n\n“锅里有汤。”", "same"],
@@ -64,6 +63,15 @@ test("every model-scaffolding form is removed, and only the form", () => {
 test("no beat and no ordinary form is touched", () => {
   for (const [name, input, expected] of KEPT)
     assert.equal(removeModelScaffolding(input), expected === "same" ? input : expected, name);
+});
+
+test("a frame the message never closed is dropped to the end, in every family", () => {
+  // The population is the rule's own declaration: a family added there is covered
+  // here without this test being touched, and one whose unclosed form survives the
+  // durable row fails by name.
+  for (const frame of REASONING_FRAMES) {
+    assert.equal(removeModelScaffolding(`早安。${frame.opening}还没想完`), "早安。", frame.opening);
+  }
 });
 
 test("removing scaffolding never drops the words around it", () => {

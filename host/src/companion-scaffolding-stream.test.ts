@@ -56,16 +56,30 @@ test("no reasoning frame reaches the stream, at any fragment boundary", () => {
   }
 });
 
-test("a frame the message never closes is dropped, and a marker that never completes is prose", () => {
+test("a frame the message never closes is dropped by the stream and by the durable row", () => {
   const unterminated = createScaffoldingStreamProjection();
   assert.equal(unterminated.push("<thinking>玩家刚醒"), "");
-  // A durable row still keeps an unclosed block, because a whole message cannot
-  // identify one; the stream saw it open, so it does not speak it.
+  // Both halves of the rule read the same declaration, so both drop what the frame
+  // never closed: the stream saw the frame open, and the whole message can identify
+  // it just as well. A durable row that kept the reasoning text would print it after
+  // the bubble withheld it.
   assert.equal(unterminated.flush(), "");
+  assert.equal(removeModelScaffolding("<thinking>玩家刚醒"), "");
 
   const partial = createScaffoldingStreamProjection();
   assert.equal(partial.push("早安<"), "早安");
   assert.equal(partial.flush(), "<");
+});
+
+test("an unclosed frame releases the same text on both halves, at every fragment boundary", () => {
+  for (const frame of REASONING_FRAMES) {
+    const input = `${PROSE_BEFORE}${frame.opening}：${REASONING}`;
+    const whole = removeModelScaffolding(input);
+    assert.equal(whole, PROSE_BEFORE, frame.opening);
+    for (const chunks of chunkings(input)) {
+      assert.equal(released(chunks).join(""), whole, `${frame.opening}, chunks ${JSON.stringify(chunks)}`);
+    }
+  }
 });
 
 test("a bracket the frame rule does not name is released as prose, in order", () => {
