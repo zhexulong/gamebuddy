@@ -129,6 +129,49 @@ export function isRefillWateringCanTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * The CLOSED vocabulary of location-fixed interaction points, mirrored by the Mod's
+ * `FixedInteractionPointKinds` and by the wire schema's own `enum` for the same field.
+ *
+ * <p>
+ * The schema is the authority: `schema-contract.test.ts` compares this set with the schema's enum, so a
+ * token added on one side alone fails there by name instead of producing `invalid_snapshot` on a real map.
+ * The four `mine_*` words name the Buildings-layer tile indices `MineShaft.checkAction` dispatches on
+ * (`MineShaft.cs:3057-3096`); `action_tile` and `touch_action_tile` name the engine's two tile properties.
+ * </p>
+ */
+export const FIXED_INTERACTION_POINT_KINDS: ReadonlySet<string> = new Set([
+  "mine_elevator",
+  "mine_ladder_up",
+  "mine_ladder_down",
+  "mine_shaft",
+  "action_tile",
+  "touch_action_tile",
+]);
+
+/**
+ * One interaction point the MAP fixes at a tile: a mine ladder, a shop counter, a television.
+ *
+ * <p>
+ * `actionWord` is the engine's own first word at that tile (`MinecartTransport` out of
+ * `Action: MinecartTransport Default`) and is `null` where the engine carries no word at all - a mine
+ * ladder is a tile INDEX, so it has nothing to quote. It is required-but-nullable rather than optional:
+ * `hasExactKeys` then proves the Mod sends the member, and a null reads as "no word" instead of as
+ * "this Mod is too old to have one".
+ * </p>
+ */
+export function isFixedInteractionPointFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["x", "y", "kind", "actionWord"]) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.kind === "string" &&
+    FIXED_INTERACTION_POINT_KINDS.has(value.kind) &&
+    (value.actionWord === null || isBoundedNonEmptyString(value.actionWord, 64))
+  );
+}
+
 export function isPetBowlTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&

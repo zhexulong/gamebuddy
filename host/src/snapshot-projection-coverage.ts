@@ -121,6 +121,7 @@ const UNPROJECTED_OBSERVED_FAMILIES = Object.freeze([
   "raftTargets",
   "horseTargets",
   "mineEntranceTargets",
+  "fixedInteractionPoints",
   "mineElevatorFloorTargets",
   "obeliskTargets",
   "animalDoorTargets",
@@ -158,6 +159,8 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "The Mod's own execution state, which the Host already owns from action receipts; publishing it into the fact block would restate execution state the Host tracks. Delivered by `stardew_observe` and program status.",
   artifactSpotFarmSourceCount:
     "A count used only while planning artifact-spot digs, paired with the family it counts. Delivered by `stardew_observe`.",
+  fixedInteractionPointsOmitted:
+    "A count used only while reading the map's fixed interaction points, paired with the family it counts: it says the list was truncated, and it would be a second spelling of `fixedInteractionPoints.length` in a per-turn fact block that already has to stay under 4 KB. Delivered by `stardew_observe`.",
   currentToolSlotItem:
     "The qualified item id in the current tool slot; `currentTool` and `toolSlots[].label` already publish the tool identity, which the environment line renders as a tool word, so this would be a second spelling of a fact already in the prompt.",
 });
