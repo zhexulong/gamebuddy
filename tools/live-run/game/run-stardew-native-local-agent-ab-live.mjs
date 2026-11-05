@@ -37,6 +37,7 @@ import {
   parseReceiptEvidence,
 } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
+import { judgeUncrossedNight, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import {
   countPriorMultidayRuns,
   dailyTaskFor,
@@ -2638,6 +2639,33 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return terminals;
   };
   /**
+   * Each of those dispatches WITH the receipts that carry it, which is what the night's verdict is decided from.
+   *
+   * Two receipts per dispatch, because they answer different questions: the ACCEPTED one declares what the action
+   * was reaching for (`target=own_bed`), and the terminal says what came of it. `judgeUncrossedNight` reads both,
+   * so the separation between "she never went to bed" and "she went to bed and the host player did not" is made
+   * from the receipts rather than from the reason's spelling.
+   */
+  const sleepWitnesses = () =>
+    sleepRequestsSinceStart().map((requestId) => {
+      const accepted = factLog
+        .slice(factStart)
+        .map(recordedReceipt)
+        .find((receipt) => receipt !== null && receipt.requestId === requestId && receipt.state === "accepted");
+      return Object.freeze({
+        requestId,
+        accepted: accepted ?? null,
+        terminal: terminalReceiptFor(factLog, requestId) ?? null,
+      });
+    });
+  /** The reason an uncrossed night is reported under, from the receipts above. */
+  const uncrossedReason = (byTimeout) => {
+    const verdict = judgeUncrossedNight({ witnesses: sleepWitnesses() });
+    // The suffix is the harness's own fact - the day turn had not settled - and it is appended to whichever case
+    // applies, so a bound this run set is never mistaken for something she did or did not do.
+    return byTimeout ? `${verdict.reasonCode}:day_turn_still_running` : verdict.reasonCode;
+  };
+  /**
    * The night's own CROSSING receipt - a `succeeded/day_advanced` terminal - or null when no dispatch in this window
    * produced one.
    *
@@ -2673,6 +2701,12 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // the night took the actor even if a later poll during the rollover fade returned the cached projection. A watch that
   // never observed the clock leaves it null, and the gate then says what it is missing instead of guessing.
   let bedTimeBeforeCrossing = null;
+  // The hour SHE went to bed, as the engine's clock read it at the first poll that saw her `sleep`.
+  //
+  // Not the night's maximum: a companion who goes to bed at 22:10 and waits for the host player is still in bed
+  // when the clock runs on to 26:00, so the maximum reports the pass-out hour for a night she slept through. The
+  // first sighting is the observation this asks for, and it comes from the snapshot the watcher already polls.
+  let bedTimeWhenSheCommitted = null;
   const observeQuietly = async () => {
     let snapshot;
     try {
@@ -2699,6 +2733,8 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // The night BEGINS when the companion dispatches `sleep`, read from EITHER channel. Reading only the
       // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
       // notice the night only once the calendar had moved - i.e. once it was over.
+      if (bedTimeWhenSheCommitted === null && sleepRequestsSinceStart().length > 0)
+        bedTimeWhenSheCommitted = readWorldClock().timeOfDay;
       if (nightBegan()) return null;
       // The engine crossed the night whatever dispatched it (the 02:00 pass-out calls `NewDay` itself), so a moved
       // calendar is also a night under way.
@@ -2710,11 +2746,17 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // reads as a judgement about her behaviour and was a fact about the turn boundary.
       //
       // So the settle keeps the watch waiting while the WORLD still has a day to run. It only concludes when the world
-      // itself says the day is spent - past the sleep hour with no `sleep`, or no longer running at all - which
+      // itself says the day is spent - past the sleep hour with no crossing, or no longer running at all - which
       // is the fact this watcher was always trying to observe.
+      //
+      // WHAT that spent night means is not decided here: `uncrossedReason` asks `judgeUncrossedNight` to read the
+      // night's own receipts, because "she never went to bed", "she went to bed and the host player never did" and
+      // "her sleep was refused" are three different findings and this one arm used to publish the first of them
+      // for all three. Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): `crossings 0 of 2` with
+      // one reason code, which read as a judgement about her and said nothing about what the night actually held.
       if (daySettled) {
         const worldClock = readWorldClock();
-        if (worldClock.spent) return "companion_did_not_sleep";
+        if (worldClock.spent) return uncrossedReason(false);
         if (worldClock.unknown) return "day_turn_settled_before_night:clock_unknown";
       }
       // Before the harness's own bound: has the WORLD stopped? A stalled heartbeat is a different finding from
@@ -2722,20 +2764,29 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       const liveness = sampleModHeartbeat();
       if (liveness.silentMs >= MOD_HEARTBEAT_STALL_MS)
         return `world_stopped_advancing:silent_ms=${String(liveness.silentMs)}:last_heartbeat=${liveness.line}`;
-      if (Date.now() >= deadline) return "companion_did_not_sleep:day_turn_still_running";
+      if (Date.now() >= deadline) return uncrossedReason(true);
       await new Promise((resolve) => setTimeout(resolve, MULTIDAY_POLL_INTERVAL_MS));
     }
   };
   const neverStarted = await waitForNightToBegin();
   if (neverStarted !== null) {
+    const verdict = judgeUncrossedNight({ witnesses: sleepWitnesses() });
     return Object.freeze({
       terminal: null,
       after: await observeQuietly(),
       menus: [],
-      // A night that never began has no bed time to report; the field is published as null rather than omitted, so a
-      // reader never has to tell "not observed" apart from "not a field on this shape".
-      bedTime: bedTimeBeforeCrossing,
+      // A night that never began has no crossing hour to report; the field is published as null rather than omitted,
+      // so a reader never has to tell "not observed" apart from "not a field on this shape". When she DID go to bed
+      // this is the hour she went, which is the clock the wait is judged against.
+      bedTime: bedTimeWhenSheCommitted ?? bedTimeBeforeCrossing,
       reasonCode: neverStarted,
+      // WHY that reason, from the receipts the wait was decided on - and only when the reason IS a sleep verdict: a
+      // watch that ended on a dead bridge or a stalled world has no finding about her dispatch, and dressing one up
+      // would attribute the harness's own stop to her. `multiday.reasonCode` and this record carry one spelling.
+      nightVerdict:
+        sleepVerdictCase(neverStarted) === null
+          ? null
+          : Object.freeze({ ...verdict, reasonCode: neverStarted, bedTime: bedTimeWhenSheCommitted }),
     });
   }
   // The day this watch began on - which is NOT the day the world is on once the wait above is over.
@@ -3957,6 +4008,9 @@ try {
             bedTime: night.bedTime ?? null,
             passedOut: night.cause === "pass_out",
             cause: night.cause ?? null,
+            // Which of the three uncrossed-night findings this was, when there was one - carried through to the day
+            // record so the artifact states WHY a night is missing instead of only that it is.
+            nightVerdict: night.nightVerdict ?? null,
           }),
         );
         return night;
@@ -3968,6 +4022,7 @@ try {
         record.cause = night?.cause ?? null;
         record.bedTime = night?.bedTime ?? null;
         record.passedOut = night?.passedOut ?? null;
+        record.nightVerdict = night?.nightVerdict ?? null;
         console.error(
           "MULTIDAY_NIGHT",
           JSON.stringify({
@@ -3979,6 +4034,14 @@ try {
         );
       },
     });
+    // The crossings, in ONE line, published beside the count it explains and printed once so an operator reading the
+    // run's log does not have to join `crossings 0` to a night record to learn whose night it was.
+    const crossingSummary = summarizeCrossings({
+      crossings: crossing.daysCrossed,
+      requestedCrossings: MULTIDAY_CROSSINGS,
+      nights: crossing.dayRecords,
+    });
+    console.error("MULTIDAY_CROSSINGS", crossingSummary);
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,
       // What the RUN was asked for, next to what it achieved: judging the window against the achieved count made the
@@ -3987,6 +4050,7 @@ try {
       requestedCrossings: MULTIDAY_CROSSINGS,
       completed: crossing.completed,
       reasonCode: crossing.reasonCode,
+      crossingSummary,
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
       assessment: assessMultiDayBaseline({ dayRecords: crossing.dayRecords, daysRequested: MULTIDAY_CROSSINGS }),
       dayRecords: crossing.dayRecords,

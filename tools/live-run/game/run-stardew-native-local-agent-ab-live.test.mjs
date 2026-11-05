@@ -15,13 +15,21 @@ import {
   parseReceiptEvidence,
 } from "../../lib/multiday-baseline.mjs";
 import { watchRollover } from "../../lib/multiday-loop.mjs";
-import { buildFailureSnapshot } from "../../lib/failure-dump.mjs";
+import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import {
+  COMPANION_DID_NOT_SLEEP,
+  COMPANION_SLEEP_REFUSED,
+  COMPANION_SLEPT_HOST_PLAYER_DID_NOT,
+  judgeUncrossedNight,
+  sleepVerdictCase,
+  summarizeCrossings,
+} from "./night-verdict.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { STARDEW_ACTION_TOOL_NAMES } from "../../../host/dist-test/action-registry.js";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descriptors.mjs";
-import { DAILY_TASK_ROTATION } from "../../lib/multiday-daily-tasks.mjs";
+import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 // The program tool's description is presented material, but the runner mounts the Host's tool definitions rather
@@ -339,7 +347,7 @@ test("the run asks the companion questions and publishes the verdict", () => {
   // session, because `await runAgentTurn(...)` does not return until the turn settles and a turn can last the whole day.
   // Player text already steers into a running turn, so the assertion is about WHERE the submit happens, not about the
   // transport.
-  assert.match(RUNNER_SOURCE, /deliverDialogueGatesForDay\(day\)/);
+  assert.match(RUNNER_SOURCE, /deliverDialogueGatesForDay\(day, tools\)/);
   assert.doesNotMatch(
     RUNNER_SOURCE,
     /await runAgentTurn\(gate\.prompt/,
@@ -390,7 +398,7 @@ test("the scheduled gates are delivered from ground truth the run observed, and 
   );
   assert.match(RUNNER_SOURCE, /const MOD_LOG_PATHS = \(\) => \{/);
   // 5. A gate is CLAIMED before the admission is awaited, so two turns cannot both speak the same line.
-  const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day)");
+  const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day, tools)");
   const deliverBody = RUNNER_SOURCE.slice(
     deliverStart,
     RUNNER_SOURCE.indexOf("\nasync function runAgentTurn", deliverStart),
@@ -707,9 +715,24 @@ test("every task the rotation asks for is a task the prompt table can state", ()
     return RUNNER_SOURCE.slice(start, end);
   };
   const keysOf = (body) => [...body.matchAll(/^ {2}([a-z][a-z0-9_]*):/gm)].map((match) => match[1]);
+  // The sweep tasks' sentences are owned by the task definitions, because they are derived from the published
+  // surface. So the table's population is its own literal keys PLUS the locale the runner spreads in: reading only
+  // the literals would report every sweep task as unstateable, and reading only the spread would stop noticing a
+  // literal key that no run asks for. Both halves are checked, and the spread itself is asserted so a task cannot
+  // be "stated" by the library while the runner quietly drops it from the note.
+  const sweepPrompts = sweepTaskPrompts();
   const drifting = [];
-  for (const name of ["DAILY_TASK_PROMPT_ZH", "DAILY_TASK_PROMPT_EN"]) {
-    const keys = new Set(keysOf(promptTableBody(name)));
+  for (const [name, locale] of [
+    ["DAILY_TASK_PROMPT_ZH", "zh"],
+    ["DAILY_TASK_PROMPT_EN", "en"],
+  ]) {
+    const body = promptTableBody(name);
+    assert.match(
+      body,
+      new RegExp(`\\.\\.\\.sweepTaskPrompts\\(\\)\\.${locale}`, "u"),
+      `${name} must spread the sweep tasks' prompts in`,
+    );
+    const keys = new Set([...keysOf(body), ...Object.keys(sweepPrompts[locale])]);
     for (const task of DAILY_TASK_ROTATION) if (!keys.has(task)) drifting.push(`${name} cannot state ${task}`);
     for (const key of keys)
       if (!DAILY_TASK_ROTATION.includes(key)) drifting.push(`${name} names ${key}, which no run asks for`);
@@ -2042,6 +2065,8 @@ test("a night the Mod crossed through Body Program reaches the record with its o
         nightCause,
         parseReceiptEvidence,
         TERMINAL_STATES,
+        judgeUncrossedNight,
+        sleepVerdictCase,
         MOD_HEARTBEAT_STALL_MS: 90_000,
         MULTIDAY_NIGHT_TIMEOUT_MS: nightTimeoutMs,
         MULTIDAY_POLL_INTERVAL_MS: 5,
@@ -2139,15 +2164,204 @@ test("a night the Mod crossed through Body Program reaches the record with its o
   // Reading the receipt channel means a refusal, which also mints a receipt naming `advance_day`, is now VISIBLE to
   // the wait. Entering the night watch on it would spend the whole night budget on a night nothing started - and the
   // day loop keeps offering turns until the day is crossed, so the next turn may sleep for real. The refusal must
-  // leave the wait waiting, so the day's own verdict (`companion_did_not_sleep`) is still what answers.
+  // leave the wait waiting, and that is what `terminal: null` and the absent `release` below assert.
+  //
+  // What it must NOT do is collapse into "she did not sleep": a refusal is a defect with a code, and a run that
+  // reported `companion_did_not_sleep` for it published the same string as a night she never tried at all. The code
+  // is quoted, and the harness's own bound travels after it as itself.
   const refusedNight = await runNight({ dispatch: "refused", nightTimeoutMs: 600 });
   assert.equal(refusedNight.terminal, null, "a refused dispatch is not the night's terminal");
   assert.match(
     String(refusedNight.reasonCode),
-    /^companion_did_not_sleep/u,
-    `a refusal leaves the wait waiting, got ${String(refusedNight.reasonCode)}`,
+    /^companion_sleep_refused:sleep_requires_indoors:day_turn_still_running$/u,
+    `a refusal is reported by its own code, got ${String(refusedNight.reasonCode)}`,
   );
+  assert.equal(refusedNight.nightVerdict.refusal.code, "sleep_requires_indoors");
+  // This window holds the refusal and nothing else: no ACCEPTED receipt survives to name what the dispatch was reaching
+  // for, so the target says null instead of printing the bed this harness happens to know about. With the accepted
+  // receipt in the window the same field carries `own_bed` (see the three-case test below).
+  assert.equal(refusedNight.nightVerdict.refusal.target, null);
   assert.equal(refusedNight.release, undefined, "and it certainly did not cross a night");
+});
+
+/**
+ * A night that did not cross is reported by the case that explains it.
+ *
+ * The watcher used to answer `companion_did_not_sleep` for EVERY night the world's clock spent without a crossing, so
+ * the string covered a companion who never went to bed, a companion who went to bed and waited for the host player
+ * (`requires_other_player`), and a sleep the Mod refused - three different findings, one of them not her fault at all.
+ * Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): `crossings 0 of 2` under that one code.
+ *
+ * Each fixture below is the SAME night, at the SAME spent clock, differing only in the receipts her `sleep` minted.
+ * That is what makes the difference this test asserts a fact about the receipts rather than about the clock.
+ */
+test("a night she slept through and the host player did not is not reported as her failure", async () => {
+  const acceptedSleep = Object.freeze({
+    executionId: "exec_sleep_1",
+    requestId: "req_sleep_1",
+    actionId: "sleep",
+    state: "accepted",
+    reasonCode: "accepted",
+    evidence: Object.freeze({ detail: "target=own_bed;never_direct_new_day=true" }),
+  });
+  // The lifecycle's own terminal when the native ready barrier never completes
+  // (`SleepAndAdvanceDayLifecycle.cs:1085-1100`): state `waiting`, projected to the wire as `blocked`, with the
+  // barrier's counts in the terminal's settlement (`ready=1;required=2`) and `ready_at_completion` still 0 because
+  // that pair is only assigned when the barrier COMPLETES.
+  const waitedForTheHost = Object.freeze({
+    ...acceptedSleep,
+    state: "blocked",
+    reasonCode: "requires_other_player",
+    evidence: Object.freeze({
+      detail:
+        "state=waiting;reason=requires_other_player;topology=multiplayer;entered_via=native_sleep_prompt;" +
+        "saving_observed=false;saved_observed=false;day_started_observed=false;save_boundary_not_observed=false;" +
+        "shipping_summary_settled=none;ready_check_observed=true;ready_at_completion=0;required_at_completion=0;" +
+        "ready=1;required=2;topology=multiplayer",
+    }),
+  });
+  // An eligibility refusal: the night was declined before anything native ran
+  // (`farmhandexecutioncontroller.lifecycleactions.cs:135-154`).
+  const refusedNotHome = Object.freeze({
+    ...acceptedSleep,
+    state: "rejected",
+    reasonCode: "not_home",
+    evidence: Object.freeze({
+      detail: "state=not_home;reason=not_home;topology=multiplayer;saving_observed=false;saved_observed=false",
+    }),
+  });
+  // The RECORDED shape `timeline.jsonl` holds: identity flattened onto the entry, receipt whole under
+  // `worldFactPayload` (`recordedReceipt`).
+  const asRecorded = (receipt) =>
+    Object.freeze({
+      type: "execution_receipt",
+      reasonCode: receipt.reasonCode,
+      requestId: receipt.requestId,
+      executionId: receipt.executionId,
+      evidence: receipt.evidence,
+      worldFactPayload: receipt,
+    });
+
+  const runNight = async (receipts) => {
+    const factLog = [];
+    const actionTrace = [];
+    const snapshot = Object.freeze({
+      revision: 189,
+      dayOfMonth: 5,
+      timeOfDay: 2600,
+      actionable: false,
+      actorDispositionKind: "passed_out",
+      actorDispositionDetail: null,
+      activeExecution: null,
+    });
+    const client = {
+      get state() {
+        return { snapshot };
+      },
+      observe: async () => snapshot,
+    };
+    // The engine's clock at the two moments that matter: the hour she went to bed, and the pass-out that spent the
+    // night. A constant clock could not tell them apart, and a bed time read from a constant is not an observation.
+    const at = (timeOfDay, spent) =>
+      Object.freeze({
+        spent,
+        minutes: Math.floor(timeOfDay / 100) * 60 + (timeOfDay % 100),
+        unknown: false,
+        timeOfDay,
+        source: "snapshot",
+      });
+    let engineClock = at(2200, false);
+    const readWorldClock = () => engineClock;
+    // The receipts land AFTER the watch begins, because a fact that was already in the log belongs to an earlier night
+    // (`factStart`) - and a fixture that pre-loads them would be testing a window the watcher never opens.
+    const timers = [
+      setTimeout(() => {
+        for (const receipt of receipts) factLog.push(asRecorded(receipt));
+        engineClock = at(2210, false);
+      }, 20),
+      setTimeout(() => {
+        engineClock = at(2600, true);
+      }, 60),
+    ];
+    const [, , , watchNightRollover] = extractRunnerFunction(
+      RUNNER_SOURCE,
+      ["recordedReceipt", "terminalReceiptFor", "watchNightThroughPassOut", "watchNightRollover"],
+      {
+        actionTrace,
+        factLog,
+        bridgeDisconnections: [],
+        client,
+        sampleModHeartbeat: () => ({ count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: 0 }),
+        readWorldClock,
+        watchRollover,
+        nightCause,
+        parseReceiptEvidence,
+        TERMINAL_STATES,
+        judgeUncrossedNight,
+        sleepVerdictCase,
+        MOD_HEARTBEAT_STALL_MS: 90_000,
+        MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
+        MULTIDAY_POLL_INTERVAL_MS: 5,
+        MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
+        MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
+      },
+    );
+    try {
+      return await watchNightRollover(1);
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+    }
+  };
+
+  // (a) she never entered the day-advance path.
+  const neverTried = await runNight([]);
+  assert.equal(
+    neverTried.reasonCode,
+    COMPANION_DID_NOT_SLEEP,
+    `no sleep receipt means she never entered the path: got ${String(neverTried.reasonCode)}`,
+  );
+  assert.equal(neverTried.nightVerdict.sleepReceipt, null, "there is no receipt, and inventing one is the defect");
+
+  // (b) she went to bed and the native barrier was the host player's.
+  const waited = await runNight([acceptedSleep, waitedForTheHost]);
+  assert.equal(
+    waited.reasonCode,
+    COMPANION_SLEPT_HOST_PLAYER_DID_NOT,
+    `she declared locally ready: got ${String(waited.reasonCode)}`,
+  );
+  // THE DIFFERENCE THE FIX HAS TO MAKE: identical night, identical spent clock, and the reason is no longer the one
+  // that reads as her failure. Before the split this string WAS `companion_did_not_sleep`.
+  assert.notEqual(
+    waited.reasonCode,
+    neverTried.reasonCode,
+    "a night she slept on cannot share the reason of a night she never tried",
+  );
+  assert.equal(waited.nightVerdict.reasonCode, waited.reasonCode, "one spelling: the record and the reason agree");
+  assert.equal(waited.nightVerdict.sleepReceipt.reasonCode, "requires_other_player");
+  assert.equal(waited.bedTime, 2210, "the hour she went to bed, not the pass-out hour the clock ran on to");
+  const summary = summarizeCrossings({
+    crossings: 0,
+    requestedCrossings: 2,
+    nights: [{ day: 1, nightVerdict: waited.nightVerdict }],
+  });
+  assert.match(summary, /^crossings 0 of 2: night 1 - she slept at 2210/u, summary);
+  assert.match(summary, /NOT a companion failure/u, summary);
+
+  // (c) her sleep came back named.
+  const refused = await runNight([acceptedSleep, refusedNotHome]);
+  assert.equal(
+    refused.reasonCode,
+    `${COMPANION_SLEEP_REFUSED}:not_home`,
+    `a refusal is quoted by its own code: got ${String(refused.reasonCode)}`,
+  );
+  assert.deepEqual(refused.nightVerdict.refusal, { code: "not_home", target: "own_bed" });
+  assert.equal(refused.nightVerdict.reasonCode, refused.reasonCode, "one spelling: the record and the reason agree");
+  const refusedSummary = summarizeCrossings({
+    crossings: 0,
+    requestedCrossings: 2,
+    nights: [{ day: 1, nightVerdict: refused.nightVerdict }],
+  });
+  assert.match(refusedSummary, /her sleep was refused \(not_home, target own_bed\)/u, refusedSummary);
 });
 
 test("the run bundle publishes the crossing record, and one it cannot judge is reported instead of refusing the manifest", () => {
@@ -2495,6 +2709,7 @@ test("an error that escapes the run still publishes the work it had already reco
   const programSubmissions = [{ programId: "p_farm_day", code: "accepted", accepted: true }];
   const written = [];
   const bundles = [];
+  const bundleFailures = [];
   const resultFile = join(tmpdir(), `gb-escaped-error-${randomUUID()}.result.json`);
   const previousResultFile = process.env.GAMEBUDDY_RESULT_FILE;
   process.env.GAMEBUDDY_RESULT_FILE = resultFile;
@@ -2531,6 +2746,7 @@ test("an error that escapes the run still publishes the work it had already reco
       summarizeActionCadence: () => ({ spans: [] }),
       summarizePresentationEvidence: () => ({ pieces: [] }),
       buildFailureSnapshot,
+      classifyFailure,
       buildRunObservation: (input) => input,
       assessCompanionInteraction: () => ({ passed: true }),
       findProtectedCovenantShipment: () => undefined,
@@ -2542,8 +2758,9 @@ test("an error that escapes the run still publishes the work it had already reco
       voiceResult: null,
       agentTurnResult: null,
       client: { state: { authenticated: true, snapshot: { revision: 42 } } },
-      writeRunBundle: async ({ result }) => {
+      writeRunBundle: async ({ result, failure }) => {
         bundles.push(result);
+        bundleFailures.push(failure);
         return { state: "written", runDir: "/run" };
       },
       closeCapture: async () => null,
@@ -2555,8 +2772,15 @@ test("an error that escapes the run still publishes the work it had already reco
   const logged = [];
   const originalError = console.error;
   console.error = (...args) => logged.push(args.map(String).join(" "));
+  let refused;
+  let crashed;
   try {
     await writeFailureDump(new Error("presentation_refused:presentation_bridge_rejected"));
+    // THE REAL INCIDENT (`2026-11-05T11-37-35-764Z-multiday_routine`): a ReferenceError escaped the run's own exit path
+    // and its message was published as the reason code. The code is now closed and the site is in the record.
+    await writeFailureDump(new ReferenceError("path is not defined"));
+    refused = JSON.parse(written[0].contents);
+    crashed = JSON.parse(written[1].contents);
   } finally {
     console.error = originalError;
     if (previousResultFile === undefined) delete process.env.GAMEBUDDY_RESULT_FILE;
@@ -2564,14 +2788,18 @@ test("an error that escapes the run still publishes the work it had already reco
   }
   const dump = written.find((entry) => entry.path === resultFile);
   assert.ok(dump !== undefined, "an escaped error must leave the run's result, not nothing");
-  const published = JSON.parse(dump.contents);
+  const published = refused;
   assert.equal(published.state, "blocked");
+  // A declared code (`throw new Error("stable_token:detail")`) keeps its name; a message that is NOT a code becomes the
+  // internal token, and its text moves to errorMessage.
   assert.equal(published.error, "presentation_refused:presentation_bridge_rejected");
   assert.equal(
     published.failure.reasonCode,
     "presentation_refused:presentation_bridge_rejected",
     "the outcome that ended the run is its named failure",
   );
+  assert.equal(published.failure.errorClass, "Error");
+  assert.equal(published.failure.errorMessage, "presentation_refused:presentation_bridge_rejected");
   // What the run did, read from its own record: the stub this replaces lost every one of these.
   assert.deepEqual(published.attemptedActionIds, ["equip_tool", "till_soil", "harvest_crop"]);
   assert.deepEqual(published.succeededActionIds, ["equip_tool", "harvest_crop"]);
@@ -2597,7 +2825,7 @@ test("an error that escapes the run still publishes the work it had already reco
   assert.equal(published.revision, 42, "the bridge facts it received are published with it");
   assert.equal(published.bridgeFacts.length, 3, "the bridge log it received travels with the result");
   // The bundle beside it is the run's own contract, written by the same assembly.
-  assert.equal(bundles.length, 1);
+  assert.equal(bundles.length, 2);
   // And it is NOT the floor record: a floor says it could not be assembled, which must never be what a run with work
   // in it reads as.
   assert.equal(Object.hasOwn(published, "reason"), false);
@@ -2605,6 +2833,30 @@ test("an error that escapes the run still publishes the work it had already reco
     logged.every((line) => !line.includes("failure_dump_assembly_failed")),
     "the assembly must not have fallen through to the floor",
   );
+
+  // The crash: a closed code, and the site readable straight out of the artifact.
+  assert.equal(crashed.state, "blocked");
+  assert.equal(crashed.error, "runner_internal_error", "a programming error is not published under its own prose");
+  const failure = crashed.failure;
+  assert.equal(failure.reasonCode, "runner_internal_error");
+  assert.equal(failure.errorClass, "ReferenceError");
+  assert.equal(failure.errorMessage, "path is not defined");
+  assert.ok(Array.isArray(failure.errorStack), "the stack is published as frames, not as one blob");
+  assert.ok(failure.errorStack.length >= 1, "the first frame is mandatory: without it the run names no site");
+  assert.match(
+    failure.errorStack[0],
+    /:\d+:\d+\)?$/u,
+    "the first frame carries a line and a column, so the site can be opened",
+  );
+  assert.match(failure.errorFrame, /:\d+$/u, "the first frame's file:line is published beside the frames");
+  assert.ok(
+    failure.errorFrame.includes("run-stardew-native-local-agent-ab-live.test.mjs"),
+    `the frame names THIS call site, not a wrapper: ${failure.errorFrame}`,
+  );
+  // End to end: the same record is what the bundle contract is handed, and it is what an audit reads.
+  assert.equal(bundleFailures[1].reasonCode, "runner_internal_error");
+  assert.equal(bundleFailures[1].errorFrame, failure.errorFrame);
+  assert.equal(bundleFailures[1].errorStack[0], failure.errorStack[0]);
 });
 
 test("an unobserved program is not a program that dispatched nothing", async () => {
