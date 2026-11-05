@@ -12,7 +12,7 @@ import {
 } from "../management-pipeline-api";
 import { characterFieldLabel, characterLabels, type CharacterLabels } from "./character-domain-labels";
 import { canonicalBase64Of, isPngCardFile } from "./png-character-card";
-import { useDraft } from "./surface-drafts";
+import { useDraft, useRecordDraft } from "./surface-drafts";
 
 /** The JSON arm's own ceiling: the decoder's text input bound (StageStCardImportCommandV1). */
 const MAX_CARD_TEXT_LENGTH = 2_097_152;
@@ -228,8 +228,15 @@ export function CharacterCardImport({
   const revealedImportId = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null);
-  /** The Host's staged report, held until the player confirms or cancels it. */
-  const [staged, setStaged] = useState<StCardImportStageResultV1 | null>(null);
+  /**
+   * The Host's staged report, held until the player confirms or cancels it - by the shell, not here.
+   *
+   * A staged card IS a decision the player is in the middle of making: leaving Characters for
+   * another surface unmounts this form, and a report held in a `useState` went with it, so the
+   * review they had not yet approved vanished and the card had to be staged again. The `importId`
+   * is the whole record (see `useRecordDraft`), and `null` is "nothing is staged".
+   */
+  const staged = useRecordDraft<StCardImportStageResultV1>("characters.card-import-staged", null);
   /**
    * The pasted card text, held by the shell rather than by this form.
    *
@@ -277,18 +284,19 @@ export function CharacterCardImport({
    * from for no gain. Focus rides along (`preventScroll` first, then one explicit scroll)
    * so the scrollport and the caret land in the same place.
    */
+  const stagedCard = staged.value;
   useEffect(() => {
-    if (staged === null) {
+    if (stagedCard === null) {
       revealedImportId.current = null;
       return;
     }
-    if (revealedImportId.current === staged.importId) return;
-    revealedImportId.current = staged.importId;
+    if (revealedImportId.current === stagedCard.importId) return;
+    revealedImportId.current = stagedCard.importId;
     const review = reviewRef.current;
     if (review === null) return;
     reviewHeadingRef.current?.focus({ preventScroll: true });
     review.scrollIntoView({ block: "nearest", behavior: "instant" });
-  }, [staged]);
+  }, [stagedCard]);
 
   const refreshHistory = async (): Promise<void> => {
     try {
@@ -306,10 +314,10 @@ export function CharacterCardImport({
   const stageCard = async (command: StageStCardImportCommandV1): Promise<void> => {
     if (busy) return;
     setBusy(true);
-    setStaged(null);
+    staged.clear();
     setOutcome(null);
     try {
-      setStaged(await api.stageStCardImport(command, csrfToken));
+      staged.type(await api.stageStCardImport(command, csrfToken));
     } catch {
       setOutcome({ kind: "error", message: labels.importFailed });
     } finally {
@@ -323,7 +331,6 @@ export function CharacterCardImport({
    * only from the Host's own confirm read-back.
    */
   const confirmStaged = async (): Promise<void> => {
-    const stagedCard = staged;
     if (busy || stagedCard === null) return;
     setBusy(true);
     try {
@@ -339,12 +346,14 @@ export function CharacterCardImport({
         await api.reviewStCardImport(stagedCard.importId, report.keptFields, Date.now(), csrfToken);
       const confirmed = await api.confirmStCardImport(stagedCard.importId, csrfToken);
       if (confirmed.name.trim().length === 0) throw new Error("import_not_confirmed");
-      setStaged(null);
+      staged.clear();
       setOutcome({ kind: "created", name: confirmed.name, report });
       onCreated?.();
       await refreshHistory();
     } catch {
-      setStaged(null);
+      // The staged record is spent either way: a confirm that did not return a name is not a card
+      // the player may press again, and the Host's own refusal sentence is what they get instead.
+      staged.clear();
       setOutcome({ kind: "error", message: labels.importFailed });
     } finally {
       setBusy(false);
@@ -353,7 +362,7 @@ export function CharacterCardImport({
 
   /** Cancelling drops the staged card client-side; no route is called. */
   const cancelStaged = (): void => {
-    setStaged(null);
+    staged.clear();
   };
 
   /**
@@ -388,7 +397,7 @@ export function CharacterCardImport({
     await stageCard(read.command);
   };
 
-  const stagedReport = staged === null ? null : reportOf(staged);
+  const stagedReport = stagedCard === null ? null : reportOf(stagedCard);
 
   return (
     <section aria-label={labels.importTitle} data-card-import>
@@ -451,7 +460,7 @@ export function CharacterCardImport({
         </div>
       </details>
 
-      {staged !== null && stagedReport !== null && (
+      {stagedCard !== null && stagedReport !== null && (
         <section aria-label={labels.importReviewTitle} data-card-import-review ref={reviewRef}>
           <h4 ref={reviewHeadingRef} tabIndex={-1}>
             {labels.importReviewTitle}
@@ -461,7 +470,7 @@ export function CharacterCardImport({
               explicit because the block is styled without markers
               (`list-style: none` drops list semantics in Safari). */}
           <ul role="list" className="card-import-report" data-card-import-review-details>
-            <li>{labels.importReviewName.replace("{{name}}", staged.name)}</li>
+            <li>{labels.importReviewName.replace("{{name}}", stagedCard.name)}</li>
             <li>
               {labels.importReviewWillKeep
                 .replace("{{count}}", String(stagedReport.keptFields.length))

@@ -221,3 +221,33 @@ test("the review names its fields in Chinese too, with no identifier in either c
   );
   await expectNoIdentifiers(review, "zh 的 review");
 });
+
+/**
+ * A staged card the player has not decided on survives a trip to another surface.
+ *
+ * The Host's staged report was this form's own `useState`, and the shell renders each surface
+ * conditionally, so looking at Settings unmounted the review the player was in the middle of
+ * answering: they came back to a form with nothing staged and had to pick the card again, while the
+ * Host still held the `importId` the report named (`character.import.stage` is answered with a
+ * staged record and no route cancels it). The record is `useRecordDraft` now - the `importId` and
+ * the field report are one thing and travel together.
+ */
+test("the staged review outlives a trip to another surface, without staging a second card", async ({ page }) => {
+  const stages: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/tavern/v1/imports")) stages.push(request.url());
+  });
+  const { surface, review } = await stageCard(page, "en");
+  await expect.poll(() => stages.length).toBe(1);
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.getByTestId("settings-surface")).toBeVisible();
+  await page.getByRole("button", { name: "Characters", exact: true }).click();
+  await expect(surface).toBeVisible();
+
+  // The review is the one the Host answered, still awaiting the player's decision - and staging it
+  // again is exactly what did NOT have to happen.
+  await expect(review).toBeVisible();
+  await expect(review.getByRole("listitem").first()).toHaveText("The card names it Nova.");
+  expect(stages, "the card was not staged a second time").toHaveLength(1);
+});
