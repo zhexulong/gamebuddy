@@ -55,8 +55,16 @@ public sealed class RefusalLayerNamingTests
     /// it exists to stop is a NEW refusal path joining them silently: a handler that mints a bare rejection fails here
     /// with its own file and line, in the commit that adds it, instead of in a live run three weeks later.
     /// </para>
+    /// <para>
+    /// RAISED FROM 539 TO 546 by `pet_farm_animal`, and the seven sites are named rather than absorbed: the seven
+    /// `RememberTerminal(..., Rejected, ...)` calls in its request/execution bodies (the scope proof, `world_not_ready`,
+    /// `farm_animal_target_gone` twice, the shared `FarmAnimalPetRefusal` result twice, and `target_out_of_reach`).
+    /// None of them can name a layer: the day marker, the held Golden Animal Cracker and the 19:00 clock are not world
+    /// layers in the closed vocabulary, and inventing a word for them would give the model a token that names no
+    /// countermeasure.
+    /// </para>
     /// </summary>
-    private const int RecordedBare = 539;
+    private const int RecordedBare = 546;
 
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()

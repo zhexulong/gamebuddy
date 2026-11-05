@@ -2344,10 +2344,8 @@ test("a night her own sleep ended, crossed by the calendar, carries her sleep on
   assert.equal(unexplained.sleepReceipt, null, "nothing observed a sleep, so nothing is published as one");
   const unexplainedRecord = dayRecord(unexplained);
   assert.ok(
-    assessMultiDayBaseline({
-      dayRecords: [unexplainedRecord, { ...unexplainedRecord, day: 2 }],
-      daysRequested: 2,
-    }).violations.some((entry) => entry.code === "night_mechanism_unobserved"),
+    assessMultiDayBaseline({ dayRecords: [unexplainedRecord, { ...unexplainedRecord, day: 2 }], daysRequested: 2 })
+      .violations.some((entry) => entry.code === "night_mechanism_unobserved"),
     "an unattributed crossing is still a blocked night",
   );
 });

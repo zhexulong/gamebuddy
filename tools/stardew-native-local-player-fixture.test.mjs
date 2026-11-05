@@ -2248,16 +2248,13 @@ test("prelive rung 3 names why a snapshot was not actionable, from the Mod's own
   // period and its C# `True`/`False` spelling are the two details a naive parse gets wrong.
   const readiness =
     "[23:30:00 TRACE GameBuddy.Stardew] [DEBUG-native-local-readiness] state=menu_open;new_day=false;game_mode=3;saving=false;fade=1.00;clock_rate_ms=700;game_time=600;paused=false;freeze_controls=false;location=Farm;tile=62,17;can_move=False;event_up=false;menu=ShippingMenu.";
-  assert.deepEqual(
-    { ...readPreliveReadinessFacts(readiness) },
-    {
-      state: "menu_open",
-      location: "Farm",
-      can_move: "False",
-      fade: "1.00",
-      menu: "ShippingMenu",
-    },
-  );
+  assert.deepEqual({ ...readPreliveReadinessFacts(readiness) }, {
+    state: "menu_open",
+    location: "Farm",
+    can_move: "False",
+    fade: "1.00",
+    menu: "ShippingMenu",
+  });
   // With the readiness line absent (Trace dropped at the default verbosity) the snapshot's own disposition
   // detail still names the modal and the body state; only the engine's fade alpha stays unknown.
   assert.deepEqual(
@@ -2369,20 +2366,17 @@ test("prelive rung numbers and codes are one authority the launcher reads instea
       [4, "clean_teardown", "prelive_clean_teardown"],
     ],
   );
-  assert.deepEqual(
-    { ...PRELIVE_FAILURE_CODES },
-    {
-      configRejected: "prelive_config_rejected",
-      scenarioRejected: "prelive_scenario_rejected",
-      scenarioNotInitialized: "prelive_scenario_not_initialized",
-      bridgeNotListening: "prelive_bridge_not_listening",
-      harnessStale: "prelive_harness_stale",
-      snapshotUnobservable: "prelive_snapshot_unobservable",
-      snapshotNotActionable: "prelive_snapshot_not_actionable",
-      dirtyTeardown: "prelive_dirty_teardown",
-      launchFailed: "prelive_launch_failed",
-    },
-  );
+  assert.deepEqual({ ...PRELIVE_FAILURE_CODES }, {
+    configRejected: "prelive_config_rejected",
+    scenarioRejected: "prelive_scenario_rejected",
+    scenarioNotInitialized: "prelive_scenario_not_initialized",
+    bridgeNotListening: "prelive_bridge_not_listening",
+    harnessStale: "prelive_harness_stale",
+    snapshotUnobservable: "prelive_snapshot_unobservable",
+    snapshotNotActionable: "prelive_snapshot_not_actionable",
+    dirtyTeardown: "prelive_dirty_teardown",
+    launchFailed: "prelive_launch_failed",
+  });
 
   const launcher = await readFile(
     new URL("./run-stardew-native-local-player-move-fixture.ps1", import.meta.url),

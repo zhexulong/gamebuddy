@@ -160,7 +160,9 @@ export function auditStubSubjectCollisions({ root = REPOSITORY_ROOT } = {}) {
       .filter((spec) => spec.unresolved.length > 0)
       .map((spec) => ({ file: spec.file, names: spec.unresolved })),
     unassessed:
-      specs.length === 0 ? ["unassessed: dialogue-web/tests - no mounted journey found, so nothing can be judged"] : [],
+      specs.length === 0
+        ? ["unassessed: dialogue-web/tests - no mounted journey found, so nothing can be judged"]
+        : [],
   };
 }
 
@@ -174,9 +176,7 @@ function report(reading) {
   // The specs that decide nothing come first: one that stubs nothing is the shape that produced
   // tonight's false green, and it must be readable before a hundred heuristic collisions scroll past.
   for (const file of reading.decidesNothing)
-    process.stdout.write(
-      `  decides_nothing:${file} - stubs no route, so its claims are decided by the app's fallback\n`,
-    );
+    process.stdout.write(`  decides_nothing:${file} - stubs no route, so its claims are decided by the app's fallback\n`);
   for (const entry of reading.unresolved)
     process.stdout.write(
       `  unassessed: ${entry.file} - route names ${entry.names.join(", ")} resolve to no literal here, so its stubs cannot be read\n`,

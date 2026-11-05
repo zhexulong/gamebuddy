@@ -106,6 +106,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("machine_inspect", "world_not_ready")]
     [InlineData("npc_relationship", "world_not_ready")]
     [InlineData("pet_animal", "world_not_ready")]
+    [InlineData("pet_farm_animal", "world_not_ready")]
     [InlineData("place_crab_pot", "farm_required")]
     [InlineData("place_wood_fence", "farm_required")]
     [InlineData("plant_seed", "world_not_ready")]
@@ -150,6 +151,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("machine_load")]
     [InlineData("npc_relationship")]
     [InlineData("pet_animal")]
+    [InlineData("pet_farm_animal")]
     [InlineData("place_crab_pot")]
     [InlineData("place_wood_fence")]
     [InlineData("plant_sapling")]
@@ -197,6 +199,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("machine_load")]
     [InlineData("npc_relationship")]
     [InlineData("pet_animal")]
+    [InlineData("pet_farm_animal")]
     [InlineData("place_crab_pot")]
     [InlineData("place_wood_fence")]
     [InlineData("plant_sapling")]
@@ -395,6 +398,7 @@ public sealed class ScopeBoundActorAdmissionTests
         "machine_inspect" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "machine_target_1" },
         "npc_relationship" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "npc_relationship_1" },
         "pet_animal" => new BridgeExecutionArgs { X = 9, Y = 10, ExpectedTargetId = "pet_target_1" },
+        "pet_farm_animal" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "farm_animal_target_1" },
         "collect_animal_product" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "animal_product_target_1" },
         "feed_animal" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "feed_trough_target_1" },
         "use_item" => new BridgeExecutionArgs { Slot = 2, ExpectedQualifiedItemId = "(O)24" },

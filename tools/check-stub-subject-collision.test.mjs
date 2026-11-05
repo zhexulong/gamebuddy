@@ -40,7 +40,8 @@ const journey = (title, body) =>
     "",
   ].join("\n");
 
-const stub = (pattern) => `  await page.route("${pattern}", (route) => route.fulfill({ status: 200, body: "{}" }));`;
+const stub = (pattern) =>
+  `  await page.route("${pattern}", (route) => route.fulfill({ status: 200, body: "{}" }));`;
 
 const codes = (reading) => reading.collisions.map((collision) => `${collision.file}:${collision.subject}`);
 const reading = (specs) => auditStubSubjectCollisions({ root: makeTree(specs) });
@@ -51,10 +52,7 @@ test.after(() => {
 
 test("a title that names the resource it stubs is listed", () => {
   const measured = reading({
-    "settings.spec.ts": journey(
-      "the connection sentence says who configured it",
-      stub("**/api/tavern/settings/connection"),
-    ),
+    "settings.spec.ts": journey("the connection sentence says who configured it", stub("**/api/tavern/settings/connection")),
   });
   assert.deepEqual(codes(measured), ["dialogue-web/tests/settings.spec.ts:connection"]);
   assert.equal(measured.decidesNothing.length, 0);
@@ -146,16 +144,10 @@ test("a spec that stubs nothing decides nothing, and one that mounts a probe pag
 
 test("the report is not a gate: it exits 0 with a collision on the list", () => {
   const root = makeTree({
-    "settings.spec.ts": journey(
-      "the connection sentence says who configured it",
-      stub("**/api/tavern/settings/connection"),
-    ),
+    "settings.spec.ts": journey("the connection sentence says who configured it", stub("**/api/tavern/settings/connection")),
   });
   const result = spawnSync(process.execPath, [CLI, "--root", root], { encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /stub_subject_collision specs=1 .*collisions=1/u);
-  assert.match(
-    result.stdout,
-    /collision:dialogue-web\/tests\/settings\.spec\.ts:\d+ stubs a route naming "connection"/u,
-  );
+  assert.match(result.stdout, /collision:dialogue-web\/tests\/settings\.spec\.ts:\d+ stubs a route naming "connection"/u);
 });

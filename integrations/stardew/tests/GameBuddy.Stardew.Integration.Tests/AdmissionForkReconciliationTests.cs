@@ -49,7 +49,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.chatactions.cs"] = 1,
         ["farmhandexecutioncontroller.questactions.cs"] = 1,
         ["farmhandexecutioncontroller.pondactions.cs"] = 1,
-        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 9,
+        ["farmhandexecutioncontroller.machinesanimalsitemsactions.cs"] = 10,
         ["farmhandexecutioncontroller.modalactions.cs"] = 3,
         ["farmhandexecutioncontroller.movementactions.cs"] = 2,
         ["farmhandexecutioncontroller.npcactions.cs"] = 1,

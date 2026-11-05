@@ -1,0 +1,110 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "move_placed_furniture",
+  "fixtureScenario": null,
+  "resolvedRunner": "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/mpf-run2.log",
+    "durable": false,
+    "note": "The runner prints its result to stdout and writes nothing durable. This bundle is that stdout object, verbatim; the path it was captured at is gitignored and will not survive. The first attempt at `.tmp/mpf-run.log` came back `blocked` with `move_placed_furniture_not_accepted` because the furniture was still on the carried-slot tile; this is the rerun that cleared it, and the blocked run is not evidence."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "placed_furniture_picked_up",
+    "target": {
+      "targetId": "placed_furniture_e02a35c22ef1ca71",
+      "kind": "placed_furniture",
+      "location": "FarmHouse",
+      "x": 9,
+      "y": 8,
+      "qualifiedItemId": "(F)2048",
+      "displayName": "床"
+    },
+    "item": "(F)2048",
+    "backpack": {
+      "before": 0,
+      "after": 1
+    },
+    "furnitureInLocationAfter": "8",
+    "evidence": {
+      "target": "placed_furniture_e02a35c22ef1ca71",
+      "location": "FarmHouse",
+      "tile": "9,8",
+      "item": "(F)2048",
+      "native_stored": "true",
+      "removed_from_furniture": "true",
+      "carried": "true",
+      "inventory_before": "0",
+      "inventory_after": "1",
+      "carried_tile": "9,8",
+      "carried_rotation": "0",
+      "carried_flipped": "false",
+      "furniture_in_location": "8"
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "placed_furniture_picked_up",
+      "revision": 1,
+      "hasEvidence": true,
+      "nativeNotices": ["床"]
+    },
+    "observations": {
+      "before": {
+        "revision": 0,
+        "location": "FarmHouse",
+        "tile": {
+          "x": 9,
+          "y": 9
+        }
+      },
+      "after": {
+        "revision": 1,
+        "location": "FarmHouse",
+        "tile": {
+          "x": 9,
+          "y": 9
+        }
+      }
+    },
+    "trace": [
+      {
+        "step": "move_placed_furniture",
+        "action": "move_placed_furniture",
+        "args": {
+          "x": 9,
+          "y": 8,
+          "expectedTargetId": "placed_furniture_e02a35c22ef1ca71"
+        },
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "placed_furniture_picked_up",
+          "revision": 1,
+          "hasEvidence": true,
+          "nativeNotices": ["床"]
+        }
+      },
+      {
+        "step": "terminal",
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "placed_furniture_picked_up",
+          "revision": 1,
+          "hasEvidence": true,
+          "nativeNotices": ["床"]
+        }
+      }
+    ]
+  },
+  "whatThisProves": [
+    "The Mod really ran the game's own `GameLocation.removeQueuedFurniture` on the game thread: the receipt is `succeeded/placed_furniture_picked_up`, and the runner asserts that terminal before this object is printed.",
+    "The world moved, in the game's words: `removed_from_furniture=true` and `furniture_in_location` 9 -> 8, so the piece left the location's furniture list.",
+    "The piece arrived in the backpack: `carried=true`, `inventory_before=0` -> `inventory_after=1`, `(F)2048` held at `carried_tile=9,8` with rotation 0 and not flipped.",
+    "The game narrated it (`nativeNotices: [床]`, the piece's own display name), and revision advanced 0 -> 1 with no `activeExecution` left behind."
+  ],
+  "whatThisDoesNotProve": [
+    "No cancellation, deadline, watchdog, replay or migration coverage.",
+    "Only pickup. The placement half of the intent is `place_owned_object`, which is a separate live_verified action.",
+    "No shared-world coverage. The seam is mp-insensitive per the derived multiplayer sensitivity register, so single-player native-local is the topology this action requires."
+  ]
+}

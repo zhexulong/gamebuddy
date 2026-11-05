@@ -139,6 +139,7 @@ public sealed class TargetFamilyRoundTripTests
         ["craftingRecipeTargets"] = "Data/CraftingRecipes; the asset is not loaded here",
         ["dailyQuestTargets"] = "Game1.questOfTheDay, which only a save load populates",
         ["debrisTargets"] = "a ResourceClump in the location's resourceClumps layer; its kind comes from Data/Objects",
+        ["farmAnimalPetTargets"] = "a FarmAnimal in the location's animals dictionary; its type, behaviour and edibility come from Data/FarmAnimals, which this process never loads",
         ["farmBuildingTargets"] = "Data/Buildings (every buildable type, cost and material); the asset is not loaded here - it is 4.6% of the payload, just under the threshold, and will cross it on a heavier run",
         ["feedTroughTargets"] = "an AnimalHouse location with a Trough map property; the harness builds no interior location",
         ["fenceGateTargets"] = "a Fence in the location's fences layer, which is built by Fence.reload from save data",
@@ -310,7 +311,7 @@ public sealed class TargetFamilyRoundTripTests
             + "(`chest_store`, `npc_relationship`, `talk_to_npc`, `pickup_item`, `equip_tool`). The previous floor of "
             + "19 was measured against a vacuous probe and proved nothing");
         undriven.Should().BeLessThanOrEqualTo(
-            64,
+            65,
             "the undriven count may not rise without a new named blocker: the eleven families this file used to call "
             + "driven moved here when the probe stopped counting refusals as passes, and each one names the native "
             + "surface its handler reaches after the target check");
@@ -326,7 +327,7 @@ public sealed class TargetFamilyRoundTripTests
             + $"known-drift {knownDrift}, undriven {undriven} families, undriven pairs {UndrivenPairs.Count}";
         report.Should().Be(
             $"driven 5 pairs over {drivenFamilies} of {declaredFamilies.Count} families, known-drift 0, "
-            + "undriven 64 families, undriven pairs 2",
+            + "undriven 65 families, undriven pairs 2",
             "the counts are the ratchet; a change here is a change to what this gate covers");
     }
 

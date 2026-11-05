@@ -101,7 +101,7 @@ function firstFrameLocation(frames) {
  */
 export function classifyFailure(thrown) {
   const error = thrown instanceof Error ? thrown : null;
-  const errorClass = error === null ? typeof thrown : error.name || "Error";
+  const errorClass = error === null ? typeof thrown : (error.name || "Error");
   const errorMessage = String(error === null ? thrown : error.message).slice(0, 1000);
   const errorStack = stackFrames(error?.stack);
   return Object.freeze({

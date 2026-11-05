@@ -27,14 +27,9 @@ function makeTree(specs) {
 }
 
 const journey = (body) =>
-  [
-    `import { expect, test } from "./frontend-coverage";`,
-    "",
-    `test("a journey", async ({ page }) => {`,
-    body,
-    "});",
-    "",
-  ].join("\n");
+  [`import { expect, test } from "./frontend-coverage";`, "", `test("a journey", async ({ page }) => {`, body, "});", ""].join(
+    "\n",
+  );
 
 const codes = (findings) => findings.map((finding) => finding.code);
 const reading = (specs) => auditAssertionSubstance({ root: makeTree(specs) });
@@ -78,10 +73,7 @@ test("the count shape the defect is named after is the same finding", () => {
 
 test("a journey that asserts nothing at all is named separately", () => {
   const measured = reading({ "silent.spec.ts": journey('  await page.getByTestId("chat-surface").click();') });
-  assert.deepEqual(
-    measured.findings.map((entry) => entry.verdict),
-    ["asserts_nothing"],
-  );
+  assert.deepEqual(measured.findings.map((entry) => entry.verdict), ["asserts_nothing"]);
   const { findings } = evaluate({ reading: measured, baseline: { entries: [] } });
   assert.deepEqual(codes(findings), ["journey_asserts_nothing"]);
 });
@@ -91,21 +83,19 @@ test("state, geometry, value and request assertions are all substantive, not exi
     'await expect(page.getByTestId("a")).toBeDisabled();',
     'await expect(page.getByTestId("a")).toBeInViewport();',
     'await expect(page.getByTestId("a")).toHaveAttribute("data-tone", "danger");',
-    "expect(route.request().postDataJSON()).toEqual({ confirm: true });",
+    'expect(route.request().postDataJSON()).toEqual({ confirm: true });',
     'expect(page.getByTestId("a")).toHaveText("Keep playing");',
     'expect(page.getByTestId("a")).toBeFocused();',
     'expect(page.getByTestId("a")).toBeNull();',
     'expect(page.getByTestId("a")).toBeTruthy();',
-    "expect(measured.strip.box.height).toBeLessThanOrEqual(100);",
+    'expect(measured.strip.box.height).toBeLessThanOrEqual(100);',
   ];
   for (const assertion of substantive) {
     const measured = reading({ "one.spec.ts": journey(`  ${assertion}`) });
     assert.deepEqual(measured.findings, [], assertion);
   }
   assert.deepEqual(
-    EXISTENCE_MATCHERS.filter((matcher) =>
-      /^toBeDisabled|toBeInViewport|toHaveAttribute|toEqual|toHaveText/u.test(matcher),
-    ),
+    EXISTENCE_MATCHERS.filter((matcher) => /^toBeDisabled|toBeInViewport|toHaveAttribute|toEqual|toHaveText/u.test(matcher)),
     [],
   );
 });

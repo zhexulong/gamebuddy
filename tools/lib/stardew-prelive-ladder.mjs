@@ -496,7 +496,10 @@ if (import.meta.main) {
     // caller that reads the JSON, and never mistaken for "the checker itself failed".
     const repositoryRoot = argumentValue("--repository-root", argv);
     const rootOptions = repositoryRoot === undefined ? undefined : { repositoryRoot: resolve(repositoryRoot) };
-    payload = evaluatePreliveHarnessRung(await readPreliveHarnessStaleness(rootOptions), rootOptions);
+    payload = evaluatePreliveHarnessRung(
+      await readPreliveHarnessStaleness(rootOptions),
+      rootOptions,
+    );
   } else if (mode === "config") {
     const timeoutSeconds = numberArgument("--timeout-seconds", argv, Number.NaN);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) usage("config mode requires --timeout-seconds");

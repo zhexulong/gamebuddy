@@ -319,7 +319,10 @@ test("a declared patch is longer than the window one snapshot sees", () => {
   const constants = modConstants([
     {
       file: "integrations/stardew/farmhandexecutioncontroller.cs",
-      text: readFileSync(new URL("../../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url), "utf8"),
+      text: readFileSync(
+        new URL("../../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url),
+        "utf8",
+      ),
     },
   ]);
   const radius = constants.get("TargetDiscoveryRadius");

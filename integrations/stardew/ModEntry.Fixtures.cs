@@ -1891,7 +1891,11 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             if (fixture.FixtureScenario == "native_harvest_bush_v1")
             {
                 (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalWeedFixtureSpot(farm);
-                if (spot is null || farm.terrainFeatures.ContainsKey(spot.Value.TargetTile)) throw new InvalidOperationException("fixture_native_harvest_bush_target_missing");
+                // A bush is a `LargeTerrainFeature`, and `largeTerrainFeatures` is the only collection the engine
+                // puts one in (GameLocation.cs:17403-17421), so the fixture places it there.
+                if (spot is null || farm.terrainFeatures.ContainsKey(spot.Value.TargetTile)
+                    || farm.largeTerrainFeatures.Any(existing => existing.Tile == spot.Value.TargetTile))
+                    throw new InvalidOperationException("fixture_native_harvest_bush_target_missing");
                 if (Game1.currentSeason != "spring")
                     Game1.currentSeason = "spring";
                 if (Game1.dayOfMonth is < 15 or > 18)
@@ -1899,7 +1903,7 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
                 StardewValley.TerrainFeatures.Bush bush = new(spot.Value.TargetTile, 1, farm);
                 bush.tileSheetOffset.Value = 1;
                 bush.shakeTimer = 0f;
-                farm.terrainFeatures.Add(spot.Value.TargetTile, bush);
+                farm.largeTerrainFeatures.Add(bush);
                 player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)spot.Value.StandingTile.X, (int)spot.Value.StandingTile.Y, false));
                 this.nativeLocalPlayerFixtureInitialized = true;
                 return;

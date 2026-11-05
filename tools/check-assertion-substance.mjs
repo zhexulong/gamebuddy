@@ -98,7 +98,9 @@ export function auditAssertionSubstance({ root = REPOSITORY_ROOT } = {}) {
     }
   }
   const unassessed =
-    specs.length === 0 ? ["unassessed: dialogue-web/tests - no mounted journey found, so nothing can be judged"] : [];
+    specs.length === 0
+      ? ["unassessed: dialogue-web/tests - no mounted journey found, so nothing can be judged"]
+      : [];
   return {
     tests,
     journeys: specs.length,
@@ -147,8 +149,7 @@ export function evaluate({ reading, baseline }) {
       file: entry.file,
       line: null,
       title: entry.title,
-      detail:
-        "this journey asserts something now (or its title changed); delete its entry so the baseline only tightens",
+      detail: "this journey asserts something now (or its title changed); delete its entry so the baseline only tightens",
     });
   }
   return { findings, held: reading.findings.filter((entry) => recorded.has(keyOf(entry))).length };

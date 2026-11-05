@@ -33,8 +33,8 @@ import {
  *
  * Because the comparison is by CONTENT, copying another tree's `host/dist-test` into a lane worktree is correct
  * exactly while that lane's Host sources are byte-identical to the tree that built it, and wrong the moment one
- * differs - `tools/new-lane-worktree.mjs` is the copy that respects that, and a rebuild is not an option inside a
- * worktree (`host/node_modules` is a junction, so the compiler entry escapes the repository root).
+ * differs - `tools/new-lane-worktree.mjs` is the copy that respects that. A lane can also build its own artifact:
+ * it installs its own `node_modules`, so the compiler entry resolves inside the lane.
  *
  * The rebuild it names is the locked public entry (`pnpm build:test`). A bare `tsc` reads as a shorter command,
  * but it bypasses the artifact lock and the test-only overlay, and `--noEmitOnError false` emits a PARTIAL tree

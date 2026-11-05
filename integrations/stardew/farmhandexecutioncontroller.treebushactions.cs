@@ -75,15 +75,33 @@ internal sealed partial class ExecutionManager
     private static bool TryGetHarvestableBush(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Bush? bush)
     {
         bush = null;
-        Vector2 tile = new(x, y);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.Bush candidate
+        StardewValley.TerrainFeatures.Bush? candidate = FindBushAt(location, new Vector2(x, y));
+        if (candidate is null
             || candidate.tileSheetOffset.Value != 1
             || !candidate.inBloom() || !candidate.readyForHarvest()
             || !string.Equals(BuildBushTargetId(location, x, y, candidate), expectedTargetId, StringComparison.Ordinal))
             return false;
         bush = candidate;
         return true;
+    }
+
+    /// <summary>
+    /// The bush standing on one tile, from the collection the engine actually puts it in.
+    ///
+    /// A wild bush is a <c>LargeTerrainFeature</c> and the engine inserts it into
+    /// <c>location.largeTerrainFeatures</c> (GameLocation.cs:17403-17421) - <c>location.terrainFeatures</c>
+    /// is not a place a bush can stand in a saved game. It is read second anyway so a world that holds one
+    /// there resolves to the same bush, and the order is the same one <see cref="DiscoverBushTargets"/> uses:
+    /// the collections are keyed by tile, and one tile holds one bush.
+    /// </summary>
+    private static StardewValley.TerrainFeatures.Bush? FindBushAt(GameLocation location, Vector2 tile)
+    {
+        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
+        {
+            if (large is StardewValley.TerrainFeatures.Bush largeBush && largeBush.Tile == tile) return largeBush;
+        }
+        return location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is StardewValley.TerrainFeatures.Bush terrainBush ? terrainBush : null;
     }
 
     public LocalExecutionReceipt RequestLocalHarvestFruitTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -227,18 +245,38 @@ internal sealed partial class ExecutionManager
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeBushTarget>();
         List<BridgeBushTarget> result = new();
+        HashSet<Vector2> publishedTiles = new();
+        // `largeTerrainFeatures` LEADS, because that is where the engine puts a bush
+        // (GameLocation.cs:17403-17421): a bush reachable only from `terrainFeatures` is a state a saved game
+        // cannot hold, and a bush reachable from both is ONE bush, so the second collection cannot publish it
+        // twice. Both loops apply the same radius, bounds and row shape the other terrain families apply, and
+        // a tile-keyed set is the identity a bush has: the two collections are keyed the same way.
+        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
+        {
+            if (result.Count >= 32) break;
+            if (large is StardewValley.TerrainFeatures.Bush bush)
+                PublishBushTarget(player, location, bush, bush.Tile, publishedTiles, result);
+        }
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
         {
             if (result.Count >= 32) break;
-            if (pair.Value is not StardewValley.TerrainFeatures.Bush bush
-                || bush.tileSheetOffset.Value != 1 || !bush.inBloom() || !bush.readyForHarvest()
-                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius))
-                continue;
-            result.Add(new BridgeBushTarget(BuildBushTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, bush),
-                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y));
+            if (pair.Value is StardewValley.TerrainFeatures.Bush bush)
+                PublishBushTarget(player, location, bush, pair.Key, publishedTiles, result);
         }
         return result;
+    }
+
+    /// <summary>One bush row, if the bush is harvestable, in reach, and not already published from the other collection.</summary>
+    private static void PublishBushTarget(Farmer player, GameLocation location, StardewValley.TerrainFeatures.Bush bush,
+        Vector2 tile, HashSet<Vector2> publishedTiles, List<BridgeBushTarget> result)
+    {
+        if (bush.tileSheetOffset.Value != 1 || !bush.inBloom() || !bush.readyForHarvest()) return;
+        int x = (int)tile.X;
+        int y = (int)tile.Y;
+        if (x < 0 || x > 1000 || y < 0 || y > 1000) return;
+        if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)) return;
+        if (!publishedTiles.Add(tile)) return;
+        result.Add(new BridgeBushTarget(BuildBushTargetId(location, x, y, bush), location.NameOrUniqueName, x, y));
     }
 
     private static string BuildBushTargetId(GameLocation location, int x, int y, StardewValley.TerrainFeatures.Bush bush)

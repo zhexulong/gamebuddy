@@ -267,7 +267,7 @@
       {
         "actionId": "use_mine_ladder",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -969,7 +969,7 @@
       {
         "actionId": "move_placed_furniture",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -1395,7 +1395,7 @@
       {
         "actionId": "pet_farm_animal",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "argumentSchema": {
           "x": {
@@ -3110,6 +3110,7 @@
       "use_raft",
       "mount_transport",
       "enter_mine",
+      "use_mine_ladder",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -3129,6 +3130,7 @@
       "bait_crab_pot",
       "place_owned_object",
       "remove_placed_item",
+      "move_placed_furniture",
       "break_container",
       "chop_tree",
       "break_rock",
@@ -3139,6 +3141,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "pet_farm_animal",
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
@@ -3199,11 +3202,7 @@
       "find_destination",
       "observe_scene"
     ],
-    "experimentalActionIds": [
-      "use_mine_ladder",
-      "move_placed_furniture",
-      "pet_farm_animal"
-    ]
+    "experimentalActionIds": []
   },
   "protocol": {
     "schemas": [
@@ -3233,6 +3232,7 @@
       "use_raft",
       "mount_transport",
       "enter_mine",
+      "use_mine_ladder",
       "enter_exit",
       "till_soil",
       "pickup_item",
@@ -3251,6 +3251,7 @@
       "bait_crab_pot",
       "place_owned_object",
       "remove_placed_item",
+      "move_placed_furniture",
       "break_container",
       "chop_tree",
       "break_rock",
@@ -3261,6 +3262,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "pet_farm_animal",
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",

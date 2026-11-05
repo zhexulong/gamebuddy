@@ -1093,7 +1093,9 @@ export function assessInteractionValue(input = {}) {
   return Object.freeze({
     schema: SCHEMA,
     verdict: failed ? "failed" : allPassed ? "passed" : "not_established",
-    unestablished: failed ? [] : clauses.filter((entry) => entry.state === "not_exercised").map((entry) => entry.id),
+    unestablished: failed
+      ? []
+      : clauses.filter((entry) => entry.state === "not_exercised").map((entry) => entry.id),
     clauses,
     measurements: Object.freeze(measurements),
     establishment: Object.freeze(established),
