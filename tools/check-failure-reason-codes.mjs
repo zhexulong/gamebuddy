@@ -59,7 +59,7 @@
  *
  * Exit code is 1 when any finding is reported, 0 otherwise.
  *
- * red-proof: the PRE-FIX tree, not a synthetic one - `git show <commit>:<runner>` into a scratch scope and this gate
+ * red-proof: history  the PRE-FIX tree, not a synthetic one - `git show <commit>:<runner>` into a scratch scope and this gate
  * names `run-stardew-native-local-agent-ab-live.mjs:2829`, `:2886` and `:4826` (`String(error?.message ?? error)` inside
  * a `reasonCode` template). See `tools/check-failure-reason-codes.test.mjs`.
  */

@@ -15,6 +15,10 @@
  *   5. a file that does not parse fails closed instead of passing as clean;
  *   6. the CLI reports, names the file, exits 1 on a finding and 0 on a clean tree - driven through the real entry
  *      point, so the gate is proven as a gate and not only as a function.
+ *
+ * red-proof: history  the pre-fix tree, quoted from the commit that shipped it - `String(error?.message ?? error)`
+ *   inside a `reasonCode` template and a caught value handed to a code helper - is what this suite failed on
+ *   before the gate learned to name the site.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
