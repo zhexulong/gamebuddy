@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Policy;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -18,9 +19,27 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
+/// Measured again 2026-11-05, and the split was larger than the four names anyone had written down: five more actions
+/// demanded the hand a tool the pack already held - <c>scythe_crop</c>, <c>refill_watering_can</c>, <c>pan_ore</c>,
+/// <c>water_pet_bowl</c> and <c>water_slime_hutch_trough</c>. The first two numbered a slot and refused
+/// <c>*_not_equipped_in_requested_slot</c>; the last two demanded the watering can with no slot argument at all, so
+/// their requirement did not appear anywhere on the action's own surface. All five now declare the category they
+/// drive and take it.
+/// </para>
+///
+/// <para>
 /// <b>Population.</b> The catalog, never a list here: every registration whose <c>resourceTemplate</c> carries a
 /// <c>tool:&lt;category&gt;</c> claim. A tool action added tomorrow is enrolled without touching this file, and one whose
 /// handler forgets to take its tool fails HERE by name instead of in a live run.
+/// </para>
+///
+/// <para>
+/// <b>What this rule cannot cover.</b> Five actions require a tool by a native PREDICATE rather than a category -
+/// <c>clear_cask</c> and <c>break_container</c> (any <c>isHeavyHitter()</c> tool), <c>remove_placed_item</c> (an Axe OR
+/// a Pickaxe), <c>toggle_tool_light</c> (a Lantern) and <c>use_raft</c> (a Raft) - and a <c>tool:&lt;category&gt;</c> claim
+/// cannot name a predicate, nor "either of two categories". They still publish the held-slot contract, and they are
+/// PRINTED by <see cref="TheActionsWhoseToolRequirementIsAPredicateAreNamed"/> rather than absorbed, so the remaining gap
+/// is a named line in this suite's output instead of an assumption that the class is closed.
 /// </para>
 ///
 /// <para>
@@ -29,8 +48,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// pure half, what one pack answers for one action's claim, runs for real in <see cref="DeclaredToolSelectionTests"/>.
 /// </para>
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the source-shape pin keeps every tool site on the declared-tool shape while the behaviour test
-// drives a site with a tool the actor is not holding; a uniform-looking source can still refuse the plan the model wrote.
+// MIXED SHAPE AND BEHAVIOUR: the source-shape pin keeps every tool site on the declared-tool shape while the catalog
+// assertions drive the same population through the real registrations; a uniform-looking source can still refuse the plan
+// the model wrote.
 public sealed class ToolPreconditionUniformityTests
 {
     /// <summary>How a handler takes the tool its own registration declares.</summary>
@@ -39,11 +59,34 @@ public sealed class ToolPreconditionUniformityTests
     /// <summary>The two spellings of "the tool must already be in your hand": the slot comparison and the old code.</summary>
     private static readonly string[] HeldToolSpellings = { "CurrentToolIndex !=", "not_equipped" };
 
+    /// <summary>
+    /// The one sentence an action's own <c>slot</c> description publishes when the slot must be the TOOL the actor is
+    /// holding.
+    ///
+    /// Anchored on the TOOL wording deliberately: the item actions publish a sentence with the same
+    /// `must also be snapshot.currentToolSlot` clause about a HELD ITEM (`HeldItemSlotMeaning`), and reading that as a
+    /// tool requirement would enrol eight item actions in a rule about tools. Measured while proving this gate: the
+    /// unanchored pattern reported <c>dress_mannequin</c>, <c>set_sign_display</c> and <c>deposit_silo_hay</c> as tool
+    /// actions.
+    /// </summary>
+    private static readonly Regex HeldSlotClaim = new(
+        "^The TOOL's backpack slot, which must also be `snapshot\\.currentToolSlot`",
+        RegexOptions.CultureInvariant);
+
+    private readonly ITestOutputHelper output;
+
+    public ToolPreconditionUniformityTests(ITestOutputHelper output)
+    {
+        this.output = output;
+    }
+
     [Fact]
     public void EveryActionThatDeclaresAToolTakesItAndRestoresTheActorsSelection()
     {
         // Owning the tool is the whole precondition. The old guard answered a different question - "is it already in
-        // the requested slot" - and every caller that owned the tool but held something else was refused.
+        // the requested slot" - and every caller that owned the tool but held something else was refused. The refusal
+        // that survives is the one that names something the caller can act on: `tool_not_owned:<category>`, which says
+        // the pack cannot be repaired by a different request.
         IReadOnlyList<string> declared = DeclaredToolActions();
         declared.Should().NotBeEmpty("the catalog must declare tool actions, or this gate reads nothing");
 
@@ -58,7 +101,10 @@ public sealed class ToolPreconditionUniformityTests
             }
 
             string body = EnclosingMethodBody(File.ReadAllText(file), index);
-            body.Should().Contain("RestoreToolSelection(Game1.player, selection)",
+            // The receiver is the handler's own local (`Game1.player` in most, a resolved `Farmer` in the ones that read
+            // the pack through it), so the property asserted is that the actor's selection is put back - not one spelling
+            // of who the actor was.
+            body.Should().Contain("RestoreToolSelection(",
                 $"{actionId} puts the index the actor held back");
             body.Should().Contain("finally", $"{actionId} restores on EVERY exit, including the refusals after the switch");
             foreach (string spelling in HeldToolSpellings)
@@ -97,13 +143,81 @@ public sealed class ToolPreconditionUniformityTests
                 + string.Join("\n  ", undeclared));
     }
 
+    [Fact]
+    public void NoActionTellsTheCallerTwoDifferentStoriesAboutItsTool()
+    {
+        // ONE fact, one spelling. `tool:<category>` is how an action says it needs a tool; the held-slot sentence is how
+        // an action says the caller must already be holding one. An action that carries both has told the planner the
+        // requirement is satisfiable from the pack and that it is a precondition on the hand - and whichever half its
+        // handler implements, the other half is a lie. This is also what a HALF-finished migration looks like, so it is
+        // the one shape this gate must never let through as "uniform" (`scythe_crop` carried both for exactly one edit).
+        List<string> contradictory = FarmhandActionCatalog.Registrations
+            .Where(registration => DeclaresToolClaim(registration) && PublishesHeldSlotContract(registration))
+            .Select(registration => registration.ActionId)
+            .ToList();
+
+        contradictory.Should().BeEmpty(
+            "an action that declares `tool:<category>` selects that tool itself and must publish the auto-selected slot "
+                + "contract instead of the held-slot one. Actions publishing both:\n  "
+                + string.Join("\n  ", contradictory));
+    }
+
+    [Fact]
+    public void TheActionsWhoseToolRequirementIsAPredicateAreNamed()
+    {
+        // The REDUCED rule, and the reason it is here rather than an exception list above: a `tool:<category>` claim can
+        // name a category, not "any heavy hitter" and not "an Axe OR a Pickaxe", so five actions cannot take the uniform
+        // shape yet. What is printed is the derived population - every catalog action that still publishes the held-slot
+        // contract and declares no category - so the remaining gap is measured on every run instead of being assumed
+        // closed, and the line disappears on its own the day the last of them stops demanding the hand.
+        IReadOnlyList<string> declared = DeclaredToolActions();
+        List<string> predicateRequirement = FarmhandActionCatalog.Registrations
+            .Where(PublishesHeldSlotContract)
+            .Where(registration => !declared.Contains(registration.ActionId, StringComparer.Ordinal))
+            .Select(registration => registration.ActionId)
+            .OrderBy(actionId => actionId, StringComparer.Ordinal)
+            .ToList();
+
+        this.output.WriteLine(
+            $"not covered by this rule: {predicateRequirement.Count} actions whose requirement is a predicate - "
+                + (predicateRequirement.Count == 0 ? "none" : string.Join(", ", predicateRequirement)));
+
+        // Every one of them must say so on its own surface: a requirement that is neither a claim nor a published
+        // sentence is one the caller can only learn by being refused. Generated actions with a slot must therefore
+        // match HeldSlotClaim, and the two that take no slot at all (`water_pet_bowl`, `water_slime_hutch_trough` did)
+        // are enrolled as declared-tool actions instead - which is why the list above is the whole of what is left.
+        foreach (string actionId in predicateRequirement)
+        {
+            FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
+                .First(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
+            registration.Descriptor!.Arguments.Should().Contain(
+                argument => argument.Name == "slot" && HeldSlotClaim.IsMatch(argument.Description ?? string.Empty),
+                $"{actionId} demands the tool the actor is holding, so its own `slot` sentence must say the slot has to "
+                    + "be `snapshot.currentToolSlot` - otherwise the requirement is invisible until a request is refused "
+                    + "for a reason nothing on the surface mentioned");
+        }
+    }
+
     // ---- the populations, derived from the authorities ---------------------------------
+
+    /// <summary>Whether one registration publishes a <c>tool:&lt;category&gt;</c> claim.</summary>
+    private static bool DeclaresToolClaim(FarmhandActionRegistration registration) =>
+        registration.Descriptor?.ResourceTemplate
+            .Any(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal)) == true;
+
+    /// <summary>
+    /// Whether one registration's own <c>slot</c> sentence says the slot must be the actor's held one. This is the
+    /// catalog's own statement of the divergent shape, so a handler that starts demanding a pre-equipped tool without a
+    /// claim joins this population and is named by it.
+    /// </summary>
+    private static bool PublishesHeldSlotContract(FarmhandActionRegistration registration) =>
+        registration.Descriptor?.Arguments
+            .Any(argument => argument.Name == "slot" && HeldSlotClaim.IsMatch(argument.Description ?? string.Empty)) == true;
 
     /// <summary>Every catalog action whose own registration carries a `tool:&lt;category&gt;` claim.</summary>
     private static IReadOnlyList<string> DeclaredToolActions() =>
         FarmhandActionCatalog.Registrations
-            .Where(registration => registration.Descriptor?.ResourceTemplate
-                .Any(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal)) == true)
+            .Where(DeclaresToolClaim)
             .Select(registration => registration.ActionId)
             .ToArray();
 
@@ -116,7 +230,7 @@ public sealed class ToolPreconditionUniformityTests
     private static IReadOnlyList<string> ActionsResolvingATool()
     {
         var pattern = new Regex(
-            "(?:TrySelectDeclaredTool\\(Game1\\.player|ResolveDeclaredTool\\(Game1\\.player\\.Items),\\s*\"([a-z0-9_]+)\"",
+            "(?:TrySelectDeclaredTool\\(Game1\\.player|TrySelectDeclaredTool\\(player|ResolveDeclaredTool\\(Game1\\.player\\.Items|ResolveDeclaredTool\\(player\\.Items),\\s*\"([a-z0-9_]+)\"",
             RegexOptions.CultureInvariant);
         return ModSourceFiles()
             .SelectMany(file => pattern.Matches(File.ReadAllText(file)).Select(match => match.Groups[1].Value))
@@ -131,9 +245,13 @@ public sealed class ToolPreconditionUniformityTests
     {
         foreach (string file in ModSourceFiles())
         {
-            int index = File.ReadAllText(file).IndexOf($"{SelectionCall}{actionId}\"", StringComparison.Ordinal);
-            if (index >= 0)
-                return (file, index);
+            string source = File.ReadAllText(file);
+            foreach (string call in new[] { $"{SelectionCall}{actionId}\"", $"TrySelectDeclaredTool(player, \"{actionId}\"" })
+            {
+                int index = source.IndexOf(call, StringComparison.Ordinal);
+                if (index >= 0)
+                    return (file, index);
+            }
         }
 
         return (null, -1);

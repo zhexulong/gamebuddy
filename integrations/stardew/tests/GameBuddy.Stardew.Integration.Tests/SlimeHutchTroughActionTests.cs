@@ -36,7 +36,6 @@ public sealed class SlimeHutchTroughActionTests
         "slime_hutch_not_current_location",
         "slime_hutch_trough_target_changed",
         "slime_hutch_trough_already_watered",
-        "watering_can_not_equipped",
         "watering_can_empty",
     };
 
@@ -124,6 +123,18 @@ public sealed class SlimeHutchTroughActionTests
         // through the shared seam, which is where both vanilla closing steps live.
         // So the invariant is two-part -- this handler must reach the seam, and the
         // seam must still run dispatch, click-anchor clear and exhaustion.
+        // The can is the action's OWN declared tool (`tool:watering_can`), so this handler takes it out of the pack,
+        // selects it for the native call and restores the actor's selection in a finally. `watering_can_not_equipped`
+        // is gone rather than renamed: requiring the actor to be holding the can was a precondition on its hand, and
+        // the refusal that survives is the resolver's `tool_not_owned:watering_can`.
+        wrapper.Should().Contain("ResolveDeclaredTool(Game1.player.Items, \"water_slime_hutch_trough\")");
+        body.Should().Contain("TrySelectDeclaredTool(Game1.player, \"water_slime_hutch_trough\"");
+        body.Should().Contain("RestoreToolSelection(Game1.player, selection)");
+        body.Should().Contain("finally");
+        body.Should().NotContain("watering_can_not_equipped");
+        body.Should().NotContain("CurrentTool");
+        body.Should().Contain("tool_not_selected:");
+
         body.Should().Contain("stamina_before");
         body.Should().Contain("stamina_after");
         body.Should().Contain("stamina_delta");
