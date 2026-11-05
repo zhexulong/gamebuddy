@@ -212,7 +212,7 @@ export function isHarvestTargetFact(value: unknown): boolean {
  * branch (HoeDirt.cs:488-529). The target version's enum declares exactly these two members; a third one would arrive
  * here as a named `invalid_snapshot`, which is the intended loud failure.
  */
-export function isHarvestMethodWord(value: unknown): boolean {
+function isHarvestMethodWord(value: unknown): boolean {
   return typeof value === "string" && (value === "grab" || value === "scythe");
 }
 
