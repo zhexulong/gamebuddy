@@ -1312,6 +1312,20 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// One harvest-method word for the wire: the engine's own <c>HarvestMethod</c> member, lower-cased.
+    ///
+    /// <para>
+    /// The row publishes the METHOD rather than the engine call name, because the method is the fact the two crop actions
+    /// branch on: <c>harvest_crop</c> admits only <c>grab</c> and <c>scythe_crop</c> admits <c>scythe</c> - and a dead crop,
+    /// which both must refuse to promise a harvest for, ignores the method entirely. The target version declares exactly
+    /// <c>Grab</c> and <c>Scythe</c>, read from the shipped assembly rather than restated here, so an added member reaches
+    /// the Host as a named refusal instead of a silently wrong word.
+    /// </para>
+    /// </summary>
+    internal static string HarvestMethodName(StardewValley.GameData.Crops.HarvestMethod method) =>
+        method.ToString().ToLowerInvariant();
+
+    /// <summary>
     /// Which crop tiles the scythe owns, as ONE decision read by both the discovery radar and the
     /// execution admission.
     ///

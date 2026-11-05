@@ -1245,12 +1245,14 @@ test("a handler whose reads cannot be extracted is counted unparsed, printed, an
   assert.match(lines.join(""), /H field coverage\s+read 0 members across 0 handlers; carried 0; absent 0 \(0 red, 0 baselined\); unparsed 2, no family 0, no schema row 0/u);
 });
 
-test("the field-level section on the real tree: the water state is a row field now, and every other gap is named", () => {
+test("the field-level section on the real tree: every decision read is a row field, and the four left are baselined", () => {
   const report = observeActionGaps({});
 
   // Printed separately from the verdicts because member extraction is heuristic: 21 reads across 10 handlers,
-  // 84 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary.
-  assert.deepEqual(report.fieldLevel.counts, { readMembers: 21, carried: 3, absent: 18, red: 14, baselined: 4 });
+  // 84 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary. The four
+  // absent members are the baselined ones: three `crop` reads on a family whose own subject IS the crop, and
+  // `needsWatering`, whose answer `watered` already publishes.
+  assert.deepEqual(report.fieldLevel.counts, { readMembers: 21, carried: 17, absent: 4, red: 0, baselined: 4 });
   assert.equal(report.fieldLevel.handlers, report.postconditionMutations.handlers);
   assert.equal(report.fieldLevel.handlersWithReads, 10);
   assert.equal(report.fieldLevel.unparsed.length, 84);
@@ -1267,29 +1269,48 @@ test("the field-level section on the real tree: the water state is a row field n
     { member: "isWatered", field: "watered", carried: true, id: "water_crop:isWatered:cropTargets" },
     { member: "needsWatering", field: null, carried: false, id: "water_crop:needsWatering:cropTargets" },
   ]);
-  // `till_soil` is the other half of the same defect and is still open: the tile row is `{x, y}` and the handler
-  // asks the engine whether a HoeDirt stands there, so the published row cannot answer for itself.
-  const tillSoil = report.fieldLevel.rows.find((row) => row.actionId === "till_soil");
-  assert.deepEqual(tillSoil.members, [{ member: "HoeDirt", field: null, carried: false, id: "till_soil:HoeDirt:soilTiles" }]);
+
+  // The fourteen rows this section called too thin, each now carrying the engine's own answer:
+  const readings = Object.fromEntries(
+    report.fieldLevel.rows.map((row) => [row.actionId, row.members.map(({ member, field }) => [member, field])]),
+  );
+  assert.deepEqual(readings, {
+    clear_hoedirt: [["crop", "crop"]],
+    cut_weeds: [["IsWeeds", "isWeeds"]],
+    fertilize_tile: [["CanApplyFertilizer", "canApplyFertilizer"]],
+    harvest_crop: [
+      ["GetHarvestMethod", "harvestMethod"],
+      ["crop", null],
+      ["forageCrop", "forageCrop"],
+      ["readyForHarvest", "readyForHarvest"],
+    ],
+    machine_inspect: [["GetMachineData", "machineData"]],
+    pickup_forage: [
+      ["QualifiedItemId", "qualifiedItemId"],
+      ["isForage", "isForage"],
+    ],
+    plant_seed: [
+      ["canPlantThisSeedHere", "canPlantThisSeedHere"],
+      ["crop", "crop"],
+    ],
+    scythe_crop: [
+      ["GetHarvestMethod", "harvestMethod"],
+      ["crop", null],
+      ["dead", "dead"],
+      ["forageCrop", "forageCrop"],
+      ["readyForHarvest", "readyForHarvest"],
+    ],
+    till_soil: [["HoeDirt", "hoeDirt"]],
+    water_crop: [
+      ["crop", null],
+      ["isWatered", "watered"],
+      ["needsWatering", null],
+    ],
+  });
 
   assert.deepEqual(
-    report.ungranted.filter((finding) => finding.kind === "field").map((finding) => finding.code),
-    [
-      "field_unobservable:cut_weeds:IsWeeds:weedTargets",
-      "field_unobservable:fertilize_tile:CanApplyFertilizer:fertilizerTargets",
-      "field_unobservable:harvest_crop:GetHarvestMethod:harvestTargets",
-      "field_unobservable:harvest_crop:forageCrop:harvestTargets",
-      "field_unobservable:harvest_crop:readyForHarvest:harvestTargets",
-      "field_unobservable:machine_inspect:GetMachineData:machineTargets",
-      "field_unobservable:pickup_forage:isForage:forageTargets",
-      "field_unobservable:plant_seed:canPlantThisSeedHere:seedTargets",
-      "field_unobservable:plant_seed:crop:seedTargets",
-      "field_unobservable:scythe_crop:GetHarvestMethod:scytheCropTargets",
-      "field_unobservable:scythe_crop:dead:scytheCropTargets",
-      "field_unobservable:scythe_crop:forageCrop:scytheCropTargets",
-      "field_unobservable:scythe_crop:readyForHarvest:scytheCropTargets",
-      "field_unobservable:till_soil:HoeDirt:soilTiles",
-    ],
-    "an equality in both directions: a fix must delete its entry, and a new gap has to be read rather than absorbed",
+    report.ungranted.filter((finding) => finding.kind === "field"),
+    [],
+    "an equality in both directions: a fixed row reports nothing, and a new gap has to be read rather than absorbed",
   );
 });

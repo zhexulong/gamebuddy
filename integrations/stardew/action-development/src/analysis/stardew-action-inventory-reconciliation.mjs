@@ -2345,11 +2345,11 @@ export function observationQuadrants({
  *      those engine type names (`location.GetHoeDirtAtTile(tile) is not null`) reads that type's presence in the
  *      target.
  *   5. CARRIED. A read is carried when its field spelling is a field of the row type the action's target family
- *      publishes. The spelling is camelCase, plus the `is` prefix stripped when a capital follows it
- *      (`isWatered` -> `watered`), which is the convention the engine's own predicates use. The row type is the
- *      schema `$defs` entry the family's `items.$ref` names - the wire authority - and its field list is
- *      CROSS-CHECKED against the Mod's `record Bridge<Row>` declaration, so a field added to one side and not
- *      the other is a finding rather than a silent half-fact.
+ *      publishes. The spelling is camelCase, plus an accessor prefix stripped when a capital follows it
+ *      (`isWatered` -> `watered`, `GetHarvestMethod` -> `harvestMethod`), which is the convention the engine's own
+ *      predicates and accessors use. The row type is the schema `$defs` entry the family's `items.$ref` names - the wire
+ *      authority - and its field list is CROSS-CHECKED against the Mod's `record Bridge<Row>` declaration, so a field
+ *      added to one side and not the other is a finding rather than a silent half-fact.
  *   6. Everything else is `field_unobservable:<action>:<member>:<family>`, ratcheted like D: a red not in the
  *      baseline fails, and a baselined entry that is now carried - or no longer measured - fails as stale.
  *   7. A handler whose body cannot be located, or that yields no decision read at all, is counted `unparsed` and
@@ -2500,13 +2500,20 @@ const lowerFirst = (name) => name[0].toLowerCase() + name.slice(1);
 /**
  * The spellings a read member and a row field may share.
  *
- * `lowerFirst` is the serializer's own crossing. The `is` prefix is stripped only when a capital letter follows it
- * (`isWatered` -> `watered`, `IsOpen` -> `open`), which is the convention every boolean predicate in the engine
- * and in the Mod already follows - a word that merely starts with those letters (`island`) is untouched.
+ * `lowerFirst` is the serializer's own crossing. An ACCESSOR prefix is stripped when a capital letter follows it, which
+ * is the convention every boolean predicate and every derived accessor in the engine already follows: `isWatered` ->
+ * `watered` (`HoeDirt.isWatered()`), `IsWeeds` -> `weeds`, `GetHarvestMethod` -> `harvestMethod` (the engine's method
+ * returns the `HarvestMethod` fact the row publishes), `GetMachineData` -> `machineData`. A word that merely starts with
+ * those letters (`island`, `getaway`) is untouched, because the prefix only counts when a capital follows it.
+ *
+ * Stripping an accessor is not a looser test: the row still has to publish the field, and the field still has to be the
+ * fact the branch consumes. It only stops the gate from asking a row to name itself after a C# call (`getHarvestMethod`)
+ * when the engine has a word for the value (`harvestMethod`).
  */
 function memberSpellings(member) {
   const spellings = new Set([lowerFirst(member)]);
   if (/^[Ii]s[A-Z]/u.test(member)) spellings.add(lowerFirst(member.slice(2)));
+  if (/^[Gg]et[A-Z]/u.test(member)) spellings.add(lowerFirst(member.slice(3)));
   return spellings;
 }
 

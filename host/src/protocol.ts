@@ -29,6 +29,7 @@ import {
   isFarmBuildingTargetFact,
   isFeedTroughTargetFact,
   isFenceGateTargetFact,
+  isFertilizerTargetFact,
   isFiniteNumber,
   isFishPondTargetFact,
   isFoodTargetFact,
@@ -331,14 +332,14 @@ export type Snapshot = Readonly<{
     targetX: number;
     targetY: number;
   }>[];
-  /** Current live tiles that the target-version Hoe can potentially till. */
-  soilTiles?: readonly Readonly<{ x: number; y: number }>[];
+  /** Current live tiles that the target-version Hoe can potentially till. `hoeDirt` is `GameLocation.GetHoeDirtAtTile` for the tile, the fact `till_soil` refuses on. */
+  soilTiles?: readonly Readonly<{ x: number; y: number; hoeDirt?: boolean }>[];
   /**
    * Current Farmhand inventory Tool slots: the slot, its bounded label, the tool's upgrade level and the category word
    * a `tool:<category>` claim uses. `category` is absent on a Mod older than that projection.
    */
   toolSlots?: readonly Readonly<{ slot: number; label: string; upgradeLevel?: number; category?: string }>[];
-  /** Nearby native forage objects available through GameLocation.checkAction. */
+  /** Nearby native forage objects available through GameLocation.checkAction. `isForage` is `Object.isForage()`, the predicate that separates this family from `itemTargets`. */
   forageTargets?: readonly Readonly<{
     targetId: string;
     x: number;
@@ -346,6 +347,7 @@ export type Snapshot = Readonly<{
     qualifiedItemId: string;
     displayName: string;
     stack: number;
+    isForage?: boolean;
   }>[];
   /** Nearby native item drops available through Debris.collect. */
   itemTargets?: readonly Readonly<{
@@ -403,6 +405,9 @@ export type Snapshot = Readonly<{
     qualifiedHarvestItemId: string;
     displayName: string;
     regrowsAfterHarvest: boolean;
+    readyForHarvest?: boolean;
+    forageCrop?: boolean;
+    harvestMethod?: string;
   }>[];
   /** Nearby empty HoeDirt targets paired with a live inventory seed slot. */
   seedTargets?: readonly Readonly<{
@@ -412,6 +417,8 @@ export type Snapshot = Readonly<{
     y: number;
     qualifiedItemId: string;
     displayName: string;
+    canPlantThisSeedHere?: boolean;
+    crop?: boolean;
   }>[];
   /** Nearby ground HoeDirt targets paired with a live fertilizer slot. */
   fertilizerTargets?: readonly Readonly<{
@@ -421,6 +428,7 @@ export type Snapshot = Readonly<{
     y: number;
     qualifiedItemId: string;
     displayName: string;
+    canApplyFertilizer?: boolean;
   }>[];
   /** Fresh empty Farm tiles paired with one qualified (O)322 inventory slot. */
   woodFenceTargets?: readonly Readonly<{
@@ -613,8 +621,15 @@ export type Snapshot = Readonly<{
     qualifiedItemId: string;
     displayName: string;
   }>[];
-  /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). */
-  weedTargets?: readonly Readonly<{ targetId: string; location: string; x: number; y: number; health: number }>[];
+  /** Nearby Weed objects cuttable by an equipped scythe (cut_weeds). `isWeeds` is `Object.IsWeeds()`. */
+  weedTargets?: readonly Readonly<{
+    targetId: string;
+    location: string;
+    x: number;
+    y: number;
+    health: number;
+    isWeeds?: boolean;
+  }>[];
   /** Nearby Grass tufts (TerrainFeature) cuttable by an equipped scythe (cut_grass); grassType 1/7 drops Hay into a silo, 6 drops rare items. */
   grassTargets?: readonly Readonly<{
     targetId: string;
@@ -653,6 +668,10 @@ export type Snapshot = Readonly<{
     cropId: string;
     qualifiedHarvestItemId: string;
     displayName: string;
+    readyForHarvest?: boolean;
+    dead?: boolean;
+    forageCrop?: boolean;
+    harvestMethod?: string;
   }>[];
   /**
    * Nearby native machines. An idle machine whose own `Data/Machines` rows accept a carried stack publishes that stack
@@ -673,6 +692,7 @@ export type Snapshot = Readonly<{
     loadInputQualifiedItemId?: string | null;
     loadInputStack?: number | null;
     collectOutputReady?: boolean | null;
+    machineData?: boolean;
   }>[];
   /** Nearby live NPCs with an existing Farmhand friendship record; inspection is read-only. */
   npcRelationshipTargets?: readonly Readonly<{
@@ -3576,7 +3596,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "pedestalTargets", maxItems: 16, accepts: isPedestalTargetFact },
   { field: "fenceGateTargets", maxItems: 16, accepts: isFenceGateTargetFact },
   { field: "seedTargets", maxItems: 64, accepts: isSeedTargetFact },
-  { field: "fertilizerTargets", maxItems: 64, accepts: isSeedTargetFact },
+  { field: "fertilizerTargets", maxItems: 64, accepts: isFertilizerTargetFact },
   { field: "debrisTargets", maxItems: 64, accepts: isDebrisTargetFact },
   { field: "rockSourceTargets", maxItems: 8, accepts: isRockSourceTargetFact },
   { field: "clearHoeDirtTargets", maxItems: 8, accepts: isClearHoeDirtTargetFact },
@@ -4490,7 +4510,15 @@ function validateBodyTrace(value: Record<string, unknown>): string | null {
 }
 
 function isSoilTile(value: unknown): boolean {
-  return isRecord(value) && hasExactKeys(value, ["x", "y"]) && isTileCoordinate(value.x) && isTileCoordinate(value.y);
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["x", "y", "hoeDirt"]) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    // Optional at the wire: a Mod older than this field publishes no answer, and one that carries it publishes
+    // `GameLocation.GetHoeDirtAtTile`, so a non-boolean is a malformed row rather than a missing measurement.
+    (value.hoeDirt === undefined || typeof value.hoeDirt === "boolean")
+  );
 }
 
 function isWeatherToken(value: unknown): boolean {

@@ -1411,6 +1411,10 @@
         },
         "y": {
           "$ref": "#/$defs/tile"
+        },
+        "hoeDirt": {
+          "type": "boolean",
+          "description": "`GameLocation.GetHoeDirtAtTile(tile) is not null` read when the row was published: whether a HoeDirt already occupies this tile. `till_soil` refuses a tilled tile with `soil_already_tilled`, so `false` is the state it admits on; discovery publishes no tilled tile. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -1484,6 +1488,10 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 999
+        },
+        "isForage": {
+          "type": "boolean",
+          "description": "`Object.isForage()` for this object, read when the row was published. It is the one predicate that separates this family from `itemTargets`, and `pickup_forage` refuses a target whose answer has since turned false. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -1604,8 +1612,26 @@
         },
         "regrowsAfterHarvest": {
           "type": "boolean"
+        },
+        "readyForHarvest": {
+          "type": "boolean",
+          "description": "`HoeDirt.readyForHarvest()` for this tile, read when the row was published. `harvest_crop` refuses an unready crop, so the row states the fact rather than leaving it to be inferred from the discovery filter. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "forageCrop": {
+          "type": "boolean",
+          "description": "`Crop.forageCrop` for this crop, read when the row was published. `harvest_crop` refuses a forage crop (the forage path is `pickup_forage`), and `scythe_crop` publishes such a tile only once it is dead. Optional at the wire for the same reason as `readyForHarvest`."
+        },
+        "harvestMethod": {
+          "$ref": "#/$defs/harvestMethod"
         }
       }
+    },
+    "harvestMethod": {
+      "enum": [
+        "grab",
+        "scythe"
+      ],
+      "description": "`Crop.GetHarvestMethod()`, the engine's own `HarvestMethod` member lower-cased, read when the row was published. It is the fact the crop actions branch on rather than the engine call name: `HoeDirt.performUseAction` harvests a `grab` crop through `Crop.harvest` and hands a `scythe` crop to the scythe branch (HoeDirt.cs:488-529), so `harvest_crop` admits only `grab` and `scythe_crop` only `scythe`. The target version's enum declares exactly these two members."
     },
     "seedTarget": {
       "type": "object",
@@ -1642,6 +1668,14 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "canPlantThisSeedHere": {
+          "type": "boolean",
+          "description": "`HoeDirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false)` for this tile and this seed, read when the row was published: the engine's own season and raised-crop admission, which refuses an out-of-season seed, a location whose season rule rejects it, and a raised crop whose footprint covers the actor. `plant_seed` refuses a tile whose answer has since turned false. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "crop": {
+          "type": "boolean",
+          "description": "`HoeDirt.crop is not null` for this tile, read when the row was published: whether a crop already occupies it, which is the other fact `plant_seed` refuses on. False on every row discovery publishes. Optional at the wire for the same reason as `canPlantThisSeedHere`."
         }
       }
     },
@@ -1680,6 +1714,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "canApplyFertilizer": {
+          "type": "boolean",
+          "description": "`HoeDirt.CanApplyFertilizer(fertilizer.QualifiedItemId)` for this tile and this fertilizer, read when the row was published: the engine's own admission (a tile that already carries fertilizer, a potted tile, or a mismatched fertilizer refuse here). `fertilize_tile` refuses a tile whose answer has since turned false. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -1821,6 +1859,10 @@
             "boolean",
             "null"
           ]
+        },
+        "machineData": {
+          "type": "boolean",
+          "description": "`Object.GetMachineData() is not null` read when the row was published: whether the object carries its own `Data/Machines` rows, which is what makes it a machine `machine_inspect`/`machine_load`/`machine_collect_output` can address rather than an ordinary placed object. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -4021,6 +4063,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 1000
+        },
+        "isWeeds": {
+          "type": "boolean",
+          "description": "`Object.IsWeeds()` for this object, read when the row was published: the litter predicate that decides whether a scythe can cut it (category -999 with \"weeds\" in the name), and the fact `cut_weeds` re-checks on the target. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -4356,6 +4402,21 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "readyForHarvest": {
+          "type": "boolean",
+          "description": "`HoeDirt.readyForHarvest()` for this tile, read when the row was published. The scythe harvest branch fires only on it (HoeDirt.cs:711-731); the dead branch ignores it. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "dead": {
+          "type": "boolean",
+          "description": "`Crop.dead` for this crop, read when the row was published. It is the discriminator between the generation's two terminals: a dead tile can only be CLEARED and drops nothing (`HoeDirt.cs:732-735`, `Crop.harvest` refuses it), whatever its harvest method or readiness. Optional at the wire for the same reason as `readyForHarvest`."
+        },
+        "forageCrop": {
+          "type": "boolean",
+          "description": "`Crop.forageCrop` for this crop, read when the row was published. The harvest branch refuses a forage crop; such a tile is published only once it is dead. Optional at the wire for the same reason as `readyForHarvest`."
+        },
+        "harvestMethod": {
+          "$ref": "#/$defs/harvestMethod"
         }
       }
     },

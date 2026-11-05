@@ -3053,7 +3053,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     // Ready means the machine's OWN lifecycle finished: `readyForHarvest` is set exactly when the window
                     // reaches zero (Object.cs:2581-2585), so a ready machine that holds something is collectable whatever
                     // it is - the state, not a Keg id, is what the collect action needs.
-                    machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null);
+                    machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null,
+                    machine.GetMachineData() is not null);
                 if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
                 {
                     for (int slot = 0; slot < player.Items.Count; slot++)
@@ -3281,7 +3282,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .Take(16)
             .Select(pair => new BridgeWeedTarget(
                 BuildWeedTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value),
-                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.MinutesUntilReady))
+                location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, pair.Value.MinutesUntilReady, pair.Value.IsWeeds()))
             .ToArray();
     }
 
@@ -3394,13 +3395,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 continue;
             // ONE decision, shared with the execution admission below, so a published row can never be a row the
             // action refuses - and a dead crop, which no readiness or water radar can see, is published here or it
-            // is lost. See ExecutionManager.ScytheCropTarget.
+            // is lost. See ExecutionManager.ScytheCropTarget. Every input is read ONCE and published: the same four
+            // engine answers decide the row's admission and state the row's own facts.
+            bool forageCrop = dirt.crop.forageCrop.Value;
+            bool readyForHarvest = dirt.readyForHarvest();
+            StardewValley.GameData.Crops.HarvestMethod harvestMethod = dirt.crop.GetHarvestMethod();
+            bool dead = dirt.crop.dead.Value;
             if (!ExecutionManager.ScytheCropTarget(
                     hasCrop: true,
-                    forageCrop: dirt.crop.forageCrop.Value,
-                    readyForHarvest: dirt.readyForHarvest(),
-                    harvestMethod: dirt.crop.GetHarvestMethod(),
-                    dead: dirt.crop.dead.Value,
+                    forageCrop: forageCrop,
+                    readyForHarvest: readyForHarvest,
+                    harvestMethod: harvestMethod,
+                    dead: dead,
                     out bool deadCrop))
                 continue;
             string? harvestId = dirt.crop.indexOfHarvest.Value;
@@ -3416,7 +3422,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
                 cropSeedId,
                 qualifiedHarvestItemId,
-                RequireDisplayName(cropSeedId)));
+                RequireDisplayName(cropSeedId),
+                readyForHarvest,
+                dead,
+                forageCrop,
+                ExecutionManager.HarvestMethodName(harvestMethod)));
             if (result.Count >= 16) break;
         }
         return result;
@@ -4209,7 +4219,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return NearestFirst(location.objects.Pairs
             .Where(pair => pair.Value is not null && pair.Value.isForage() && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
             .Take(64)
-            .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack))
+            .Select(pair => new BridgeForageTarget(BuildForageTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, pair.Value), (int)pair.Key.X, (int)pair.Key.Y, pair.Value.QualifiedItemId, RequireDisplayName(pair.Value.QualifiedItemId), pair.Value.Stack, pair.Value.isForage()))
             .ToArray();
     }
 
@@ -4318,11 +4328,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
                         || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
-                        || dirt.crop is not null
-                        || !dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false))
+                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
                         continue;
-                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId)));
+                    // Both published facts are the engine's own answers on this tile, read once: the season/raised-crop
+                    // admission `plant_seed` re-checks, and the crop occupancy that makes the tile unusable for a seed.
+                    bool canPlantThisSeedHere = dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false);
+                    if (dirt.crop is not null || !canPlantThisSeedHere)
+                        continue;
+                    rowsForThisStack.Add(new BridgeSeedTarget(BuildSeedTargetId(location, slot, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
                 }
             }
             // Nearest first, THEN the window: the scan walks x then y from the far corner, so trimming first would keep
@@ -4548,10 +4561,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)
                         || !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                         || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
-                        || !dirt.CanApplyFertilizer(fertilizer.QualifiedItemId))
+                        || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot))
                         continue;
-                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId)));
+                    // The engine's own admission answer on this tile, published beside the tile instead of implied by the
+                    // filter: `fertilize_tile` refuses a row whose `CanApplyFertilizer` no longer holds.
+                    bool canApplyFertilizer = dirt.CanApplyFertilizer(fertilizer.QualifiedItemId);
+                    if (!canApplyFertilizer)
+                        continue;
+                    result.Add(new BridgeFertilizerTarget(BuildFertilizerTargetId(location, slot, x, y, fertilizer.QualifiedItemId), slot, x, y, fertilizer.QualifiedItemId, RequireDisplayName(fertilizer.QualifiedItemId), canApplyFertilizer));
                 }
             }
         }
@@ -4590,7 +4607,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     crop.netSeedIndex.Value ?? harvestId,
                     harvestItem.QualifiedItemId,
                     harvestItem.DisplayName,
-                    crop.RegrowsAfterHarvest());
+                    crop.RegrowsAfterHarvest(),
+                    dirt.readyForHarvest(),
+                    crop.forageCrop.Value,
+                    ExecutionManager.HarvestMethodName(crop.GetHarvestMethod()));
             })
             .ToArray();
     }
@@ -4691,7 +4711,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     || location.objects.ContainsKey(tile)
                     || !location.isTileLocationOpen(tile))
                     continue;
-                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y)));
+                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, location.GetHoeDirtAtTile(tile) is not null)));
             }
         }
         // Nearest first, then a stable coordinate order so repeated observations

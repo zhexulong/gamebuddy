@@ -56,7 +56,7 @@ function isToolSlotCategory(value: unknown): value is string {
 export function isForageTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName"]) &&
+    hasOnlyKeys(value, ["targetId", "x", "y", "qualifiedItemId", "stack", "displayName", "isForage"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -69,7 +69,10 @@ export function isForageTargetFact(value: unknown): boolean {
     value.stack <= 999 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    value.displayName.length <= 128 &&
+    // Optional at the wire: a Mod older than this field publishes no answer, and one that carries it publishes
+    // `Object.isForage()`, so a non-boolean is a malformed row rather than a missing measurement.
+    (value.isForage === undefined || typeof value.isForage === "boolean")
   );
 }
 
@@ -149,7 +152,7 @@ export function isSlimeHutchTroughTargetFact(value: unknown): boolean {
 export function isCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "x", "y", "cropId", "displayName"]) &&
+    hasOnlyKeys(value, ["targetId", "x", "y", "cropId", "displayName", "watered", "harvestable"]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -158,14 +161,19 @@ export function isCropTargetFact(value: unknown): boolean {
     value.cropId.length <= 128 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    value.displayName.length <= 128 &&
+    // Optional at the wire: a Mod older than 2026-11-05 publishes neither, and a row that carries one publishes the
+    // engine's own `isWatered()` / `readyForHarvest()` answer, so a non-boolean is a malformed row rather than a
+    // missing measurement.
+    (value.watered === undefined || typeof value.watered === "boolean") &&
+    (value.harvestable === undefined || typeof value.harvestable === "boolean")
   );
 }
 
 export function isHarvestTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
+    hasOnlyKeys(value, [
       "targetId",
       "x",
       "y",
@@ -173,6 +181,9 @@ export function isHarvestTargetFact(value: unknown): boolean {
       "qualifiedHarvestItemId",
       "displayName",
       "regrowsAfterHarvest",
+      "readyForHarvest",
+      "forageCrop",
+      "harvestMethod",
     ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
@@ -186,8 +197,23 @@ export function isHarvestTargetFact(value: unknown): boolean {
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128 &&
-    typeof value.regrowsAfterHarvest === "boolean"
+    typeof value.regrowsAfterHarvest === "boolean" &&
+    (value.readyForHarvest === undefined || typeof value.readyForHarvest === "boolean") &&
+    (value.forageCrop === undefined || typeof value.forageCrop === "boolean") &&
+    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod))
   );
+}
+
+/**
+ * The engine's own `StardewValley.GameData.Crops.HarvestMethod` members, lower-cased.
+ *
+ * Published as the fact rather than as the engine call name, because it is what the two crop actions branch on:
+ * `HoeDirt.performUseAction` harvests a `grab` crop through `Crop.harvest` and hands a `scythe` crop to the scythe
+ * branch (HoeDirt.cs:488-529). The target version's enum declares exactly these two members; a third one would arrive
+ * here as a named `invalid_snapshot`, which is the intended loud failure.
+ */
+export function isHarvestMethodWord(value: unknown): boolean {
+  return typeof value === "string" && (value === "grab" || value === "scythe");
 }
 
 export function isWoodFenceTargetFact(value: unknown): boolean {
@@ -368,7 +394,16 @@ function isCrabPotCore(value: Record<string, unknown>): boolean {
 export function isSeedTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName"]) &&
+    hasOnlyKeys(value, [
+      "targetId",
+      "slot",
+      "x",
+      "y",
+      "qualifiedItemId",
+      "displayName",
+      "canPlantThisSeedHere",
+      "crop",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -378,7 +413,31 @@ export function isSeedTargetFact(value: unknown): boolean {
     value.qualifiedItemId.length <= 128 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    value.displayName.length <= 128 &&
+    // Optional at the wire: a Mod older than these fields publishes neither, and a row that carries one publishes the
+    // engine's own `HoeDirt.canPlantThisSeedHere` / `HoeDirt.crop is not null` answer.
+    (value.canPlantThisSeedHere === undefined || typeof value.canPlantThisSeedHere === "boolean") &&
+    (value.crop === undefined || typeof value.crop === "boolean")
+  );
+}
+
+export function isFertilizerTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName", "canApplyFertilizer"]) &&
+    isOpaqueId(value.targetId) &&
+    isToolSlot(value.slot) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128 &&
+    // Optional at the wire for the same reason as the seed row's own two facts; the value is
+    // `HoeDirt.CanApplyFertilizer`, the predicate `fertilize_tile` refuses on.
+    (value.canApplyFertilizer === undefined || typeof value.canApplyFertilizer === "boolean")
   );
 }
 
@@ -532,6 +591,7 @@ export function isMachineTargetFact(value: unknown): boolean {
       "loadInputStack",
       "collectOutputReady",
       "displayName",
+      "machineData",
     ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
@@ -560,6 +620,8 @@ export function isMachineTargetFact(value: unknown): boolean {
     (value.collectOutputReady === undefined ||
       value.collectOutputReady === null ||
       typeof value.collectOutputReady === "boolean") &&
+    // Optional at the wire: `Object.GetMachineData() is not null`, the answer that makes this object a machine.
+    (value.machineData === undefined || typeof value.machineData === "boolean") &&
     // The three load fields are one fact: the slot that holds the input, the item it holds, and the count the machine's
     // own rows consume. Half a load is not a smaller promise, it is an unusable one, so all three appear together.
     ((value.loadInputSlot === undefined &&
@@ -680,7 +742,7 @@ export function isTreeSaplingTargetFact(value: unknown): boolean {
 export function isWeedTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "health"]) &&
+    hasOnlyKeys(value, ["targetId", "location", "x", "y", "health", "isWeeds"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -690,7 +752,9 @@ export function isWeedTargetFact(value: unknown): boolean {
     typeof value.health === "number" &&
     Number.isSafeInteger(value.health) &&
     value.health >= 0 &&
-    value.health <= 1000
+    value.health <= 1000 &&
+    // Optional at the wire: `Object.IsWeeds()`, the litter predicate `cut_weeds` re-checks on the target.
+    (value.isWeeds === undefined || typeof value.isWeeds === "boolean")
   );
 }
 
@@ -844,7 +908,19 @@ export function isLanternSlotFact(value: unknown): boolean {
 export function isScytheCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "location", "x", "y", "cropId", "qualifiedHarvestItemId", "displayName"]) &&
+    hasOnlyKeys(value, [
+      "targetId",
+      "location",
+      "x",
+      "y",
+      "cropId",
+      "qualifiedHarvestItemId",
+      "displayName",
+      "readyForHarvest",
+      "dead",
+      "forageCrop",
+      "harvestMethod",
+    ]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -859,7 +935,13 @@ export function isScytheCropTargetFact(value: unknown): boolean {
     value.qualifiedHarvestItemId.length <= 128 &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
-    value.displayName.length <= 128
+    value.displayName.length <= 128 &&
+    // Optional at the wire. These are the four facts the action's two terminals differ on - a dead tile can only be
+    // cleared, and the harvest branch needs readiness, a non-forage crop and the scythe method.
+    (value.readyForHarvest === undefined || typeof value.readyForHarvest === "boolean") &&
+    (value.dead === undefined || typeof value.dead === "boolean") &&
+    (value.forageCrop === undefined || typeof value.forageCrop === "boolean") &&
+    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod))
   );
 }
 

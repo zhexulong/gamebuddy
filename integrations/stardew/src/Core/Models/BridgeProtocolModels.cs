@@ -234,7 +234,17 @@ public sealed record BridgeDoor(
     int TargetY
 );
 
-public sealed record BridgeSoilTile(int X, int Y);
+/// <summary>
+/// One tile the Hoe can till.
+///
+/// <para>
+/// <see cref="HoeDirt"/> is the engine's own presence answer for the tile
+/// (<c>GameLocation.GetHoeDirtAtTile</c>), which is the fact <c>till_soil</c> admits on: a tile that already carries
+/// one is refused with <c>soil_already_tilled</c>. Discovery publishes no tilled tile today, so this reads false - the
+/// point is that the row states the fact instead of leaving its reader to infer it from the row's existence.
+/// </para>
+/// </summary>
+public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt);
 
 /// <summary>
 /// One inventory slot that holds a tool: a slot a tool action may name, the tool's own item identity, and its upgrade
@@ -255,17 +265,39 @@ public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, str
 
 public sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
 
-public sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
+/// <summary>
+/// One native forage object. <see cref="IsForage"/> is <c>Object.isForage()</c> at publish time - the predicate that is
+/// the only difference between this family and <see cref="BridgeItemTarget"/>.
+/// </summary>
+public sealed record BridgeForageTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack, bool IsForage);
 
 public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
 public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName, bool Watered, bool Harvestable);
 
-public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest);
+/// <summary>
+/// One crop tile <c>harvest_crop</c> accepts, with the four facts its admission branches on: whether the crop is ready
+/// (<c>HoeDirt.readyForHarvest()</c>), whether it is a forage crop (<c>Crop.forageCrop</c>), which tool the engine's
+/// harvest path requires (<c>Crop.GetHarvestMethod()</c>: <c>grab</c> or <c>scythe</c>) and whether it regrows.
+/// </summary>
+public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest, bool ReadyForHarvest, bool ForageCrop, string HarvestMethod);
 
-public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
+/// <summary>
+/// One empty HoeDirt tile paired with a carried seed.
+///
+/// <para>
+/// <see cref="CanPlantThisSeedHere"/> is <c>HoeDirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false)</c> - the
+/// engine's season/raised-crop admission, which is what <c>plant_seed</c> refuses on. <see cref="Crop"/> is the handler's
+/// other test (<c>HoeDirt.crop is not null</c>): a tile that already carries a crop is not a seed target.
+/// </para>
+/// </summary>
+public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, bool CanPlantThisSeedHere, bool Crop);
 
-public sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
+/// <summary>
+/// One HoeDirt tile paired with a carried fertilizer. <see cref="CanApplyFertilizer"/> is the engine's own
+/// <c>HoeDirt.CanApplyFertilizer(fertilizerId)</c>, the predicate <c>fertilize_tile</c> refuses on.
+/// </summary>
+public sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, bool CanApplyFertilizer);
 
 public sealed record BridgeWoodFenceTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
@@ -299,7 +331,16 @@ public sealed record BridgeArtifactSpotResultTarget(string TargetId, string Loca
 
 public sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
 
-public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady);
+/// <summary>
+/// One native machine.
+///
+/// <para>
+/// <see cref="MachineData"/> is <c>Object.GetMachineData() is not null</c> at publish time: whether the object carries
+/// its own <c>Data/Machines</c> rows, which is what makes it a machine `machine_inspect`/`machine_load` can address
+/// rather than an ordinary placed object.
+/// </para>
+/// </summary>
+public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady, bool MachineData);
 
 public sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
 
@@ -479,7 +520,7 @@ public sealed record BridgeChestsSummary(int ChestCount, int ItemCount, int Full
 public sealed record BridgeShippingBinTarget(string TargetId, int X, int Y, int Slot, string QualifiedItemId, string DisplayName, int Stack);
 public sealed record BridgeTreeStumpTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health);
 public sealed record BridgeTreeSaplingTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
-public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health);
+public sealed record BridgeWeedTarget(string TargetId, string Location, int X, int Y, int Health, bool IsWeeds);
 
 /// <summary>
 /// One live grass tuft discoverable on the current map (the TerrainFeature
@@ -497,7 +538,18 @@ public sealed record BridgeMannequinTarget(string TargetId, string Location, int
 public sealed record BridgeSignTarget(string TargetId, string Location, int X, int Y, bool HasDisplayItem, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DisplayQualifiedItemId);
 public sealed record BridgeSiloTarget(string TargetId, string Location, int X, int Y, int Hay);
 public sealed record BridgeLanternSlot(int Slot, bool IsOn, int FuelLeft);
-public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName);
+/// <summary>
+/// One crop tile the scythe owns: a ready <c>scythe</c>-method crop, or a dead crop of any method.
+///
+/// <para>
+/// The four facts <c>scythe_crop</c> branches on are published rather than implied by the row's existence, because the
+/// two terminals differ: <c>dead</c> means the tile can only be CLEARED and drops nothing (<c>HoeDirt.cs:732-735</c>),
+/// while the harvest branch needs <c>readyForHarvest</c>, a non-forage crop and <c>harvestMethod == scythe</c>
+/// (<c>HoeDirt.cs:711-731</c>). None of these move on a tile the radar already published, so a reader cannot infer them
+/// from a re-read.
+/// </para>
+/// </summary>
+public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool ReadyForHarvest, bool Dead, bool ForageCrop, string HarvestMethod);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
 public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink);
