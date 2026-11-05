@@ -1234,10 +1234,12 @@ export function ComposedReferenceGameApp() {
    *
    * The emptied list does not reach here: the Chats panel's removal seam applies the
    * owner's rule and creates a Chat through its own New Chat path before it reports, so
-   * the shell is never asked to move to a Chat that does not exist. What remains here is
-   * the residual case where this shell's own list read disagrees with that decision, or
-   * the mounted turn refuses the switch: there is nothing to move to, so the live stream
-   * is closed instead of being left reading the dead thread.
+   * the shell is never asked to move to a Chat that does not exist. What remains is the
+   * residual case where this shell's own list read disagrees with that decision: there is
+   * no survivor to select, so the authority is read instead of the shell stopping. Stopping
+   * at that point left the removed conversation mounted with its live stream closed - a
+   * conversation the active list no longer held, that could not be written to, and with
+   * nothing saying either.
    */
   const handleCurrentChatRemoved = (removedHandle: string): void => {
     const current = viewRef.current;
@@ -1251,7 +1253,14 @@ export function ComposedReferenceGameApp() {
         const list = await managementPipelineApiRef.current.listChats();
         const next = list.chats.find((chat) => chat.handle !== removedHandle) ?? null;
         if (next === null) {
+          // No survivor to switch to, and the removed Chat is gone from the list: the
+          // authority is what this shell shows, so it is read again rather than the dead
+          // thread being kept with its cursor shut. The read adopts whatever conversation
+          // the Host really holds, and a Host that holds none answers with no Chat half -
+          // which `readChatSnapshotPair` refuses into the problem view and its Retry.
           closeLiveStream();
+          const pair = await readChatSnapshotPair(composedApiRef.current);
+          adoptMountedChat(pair.root, pair.draft);
           return;
         }
         await managementPipelineApiRef.current.selectChat(
