@@ -46,6 +46,10 @@ export const TARGET_FIELD = Object.freeze({
   machine_load: "MachineTargets",
   machine_collect_output: "MachineTargets",
   collect_animal_product: "AnimalProductTargets",
+  // The farm animals themselves (`location.animals`), which is a different subject from the household Pet's
+  // `PetTargets`: `pet_animal` pets the cat/dog through `Pet.checkAction`, `pet_farm_animal` pets the barn/coop stock
+  // through `FarmAnimal.pet`.
+  pet_farm_animal: "FarmAnimalPetTargets",
   feed_animal: "FeedTroughTargets",
   use_item: "FoodTargets",
   harvest_crop: "HarvestTargets",
@@ -105,6 +109,11 @@ export const TARGET_FIELD = Object.freeze({
   use_raft: "RaftTargets",
   mount_transport: "HorseTargets",
   enter_mine: "MineEntranceTargets",
+  // The way OUT of a mine level reads the SAME family: `MineShaft.checkAction` opens the exit ladder's
+  // `ExitMine` question from a tile in the same `Buildings` layer, and `DiscoverMineEntranceTargets`
+  // publishes both ladder kinds under one opaque id family (`mine_entrance_<16 hex>`), because a caller
+  // cannot tell the kinds apart. Declared here rather than adding a snapshot field the action never reads.
+  use_mine_ladder: "MineEntranceTargets",
   // Added by the minecart lane after this table was written; the audit caught the
   // omission rather than letting the action ship with an unverified discovery leg.
   ride_minecart: "MinecartTargets",
