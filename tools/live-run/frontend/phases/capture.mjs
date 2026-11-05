@@ -97,14 +97,18 @@ async function main() {
   );
 
   let failed = 0;
+  let skippedByMarker = 0;
+  const executed = [];
   const doneDir = join(paths.stateDir, "capture-done");
   await mkdir(doneDir, { recursive: true });
   for (const driver of selected) {
     const doneMarker = join(doneDir, `${driver.out}.driver-done`);
     if (!force && (await exists(doneMarker))) {
+      skippedByMarker += 1;
       log(`SKIP ${driver.key} (done marker ${doneMarker} exists)`);
       continue;
     }
+    executed.push(driver.key);
     log(`========== ${driver.key} ==========`);
     const started = Date.now();
     const code = await runDriver(driver, { port, cdpPort, run, paths, log });
@@ -117,7 +121,23 @@ async function main() {
     await writeFile(doneMarker, JSON.stringify({ exit: code, elapsed }, null, 1), "utf8");
   }
 
-  log(`DONE-CAPTURE failed=${failed} of ${selected.length} (skipped=${DRIVERS.length - selected.length})`);
+  // `skipped` used to mean "filtered out by --driver=", so a driver skipped by a done marker was counted as
+  // neither skipped nor failed - and a stage where every marker already existed printed
+  // `failed=0 of 20 (skipped=0)` and exited 0 above eight-day-old screenshots. A run that executed nothing
+  // verified nothing, so it is a failure with its own exit code rather than a pass.
+  log(
+    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length}`,
+  );
+  if (selected.length === 0) {
+    log(`capture_selected_nothing: --driver= matched none of ${DRIVERS.length} drivers, so this run verified nothing`);
+    process.exit(4);
+  }
+  if (executed.length === 0) {
+    log(
+      `capture_ran_nothing: every selected driver was skipped by a done marker in ${doneDir}, so this run verified nothing; pass --force or use a fresh --out`,
+    );
+    process.exit(4);
+  }
   process.exit(failed === 0 ? 0 : 3);
 }
 
