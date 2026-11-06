@@ -80,12 +80,12 @@ public sealed class ExecutionArgumentWireCoverageTests
     /// Actions whose wire list and catalog list disagree TODAY. Each is a real drift that needs its own fix and its
     /// own live gate; they are named here so the guard stays strict for everything else instead of being weakened to
     /// cover them.
+    ///
+    /// EMPTY, and that is the point: `pickup_forage` was the one entry, because its wire list carried `sceneTarget`
+    /// while the catalog declared that as a binding rather than an argument. The binding is gone, so the drift is gone,
+    /// and `TheDeclaredDriftIsStillRealAndStillTheOnlyOne` fails if an entry is added back while no action drifts.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> DeclaredDrift = new Dictionary<string, string>(StringComparer.Ordinal)
-    {
-        ["pickup_forage"] =
-            "the wire list carries `sceneTarget` and the catalog descriptor does not declare it as an argument: the parser ",
-    };
+    private static readonly IReadOnlyDictionary<string, string> DeclaredDrift = new Dictionary<string, string>(StringComparer.Ordinal);
 
     [Fact]
     public void TheWireListAndTheCatalogDeclareTheSameArgumentNames()

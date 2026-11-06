@@ -72,6 +72,13 @@ async function loadRuns(files) {
       continue;
     }
     const observation = parsed?.observation;
+    // A killed run was stopped from OUTSIDE (a timeout's SIGTERM, an operator's Ctrl+C): nothing about the product was
+    // measured, so it is not a draw from the distribution this tool compares. Counting it as a non-pass would let an
+    // external interrupt read as a regression in whichever prompt happened to be under test.
+    if (parsed?.state === "killed") {
+      excludedOldRuns.push({ file, reason: `killed:${parsed.reasonCode ?? "run_killed_by_signal"}` });
+      continue;
+    }
     if (observation === undefined || observation === null) {
       excludedOldRuns.push({ file, reason: "no_observation_block" });
       continue;

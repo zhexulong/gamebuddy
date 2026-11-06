@@ -40,8 +40,6 @@ public static class FarmhandExecutionAcceptance
         reasonCode = "accepted";
         if (args.AdditionalProperties is { Count: > 0 })
         { reasonCode = "invalid_execution_request"; return false; }
-        if (descriptor.SceneTarget is not null && !IsValidSceneBinding(args.SceneTarget))
-        { reasonCode = "observation_binding_malformed"; return false; }
         if (!HasExactArgumentShape(descriptor, args))
         { reasonCode = "invalid_execution_request"; return false; }
         FarmhandExecutionAcceptanceFacts facts = descriptor.Acceptance ?? Default;
@@ -56,9 +54,8 @@ public static class FarmhandExecutionAcceptance
 
     /// <summary>
     /// The request must carry exactly the arguments declared by the registered
-    /// descriptor (plus the scene binding when the descriptor declares one) and
-    /// nothing else. A declared argument missing, or an undeclared argument
-    /// present, fails closed.
+    /// descriptor and nothing else. A declared argument missing, or an undeclared
+    /// argument present, fails closed.
     /// </summary>
     private static bool HasExactArgumentShape(FarmhandActionDescriptor descriptor, BridgeExecutionArgs args)
     {
@@ -68,7 +65,6 @@ public static class FarmhandExecutionAcceptance
     bool chestId = args.ChestId is not null;
         bool qualifiedItem = args.ExpectedQualifiedItemId is not null;
         bool target = args.ExpectedTargetId is not null;
-        bool sceneTarget = args.SceneTarget is not null;
         bool destination = args.Destination is not null;
         bool emote = args.Emote is not null;
         bool direction = args.Direction is not null;
@@ -89,7 +85,6 @@ public static class FarmhandExecutionAcceptance
             && chestId == HasArgument(descriptor, "chestId")
             && qualifiedItem == HasArgument(descriptor, "expectedQualifiedItemId")
             && target == HasArgument(descriptor, "expectedTargetId")
-            && sceneTarget == (descriptor.SceneTarget is not null)
             && destination == HasArgument(descriptor, "destination")
             && emote == HasArgument(descriptor, "emote")
             && direction == HasArgument(descriptor, "direction")
@@ -168,8 +163,4 @@ public static class FarmhandExecutionAcceptance
         && coordinate == MathF.Floor(coordinate)
         && coordinate >= minimum
         && coordinate <= maximum;
-
-    private static bool IsValidSceneBinding(ObservationBindingV1? target) => target is not null
-        && BridgeProtocol.IsOpaqueId(target.ObservationId)
-        && BridgeProtocol.IsOpaqueId(target.Ref);
 }

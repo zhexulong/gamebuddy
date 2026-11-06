@@ -881,35 +881,24 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.pickup_forage,
         label: "Pick Up Stardew Forage",
         description:
-          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates), and sceneTarget must be the { observationId, ref } binding that stardew_read_scene published for that same target. Only the authoritative native receipt and target disappearance can report completion.",
-        parameters: Type.Object(
-          {
-            x: Type.Integer({ minimum: 0, maximum: 1000 }),
-            y: Type.Integer({ minimum: 0, maximum: 1000 }),
-            expectedQualifiedItemId: Type.String({
-              minLength: 1,
-              maxLength: 128,
-            }),
-            expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
-            sceneTarget: Type.Object(
-              {
-                observationId: Type.String({ minLength: 1, maxLength: 128 }),
-                ref: Type.String({ pattern: "^sr1_[A-Za-z0-9_-]{16}$" }),
-              },
-              { additionalProperties: false },
-            ),
-            requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-            idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-          },
-          { additionalProperties: false },
-        ),
+          "Pick up a live native forage target. x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the forageTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt and target disappearance can report completion.",
+        parameters: Type.Object({
+          x: Type.Integer({ minimum: 0, maximum: 1000 }),
+          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          expectedQualifiedItemId: Type.String({
+            minLength: 1,
+            maxLength: 128,
+          }),
+          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+          idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+        }),
         action: "pickup_forage",
         toArgs: (params) => ({
           x: params.x,
           y: params.y,
           expectedQualifiedItemId: params.expectedQualifiedItemId,
           expectedTargetId: params.expectedTargetId,
-          sceneTarget: params.sceneTarget,
         }),
       }),
     );
@@ -1396,7 +1385,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chop_tree,
         label: "Chop Stardew Tree",
         description:
-          "Use one equipped Axe swing on a live ordinary mature tree. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only source transformation in the authoritative receipt determines completion.",
+          "Chop one live ordinary mature tree. The Mod keeps swinging the equipped Axe until the tree is felled and reports how many swings it took, so one call completes the chop. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the felled tree in the authoritative receipt determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),

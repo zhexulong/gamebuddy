@@ -2040,6 +2040,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "targetId",
         "npcName",
         "displayName",
         "location",
@@ -2048,6 +2049,9 @@
         "inCurrentLocation"
       ],
       "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
         "npcName": {
           "type": "string",
           "minLength": 1,

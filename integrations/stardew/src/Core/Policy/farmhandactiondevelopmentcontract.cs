@@ -26,15 +26,7 @@ public sealed record ActionDevelopmentContract(
 
 public sealed record ActionDevelopmentContractArgs(
     string[] RequiredProperties,
-    IReadOnlyList<string>? ToolAllowedValues,
-    ActionDevelopmentContractSceneTarget? SceneTarget = null
-);
-
-public sealed record ActionDevelopmentContractSceneTarget(
-    string Type,
-    int Version,
-    bool Required,
-    string[] RequiredProperties
+    IReadOnlyList<string>? ToolAllowedValues
 );
 
 public sealed record ActionDevelopmentContractTerminal(
@@ -111,12 +103,7 @@ public static class FarmhandActionDevelopmentContract
         "equip_tool" => new ActionDevelopmentContractArgs(new[] { "tool" }, EquipToolAllowedValues),
         "pickup_forage" => new ActionDevelopmentContractArgs(
             PickupForageRequiredProperties.ToArray(),
-            null,
-            new ActionDevelopmentContractSceneTarget(
-                "ObservationBinding",
-                1,
-                true,
-                new[] { "observationId", "ref" })),
+            null),
         _ => throw new KeyNotFoundException($"Action {actionId} has no semantic argument contract."),
     };
 

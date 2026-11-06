@@ -17,6 +17,7 @@ import { captured, hostValidators, ROOT } from "./wire-declaration.test-support.
  * <pre>
  *   health          Mod `tree.health.Value > 0f`   |  Host `value.health === 1`       -> bridge closed on a real farm
  *   sceneTarget     Mod declares it                |  artifact omits it                -> 14 dispatches, 0 successes
+ *                   (the binding was later removed: its producer published no joinable id)
  *   chest_retrieve  artifact [chestId, item]       |  Host wanted [slot, x, y, id]     -> every request refused
  *   identity        Mod publishes it               |  Host `hasExactKeys` missed it    -> invalid_observe_scene_result
  *   sr1_            affordance offers a ref        |  action validates a sha256 id     -> 6 chop failures

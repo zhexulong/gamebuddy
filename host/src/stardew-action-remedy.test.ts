@@ -126,6 +126,22 @@ test("the bare legacy body_owned stays a dead end for the prefix fallback", () =
   assert.equal(remedyForBodyHold("body_owned", null), null);
 });
 
+test("a queued request that outlived its wait names the owner it waited for", () => {
+  // The Mod parks a request behind the actor's OWN in-flight work and dispatches it when that work ends. When the
+  // boundary is crossed, the wait answers with `waiting_for_body:<owner>` - a code neither the named table nor the
+  // `body_owned_` prefix fallback covers. It must still give the Agent a next step, and it must name the owner.
+  const remedy = remedyForBodyHold(
+    "waiting_for_body:body_owned_by_activity",
+    "owner_execution_id=exec_1;owner_action=pickup_item",
+  );
+  assert.equal(remedy?.action, null, "the wait is over: there is no tool to call");
+  assert.match(remedy?.guidance ?? "", /pickup_item/, "the guidance must name the owner, not just the hold");
+  assert.match(remedy?.guidance ?? "", /Re-issue the same request/);
+  // Evidence is optional: without it the code itself still says which owner the wait was for.
+  const withoutDetail = remedyForBodyHold("waiting_for_body:body_owned_by_movement", null);
+  assert.match(withoutDetail?.guidance ?? "", /body_owned_by_movement/);
+});
+
 test("a reason code that is not a body hold gets no remedy", () => {
   // Attaching a remedy here would tell the Agent to close a dialogue that is not open.
   for (const code of [

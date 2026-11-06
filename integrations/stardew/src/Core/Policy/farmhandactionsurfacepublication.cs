@@ -28,23 +28,6 @@ public sealed record FarmhandActionDescriptorProjection(
     /// </summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionApproachRequirementProjection? Approach = null,
     /// <summary>
-    /// The ObservationBinding/v1 descriptor this action requires, or null when it requires none.
-    ///
-    /// <para>
-    /// THIS FIELD IS WHY `pickup_forage` WAS UNUSABLE. The Mod declared it (`FarmhandActionDefinitions.cs:572`, required:
-    /// true, `[observationId, ref]`), `BridgeSession.cs:272` projected it onto the registration wire, and this record -
-    /// the one the artifact is serialized from - did not have it. So the generated catalog said nothing about the
-    /// binding while `protocol.ts:2812` required `sceneTarget` on every envelope; the model can only copy fields the
-    /// catalog publishes, and the catalog published neither the field nor any way to obtain `observationId`. Measured:
-    /// **14 dispatches, 14 `observation_binding_malformed`, 0 successes.** It was reachable and correct on both sides and
-    /// impossible to call.
-    /// </para>
-    /// <para>
-    /// Omitted when null, like `Approach`, so the ninety-four actions that require no binding keep the exact wire shape
-    /// they had before.
-    /// </para>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionObservationBindingProjection? SceneTarget = null,
-    /// <summary>
     /// The snapshot family that supplies this action's targets (`cropTargets`), or null when it addresses nothing a
     /// snapshot publishes (`advance_day`, `dismiss_modal`).
     ///
@@ -89,20 +72,17 @@ public sealed record FarmhandActionPostcondition(string Name);
 /// Where the body must stand before the action can happen, in the Mod's own words. Published because a
 /// precondition the Mod enforces and never declares can only be learned by being refused - measured
 /// 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
+///
+/// <para>
+/// `withinTiles` is OMITTED when the relation states no distance (`self_walked`), because the Host refuses an explicit
+/// `null`: `{relation}` and `{relation, withinTiles: 0}` are different claims, and the serializer must not turn the
+/// first into the second.
+/// </para>
 /// </summary>
-public sealed record FarmhandActionApproachRequirementProjection(string Relation, int? WithinTiles);
+public sealed record FarmhandActionApproachRequirementProjection(
+    string Relation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WithinTiles = null);
 
-/// <summary>
-/// The ObservationBinding/v1 requirement in the Mod's own words: which target properties a caller must supply, and
-/// whether the requirement is mandatory. Published because the Host validates `sceneTarget` against this declaration
-/// while the model can only satisfy what the artifact tells it exists - a binding the Mod requires and the catalog omits
-/// is a call nobody can legally make.
-/// </summary>
-public sealed record FarmhandActionObservationBindingProjection(
-    string Type,
-    int Version,
-    bool Required,
-    IReadOnlyList<string> RequiredProperties);
 /// <summary>Exact descriptor envelope exported by the Mod.</summary>
 public sealed record FarmhandActionDescriptorArtifact(
     string Schema,
@@ -161,13 +141,6 @@ public static class FarmhandActionSurfacePublication
             WatchdogMs: descriptor.WatchdogMs,
             Approach: descriptor.Approach is { } approach
                 ? new FarmhandActionApproachRequirementProjection(approach.Relation, approach.WithinTiles)
-                : null,
-            SceneTarget: descriptor.SceneTarget is { } sceneTarget
-                ? new FarmhandActionObservationBindingProjection(
-                    sceneTarget.Type,
-                    sceneTarget.Version,
-                    sceneTarget.Required,
-                    sceneTarget.RequiredProperties)
                 : null,
             TargetFamily: descriptor.TargetFamily);
     }

@@ -269,8 +269,12 @@ internal static class RefusalProbe
     /// read `blocked_by=none` - the one answer that reads as "nothing is in the way" about something that is, and that
     /// walks away on its own.
     /// </para>
+    /// <para>
+    /// Internal rather than private because the WALK asks it too: a person on the tile the caller named is not a wall,
+    /// and the walk has to stand beside them instead of reporting a route that does not exist.
+    /// </para>
     /// </summary>
-    private static RefusalLayerToken CharacterOn(GameLocation location, Vector2 tile)
+    internal static RefusalLayerToken CharacterOn(GameLocation location, Vector2 tile)
     {
         foreach (NPC character in location.characters)
         {
@@ -304,9 +308,9 @@ internal static class RefusalProbe
     /// The actor is outside the spatial relation the action's row declares.
     ///
     /// <para>
-    /// Both halves come from the declaration: the relation word and the distance the row allows. An action that
-    /// declares no approach is not out of range - its handler walks the actor in itself - so this layer stays silent
-    /// rather than refusing work the action does.
+    /// Both halves come from the declaration: the relation word and the distance the row allows. An action that declares
+    /// `self_walked` states no distance - its handler walks the actor in itself - so this layer stays silent rather than
+    /// refusing work the action does.
     /// </para>
     /// </summary>
     private static RefusalLayerToken OutsideDeclaredRange(FarmhandActionRegistration? action, Vector2 tile, Vector2? actorTile)
@@ -326,6 +330,34 @@ internal static class RefusalProbe
     /// <summary>One named occupant as a token: the name the player sees, or the type when it has none.</summary>
     private static RefusalLayerToken Named(RefusalLayerKind layer, string? name, string fallback, Vector2 tile) =>
         new(layer, $"{WithoutSpaces(string.IsNullOrWhiteSpace(name) ? fallback : name)}@{FormatPoint(tile)}");
+
+    /// <summary>
+    /// The occupant's own name, as a reason code may spell it.
+    ///
+    /// A `reasonCode` is judged TWICE: the Mod's journal accepts `[A-Za-z0-9_:-]`
+    /// (`FarmhandExecutionJournal.IsValidReasonCode`) and the Host's own validator accepts `[a-z0-9_:-]`
+    /// (`host/src/protocol.ts`, `isReasonCode`), so the stricter of the two is the rule here. A villager's name is
+    /// free text (`Mr. Qi`), so it reaches a code only through this one mapping: pasted in raw it would make the
+    /// receipt fail validation instead of reporting.
+    /// </summary>
+    internal static string ReasonCodeToken(RefusalLayerToken token) =>
+        ReasonCodeToken(token.Detail is { } detail ? detail.Split('@')[0] : string.Empty);
+
+    /// <summary>The same mapping for a bare name, so a token built elsewhere cannot take a second route to the wire.</summary>
+    internal static string ReasonCodeToken(string name)
+    {
+        if (name.Length == 0)
+            return "character";
+        var mapped = new System.Text.StringBuilder(name.Length);
+        foreach (char character in name)
+        {
+            char lowered = char.ToLowerInvariant(character);
+            bool allowed = (lowered >= 'a' && lowered <= 'z') || (lowered >= '0' && lowered <= '9')
+                || lowered is '_' or '-' or ':';
+            mapped.Append(allowed ? lowered : '_');
+        }
+        return mapped.ToString();
+    }
 
     /// <summary>A token carries no spaces: the field is split on `;` and `:`, and a name must not break that.</summary>
     internal static string WithoutSpaces(string value) => value.Replace(' ', '_');

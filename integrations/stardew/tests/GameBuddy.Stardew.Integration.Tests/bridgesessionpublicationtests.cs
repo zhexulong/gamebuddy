@@ -55,14 +55,12 @@ public sealed class BridgeSessionPublicationTests
          pickupForage.Descriptor.Should().NotBeNull();
          pickupForage.Descriptor!.Arguments.Select(argument => argument.Name)
              .Should().Equal("x", "y", "expectedQualifiedItemId", "expectedTargetId");
-         pickupForage.Descriptor.SceneTarget.Should().BeEquivalentTo(
-             new FarmhandActionObservationBindingDescriptorWire("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
          pickupForage.Descriptor.Effect.Should().Be("write");
          pickupForage.Descriptor.Postcondition.Name.Should().Be("native_action_postcondition");
-         // The spatial precondition this action ENFORCES (`observation_binding_target_out_of_range` from beyond
-         // Chebyshev 1) travels on the wire, so `plan_shape` can say it instead of the companion learning it from a
-         // refusal. Before this member existed the declaration stopped at the surface artifact and every action
-         // answered `approach_requirement_undeclared`.
+         // The spatial precondition this action ENFORCES (`forage_target_out_of_range` from beyond Chebyshev 1)
+         // travels on the wire, so `plan_shape` can say it instead of the companion learning it from a refusal. Before
+         // this member existed the declaration stopped at the surface artifact and every action answered
+         // `approach_requirement_undeclared`.
          pickupForage.Descriptor.Approach.Should().Be(new FarmhandActionApproachRequirementWire("adjacent", 1));
          payload.Registrations.Single(registration => registration.ActionId == "move_to_tile")
              .Descriptor!.Approach.Should().BeNull("an action that declares no precondition publishes none");
@@ -124,6 +122,16 @@ public sealed class BridgeSessionPublicationTests
             .Single(registration => registration.GetProperty("actionId").GetString() == "move_to_tile");
         serializedMoveToTile.GetProperty("descriptor").TryGetProperty("approach", out _).Should().BeFalse(
             "an action declaring no precondition must not arrive looking like one that declared 'anywhere'");
+
+        // And the action the defect was measured on: `cut_weeds` walks the actor in, so the wire states the relation and
+        // states NO distance. `withinTiles: null` is not the same statement - the Host refuses it by name - so the
+        // member is omitted, which is why this reads the exact key set rather than the value alone.
+        JsonElement serializedCutWeeds = serializedPayload.GetProperty("registrations")
+            .EnumerateArray()
+            .Single(registration => registration.GetProperty("actionId").GetString() == "cut_weeds");
+        JsonElement cutWeedsApproach = serializedCutWeeds.GetProperty("descriptor").GetProperty("approach");
+        cutWeedsApproach.EnumerateObject().Select(property => property.Name).Should().Equal("relation");
+        cutWeedsApproach.GetProperty("relation").GetString().Should().Be("self_walked");
 
         string? snapshotOutputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_SNAPSHOT_WIRE_OUTPUT");
         string? helloOutputPath = Environment.GetEnvironmentVariable("GAMEBUDDY_HELLO_WIRE_OUTPUT");

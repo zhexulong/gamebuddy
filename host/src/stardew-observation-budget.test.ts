@@ -58,9 +58,33 @@ const snapshot: Snapshot = {
   toolSlots: [{ slot: 1, label: "(T)Hoe", upgradeLevel: 2, category: "hoe" }],
   // Bounded: villagers elsewhere whose coordinates no action can reach, plus one in this location.
   villagerWhereabouts: [
-    { npcName: "Marlon", displayName: "马龙", location: "AdventureGuild", x: 5, y: 11, inCurrentLocation: false },
-    { npcName: "Jas", displayName: "贾斯", location: "AnimalShop", x: 4, y: 6, inCurrentLocation: false },
-    { npcName: "Abigail", displayName: "阿比盖尔", location: "Farm", x: 70, y: 20, inCurrentLocation: true },
+    {
+      targetId: "npc_relationship_marlon",
+      npcName: "Marlon",
+      displayName: "马龙",
+      location: "AdventureGuild",
+      x: 5,
+      y: 11,
+      inCurrentLocation: false,
+    },
+    {
+      targetId: "npc_relationship_jas",
+      npcName: "Jas",
+      displayName: "贾斯",
+      location: "AnimalShop",
+      x: 4,
+      y: 6,
+      inCurrentLocation: false,
+    },
+    {
+      targetId: "npc_relationship_abigail",
+      npcName: "Abigail",
+      displayName: "阿比盖尔",
+      location: "Farm",
+      x: 70,
+      y: 20,
+      inCurrentLocation: true,
+    },
   ],
   // Bounded: learned recipes that cannot be crafted from this inventory.
   craftingRecipeTargets: [
@@ -361,7 +385,15 @@ test("an observation with nothing to bound is published unchanged and disclosed 
   const clean: Snapshot = {
     ...snapshot,
     villagerWhereabouts: [
-      { npcName: "Abigail", displayName: "阿比盖尔", location: "Farm", x: 70, y: 20, inCurrentLocation: true },
+      {
+        targetId: "npc_relationship_abigail",
+        npcName: "Abigail",
+        displayName: "阿比盖尔",
+        location: "Farm",
+        x: 70,
+        y: 20,
+        inCurrentLocation: true,
+      },
     ],
     craftingRecipeTargets: [{ targetId: "Wood_Fence", displayName: "木栅栏", ingredientsAvailable: true }],
     cookingRecipeTargets: [],

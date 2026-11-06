@@ -245,22 +245,24 @@ public sealed class SaplingApproachWiringTests
     // ---- the declaration the companion reads ---------------------------------
 
     [Fact]
-    public void TheSelfWalkingActionPublishesNoStandingPrecondition()
+    public void TheSelfWalkingActionDeclaresThatItClosesTheDistance()
     {
         // `approachRequirement` is published through `plan_shape`. Once an action walks in itself, "you must
         // already stand beside this" would be a false sentence in front of the companion - it would spend a
-        // separate `move_to_tile` on a precondition the action now satisfies on its own. Read from the
-        // catalog and from the projection the Host is generated from, which are runtime facts.
+        // separate `move_to_tile` on a precondition the action now satisfies on its own - and saying nothing at all
+        // left the wire unable to tell "no constraint" from "nobody decided". Read from the catalog and from the
+        // projection the Host is generated from, which are runtime facts.
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == "plant_sapling");
-        registration.Descriptor!.Approach.Should().BeNull(
-            "plant_sapling walks in itself, so it declares no standing precondition");
+        registration.Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirement("self_walked", null),
+            "plant_sapling walks in itself, so it declares that instead of a standing precondition");
 
         FarmhandActionDescriptorProjection published = FarmhandActionSurfacePublication.Actions
             .Single(candidate => candidate.ActionId == "plant_sapling");
-        published.Approach.Should().BeNull("plant_sapling publishes no approach requirement");
+        published.Approach.Should().Be(new FarmhandActionApproachRequirementProjection("self_walked"),
+            "plant_sapling publishes the relation with no distance beside it");
 
-        // The actions that DO still refuse from afar keep their declaration, so the null above cannot be
+        // The actions that DO still refuse from afar keep their declaration, so the relation above cannot be
         // satisfied by a catalog that forgot to project anything at all.
         FarmhandActionSurfacePublication.Actions
             .Single(candidate => candidate.ActionId == "pickup_forage")

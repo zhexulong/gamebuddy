@@ -31,6 +31,12 @@ import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { killProcessTree, listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
+import {
+  installLiveRunInterrupt,
+  killedReasonCode,
+  restoreFixtureTransaction as restoreFixtureTransactionSteps,
+  writeKilledRunRecord,
+} from "../../lib/live-run-teardown.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
@@ -189,6 +195,77 @@ function currentOwnerId() {
   }
 }
 
+/**
+ * A run that is killed from outside still costs its own verdict, and this is the process that owns the fixture
+ * transaction, so this is where its teardown has to be armed.
+ *
+ * Measured 2026-11-06 at 19:37:14: an external timeout ended the launcher mid-await, leaving the transaction unreleased
+ * under `.stardew-native-local-player-fixture.lock`, the run directory holding only `launch.json`, and no restore ever
+ * run. The trap itself, the reason the run publishes and the two teardown steps live in `tools/lib/live-run-teardown.mjs`
+ * because the RUNNER needs the same rule for its own bundle.
+ *
+ * The settle window is the point of the delay: on Windows Ctrl+C reaches every process on the console, so the runner sees
+ * the same signal and gets to write its accumulated day records before this process restores the fixture underneath it.
+ */
+const KILL_SETTLE_MS = 60_000;
+const startedAtMs = Date.now();
+let takeoverWatch = null;
+let childSettled = null;
+
+/**
+ * What a killed run runs: settle the runner, reap the game, restore the fixture, and leave a record only if the runner
+ * left none.
+ */
+async function killedTeardown(signal) {
+  if (childSettled !== null) {
+    console.error(`[killed] waiting up to ${KILL_SETTLE_MS} ms for the runner to publish its own killed bundle`);
+    await Promise.race([childSettled, sleep(KILL_SETTLE_MS)]);
+  }
+  // A killed run does not leave its game playing. Same primitive as the takeover watch: the exact PIDs of the game
+  // processes this launcher's own orchestrator started, never a kill by image name.
+  for (const pid of liveGameProcesses()) killProcessTree(pid);
+  if (takeoverWatch !== null) clearInterval(takeoverWatch);
+  try {
+    restoreFixtureTransaction();
+  } catch (error) {
+    // A restore that refuses must not take the killed record with it: "the lock is still held" and "we stopped this
+    // run" are two separate facts, and the second one is the run's verdict.
+    console.error(`[killed] fixture restore failed: ${String(error?.message ?? error).slice(0, 200)}`);
+  }
+  writeKilledRunRecord({
+    resultPath,
+    record: {
+      state: "killed",
+      reasonCode: killedReasonCode(signal),
+      scenario,
+      action,
+      label,
+      saveName,
+      windowMode,
+      fixtureOwnerId: myOwnerId,
+      startedAtMs,
+      endedAtMs: Date.now(),
+      // The day records and counters are the RUNNER's own accumulation. This record exists only because it published
+      // none inside the settle window, so they are named absent with the reason rather than filled with zeroes.
+      evidence: { dayRecords: null, counters: null, reason: "runner_published_no_bundle" },
+    },
+  });
+}
+
+/** The ONE restore both exits run, so a killed run cannot miss a teardown the ordinary one performs. */
+function restoreFixtureTransaction() {
+  restoreFixtureTransactionSteps({
+    run,
+    fixtureRoot,
+    modsPath,
+    releaseDir,
+    backupName,
+    evidenceDir: path.dirname(resultPath),
+  });
+}
+
+installLiveRunInterrupt({ onInterrupt: killedTeardown });
+
 await waitForFreeFixture();
 
 // A previous run that died before restoring leaves its working save behind, and prepare then refuses
@@ -321,7 +398,7 @@ console.log("fixture owned by this run:", myOwnerId);
 // as the root stops being ours rather than allowed to finish and produce an artifact
 // that looks like a companion failure but is an environment failure.
 let takenOver = false;
-const takeoverWatch = setInterval(() => {
+takeoverWatch = setInterval(() => {
   if (takenOver) return;
   const owner = currentOwnerId();
   if (owner === myOwnerId) return;
@@ -335,7 +412,7 @@ const takeoverWatch = setInterval(() => {
     killProcessTree(pid);
   }
 }, 5_000);
-await new Promise((resolve) => {
+childSettled = new Promise((resolve) => {
   const child = spawn(node, ["tools/_ladder-live-orchestrator.mjs"], {
     cwd: repo,
     // The orchestrator's only job is to launch SMAPI, and SMAPI's entry point needs an
@@ -387,6 +464,9 @@ await new Promise((resolve) => {
     resolve();
   });
 });
+// The child's own completion. A signal does not wait here: the trap's teardown runs concurrently, gives the runner its
+// settle window, and then exits the process - so this await is simply where an ORDINARY run continues.
+await childSettled;
 console.log("live runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
 if (takenOver) {
   console.log("result file (if any) is marked invalid next to it; not restoring someone else's transaction");
@@ -394,22 +474,7 @@ if (takenOver) {
   throw new Error("fixture_taken_over_mid_run");
 }
 
-run([
-  "tools/restore-stardew-native-local-player-fixture.mjs",
-  "--root",
-  fixtureRoot,
-  "--mods-path",
-  modsPath,
-  "--release-dir",
-  releaseDir,
-  "--backup-name",
-  backupName,
-  // The run's own directory: the fixture archives the body-program journal here before deleting the live
-  // scope, so what the programs did survives the restore instead of existing only in a log.
-  "--evidence-dir",
-  path.dirname(resultPath),
-]);
-console.log("fixture transaction restored");
+restoreFixtureTransaction();
 
 if (fs.existsSync(resultPath)) {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));

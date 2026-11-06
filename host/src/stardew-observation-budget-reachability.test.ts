@@ -43,20 +43,22 @@ import test from "node:test";
  *       that silently emptied the family `craft_item` names.</li>
  * </ol>
  *
- * <h2>The answer, so nobody re-derives it from the wrong end</h2>
+ * <h2>What the roster elision is allowed to do, and why it had to change</h2>
  * <p>
- * The elision set is CORRECT, and the reason is structural rather than statistical: `villagerWhereabouts` carries no
- * addressing property at all. Its rows are `npcName`, `displayName`, `location`, `x`, `y`, `inCurrentLocation` - a roster
- * of who is where, not a list of addresses. `talk_to_npc` names its villager through `npcRelationshipTargets`, whose
- * `targetId` is `BuildNpcRelationshipTargetId(location, npcName)` - a function of the NAME and the map, never of a tile -
- * and the budget does not touch that family. An off-map villager's tile is not an address either: the action requires the
- * villager in the ACTOR's location, so such a row could not be dispatched at while the actor stands here.
+ * `villagerWhereabouts` used to carry no addressing property at all: its rows were `npcName`, `displayName`, `location`,
+ * `x`, `y`, `inCurrentLocation` - a roster of who is where, not a list of addresses - and `talk_to_npc` named its
+ * villager only through `npcRelationshipTargets`. That family is bounded to the Mod's 6-tile discovery envelope, so a
+ * villager forty tiles away on the actor's own map was in the roster with a tile and addressable nowhere: 18
+ * observations, `npcRelationshipTargets` empty in every one, 39 roster rows, zero `talk_to_npc` receipts. The roster now
+ * carries `targetId` (`BuildNpcRelationshipTargetId`, a function of the name and the map, never of a tile), which is the
+ * same id the action resolves.
  * </p>
  * <p>
- * So the 24-39 elided rows are not why `talk_to_npc` was never called. The companion was told "Marlon is in
- * AdventureGuild" and did not go. The gate still protects the decision: the moment an elision touches an addressable
- * family's rows, or drops a row that says nothing about being unusable, it fails naming the counter, the family and the
- * property - and the roster test states, and re-checks, why the villager reduction costs no dispatch.
+ * So this gate's second clause is now stated precisely rather than absolutely: an elision may never remove an ADDRESSING
+ * property from a row, and may remove any other field from an addressable family's row ONLY when that same reading has
+ * already justified the row as undispatchable. The villager reduction qualifies - it fires only when both signals say the
+ * villager is on another map, where `talk_to_npc` refuses by its own precondition - and it keeps the address, dropping
+ * only the tile and its `false` flag. A reading that has no justification may not touch an addressed row at all.
  * </p>
  */
 function repoRoot(start: string): string {
@@ -191,8 +193,9 @@ const ELISION_READINGS: Readonly<Record<string, ElisionReading>> = {
     families: ["villagerWhereabouts"],
     justifies: (row) => row.inCurrentLocation === false,
     reasoning:
-      "the roster carries no address, and the row is reduced exactly when both signals already said the villager is on " +
-      "another map - a tile the actor cannot dispatch at from here",
+      "the row is reduced exactly when both signals already said the villager is on another map, where `talk_to_npc` " +
+      "refuses by its own precondition - so the tile it drops names nothing the actor could dispatch at from here, and " +
+      "the `targetId` it keeps is the address the action resolves once the actor walks onto that map",
   },
   withheldUnavailableRecipes: {
     families: ["craftingRecipeTargets", "cookingRecipeTargets"],
@@ -250,6 +253,7 @@ function catalogue(slot: number, count: number, item: string): readonly any[] {
 
 /** A villager standing on another map: the row `round17` carried 24-39 of on every observation. */
 const OFF_MAP_VILLAGER = Object.freeze({
+  targetId: "npc_relationship_marlon",
   npcName: "Marlon",
   displayName: "马龙",
   location: "AdventureGuild",
@@ -260,6 +264,7 @@ const OFF_MAP_VILLAGER = Object.freeze({
 
 /** The row an action IS dispatched at: an in-location villager, kept whole so the rewrite test has a control. */
 const HERE_VILLAGER = Object.freeze({
+  targetId: "npc_relationship_abigail",
   npcName: "Abigail",
   displayName: "阿比盖尔",
   location: "Farm",
@@ -317,8 +322,8 @@ const TRIGGERS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
 type FamilyDiff = Readonly<{
   /** Rows present in the input and absent from the output. */
   dropped: readonly any[];
-  /** One entry per surviving row that came back with FEWER keys. */
-  removedFieldsByRow: readonly Readonly<{ removed: readonly string[] }>[];
+  /** One entry per surviving row that came back with FEWER keys, with the row it came from. */
+  removedFieldsByRow: readonly Readonly<{ removed: readonly string[]; row: any }>[];
   /** The rows that survived, so a justification can compare a dropped row against its own stack. */
   kept: readonly any[];
 }>;
@@ -330,7 +335,7 @@ type FamilyDiff = Readonly<{
 function diffFamily(inputRows: readonly any[], publishedRows: readonly any[]): FamilyDiff {
   const remaining = [...publishedRows];
   const dropped: any[] = [];
-  const removedFieldsByRow: { removed: readonly string[] }[] = [];
+  const removedFieldsByRow: { removed: readonly string[]; row: any }[] = [];
   for (const row of inputRows) {
     const index = remaining.findIndex((candidate) =>
       Object.entries(candidate).every(([key, value]) => row[key] === value),
@@ -341,7 +346,7 @@ function diffFamily(inputRows: readonly any[], publishedRows: readonly any[]): F
     }
     const [published] = remaining.splice(index, 1);
     const removed = Object.keys(row).filter((key) => !(key in published));
-    if (removed.length > 0) removedFieldsByRow.push({ removed });
+    if (removed.length > 0) removedFieldsByRow.push({ removed, row });
   }
   return { dropped, removedFieldsByRow, kept: publishedRows };
 }
@@ -493,13 +498,18 @@ test("no elision touches a family some published action names its target through
   assert.deepEqual(problems, [], problems.join("\n"));
 });
 
-test("an elision never removes an addressing property, nor rewrites a row an action names its target from", () => {
+test("an elision never removes an addressing property, and may rewrite an addressed row only as undispatchable", () => {
   // THE CROSSING. Left side: the row properties some published action must be SHOWN (`targetId`, `qualifiedItemId`,
-  // `chestId`, derived from the catalog). Right side: what the shipped bound actually took away, measured. A family that
-  // carries an addressing property is where some action names its target, so no elision may rewrite its rows at all.
+  // `chestId`, derived from the catalog). Right side: what the shipped bound actually took away, measured. Removing an
+  // addressing property is never legal - a row that cannot supply the identifier its action needs is an uncallable
+  // action. Removing any OTHER field from a family some action addresses is legal only when the same reading already
+  // justifies that row as one nothing can be dispatched at, so the reduction costs no decision.
   const problems: string[] = [];
   for (const counter of Object.keys(ELISION_READINGS)) {
-    for (const [family, diff] of measure(counter).families) {
+    const reading = ELISION_READINGS[counter]!;
+    const measurement = measure(counter);
+    const input = { ...BASE, ...TRIGGERS[counter] };
+    for (const [family, diff] of measurement.families) {
       const removals = [...new Set(diff.removedFieldsByRow.flatMap((row) => row.removed))].sort();
       if (removals.length === 0) continue;
       const addressing = removals.filter((field) => ADDRESSING_NAMES.has(field));
@@ -511,12 +521,23 @@ test("an elision never removes an addressing property, nor rewrites a row an act
             `no longer supply the identifier the action must be shown, so the action becomes uncallable. An elision may ` +
             `drop a fact nothing can be dispatched at; it may not drop an address.`,
         );
-      else if (carried.length > 0)
-        problems.push(
-          `${counter} rewrites \`${family}\` rows (removing ${removals.map((field) => `\`${field}\``).join(", ")}), ` +
-            `and that family carries ${carried.map((field) => `\`${field}\``).join(", ")} - an addressed row is an ` +
-            `action's input shape, so a partial reduction is a shape the action never agreed to read.`,
+      else if (carried.length > 0) {
+        const unjustified = diff.removedFieldsByRow.filter(
+          (entry) =>
+            reading.justifies === undefined ||
+            !reading.justifies(entry.row, {
+              tile: input.tile,
+              keptForSlot: (slot: number) => diff.kept.filter((candidate) => candidate.slot === slot),
+            }),
         );
+        if (unjustified.length > 0)
+          problems.push(
+            `${counter} rewrites \`${family}\` rows (removing ${removals.map((field) => `\`${field}\``).join(", ")}), ` +
+              `and that family carries ${carried.map((field) => `\`${field}\``).join(", ")}. A partial reduction of an ` +
+              `addressed row is legal only for a row the reading has already justified as undispatchable, and ` +
+              `${unjustified.length} of them are not: ${reading.justifies === undefined ? "the reading declares no justification" : "its justification did not hold"}.`,
+          );
+      }
     }
   }
   assert.deepEqual(problems, [], problems.join("\n"));
@@ -555,23 +576,24 @@ test("every dropped row is justified by the row itself, so a withheld address is
   assert.deepEqual(problems, [], problems.join("\n"));
 });
 
-test("the roster the budget reduces is not addressable, and the family the village actions name is untouched", () => {
-  // THE DECISION THIS GATE PROTECTS, in one place. `round17` lost `talk_to_npc` while `elidedVillagerRows` was 24-39, and
-  // the tempting conclusion is that the elision caused it. The gate states the structural reason it did not, and fails the
-  // moment the reason stops holding: the roster must stay unaddressable, and the family the village actions DO name must
-  // survive the bound unchanged.
+test("the roster is addressable, keeps its address when reduced, and the family the village actions name is untouched", () => {
+  // THE DECISION THIS GATE PROTECTS, in one place. `talk_to_npc` is dispatched at a villager named by
+  // `BuildNpcRelationshipTargetId`, and that family is bounded to the 6-tile discovery envelope - so a villager further
+  // away on the actor's own map had a tile in this roster and an address nowhere. The roster therefore carries the SAME
+  // id, and the elision that reduces an off-map row keeps it: what it drops is the tile and its `false` flag, the two
+  // facts a row for a villager on another map cannot be dispatched at.
   const roster = FAMILY_ROW_PROPERTIES.get("villagerWhereabouts");
   assert.ok(roster !== undefined, "the wire must still publish `villagerWhereabouts`");
   assert.deepEqual(
     [...ADDRESSING_NAMES].filter((name) => roster.has(name)).sort(),
-    [],
-    `\`villagerWhereabouts\` now carries an addressing property. Reducing a row an action can name would make that ` +
-      `action uncallable, so the villager elision must be reconsidered rather than left as it is.`,
+    ["targetId"],
+    "`villagerWhereabouts` carries the villager's address, which is what makes a villager past the discovery envelope " +
+      "callable at all. A wire that stopped publishing it would put the roster back to a list of tiles nothing accepts.",
   );
-  assert.equal(
+  assert.deepEqual(
     ADDRESSABLE_FAMILIES.get("villagerWhereabouts"),
-    undefined,
-    "no published action addresses the whereabouts roster - that is why dropping an off-map tile costs no dispatch",
+    ["targetId"],
+    "a published action names its target through `villagerWhereabouts.targetId`",
   );
 
   assert.ok(
@@ -593,4 +615,11 @@ test("the roster the budget reduces is not addressable, and the family the villa
     HERE_VILLAGER,
     "a villager in the actor's own location keeps the tile an action needs",
   );
+  const reducedVillager = published.villagerWhereabouts.find((row: any) => row.npcName === "Marlon");
+  assert.equal(
+    reducedVillager?.targetId,
+    OFF_MAP_VILLAGER.targetId,
+    "the reduced row keeps the address `talk_to_npc` resolves, so travelling there still names her",
+  );
+  assert.equal(reducedVillager?.x, undefined, "and loses the tile, which addresses nothing from this map");
 });

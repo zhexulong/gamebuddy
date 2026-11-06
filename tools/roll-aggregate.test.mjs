@@ -73,6 +73,31 @@ test("summarizes one group with means and stddevs per metric", async () => {
   }
 });
 
+test("a run interrupted from outside is not a draw about the product", async () => {
+  // The aggregate exists to decide whether a CHANGE beat its baseline, and a killed run measured nothing about it. Its
+  // gate metric would otherwise read 0 - an external interrupt scored as a regression in the prompt under test.
+  const dir = await mkdtemp(join(tmpdir(), "roll-killed-"));
+  try {
+    await writeRuns(dir, {
+      "kept.json": makeRun({ observationOverrides: { turnMs: 100000 } }),
+      "killed.json": JSON.stringify({
+        state: "killed",
+        reasonCode: "run_killed_by_signal:SIGINT",
+        observation: observation({ turnMs: 900000 }),
+      }),
+    });
+    const { code, stdout } = await runAggregate(["--runs", dir]);
+    assert.equal(code, 0);
+    const out = JSON.parse(stdout);
+    assert.equal(out.groups[0].count, 1, "the killed run must not be one of the samples");
+    assert.equal(out.groups[0].values.turnMs.mean, 100000, "and its numbers must not move the mean");
+    assert.equal(out.excludedOldRuns.length, 1);
+    assert.equal(out.excludedOldRuns[0].reason, "killed:run_killed_by_signal:SIGINT", "the exclusion says why");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("declares improved when the change exceeds the noise window", async () => {
   const base = await mkdtemp(join(tmpdir(), "roll-base-"));
   const changed = await mkdtemp(join(tmpdir(), "roll-changed-"));

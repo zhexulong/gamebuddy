@@ -80,13 +80,6 @@ public static class BridgeProtocol
                 : "invalid_observe_scene_request";
             return false;
         }
-        if ((value is ObservationBindingV1 binding && !IsValidObservationBinding(binding))
-            || (value is null && typeof(T) == typeof(ObservationBindingV1)))
-        {
-            json = string.Empty;
-            reasonCode = "observation_binding_malformed";
-            return false;
-        }
         if (!IsValidBodyProgramOutboundResult(value))
         {
             json = string.Empty;
@@ -1245,9 +1238,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || !payload.TryGetProperty("args", out JsonElement args)
                 || ExecutionArgumentProperties(action.GetString()) is not { } argumentProperties
                 || !HasExactProperties(args, argumentProperties)
-                 || (action.GetString() == "pickup_forage"
-                     && (!args.TryGetProperty("sceneTarget", out JsonElement sceneTarget)
-                         || !TryReadObservationBinding(sceneTarget, out _)))
                  || (action.GetString() == "navigate_to_destination"
                      && (!args.TryGetProperty("destination", out JsonElement destination)
                          || !IsExactNavigationDestinationSelector(destination)))
@@ -1292,37 +1282,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 reasonCode = "invalid_json";
                 return false;
             }
-        }
-    }
-
-    public static bool TryDeserializeObservationBindingV1(
-        string json,
-        out ObservationBindingV1? binding,
-        out string reasonCode)
-    {
-        binding = null;
-        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes)
-        {
-            reasonCode = "message_too_large";
-            return false;
-        }
-
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(json);
-            if (!TryReadObservationBinding(document.RootElement, out binding))
-            {
-                reasonCode = "observation_binding_malformed";
-                return false;
-            }
-
-            reasonCode = "accepted";
-            return true;
-        }
-        catch (JsonException)
-        {
-            reasonCode = "observation_binding_malformed";
-            return false;
         }
     }
 
@@ -1658,22 +1617,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         Span<byte> bytes = stackalloc byte[12];
         return Convert.TryFromBase64String(encoded.Replace('-', '+').Replace('_', '/'), bytes, out int written)
             && written == bytes.Length;
-    }
-
-    private static bool IsValidObservationBinding(ObservationBindingV1? binding) => binding is not null
-        && IsOpaqueId(binding.ObservationId)
-        && IsOpaqueId(binding.Ref);
-
-    private static bool TryReadObservationBinding(JsonElement value, out ObservationBindingV1? binding)
-    {
-        binding = null;
-        if (!HasExactProperties(value, "observationId", "ref")
-            || !ReadOpaqueString(value.GetProperty("observationId"), out string? observationId)
-            || !ReadOpaqueString(value.GetProperty("ref"), out string? reference))
-            return false;
-
-        binding = new ObservationBindingV1(observationId!, reference!);
-        return true;
     }
 
     private static bool IsValidObserveSceneRequest(ObserveSceneRequestPayload? request) => request is not null
@@ -2057,7 +2000,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             "use_raft" => new[] { "slot", "x", "y" },
             "mount_transport" or "enter_mine" or "use_mine_ladder" => new[] { "x", "y", "expectedTargetId" },
             "equip_tool" => new[] { "tool" },
-        "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
+        "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
             "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" or "break_resource_clump" => new[] { "x", "y", "expectedTargetId" },
         // talk_to_npc names the villager through the NPC family's opaque target id

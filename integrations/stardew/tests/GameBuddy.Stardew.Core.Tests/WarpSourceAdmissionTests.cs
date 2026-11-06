@@ -248,9 +248,6 @@ public sealed class WarpSourceAdmissionTests
             Text = text,
             Choice = choice,
             Destination = destination,
-            SceneTarget = descriptor.SceneTarget is null
-                ? null
-                : new ObservationBindingV1("obs_0000000000000000", "ref_0000000000000000"),
         };
     }
 

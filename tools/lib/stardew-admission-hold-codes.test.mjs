@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { ADMISSION_HOLD_CODES, isAdmissionHold } from "./stardew-admission-hold-codes.mjs";
+import { ADMISSION_HOLD_CODES, WAITING_FOR_BODY_PREFIX, isAdmissionHold } from "./stardew-admission-hold-codes.mjs";
 
 /**
  * The list must match the Mod's OWN source, or it becomes one more stale mirror - which is the failure it exists
@@ -52,8 +52,28 @@ test("the list carries nothing the Mod cannot return", () => {
   }
 });
 
+test("the waiting-for-body prefix is the Mod's own spelling", () => {
+  // The wait's code is assembled in the Mod from one constant, so this reads that constant rather than trusting a hand
+  // copy: a renamed prefix here would silently stop recognising a queued request's refusal.
+  const controller = readFileSync(path.join(ROOT, "integrations", "stardew", "farmhandexecutioncontroller.cs"), "utf8");
+  const declared = /WaitingForBodyPrefix = "([a-z0-9_:]+)"/.exec(controller);
+  assert.notEqual(declared, null, "the Mod must declare the wait prefix as one constant");
+  assert.equal(
+    WAITING_FOR_BODY_PREFIX,
+    declared[1],
+    "the harness mirror and the Mod disagree about the wait's spelling, so a queued refusal would read as an unknown code",
+  );
+});
+
 test("isAdmissionHold accepts the holds and refuses anything else", () => {
   for (const code of ADMISSION_HOLD_CODES) assert.equal(isAdmissionHold(code), true, code);
+  // A queued request's expired wait IS a body hold: the body being occupied is what refused it.
+  assert.equal(isAdmissionHold("waiting_for_body:body_owned_by_activity"), true, "the named wait");
+  assert.equal(
+    isAdmissionHold("waiting_for_body:"),
+    false,
+    "a bare prefix names no owner, so it is not a code the Mod can mint",
+  );
   // The point of the helper: an unrelated refusal must NOT read as a hold, or a gate would pass on the wrong one.
   for (const code of [
     "talk_to_npc_target_not_found",

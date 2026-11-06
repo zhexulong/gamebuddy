@@ -169,9 +169,11 @@ public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string 
 public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
 public sealed record FarmhandActionPostconditionWire(string Name);
 public sealed record FarmhandActionObservationBindingDescriptorWire(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
-/// <summary>Where the body must already stand, in the Mod's own words (<c>Relation</c>, e.g. `adjacent`), or null
-/// when that relationship states no distance.</summary>
-public sealed record FarmhandActionApproachRequirementWire(string Relation, int? WithinTiles);
+/// <summary>Where the body must already stand, in the Mod's own words (<c>Relation</c>: `adjacent`, or `self_walked`
+/// when the action closes the distance itself), or null when that relationship states no distance.</summary>
+public sealed record FarmhandActionApproachRequirementWire(
+    string Relation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WithinTiles = null);
 public sealed record FarmhandActionDescriptorWire(
     IReadOnlyList<FarmhandActionArgumentWire> Arguments,
     IReadOnlyDictionary<string, string> OutputFacts,
@@ -397,7 +399,7 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 /// only instantiated, non-event villagers on a loaded location appear.
 /// </para>
 /// </summary>
-public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
+public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
 /// One farm location's ready-for-harvest crop summary, across the loaded world.
