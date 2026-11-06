@@ -1,3 +1,4 @@
+import type { ProblemStep } from "../composed-problem-view";
 import type { Messages } from "../i18n";
 import type { BrowserTurnV1 } from "../reference-pipeline-api";
 
@@ -89,3 +90,35 @@ export function turnFailureText(
   if (problemCode === undefined) return labels.chatFailed;
   return byCode[problemCode] ?? labels.chatFailed;
 }
+
+/**
+ * What a failed turn leaves the player able to do, per code and per classified cause.
+ *
+ * The sentence above already tells the player what happened and, in most of its members, what to do
+ * about it - "You can try again", "Fix the key for this connection in Settings". The step is the
+ * same fact as a type, so it can be held to the product rather than read out of prose:
+ * `tools/check-fail-closed-forward-path.mjs` requires a step for every member here, requires the
+ * control it names to be one the surface really draws (`data-testid="composer-send"` on the
+ * composer's send button, `new-chat` on the chats list), and requires an entry that answers with a
+ * control somewhere else to have the family's own sentence say so (`elsewhere.said_as`).
+ *
+ * The split is the one the catalogue's own sentences make. A turn that was interrupted, presented
+ * nothing or could not be written is re-sent - the composer still holds the words, and Send is the
+ * control that does it. A provider refusal is not re-sent, because the same message would fail the
+ * same way: it is fixed in Settings, where the connection and the model live. `context_overflow` is
+ * neither - the room is freed by starting a new chat, which is the one control the sentence names.
+ */
+export const TURN_FAILURE_STEPS: Readonly<
+  Record<NonNullable<BrowserTurnV1["problemCode"]> | NonNullable<BrowserTurnV1["providerFailure"]>, ProblemStep>
+> = {
+  interrupted: { kind: "control", id: "composer-send" },
+  no_visible_presentation: { kind: "control", id: "composer-send" },
+  storage_unavailable: { kind: "control", id: "composer-send" },
+  runtime_unavailable: { kind: "outside_surface", step: "open_settings" },
+
+  credential_rejected: { kind: "outside_surface", step: "open_settings" },
+  model_not_served: { kind: "outside_surface", step: "open_settings" },
+  rate_limited: { kind: "outside_surface", step: "open_settings" },
+  endpoint_unreachable: { kind: "outside_surface", step: "open_settings" },
+  context_overflow: { kind: "control", id: "new-chat", elsewhere: { said_as: "start a new chat" } },
+};

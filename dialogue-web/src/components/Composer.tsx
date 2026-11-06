@@ -296,6 +296,7 @@ export function Composer({
             <button
               type="button"
               className="composer-button send-button"
+              data-testid="composer-send"
               onClick={onSend}
               disabled={disabled || sendUnavailable || !value.trim()}
               title={labels.send}

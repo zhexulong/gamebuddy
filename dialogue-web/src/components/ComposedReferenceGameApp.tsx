@@ -16,7 +16,11 @@ import {
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
-import { composedProblemView as problemView, declaredProblemSentence } from "../composed-problem-view";
+import {
+  composedProblemView as problemView,
+  declaredProblemSentence,
+  PROBLEM_RETRY_READ,
+} from "../composed-problem-view";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import {
   type ComposedPreviewV1,
@@ -665,7 +669,7 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The problem screen's one step: the read it came from, taken again.
+   * The step the card can perform itself: the read it came from, taken again.
    *
    * `rereadChat` is that read - the composed root and the draft it carries, which is what the mount
    * took and every view here was committed over - so the control is a real call rather than a reload,
@@ -673,6 +677,11 @@ export function ComposedReferenceGameApp() {
    * Host refuses commits its own sentence to the same card. The ref is the single-flight guard; the
    * button shows nothing while the read is outstanding, so a second state would only be a second
    * `/state`.
+   *
+   * The action carries `PROBLEM_RETRY_READ` as its id, and `ProblemView` draws it for exactly the
+   * failures whose `step` names that control: a refusal whose answer is something else (`turn_busy`, a
+   * signed-out session, an oversized message) states its own step instead and gets no button that
+   * cannot help it.
    */
   const problemRetryRef = useRef(false);
   const retryProblemView = (): void => {
@@ -1455,7 +1464,9 @@ export function ComposedReferenceGameApp() {
           <ProblemView
             title={view.title}
             detail={view.detail}
-            action={{ label: labels().problemRetryRead, run: retryProblemView }}
+            step={view.step}
+            action={{ id: PROBLEM_RETRY_READ, label: labels().problemRetryRead, run: retryProblemView }}
+            labels={labels()}
           />
         )}
         {view.kind === "ready" && view.session.snapshot.chat !== null && (

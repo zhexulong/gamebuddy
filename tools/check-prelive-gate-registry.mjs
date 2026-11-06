@@ -297,6 +297,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:evidence-bundle",
   },
   {
+    path: "tools/check-fail-closed-forward-path.mjs",
+    reason:
+      "elsewhere: reads every refusal the two browser contracts declare and the step its own sentence owes " +
+      "the player, runs on every push in the CI gates job",
+    runsIn: "pnpm check:fail-closed-forward-path",
+  },
+  {
     path: "tools/check-game-historian-rubric.mjs",
     reason: "elsewhere: static rubric gate over the historian prompt, runs on every push in the CI gates job",
     runsIn: "pnpm check:game-historian-rubric",

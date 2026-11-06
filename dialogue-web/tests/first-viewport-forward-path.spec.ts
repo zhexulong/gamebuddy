@@ -60,6 +60,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { GAME_SESSION_INPUTS, GAME_SESSION_PHASES, deriveGameSessionControls } from "../src/game-lifecycle-controls";
+import { PROBLEM_CODES } from "../src/reference-pipeline-api";
 import * as surfaceRoute from "../src/composed-surface-route";
 import { type Page, type Route, expect, test } from "./frontend-coverage";
 
@@ -165,6 +166,14 @@ function contractLiterals(declarationName: string, propertyName: string): readon
 }
 
 const SHELL_VIEW_KINDS = declaredKinds(SHELL_VIEW_FILES, "ViewState");
+/**
+ * `ProblemViewState` now carries its own step, so the walk above reaches `ProblemStep`'s four kinds
+ * too. They are the failure's answer vocabulary, not states of the shell, so they are subtracted
+ * here - derived from the same declaration rather than listed by hand, so a fifth step kind joins
+ * this reading the moment the product declares it.
+ */
+const PROBLEM_STEP_KINDS = declaredKinds(["src/composed-problem-view.ts"], "ProblemStep");
+const SHELL_STATE_KINDS = SHELL_VIEW_KINDS.filter((kind) => !PROBLEM_STEP_KINDS.includes(kind));
 const SUBMIT_AVAILABILITY = contractLiterals("TavernBrowserOperationV1Schema", "availability");
 
 // ---------------------------------------------------------------------------------------------
@@ -590,6 +599,9 @@ const GAME_STEP_CONTROL: Readonly<Record<string, string | null>> = {
   retry_resume: "game-resume",
   cancel_resume: "game-resume-cancel",
   create: "game-create",
+  // `game_not_read`: the Host could not read the instance row, so the panel's own reread is the
+  // step - the same `data-testid="game-reread"` control `GameStatePanel` draws for it.
+  reread_game: "game-reread",
   terminal: null,
   wait_for_game: null,
   restart_gamebuddy: null,
@@ -867,14 +879,19 @@ for (const surface of SURFACES) {
  */
 test("the shell's own states are each measured or named as a gap", async ({ page }) => {
   expect(
-    SHELL_VIEW_KINDS.length,
+    SHELL_STATE_KINDS.length,
     `src/components/composed-reference-game-view.ts declares no ViewState kinds, so this gate's shell population is empty`,
   ).toBeGreaterThan(0);
 
   const assessed: string[] = [];
   const unassessed: string[] = [];
+  if (PROBLEM_STEP_KINDS.length > 0)
+    unassessed.push(
+      `${PROBLEM_STEP_KINDS.join("/")} - reached through ProblemViewState's step, and not a state of the shell: ` +
+        "`tools/check-fail-closed-forward-path.mjs` owns that vocabulary",
+    );
 
-  for (const kind of SHELL_VIEW_KINDS) {
+  for (const kind of SHELL_STATE_KINDS) {
     if (kind === "ready") {
       assessed.push(`${kind} (the ${SURFACES.length} surfaces above)`);
       continue;
@@ -931,4 +948,67 @@ test("the shell's own states are each measured or named as a gap", async ({ page
   );
   for (const entry of assessed) console.log(`[forward-path] assessed: ${entry}`);
   for (const entry of unassessed) console.log(`[forward-path] unassessed: ${entry}`);
+});
+
+/**
+ * Every refusal the tavern contract can answer with, on the card that shows it, at 400x800.
+ *
+ * The defect this is written against is the card's own history: one button for all sixty-six codes,
+ * so `turn_busy`, `session_expired` and `payload_too_large` each offered a re-read that could not
+ * help, and a reader could not tell a step they could take from one they could not. The answer is
+ * now the failure's own `step` (`src/composed-problem-view.ts`), and the card renders it as it is: a
+ * button when the step is the card's own read, and otherwise a sentence naming what to do instead.
+ *
+ * So the assertion is the shape a player needs, not a list of expected words: per code, either an
+ * enabled control inside the window or a non-empty step line inside it. A `no_step` refusal is
+ * covered by the same rule - its line is what says the request cannot be carried out, and an empty
+ * or absent line is exactly the dead end this exists to catch.
+ *
+ * The population is the contract mirror's own closed union, so a code added to the contract is
+ * measured the first time this runs.
+ */
+test("every tavern problem code leaves a step in the first viewport", async ({ page }) => {
+  test.setTimeout(300_000);
+  expect(
+    PROBLEM_CODES.length,
+    "src/reference-pipeline-api.ts declares no problem codes, so this gate's population is empty",
+  ).toBeGreaterThan(0);
+
+  // One handler, switched per code: re-registering a route per iteration would stack handlers and
+  // answer with whichever was registered last rather than with the code under test.
+  let underTest = "";
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(problem(403, underTest)));
+
+  const deadEnds: string[] = [];
+  for (const code of PROBLEM_CODES) {
+    underTest = code;
+    await page.setViewportSize(VIEWPORT);
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    const card = page.locator(".problem-view");
+    await expect(card, `${code}: the problem card never mounted`).toBeVisible();
+
+    const control = page.locator(".problem-view button");
+    const controls = await control.count();
+    const enabled = controls > 0 ? (await control.first().isEnabled()) && (await control.first().boundingBox()) : null;
+    const inWindow = enabled !== null && enabled.y >= -1 && enabled.y + enabled.height <= VIEWPORT.height + 1;
+
+    const stepLine = page.locator('.problem-view [data-testid="problem-step"]');
+    const lines = await stepLine.count();
+    const text = lines > 0 ? ((await stepLine.first().textContent()) ?? "").trim() : "";
+    const lineBox = lines > 0 ? await stepLine.first().boundingBox() : null;
+    const lineInWindow = lineBox !== null && lineBox.y >= -1 && lineBox.y + lineBox.height <= VIEWPORT.height + 1;
+
+    const reads = (await card.innerText()).replace(/\s+/gu, " ").trim();
+    if (!((inWindow && enabled !== null) || (text.length > 0 && lineInWindow)))
+      deadEnds.push(
+        `${code}: controls ${controls}, step lines ${lines} ("${text}"), card reads: ${reads}`,
+      );
+  }
+
+  console.log(`[forward-path] problem codes measured: ${PROBLEM_CODES.length}, dead ends: ${deadEnds.length}`);
+  expect(
+    deadEnds.length,
+    `${deadEnds.length} of ${PROBLEM_CODES.length} refusals leave the player nothing to act on inside the ` +
+      `${VIEWPORT.width}x${VIEWPORT.height} first viewport:\n${deadEnds.join("\n")}`,
+  ).toBe(0);
 });

@@ -57,28 +57,81 @@ import { ReferencePipelineSessionError } from "./reference-pipeline-session";
  * `idempotency_conflict`, where the Host stated it did not run the command at all.
  */
 
-export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string }>;
+export type ProblemViewState = Readonly<{ kind: "problem"; title: string; detail: string; step: ProblemStep }>;
+
+/**
+ * What the player does next, as the failure's own type.
+ *
+ * A closed state that names what went wrong and not what to do is the defect this type exists
+ * against. Sixty-one tavern refusals and twenty-three game ones shared one sentence pair and, at
+ * the card, one button - the read taken again - so `turn_busy`, `session_expired` and
+ * `payload_too_large` all offered the same step, and for three of those a re-read cannot help. The
+ * step is now part of the sentence, which makes it a compile error to word a refusal without
+ * answering it (see `sentence` below).
+ *
+ * The four kinds are the four true answers, and the card renders each differently:
+ *
+ *  - `control` - a control the product really has, named by the marker that control already
+ *    carries (`problem-retry-read` on this card; `message-delete`, `new-chat`, `game-stop` on the
+ *    surface the refusal came from). `elsewhere` is for a control this whole-window card cannot
+ *    draw, and `said_as` is the phrase the family's own `detail` must literally contain - so
+ *    "the answer is that button over there" is a claim the sentence can be held to, not a comment.
+ *  - `outside_surface` - the step is off this page entirely: a saved connection in Settings, a fresh
+ *    bootstrap handoff, a fresh GameBuddy. The card says which one.
+ *  - `self_heals` - there is nothing to press because the condition ends by itself: the Host
+ *    finishes the turn it is on (`host_retries`), the next read shows the state the page is owed
+ *    (`next_read`), or the event stream reconnects and catches the page up (`stream_resumes`).
+ *  - `no_step` - the intent is refused for good: no control anywhere changes it and nothing will
+ *    resolve by waiting. `because` is the reason, and the family's `detail` has to state the
+ *    constraint that makes it so (`over_a_ceiling`, `already_true`, `not_this_artifact`).
+ *
+ * The vocabulary is closed in both directions: the `Record<TavernProblemCode, ProblemSentence>` and
+ * `Record<GameProblemCode, GameProblemView>` annotations make a new code a missing answer here, and
+ * `tools/check-fail-closed-forward-path.mjs` holds every step's id, phrase and reason to what the
+ * product really declares.
+ */
+export type ProblemStep =
+  | Readonly<{ kind: "control"; id: string; elsewhere?: Readonly<{ said_as: string }> }>
+  | Readonly<{ kind: "outside_surface"; step: "open_settings" | "retry_bootstrap" | "restart_gamebuddy" }>
+  | Readonly<{ kind: "self_heals"; because: "host_retries" | "next_read" | "stream_resumes" }>
+  | Readonly<{ kind: "no_step"; because: "over_a_ceiling" | "already_true" | "not_this_artifact" }>;
+
+/**
+ * The card's own control: the read the failure came from, taken again.
+ *
+ * It is the only step this whole-window card can perform - `ProblemView` draws a button for exactly
+ * this id and for no other - which is why it is a named constant rather than a string at each
+ * family: `ComposedReferenceGameApp` builds the action from it and `ProblemView` renders it.
+ */
+export const PROBLEM_RETRY_READ = "problem-retry-read";
+
+const RETRY_READ: ProblemStep = { kind: "control", id: PROBLEM_RETRY_READ };
+const RESTART_GAMEBUDDY: ProblemStep = { kind: "outside_surface", step: "restart_gamebuddy" };
+/** Waiting is the whole step: the Host is working, and it ends its own work. */
+const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "host_retries" };
+/** Nothing is in flight; the page is simply behind, and its next read is the state it is owed. */
+const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };
 
 /** One player-facing sentence pair, shared by every code whose fact and next step are the same. */
 type ProblemSentence = (labels: Messages) => ProblemViewState;
 
-function sentence(title: string, detail: string): ProblemViewState {
-  return { kind: "problem", title, detail };
+function sentence(title: string, detail: string, step: ProblemStep): ProblemViewState {
+  return { kind: "problem", title, detail, step };
 }
 
 // --- Authentication, reconciliation, absent route ---------------------------------------------
 
 /** Codes whose own meaning is "there is no live session behind this request". */
 const sessionExpired: ProblemSentence = (labels) =>
-  sentence(labels.problemSessionExpiredTitle, labels.problemSessionExpiredDetail);
+  sentence(labels.problemSessionExpiredTitle, labels.problemSessionExpiredDetail, RESTART_GAMEBUDDY);
 
 /** Codes whose own meaning is "the state could not be safely reconciled". */
 const reconciliationFailed: ProblemSentence = (labels) =>
-  sentence(labels.problemReconciliationFailedTitle, labels.problemReconciliationFailedDetail);
+  sentence(labels.problemReconciliationFailedTitle, labels.problemReconciliationFailedDetail, RETRY_READ);
 
 /** Codes whose own meaning is "the page asked for a route this build does not serve". */
 const routeUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.problemRouteUnavailableTitle, labels.problemRouteUnavailableDetail);
+  sentence(labels.problemRouteUnavailableTitle, labels.problemRouteUnavailableDetail, RESTART_GAMEBUDDY);
 
 // --- The message mutations: one sentence each -------------------------------------------------
 //
@@ -87,28 +140,37 @@ const routeUnavailable: ProblemSentence = (labels) =>
 // unable to tell what happened to the conversation. Each refusal names its own point or its own row.
 
 const chatMessageNotFound: ProblemSentence = (labels) =>
-  sentence(labels.problemChatMessageNotFoundTitle, labels.problemChatMessageNotFoundDetail);
+  sentence(labels.problemChatMessageNotFoundTitle, labels.problemChatMessageNotFoundDetail, RETRY_READ);
 
 const chatMessageRevisionConflict: ProblemSentence = (labels) =>
-  sentence(labels.problemChatMessageRevisionConflictTitle, labels.problemChatMessageRevisionConflictDetail);
+  sentence(labels.problemChatMessageRevisionConflictTitle, labels.problemChatMessageRevisionConflictDetail, RETRY_READ);
 
 const chatRewindOpeningRetained: ProblemSentence = (labels) =>
-  sentence(labels.problemChatRewindOpeningRetainedTitle, labels.problemChatRewindOpeningRetainedDetail);
+  sentence(labels.problemChatRewindOpeningRetainedTitle, labels.problemChatRewindOpeningRetainedDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 const chatRewindTurnActive: ProblemSentence = (labels) =>
-  sentence(labels.problemChatRewindTurnActiveTitle, labels.problemChatRewindTurnActiveDetail);
+  sentence(labels.problemChatRewindTurnActiveTitle, labels.problemChatRewindTurnActiveDetail, HOST_RETRIES);
 
 const chatEditTurnActive: ProblemSentence = (labels) =>
-  sentence(labels.problemChatEditTurnActiveTitle, labels.problemChatEditTurnActiveDetail);
+  sentence(labels.problemChatEditTurnActiveTitle, labels.problemChatEditTurnActiveDetail, HOST_RETRIES);
 
 const chatDeleteOpeningRetained: ProblemSentence = (labels) =>
-  sentence(labels.problemChatDeleteOpeningRetainedTitle, labels.problemChatDeleteOpeningRetainedDetail);
+  sentence(labels.problemChatDeleteOpeningRetainedTitle, labels.problemChatDeleteOpeningRetainedDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 const chatDeleteTurnActive: ProblemSentence = (labels) =>
-  sentence(labels.problemChatDeleteTurnActiveTitle, labels.problemChatDeleteTurnActiveDetail);
+  sentence(labels.problemChatDeleteTurnActiveTitle, labels.problemChatDeleteTurnActiveDetail, HOST_RETRIES);
 
 const chatDeleteBindingUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.problemChatDeleteBindingUnavailableTitle, labels.problemChatDeleteBindingUnavailableDetail);
+  sentence(labels.problemChatDeleteBindingUnavailableTitle, labels.problemChatDeleteBindingUnavailableDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 /**
  * Discarding one variant, when it is the last one: the reply would be left with nothing to read, and
@@ -116,7 +178,11 @@ const chatDeleteBindingUnavailable: ProblemSentence = (labels) =>
  * "could not change the conversation".
  */
 const chatSwipeLastVariant: ProblemSentence = (labels) =>
-  sentence(labels.problemChatSwipeLastVariantTitle, labels.problemChatSwipeLastVariantDetail);
+  sentence(labels.problemChatSwipeLastVariantTitle, labels.problemChatSwipeLastVariantDetail, {
+    kind: "control",
+    id: "message-delete",
+    elsewhere: { said_as: "delete the message" },
+  });
 
 // --- Ten refusals that say the same thing: what you edited moved first --------------------------
 //
@@ -127,7 +193,7 @@ const chatSwipeLastVariant: ProblemSentence = (labels) =>
 // sentence - a stale write is not a busy system, a missing item or an outage.
 
 const revisionConflict: ProblemSentence = (labels) =>
-  sentence(labels.problemRevisionConflictTitle, labels.problemRevisionConflictDetail);
+  sentence(labels.problemRevisionConflictTitle, labels.problemRevisionConflictDetail, RETRY_READ);
 
 // --- Four one-at-a-time refusals ----------------------------------------------------------------
 
@@ -135,7 +201,7 @@ const revisionConflict: ProblemSentence = (labels) =>
  * A turn, a selection change, a dialogue activation or the same request is already in progress.
  */
 const stillRunning: ProblemSentence = (labels) =>
-  sentence(labels.problemStillRunningTitle, labels.problemStillRunningDetail);
+  sentence(labels.problemStillRunningTitle, labels.problemStillRunningDetail, HOST_RETRIES);
 
 /**
  * Saving her directive would carry the profile to the Chats that pin it, and one of them is answering.
@@ -143,62 +209,93 @@ const stillRunning: ProblemSentence = (labels) =>
  * "save again once the reply finishes", and it is the save that is held, not the reply.
  */
 const characterVoiceTurnActive: ProblemSentence = (labels) =>
-  sentence(labels.problemCharacterVoiceTurnActiveTitle, labels.problemCharacterVoiceTurnActiveDetail);
+  sentence(labels.problemCharacterVoiceTurnActiveTitle, labels.problemCharacterVoiceTurnActiveDetail, HOST_RETRIES);
 
 /** A repeat that the Host could not recognise as the same request, so it did not run it twice. */
 const repeatNotMatched: ProblemSentence = (labels) =>
-  sentence(labels.problemRepeatNotMatchedTitle, labels.problemRepeatNotMatchedDetail);
+  sentence(labels.problemRepeatNotMatchedTitle, labels.problemRepeatNotMatchedDetail, RETRY_READ);
 
 /** Five "the handle names nothing any more" refusals: a companion, connection, Chat, entry, import. */
-const noSuchItem: ProblemSentence = (labels) => sentence(labels.problemNoSuchItemTitle, labels.problemNoSuchItemDetail);
+const noSuchItem: ProblemSentence = (labels) =>
+  sentence(labels.problemNoSuchItemTitle, labels.problemNoSuchItemDetail, RETRY_READ);
 
 /** Stopping a turn that had already finished or never started: there was nothing to stop. */
 const turnNotRunning: ProblemSentence = (labels) =>
-  sentence(labels.problemTurnNotRunningTitle, labels.problemTurnNotRunningDetail);
+  sentence(labels.problemTurnNotRunningTitle, labels.problemTurnNotRunningDetail, NEXT_READ);
 
 /** The runtime, the presentation path or the store could not be used just now: retry is the answer. */
 const serviceUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.problemServiceUnavailableTitle, labels.problemServiceUnavailableDetail);
+  sentence(labels.problemServiceUnavailableTitle, labels.problemServiceUnavailableDetail, RETRY_READ);
 
 /** The live event stream lost its place; the page is behind the authoritative state. */
 const streamResyncRequired: ProblemSentence = (labels) =>
-  sentence(labels.problemStreamResyncTitle, labels.problemStreamResyncDetail);
+  sentence(labels.problemStreamResyncTitle, labels.problemStreamResyncDetail, RETRY_READ);
 
 /** A request this build could not take as it was sent - malformed, or over the body ceiling. */
 const requestRejected: ProblemSentence = (labels) =>
-  sentence(labels.problemRequestRejectedTitle, labels.problemRequestRejectedDetail);
+  sentence(labels.problemRequestRejectedTitle, labels.problemRequestRejectedDetail, {
+    kind: "control",
+    id: "composer-send",
+    elsewhere: { said_as: "send a smaller one" },
+  });
 
 // --- Authored content and the reviewed card import ---------------------------------------------
 
 /** Her authored text (persona/scenario/greeting) is not content the Host can keep as written. */
 const authoredContentInvalid: ProblemSentence = (labels) =>
-  sentence(labels.problemAuthoredContentInvalidTitle, labels.problemAuthoredContentInvalidDetail);
+  sentence(labels.problemAuthoredContentInvalidTitle, labels.problemAuthoredContentInvalidDetail, {
+    kind: "control",
+    id: "persona-editor",
+    elsewhere: { said_as: "save again" },
+  });
 
 /** The review or the confirm step of an import carried fields the Host cannot accept. */
 const importFormInvalid: ProblemSentence = (labels) =>
-  sentence(labels.problemImportFormInvalidTitle, labels.problemImportFormInvalidDetail);
+  sentence(labels.problemImportFormInvalidTitle, labels.problemImportFormInvalidDetail, {
+    kind: "control",
+    id: "card-import-trigger",
+    elsewhere: { said_as: "Start the import again from the file" },
+  });
 
 /** The chosen file is not a Tavern character card this Host's import accepts. */
 const cardImportRejected: ProblemSentence = (labels) =>
-  sentence(labels.problemCardImportRejectedTitle, labels.problemCardImportRejectedDetail);
+  sentence(labels.problemCardImportRejectedTitle, labels.problemCardImportRejectedDetail, {
+    kind: "control",
+    id: "card-import-trigger",
+    elsewhere: { said_as: "choose it again" },
+  });
 
 // --- Her own records: a card, a picture ---------------------------------------------------------
 
 /** Her records do not fit a card the import accepts, and retrying cannot shrink them. */
 const cardTooLarge: ProblemSentence = (labels) =>
-  sentence(labels.problemCardTooLargeTitle, labels.problemCardTooLargeDetail);
+  sentence(labels.problemCardTooLargeTitle, labels.problemCardTooLargeDetail, {
+    kind: "no_step",
+    because: "over_a_ceiling",
+  });
 
 /** A PNG card must carry a picture and she has none; the JSON card carries her records without one. */
 const cardImageAbsent: ProblemSentence = (labels) =>
-  sentence(labels.problemCardImageAbsentTitle, labels.problemCardImageAbsentDetail);
+  sentence(labels.problemCardImageAbsentTitle, labels.problemCardImageAbsentDetail, {
+    kind: "control",
+    id: "companion-card-export-json",
+    elsewhere: { said_as: "Export the JSON card instead" },
+  });
 
 /** Her picture is over the avatar ceiling or not a complete PNG - either way, choose another file. */
 const avatarRejected: ProblemSentence = (labels) =>
-  sentence(labels.problemAvatarRejectedTitle, labels.problemAvatarRejectedDetail);
+  sentence(labels.problemAvatarRejectedTitle, labels.problemAvatarRejectedDetail, {
+    kind: "control",
+    id: "companion-avatar-choose",
+    elsewhere: { said_as: "Choose a smaller, complete PNG" },
+  });
 
 /** Her durable record is absent, incomplete or unreadable: a data-integrity fact, not an outage. */
 const recordUnreadable: ProblemSentence = (labels) =>
-  sentence(labels.problemRecordUnreadableTitle, labels.problemRecordUnreadableDetail);
+  sentence(labels.problemRecordUnreadableTitle, labels.problemRecordUnreadableDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 /**
  * The companion in play cannot be deleted: her Chats are the mounted conversation, so removing
@@ -206,7 +303,10 @@ const recordUnreadable: ProblemSentence = (labels) =>
  * fault, and the surface's own control is absent for her for the same reason.
  */
 const companionInPlay: ProblemSentence = (labels) =>
-  sentence(labels.problemCompanionInPlayTitle, labels.problemCompanionInPlayDetail);
+  sentence(labels.problemCompanionInPlayTitle, labels.problemCompanionInPlayDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 /**
  * Choosing the companion who is already in play is not a switch: there is nothing to record, and
@@ -214,7 +314,10 @@ const companionInPlay: ProblemSentence = (labels) =>
  * is nothing at all - not "try again", not "reload".
  */
 const companionAlreadyInPlay: ProblemSentence = (labels) =>
-  sentence(labels.problemCompanionAlreadyInPlayTitle, labels.problemCompanionAlreadyInPlayDetail);
+  sentence(labels.problemCompanionAlreadyInPlayTitle, labels.problemCompanionAlreadyInPlayDetail, {
+    kind: "no_step",
+    because: "already_true",
+  });
 
 /**
  * A running Game session owns the companion it started with: the Mod authorizes exactly one
@@ -223,55 +326,86 @@ const companionAlreadyInPlay: ProblemSentence = (labels) =>
  * player can take, which is what the sentence names.
  */
 const companionSwitchBlockedBySession: ProblemSentence = (labels) =>
-  sentence(labels.problemCompanionSwitchSessionTitle, labels.problemCompanionSwitchSessionDetail);
+  sentence(labels.problemCompanionSwitchSessionTitle, labels.problemCompanionSwitchSessionDetail, {
+    kind: "control",
+    id: "game-stop",
+    elsewhere: { said_as: "Stop the game first" },
+  });
 
 // --- The opening a Chat started on --------------------------------------------------------------
 
 /** The opening is sealed: the conversation has messages, so its greeting can no longer change. */
 const openingLocked: ProblemSentence = (labels) =>
-  sentence(labels.problemOpeningLockedTitle, labels.problemOpeningLockedDetail);
+  sentence(labels.problemOpeningLockedTitle, labels.problemOpeningLockedDetail, {
+    kind: "control",
+    id: "new-chat",
+    elsewhere: { said_as: "Start a new chat" },
+  });
 
 /** This Chat's opening is not a reviewed greeting set, so there is no other opening to choose. */
 const openingNotReviewable: ProblemSentence = (labels) =>
-  sentence(labels.problemOpeningNotReviewableTitle, labels.problemOpeningNotReviewableDetail);
+  sentence(labels.problemOpeningNotReviewableTitle, labels.problemOpeningNotReviewableDetail, {
+    kind: "no_step",
+    because: "not_this_artifact",
+  });
 
 /** The named opening is no longer a member of this Chat's greeting set. */
 const openingVariantGone: ProblemSentence = (labels) =>
-  sentence(labels.problemOpeningVariantGoneTitle, labels.problemOpeningVariantGoneDetail);
+  sentence(labels.problemOpeningVariantGoneTitle, labels.problemOpeningVariantGoneDetail, RETRY_READ);
 
 // --- Her world book -----------------------------------------------------------------------------
 
 /** She has no world book to replace. */
 const worldBookAbsent: ProblemSentence = (labels) =>
-  sentence(labels.problemWorldBookAbsentTitle, labels.problemWorldBookAbsentDetail);
+  sentence(labels.problemWorldBookAbsentTitle, labels.problemWorldBookAbsentDetail, {
+    kind: "control",
+    id: "world-book-create",
+    elsewhere: { said_as: "Save a new one" },
+  });
 
 /** The book was replaced, but the threads pinning the previous revision could not follow it. */
 const worldBookBindingPartial: ProblemSentence = (labels) =>
-  sentence(labels.problemWorldBookBindingPartialTitle, labels.problemWorldBookBindingPartialDetail);
+  sentence(labels.problemWorldBookBindingPartialTitle, labels.problemWorldBookBindingPartialDetail, RETRY_READ);
 
 // --- The managed World Info library -------------------------------------------------------------
 
 /** Another entry already holds the title this one was saved under. */
 const worldInfoTitleTaken: ProblemSentence = (labels) =>
-  sentence(labels.problemWorldInfoTitleTakenTitle, labels.problemWorldInfoTitleTakenDetail);
+  sentence(labels.problemWorldInfoTitleTakenTitle, labels.problemWorldInfoTitleTakenDetail, {
+    kind: "control",
+    id: "world-book-submit",
+    elsewhere: { said_as: "save again" },
+  });
 
 /** The mounted Chat still reads this entry, so it cannot be deleted out from under it. */
 const worldInfoInUse: ProblemSentence = (labels) =>
-  sentence(labels.problemWorldInfoInUseTitle, labels.problemWorldInfoInUseDetail);
+  sentence(labels.problemWorldInfoInUseTitle, labels.problemWorldInfoInUseDetail, {
+    kind: "control",
+    id: "world-book-list",
+    elsewhere: { said_as: "Untie it from the chat first" },
+  });
 
 // --- The player's own connections ----------------------------------------------------------------
 
 /** The connection has not been proven to answer yet, so it cannot become the active one. */
 const connectionNotReady: ProblemSentence = (labels) =>
-  sentence(labels.problemConnectionNotReadyTitle, labels.problemConnectionNotReadyDetail);
+  sentence(labels.problemConnectionNotReadyTitle, labels.problemConnectionNotReadyDetail, {
+    kind: "control",
+    id: "connection-form",
+    elsewhere: { said_as: "Test it" },
+  });
 
 /** The connection list moved, or the connection named is the active one and cannot be removed. */
 const connectionConflict: ProblemSentence = (labels) =>
-  sentence(labels.problemConnectionConflictTitle, labels.problemConnectionConflictDetail);
+  sentence(labels.problemConnectionConflictTitle, labels.problemConnectionConflictDetail, RETRY_READ);
 
 /** As many connections as this Host keeps: one has to go before another can be added. */
 const connectionLimitReached: ProblemSentence = (labels) =>
-  sentence(labels.problemConnectionLimitReachedTitle, labels.problemConnectionLimitReachedDetail);
+  sentence(labels.problemConnectionLimitReachedTitle, labels.problemConnectionLimitReachedDetail, {
+    kind: "control",
+    id: "connection-list",
+    elsewhere: { said_as: "Remove one" },
+  });
 
 /**
  * Every member of the contract's `ProblemCode` union, and the sentence the player reads for it.
@@ -401,32 +535,49 @@ function unsettled(sentenceOf: ProblemSentence): GameProblemView {
 // running); these name a game the chat page is not on, so \"Reload the chat\" would point the player
 // at the wrong page.
 const gamePrerequisitesMissing: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemPrerequisitesMissingTitle, labels.gameProblemPrerequisitesMissingDetail);
+  sentence(labels.gameProblemPrerequisitesMissingTitle, labels.gameProblemPrerequisitesMissingDetail, {
+    kind: "control",
+    id: "companion-choose",
+    elsewhere: { said_as: "Enable companion play" },
+  });
 const gameCompatibility: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemCompatibilityTitle, labels.gameProblemCompatibilityDetail);
+  sentence(labels.gameProblemCompatibilityTitle, labels.gameProblemCompatibilityDetail, {
+    kind: "control",
+    id: "game-start-guide",
+    elsewhere: { said_as: "Fix the installation" },
+  });
 const gameInstanceGone: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemInstanceGoneTitle, labels.gameProblemInstanceGoneDetail);
+  sentence(labels.gameProblemInstanceGoneTitle, labels.gameProblemInstanceGoneDetail, RETRY_READ);
 const gameAttachmentMoved: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemAttachmentMovedTitle, labels.gameProblemAttachmentMovedDetail);
+  sentence(labels.gameProblemAttachmentMovedTitle, labels.gameProblemAttachmentMovedDetail, RETRY_READ);
 const gameNotRepeated: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemNotRepeatedTitle, labels.gameProblemNotRepeatedDetail);
+  sentence(labels.gameProblemNotRepeatedTitle, labels.gameProblemNotRepeatedDetail, RETRY_READ);
 const gameCabinChoiceStale: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemCabinChoiceStaleTitle, labels.gameProblemCabinChoiceStaleDetail);
+  sentence(labels.gameProblemCabinChoiceStaleTitle, labels.gameProblemCabinChoiceStaleDetail, {
+    kind: "control",
+    id: "cabin-choice-list",
+    elsewhere: { said_as: "Read the cabins again" },
+  });
 const gameHandoffUncertain: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemHandoffUncertainTitle, labels.gameProblemHandoffUncertainDetail);
+  sentence(labels.gameProblemHandoffUncertainTitle, labels.gameProblemHandoffUncertainDetail, HOST_RETRIES);
 const gameRuntimeUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemRuntimeUnavailableTitle, labels.gameProblemRuntimeUnavailableDetail);
+  sentence(labels.gameProblemRuntimeUnavailableTitle, labels.gameProblemRuntimeUnavailableDetail, RETRY_READ);
 const gameStorageUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemStorageUnavailableTitle, labels.gameProblemStorageUnavailableDetail);
+  sentence(labels.gameProblemStorageUnavailableTitle, labels.gameProblemStorageUnavailableDetail, RETRY_READ);
 const gameEndgameSettlement: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemEndgameSettlementTitle, labels.gameProblemEndgameSettlementDetail);
-const gameClosed: ProblemSentence = (labels) => sentence(labels.gameProblemClosedTitle, labels.gameProblemClosedDetail);
+  sentence(labels.gameProblemEndgameSettlementTitle, labels.gameProblemEndgameSettlementDetail, RETRY_READ);
+const gameClosed: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemClosedTitle, labels.gameProblemClosedDetail, {
+    kind: "control",
+    id: "game-activate",
+    elsewhere: { said_as: "Open the game again from GameBuddy" },
+  });
 const gameRequestRejected: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemRequestRejectedTitle, labels.gameProblemRequestRejectedDetail);
+  sentence(labels.gameProblemRequestRejectedTitle, labels.gameProblemRequestRejectedDetail, RETRY_READ);
 const gameRouteUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemRouteUnavailableTitle, labels.gameProblemRouteUnavailableDetail);
+  sentence(labels.gameProblemRouteUnavailableTitle, labels.gameProblemRouteUnavailableDetail, RESTART_GAMEBUDDY);
 const gameStateUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail);
+  sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail, RETRY_READ);
 
 /**
  * Every member of the game contract's `GameProblemCode` union, and what the player reads for it.
@@ -451,6 +602,7 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
         cause === null
           ? labels.gameProblemUnavailableDetail
           : labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", cause),
+        RETRY_READ,
       ),
   },
   game_prerequisites_missing: refused(gamePrerequisitesMissing),
@@ -549,6 +701,7 @@ function internalProblem(error: unknown, labels: Messages): ProblemViewState {
     kind: "problem",
     title: labels.problemInternalErrorTitle,
     detail: template.replace("{{code}}", code).replace("{{cause}}", cause ?? ""),
+    step: RETRY_READ,
   };
 }
 
@@ -616,6 +769,7 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
       kind: "problem",
       title: labels.problemTemporarilyUnavailableTitle,
       detail: labels.problemTemporarilyUnavailableDetail,
+      step: RETRY_READ,
     };
   }
   return internalProblem(error, labels);
