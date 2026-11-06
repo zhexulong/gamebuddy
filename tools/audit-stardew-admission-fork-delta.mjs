@@ -37,12 +37,19 @@ const DELTA_STATES = Object.freeze([
   { state: "eating", fact: "Eating", reachable: true },
   { state: "a tool swing in progress", fact: "UsingTool", reachable: true },
   { state: "a charged tool", fact: "ToolCharged (toolPower != 0)", reachable: true },
-  { state: "another body slot is owned (navigate/mount/bus/day)", fact: "ExecutionManager body exclusivity", reachable: true },
+  {
+    state: "another body slot is owned (navigate/mount/bus/day)",
+    fact: "ExecutionManager body exclusivity",
+    reachable: true,
+  },
 ]);
 
 /** The extra clauses a site tests BEYOND the triple, which the migration keeps or drops deliberately. */
 const EXTRA_CLAUSE_PATTERNS = Object.freeze([
-  { text: "|| Game1.player.isEating", means: "already tests eating; the authority covers it too, so this clause becomes redundant" },
+  {
+    text: "|| Game1.player.isEating",
+    means: "already tests eating; the authority covers it too, so this clause becomes redundant",
+  },
   { text: "|| Game1.dialogueUp", means: "already tests a dialogue; the authority's DialogueUp fact is the same fact" },
 ]);
 
@@ -64,7 +71,13 @@ function enclosingMethod(lines, index) {
   for (let at = index; at >= 0; at -= 1) {
     const line = lines[at];
     if (/^\s{4}(private|internal|public|protected)\s/.test(line) && line.includes("(") && !line.trim().startsWith("//"))
-      return { name: line.trim().replace(/\s*\{?\s*$/, "").slice(0, 120), line: at + 1 };
+      return {
+        name: line
+          .trim()
+          .replace(/\s*\{?\s*$/, "")
+          .slice(0, 120),
+        line: at + 1,
+      };
   }
   return { name: "(unknown)", line: null };
 }
@@ -117,7 +130,10 @@ function findSites(sourceRoot) {
       });
     }
   }
-  return { sites: [...sites, ...split].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line), splitCount: split.length };
+  return {
+    sites: [...sites, ...split].sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line),
+    splitCount: split.length,
+  };
 }
 
 const values = parseArguments(process.argv.slice(2));
@@ -154,10 +170,14 @@ const report = {
 
 if (values.has("json")) console.log(JSON.stringify(report, null, 2));
 else {
-  console.log(`${report.artifactKind}: ${report.siteCount} forked sites (${report.exactTripleCount} exact triple, ${report.splitSpellingCount} split spelling)`);
+  console.log(
+    `${report.artifactKind}: ${report.siteCount} forked sites (${report.exactTripleCount} exact triple, ${report.splitSpellingCount} split spelling)`,
+  );
   console.log("");
   for (const site of report.sites)
-    console.log(`  ${site.file}:${site.line}  ${site.method}\n      ${site.spelling}${site.extraClauses.length ? ` (+ ${site.extraClauses.join(" ")})` : ""}`);
+    console.log(
+      `  ${site.file}:${site.line}  ${site.method}\n      ${site.spelling}${site.extraClauses.length ? ` (+ ${site.extraClauses.join(" ")})` : ""}`,
+    );
   console.log("");
   console.log("Every converging site would ALSO refuse these states (the authority requires disposition Idle):");
   for (const state of report.newlyRefusedStates) console.log(`  - ${state.state}   [${state.fact}]`);

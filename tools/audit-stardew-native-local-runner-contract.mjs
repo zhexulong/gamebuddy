@@ -164,7 +164,10 @@ const classify = (code) => {
 };
 
 export function auditRunnerContracts({ toolsRoot = TOOLS, fixturePath } = {}) {
-  const fixture = readFileSync(fixturePath ?? path.join(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"), "utf8");
+  const fixture = readFileSync(
+    fixturePath ?? path.join(ROOT, "tools/lib/stardew-native-local-player-fixture.mjs"),
+    "utf8",
+  );
 
   // The fixture's own output shape is the authority for what a runner may expect.
   const fixtureWritesRetiredShape = /^result\.(ActionPolicyVersion|EnabledActions)\s*=/m.test(fixture);
@@ -173,9 +176,15 @@ export function auditRunnerContracts({ toolsRoot = TOOLS, fixturePath } = {}) {
 
   const findings = [];
   if (!fixtureWritesDenyByException)
-    findings.push({ kind: "contract", detail: "fixture no longer writes the deny-by-exception policy this audit assumes" });
+    findings.push({
+      kind: "contract",
+      detail: "fixture no longer writes the deny-by-exception policy this audit assumes",
+    });
   if (fixtureWritesRetiredShape)
-    findings.push({ kind: "contract", detail: "fixture writes the retired ActionPolicyVersion/EnabledActions shape again" });
+    findings.push({
+      kind: "contract",
+      detail: "fixture writes the retired ActionPolicyVersion/EnabledActions shape again",
+    });
 
   const names = readdirSync(toolsRoot)
     .filter((name) => /^run-stardew-native-local-player-.*-smoke\.mjs$/.test(name))

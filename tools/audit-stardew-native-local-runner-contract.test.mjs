@@ -52,9 +52,9 @@ const CONFORMING_RUNNER = "dig-artifact-spot";
 // silently turn the assertions below into no-ops.
 const RETIRED_SHAPE_SOURCE = [
   "export async function runSyntheticSmoke(client, receipts, config) {",
-  "  if (config.ActionPolicyVersion !== 0) throw new Error(\"native_local_action_policy_invalid\");",
-  "  if (JSON.stringify(config.EnabledActions) !== JSON.stringify([])) throw new Error(\"invalid\");",
-  "  return { state: \"blocked\" };",
+  '  if (config.ActionPolicyVersion !== 0) throw new Error("native_local_action_policy_invalid");',
+  '  if (JSON.stringify(config.EnabledActions) !== JSON.stringify([])) throw new Error("invalid");',
+  '  return { state: "blocked" };',
   "}",
   "",
 ].join("\n");
@@ -92,7 +92,9 @@ test("regressing a baseline-conforming runner to an equality capability set is a
   assert.notEqual(mutated, original, "mutation must actually change the source");
   writeFileSync(box.runnerPath(CONFORMING_RUNNER), mutated);
 
-  const named = box.audit().findings.filter((f) => f.kind === "conforming_regression" && f.runner === CONFORMING_RUNNER);
+  const named = box
+    .audit()
+    .findings.filter((f) => f.kind === "conforming_regression" && f.runner === CONFORMING_RUNNER);
   assert.equal(named.length, 1);
   assert.match(named[0].detail, /exact-capability-set/);
 });
@@ -120,7 +122,7 @@ test("a NEW runner that conforms is accepted", () => {
   const before = box.audit();
   writeFileSync(box.runnerPath(newId), conforming);
   const report = box.audit();
-  assert.equal(report.newRunnerCount, before.newRunnerCount + 1, 'the new runner must be detected as new');
+  assert.equal(report.newRunnerCount, before.newRunnerCount + 1, "the new runner must be detected as new");
   assert.deepEqual(report.findings, [], "a conforming new runner is not a finding");
 });
 

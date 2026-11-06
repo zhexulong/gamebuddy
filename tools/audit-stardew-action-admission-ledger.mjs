@@ -38,9 +38,7 @@ function readModSources(rev) {
     .split("\n")
     .map((line) => line.trim())
     .filter((file) => file.length > 0 && MOD_GLOB.test(file));
-  return new Map(
-    files.map((file) => [file, execFileSync("git", ["show", `${rev}:${file}`], { encoding: "utf8" })]),
-  );
+  return new Map(files.map((file) => [file, execFileSync("git", ["show", `${rev}:${file}`], { encoding: "utf8" })]));
 }
 
 /**
@@ -76,7 +74,8 @@ function classifyActionableGuards(sources) {
       // `notActionable` flag whose ternary is two lines up; it serves both
       // profiles and is already accounted for by the per-profile counters, so it
       // must not be misread as an action-body check.
-      const inSharedHelper = /if \(notActionable\)/.test(condition) || /AdmissionActionabilityProfile/.test(lines[index - 2] ?? "");
+      const inSharedHelper =
+        /if \(notActionable\)/.test(condition) || /AdmissionActionabilityProfile/.test(lines[index - 2] ?? "");
       if (inSharedHelper) continue;
       if (/UsingTool|toolPower/.test(condition)) physical.push(where);
       else if (/activeClickableMenu|eventUp|CanMove/.test(condition)) general.push(where);
@@ -97,14 +96,10 @@ function deriveHandlerShape(sources) {
     const starts = [...text.matchAll(/public LocalExecutionReceipt (Request\w+)\(/g)];
     handlers += starts.length;
     for (let index = 0; index < starts.length; index += 1) {
-      const body = text.slice(
-        starts[index].index,
-        index + 1 < starts.length ? starts[index + 1].index : text.length,
-      );
+      const body = text.slice(starts[index].index, index + 1 < starts.length ? starts[index + 1].index : text.length);
       const revisions = (body.match(/this\.revision\+\+/g) ?? []).length;
       const ids = (body.match(/Guid\.NewGuid\(\)/g) ?? []).length;
-      if (revisions !== 1 || ids !== 1)
-        anomalies.push(`${file}:${starts[index][1]} revision=${revisions} guid=${ids}`);
+      if (revisions !== 1 || ids !== 1) anomalies.push(`${file}:${starts[index][1]} revision=${revisions} guid=${ids}`);
     }
   }
   return { handlers, anomalies };
@@ -128,8 +123,14 @@ const derived = {
   // own definition line is excluded so the value is the number of migrated
   // handlers, not migrated handlers + 1.
   sharedAdmissionCalls: countLines(sources, String.raw`this\.AdmitExecution\(`),
-  sharedAdmissionPhysical: countLines(sources, String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.Physical`),
-  sharedAdmissionGeneral: countLines(sources, String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.General`),
+  sharedAdmissionPhysical: countLines(
+    sources,
+    String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.Physical`,
+  ),
+  sharedAdmissionGeneral: countLines(
+    sources,
+    String.raw`this\.AdmitExecution\(.*AdmissionActionabilityProfile\.General`,
+  ),
 };
 const guards = classifyActionableGuards(sources);
 const shape = deriveHandlerShape(sources);
@@ -193,6 +194,8 @@ console.log(JSON.stringify(report, null, 2));
 if (drift.length > 0) {
   console.error(`\n${LEDGER_FILE} ledger drift:`);
   for (const [key, value] of drift)
-    console.error(`  ${key}: document says ${value}, source has ${derived[key] ?? report.actionableGuardProfiles[key]}`);
+    console.error(
+      `  ${key}: document says ${value}, source has ${derived[key] ?? report.actionableGuardProfiles[key]}`,
+    );
 }
 if (options.check && drift.length > 0) process.exitCode = 1;

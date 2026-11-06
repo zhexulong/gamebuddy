@@ -124,10 +124,7 @@ test("the delta states are cited to the facts that produce them", () => {
 
 test("a source root that is not there is an error, not an empty worklist", () => {
   // "I could not look" and "there is nothing" must not be confused: the second reads as a clean worklist.
-  assert.throws(
-    () => measure(["--source-root", "docs"]),
-    /stardew_source_root_missing/,
-  );
+  assert.throws(() => measure(["--source-root", "docs"]), /stardew_source_root_missing/);
 });
 
 test("a tree with no Mod sources reports zero rather than a default list", () => {
