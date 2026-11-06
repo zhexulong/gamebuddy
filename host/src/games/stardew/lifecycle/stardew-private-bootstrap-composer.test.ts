@@ -1880,10 +1880,13 @@ test("only the production internal and dedicated test-only adapter import the co
 
   assert.deepEqual(coreImporters.sort(), [
     "stardew-private-bootstrap-composer.internal.ts",
+    // The internal-boundary suite imports the core module on purpose: its subject IS the boundary.
+    "stardew-private-bootstrap-composer.private.test.ts",
     "stardew-private-bootstrap-composer.test-support-internal.ts",
     "stardew-private-bootstrap-composer.test.ts",
   ]);
   assert.deepEqual(testInternalImporters.sort(), [
+    "stardew-private-bootstrap-composer.private.test.ts",
     "stardew-private-bootstrap-composer.test-fixtures.ts",
     "stardew-private-bootstrap-composer.test-support.ts",
     "stardew-private-bootstrap-composer.test.ts",
