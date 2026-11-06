@@ -131,6 +131,19 @@ const output = `${executed.stdout ?? ""}${executed.stderr ?? ""}`;
 const rows = inventory(output);
 const missed = unassessed(output);
 const violated = failures(output);
+// A runner that exits 0 without printing a single MEASURE line has measured nothing, and a check whose
+// population is empty agrees with itself. On 2026-11-05 this gate reported
+// `"status":"passed","fields":0,"declared":0` on a page that always renders text fields, which is the
+// same shape as a capture phase that skipped every driver and reported success.
+if (rows.length === 0 && executed.status === 0) {
+  const detail =
+    "the journey exited 0 and printed no MEASURE line, so this gate measured no field and cannot pass; a green run reads fields>=2";
+  process.stdout.write(
+    `${JSON.stringify(report({ status: "blocked", rows, missed, violations: violated, detail }))}\n`,
+  );
+  process.stderr.write(`draft_declaration_coverage: ${detail}\n`);
+  process.exit(1);
+}
 const status = executed.status === 0 ? "passed" : "failed";
 const reading = report({
   status,
