@@ -421,8 +421,7 @@ export async function inspectStardewGameplaySurface({ gamePath } = {}) {
       .filter((entry) => entry.isFile() && /^farmhandexecutioncontroller(\.[a-z0-9]+)*\.cs$/.test(entry.name))
       .map((entry) => entry.name)
       .sort();
-    if (executionManagerParts.length === 0)
-      throw new Error("execution_manager_source_missing");
+    if (executionManagerParts.length === 0) throw new Error("execution_manager_source_missing");
     const bridgeSource = (
       await Promise.all(executionManagerParts.map((name) => readFile(path.join(modSourceRoot, name), "utf8")))
     ).join("\n");

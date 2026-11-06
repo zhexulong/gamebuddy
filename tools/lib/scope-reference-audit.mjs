@@ -76,9 +76,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { Language, Parser } from "web-tree-sitter";
+import { grammarWasmFor, JAVASCRIPT_GRAMMARS, parseJavaScript } from "./javascript-ast.mjs";
 
 /** Rule ids a caller may disable. `parse_error` is not disableable. */
 export const SCOPE_REFERENCE_RULES = Object.freeze(["out_of_scope_reference", "read_before_declaration"]);
@@ -86,15 +85,7 @@ export const SCOPE_REFERENCE_RULES = Object.freeze(["out_of_scope_reference", "r
 export const PARSE_ERROR_RULE = "parse_error";
 
 /** Extensions this audit understands, mapped to their grammar's wasm file. */
-export const SUPPORTED_EXTENSIONS = Object.freeze({
-  ".cjs": "tree-sitter-javascript.wasm",
-  ".js": "tree-sitter-javascript.wasm",
-  ".mjs": "tree-sitter-javascript.wasm",
-  ".cts": "tree-sitter-typescript.wasm",
-  ".mts": "tree-sitter-typescript.wasm",
-  ".ts": "tree-sitter-typescript.wasm",
-  ".tsx": "tree-sitter-tsx.wasm",
-});
+export const SUPPORTED_EXTENSIONS = JAVASCRIPT_GRAMMARS;
 
 const FUNCTION_LIKE = new Set([
   "arrow_function",
@@ -251,29 +242,6 @@ export const HOST_GLOBALS = new Set([
   "undefined",
   "unescape",
 ]);
-
-const require = createRequire(import.meta.url);
-const wasmDirectory = path.join(path.dirname(require.resolve("@vscode/tree-sitter-wasm/package.json")), "wasm");
-
-const parserPromises = new Map();
-
-function parserFor(grammarWasm) {
-  let promise = parserPromises.get(grammarWasm);
-  if (promise === undefined) {
-    promise = (async () => {
-      await Parser.init();
-      const parser = new Parser();
-      parser.setLanguage(await Language.load(path.join(wasmDirectory, grammarWasm)));
-      return parser;
-    })();
-    parserPromises.set(grammarWasm, promise);
-  }
-  return promise;
-}
-
-function grammarFor(fileName) {
-  return SUPPORTED_EXTENSIONS[path.extname(fileName).toLowerCase()] ?? null;
-}
 
 class Scope {
   constructor(parent, node, kind) {
@@ -599,14 +567,11 @@ function firstErrorNode(root) {
 export async function analyzeSource(source, options = {}) {
   const fileName = options.fileName ?? "<source>";
   const enabled = new Set(options.rules ?? SCOPE_REFERENCE_RULES);
-  const grammarWasm = grammarFor(fileName);
-  if (grammarWasm === null) {
+  if (grammarWasmFor(fileName) === null) {
     throw new Error(`scope-reference audit does not support ${JSON.stringify(fileName)}`);
   }
 
-  const parser = await parserFor(grammarWasm);
-  const tree = parser.parse(source);
-  const root = tree.rootNode;
+  const root = (await parseJavaScript(source, fileName)).rootNode;
   const starts = lineStarts(source);
 
   if (root.hasError) {

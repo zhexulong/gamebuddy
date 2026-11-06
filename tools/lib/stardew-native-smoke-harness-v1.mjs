@@ -79,7 +79,8 @@ export async function observeFresh(client, { actionable = false } = {}) {
  * bounded, so a world that never settles still fails rather than looping.
  */
 export async function executeFreshAfterReobserve(client, options, { attempts = 3 } = {}) {
-  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 8) throw new NativeSmokeHarnessError("invalid_native_reobserve_attempts");
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 8)
+    throw new NativeSmokeHarnessError("invalid_native_reobserve_attempts");
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     // BOTH windows belong inside the try. The observation itself is the more likely one to go stale: the
@@ -156,8 +157,14 @@ export function assertExactCapabilities(snapshot, expectedCapabilities) {
   const expected = [...expectedCapabilities].sort();
   if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
     // Name what differed, bounded, so a blocked gate is diagnosable from its own output.
-    const missing = expected.filter((value) => !actual.includes(value)).slice(0, 5).join(",");
-    const unexpected = actual.filter((value) => !expected.includes(value)).slice(0, 5).join(",");
+    const missing = expected
+      .filter((value) => !actual.includes(value))
+      .slice(0, 5)
+      .join(",");
+    const unexpected = actual
+      .filter((value) => !expected.includes(value))
+      .slice(0, 5)
+      .join(",");
     throw new NativeSmokeHarnessError(
       "native_capability_surface_mismatch",
       `actual=${actual.length}:expected=${expected.length}:missing=${missing}:unexpected=${unexpected}`,
@@ -228,17 +235,15 @@ export function assertRequiredCapabilities(snapshot, requiredCapabilities) {
  * deny-by-exception the published底座 is legitimately advertised and a runner
  * cannot narrow it; the isolation proof lives in stardew-policy-isolation.
  */
-export function validateNativeLocalFixturePolicy(
-  config,
-  { requiredActions = [], experimentalActions } = {},
-) {
+export function validateNativeLocalFixturePolicy(config, { requiredActions = [], experimentalActions } = {}) {
   const denied = config?.DeniedActions;
   const deniedFamilies = config?.DeniedActionFamilies;
   if (!Array.isArray(denied) || !Array.isArray(deniedFamilies))
     throw new NativeSmokeHarnessError("native_fixture_policy_invalid");
   const deniedSet = new Set(denied);
   const blocking = requiredActions.filter((action) => deniedSet.has(action));
-  if (blocking.length > 0) throw new NativeSmokeHarnessError(`native_fixture_policy_denies_required:${blocking.join(",")}`);
+  if (blocking.length > 0)
+    throw new NativeSmokeHarnessError(`native_fixture_policy_denies_required:${blocking.join(",")}`);
   const optedIn = config?.ExperimentalActions;
   if (!Array.isArray(optedIn)) throw new NativeSmokeHarnessError("native_fixture_policy_invalid");
   // Only enforced when the caller declares which actions may legitimately be
@@ -247,7 +252,8 @@ export function validateNativeLocalFixturePolicy(
   if (Array.isArray(experimentalActions)) {
     const allowed = new Set(experimentalActions);
     const illegal = optedIn.filter((action) => !allowed.has(action));
-    if (illegal.length > 0) throw new NativeSmokeHarnessError(`native_fixture_policy_illegal_opt_in:${illegal.join(",")}`);
+    if (illegal.length > 0)
+      throw new NativeSmokeHarnessError(`native_fixture_policy_illegal_opt_in:${illegal.join(",")}`);
   }
   return config;
 }
@@ -314,7 +320,15 @@ export async function observeTopologySnapshot(client, topology, { actionable = f
       if (!(error instanceof Error) || error.message !== "observe_snapshot_not_admitted") throw error;
     }
     const cached = client.state?.snapshot ?? null;
-    if (cached !== null && typeof cached.location === "string" && cached.location.length > 0 && cached.location !== "unknown" && Number.isSafeInteger(cached.tile?.x) && cached.tile.x >= 0 && (!actionable || cached.actionable === true)) {
+    if (
+      cached !== null &&
+      typeof cached.location === "string" &&
+      cached.location.length > 0 &&
+      cached.location !== "unknown" &&
+      Number.isSafeInteger(cached.tile?.x) &&
+      cached.tile.x >= 0 &&
+      (!actionable || cached.actionable === true)
+    ) {
       return cached;
     }
     await delay(100);
@@ -441,12 +455,13 @@ export async function connectNativeLocalClient(
   const unsubscribe = client.onFact((fact) => {
     if (fact.type === "execution_receipt") receipts.push(fact.payload);
   });
-  const unsubscribeDiagnostic = typeof client.onDiagnostic === "function"
-    ? client.onDiagnostic((diagnostic) => {
-      diagnostics.push(diagnostic);
-      if (diagnostics.length > 16) diagnostics.shift();
-    })
-    : () => {};
+  const unsubscribeDiagnostic =
+    typeof client.onDiagnostic === "function"
+      ? client.onDiagnostic((diagnostic) => {
+          diagnostics.push(diagnostic);
+          if (diagnostics.length > 16) diagnostics.shift();
+        })
+      : () => {};
   return {
     client,
     scope,
@@ -512,9 +527,18 @@ export async function waitForFreshSnapshot(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const snapshot = await observeFreshPolling(client);
-    if (snapshot.revision < minRevision) { await delay(100); continue; }
-    if (requireActionable && (snapshot.actionable !== true || snapshot.activeExecution != null)) { await delay(100); continue; }
-    if (check !== undefined && !check(snapshot)) { await delay(100); continue; }
+    if (snapshot.revision < minRevision) {
+      await delay(100);
+      continue;
+    }
+    if (requireActionable && (snapshot.actionable !== true || snapshot.activeExecution != null)) {
+      await delay(100);
+      continue;
+    }
+    if (check !== undefined && !check(snapshot)) {
+      await delay(100);
+      continue;
+    }
     return snapshot;
   }
   throw new NativeSmokeHarnessError("native_fresh_snapshot_timeout");

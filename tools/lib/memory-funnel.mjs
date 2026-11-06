@@ -244,7 +244,8 @@ function stageDecay({ distance, foldObserved, postFoldAssembly, realFold }) {
   if (!useRealFold && foldObserved !== true) return gap("L3_decay", "fold_not_observed", "restart_substitute");
   if (useRealFold) {
     if (realFold.revision === undefined) return gap("L3_decay", "fold_commit_revision_unobserved", "fold_commit");
-    if (realFold.postFoldRenderedIds === undefined) return gap("L3_decay", "fold_post_render_unobserved", "fold_commit");
+    if (realFold.postFoldRenderedIds === undefined)
+      return gap("L3_decay", "fold_post_render_unobserved", "fold_commit");
     // The fold-commit marker and the memory-ids line share ONE revision; the ids
     // observed at that revision ARE the post-fold rendered set.
     if (realFold.seedId === undefined) return gap("L3_decay", "fold_seed_id_unobserved", "fold_commit");
@@ -352,9 +353,12 @@ export function attributeMemoryFunnel(observation = {}) {
  */
 const RECOMMENDATIONS = Object.freeze({
   L1_write: "persistence layer: check the CAS/transaction outcome on the write path before blaming recall",
-  L2_assembly: "context materialization: the fact was stored but did not survive rendering - inspect the token budget and visibility predicate",
-  L3_decay: "consolidation: the fact survived until a fold/restart and then did not - inspect the fold compression and whether this fact class needs a permanent exemption",
-  L4_expression: "presentation admission: the fact was in the context but did not reach the reply - inspect the system prompt's attention and the model settings",
+  L2_assembly:
+    "context materialization: the fact was stored but did not survive rendering - inspect the token budget and visibility predicate",
+  L3_decay:
+    "consolidation: the fact survived until a fold/restart and then did not - inspect the fold compression and whether this fact class needs a permanent exemption",
+  L4_expression:
+    "presentation admission: the fact was in the context but did not reach the reply - inspect the system prompt's attention and the model settings",
 });
 
 /**
@@ -365,7 +369,8 @@ const RECOMMENDATIONS = Object.freeze({
  */
 export function summarizeMemoryFunnel(observations = []) {
   const counts = {};
-  for (const stageId of MEMORY_FUNNEL_STAGES) counts[stageId] = { passed: 0, broken: 0, observability_gap: 0, not_reached: 0 };
+  for (const stageId of MEMORY_FUNNEL_STAGES)
+    counts[stageId] = { passed: 0, broken: 0, observability_gap: 0, not_reached: 0 };
   const findings = [];
   for (const observation of observations) {
     const attributed = attributeMemoryFunnel(observation);
@@ -393,35 +398,32 @@ export function summarizeMemoryFunnel(observations = []) {
  * run that reported nothing.
  */
 export function m0DigestsFromMarkers(markers) {
-	let observed = false;
-	const passes = [];
-	for (const line of markers) {
-		const match = /^\[probe:m0_digest\]\s+([a-f0-9]{64})\s+(\S+)\s*$/u.exec(
-			String(line).trim(),
-		);
-		if (match === null) continue;
-		observed = true;
-		passes.push(Object.freeze({ digest: match[1], revision: match[2] }));
-	}
-	if (!observed) return undefined;
-	if (passes.length === 0)
-		return Object.freeze({ observed: true, passes: Object.freeze([]), stable: null });
-	// Stability is judged PER REVISION: every pass that rendered the same
-	// materialization must have produced the same m[0] bytes (that is the
-	// prefix-cache contract). A revision change is a fold, not a defect.
-	const byRevision = new Map();
-	for (const pass of passes) {
-		const set = byRevision.get(pass.revision) ?? new Set();
-		set.add(pass.digest);
-		byRevision.set(pass.revision, set);
-	}
-	const stable = [...byRevision.values()].every((digests) => digests.size === 1);
-	return Object.freeze({
-		observed: true,
-		revisionCount: byRevision.size,
-		passes: Object.freeze(passes),
-		stable,
-	});
+  let observed = false;
+  const passes = [];
+  for (const line of markers) {
+    const match = /^\[probe:m0_digest\]\s+([a-f0-9]{64})\s+(\S+)\s*$/u.exec(String(line).trim());
+    if (match === null) continue;
+    observed = true;
+    passes.push(Object.freeze({ digest: match[1], revision: match[2] }));
+  }
+  if (!observed) return undefined;
+  if (passes.length === 0) return Object.freeze({ observed: true, passes: Object.freeze([]), stable: null });
+  // Stability is judged PER REVISION: every pass that rendered the same
+  // materialization must have produced the same m[0] bytes (that is the
+  // prefix-cache contract). A revision change is a fold, not a defect.
+  const byRevision = new Map();
+  for (const pass of passes) {
+    const set = byRevision.get(pass.revision) ?? new Set();
+    set.add(pass.digest);
+    byRevision.set(pass.revision, set);
+  }
+  const stable = [...byRevision.values()].every((digests) => digests.size === 1);
+  return Object.freeze({
+    observed: true,
+    revisionCount: byRevision.size,
+    passes: Object.freeze(passes),
+    stable,
+  });
 }
 /**
  * Parse the authored-source marker lines: which KINDS of reviewed context Magic
@@ -434,25 +436,23 @@ export function m0DigestsFromMarkers(markers) {
  * observation must not read as a negative one.
  */
 export function m0SourcesFromMarkers(markers) {
-	let observed = false;
-	const stable = new Set();
-	const volatileKinds = new Set();
-	for (const line of markers) {
-		const match = /^\[probe:m0_sources\]\s+(\S+)\s+stable=(\S+)\s+volatile=(\S+)\s*$/u.exec(
-			String(line).trim(),
-		);
-		if (match === null) continue;
-		observed = true;
-		for (const kind of match[2].split(",")) if (kind !== "-") stable.add(kind);
-		for (const kind of match[3].split(",")) if (kind !== "-") volatileKinds.add(kind);
-	}
-	if (!observed) return undefined;
-	const stableKinds = Object.freeze([...stable].sort());
-	return Object.freeze({
-		observed: true,
-		stableKinds,
-		volatileKinds: Object.freeze([...volatileKinds].sort()),
-		// The one fact S3 is about: reviewed always-on background reached m[0].
-		lorebookConstantPresent: stable.has("lorebook_constant"),
-	});
+  let observed = false;
+  const stable = new Set();
+  const volatileKinds = new Set();
+  for (const line of markers) {
+    const match = /^\[probe:m0_sources\]\s+(\S+)\s+stable=(\S+)\s+volatile=(\S+)\s*$/u.exec(String(line).trim());
+    if (match === null) continue;
+    observed = true;
+    for (const kind of match[2].split(",")) if (kind !== "-") stable.add(kind);
+    for (const kind of match[3].split(",")) if (kind !== "-") volatileKinds.add(kind);
+  }
+  if (!observed) return undefined;
+  const stableKinds = Object.freeze([...stable].sort());
+  return Object.freeze({
+    observed: true,
+    stableKinds,
+    volatileKinds: Object.freeze([...volatileKinds].sort()),
+    // The one fact S3 is about: reviewed always-on background reached m[0].
+    lorebookConstantPresent: stable.has("lorebook_constant"),
+  });
 }

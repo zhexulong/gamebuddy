@@ -96,7 +96,11 @@ test("every probe fixture scores a plausible wrong reply as a failure", async ()
       keywords: evaluateProbeReply({ transcriptText: replies.wrong, step }),
       dimension: probe.dimension,
     });
-    assert.notEqual(verdict.event, "needle.hit", `${probeId}: a wrong reply PASSED - the probe cannot detect this failure`);
+    assert.notEqual(
+      verdict.event,
+      "needle.hit",
+      `${probeId}: a wrong reply PASSED - the probe cannot detect this failure`,
+    );
     if (probeId === "p-supersede-stress") {
       // The both-answers fudge must land on the supersession failure, not on a
       // generic confusion, because criterion 3 is specifically about that.
@@ -156,7 +160,9 @@ test("the required keywords are recallable from the seeds at the declared thresh
     const manifest = await loadFixture(`${probeId.replace("p-", "")}.json`);
     const probe = manifest.probes[0];
     const step = probe.steps.find((candidate) => candidate.kind === "probe");
-    const seeds = probe.steps.filter((candidate) => candidate.kind === "seed").map((candidate) => candidate.text.toLowerCase());
+    const seeds = probe.steps
+      .filter((candidate) => candidate.kind === "seed")
+      .map((candidate) => candidate.text.toLowerCase());
     const allSeedText = seeds.join(" ");
     const required = step.requiredKeywords ?? [];
     const threshold = Math.ceil(required.length * (step.minHitRate ?? 0.5));
@@ -188,9 +194,13 @@ test("every fixture on disk is valid, digest-pinned, and has a regenerate check"
     assert.match(manifest.manifestDigest, /^[a-f0-9]{64}$/);
     // The checked-in JSON must be exactly what its generator emits, or the digest
     // describes something other than what the harness will load.
-    const generated = await run(process.execPath, [fileURLToPath(new URL(name.replace(/\.json$/, ".manifest.mjs"), PROBE_DIR))], {
-      maxBuffer: 4 * 1024 * 1024,
-    });
+    const generated = await run(
+      process.execPath,
+      [fileURLToPath(new URL(name.replace(/\.json$/, ".manifest.mjs"), PROBE_DIR))],
+      {
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
     const regenerated = JSON.parse(generated.stdout);
     assert.equal(regenerated.manifestDigest, manifest.manifestDigest, `${name}: digest drifted from its generator`);
   }
@@ -205,6 +215,9 @@ test("embodied probes carry a standing directive and an action-shaped question",
     const step = probe.steps.find((candidate) => candidate.kind === "probe");
     assert.equal(probe.seedClass, "explicit", `${name}: an embodied probe needs an explicit directive`);
     assert.match(step.text, /\?/, `${name}: the probe turn must ask something`);
-    assert.ok((step.forbiddenKeywords ?? []).length > 0, `${name}: without a forbidden set a wrong ACTION cannot be detected`);
+    assert.ok(
+      (step.forbiddenKeywords ?? []).length > 0,
+      `${name}: without a forbidden set a wrong ACTION cannot be detected`,
+    );
   }
 });

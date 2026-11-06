@@ -6,13 +6,15 @@ const DEFAULT_ERROR_CODE = "atomic_directory";
 
 function errorName(code, errorCode) {
   if (errorCode !== "ci_snapshot" && errorCode !== "ci_snapshot_output") return code;
-  return {
-    parent_invalid: "output_root_invalid",
-    staging_invalid: errorCode === "ci_snapshot" ? "temporary_output_invalid" : "output_root_invalid",
-    final_invalid: "output_root_invalid",
-    staging_unavailable: "temporary_output_unavailable",
-    output_exists: "output_exists",
-  }[code] ?? code;
+  return (
+    {
+      parent_invalid: "output_root_invalid",
+      staging_invalid: errorCode === "ci_snapshot" ? "temporary_output_invalid" : "output_root_invalid",
+      final_invalid: "output_root_invalid",
+      staging_unavailable: "temporary_output_unavailable",
+      output_exists: "output_exists",
+    }[code] ?? code
+  );
 }
 
 function fail(code, cause, errorCode = DEFAULT_ERROR_CODE) {
@@ -58,16 +60,21 @@ async function ensureCanonicalParent(parent, errorCode) {
     }
   }
   for (const candidate of missing.reverse()) {
-    try { await mkdir(candidate, { mode: 0o700 }); }
-    catch (error) { if (error?.code !== "EEXIST") throw error; }
+    try {
+      await mkdir(candidate, { mode: 0o700 });
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+    }
     await assertCanonicalDirectory(candidate, "parent_invalid", errorCode);
   }
   return await assertCanonicalDirectory(parent, "parent_invalid", errorCode);
 }
 
 async function assertAbsent(candidate, code, errorCode = DEFAULT_ERROR_CODE) {
-  try { await lstat(candidate); fail(code, undefined, errorCode); }
-  catch (error) {
+  try {
+    await lstat(candidate);
+    fail(code, undefined, errorCode);
+  } catch (error) {
     if (error?.message === `${errorCode}_${code}`) throw error;
     if (error?.code !== "ENOENT") throw error;
   }
@@ -81,10 +88,7 @@ function recordOf(transaction) {
   return record;
 }
 
-export async function prepareAtomicDirectory(
-  finalPath,
-  { code: errorCode = DEFAULT_ERROR_CODE, create = true } = {},
-) {
+export async function prepareAtomicDirectory(finalPath, { code: errorCode = DEFAULT_ERROR_CODE, create = true } = {}) {
   if (
     typeof finalPath !== "string" ||
     finalPath.length === 0 ||
@@ -122,8 +126,9 @@ export async function commitAtomicDirectory(transaction) {
   await assertCanonicalDirectory(record.parent, "parent_invalid", record.errorCode);
   await assertCanonicalDirectory(record.stagingPath, "staging_invalid", record.errorCode);
   await assertAbsent(record.finalPath, "output_exists", record.errorCode);
-  try { await rename(record.stagingPath, record.finalPath); }
-  catch (error) {
+  try {
+    await rename(record.stagingPath, record.finalPath);
+  } catch (error) {
     if (["EEXIST", "ENOTEMPTY", "EPERM"].includes(error?.code)) fail("output_exists", error, record.errorCode);
     throw error;
   }

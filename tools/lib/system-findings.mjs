@@ -114,9 +114,7 @@ export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
     const code = entry?.reasonCode ?? "unknown";
     reasonCounts[code] = (reasonCounts[code] ?? 0) + 1;
   }
-  const reasonSummaries = Object.fromEntries(
-    Object.entries(reasonCounts).sort((a, b) => b[1] - a[1]),
-  );
+  const reasonSummaries = Object.fromEntries(Object.entries(reasonCounts).sort((a, b) => b[1] - a[1]));
 
   const findings = [];
   const totalRejected = rejected.length;
@@ -132,9 +130,7 @@ export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
   }
   for (const [action, entries] of Object.entries(byAction)) {
     if (entries.length < 3) continue;
-    const signatures = new Set(
-      entries.map((entry) => JSON.stringify(entry?.args ?? null)),
-    );
+    const signatures = new Set(entries.map((entry) => JSON.stringify(entry?.args ?? null)));
     const codes = new Set(entries.map((entry) => entry?.reasonCode));
     if (signatures.size >= 3 && (codes.size === 1 || codes.size === 2)) {
       findings.push({
@@ -258,7 +254,9 @@ export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
   // Counting thresholds must never hide this: one such rejection in a run is a
   // system defect, and the live trace that motivated this module showed exactly
   // this being reported as a clean run.
-  const deliveryRejections = rejected.filter((entry) => componentOf(entry?.reasonCode ?? "", entry?.evidence) === "delivery");
+  const deliveryRejections = rejected.filter(
+    (entry) => componentOf(entry?.reasonCode ?? "", entry?.evidence) === "delivery",
+  );
   if (deliveryRejections.length > 0) {
     const codes = [...new Set(deliveryRejections.map((entry) => entry?.reasonCode ?? "unknown"))];
     findings.push({
@@ -268,7 +266,8 @@ export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
       action: null,
       count: deliveryRejections.length,
       detail: `${deliveryRejections.length} request(s) were rejected at the delivery boundary (${codes.join(", ")}) — the action may have run natively while the caller was told it was not created`,
-      recommendation: "distinguish a genuine pre-admission rejection from a lost/duplicated receipt before reporting failure",
+      recommendation:
+        "distinguish a genuine pre-admission rejection from a lost/duplicated receipt before reporting failure",
       sampleCodes: codes,
     });
   }
@@ -292,7 +291,9 @@ export function summarizeSystemFindings(actionTrace, executionFailures = {}) {
       severity: "medium",
       action: null,
       count: totalRejected,
-      detail: `${totalRejected} of ${total} actions were rejected (${Object.entries(reasonSummaries).map(([c, n]) => `${c} x${n}`).join(", ")}) across ${Object.keys(componentCounts).join(", ")}`,
+      detail: `${totalRejected} of ${total} actions were rejected (${Object.entries(reasonSummaries)
+        .map(([c, n]) => `${c} x${n}`)
+        .join(", ")}) across ${Object.keys(componentCounts).join(", ")}`,
       recommendation: "read each reason code above; a rejection is information, not noise",
       sampleCodes: Object.keys(reasonSummaries),
     });

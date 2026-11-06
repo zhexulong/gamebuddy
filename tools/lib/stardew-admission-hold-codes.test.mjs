@@ -55,6 +55,15 @@ test("the list carries nothing the Mod cannot return", () => {
 test("isAdmissionHold accepts the holds and refuses anything else", () => {
   for (const code of ADMISSION_HOLD_CODES) assert.equal(isAdmissionHold(code), true, code);
   // The point of the helper: an unrelated refusal must NOT read as a hold, or a gate would pass on the wrong one.
-  for (const code of ["talk_to_npc_target_not_found", "invalid_deadline", "world_not_ready", "hands_not_empty", "", null, undefined, 7])
+  for (const code of [
+    "talk_to_npc_target_not_found",
+    "invalid_deadline",
+    "world_not_ready",
+    "hands_not_empty",
+    "",
+    null,
+    undefined,
+    7,
+  ])
     assert.equal(isAdmissionHold(code), false, String(code));
 });

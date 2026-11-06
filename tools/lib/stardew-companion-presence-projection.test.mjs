@@ -48,10 +48,7 @@ test("parseCompanionClaims excludes ability and preference statements", () => {
 test("parseCompanionClaims handles a mixed phrase and a multi-claim sentence", () => {
   // Commas are not windows in the parser: the first-person subject carries
   // across, so both verbs in one sentence count as distinct claims.
-  assert.deepEqual(parseCompanionClaims("我这就去浇水,顺便除除草", VOCAB), [
-    "stardew.water_crop",
-    "stardew.weed_pull",
-  ]);
+  assert.deepEqual(parseCompanionClaims("我这就去浇水,顺便除除草", VOCAB), ["stardew.water_crop", "stardew.weed_pull"]);
 });
 
 test("buildPresenceProjection reports claimsReceipted from same-turn accepted/succeeded receipts (N=0)", () => {
@@ -121,14 +118,8 @@ test("buildPresenceProjection leaves turn without claims finding-free", () => {
 test("invalid inputs fail closed with a typed error", () => {
   assert.throws(() => parseCompanionClaims("", VOCAB), PresenceProjectionError);
   assert.throws(() => parseCompanionClaims("我这就去浇水", null), PresenceProjectionError);
-  assert.throws(
-    () => parseCompanionClaims("我这就去浇水", { "bad id!": ["浇水"] }),
-    PresenceProjectionError,
-  );
-  assert.throws(
-    () => parseCompanionClaims("我这就去浇水", { "stardew.water_crop": [] }),
-    PresenceProjectionError,
-  );
+  assert.throws(() => parseCompanionClaims("我这就去浇水", { "bad id!": ["浇水"] }), PresenceProjectionError);
+  assert.throws(() => parseCompanionClaims("我这就去浇水", { "stardew.water_crop": [] }), PresenceProjectionError);
   assert.throws(
     () =>
       buildPresenceProjection({

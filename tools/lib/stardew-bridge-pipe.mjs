@@ -32,3 +32,22 @@ export function bridgePipeNameFor(modsPath) {
     throw new Error(`bridge_pipe_name_invalid:${configPath}:${String(name)}`);
   return name;
 }
+
+/**
+ * Print the config path for a mods directory, so a PowerShell harness can join no folder name of its own.
+ *
+ * The harnesses cannot import this module, and `tools/run-stardew-native-local-player-move-fixture.ps1` spelled the
+ * folder by hand instead: it read `Mods/GameBuddy.Stardew/config.json` while every fixture deploys `Mods/GameBuddy`,
+ * so a correct lane failed preflight with `Missing harness path` and a name that pointed at the wrong half.
+ */
+function cliMain(argv) {
+  if (argv.length === 2 && argv[0] === "--print-config-path") {
+    process.stdout.write(`${bridgeConfigPath(argv[1])}\n`);
+    return;
+  }
+  process.stderr.write("usage: stardew-bridge-pipe.mjs --print-config-path <modsPath>\n");
+  process.exitCode = 2;
+}
+
+const isCli = process.argv[1]?.replaceAll("\\", "/").endsWith("tools/lib/stardew-bridge-pipe.mjs") === true;
+if (isCli) cliMain(process.argv.slice(2));

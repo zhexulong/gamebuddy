@@ -36,7 +36,12 @@ const probe = {
       text: "I have a calico cat called Sesame（芝麻）, and she adores grilled saury. She is mine, she lives at my place.",
       persistVia: "conversation",
     },
-    { kind: "filler", role: "player", text: "The innkeeper's ginger cat keeps sleeping on the porch.", persistVia: "conversation" },
+    {
+      kind: "filler",
+      role: "player",
+      text: "The innkeeper's ginger cat keeps sleeping on the porch.",
+      persistVia: "conversation",
+    },
     { kind: "filler", role: "player", text: "The river is running high after the storm.", persistVia: "conversation" },
     {
       kind: "probe",

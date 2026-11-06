@@ -21,10 +21,7 @@
 
 import { readFileSync } from "node:fs";
 
-const PROFILE_SOURCE = new URL(
-  "../../host/src/composition/desktop-presentation-admission-owner.ts",
-  import.meta.url,
-);
+const PROFILE_SOURCE = new URL("../../host/src/composition/desktop-presentation-admission-owner.ts", import.meta.url);
 
 /** The ids declared by `composeTavernManagementProfile()`'s `operationIds`. */
 function readMountedTavernManagementOperationIds() {
@@ -83,9 +80,7 @@ export function readMountedTavernManagementProfile() {
   });
 }
 
-export const MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS = Object.freeze(
-  readMountedTavernManagementOperationIds(),
-);
+export const MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS = Object.freeze(readMountedTavernManagementOperationIds());
 
 const KNOWN = new Set(MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS);
 

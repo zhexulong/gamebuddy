@@ -141,7 +141,10 @@ test("a REAL fold that retains the seed passes L3 with the fold-commit revision 
     probeEvent: "needle.hit",
   });
   assert.equal(statusOf(attributed, "L3_decay"), "passed");
-  assert.equal(attributed.stages.find((row) => row.stage === "L3_decay").detail, "seed id retained in the fold-commit revision rendered set");
+  assert.equal(
+    attributed.stages.find((row) => row.stage === "L3_decay").detail,
+    "seed id retained in the fold-commit revision rendered set",
+  );
   assert.equal(statusOf(attributed, "L4_expression"), "passed");
 });
 
@@ -175,9 +178,22 @@ test("a write that did not survive budget trimming is attributed to assembly, no
 test("the two causes of distractor.confused are NOT equivalent at L4", () => {
   // Upstream observed green, so a recall failure is genuinely attributable to L4
   // and the cause discriminates: `needle_only` means the fact WAS recalled.
-  const upstreamGreen = { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true };
-  const recalled = attributeMemoryFunnel({ ...upstreamGreen, probeEvent: "distractor.confused", probeReason: "needle_only" });
-  const failed = attributeMemoryFunnel({ ...upstreamGreen, probeEvent: "distractor.confused", probeReason: "recall_failed" });
+  const upstreamGreen = {
+    seedRequired: true,
+    seedPresentInReadback: true,
+    renderedMemoryIdsObserved: true,
+    seedIdRendered: true,
+  };
+  const recalled = attributeMemoryFunnel({
+    ...upstreamGreen,
+    probeEvent: "distractor.confused",
+    probeReason: "needle_only",
+  });
+  const failed = attributeMemoryFunnel({
+    ...upstreamGreen,
+    probeEvent: "distractor.confused",
+    probeReason: "recall_failed",
+  });
   assert.equal(statusOf(recalled, "L4_expression"), "passed");
   assert.equal(statusOf(failed, "L4_expression"), "broken");
   // Without the cause we must not guess either way.
@@ -209,7 +225,10 @@ test("a turn-distance probe does not report a gap for a fold it never crossed", 
     seedIdRendered: true,
     probeEvent: "needle.hit",
   });
-  assert.equal(attributed.stages.some((row) => row.stage === "L3_decay"), false);
+  assert.equal(
+    attributed.stages.some((row) => row.stage === "L3_decay"),
+    false,
+  );
   assert.equal(statusOf(attributed, "L4_expression"), "passed");
   assert.equal(attributed.findings.length, 0);
 });
@@ -225,10 +244,7 @@ test("a fold-distance probe that never saw a marker does report a gap", () => {
 test("parses fold-commit markers bound to the same materialization revision", () => {
   // A pass WITHOUT a fold: only memory-ids markers, no fold-commit line.
   assert.equal(
-    foldCommittedRenderedIdsFromMarkers([
-      "[probe:m0_memory_ids] rev_1 1,2",
-      "[probe:m0_chapters] rev_1 0 -",
-    ]),
+    foldCommittedRenderedIdsFromMarkers(["[probe:m0_memory_ids] rev_1 1,2", "[probe:m0_chapters] rev_1 0 -"]),
     undefined,
   );
   // A real fold pass: the fold-commit marker and the post-fold ids share rev_fold.
@@ -264,10 +280,7 @@ test("parses fold-commit markers bound to the same materialization revision", ()
 test("non-marker 3-token lines never set rendered-memory observed (audit NOTE anchor)", () => {
   // A "refreshed 7 memories"-style line must NOT flip the rendered set from
   // "we never saw a marker" (undefined) to "we saw an empty set" (a set).
-  assert.equal(
-    renderedMemoryIdsFromMarkers(["[buddy] refreshed 7 memories", "[buddy] other junk here"]),
-    undefined,
-  );
+  assert.equal(renderedMemoryIdsFromMarkers(["[buddy] refreshed 7 memories", "[buddy] other junk here"]), undefined);
   assert.equal(renderedChaptersFromMarkers(["some line with 3 tokens here", "another 1 2 3"]), undefined);
   // A trailing comma in the id list is not an id 0 (Number("")===0 would parse
   // "1,2," as {1,2,0} on a non-anchored regex; the anchored one drops it).
@@ -325,8 +338,21 @@ test("every broken stage ships an actionable recommendation", () => {
   for (const observation of [
     { seedRequired: true, conflictObserved: true },
     { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: false },
-    { distance: "fold", seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, realFold: { revision: "rev_fold", postFoldRenderedIds: new Set([1]), seedId: 2 } },
-    { seedRequired: true, seedPresentInReadback: true, renderedMemoryIdsObserved: true, seedIdRendered: true, probeEvent: "needle.miss" },
+    {
+      distance: "fold",
+      seedRequired: true,
+      seedPresentInReadback: true,
+      renderedMemoryIdsObserved: true,
+      seedIdRendered: true,
+      realFold: { revision: "rev_fold", postFoldRenderedIds: new Set([1]), seedId: 2 },
+    },
+    {
+      seedRequired: true,
+      seedPresentInReadback: true,
+      renderedMemoryIdsObserved: true,
+      seedIdRendered: true,
+      probeEvent: "needle.miss",
+    },
   ]) {
     const attributed = attributeMemoryFunnel(observation);
     assert.equal(attributed.findings.length, 1);
@@ -341,7 +367,10 @@ test("the real run-07 trace attributes honestly: upstream gaps, L4 passed, no fi
   // so L1/L2 must report gaps rather than failures, and the one stage we could
   // genuinely score (L4, where reason=needle_only means recall) must pass.
   const trace = JSON.parse(
-    await readFile(new URL("../fixtures/chat-run-audit/real-live-runs/run-07-probe-cause.json", import.meta.url), "utf8"),
+    await readFile(
+      new URL("../fixtures/chat-run-audit/real-live-runs/run-07-probe-cause.json", import.meta.url),
+      "utf8",
+    ),
   );
   const probe = trace.events.find((event) => event.kind === "probe");
   assert.equal(probe.code, "distractor.confused");
@@ -373,14 +402,26 @@ test("renderedMemoryIdsFromMarkers distinguishes an absent marker from an empty 
 
 test("renderedMemoryIdsFromMarkers reads the id list and ignores non-marker lines", () => {
   const single = renderedMemoryIdsFromMarkers(["refreshed 7 memories", renderedMemoryMarker("rev_9", "3,1,2")]);
-  assert.deepEqual([...single].sort((left, right) => left - right), [1, 2, 3]);
+  assert.deepEqual(
+    [...single].sort((left, right) => left - right),
+    [1, 2, 3],
+  );
   // Two emissions in one run union into the observed set rather than overwriting:
   // a pass may render more than once (fold + soft refresh).
-  const union = renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_a", "1,2"), renderedMemoryMarker("rev_b", "2,3")]);
-  assert.deepEqual([...union].sort((left, right) => left - right), [1, 2, 3]);
+  const union = renderedMemoryIdsFromMarkers([
+    renderedMemoryMarker("rev_a", "1,2"),
+    renderedMemoryMarker("rev_b", "2,3"),
+  ]);
+  assert.deepEqual(
+    [...union].sort((left, right) => left - right),
+    [1, 2, 3],
+  );
   // A malformed tail is skipped, not parsed as an id: "-" stays empty and junk is dropped.
   const junk = renderedMemoryIdsFromMarkers([renderedMemoryMarker("rev_c", "1,-,abc,2")]);
-  assert.deepEqual([...junk].sort((left, right) => left - right), [1, 2]);
+  assert.deepEqual(
+    [...junk].sort((left, right) => left - right),
+    [1, 2],
+  );
 });
 
 test("renderedChaptersFromMarkers distinguishes absent from zero and reads count+digest", () => {
@@ -457,10 +498,7 @@ test("m0DigestsFromMarkers distinguishes an absent digest marker from a stable r
 test("m0DigestsFromMarkers flags a same-revision digest change as unstable and allows a fold revision change", () => {
   const digestA = "a".repeat(64);
   const digestB = "b".repeat(64);
-  const unstable = m0DigestsFromMarkers([
-    `[probe:m0_digest] ${digestA} rev_1`,
-    `[probe:m0_digest] ${digestB} rev_1`,
-  ]);
+  const unstable = m0DigestsFromMarkers([`[probe:m0_digest] ${digestA} rev_1`, `[probe:m0_digest] ${digestB} rev_1`]);
   assert.equal(unstable.stable, false);
   // A legitimate fold advances the revision; each revision is internally stable.
   const folded = m0DigestsFromMarkers([
@@ -474,12 +512,11 @@ test("m0DigestsFromMarkers flags a same-revision digest change as unstable and a
 });
 
 test("m0DigestsFromMarkers ignores malformed digest lines (junk tails, wrong length)", () => {
+  assert.equal(m0DigestsFromMarkers(["[probe:m0_digest] short-not-a-hash rev_1"]), undefined);
   assert.equal(
-    m0DigestsFromMarkers(["[probe:m0_digest] short-not-a-hash rev_1"]),
-    undefined,
-  );
-  assert.equal(
-    m0DigestsFromMarkers(["[probe:m0_digest] zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz rev_1"]),
+    m0DigestsFromMarkers([
+      "[probe:m0_digest] zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz rev_1",
+    ]),
     undefined,
   );
 });

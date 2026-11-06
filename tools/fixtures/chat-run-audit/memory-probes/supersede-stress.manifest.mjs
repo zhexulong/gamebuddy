@@ -33,7 +33,12 @@ const probe = {
       text: "For the record, my favourite thing to grow is parsnips - I never get tired of them.",
       persistVia: "conversation",
     },
-    { kind: "filler", role: "player", text: "The first harvest always feels like a small victory.", persistVia: "conversation" },
+    {
+      kind: "filler",
+      role: "player",
+      text: "The first harvest always feels like a small victory.",
+      persistVia: "conversation",
+    },
     { kind: "filler", role: "player", text: "I keep meaning to expand the eastern field.", persistVia: "conversation" },
     {
       kind: "seed",
@@ -41,8 +46,18 @@ const probe = {
       text: "Actually, scratch that - I am tired of parsnips. These days amethyst is my favourite thing, hands down.",
       persistVia: "conversation",
     },
-    { kind: "filler", role: "player", text: "The creek runs high after a storm like that one.", persistVia: "conversation" },
-    { kind: "filler", role: "player", text: "I moved the scarecrow closer to the fence line.", persistVia: "conversation" },
+    {
+      kind: "filler",
+      role: "player",
+      text: "The creek runs high after a storm like that one.",
+      persistVia: "conversation",
+    },
+    {
+      kind: "filler",
+      role: "player",
+      text: "I moved the scarecrow closer to the fence line.",
+      persistVia: "conversation",
+    },
     {
       kind: "probe",
       role: "player",

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
@@ -8,13 +11,14 @@ import {
   isLiveRunWindowMode,
   launchStardewLiveRun,
   normalizeLiveRunWindowMode,
+  openLaneLog,
+  pipeConsoleInto,
   shouldCaptureWindowEvidence,
   windowModeEnvironment,
   windowModeToStyle,
 } from "./stardew-live-run.mjs";
 
 const execFileAsync = promisify(execFile);
-import { readFileSync } from "node:fs";
 
 const toolPath = fileURLToPath(new URL("./stardew-live-run.mjs", import.meta.url));
 const source = readFileSync(toolPath, "utf8");
@@ -122,4 +126,39 @@ test("launchStardewLiveRun rejects invalid launch inputs before spawning", async
     launchStardewLiveRun({ gamePath: "C:\\x", modsPath: "C:\\y", windowMode: "fake", pipeName: "p" }),
     TypeError,
   );
+  // A lane log is a path this lane owns, so a relative one is a caller bug: it would resolve against whatever cwd the
+  // harness happens to have and land in another lane's tree.
+  await assert.rejects(
+    launchStardewLiveRun({
+      gamePath: "C:\\x",
+      modsPath: "C:\\y",
+      windowMode: "hidden",
+      pipeName: "p",
+      logPath: "lane/smapi.log",
+    }),
+    /invalid_live_run_log_path/,
+  );
+});
+
+test("a named lane log receives the console stream the drain would otherwise discard", async (t) => {
+  // The lane log is not a copy of SMAPI's own file: SMAPI names that by PLAYER INDEX inside the game, so two lanes
+  // cannot be told apart by it. What this module does is keep the bytes it must drain anyway, on the only path the
+  // caller can attribute to its lane - driven here with a real child instead of a game process.
+  const dir = mkdtempSync(join(tmpdir(), "gb-lane-log-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const logPath = join(dir, "nested", "smapi-console.log");
+  const laneLog = openLaneLog(logPath);
+  const child = spawn(
+    process.execPath,
+    ["-e", "process.stdout.write('mod line\\n'); process.stderr.write('stderr line\\n')"],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  pipeConsoleInto(laneLog, { stdout: child.stdout, stderr: child.stderr });
+  await new Promise((resolvePromise) => child.once("close", resolvePromise));
+  await new Promise((resolvePromise) => laneLog.end(resolvePromise));
+  const text = readFileSync(logPath, "utf8");
+  assert.match(text, /mod line/u);
+  assert.match(text, /stderr line/u);
+  // And the no-log path still drains: an unread console pipe is what froze the game thread.
+  assert.match(source, /if \(laneLog === null\) child\.stdout\?\.resume\(\);/u);
 });

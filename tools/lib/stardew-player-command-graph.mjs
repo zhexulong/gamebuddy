@@ -1157,15 +1157,7 @@ function reachableSecondHopEdges(gameLocationSource, rootDispatchEdges, ingress,
  * router reaches GameLocation.checkAction. A branch candidate retains every
  * source fragment and offset; it is not inferred from the candidate name.
  */
-function sourceBranchCandidates({
-  source,
-  sourceType,
-  sourceFile,
-  sourceMethod,
-  definitions,
-  sourceEdgeIds,
-  reason,
-}) {
+function sourceBranchCandidates({ source, sourceType, sourceFile, sourceMethod, definitions, sourceEdgeIds, reason }) {
   const body = methodBody(source, sourceMethod);
   if (body === null) return [];
   return definitions

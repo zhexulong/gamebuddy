@@ -73,10 +73,9 @@ test("fails closed when the root exists but holds no decompiled source", () => {
 test("fails closed when the root path is a file rather than a directory", () => {
   const repo = withTempRepo((dir) => writeFileSync(path.join(dir, "not-a-tree"), "", "utf8"));
   try {
-    assert.throws(
-      () => assertStardewDecompileRoot(path.join(repo, "not-a-tree")),
-      { code: "stardew_decompile_root_missing" },
-    );
+    assert.throws(() => assertStardewDecompileRoot(path.join(repo, "not-a-tree")), {
+      code: "stardew_decompile_root_missing",
+    });
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

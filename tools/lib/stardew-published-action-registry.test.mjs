@@ -33,15 +33,9 @@ test("published action extraction is Mod-owned and excludes experimental registr
 });
 
 test("published action extraction fails closed without the Mod registration declaration", async () => {
-  await withRegistrations(
-    registrations.replace("Registrations", "OtherRegistrations"),
-    async (registrationsPath) => {
-      await assert.rejects(
-        readPublishedStardewActionIds({ registrationsPath }),
-        /missing_mod_registrations/,
-      );
-    },
-  );
+  await withRegistrations(registrations.replace("Registrations", "OtherRegistrations"), async (registrationsPath) => {
+    await assert.rejects(readPublishedStardewActionIds({ registrationsPath }), /missing_mod_registrations/);
+  });
 });
 
 test("published action extraction rejects duplicate Mod-owned published identifiers", async () => {

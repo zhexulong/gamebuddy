@@ -66,9 +66,7 @@ const SEAM_KINDS = Object.freeze(["native", "mod_owned"]);
  * cited outcome fork cannot be understated by forgetting to list it here.
  */
 export function deriveRequiredSharedWorldMechanisms(mechanisms) {
-  return Object.freeze(
-    mechanisms.filter((m) => m.forks.some((f) => f.forkClass === "outcome_fork")).map((m) => m.id),
-  );
+  return Object.freeze(mechanisms.filter((m) => m.forks.some((f) => f.forkClass === "outcome_fork")).map((m) => m.id));
 }
 
 /**
@@ -146,7 +144,8 @@ function fail(code, message, details = {}) {
 }
 
 function text(value, field, details) {
-  if (typeof value !== "string" || !value.trim()) fail("mp_sensitivity_register_invalid", `Expected non-empty ${field}.`, details);
+  if (typeof value !== "string" || !value.trim())
+    fail("mp_sensitivity_register_invalid", `Expected non-empty ${field}.`, details);
   return value;
 }
 
@@ -174,15 +173,73 @@ export function extractMethodBody(sourceText, signature) {
 
 /** Call names never treated as helper calls when scanning a seam body. */
 const SKIPPED_SEAM_CALLS = new Set([
-  "if", "for", "foreach", "while", "switch", "return", "new", "throw", "base",
-  "this", "Math", "string", "int", "float", "bool", "double", "Vector2", "Game1",
-  "item", "who", "t", "location", "farmer", "out", "ref", "in", "nameof",
-  "typeof", "default", "await", "Color", "Rectangle", "List", "Dictionary",
-  "HashSet", "Array", "Task", "KeyValuePair", "Point",
-  "Get", "Set", "TryGetValue", "ContainsKey", "Contains", "Add", "Remove",
-  "ToString", "GetHashCode", "Equals", "Any", "All", "Where", "Select",
-  "OrderBy", "ToArray", "ToList", "First", "FirstOrDefault", "Single",
-  "SingleOrDefault", "Max", "Min", "Sum", "Count", "Length", "Wait", "Sleep",
+  "if",
+  "for",
+  "foreach",
+  "while",
+  "switch",
+  "return",
+  "new",
+  "throw",
+  "base",
+  "this",
+  "Math",
+  "string",
+  "int",
+  "float",
+  "bool",
+  "double",
+  "Vector2",
+  "Game1",
+  "item",
+  "who",
+  "t",
+  "location",
+  "farmer",
+  "out",
+  "ref",
+  "in",
+  "nameof",
+  "typeof",
+  "default",
+  "await",
+  "Color",
+  "Rectangle",
+  "List",
+  "Dictionary",
+  "HashSet",
+  "Array",
+  "Task",
+  "KeyValuePair",
+  "Point",
+  "Get",
+  "Set",
+  "TryGetValue",
+  "ContainsKey",
+  "Contains",
+  "Add",
+  "Remove",
+  "ToString",
+  "GetHashCode",
+  "Equals",
+  "Any",
+  "All",
+  "Where",
+  "Select",
+  "OrderBy",
+  "ToArray",
+  "ToList",
+  "First",
+  "FirstOrDefault",
+  "Single",
+  "SingleOrDefault",
+  "Max",
+  "Min",
+  "Sum",
+  "Count",
+  "Length",
+  "Wait",
+  "Sleep",
 ]);
 
 /**
@@ -193,7 +250,8 @@ const SKIPPED_SEAM_CALLS = new Set([
  */
 function indexHelperBodies(sourceText) {
   const bodies = new Map();
-  const re = /(?:private|protected|internal)(?:\s+(?:static|virtual|override))*\s+[\w<>,\[\].\?]+\s+(\w+)\s*\([^)]*\)\s*(?:=>\s*[^;]+;|\{)/g;
+  const re =
+    /(?:private|protected|internal)(?:\s+(?:static|virtual|override))*\s+[\w<>,\[\].\?]+\s+(\w+)\s*\([^)]*\)\s*(?:=>\s*[^;]+;|\{)/g;
   let m;
   while ((m = re.exec(sourceText))) {
     const open = sourceText.indexOf("{", m.index + m[0].length - 1);
@@ -314,7 +372,10 @@ function validateAction(action, sources, index, scopeAcksByAction) {
   // an unknown lifecycle -- the gate's job is multiplayer scope, not publication
   // ranking.
   if (!["published", "live_verified", "experimental"].includes(action.lifecycle))
-    fail("mp_sensitivity_register_invalid", `Invalid lifecycle for ${actionId}.`, { actionId, lifecycle: action.lifecycle });
+    fail("mp_sensitivity_register_invalid", `Invalid lifecycle for ${actionId}.`, {
+      actionId,
+      lifecycle: action.lifecycle,
+    });
 
   if (!Array.isArray(action.seams) || action.seams.length === 0)
     fail("mp_sensitivity_register_invalid", `${actionId} must declare at least one native seam.`, { actionId });
@@ -323,7 +384,10 @@ function validateAction(action, sources, index, scopeAcksByAction) {
   for (const [seamIndex, seam] of action.seams.entries()) {
     const sensitivity = seam.sensitivity;
     if (!SEAM_SENSITIVITY.includes(sensitivity))
-      fail("mp_sensitivity_register_invalid", `Invalid sensitivity for ${actionId}.seams[${seamIndex}].`, { actionId, sensitivity });
+      fail("mp_sensitivity_register_invalid", `Invalid sensitivity for ${actionId}.seams[${seamIndex}].`, {
+        actionId,
+        sensitivity,
+      });
     const decisive = evidence[seamIndex].decisiveTokens;
     const context = evidence[seamIndex].contextTokens;
     const isNative = (seam.kind ?? "native") === "native";
@@ -356,7 +420,10 @@ function validateAction(action, sources, index, scopeAcksByAction) {
       text(seam.observedEffect ?? "", `${actionId}.seams[${seamIndex}].observedEffect`);
     if (sensitivity !== "mp-insensitive" && isNative && decisive.length === 0 && sensitivity !== "mp-semantic")
       text(seam.contextEffect ?? "", `${actionId}.seams[${seamIndex}].contextEffect`);
-    if (sensitivity === "mp-semantic" && !text(seam.semanticEffect ?? "", `${actionId}.seams[${seamIndex}].semanticEffect`))
+    if (
+      sensitivity === "mp-semantic" &&
+      !text(seam.semanticEffect ?? "", `${actionId}.seams[${seamIndex}].semanticEffect`)
+    )
       fail(
         "mp_sensitivity_register_invalid",
         `${actionId} declares ${seam.file} mp-semantic without recording the semantic effect.`,
@@ -377,7 +444,10 @@ function validateAction(action, sources, index, scopeAcksByAction) {
 
   const requiredTopology = text(action.requiredLiveTopology, `${actionId}.requiredLiveTopology`);
   if (!REQUIRED_LIVE_TOPOLOGY.includes(requiredTopology))
-    fail("mp_sensitivity_register_invalid", `Invalid requiredLiveTopology for ${actionId}.`, { actionId, requiredTopology });
+    fail("mp_sensitivity_register_invalid", `Invalid requiredLiveTopology for ${actionId}.`, {
+      actionId,
+      requiredTopology,
+    });
 
   // Policy: an action whose native seam can change its transaction outcome under
   // multiplayer must be gated by an actual multiplayer live run, not a
@@ -439,12 +509,17 @@ function validateAction(action, sources, index, scopeAcksByAction) {
   // reaching live_verified requires the requiredLiveTopology run to have passed),
   // and a published action has completed the whole ladder; only experimental
   // actions can still be unverified.
-  if (admission.verdict === "admits_multiplayer" && derivedSensitivity === "mp-semantic" && action.lifecycle === "experimental")
+  if (
+    admission.verdict === "admits_multiplayer" &&
+    derivedSensitivity === "mp-semantic" &&
+    action.lifecycle === "experimental"
+  )
     defects.push(
       Object.freeze({
         actionId,
         defect: "unverified_scope",
-        detail: "Admission admits multiplayer but a native seam reads multiplayer state that can change the transaction outcome.",
+        detail:
+          "Admission admits multiplayer but a native seam reads multiplayer state that can change the transaction outcome.",
       }),
     );
 
@@ -457,7 +532,11 @@ function validateAction(action, sources, index, scopeAcksByAction) {
   if (ack) {
     text(ack.reason, `${actionId}.acknowledgedDefect.reason`);
     text(ack.owner, `${actionId}.acknowledgedDefect.owner`);
-    if (ack.defect !== "over_restriction" && ack.defect !== "unverified_scope" && ack.defect !== "mp_sensitive_exclusion")
+    if (
+      ack.defect !== "over_restriction" &&
+      ack.defect !== "unverified_scope" &&
+      ack.defect !== "mp_sensitive_exclusion"
+    )
       fail("mp_sensitivity_register_invalid", `Invalid acknowledgedDefect.defect for ${actionId}.`, { actionId });
     const matched = defects.find((defect) => defect.defect === ack.defect);
     if (!matched)
@@ -501,7 +580,12 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
   const scopeAcks = (register.scopeAcknowledgements ?? []).map((scope, index) => {
     const where = `scopeAcknowledgements[${index}]`;
     const isMechanism = scope.defect === "unverified_mechanism_scope";
-    if (scope.defect !== "over_restriction" && scope.defect !== "unverified_scope" && scope.defect !== "mp_sensitive_exclusion" && !isMechanism)
+    if (
+      scope.defect !== "over_restriction" &&
+      scope.defect !== "unverified_scope" &&
+      scope.defect !== "mp_sensitive_exclusion" &&
+      !isMechanism
+    )
       fail("mp_sensitivity_register_invalid", `Invalid ${where}.defect.`, { defect: scope.defect });
     // Mechanism pins name mechanisms; action pins name actions. Never both, never neither.
     const key = isMechanism ? "mechanisms" : "actions";
@@ -522,7 +606,8 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
   });
   const scopeAcksByAction = new Map();
   for (const scope of scopeAcks)
-    for (const id of scope.actions) scopeAcksByAction.set(id, { defect: scope.defect, reason: scope.reason, owner: scope.owner });
+    for (const id of scope.actions)
+      scopeAcksByAction.set(id, { defect: scope.defect, reason: scope.reason, owner: scope.owner });
 
   const actions = register.actions.map((action, index) => validateAction(action, sources, index, scopeAcksByAction));
 
@@ -534,7 +619,8 @@ export function validateMultiplayerSensitivityRegister(register, sources) {
   const declared = register.declaredActionIds;
   if (!Array.isArray(declared) || declared.length !== actions.length)
     fail("mp_sensitivity_register_invalid", "declaredActionIds must cover every action exactly once.");
-  for (const actionId of declared) if (!seen.has(actionId)) fail("mp_sensitivity_register_invalid", `declaredActionIds names unknown ${actionId}.`);
+  for (const actionId of declared)
+    if (!seen.has(actionId)) fail("mp_sensitivity_register_invalid", `declaredActionIds names unknown ${actionId}.`);
 
   const defects = actions.flatMap((action) => action.defects);
   // Every scope acknowledgement must still be justified by a derived finding, so

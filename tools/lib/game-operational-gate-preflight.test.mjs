@@ -109,11 +109,29 @@ test("runtime root validation is linear on pathological path strings (ReDoS regr
   // is a flat character class, so the same inputs complete instantly.
   const bang = "C:\\" + "!/!".repeat(300) + '"';
   const slash = "C:\\" + "/".repeat(600) + '"';
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: bang }).reasonCode, "runtime_root_invalid");
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: slash }).reasonCode, "runtime_root_invalid");
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: bang }).reasonCode,
+    "runtime_root_invalid",
+  );
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: slash }).reasonCode,
+    "runtime_root_invalid",
+  );
   // The legal corpus still accepts and rejects exactly as before.
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "C:/GameBuddy/operational-gate" }).state, "READY");
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "/" }).reasonCode, "runtime_root_invalid");
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: "relative/game" }).reasonCode, "runtime_root_invalid");
-  assert.equal(validateGameOperationalGatePreflight({ ...config, runtimeRoot: 'C:/a"b' }).reasonCode, "runtime_root_invalid");
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: "C:/GameBuddy/operational-gate" }).state,
+    "READY",
+  );
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: "/" }).reasonCode,
+    "runtime_root_invalid",
+  );
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: "relative/game" }).reasonCode,
+    "runtime_root_invalid",
+  );
+  assert.equal(
+    validateGameOperationalGatePreflight({ ...config, runtimeRoot: 'C:/a"b' }).reasonCode,
+    "runtime_root_invalid",
+  );
 });

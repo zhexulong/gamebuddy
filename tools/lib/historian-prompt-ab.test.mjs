@@ -16,10 +16,7 @@ import test from "node:test";
 import { checkHistorianRubric } from "./historian-rubric.mjs";
 
 const fixture = JSON.parse(
-  readFileSync(
-    fileURLToPath(new URL("../fixtures/historian-prompt-ab/voice-change.json", import.meta.url)),
-    "utf8",
-  ),
+  readFileSync(fileURLToPath(new URL("../fixtures/historian-prompt-ab/voice-change.json", import.meta.url)), "utf8"),
 );
 const arm = (variant) => fixture.arms.find((entry) => entry.variant === variant);
 

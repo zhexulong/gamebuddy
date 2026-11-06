@@ -13,7 +13,12 @@ import test from "node:test";
 import {
   buildFailureSnapshot,
   buildReproPlan,
+  classifyFailure,
+  FAILURE_STACK_FRAMES,
   planReplaySchedule,
+  PROGRAMMING_ERROR_CLASSES,
+  RUNNER_ERROR_CODE,
+  RUNNER_INTERNAL_ERROR_CODE,
   SEASON_NAMES,
   SINGLE_STEP_ENTRY,
 } from "./failure-dump.mjs";
@@ -248,6 +253,66 @@ test("the failure snapshot is the bridge's own facts, with nothing invented", ()
   assert.equal(empty.inGameTime, null);
   assert.equal(empty.day, null);
   assert.equal(empty.atMs !== null, true);
+});
+
+/**
+ * A thrown value, published as a CODE plus the facts a reader needs to open the site.
+ *
+ * Measured 2026-11-05 (`2026-11-05T11-37-35-764Z-multiday_routine`): the record was `{ reasonCode: "path is not
+ * defined", component: "runner", step: 0 }` - an exception message where a code belongs, and no class, stack or site.
+ * Every arm below is a closed one, so a message can no longer become a code by accident.
+ */
+test("a thrown error is classified into a closed code, with its class, message and first frame", () => {
+  const programming = classifyFailure(new ReferenceError("path is not defined"));
+  assert.equal(programming.reasonCode, RUNNER_INTERNAL_ERROR_CODE);
+  assert.equal(programming.errorClass, "ReferenceError");
+  assert.equal(programming.errorMessage, "path is not defined");
+  assert.ok(programming.errorStack.length >= 1 && programming.errorStack.length <= FAILURE_STACK_FRAMES);
+  assert.match(programming.errorStack[0], /^at\s/u, "a frame is a frame, not a message line");
+  assert.match(programming.errorFrame, /:\d+$/u, "the first frame's file:line is mandatory");
+  assert.ok(programming.errorFrame.includes("replay-engine.test.mjs"), programming.errorFrame);
+  // The class decides, not the message: a TypeError whose message looks like a code is still an internal error.
+  for (const errorClass of PROGRAMMING_ERROR_CLASSES) {
+    const Thrown = globalThis[errorClass];
+    assert.equal(classifyFailure(new Thrown("native_door_locked")).reasonCode, RUNNER_INTERNAL_ERROR_CODE);
+  }
+  // A declared code - this tree's `throw new Error("stable_token:detail")` style - keeps its name.
+  assert.equal(
+    classifyFailure(new Error("unknown_run_scenario:multiday_riddle")).reasonCode,
+    "unknown_run_scenario:multiday_riddle",
+  );
+  // Prose is not a code, even when the class is a bare `Error`.
+  assert.equal(classifyFailure(new Error("path is not defined")).reasonCode, RUNNER_INTERNAL_ERROR_CODE);
+  // A thrown non-Error has no class and no stack, and says so instead of passing as an Error with an empty message.
+  const thrownString = classifyFailure("pipe closed");
+  assert.equal(thrownString.reasonCode, RUNNER_ERROR_CODE);
+  assert.equal(thrownString.errorClass, "string");
+  assert.equal(thrownString.errorMessage, "pipe closed");
+  assert.deepEqual(thrownString.errorStack, []);
+  assert.equal(thrownString.errorFrame, null);
+});
+
+test("a crashed run's snapshot carries the classified throw, and a refused one carries null", () => {
+  const thrown = classifyFailure(new ReferenceError("path is not defined"));
+  const crashed = buildFailureSnapshot({
+    // The classified throw OWNS the code: a caller cannot state another one beside it.
+    reasonCode: "native_door_locked",
+    component: "runner",
+    step: 0,
+    snapshot: null,
+    thrown,
+  });
+  assert.equal(crashed.reasonCode, RUNNER_INTERNAL_ERROR_CODE);
+  assert.equal(crashed.errorClass, "ReferenceError");
+  assert.equal(crashed.errorMessage, "path is not defined");
+  assert.equal(crashed.errorFrame, thrown.errorFrame);
+  // A refusal is a different failure and is not dressed up as a crash.
+  const refused = buildFailureSnapshot({ reasonCode: "native_door_locked", component: "native-state", step: 4 });
+  assert.equal(refused.reasonCode, "native_door_locked");
+  assert.equal(refused.errorClass, null);
+  assert.equal(refused.errorMessage, null);
+  assert.equal(refused.errorStack, null);
+  assert.equal(refused.errorFrame, null);
 });
 
 test("the replay plan derives its budget from the trace and points at the real entry point", () => {

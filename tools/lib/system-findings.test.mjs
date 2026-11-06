@@ -4,9 +4,9 @@ import { summarizeSystemFindings } from "./system-findings.mjs";
 
 test("returns empty health for a clean run", () => {
   const result = summarizeSystemFindings([
-      { action: "till_soil", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "soil_tilled" },
-      { action: "plant_seed", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "seed_planted" },
-    ]);
+    { action: "till_soil", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "soil_tilled" },
+    { action: "plant_seed", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "seed_planted" },
+  ]);
   assert.equal(result.findings.length, 0);
   assert.equal(result.rejectedCount, 0);
   assert.equal(result.acceptedCount, 2);
@@ -93,14 +93,14 @@ test("namespaced replay rejections are attributed, not left unclassified", () =>
   // code like the replay rejection must still land on a component. Matching only
   // the whole string would silently fall through to `unclassified`.
   const result = summarizeSystemFindings([
-      { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "stale_snapshot" },
-      {
-        action: "move_to_tile",
-        args: { x: 3, y: 12 },
-        state: "rejected",
-        reasonCode: "execution_receipt_replay_rejected:non_monotonic_revision",
-      },
-    ]);
+    { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "stale_snapshot" },
+    {
+      action: "move_to_tile",
+      args: { x: 3, y: 12 },
+      state: "rejected",
+      reasonCode: "execution_receipt_replay_rejected:non_monotonic_revision",
+    },
+  ]);
   assert.equal(result.rejectedCount, 2);
   const components = result.findings.map((finding) => finding.component);
   assert.ok(components.includes("delivery"), `expected a delivery finding, got ${JSON.stringify(result.findings)}`);
@@ -114,14 +114,14 @@ test("never reports a clean run while actions were rejected", () => {
   // so the run's own health report said "no problems" about a run with four
   // real rejections. A rejection must always surface at least once.
   const result = summarizeSystemFindings([
-      { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "no_native_path" },
-      { action: "move_to_tile", args: { x: 3, y: 11 }, state: "rejected", reasonCode: "no_native_path" },
-      { action: "travel", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "warp_out_of_range" },
-      { action: "harvest_crop", args: { x: 64, y: 18 }, state: "rejected", reasonCode: "target_out_of_range" },
-      { action: "move_to_tile", args: { x: 64, y: 15 }, state: "succeeded", reasonCode: "target_reached" },
-      { action: "travel", args: { x: 80, y: 17 }, state: "succeeded", reasonCode: "travel_completed" },
-      { action: "harvest_crop", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "crop_harvested" },
-    ]);
+    { action: "move_to_tile", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "no_native_path" },
+    { action: "move_to_tile", args: { x: 3, y: 11 }, state: "rejected", reasonCode: "no_native_path" },
+    { action: "travel", args: { x: 3, y: 12 }, state: "rejected", reasonCode: "warp_out_of_range" },
+    { action: "harvest_crop", args: { x: 64, y: 18 }, state: "rejected", reasonCode: "target_out_of_range" },
+    { action: "move_to_tile", args: { x: 64, y: 15 }, state: "succeeded", reasonCode: "target_reached" },
+    { action: "travel", args: { x: 80, y: 17 }, state: "succeeded", reasonCode: "travel_completed" },
+    { action: "harvest_crop", args: { x: 64, y: 18 }, state: "succeeded", reasonCode: "crop_harvested" },
+  ]);
   assert.equal(result.rejectedCount, 4);
   assert.ok(result.findings.length > 0, "a run with rejections must never report no findings");
   const summary = result.findings.find((finding) => finding.id === "rejection_observed");
@@ -133,13 +133,12 @@ test("never reports a clean run while actions were rejected", () => {
 
 test("a genuinely clean run still reports nothing", () => {
   const result = summarizeSystemFindings([
-      { action: "move_to_tile", args: { x: 1, y: 1 }, state: "succeeded", reasonCode: "target_reached" },
-      { action: "harvest_crop", args: { x: 2, y: 2 }, state: "succeeded", reasonCode: "crop_harvested" },
-    ]);
+    { action: "move_to_tile", args: { x: 1, y: 1 }, state: "succeeded", reasonCode: "target_reached" },
+    { action: "harvest_crop", args: { x: 2, y: 2 }, state: "succeeded", reasonCode: "crop_harvested" },
+  ]);
   assert.deepEqual(result.findings, []);
   assert.equal(result.rejectedCount, 0);
 });
-
 
 test("a refusal is attributed by its own evidence, not by its reason code alone", () => {
   // Measured live, then corrected: this refusal named a budget
@@ -154,10 +153,23 @@ test("a refusal is attributed by its own evidence, not by its reason code alone"
       args: { x: 4, y: 8 },
       state: "rejected",
       reasonCode: "no_native_path",
-      evidence: "from=3,9;to=4,8;target_standable=false;route_exists_cardinal=false;path_search=no_cardinal_route;budget=40000",
+      evidence:
+        "from=3,9;to=4,8;target_standable=false;route_exists_cardinal=false;path_search=no_cardinal_route;budget=40000",
     },
-    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=false" },
-    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=false" },
+    {
+      action: "move_to_tile",
+      args: { x: 5, y: 9 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "route_exists_cardinal=false",
+    },
+    {
+      action: "move_to_tile",
+      args: { x: 6, y: 9 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "route_exists_cardinal=false",
+    },
   ]);
   assert.equal(planner.findings.find((finding) => finding.id === "dominant_rejection").component, "native_state");
 
@@ -171,8 +183,20 @@ test("a refusal is attributed by its own evidence, not by its reason code alone"
       reasonCode: "no_native_path",
       evidence: "route_exists_cardinal=true;path_search=planner_null_with_cardinal_route;budget=40000",
     },
-    { action: "move_to_tile", args: { x: 5, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=true" },
-    { action: "move_to_tile", args: { x: 6, y: 9 }, state: "rejected", reasonCode: "no_native_path", evidence: "route_exists_cardinal=true" },
+    {
+      action: "move_to_tile",
+      args: { x: 5, y: 9 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "route_exists_cardinal=true",
+    },
+    {
+      action: "move_to_tile",
+      args: { x: 6, y: 9 },
+      state: "rejected",
+      reasonCode: "no_native_path",
+      evidence: "route_exists_cardinal=true",
+    },
   ]);
   assert.equal(contradictory.findings.find((finding) => finding.id === "dominant_rejection").component, "observation");
 
