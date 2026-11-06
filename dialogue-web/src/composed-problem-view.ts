@@ -1,12 +1,12 @@
-import type { Messages } from "./i18n";
 import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
   GAME_PROBLEM_CODES,
   type GameProblemCode,
 } from "./composed-reference-game-browser-api";
-import { PROBLEM_CODES, TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
+import type { Messages } from "./i18n";
 import type { TavernProblemCode } from "./reference-pipeline-api";
+import { PROBLEM_CODES, TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
 import { ReferencePipelineSessionError } from "./reference-pipeline-session";
 
 /**

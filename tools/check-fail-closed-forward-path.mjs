@@ -56,7 +56,7 @@
  *                    (`message-delete` -> `message-del` ) is `control_id_not_a_control` naming that
  *                    family (tools/check-fail-closed-forward-path.test.mjs)
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";

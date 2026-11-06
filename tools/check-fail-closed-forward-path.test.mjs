@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { SOURCES, checkForwardPath, checkForwardPathOf } from "./check-fail-closed-forward-path.mjs";
+import { checkForwardPath, checkForwardPathOf, SOURCES } from "./check-fail-closed-forward-path.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WEB_ROOT = join(ROOT, "dialogue-web");

@@ -1,5 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
 import { Brain, Gamepad2, MessagesSquare, Settings, SlidersHorizontal, Users } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { readChatSnapshotPair } from "../chat-snapshot-pair";
+import {
+  declaredProblemSentence,
+  PROBLEM_RETRY_READ,
+  composedProblemView as problemView,
+} from "../composed-problem-view";
+import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
+import {
+  ComposedReferenceGameProblemError,
+  ComposedReferenceGameProtocolError,
+} from "../composed-reference-game-browser-api";
+import {
+  CHARACTERS_PANEL,
+  CHAT_PANEL,
+  CHATS_PANEL,
+  GAME_PANEL,
+  MEMORY_PANEL,
+  SETTINGS_PANEL,
+  useSurfaceRoute,
+} from "../composed-surface-route";
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import type { BrowserDraftV1, BrowserEventV1 } from "../reference-pipeline-api";
@@ -10,49 +30,29 @@ import {
   pendingSubmission,
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
-import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
-import {
-  ComposedReferenceGameProblemError,
-  ComposedReferenceGameProtocolError,
-} from "../composed-reference-game-browser-api";
-import { readChatSnapshotPair } from "../chat-snapshot-pair";
-import {
-  composedProblemView as problemView,
-  declaredProblemSentence,
-  PROBLEM_RETRY_READ,
-} from "../composed-problem-view";
+import { AppBar, type AppBarProps } from "./AppBar";
+import { CharactersSurface } from "./CharactersSurface";
+import { ChatSurface } from "./ChatSurface";
+import { ChatsSurface } from "./ChatsSurface";
+import { ContextDrawer } from "./ContextDrawer";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
+import { GameSurface } from "./GameSurface";
+import { MemorySurface } from "./MemorySurface";
+import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./management-surface-panels";
+import { ProblemView } from "./ProblemView";
+import { SettingsSurface } from "./SettingsSurface";
+import { SkipLink } from "./SkipLink";
+import { SurfaceModelSettings } from "./SurfaceModelSettings";
+import { SurfaceDrafts } from "./surface-drafts";
+import { turnFailureText } from "./turn-failure-text";
+import { markTurn, observeTurnEvent } from "./turn-timings";
+import { useArrivalReread } from "./use-arrival-reread";
 import {
   type ComposedPreviewV1,
   TERMINAL_TURN_STATES,
   terminalTurn,
   useComposedBootstrap,
 } from "./use-composed-bootstrap";
-import { useArrivalReread } from "./use-arrival-reread";
-import { AppBar, type AppBarProps } from "./AppBar";
-import { ChatSurface } from "./ChatSurface";
-import { GameSurface } from "./GameSurface";
-import { ContextDrawer } from "./ContextDrawer";
-import { ProblemView } from "./ProblemView";
-import { SkipLink } from "./SkipLink";
-import { SurfaceModelSettings } from "./SurfaceModelSettings";
-import { CharactersSurface } from "./CharactersSurface";
-import { turnFailureText } from "./turn-failure-text";
-import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./management-surface-panels";
-import { ChatsSurface } from "./ChatsSurface";
-import { MemorySurface } from "./MemorySurface";
-import { SettingsSurface } from "./SettingsSurface";
-import { SurfaceDrafts } from "./surface-drafts";
-import {
-  CHARACTERS_PANEL,
-  CHATS_PANEL,
-  CHAT_PANEL,
-  GAME_PANEL,
-  MEMORY_PANEL,
-  SETTINGS_PANEL,
-  useSurfaceRoute,
-} from "../composed-surface-route";
-import { markTurn, observeTurnEvent } from "./turn-timings";
 
 /** The recovery read's first retry delay, and the ceiling its doubling stops at. */
 const RETRY_FIRST_MS = 1_000;
