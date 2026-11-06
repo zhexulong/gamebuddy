@@ -151,12 +151,6 @@
       ]
     }
   },
-  // Declared ahead of its consumer: the observation budget's switch from `MAX_PLAN_NODES` to this constant is in
-  // flight in a worktree and does not pass its own four tests yet, so nothing in HEAD imports it. Only unused-export
-  // issues are ignored, in this one file, and the exemption goes away the moment that consumer lands.
-  "ignoreIssues": {
-    "host/src/body-program-script.ts": ["exports"]
-  },
   "ignore": [
     "host/src/composition/desktop-host-composition-drain-fixture-worker.ts",
     "host/src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",

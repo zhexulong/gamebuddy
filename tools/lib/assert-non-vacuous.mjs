@@ -26,7 +26,7 @@
  * The fields a report may carry its population under. Every member is "objects this gate examined"; a new
  * member has to mean the same thing, or the rule it feeds says nothing.
  */
-export const POPULATION_FIELDS = Object.freeze(["population", "fields", "cases"]);
+const POPULATION_FIELDS = Object.freeze(["population", "fields", "cases"]);
 
 /**
  * Judge one gate report's population.
