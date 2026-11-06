@@ -33,7 +33,9 @@
  *   - `.stdout` / `.stderr` / `String(...)` / `.trim()` around it;
  *   - ONE HOP through a function's parameters: a call passing a tainted argument taints the parameter in that position
  *     (`inventory(output)` -> `readingLines(stdout)` -> `String(stdout).split("\n")`). That hop is what the real defect
- *     needed - the parse lived in a helper that received captured output as a parameter.
+ *     needed - the parse lived in a helper that received captured output as a parameter. A DESTRUCTURED parameter is
+ *     carried by each name it introduces (`classify({ project, exitCode, output })` taints `output`, because the build
+ *     log is what the caller handed over).
  *
  * Taint is resolved through the file's LEXICAL SCOPES, so a `candidate` or a `node` in an unrelated function is not
  * tainted by a name that happens to match somewhere else in the file.
@@ -183,6 +185,28 @@ function argumentsOf(call) {
   return args === null || args === undefined ? [] : args.namedChildren;
 }
 
+/** The names a binding pattern introduces, so `{ output }` and `[a, b]` are carried like a plain parameter. */
+function boundNames(node, names = []) {
+  if (node === null || node === undefined) return names;
+  switch (node.type) {
+    case "identifier":
+    case "shorthand_property_identifier_pattern":
+      names.push(node.text);
+      break;
+    case "assignment_pattern":
+    case "rest_pattern":
+    case "object_assignment_pattern":
+      boundNames(node.childForFieldName("left") ?? node.namedChildren[0], names);
+      break;
+    case "pair":
+      boundNames(node.childForFieldName("value"), names);
+      break;
+    default:
+      for (const child of node.namedChildren) boundNames(child, names);
+  }
+  return names;
+}
+
 /** The identifier a binding or a parameter introduces, or `null` when it destructures. */
 function boundName(node) {
   if (node === null || node === undefined) return null;
@@ -242,7 +266,9 @@ function readScopes(root) {
     if (FUNCTION_TYPES.has(node.type)) {
       inner = { parent: scope, bindings: new Map() };
       const parameters = node.childForFieldName("parameters")?.namedChildren ?? [];
-      const params = parameters.map((parameter) => declare(inner, boundName(parameter), null, null));
+      const params = parameters.map((parameter) =>
+        boundNames(parameter).map((name) => declare(inner, name, null, null)),
+      );
       const record = { node, params, returns: ownReturns(node) };
       functions.push(record);
       functionByKey.set(nodeKey(node), record);
@@ -369,10 +395,11 @@ function taintParameters(calls, scopes, tainted) {
     if (record === undefined) continue;
     argumentsOf(call).forEach((argument, index) => {
       if (!carriesCapture(argument, scopes, tainted)) return;
-      const parameter = record.params[index];
-      if (parameter === null || parameter === undefined || parameter.tainted) return;
-      parameter.tainted = true;
-      changed = true;
+      for (const parameter of record.params[index] ?? []) {
+        if (parameter === null || parameter.tainted) continue;
+        parameter.tainted = true;
+        changed = true;
+      }
     });
   }
   return changed;
