@@ -2774,7 +2774,13 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     const deadline = Date.now() + MULTIDAY_NIGHT_TIMEOUT_MS;
     for (;;) {
       if (bridgeDisconnections.length > 0) {
-        return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
+        // Name what actually happened. A closed pipe before any `sleep` dispatch is the game process going away,
+        // not a night we watched: measured 2026-11-06, a `STATUS_STACK_OVERFLOW` crash inside the game surfaced as
+        // `night_watched_over_a_dead_bridge:pipe_closed` on a run that had recorded one day and never slept once.
+        const disconnection = String(bridgeDisconnections[0]?.reasonCode ?? "unknown");
+        return bedTimeWhenSheCommitted === null
+          ? `game_process_exited_before_the_night:${disconnection}`
+          : `night_watched_over_a_dead_bridge:${disconnection}`;
       }
       // The night BEGINS when the companion dispatches `sleep`, read from EITHER channel. Reading only the
       // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
