@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import { parseSummary, parseViolations, ratchet } from "./check-format-ratchet.mjs";
 
 const SCRIPTS_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -118,7 +119,9 @@ test("planted.1: a file the tree does not record that fails to format fails the 
     assert.equal(result.status, 1);
     assert.match(result.stdout, /format_ratchet_failed new=1/);
     assert.match(result.stdout, /tools\/planted\.mjs/);
-    process.stdout.write(`planted.1: planted a mis-formatted tools/planted.mjs -> ${result.stdout.split("\n")[0]}\n`);
+    process.stdout.write(
+      `planted.1: planted a mis-formatted tools/planted.mjs -> ${cleanOutputLines(result.stdout)[0]}\n`,
+    );
   });
 });
 
@@ -129,7 +132,7 @@ test("planted.2: a recorded mis-formatted file is legacy debt, not a finding", (
     const result = runGate(root);
     assert.equal(result.status, 0);
     assert.match(result.stdout, /format_ratchet_ok/);
-    process.stdout.write(`planted.2: recorded tools/legacy.mjs -> ${result.stdout.split("\n")[0]}\n`);
+    process.stdout.write(`planted.2: recorded tools/legacy.mjs -> ${cleanOutputLines(result.stdout)[0]}\n`);
   });
 });
 
@@ -137,7 +140,7 @@ test("planted.3: a git-ignored scratch file is not repository content and is not
   withFixture({ "tools/_scratch.mjs": "const  scratch  =  1\n" }, (root) => {
     const result = runGate(root);
     assert.equal(result.status, 0, result.stdout);
-    process.stdout.write(`planted.3: ignored tools/_scratch.mjs -> ${result.stdout.split("\n")[0]}\n`);
+    process.stdout.write(`planted.3: ignored tools/_scratch.mjs -> ${cleanOutputLines(result.stdout)[0]}\n`);
   });
 });
 

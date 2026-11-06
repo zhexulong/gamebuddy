@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import { CEILINGS, limits, measure, ratchet } from "./check-file-complexity-gate.mjs";
 
 const SCRIPTS_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -146,7 +147,7 @@ test("planted.A: 同一个 fixture 只加一行，门禁失败并指出是它变
     assert.match(result.stdout, /✖ integrations\/stardew\/ModEntry\.cs: 2888 行/);
     assert.match(result.stderr, /2887 -> 2888 行/);
     process.stdout.write(
-      `planted.A: 2887 -> 2888 -> ${result.stderr.split("\n").find((line) => line.includes("->"))}\n`,
+      `planted.A: 2887 -> 2888 -> ${cleanOutputLines(result.stderr).find((line) => line.includes("->"))}\n`,
     );
   });
 });

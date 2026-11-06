@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 
 /**
  * Pre-commit hook: format what is being committed, so the formatting ratchet in CI stops seeing new
@@ -28,9 +29,9 @@ const BIOME = "node_modules/@biomejs/biome/bin/biome";
 const git = (args, options = {}) =>
   execFileSync("git", args, { encoding: "utf8", maxBuffer: 1 << 26, ...options }).trim();
 
-const staged = git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])
-  .split(/\r?\n/)
-  .filter((path) => path.length > 0);
+const staged = cleanOutputLines(git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])).filter(
+  (path) => path.length > 0,
+);
 
 // What is actually about to be committed, printed before anything else. In this repository several
 // sessions share one checkout and one index, so a `git add` can be followed by a neighbour's `git add`,
@@ -78,7 +79,7 @@ try {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
-  console.log(`pre-commit: ${output.trim().split(/\r?\n/).slice(-1)[0] ?? "formatted"}`);
+  console.log(`pre-commit: ${cleanOutputLines(output.trim()).slice(-1)[0] ?? "formatted"}`);
 } catch (error) {
   const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
   // Biome exits 1 when every given path is one its configuration ignores (for example
@@ -113,10 +114,9 @@ if (changed.length > 0) {
 
 for (const ratchet of ["tools/scripts/check-format-ratchet.mjs", "tools/scripts/check-lint-ratchet.mjs"]) {
   try {
-    const line = execFileSync("node", [ratchet], { encoding: "utf8", maxBuffer: 1 << 26 })
-      .trim()
-      .split(/\r?\n/)
-      .slice(-1)[0];
+    const line = cleanOutputLines(
+      execFileSync("node", [ratchet], { encoding: "utf8", maxBuffer: 1 << 26 }).trim(),
+    ).slice(-1)[0];
     console.log(`pre-commit: ${line}`);
   } catch (error) {
     const line = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim().split(/\r?\n/).slice(-1)[0];
@@ -142,9 +142,7 @@ try {
   });
   console.log(
     `pre-commit: ${
-      result
-        .trim()
-        .split(/\r?\n/)
+      cleanOutputLines(result.trim())
         .filter((line) => line.length > 0)
         .slice(-1)[0]
     }`,
@@ -171,9 +169,7 @@ try {
   });
   console.log(
     `pre-commit: ${
-      output
-        .trim()
-        .split(/\r?\n/)
+      cleanOutputLines(output.trim())
         .filter((line) => line.length > 0)
         .slice(-1)[0]
     }`,

@@ -35,6 +35,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -51,7 +52,7 @@ const checkedSummary = /^Checked (?<checked>\d+) files?/mu;
 /** Repo-relative, forward-slashed paths of every file a biome format run would reformat. */
 export function parseViolations(output) {
   const files = new Set();
-  for (const line of output.split(/\r?\n/u)) {
+  for (const line of cleanOutputLines(output)) {
     const match = violationHeader.exec(line);
     if (match !== null) files.add(match.groups.file.replace(/\\/gu, "/"));
   }

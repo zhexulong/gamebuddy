@@ -7,6 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { classify, EXCLUSIONS, main, trackedProjects } from "./check-csharp-compile.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MOD = "integrations/stardew/GameBuddy.Stardew.csproj";
@@ -195,7 +196,7 @@ test("the gate is honest about the game: the Mod's exclusion is present while no
   // rather than the exclusion being assumed permanent.
   const tracked = spawnSync("git", ["ls-files", "*.dll"], { cwd: ROOT, encoding: "utf8", windowsHide: true });
   assert.equal(tracked.status, 0);
-  const gameAssemblyTracked = tracked.stdout.split("\n").some((line) => /Stardew Valley\.dll$/u.test(line.trim()));
+  const gameAssemblyTracked = cleanOutputLines(tracked.stdout).some((line) => /Stardew Valley\.dll$/u.test(line));
   const modExcluded = EXCLUSIONS.some((entry) => entry.project === MOD);
   assert.equal(
     modExcluded,

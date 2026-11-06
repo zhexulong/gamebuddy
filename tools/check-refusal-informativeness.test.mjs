@@ -26,6 +26,7 @@ import {
   SOURCES,
   toSnakeCase,
 } from "./check-refusal-informativeness.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_PATH = fileURLToPath(new URL("check-refusal-informativeness.mjs", import.meta.url));
@@ -271,7 +272,7 @@ test("the CLI is the gate: non-zero while a finding exists, and it prints the ma
   const result = spawnSync(process.execPath, [CLI_PATH], { cwd: REPOSITORY_ROOT, encoding: "utf8" });
   const report = checkRefusalInformativeness();
   assert.equal(result.status, report.verdict === "passed" ? 0 : 1);
-  const printed = result.stdout.split("\n");
+  const printed = cleanOutputLines(result.stdout);
   assert.equal(printed[0], renderReport(report).split("\n")[0]);
   assert.match(result.stdout, /action x class/u);
   assert.match(result.stdout, /cells informative=\d+ not_informative=\d+/u);

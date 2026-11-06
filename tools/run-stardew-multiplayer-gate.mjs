@@ -67,6 +67,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 import { STARDEW_SHARED_WORLD_ACTION_SCENARIOS } from "./stardew-action-gate-descriptors.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -130,7 +131,7 @@ export function resolveMultiplayerGatePlan({ action, runner } = {}) {
  * backwards for the first line that parses rather than assuming the first line.
  */
 export function parseDriverResult(stdout) {
-  const lines = String(stdout ?? "").split(/\r?\n/u);
+  const lines = cleanOutputLines(stdout);
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index].trim();
     if (!line.startsWith("{")) continue;

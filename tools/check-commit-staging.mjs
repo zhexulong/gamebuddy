@@ -28,6 +28,7 @@
  * every other lane silently; whether to install one is the owner's call.
  */
 import { execFileSync } from "node:child_process";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const args = process.argv.slice(2);
 
@@ -59,7 +60,7 @@ function stagedEntries() {
 
 function numstatByPath() {
   const map = new Map();
-  for (const line of git("diff", "--cached", "--numstat").split("\n")) {
+  for (const line of cleanOutputLines(git("diff", "--cached", "--numstat"))) {
     if (line.trim().length === 0) continue;
     const [added, deleted, ...rest] = line.split("\t");
     map.set(rest.join("\t").replace(/\\/gu, "/"), { added, deleted });

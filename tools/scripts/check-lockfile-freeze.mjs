@@ -19,6 +19,7 @@
  *     already re-frozen passes here, which is the state the author must be in to commit a coherent unit.
  */
 import { execFileSync } from "node:child_process";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 
 const LOCKFILES = new Set([
   "pnpm-lock.yaml",
@@ -29,12 +30,12 @@ const GATE = "tools/check-dependency-risk.mjs";
 
 let staged;
 try {
-  staged = execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], {
-    encoding: "utf8",
-    maxBuffer: 1 << 26,
-  })
-    .split(/\r?\n/)
-    .filter((path) => path.length > 0);
+  staged = cleanOutputLines(
+    execFileSync("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], {
+      encoding: "utf8",
+      maxBuffer: 1 << 26,
+    }),
+  ).filter((path) => path.length > 0);
 } catch {
   console.log("dependency-risk-freeze: could not read the staged set; skipping (CI still runs the gate)");
   process.exit(0);
@@ -56,7 +57,7 @@ try {
     maxBuffer: 1 << 26,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const line = output.trim().split(/\r?\n/).slice(-1)[0];
+  const line = cleanOutputLines(output.trim()).slice(-1)[0];
   console.log(`dependency-risk-freeze: ${line}`);
   process.exit(0);
 } catch (error) {

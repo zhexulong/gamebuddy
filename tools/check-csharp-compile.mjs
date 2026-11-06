@@ -49,6 +49,7 @@
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BUILD_TIMEOUT_MS = 10 * 60_000;
@@ -106,11 +107,11 @@ const COMPILER_DIAGNOSTIC = /error CS\d{4}/u;
  * reference fails to compile prints the MOD's prerequisite refusal ahead of the CS diagnostic that
  * actually stopped it, so "first error line" named the wrong cause.
  */
-function firstErrorLine(output) {
-  const lines = output.split("\n");
+function firstErrorLine(lines) {
   const diagnostic = lines.find((candidate) => COMPILER_DIAGNOSTIC.test(candidate));
-  const line = diagnostic ?? lines.find((candidate) => /\berror\b/iu.test(candidate));
-  return line === undefined ? "(no error line in the build output)" : line.trim();
+  return (
+    diagnostic ?? lines.find((candidate) => /\berror\b/iu.test(candidate)) ?? "(no error line in the build output)"
+  );
 }
 
 /**
@@ -118,22 +119,24 @@ function firstErrorLine(output) {
  * produced; nothing here re-derives a compiler's verdict.
  */
 export function classify({ project, exitCode, output }) {
+  const lines = cleanOutputLines(output);
+  const text = lines.join("\n");
   const exclusion = exclusionsByProject.get(project);
   if (exitCode === 0) {
     // A registered project that builds got its prerequisite after all (a machine with the game, or
     // a runner that configured it). Covered this run, and its exclusion prints nothing.
     return { outcome: "compiled" };
   }
-  if (COMPILER_DIAGNOSTIC.test(output)) {
-    return { outcome: "compile_error", detail: firstErrorLine(output) };
+  if (COMPILER_DIAGNOSTIC.test(text)) {
+    return { outcome: "compile_error", detail: firstErrorLine(lines) };
   }
   if (exclusion === undefined) {
-    return { outcome: "undeclared_failure", detail: firstErrorLine(output) };
+    return { outcome: "undeclared_failure", detail: firstErrorLine(lines) };
   }
-  if (!output.includes(exclusion.refusal)) {
+  if (!text.includes(exclusion.refusal)) {
     return {
       outcome: "exclusion_unearned",
-      detail: `expected refusal "${exclusion.refusal}", build said: ${firstErrorLine(output)}`,
+      detail: `expected refusal "${exclusion.refusal}", build said: ${firstErrorLine(lines)}`,
     };
   }
   return { outcome: "declared_exclusion" };
@@ -143,11 +146,7 @@ export function classify({ project, exitCode, output }) {
 export function trackedProjects(root = ROOT) {
   const listed = spawnSync("git", ["ls-files", "*.csproj"], { cwd: root, encoding: "utf8", windowsHide: true });
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr.trim()}`);
-  return listed.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
+  return cleanOutputLines(listed.stdout).filter(Boolean).sort();
 }
 
 /** `-p:GamePath` only when the caller named one, so a plain checkout builds the way it always has. */

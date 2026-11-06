@@ -25,6 +25,7 @@ import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "./lib/historian-rubric.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const FIXTURE = "pi-magic-context-chapter-fold.test.ts";
@@ -169,7 +170,7 @@ if (failures.length > 0) {
   // that reports "failed" without that output turns every diagnosis into a fresh reproduction.
   if (runExit !== 0)
     process.stderr.write(
-      `[memory-fold-gate] fixture output tail:\n${runOutput.trim().split("\n").slice(-20).join("\n")}\n`,
+      `[memory-fold-gate] fixture output tail:\n${cleanOutputLines(runOutput.trim()).slice(-20).join("\n")}\n`,
     );
   if (compileOutput.trim().length > 0)
     process.stderr.write(

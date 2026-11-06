@@ -22,6 +22,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+import { cleanOutputLines } from "./subprocess-output.mjs";
 
 const JOURNEY_DIRECTORY = "dialogue-web/tests";
 
@@ -31,7 +32,7 @@ const toPosix = (path) => path.split(sep).join("/");
 export function untrackedFiles(root) {
   const result = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
   if (result.status !== 0) return new Set();
-  return new Set(String(result.stdout).split("\n").filter(Boolean).map(toPosix));
+  return new Set(cleanOutputLines(result.stdout).filter(Boolean).map(toPosix));
 }
 
 /** Every `.spec.ts` under `directory`, as repo-relative paths, sorted. */

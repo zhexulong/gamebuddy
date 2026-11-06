@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 import { armGateProfiles, parseDriverResult } from "./run-stardew-multiplayer-gate.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -456,7 +457,7 @@ export async function main(argv) {
 
 /** The loop runner's own JSON line, which carries the rubric and the fact counts. */
 export function parseLoopResult(stdout) {
-  const lines = String(stdout ?? "").split(/\r?\n/u);
+  const lines = cleanOutputLines(stdout);
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index].trim();
     const at = line.indexOf("{");
