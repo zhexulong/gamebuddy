@@ -32,6 +32,7 @@ import {
   REPO_ROOT,
   KIT_ROOT,
 } from "./lib/config.mjs";
+import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -94,7 +95,7 @@ function discoverRuntime(explicit) {
   const result = spawnSync(process.execPath, args, { cwd: REPO_ROOT, encoding: "utf8", windowsHide: true });
   if (result.status !== 0) return null;
   try {
-    return JSON.parse(result.stdout.trim().split("\n").pop())?.found ?? null;
+    return JSON.parse(cleanOutputLines(result.stdout.trim()).pop())?.found ?? null;
   } catch {
     return null;
   }
@@ -186,7 +187,7 @@ async function phaseCheck(paths, run) {
   process.stderr.write(result.stderr ?? "");
   let requiredMissing = 1;
   try {
-    requiredMissing = JSON.parse(result.stdout.trim().split("\n").pop())?.requiredMissing ?? 1;
+    requiredMissing = JSON.parse(cleanOutputLines(result.stdout.trim()).pop())?.requiredMissing ?? 1;
   } catch {
     requiredMissing = 1;
   }

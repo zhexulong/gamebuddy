@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { REPO_ROOT } from "../lib/config.mjs";
+import { cleanOutputLines } from "../../../lib/subprocess-output.mjs";
 
 const RUNTIME_PROBE = fileURLToPath(new URL("./runtime-discover.mjs", import.meta.url));
 
@@ -79,7 +80,7 @@ async function main() {
   }
 
   const dotnet = spawnSync("dotnet", ["--version"], { encoding: "utf8", windowsHide: true });
-  if (dotnet.status === 0) pass("dotnet", dotnet.stdout.trim().split("\n")[0]);
+  if (dotnet.status === 0) pass("dotnet", cleanOutputLines(dotnet.stdout.trim())[0]);
   else fail("dotnet", "no dotnet on PATH (needed for Mod + reclaimer builds)");
 
   const gameDir = process.env.GB_SHOTS_GAME_DIR ?? "D:\\Steam\\steamapps\\common\\Stardew Valley";
@@ -99,7 +100,7 @@ async function main() {
   let runtimeDetail = null;
   if (runtimeProbe.status === 0) {
     try {
-      const parsed = JSON.parse(runtimeProbe.stdout.trim().split("\n").pop());
+      const parsed = JSON.parse(cleanOutputLines(runtimeProbe.stdout.trim()).pop());
       runtime = parsed.found ?? null;
       runtimeDetail = parsed.source ?? null;
     } catch {

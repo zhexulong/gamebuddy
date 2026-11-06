@@ -14,6 +14,7 @@
  * that from a defect.
  */
 import { spawnSync } from "node:child_process";
+import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -97,7 +98,7 @@ function run(command, argv, { allowFailure = false } = {}) {
   if (dryRun) return { status: 0, stdout: "", stderr: "" };
   const result = spawnSync(command, argv, { cwd: repo, encoding: "utf8", shell: false });
   const out = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-  if (out.trim()) process.stdout.write(`${out.trim().split("\n").slice(-12).join("\n")}\n`);
+  if (out.trim()) process.stdout.write(`${cleanOutputLines(out.trim()).slice(-12).join("\n")}\n`);
   if (result.status !== 0 && !allowFailure) {
     console.error(`\nfailed: ${command} exited ${String(result.status)}`);
     process.exit(result.status ?? 1);
