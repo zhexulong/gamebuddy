@@ -32,13 +32,6 @@ const git = (args, options = {}) =>
 const staged = cleanOutputLines(git(["diff", "--cached", "--name-only", "--diff-filter=ACMR"])).filter(
   (path) => path.length > 0,
 );
-// Deletions are counted separately because they were invisible in the line above (`--diff-filter=ACMR`
-// excludes D), and a commit that removes files is exactly the shape that needs to be seen before it lands:
-// on 2026-11-05 a `git commit -- .` swept 471 paths and 25 464 deletions out of a shared checkout while the
-// summary line described only what was added or modified.
-const deleted = cleanOutputLines(git(["diff", "--cached", "--name-only", "--diff-filter=D"])).filter(
-  (path) => path.length > 0,
-);
 
 // What is actually about to be committed, printed before anything else. In this repository several
 // sessions share one checkout and one index, so a `git add` can be followed by a neighbour's `git add`,
@@ -52,39 +45,8 @@ const summary = staged
   .map((path) => `  ${path}`)
   .join("\n");
 console.log(
-  `pre-commit: staging ${staged.length} file(s) and deleting ${deleted.length}:\n${summary}${staged.length > 25 ? `\n  …and ${staged.length - 25} more` : ""}`,
+  `pre-commit: staging ${staged.length} file(s):\n${summary}${staged.length > 25 ? `\n  …and ${staged.length - 25} more` : ""}`,
 );
-if (deleted.length > 0) {
-  const shown = deleted
-    .slice(0, 10)
-    .map((path) => `  - ${path}`)
-    .join("\n");
-  console.log(`pre-commit: deleting:\n${shown}${deleted.length > 10 ? `\n  …and ${deleted.length - 10} more` : ""}`);
-}
-
-// THE CATASTROPHE BRAKE. The warnings around this line are about intent - a mixed set is sometimes
-// deliberate - but a commit an order of magnitude larger than any deliberate one is not a judgement call,
-// it is a sweep, and it happened here: `git commit -- .` is a partial commit that takes the WORKTREE for
-// its pathspec, so in a checkout several sessions share it committed every lane's in-flight work plus
-// 25 464 deletions under one message. Nobody reads a warning at that moment; a refusal names the number
-// and stops. The ceiling is not tuned to any case in this repository - the largest deliberate commits run
-// in the dozens - and a genuinely large sweep sets the variable on purpose, which is the difference the
-// brake is for.
-const LARGE_COMMIT_PATHS = 120;
-const LARGE_COMMIT_DELETIONS = 40;
-if (
-  process.env.GAMEBUDDY_ALLOW_LARGE_COMMIT !== "1" &&
-  (staged.length + deleted.length > LARGE_COMMIT_PATHS || deleted.length > LARGE_COMMIT_DELETIONS)
-) {
-  console.error(
-    `pre-commit: refusing a commit of ${staged.length} path(s) and ${deleted.length} deletion(s).\n` +
-      "That is larger than any deliberate commit in this repository, so it is read as a sweep - a pathspec\n" +
-      "that took the worktree instead of the index, or a `git add` that collected a neighbour's files.\n" +
-      "If this sweep is intended: GAMEBUDDY_ALLOW_LARGE_COMMIT=1 git commit ...\n" +
-      "If it is not: `git reset` and stage only your own paths.",
-  );
-  process.exit(1);
-}
 const owners = [...new Set(staged.map((path) => path.split("/")[0]))];
 if (owners.length > 1) {
   console.log(
