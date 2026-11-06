@@ -1324,6 +1324,180 @@
         "handlerGroup": null
       },
       {
+        "actionId": "rotate_furniture",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "rotate_furniture",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string",
+              "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "furniture_rotated"
+          },
+          "targetFamily": "worldObjectTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "remove_fence",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "remove_fence",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer",
+              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+            },
+            "expectedTargetId": {
+              "type": "string",
+              "description": "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "fence_removed"
+          },
+          "targetFamily": "worldObjectTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "put_item_in_fish_tank",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "put_item_in_fish_tank",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string",
+              "description": "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "fish_tank_item_deposited"
+          },
+          "targetFamily": "worldObjectTargets"
+        },
+        "handlerGroup": null
+      },
+      {
+        "actionId": "place_item_on_pedestal",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "place_item_on_pedestal",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "slot": {
+              "type": "integer",
+              "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            },
+            "expectedTargetId": {
+              "type": "string",
+              "description": "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself."
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "pedestal_item_placed"
+          },
+          "targetFamily": "worldObjectTargets"
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "chop_tree",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -3892,6 +4066,41 @@
           "targetFamily": "tailoringTargets"
         },
         "handlerGroup": null
+      },
+      {
+        "actionId": "open_geode",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "open_geode",
+          "identityVersion": 1,
+          "lifecycle": "experimental",
+          "kind": "execution",
+          "argumentSchema": {
+            "slot": {
+              "type": "integer",
+              "description": "The backpack slot holding the geode, taken from the observation inventory row."
+            },
+            "expectedQualifiedItemId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          }
+        },
+        "handlerGroup": null
       }
     ],
     "publishedExecutionActionIds": [
@@ -4088,8 +4297,13 @@
     "experimentalActionIds": [
       "use_mine_ladder",
       "move_placed_furniture",
+      "rotate_furniture",
+      "remove_fence",
+      "put_item_in_fish_tank",
+      "place_item_on_pedestal",
       "break_resource_clump",
-      "pet_farm_animal"
+      "pet_farm_animal",
+      "open_geode"
     ],
     "helloAdvertisement": "catalog_projection",
     "capabilityProvenance": {
@@ -4153,22 +4367,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4251,22 +4470,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4300,6 +4524,7 @@
       "answer_dialogue",
       "bait_crab_pot",
       "break_container",
+      "break_resource_clump",
       "break_rock",
       "build_farm_building",
       "chest_retrieve",
@@ -4348,22 +4573,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4446,22 +4676,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4544,22 +4779,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4642,22 +4882,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4836,22 +5081,27 @@
       "name_entity",
       "navigate_to_destination",
       "npc_relationship",
+      "open_geode",
       "pan_ore",
       "pet_animal",
       "pet_farm_animal",
       "pickup_forage",
       "pickup_item",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
       "plant_sapling",
       "plant_seed",
+      "put_item_in_fish_tank",
       "redeem_prize_ticket",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
       "respond_level_up",
       "ride_bus",
       "ride_minecart",
+      "rotate_furniture",
       "scythe_crop",
       "select_mine_elevator_floor",
       "send_multiplayer_chat",
@@ -4981,12 +5231,17 @@
       "equip_wearable",
       "load_building_chest",
       "move_placed_furniture",
+      "open_geode",
       "pan_ore",
       "place_crab_pot",
+      "place_item_on_pedestal",
       "place_owned_object",
       "place_wood_fence",
+      "put_item_in_fish_tank",
       "refill_watering_can",
+      "remove_fence",
       "remove_placed_item",
+      "rotate_furniture",
       "set_sign_display",
       "tailor_clothing",
       "toggle_animal_door",

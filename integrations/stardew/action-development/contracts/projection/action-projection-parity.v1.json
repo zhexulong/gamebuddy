@@ -1034,6 +1034,152 @@
         "targetFamily": "worldObjectTargets"
       },
       {
+        "actionId": "rotate_furniture",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "description": "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw."
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "furniture_rotated"
+        },
+        "targetFamily": "worldObjectTargets"
+      },
+      {
+        "actionId": "remove_fence",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer",
+            "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "description": "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "fence_removed"
+        },
+        "targetFamily": "worldObjectTargets"
+      },
+      {
+        "actionId": "put_item_in_fish_tank",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "description": "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result."
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "fish_tank_item_deposited"
+        },
+        "targetFamily": "worldObjectTargets"
+      },
+      {
+        "actionId": "place_item_on_pedestal",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "slot": {
+            "type": "integer",
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+          },
+          "expectedQualifiedItemId": {
+            "type": "string"
+          },
+          "expectedTargetId": {
+            "type": "string",
+            "description": "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself."
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "pedestal_item_placed"
+        },
+        "targetFamily": "worldObjectTargets"
+      },
+      {
         "actionId": "chop_tree",
         "identityVersion": 1,
         "lifecycle": "published",
@@ -3261,6 +3407,10 @@
     "experimentalActionIds": [
       "use_mine_ladder",
       "move_placed_furniture",
+      "rotate_furniture",
+      "remove_fence",
+      "put_item_in_fish_tank",
+      "place_item_on_pedestal",
       "break_resource_clump",
       "pet_farm_animal",
       "open_geode"

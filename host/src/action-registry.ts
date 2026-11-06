@@ -67,6 +67,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
     ["world_object"],
   ),
+  actionAdapter(
+    "open_geode",
+    "Open a geode",
+    "Crack one carried geode at the blacksmith's own counter, through the game's GeodeMenu, so the machine's own assignment and fee decide what comes out. `slot` and `expectedQualifiedItemId` must be copied exactly from the `inventoryItemFacts` row of the MOST RECENT observe result: the slice the geode occupies is checked against that id before anything is consumed, so a stale pair is refused rather than opening a different item. The fee is charged and the reward is placed in the backpack by the menu itself; a counter the actor cannot reach, a fee it cannot pay and a full backpack are each refused by name, and the postcondition is the geode gone and the reward in the pack.",
+    ["inventory_slot", "geode"],
+  ),
   actionAdapter("move_to_tile", "Move to a Stardew tile", "Move the Farmhand to a live, structured target tile.", [
     "tile",
   ]),
@@ -669,6 +675,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   sleep: "stardew_sleep",
   clear_debris: "stardew_clear_debris",
   break_resource_clump: "stardew_break_resource_clump",
+  open_geode: "stardew_open_geode",
   npc_relationship: "stardew_npc_relationship",
   water_pet_bowl: "stardew_water_pet_bowl",
   dismiss_modal: "stardew_dismiss_modal",
@@ -823,6 +830,8 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "put_item_in_fish_tank",
   "place_item_on_pedestal",
   "break_container",
+  "break_resource_clump",
+  "open_geode",
   "equip_wearable",
   "unequip_wearable",
   "dismount_transport",
@@ -994,6 +1003,22 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "container_source_broken") return false;
+    return true;
+  }
+  if (actionId === "break_resource_clump") {
+    // A clump is cleared with a tool its own native switch picks, so the request names no slot: the
+    // identity-locked target plus the tile it was published at is the whole input, and the tool family the
+    // clump demands is re-derived on the game thread rather than trusted from the caller.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
+    return true;
+  }
+  if (actionId === "open_geode") {
+    // A backpack transaction with no tile: the slice the geode occupies and that geode's own wire identity.
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
     return true;
   }
   if (actionId === "express_emote") {
