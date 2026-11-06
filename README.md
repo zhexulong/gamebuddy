@@ -78,7 +78,7 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 
 完整的首次运行、数据位置、卸载与排障说明见 **[玩家安装与首次运行](guides/player-install.md)**。
 
-> 当前公开渠道的签名安装包与自动更新仍在收敛；在它开放之前，可以用下面的命令构建本地预览安装包。预览包不用于分发。
+> 当前公开渠道的签名安装包与自动更新仍在收敛；在它开放之前，可以用下面的命令构建本地预览安装包。预览包未签名，Windows SmartScreen 可能提示，不用于分发。
 
 ### 构建本地安装包
 
@@ -125,7 +125,7 @@ pnpm build:player-distribution
 pnpm quality:check
 ```
 
-更细的开发流程、测试调用方式、live-run 与沙盒工具索引，见 **[开发指南](guides/development.md)**。
+更细的开发流程、测试调用方式、live-run 与沙盒工具索引，见 **[开发指南](guides/development.md)**；提交与评审约定见 **[CONTRIBUTING.md](CONTRIBUTING.md)**。
 
 ---
 
