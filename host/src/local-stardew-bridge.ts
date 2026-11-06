@@ -228,7 +228,14 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         clearTimeout(pending.timer);
         pending.reject(
           new Error(
-            isBodyProgramRequest(pending.type) ? "body_program_protocol_invalid" : `bridge_disconnected:${reasonCode}`,
+            // A body-program request that the Invariant rejected carries its own detail in `reasonCode`; dropping it
+            // here is how the close reason and the thrown error diverged (two producers, one bare code). Only a
+            // disconnect that says nothing about the invariant needs the generic name.
+            isBodyProgramRequest(pending.type)
+              ? reasonCode.startsWith("body_program_protocol_invalid")
+                ? reasonCode
+                : "body_program_protocol_invalid"
+              : `bridge_disconnected:${reasonCode}`,
           ),
         );
       }
@@ -575,7 +582,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       response.type !== "program_submit_result" ||
       (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
     )
-      return this.rejectBodyProgramProtocol();
+      return this.rejectBodyProgramProtocol(
+        `program_submit:expected=program_submit_result;got=${String(response.type)};requested=${request.programId};returned=${String(response.type === "program_submit_result" ? response.payload.snapshot?.programId : "-")}`,
+      );
     return response.payload;
   }
 
@@ -587,7 +596,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       response.type !== "program_status_result" ||
       (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
     )
-      return this.rejectBodyProgramProtocol();
+      return this.rejectBodyProgramProtocol(
+        `program_status:expected=program_status_result;got=${String(response.type)};requested=${request.programId};returned=${String(response.type === "program_status_result" ? response.payload.snapshot?.programId : "-")}`,
+      );
     return response.payload;
   }
 
@@ -605,7 +616,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       response.type !== "program_stop_result" ||
       (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
     )
-      return this.rejectBodyProgramProtocol();
+      return this.rejectBodyProgramProtocol(
+        `program_stop:expected=program_stop_result;got=${String(response.type)};requested=${request.programId};returned=${String(response.type === "program_stop_result" ? response.payload.snapshot?.programId : "-")}`,
+      );
     return response.payload;
   }
 
@@ -614,7 +627,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("program_events", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "program_events_result" || response.payload.programId !== request.programId)
-      return this.rejectBodyProgramProtocol();
+      return this.rejectBodyProgramProtocol(
+        `program_events:expected=program_events_result;got=${String(response.type)};requested=${request.programId};returned=${String(response.type === "program_events_result" ? response.payload.programId : "-")}`,
+      );
     const result = response.payload;
     if (
       result.events.length > request.pageSize ||
@@ -631,13 +646,20 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
         ? result.nextCursor !== request.cursor
         : result.highWater < request.cursor || result.nextCursor !== result.events[result.events.length - 1]!.cursor)
     )
-      return this.rejectBodyProgramProtocol();
+      return this.rejectBodyProgramProtocol(
+        `program_events:cursor=${request.cursor};next=${result.nextCursor};highWater=${result.highWater};pageSize=${request.pageSize};events=${result.events.length};first=${result.events[0]?.cursor ?? "-"};last=${result.events.at(-1)?.cursor ?? "-"}`,
+      );
     return result;
   }
 
-  private rejectBodyProgramProtocol(): never {
-    this.transport.close("body_program_protocol_invalid");
-    throw new Error("body_program_protocol_invalid");
+  /**
+   * The reason string is the whole point: `body_program_protocol_invalid` was reported for a run on 2026-11-06 whose
+   * bridge closed after a night crossing, and that name says nothing about WHICH invariant broke. Each caller now
+   * states what it expected and what it got, so the next occurrence names its own cause instead of a hunt.
+   */
+  private rejectBodyProgramProtocol(detail: string): never {
+    this.transport.close(`body_program_protocol_invalid:${detail}`);
+    throw new Error(`body_program_protocol_invalid:${detail}`);
   }
 
   /**
@@ -746,10 +768,13 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const fault = validateBridgeMessage(message, this.scope);
     const bodyProgramPending = this.#pending.get(message.correlationId);
     if (fault !== null && bodyProgramPending !== undefined && isBodyProgramRequest(bodyProgramPending.type)) {
+      // Name the frame and the fault: a body-program reply the validator refuses used to close the bridge with the
+      // bare code, which cannot be told apart from a wrong-program snapshot or a cursor regression.
+      const detail = `frame_validation:pending=${bodyProgramPending.type};got=${String(message.type)};fault=${fault}`;
       this.#pending.delete(message.correlationId);
       clearTimeout(bodyProgramPending.timer);
-      bodyProgramPending.reject(new Error("body_program_protocol_invalid"));
-      this.transport.close("body_program_protocol_invalid");
+      bodyProgramPending.reject(new Error(`body_program_protocol_invalid:${detail}`));
+      this.transport.close(`body_program_protocol_invalid:${detail}`);
       return;
     }
     if (
@@ -825,7 +850,9 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       return;
     }
     if (isBodyProgramResponse(message.type) && (pending === undefined || !isBodyProgramRequest(pending.type))) {
-      this.transport.close("body_program_protocol_invalid");
+      this.transport.close(
+        `body_program_protocol_invalid:unsolicited:got=${String(message.type)};pending=${String(pending?.type ?? "none")}`,
+      );
       return;
     }
     if (pending !== undefined && !isExpectedResponse(pending.type, message.type)) {
@@ -834,13 +861,16 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       pending.reject(
         new Error(
           isBodyProgramRequest(pending.type)
-            ? "body_program_protocol_invalid"
+            ? `body_program_protocol_invalid:mismatched:pending=${pending.type};got=${String(message.type)}`
             : pending.type === "navigation_read_request"
               ? "unexpected_navigation_read_response"
               : "unexpected_bridge_response",
         ),
       );
-      if (isBodyProgramRequest(pending.type)) this.transport.close("body_program_protocol_invalid");
+      if (isBodyProgramRequest(pending.type))
+        this.transport.close(
+          `body_program_protocol_invalid:mismatched:pending=${pending.type};got=${String(message.type)}`,
+        );
       return;
     }
     if (message.type === "hello_ack") {

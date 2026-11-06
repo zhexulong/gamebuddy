@@ -4797,6 +4797,12 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "approach",
   "postcondition",
   "targetFamily",
+  // The observation binding an action declares. It was in this list when `sceneTarget` entered the catalog (see the
+  // note at line 2555), and it went missing while three action lanes merged - which the Mod experiences as
+  // `invalid_hello_ack` for the WHOLE registration list, because `hasOnlyKeys` refuses the ack rather than the one
+  // descriptor. The derived test beside this file now reads the Mod's own record, so a key this list lacks fails in
+  // the Host's own suite instead of after a game launch (measured 2026-11-06: four live runs died at hello).
+  "sceneTarget",
 ] as const;
 
 export function isValidActionDescriptor(value: unknown): value is ActionRegistrationDescriptor {

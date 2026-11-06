@@ -1777,7 +1777,16 @@ test("body program closes the named pipe for a structurally valid wrong correlat
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      const closed = await disconnected;
+      assert.equal(closed.state, "disconnected");
+      // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
+      // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
+      // suite fail the moment the frame validator started naming its fault first.
+      assert.match(
+        closed.reasonCode,
+        /^body_program_protocol_invalid:.+$/u,
+        `the close names the invariant that broke: ${closed.reasonCode}`,
+      );
       assert.equal(client.state.connected, false);
     },
   );
@@ -1819,7 +1828,11 @@ test("body program closes the named pipe for a wrong correlated programId", asyn
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      assert.deepEqual(await disconnected, {
+        state: "disconnected",
+        reasonCode:
+          "body_program_protocol_invalid:program_events:expected=program_events_result;got=program_events_result;requested=program_01;returned=foreign_program",
+      });
       assert.equal(client.state.connected, false);
     },
   );
@@ -1869,7 +1882,16 @@ test("body program closes the named pipe when events exceed the requested page s
         client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      const closed = await disconnected;
+      assert.equal(closed.state, "disconnected");
+      // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
+      // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
+      // suite fail the moment the frame validator started naming its fault first.
+      assert.match(
+        closed.reasonCode,
+        /^body_program_protocol_invalid:.+$/u,
+        `the close names the invariant that broke: ${closed.reasonCode}`,
+      );
       assert.equal(client.state.connected, false);
     },
   );
@@ -1939,7 +1961,16 @@ test("body program still closes for a non-empty page whose high-water is below t
         client.programEvents({ programId: "program_01", cursor: 100, pageSize: 1 }),
         /body_program_protocol_invalid/,
       );
-      assert.deepEqual(await disconnected, { state: "disconnected", reasonCode: "body_program_protocol_invalid" });
+      const closed = await disconnected;
+      assert.equal(closed.state, "disconnected");
+      // Three invariants can legitimately fire on this fixture (frame validation, the header/event rule, the cursor
+      // rule); what the case is for is that the bridge closes AND says which one broke. Pinning one sentence made the
+      // suite fail the moment the frame validator started naming its fault first.
+      assert.match(
+        closed.reasonCode,
+        /^body_program_protocol_invalid:.+$/u,
+        `the close names the invariant that broke: ${closed.reasonCode}`,
+      );
       assert.equal(client.state.connected, false);
     },
   );
