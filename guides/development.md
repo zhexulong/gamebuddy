@@ -50,6 +50,7 @@ pnpm --dir host test   # Host 编译产物测试（Node runner）
 
 - **Host 套件跑编译产物。** `host/scripts/run-tests.mjs` 从 `host/dist-test` 运行并校验其新鲜度；改动 `host/src` 后先 `pnpm --dir host build:test`，否则会因产物过期而拒绝运行。直接 `bun test src/...` 会缺少编译产物与 `node:test` 能力，产生的红灯不是产品回归。
 - **真实游戏验证不等于单元测试。** live-run 需要已安装的游戏、隔离的 Mod profile 与存档；同一时间只允许一个 lane 启动 SMAPI/Stardew 进程。
+- **语音门禁验证的是网关，不是产品输入。** 产品界面没有录音路径（无 `getUserMedia` / `MediaRecorder` / 语音上传）；`tools/run-windows-voice-input-gate.mjs` 等验证的是网关侧能力，不能当作语音输入已接入。
 - **门禁先红后绿。** 新增断言要先在真实注入的违规上看到失败，再修到通过；只在“当前树通过”不算证明。
 
 ## Live run 与游戏验证

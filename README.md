@@ -54,7 +54,8 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 | 世界书：条目管理与绑定 | 🚧 管理能力存在；selective Lorebook 仍是独立 release-candidate |
 | 长期 Memory：章节折叠、语义记忆、跨会话召回 | ✅ |
 | 跨表面连续性（Chat ↔ Game 同一身份） | ✅ 绑定同一 continuity 时 |
-| 语音：PTT 状态机、流式 TTS、打断 | 🚧 预览；ASR 需要本机资产或自备云端 key |
+| 语音输出：流式 TTS、打断、播放 epoch | 🚧 预览；需要配置 TTS provider（Desktop 语音是输出通道） |
+| 语音输入（PTT 麦克风 / ASR） | ⬜ 尚未接入产品；网关侧有实验门禁，产品无录音路径 |
 | Windows 安装包（per-user、免 Node/.NET 运行时） | 🚧 可构建并通过干净机沙箱验收；签名公开发行通道仍在收敛 |
 | 多游戏 / 社区 Connector | ⬜ 尚未支持（Host 已留 integration seam，但不是通用游戏协议） |
 | macOS / Linux | ⬜ 尚未支持 |
@@ -143,7 +144,7 @@ flowchart TB
         Identity["身份与连续性 (Identity / Continuity)"]
         Memory["长期 Memory (Magic Context)<br/>章节折叠 / 语义记忆 / 召回"]
         PiRuntime["受限 Pi Runtime<br/>显式工具 allowlist"]
-        VoiceGW["Voice Gateway<br/>PTT / ASR / TTS"]
+        VoiceGW["Voice Gateway<br/>流式 TTS / 打断"]
         ActionRouter["Game Action Router<br/>policy / 前置检查 / 回执"]
     end
 
@@ -187,7 +188,7 @@ ai-game-companion/
 ├── packages/              # 共享契约（如 Game Action Program 模型与校验器）
 ├── protocol/              # 跨语言 Bridge 协议与 schema
 ├── desktop/               # Windows 桌面外壳与安装器
-├── voice-gateway/         # 本地语音网关（PTT / ASR / TTS）
+├── voice-gateway/         # 本地语音网关（当前为输出通道：TTS / 打断）
 ├── vendor/
 │   ├── pi-koe/            # 第一方语音中枢（submodule）
 │   └── magic-context/     # 长期 Memory 引擎（定制 fork）
