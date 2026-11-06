@@ -2362,7 +2362,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.clear_cask,
         label: "Clear Cask",
         description:
-          "Use the equipped Axe, Pickaxe, or Hoe on one live adjacent Cask. slot, x, y and expectedTargetId must be copied exactly from the toolSlots and caskTargets in the MOST RECENT observe result. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
+          "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -2415,7 +2415,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.toggle_tool_light,
         label: "Toggle Tool Light",
         description:
-          "Toggle the Lantern light; slot must identify the Lantern currently equipped, copied from lanternSlots in the most recent observe result. The light toggles on the tool itself, not on a world object.",
+          "Toggle the Lantern light; the action takes the lantern its own `tool:lantern` claim declares out of the pack and puts the actor's previous selection back, so slot is the number from lanternSlots in the most recent observe result and need not be the held one. The light toggles on the tool itself, not on a world object.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
@@ -2816,7 +2816,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.remove_placed_item,
           label: "Remove a placed object",
           description:
-            "Remove a placed object from the world with the tool that can remove it. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. A tool that cannot remove THIS object is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
+            "Remove a placed object from the world with the tool that can remove it: the action takes an Axe or Pickaxe out of the pack (the object itself decides which one removes it) and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. A pack with neither tool, or a tool that cannot remove THIS object, is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
           parameters: schema,
           action: "remove_placed_item",
           toArgs: (params) => ({
@@ -2861,7 +2861,7 @@ export function createStardewActionTools(
           name: STARDEW_ACTION_TOOL_NAMES.break_container,
           label: "Break a container",
           description:
-            "Break a breakable container on the map, such as a crate or barrel, with the tool in the named slot. slot, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the container being GONE and its drops accounted for, not the tool's return value.",
+            "Break a breakable container on the map, such as a crate or barrel. The action takes a tool the container accepts (any heavy hitter) out of the pack and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one; x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. Success is the container being GONE and its drops accounted for, not the tool's return value.",
           parameters: schema,
           action: "break_container",
           toArgs: (params) => ({

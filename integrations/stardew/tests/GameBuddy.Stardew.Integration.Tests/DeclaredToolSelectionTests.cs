@@ -65,8 +65,18 @@ public sealed class DeclaredToolSelectionTests
         Claim("pan_ore").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pan", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_pet_bowl").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
         Claim("water_slime_hutch_trough").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
+        // The last two of the predicate class, repaired the same way: `toggle_tool_light` on 2026-11-06 and `use_raft`
+        // after it. Each drives ONE tool subclass the pack carries, so each earned a word in the vocabulary rather than
+        // a predicate: `lantern` and `raft`.
+        Claim("toggle_tool_light").Should().Be(new FarmhandActionResourceTemplateClaim("tool:lantern", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("use_raft").Should().Be(new FarmhandActionResourceTemplateClaim("tool:raft", FarmhandResourceTemplateValue.AnyUpgrade));
+        // The two words no category can say: `remove_placed_item` needs an Axe OR a Pickaxe, and the container/cask pair
+        // need the game's own heavy-hitter predicate. Each word is the refusal word too (`tool_not_owned:<word>`).
+        Claim("remove_placed_item").Should().Be(new FarmhandActionResourceTemplateClaim("tool:axe_or_pickaxe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("break_container").Should().Be(new FarmhandActionResourceTemplateClaim("tool:heavy_hitter", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("clear_cask").Should().Be(new FarmhandActionResourceTemplateClaim("tool:heavy_hitter_not_melee_weapon", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
-        Claim("use_raft").Should().BeNull();
+        Claim("dress_mannequin").Should().BeNull();
     }
 
     [Fact]
@@ -96,6 +106,8 @@ public sealed class DeclaredToolSelectionTests
             ["shears"] = Shears(),
             ["milk_pail"] = MilkPail(),
             ["pan"] = Pan(),
+            ["lantern"] = Lantern(),
+            ["raft"] = Raft(),
         };
         FarmhandActionCatalog.ToolEnum.Should().BeEquivalentTo(representatives.Keys);
 
@@ -104,13 +116,15 @@ public sealed class DeclaredToolSelectionTests
         {
             string category = registration.Descriptor!.ResourceTemplate
                 .First(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal)).Key["tool:".Length..];
-            // An empty pack, and a pack holding every OTHER category: neither may answer anything but the one word.
-            // The second case is also what separates "you own no scythe" from "you own the wrong tool" - the action
-            // must not borrow the neighbour's tool to avoid refusing.
+            // An empty pack, and a pack holding every tool that does NOT satisfy the claim: neither may answer anything
+            // but the one word. The second case is also what separates "you own no scythe" from "you own the wrong
+            // tool" - the action must not borrow a neighbour's tool to avoid refusing. Which tools those are is the
+            // vocabulary's own answer, so a predicate word (`axe_or_pickaxe`, `heavy_hitter`) is covered without a
+            // second list here.
             foreach (IList<Item?> pack in new IList<Item?>[]
             {
                 new List<Item?>(),
-                representatives.Where(entry => !string.Equals(entry.Key, category, StringComparison.Ordinal))
+                representatives.Where(entry => !Satisfies(category, entry.Value))
                     .Select(entry => (Item?)entry.Value)
                     .ToList(),
             })
@@ -131,10 +145,14 @@ public sealed class DeclaredToolSelectionTests
     }
 
     [Fact]
-    public void EveryDeclaredToolCategoryIsOneTheSelectionVocabularyKnows()
+    public void EveryDeclaredToolWordIsOneTheSelectionVocabularyKnows()
     {
-        // The category reaches `MatchesToolCategory` verbatim, so a `tool:<word>` claim the matching switch does not know
-        // would resolve to "not owned" forever. Categories come from the one published enum, which is what pins that.
+        // The word reaches the matcher verbatim, so a `tool:<word>` claim the vocabulary does not know would resolve to
+        // "not owned" forever. The vocabulary is the published category enum PLUS the predicate table's own words, read
+        // from the table rather than restated, so a new word is enrolled by the code that answers it.
+        var vocabulary = new HashSet<string>(FarmhandActionCatalog.ToolEnum, StringComparer.Ordinal);
+        vocabulary.UnionWith(ExecutionManager.ToolRequirementPredicates.Keys);
+        int population = 0;
         foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
         {
             foreach (FarmhandActionResourceTemplateClaim claim in registration.Descriptor?.ResourceTemplate
@@ -142,9 +160,51 @@ public sealed class DeclaredToolSelectionTests
             {
                 if (!claim.Key.StartsWith("tool:", StringComparison.Ordinal))
                     continue;
-                FarmhandActionCatalog.ToolEnum.Should().Contain(claim.Key["tool:".Length..],
+                population++;
+                vocabulary.Should().Contain(claim.Key["tool:".Length..],
                     $"{registration.ActionId} claims a tool the selection vocabulary must be able to match");
             }
+        }
+
+        population.Should().BeGreaterThan(0, "the population comes from the catalog; zero means the derivation stopped");
+    }
+
+    [Fact]
+    public void ThePredicateWordsAnswerTheNativeQuestionsTheyName()
+    {
+        // Each row is a fact read off the game, not off this suite's own matcher: `Tool.isHeavyHitter` is
+        // `MeleeWeapon || Hoe || Axe || Pickaxe` (Tool.cs:427-434), the cask adds `&& !(t is MeleeWeapon)`
+        // (Cask.cs:43), and `remove_placed_item`'s two seams are Axe.DoFunction and Pickaxe.DoFunction. A word that
+        // drifted from its predicate would tell a caller to fetch a tool the handler never looks for.
+        (string Word, string Satisfied, string NotSatisfied)[] rows =
+        {
+            ("axe_or_pickaxe", "axe,pickaxe", "hoe,watering_can,fishing_rod,scythe,weapon,shears,milk_pail,pan,lantern,raft"),
+            ("heavy_hitter", "axe,pickaxe,hoe,scythe,weapon", "watering_can,fishing_rod,shears,milk_pail,pan,lantern,raft"),
+            ("heavy_hitter_not_melee_weapon", "axe,pickaxe,hoe", "scythe,weapon,watering_can,fishing_rod,shears,milk_pail,pan,lantern,raft"),
+        };
+        var representatives = new Dictionary<string, Tool>(StringComparer.Ordinal)
+        {
+            ["axe"] = Axe(upgradeLevel: 0),
+            ["pickaxe"] = Pickaxe(upgradeLevel: 0),
+            ["hoe"] = Hoe(),
+            ["watering_can"] = WateringCan(),
+            ["fishing_rod"] = FishingRod(),
+            ["scythe"] = Scythe(),
+            ["weapon"] = Sword(),
+            ["shears"] = Shears(),
+            ["milk_pail"] = MilkPail(),
+            ["pan"] = Pan(),
+            ["lantern"] = Lantern(),
+            ["raft"] = Raft(),
+        };
+
+        foreach ((string word, string satisfied, string notSatisfied) in rows)
+        {
+            ExecutionManager.ToolRequirementPredicates.Should().ContainKey(word, "the table is the authority for the vocabulary");
+            foreach (string category in satisfied.Split(','))
+                Satisfies(word, representatives[category]).Should().BeTrue($"{word} names a tool {category} answers natively");
+            foreach (string category in notSatisfied.Split(','))
+                Satisfies(word, representatives[category]).Should().BeFalse($"{word} must not admit a {category}");
         }
     }
 
@@ -286,6 +346,8 @@ public sealed class DeclaredToolSelectionTests
             ("shears", Shears()),
             ("milk_pail", MilkPail()),
             ("pan", Pan()),
+            ("lantern", Lantern()),
+            ("raft", Raft()),
         })
         {
             FarmhandActionCatalog.ToolEnum.Should().Contain(category);
@@ -344,6 +406,9 @@ public sealed class DeclaredToolSelectionTests
             .GetMethod("ResolveDeclaredTool", BindingFlags.NonPublic | BindingFlags.Static)!
             .Invoke(null, new object?[] { pack, actionId })!;
 
+    /// <summary>Whether one tool satisfies the WORD a claim names, asked through the Mod's own vocabulary.</summary>
+    private static bool Satisfies(string word, Tool tool) => ExecutionManager.SatisfiesToolRequirement(tool, word);
+
     /// <summary>The evidence keys the Host pins, read out of the first key array of one validator's source region.</summary>
     private static IReadOnlyList<string> HostEvidenceKeys(string source, string marker, string endMarker)
     {
@@ -388,6 +453,12 @@ public sealed class DeclaredToolSelectionTests
     private static MilkPail MilkPail() => SeedTool<MilkPail>("(T)MilkPail", 0);
 
     private static Pan Pan() => SeedTool<Pan>("(T)Pan", 0);
+
+    /// <summary>The tool `toggle_tool_light` takes: its word entered the vocabulary with that action.</summary>
+    private static Lantern Lantern() => SeedTool<Lantern>("(T)Lantern", 0);
+
+    /// <summary>The tool `use_raft` takes, and the one no list of categories could have named before it.</summary>
+    private static Raft Raft() => SeedTool<Raft>("(T)Raft", 0);
 
     /// <summary>A scythe is a MeleeWeapon whose own id says so (`MeleeWeapon.isScythe`), never the type alone.</summary>
     private static MeleeWeapon Scythe() => SeedTool<MeleeWeapon>("(W)47", 0);

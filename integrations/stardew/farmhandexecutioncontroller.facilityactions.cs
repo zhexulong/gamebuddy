@@ -35,8 +35,8 @@ internal sealed partial class ExecutionManager
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (!TryGetEquippedCaskTool(slot, out _))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_equipped_in_requested_slot", $"slot={slot}");
+        if (ResolveDeclaredTool(Game1.player.Items, "clear_cask").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? probeObject)
@@ -51,25 +51,36 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteClearCask(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (!TryGetEquippedCaskTool(slot, out Tool? tool))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? targetObject)
-            || targetObject is not StardewValley.Objects.Cask cask
-            || !string.Equals(BuildCaskTargetId(location, targetX, targetY, cask), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "cask_target_changed", $"target={targetX},{targetY}");
-        bool hadHeldObject = cask.heldObject.Value is not null;
-        string? heldQualifiedItemId = cask.heldObject.Value?.QualifiedItemId;
-        bool removed = cask.performToolAction(tool);
-        if (removed) location.objects.Remove(tile);
-        bool postcondition = removed
-            ? !location.objects.ContainsKey(tile)
-            : location.objects.TryGetValue(tile, out StardewValley.Object? remaining) && ReferenceEquals(remaining, cask) && cask.heldObject.Value is null;
-        string evidence = $"target={expectedTargetId};tool={DescribeTool(tool) ?? "tool"};had_held_object={hadHeldObject.ToString().ToLowerInvariant()};held_qualified_item_id={heldQualifiedItemId ?? "none"};removed={removed.ToString().ToLowerInvariant()};postcondition={postcondition.ToString().ToLowerInvariant()}";
-        return postcondition
-            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "cask_cleared", evidence)
-            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "cask_clear_postcondition_unavailable", evidence);
+        // The tool is not the caller's to name: this row claims `tool:heavy_hitter_not_melee_weapon`, the cask's own guard
+        // (`Cask.cs:43` takes any `isHeavyHitter()` tool that is not a MeleeWeapon), so the handler takes the best owned one
+        // that passes it and puts the actor's selection back in the `finally` below.
+        if (!TrySelectDeclaredTool(Game1.player, "clear_cask", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        Tool tool = selection.Tool;
+        try
+        {
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.objects.TryGetValue(tile, out StardewValley.Object? targetObject)
+                || targetObject is not StardewValley.Objects.Cask cask
+                || !string.Equals(BuildCaskTargetId(location, targetX, targetY, cask), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "cask_target_changed", $"target={targetX},{targetY}");
+            bool hadHeldObject = cask.heldObject.Value is not null;
+            string? heldQualifiedItemId = cask.heldObject.Value?.QualifiedItemId;
+            bool removed = cask.performToolAction(tool);
+            if (removed) location.objects.Remove(tile);
+            bool postcondition = removed
+                ? !location.objects.ContainsKey(tile)
+                : location.objects.TryGetValue(tile, out StardewValley.Object? remaining) && ReferenceEquals(remaining, cask) && cask.heldObject.Value is null;
+            string evidence = $"target={expectedTargetId};tool={DescribeTool(tool) ?? "tool"};had_held_object={hadHeldObject.ToString().ToLowerInvariant()};held_qualified_item_id={heldQualifiedItemId ?? "none"};removed={removed.ToString().ToLowerInvariant()};postcondition={postcondition.ToString().ToLowerInvariant()}";
+            return postcondition
+                ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "cask_cleared", evidence)
+                : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "cask_clear_postcondition_unavailable", evidence);
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
     }
 
     public LocalExecutionReceipt RequestLocalDressMannequin(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -199,25 +210,34 @@ internal sealed partial class ExecutionManager
         string executionId = Guid.NewGuid().ToString("N");
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt rejection) return rejection;
-        if (!IsEquippedLantern(slot, out StardewValley.Tools.Lantern? lantern))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "lantern_not_equipped_in_requested_slot", $"slot={slot}");
-        bool wasOn = lantern!.on;
-        lantern.DoFunction(Game1.player.currentLocation, x, y, 0, Game1.player);
-        bool toggled = lantern.on != wasOn;
-        return toggled
-            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_light_toggled", $"slot={slot};was_on={wasOn.ToString().ToLowerInvariant()};is_on={lantern.on.ToString().ToLowerInvariant()}")
-            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_light_postcondition_unavailable", $"slot={slot};was_on={wasOn.ToString().ToLowerInvariant()}");
-    }
-
-    private static bool TryGetEquippedCaskTool(int slot, out Tool? tool)
-    {
-        tool = null;
-        Farmer player = Game1.player;
-        if (slot < 0 || slot >= player.Items.Count || player.CurrentToolIndex != slot
-            || player.Items[slot] is not Tool candidate || candidate is not (Axe or Pickaxe or Hoe)
-            || !candidate.isHeavyHitter() || !ReferenceEquals(player.CurrentTool, candidate)) return false;
-        tool = candidate;
-        return true;
+        // The lantern is not the caller's to name: this action's own registration claims `tool:lantern`, so the handler
+        // takes the actor's lantern out of the pack and puts back the index the actor held. `tool_not_owned:lantern` is
+        // the refusal that survives, and it names the one fact the caller can act on - the pack has no lantern. The
+        // refusal this replaced blamed the actor's HAND for a tool the pack already carried, so a request that owned
+        // exactly what it asked for died on what the actor happened to be holding.
+        if (!TrySelectDeclaredTool(Game1.player, "toggle_tool_light", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        bool wasOn;
+        bool isOn;
+        try
+        {
+            // Never toggle whatever the switch left in hand: the selection's own postcondition, in the same words the
+            // rest of the tool family uses for it.
+            if (selection.Tool is not StardewValley.Tools.Lantern lantern)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            wasOn = lantern.on;
+            lantern.DoFunction(Game1.player.currentLocation, x, y, 0, Game1.player);
+            isOn = lantern.on;
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        // The receipt's `slot` is the one the SELECTION put in hand, never the number the request carried - that is the
+        // fact the caller's plan needs, and the Host's key set for this action is unchanged (`slot;was_on;is_on`).
+        return isOn != wasOn
+            ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_light_toggled", $"slot={selection.Slot};was_on={wasOn.ToString().ToLowerInvariant()};is_on={isOn.ToString().ToLowerInvariant()}")
+            : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_light_postcondition_unavailable", $"slot={selection.Slot};was_on={wasOn.ToString().ToLowerInvariant()}");
     }
 
     private static bool TryGetHeldItem(int slot, out Item? item)
@@ -341,13 +361,4 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    private static bool IsEquippedLantern(int slot, out StardewValley.Tools.Lantern? lantern)
-    {
-        lantern = null;
-        Farmer player = Game1.player;
-        if (slot < 0 || slot >= player.Items.Count || player.CurrentToolIndex != slot
-            || player.Items[slot] is not StardewValley.Tools.Lantern candidate || !ReferenceEquals(player.CurrentTool, candidate)) return false;
-        lantern = candidate;
-        return true;
-    }
 }

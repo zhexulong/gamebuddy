@@ -158,7 +158,7 @@ public sealed class BreakResourceClumpActionTests
                 .FirstOrDefault(candidate => candidate.Key.StartsWith("tool:", StringComparison.Ordinal));
             if (claim is null)
                 continue;
-            string category = claim.Key["tool:".Length..];
+            string word = claim.Key["tool:".Length..];
             foreach (List<Item?> pack in new[]
             {
                 new List<Item?> { Axe(0), Axe(3), Pickaxe(0), Pickaxe(2), Scythe() },
@@ -167,7 +167,9 @@ public sealed class BreakResourceClumpActionTests
             })
             {
                 DeclaredToolResolution fromClaim = Resolve(pack, registration.ActionId);
-                DeclaredToolResolution fromRequirement = ResolveOwned(pack, category, 0);
+                // The parameterised path is given the SAME question the claim path asks - the vocabulary's own matcher -
+                // so a claim word that is a category, a set of categories or a native predicate is compared like for like.
+                DeclaredToolResolution fromRequirement = ResolveOwnedByWord(pack, word, 0);
                 fromRequirement.Slot.Should().Be(fromClaim.Slot, $"{registration.ActionId} must resolve the same slot");
                 fromRequirement.RefusalCode.Should().Be(fromClaim.RefusalCode, $"{registration.ActionId} must refuse alike");
             }
@@ -321,8 +323,31 @@ public sealed class BreakResourceClumpActionTests
 
     private static DeclaredToolResolution ResolveOwned(IList<Item?> pack, string category, int minimumUpgrade) =>
         (DeclaredToolResolution)typeof(ExecutionManager)
-            .GetMethod("ResolveOwnedTool", BindingFlags.NonPublic | BindingFlags.Static)!
+            .GetMethod(
+                "ResolveOwnedTool",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                binder: null,
+                types: new[] { typeof(IList<Item?>), typeof(string), typeof(int), typeof(int) },
+                modifiers: null)!
             .Invoke(null, new object?[] { pack, category, minimumUpgrade, int.MaxValue })!;
+
+    /// <summary>The same ranking, asked with the vocabulary's own matcher: the form a claim word uses.</summary>
+    private static DeclaredToolResolution ResolveOwnedByWord(IList<Item?> pack, string word, int minimumUpgrade) =>
+        (DeclaredToolResolution)typeof(ExecutionManager)
+            .GetMethod(
+                "ResolveOwnedTool",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                binder: null,
+                types: new[] { typeof(IList<Item?>), typeof(string), typeof(Func<Tool, bool>), typeof(int), typeof(int) },
+                modifiers: null)!
+            .Invoke(null, new object?[]
+            {
+                pack,
+                word,
+                new Func<Tool, bool>(tool => ExecutionManager.SatisfiesToolRequirement(tool, word)),
+                minimumUpgrade,
+                int.MaxValue,
+            })!;
 
     private static string ClumpToolRefusalCode(string resolutionRefusal) =>
         (string)typeof(ExecutionManager)

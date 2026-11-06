@@ -123,7 +123,9 @@
                 "scythe",
                 "shears",
                 "milk_pail",
-                "pan"
+                "pan",
+                "lantern",
+                "raft"
               ]
             }
           },
@@ -290,7 +292,7 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "x": {
               "type": "integer"
@@ -305,6 +307,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:raft",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -1219,7 +1225,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1231,6 +1237,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:axe_or_pickaxe",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -1300,7 +1310,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1312,6 +1322,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:heavy_hitter",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -1700,7 +1714,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -1712,6 +1726,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:watering_can",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -2043,6 +2061,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:watering_can",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -2081,6 +2103,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:watering_can",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -2542,7 +2568,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -2554,6 +2580,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:heavy_hitter_not_melee_weapon",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -2704,7 +2734,7 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "x": {
               "type": "integer"
@@ -2719,6 +2749,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:lantern",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -2897,7 +2931,7 @@
           "argumentSchema": {
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "x": {
               "type": "integer"
@@ -2912,6 +2946,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:pan",
+                "value": "AnyUpgrade"
               }
             ]
           },
@@ -3060,7 +3098,7 @@
             },
             "slot": {
               "type": "integer",
-              "description": "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you."
+              "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
             },
             "expectedTargetId": {
               "type": "string"
@@ -3072,6 +3110,10 @@
               {
                 "key": "embodied_actor",
                 "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:scythe",
+                "value": "AnyUpgrade"
               }
             ]
           },

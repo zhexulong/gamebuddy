@@ -566,8 +566,10 @@ internal sealed partial class ExecutionManager
 
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
-        if (slot < 0 || slot >= player.Items.Count || player.CurrentToolIndex != slot || player.Items[slot] is not Raft raft || !ReferenceEquals(player.CurrentTool, raft))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_not_equipped_in_requested_slot", $"slot={slot}");
+        // Ask before walking: a pack that cannot satisfy this action's own `tool:raft` claim is refused now rather than
+        // after an approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
+        if (ResolveDeclaredTool(player.Items, "use_raft").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         if (!location.isWaterTile(targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water", $"tile={targetX},{targetY}");
         // 5.2: the water tile is on the map the actor is standing on and the shore beside it is walkable, so out of the
@@ -580,31 +582,44 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Launches the raft at the named water tile. Reached both in range and on arrival: the slot, the raft in it and
-    /// the tile's water property are re-read because the walk takes ticks and the actor can be holding something else
-    /// by the end of it.
+    /// Launches the raft at the named water tile. Reached both in range and on arrival: the tool and the tile's water
+    /// property are re-read because the walk takes ticks. The raft is NOT the caller's to name - the action's own
+    /// registration claims `tool:raft`, so this selects the raft it needs and puts the actor's own selection back in a
+    /// `finally`, which is what every other declared-tool action in this Mod does.
     /// </summary>
     private LocalExecutionReceipt ExecuteUseRaft(string executionId, string requestId, int slot, int targetX, int targetY)
     {
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
-        if (slot < 0 || slot >= player.Items.Count || player.CurrentToolIndex != slot || player.Items[slot] is not Raft raft || !ReferenceEquals(player.CurrentTool, raft))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_not_equipped_in_requested_slot", $"slot={slot}");
-        if (!location.isWaterTile(targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water", $"tile={targetX},{targetY}");
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_out_of_range",
-                $"tile={targetX},{targetY};actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach=1;approach=did_not_arrive");
+        if (!TrySelectDeclaredTool(player, "use_raft", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        try
+        {
+            // Never launch whatever the switch left in hand: the selection's own postcondition.
+            if (selection.Tool is not Raft raft)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            if (!location.isWaterTile(targetX, targetY))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water", $"tile={targetX},{targetY}");
+            if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_out_of_range",
+                    $"tile={targetX},{targetY};actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach=1;approach=did_not_arrive");
 
-        float staminaBefore = player.Stamina;
-        bool raftingBefore = player.isRafting;
-        raft.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, player);
-        bool launched = !raftingBefore && player.isRafting;
-        if (!launched && player.Stamina != staminaBefore)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "raft_launch_postcondition_unavailable", $"tile={targetX},{targetY};is_rafting={player.isRafting.ToString().ToLowerInvariant()};stamina_changed=true");
-        return this.RememberTerminal(requestId, executionId, launched ? ExecutionState.Succeeded : ExecutionState.Rejected,
-            launched ? "raft_launched" : "raft_launch_not_started",
-            $"tile={targetX},{targetY};is_rafting={player.isRafting.ToString().ToLowerInvariant()};stamina_before={staminaBefore:0.####};stamina_after={player.Stamina:0.####}");
+            float staminaBefore = player.Stamina;
+            bool raftingBefore = player.isRafting;
+            raft.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, player);
+            bool launched = !raftingBefore && player.isRafting;
+            if (!launched && player.Stamina != staminaBefore)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "raft_launch_postcondition_unavailable", $"tile={targetX},{targetY};is_rafting={player.isRafting.ToString().ToLowerInvariant()};stamina_changed=true");
+            // The Host pins this action's success evidence to the exact key set `tile;is_rafting;stamina_before;stamina_after`,
+            // so the selection adds no key here; the tests prove the switch and the restore instead.
+            return this.RememberTerminal(requestId, executionId, launched ? ExecutionState.Succeeded : ExecutionState.Rejected,
+                launched ? "raft_launched" : "raft_launch_not_started",
+                $"tile={targetX},{targetY};is_rafting={player.isRafting.ToString().ToLowerInvariant()};stamina_before={staminaBefore:0.####};stamina_after={player.Stamina:0.####}");
+        }
+        finally
+        {
+            RestoreToolSelection(player, selection);
+        }
     }
 
     /// <summary>Which of the two ladder kinds a request may name; each kind has exactly one owner action.</summary>
