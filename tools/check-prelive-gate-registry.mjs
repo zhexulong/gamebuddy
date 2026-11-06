@@ -221,6 +221,22 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-child-output-parsing.mjs",
+    reason:
+      "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
+      "uncommitted (`tools/refusal-exp.mjs`, `tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
+      "so adopting it needs their fix, not the wiring",
+    runsIn: "on-demand",
+  },
+  {
+    path: "tools/check-derived-population.mjs",
+    reason:
+      "debt: measured red at HEAD — `examined 794, violations 994, unread 1`, i.e. the tree's history of literal " +
+      "population assertions that a first sweep legitimately predates; asserting it in the sweep needs the fixes, " +
+      "not the wiring",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/check-head-self-contained.mjs",
     reason:
       "elsewhere: reads the commit's own module graph (`git ls-tree HEAD`, not the index), runs on every push in " +

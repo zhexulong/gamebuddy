@@ -399,6 +399,20 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "and plants a staged-but-uncommitted module, a never-written target and a gitignored build output, and the " +
       "gate's own red-proof marker names them",
   },
+  {
+    gate: "check-child-output-parsing.mjs",
+    reason:
+      "finds hand-parsed child-process output by following the value from the subprocess call to the split; its " +
+      "falsifier is tools/check-child-output-parsing.test.mjs, which hands the real 2026-11-05 capture to the old " +
+      "reader (0 lines) and to the shared one (6 lines) and plants a tainted split",
+  },
+  {
+    gate: "check-derived-population.mjs",
+    reason:
+      "reads test files as syntax trees so a literal population assertion (`list.length === 15`) is found in code " +
+      "and not in prose; its falsifier is tools/check-derived-population.test.mjs, eight injections including the " +
+      "member-diff format that replaces a bare pair of counts",
+  },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
   {
     gate: "check-class-name-declarations.mjs",
