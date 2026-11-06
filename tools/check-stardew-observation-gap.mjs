@@ -2,7 +2,7 @@
 /**
  * The observation-gap report, ARMED: `stardew-action-inventory-reconciliation.mjs --fail-on-ungranted`.
  *
- * WHY. The reconciliation analyzer prints six observation sections - replicated collections, tile channels,
+ * WHY. The reconciliation analyzer prints six observation sections - engine collections, tile channels,
  * addressability, postcondition mutations, publication gating, consumption - and appends them to its artifact under
  * `observationGaps`. The flag that turns an unregistered gap into a failure is `--fail-on-ungranted`, and on 2026-11-05
  * a grep for it found three hits, all inside that one file: the flag was written and never passed. The default CLI
@@ -49,7 +49,7 @@ export const CAPABILITY_CATALOG = "design/gameplay-capability-catalog.json";
 export const REQUIRED_INPUTS = Object.freeze([DECOMPILED_ROOT, ACTION_REGISTER, CAPABILITY_CATALOG]);
 
 /** What the analyzer prints when it measured: its own summary line, from `writeObservationSummary`. */
-const SUMMARY_MARKER = /^observation gaps: \d+ replicated location collections$/mu;
+const SUMMARY_MARKER = /^observation gaps: \d+ engine collections$/mu;
 
 export function missingInputs({ exists = (path) => existsSync(resolve(ROOT, path)) } = {}) {
   return REQUIRED_INPUTS.filter((path) => !exists(path));

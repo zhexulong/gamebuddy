@@ -1,6 +1,6 @@
 {
   "schema": "gamebuddy-stardew-observation-gap-baseline/v1",
-  "note": "Every entry is a measured reading, not an accepted gap. An entry whose subject is now read (or whose mutation no longer exists) must be deleted or the report fails as stale_baseline_entry. collection_never_read:largeTerrainFeatures is absent for a different reason: the report named it on its first run, the bush discovery and TryGetHarvestableBush were made to read location.largeTerrainFeatures (where a bush actually stands), and the finding is therefore gone rather than excused.",
+  "note": "Every entry is a measured reading, not an accepted gap. An entry whose subject is now read (or whose mutation no longer exists) must be deleted or the report fails as stale_baseline_entry. collection_never_read:largeTerrainFeatures is absent for a different reason: the report named it on its first run, the bush discovery and TryGetHarvestableBush were made to read location.largeTerrainFeatures (where a bush actually stands), and the finding is therefore gone rather than excused. The 95 collection entries added with the owner-widened population are the same kind of reading: each names a member of GameLocation, Farmer or Game1 that no Discover* body reads, and states the concrete fact that makes it unread (a draw-order or light cache the map rebuilds, a Data/* content cache, a ledger no action chooses from, or a family published by a body the Discover*-named scan does not match). They are not an endorsement that these 95 can never matter.",
   "entries": [
     {
       "kind": "collection",
@@ -246,6 +246,481 @@
       "id": "rotate_furniture:TileLocation",
       "reason": "`GetAdditionalFurniturePlacementStatus` WRITES `tileLocation` while it answers (:1475), and the handler restores it before re-reading (:188, :218); the piece's position is identity, already carried by `worldObjectTargets.x/y`, and the changed fact is `rotation`/`rotations`",
       "kind": "mutation"
+    },
+    {
+      "kind": "collection",
+      "id": "backgroundLayers",
+      "reason": "the Buildings-behind draw-order cache (`List<KeyValuePair<Layer, int>>`) `loadLayers` fills so `GameLocation.draw` paints the map's layers in order. It is a rendering index rebuilt from the map itself, and no action's outcome depends on which layer a sprite is painted in"
+    },
+    {
+      "kind": "collection",
+      "id": "buildingLayers",
+      "reason": "the same draw-order cache for the `Buildings` layer; rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "frontLayers",
+      "reason": "the same draw-order cache for the `Front` layer; rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "alwaysFrontLayers",
+      "reason": "the same draw-order cache for the `AlwaysFront` layer; rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "temporarySprites",
+      "reason": "client-side animated sprites (`TemporaryAnimatedSpriteList`: sparkles, smoke, companion bubbles) advanced by `updateTemporarySprites` each tick and never saved. The Mod's one read (`ModEntry.cs:2507`) scans for its OWN companion bubble, which is Chat-surface dialogue state, not a world fact an action addresses"
+    },
+    {
+      "kind": "collection",
+      "id": "postFarmEventOvernightActions",
+      "reason": "the callbacks the engine runs after the overnight farm event (`List<Action>`): closures the engine registers while an event plays, so there is no value a snapshot could name and no action picks one"
+    },
+    {
+      "kind": "collection",
+      "id": "farmers",
+      "reason": "the farmhands standing on the location (`FarmerCollection`). This surface has one embodied actor and `Game1.otherFarmers` is the same roster; the Mod reads `location.farmers` only as an execution guard for proximity (`farmhandexecutioncontroller.cs:1111`), never as a target"
+    },
+    {
+      "kind": "collection",
+      "id": "_activeTerrainFeatures",
+      "reason": "the per-tick working subset of terrain features (`List<TerrainFeature>` rebuilt by `updateTerrainFeatures`). The same objects are published where they persist, through `terrainFeatures`"
+    },
+    {
+      "kind": "collection",
+      "id": "critters",
+      "reason": "ambient decorations (butterflies, birds, fireflies) `updateCritters` spawns for atmosphere; they carry no interaction and no action targets one"
+    },
+    {
+      "kind": "collection",
+      "id": "lightGlowLayerCache",
+      "reason": "the per-frame blended-light lookup (`Dictionary<Vector2, float>`) `updateLights` rebuilds from `lightGlows`; visual state with no world fact in it"
+    },
+    {
+      "kind": "collection",
+      "id": "modData",
+      "reason": "the per-location mod key/value store (`ModDataDictionary`). Its entries are private facts of whichever mod wrote them; the Mod publishes its own facts through snapshot rows and no action reads or writes another mod's entry"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.animationFrames",
+      "reason": "the sprite animation table (`FarmerSprite.AnimationFrame[]`) the actor's `FarmerSprite` plays. Animation is presentation; the snapshot publishes the actor's tile and facing through the scene row"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.questLog",
+      "reason": "the accepted-quest log. `accept_daily_quest` WRITES it and the engine settles quest progress itself; the board's offers are published as `dailyQuestTargets`, and neither the daily-quest nor the delivery path chooses a quest-log entry as a target - the Mod reads the log only for receipt evidence (`completedQuestsBefore`, `quest25CompletedBefore`, `machinesanimalsitemsactions.cs:1153-1172`)"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.professions",
+      "reason": "the chosen profession ids. The level-up branch fact is published as `pendingLevelUpChoices`: `BridgeLevelUpChoice` carries `PreviousProfession` and both branch ids, built at `farmhandexecutioncontroller.cs:2575` from `player.professions.Contains(...)` - a publisher body the `Discover*`-named scan does not match, not a missing fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.newLevels",
+      "reason": "the pending level-up skill/level pairs, published as `pendingLevelUpChoices` by `DescribePendingLevelUps` (`farmhandexecutioncontroller.cs:2548`), a publisher whose name the `Discover*` scan does not match"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.newLevelSparklingTexts",
+      "reason": "the queue that draws the \"new level!\" sparkle above the actor (`Queue<int>`); a cosmetic overlay, not a world fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.experiencePoints",
+      "reason": "the per-skill experience array. It is read only as receipt evidence (`fishingExperienceBefore`, `crabpotactions.cs:168`) so a receipt can say what the call changed; no action chooses a target or a decision from XP, and `pendingLevelUpChoices` is what publishes the level a skill reached"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.dialogueQuestionsAnswered",
+      "reason": "the ids of dialogue questions already answered. A conversation ledger; `answer_dialogue` publishes the LIVE question's responses through the question receipt, so the answered set is not a fact any action decides from"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.activeDialogueEvents",
+      "reason": "the timed dialogue keys the engine currently holds (e.g. `dumped`). Read only as a refusal gate (`gift_rejected_dumped`, `machinesanimalsitemsactions.cs:1272`); the key's effect is the engine's own dialogue, which the refusal names"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.previousActiveDialogueEvents",
+      "reason": "the previous tick's copy of `activeDialogueEvents`, kept by the engine to age the same timed keys out; bookkeeping for that collection, not a separate fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.triggerActionsRun",
+      "reason": "which data-trigger actions already ran, so a trigger fires once. Engine bookkeeping keyed by trigger id; no action reads or writes it"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.eventsSeen",
+      "reason": "the ids of cutscene events already watched. A progress ledger: no action starts, watches or targets a cutscene (the event system owns that), and a played event publishes itself through the interaction receipt"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.secretNotesSeen",
+      "reason": "the secret-note ids already found; a collectible ledger. No action reads a note, and the note's content is delivered by the engine's letter UI"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.songsHeard",
+      "reason": "the jukebox tracks already unlocked; a collectible ledger with no action"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.achievements",
+      "reason": "the achievement ids already unlocked, awarded by the engine; no action awards or reads an achievement"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.specialItems",
+      "reason": "the \"special items\" wallet keys (club card, rusty key). The engine reads them to gate content and every such gate reaches the model as the refusal it produces, named with the game's own dialogue"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.specialBigCraftables",
+      "reason": "the wallet keys for special big craftables, the same mechanism as `specialItems` and the same refusal-named gate"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.mailReceived",
+      "reason": "the letter keys the actor has received. Read at execution to name a gate (`vault_not_completed` on the bus, `ccDoorUnlock` on doors and the fish tank) and those gates reach the model as the refusal with the game's own dialogue; no action chooses a mail key as a target, and `claim_mail_attachment` publishes the waiting letters as `mailboxTargets`"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.mailForTomorrow",
+      "reason": "the letters queued for overnight delivery (`NetStringHashSet`); the engine drains it when the day rolls over, and nothing an action does depends on what is queued"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.locationsVisited",
+      "reason": "which locations the actor has entered; a ledger for the map UI. The Mod's only read is a fixture assertion (`ModEntry.Fixtures.MultiDay.cs:335`) of a fact it just set, not a publisher"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.companions",
+      "reason": "junimo and companion sprites following the actor (`NetList<Companion>`); cosmetic followers with no interaction"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.displayedShippedItems",
+      "reason": "the shipping-bin display list (`IList<Item>`) the shipping menu draws over `basicShipped`; a menu list, not the shipped ledger"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.itemsLostLastDeath",
+      "reason": "the items dropped by the last death; the engine writes it and `respawn`-style recovery is not on this surface, so no action reads or targets it"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.movementDirections",
+      "reason": "the buffered movement input codes (`List<int>`); input history the engine replays, not world state"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.messageQueue",
+      "reason": "the outgoing network message queue (`IList<OutgoingMessage>`); transport plumbing"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.obsolete_friendships",
+      "reason": "a pre-1.6 friendship map kept only so an old save loads (`SerializableDictionary<string, int[]>`); `friendshipData` is the live collection and `npcRelationshipTargets` publishes it"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.emoteFavorites",
+      "reason": "the actor's emote hotkeys (`List<string>`); a UI preference"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.performedEmotes",
+      "reason": "which emotes the actor has performed (`SerializableDictionary<string, bool>`); a cosmetic ledger, and `express_emote` publishes its own result through the receipt"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.enchantments",
+      "reason": "the enchantments on the held tool (`List<BaseEnchantment>`). No action enchants a tool, and the tool row publishes the tool's identity and upgrade level"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.basicShipped",
+      "reason": "the shipped-item ledger (`NetStringDictionary<int, NetInt>`). `ship_item` publishes the shipping bin's contents as `shippingBinTargets`; the cumulative ledger is a collections-page fact no action reads"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.mineralsFound",
+      "reason": "the museum's mineral ledger. `claim_museum_reward` publishes the claimable rewards as `museumRewardTargets`; the ledger behind them is not a decision input"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.recipesCooked",
+      "reason": "the cooked-recipe counters, read only as receipt evidence (`cookedBefore`, `cookingactions.cs:215`); `cook_recipe` publishes the station as `cookingStationTargets` and the recipe as `recipeTargets`"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.fishCaught",
+      "reason": "the fishing ledger (`NetStringIntArrayDictionary`). The action surface has no fishing action: no rod cast, no catch, no bucket to read it from"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.archaeologyFound",
+      "reason": "the archaeology ledger. `dig_artifact_spot` publishes the spots (`artifactSpotTargets`); what a dig yielded is the receipt's native notice"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.callsReceived",
+      "reason": "the phone-call ledger; no action places, answers or reads a call"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.giftedItems",
+      "reason": "the per-villager daily gift tally (`SerializableDictionary<string, SerializableDictionary<string, int>>`). The `npcRelationshipTargets` row already publishes `GiftsToday` and `GiftsThisWeek`, which is the fact a gift action decides from"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.tailoredItems",
+      "reason": "which clothing items were tailored (`NetStringDictionary<int, NetInt>`). `tailor_clothing` and `dye_clothing_with_item` publish the tailoring targets; the tailored ledger is a collections-page fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.trinketItems",
+      "reason": "the trinket slots (`NetList<Trinket>`). The surface has `equip_wearable` for hat, shirt, pants, boots and rings and no trinket action, so nothing reads the trinket belt"
+    },
+    {
+      "kind": "collection",
+      "id": "Farmer.chestConsumedMineLevels",
+      "reason": "which mine chests the actor has already opened; the engine's de-duplication ledger for mine rewards, with no action and no reader"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1._locationLookup",
+      "reason": "the name-to-location index behind `Game1.locations`, filled by the same `locationData` pass; a lookup for the collection section A already reads by `Game1.locations`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1._locations",
+      "reason": "the backing list of `Game1.locations`. `Discover*` bodies read `Game1.locations`, which is this list; a separate read would be a second spelling of one collection - the same reason `netObjects` and `overlayObjects` are excused"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.npcDialogues",
+      "reason": "the per-NPC dialogue queues the engine pops when a villager is talked to. `talk_to_npc` publishes the villager and the relationship row; the dialogue text arrives through the interaction receipt"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.morningQueue",
+      "reason": "the callbacks the engine runs when a new day starts (`Queue<Action>`); engine scheduling, no value a snapshot could name"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.crabPotOverlayTiles",
+      "reason": "the crab-pot overlay counts. Published as `BridgeCrabPotOverlayTile` rows inside `crabPotCollectTargets` (`farmhandexecutioncontroller.cs:3617`), a publisher body the `Discover*`-named scan does not match"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.mailDeliveredFromMailForTomorrow",
+      "reason": "the bookkeeping of letters the overnight rollover delivered; the engine drains it and no action reads the delivered set"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.dynamicPixelRects",
+      "reason": "cached texture rectangles (`Texture2D[]`) the renderer reuses; rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.newGameSetupOptions",
+      "reason": "the options chosen at new-game setup (`Dictionary<string, object>`), consumed when the save is created; this surface never creates a save"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.eventsSeenSinceLastLocationChange",
+      "reason": "which events played since the last map change (cutscene bookkeeping for the event system); no action reads it"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.bannedUsers",
+      "reason": "the blocked-multiplayer-user list (`SerializableDictionary<string, string>`); a lobby moderation fact, and this surface has no multiplayer administration action"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.currentObjectDialogue",
+      "reason": "the queue of object dialogue lines the engine is drawing (`Queue<string>`); text being rendered, not a world fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.worldStateIDs",
+      "reason": "the lobby's world-state identifiers (`HashSet<string>`); networking plumbing with no action"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.questionChoices",
+      "reason": "the responses of the question the engine is showing (`List<Response>`). `answer_dialogue` publishes the question's responses with the question (`modalactions.cs:140`) and `pendingLevelUpChoices` publishes the level-up case; the raw list is not a separate fact"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.achievements",
+      "reason": "the achievement definition map from `Data/achievements`; content data, and no action awards or reads an achievement"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.bigCraftableData",
+      "reason": "the parsed `Data/bigCraftables` content cache (`DataLoader`); content data. The world objects it describes are published from `location.objects` as `worldObjectTargets`, and a handler reads the data itself through `DataLoader` when it needs a definition"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.characterData",
+      "reason": "the parsed `Data/Characters` content cache; `characterData` describes NPCs that the world rows identify by name, and a handler reads the definition through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.cropData",
+      "reason": "the parsed `Data/Crops` content cache; the crop STATE on a tile is published from `terrainFeatures` as `cropTargets`, and the definition is read through `DataLoader` when an action needs it"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.farmAnimalData",
+      "reason": "the parsed `Data/FarmAnimals` content cache; the animals themselves are published from `location.animals` as `farmAnimalProductTargets`/`farmAnimalPetTargets`, and the definition is read through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.floorPathData",
+      "reason": "the parsed `Data/FloorPaths` content cache: which floor tiles an NPC may walk on inside a building. It feeds the native pathfinder that `navigate_to_destination` drives; the path itself is the action's result, not a row"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.fruitTreeData",
+      "reason": "the parsed `Data/FruitTrees` content cache; a tree's own growth state is published from `terrainFeatures` as `fruitTreeTargets`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.jukeboxTrackData",
+      "reason": "the parsed `Data/JukeboxTracks` content cache; no action plays a jukebox track"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.locationData",
+      "reason": "the parsed `Data/Locations` content cache (`include` rules, spawns). The locations themselves come from `Game1.locations`, and an action that needs a location's definition reads it through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.locationContextData",
+      "reason": "the parsed `Data/LocationContexts` content cache (fish, forage and artifact tables keyed by context). No action chooses a target from a context table; the Mod reads the definition through `DataLoader` when a native call needs it"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.NPCGiftTastes",
+      "reason": "the parsed `Data/NPCGiftTastes` content cache (which item a villager likes). `npc_relationship` publishes the relationship row and the gift action's receipt states the engine's answer; the taste table is read by the engine, not chosen from"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.pantsData",
+      "reason": "the parsed `Data/pants` content cache; the worn pants are published as the actor's equipped wearable, and the definition is read through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.petData",
+      "reason": "the parsed `Data/Pets` content cache; the pet itself is published from the world as `petTargets`, and the definition is read through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.shirtData",
+      "reason": "the parsed `Data/shirts` content cache; the worn shirt is published as the actor's equipped wearable"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.toolData",
+      "reason": "the parsed `Data/Tools` content cache (upgrade costs and levels); the OWNED tools are published as `toolSlots` from the pack, and the definition is read through `DataLoader`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.weaponData",
+      "reason": "the parsed `Data/Weapons` content cache (damage, knockback). No action swings a weapon at a target and the surface has no combat action"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.hudMessages",
+      "reason": "the HUD toast list (`List<HUDMessage>`). Published as `nativeNotices`: `NativeNoticeObserver` reads this collection (`Sensory/NativeNoticeObserver.cs:46`) and the snapshot's `NativeNotices` field carries what the engine announced"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.rainDrops",
+      "reason": "the falling-rain sprite array (`RainDrop[]`) the weather renderer seeds; weather visuals, and the weather FACT is published on the scene row"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.debrisWeather",
+      "reason": "the drifting weather debris list (leaves, petals) the renderer advances; visual only"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.screenOverlayTempSprites",
+      "reason": "the screen-space animation list (fades, letter overlays); rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.uiOverlayTempSprites",
+      "reason": "the UI-space animation list the menu renderer draws; rendering only"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.directionKeyPolling",
+      "reason": "the held-direction key buffer (`int[]`) the movement code polls; input state, which no snapshot publishes for any surface"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.currentLightSources",
+      "reason": "the light sources the renderer blends this frame (`Dictionary<string, LightSource>`); lighting, and the actor's OWN held light is published as `lanternSlots` by `toggle_tool_light`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.nextClickableMenu",
+      "reason": "the menus the engine will open next (`List<IClickableMenu>`). Read only as a refusal guard (an `ItemGrabMenu` is about to open, `itemtileactions.cs:873`); the menu that IS open is what `dismiss_modal` and `answer_dialogue` publish"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.actionsWhenPlayerFree",
+      "reason": "the callbacks the engine runs once the actor is free (`List<Action>`); engine scheduling of closures, with no value a snapshot could name"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.onScreenMenus",
+      "reason": "the open menu stack (`IList<IClickableMenu>`). The engine's modal state; what an action needs is the open menu's identity, published by `dismiss_modal`/`answer_dialogue` from `Game1.activeClickableMenu`"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.otherFarmers",
+      "reason": "the multiplayer farmhand roster (`NetRootDictionary<long, Farmer>`). This surface has one embodied actor (`Game1.player`) and the companion is not a farmer; the same roster is excused as `farmers` on the location"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.delayedActions",
+      "reason": "the engine's deferred actions (`IList<DelayedAction>`): closures scheduled for a later tick, which no snapshot can name and no action chooses"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.endOfNightMenus",
+      "reason": "the menus the engine shows at day end (`Stack<IClickableMenu>`); engine-owned day transition UI, not a target"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.splitscreenOptions",
+      "reason": "the per-split-screen option sets (`SerializableDictionary<long, Options>`); local co-op configuration, which this surface never sets"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.CustomData",
+      "reason": "the save's per-mod key/value store (`SerializableDictionary<string, string>`); the same reason as `modData` - private entries of whichever mod wrote them"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.remoteEventQueue",
+      "reason": "the queued remote events (`List<Action>`) the network layer replays; transport plumbing"
+    },
+    {
+      "kind": "collection",
+      "id": "Game1.weddingsToday",
+      "reason": "the actor ids marrying today (`List<long>`); day bookkeeping for the wedding event, and no action reads or arranges a wedding"
     }
   ]
 }

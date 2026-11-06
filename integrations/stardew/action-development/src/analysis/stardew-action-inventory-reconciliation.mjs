@@ -1282,12 +1282,37 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
  *
  * Each section is derived from an authority, never from a list in this file:
  *
- *   A collections        the population is the public instance members of `GameLocation` whose
- *                        declared type is one of the engine's NETWORKED collection types, read from
- *                        the decompiled assembly, plus `Game1.locations`. Plain `List`/`Dictionary`
- *                        members (`critters`, `temporarySprites`, `backgroundLayers`, `modData`) are
- *                        engine-local caches and visual state, not replicated world state a mod can
- *                        address, so they are excluded by TYPE rather than by a name list.
+ *   A collections        the population is every public COLLECTION-TYPED member of the three owners the
+ *                        engine keeps world and actor state on, read from the decompiled assembly:
+ *                        `GameLocation` (instance), `Farmer` (instance - the pack, the friendships, the
+ *                        quest log, the recipe books, the mail keys) and `Game1` (instance and STATIC,
+ *                        because its statics ARE the world: `locations`, `objectData`). A member counts by
+ *                        its DECLARED TYPE - an array, a type whose own name ends with a container genus
+ *                        (`NetCollection`, `NetLongDictionary`, `NetVector2HashSet`, `Queue`), or a named
+ *                        engine type that declares a collection interface itself (`Inventory :
+ *                        IList<Item>`, resolved from the tree) - and a single-object holder
+ *                        (`NetRef<Horse>`, `NetRoot<NetWorldState>`) is excluded by that same test.
+ *                        The classification is one instrument: a collection is `read` when a `Discover*`
+ *                        body names its member (`player.Items`, `location.objects`), or, for a `Game1`
+ *                        member, names `Game1.<member>`. The test is the MEMBER NAME, so a read row says
+ *                        "a publisher reads a member with this name", which is what a name-based scan can
+ *                        honestly claim.
+ *
+ *                        THE OWNERS AND THE TYPE TEST ARE THE FIX FOR A REAL BLINDNESS. This population
+ *                        used to be `GameLocation` members of the engine's NETWORKED types plus
+ *                        `Game1.locations`; everything attached to the PLAYER was structurally outside
+ *                        it, so `till_soil` needing a hoe the pack may not hold was never a question the
+ *                        report could ask. Plain `List`/`Dictionary` members were excluded "as local
+ *                        caches", and that type filter is precisely what hid the pack: `Farmer.Items` is
+ *                        an `Inventory`, which names no container genus. The local caches (`critters`,
+ *                        `temporarySprites`, `lightGlowLayerCache`, the `Data/*` content dictionaries, the
+ *                        menu and scheduling queues) are IN the population now and each one is argued in
+ *                        the baseline with the concrete fact that makes it unread, instead of being
+ *                        excluded by a type rule nobody had to defend.
+ *
+ *                        Every row carries the declaration it came from (`GameLocation.cs:185`), which the
+ *                        `collection_never_read` finding prints, so a reader opens the line rather than
+ *                        trusting this report about it.
  *   B tile channels      the engine stores interaction in tile properties and layer indexes as well as
  *                        in collections. Each channel declares the engine site that dispatches on it,
  *                        and that declaration is verified against the decompiled source on every run
@@ -1332,6 +1357,17 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
  * its first run is what closed it: the bush discovery walked `terrainFeatures`, where a bush cannot stand in a
  * saved game, so `DiscoverBushTargets` and `TryGetHarvestableBush` now read `location.largeTerrainFeatures`
  * (GameLocation.cs:17403-17421) and one bush reachable from both collections is published once.
+ *
+ * What the widened population then cost is worth stating where the next reader will look: 122 members, 102 of
+ * them unread by any publisher, so this file's baseline grew by 95 collection entries in one pass. Each entry
+ * states the concrete fact that makes the member unread - a draw-order cache the map itself rebuilds, a
+ * content cache the handler reads through `DataLoader`, a `Data/*`-backed ledger no action chooses from, or a
+ * family published by a body this section's `Discover*`-named scan does not match (`pendingLevelUpChoices`
+ * from `DescribePendingLevelUps`, `NativeNotices` from `NativeNoticeObserver`). That is a larger excuse list
+ * than this instrument had ever carried, and the honest reading of it is that section A now measures "every
+ * engine collection" rather than "every collection an action can address": the owner-scoped split that would
+ * turn 95 reasons into three rules is the next shape change, not something these entries pretend to have
+ * solved.
  */
 
 export const OBSERVATION_BASELINE_SCHEMA = "gamebuddy-stardew-observation-gap-baseline/v1";
@@ -1340,42 +1376,162 @@ const OBSERVATION_SURFACE_PATH = "integrations/stardew/action-development/contra
 const OBSERVATION_MODELS_PATH = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
 
 /**
- * The engine's replicated collection types. A `GameLocation` member of one of these types is world
- * state every client sees; a plain `List`/`Dictionary`/`HashSet` member is a local cache.
+ * The container genus a collection type names in its own name: `NetCollection`, `NetLongDictionary`,
+ * `NetVector2HashSet`, `NetObjectList`, `Queue`, `Stack`, `NetArray`, `OverlaidDictionary`.
+ *
+ * The genus is read off the TYPE, never off the member. `NETWORKED_COLLECTION_TYPE` used to be the whole
+ * vocabulary, and it excluded every plain `List`/`IList` member by type - which is how `Farmer.Items`
+ * (an `Inventory`, declared `IList<Item>`) stayed outside a report whose question is "can we see the world".
  */
-const NETWORKED_COLLECTION_TYPE =
-  /^(?:NetCollection|NetObjectList|NetList|NetLongDictionary|NetVector2Dictionary|NetPointDictionary|NetStringDictionary|NetVector2HashSet|NetMutexQueue|OverlaidDictionary|OverlayDictionary|InteriorDoorDictionary)\b/u;
+const COLLECTION_TYPE_GENUS = /(?:List|Collection|Dictionary|Set|Queue|Stack|Array)$/u;
 
-/** The game-wide location list, declared on `Game1` rather than on a location. */
-const GAME1_LOCATIONS = "Game1.locations";
-const READS_GAME1_LOCATIONS = /\bGame1\s*\??\s*\.\s*locations\b/u;
+/** A BCL array (`int[]`, `EmoteType[]`) holds element values the way a list does. */
+const ARRAY_TYPE = /\[\s*,*\s*\]$/u;
+
+/** `StardewValley.Network.NetLongDictionary<FarmAnimal, NetRef<FarmAnimal>>` -> `NetLongDictionary`. */
+function outerTypeName(declaredType) {
+  const angle = declaredType.indexOf("<");
+  const head = angle < 0 ? declaredType : declaredType.slice(0, angle);
+  return head.slice(head.lastIndexOf(".") + 1).trim();
+}
+
+/**
+ * Is `declaredType` a collection of some element type?
+ *
+ * Three shapes count, and they are the same three for every owner: an array, a type whose own name ends
+ * with a container genus, and a NAMED engine type that declares a collection interface itself
+ * (`Inventory : IList<Item>`), resolved from the decompiled tree - because `public Inventory Items` is the
+ * pack and its declaration names no genus at all. A single-object holder is none of the three:
+ * `NetRef<Horse>`, `NetRoot<NetWorldState>`, `NetEvent1Field<string, NetString>` and the scalar wrappers
+ * (`NetInt`, `NetEnum`) are excluded by the same test that admits the collections, not by a skip list.
+ */
+export function isCollectionType(declaredType, collectionTypes) {
+  const type = String(declaredType).replace(/\?$/u, "").trim();
+  if (ARRAY_TYPE.test(type)) return true;
+  const outer = outerTypeName(type);
+  if (COLLECTION_TYPE_GENUS.test(outer)) return true;
+  return collectionTypes.has(outer);
+}
+
+/** One type declaration line of a decompiled source: its name and its base list, if it has one. */
+const TYPE_DECLARATION =
+  /^\s*(?:(?:public|internal|private|protected|sealed|abstract|static|partial|readonly|unsafe|new)\s+)*(?:class|struct|interface|record)\s+(\w+)\s*(?:<[^>\n]*>)?\s*(?::\s*([^\n{]+))?$/gmu;
+
+/** A base list split on its top-level commas: `IInventory, IList<Item>, ICollection<Item>` -> three. */
+function splitBases(list) {
+  const bases = [];
+  let depth = 0;
+  let current = "";
+  for (const character of list) {
+    if (character === "<") depth += 1;
+    else if (character === ">") depth -= 1;
+    if (character === "," && depth === 0) {
+      if (current.trim() !== "") bases.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim() !== "") bases.push(current.trim());
+  return bases;
+}
+
+/**
+ * Every engine type that DECLARES itself a collection, read from the decompiled tree.
+ *
+ * This is what makes `public Inventory Items => netItems.Value;` a collection without naming `Inventory`
+ * anywhere in this file: `Inventory : INetObject<NetFields>, IInventory, IList<Item>, ICollection<Item>`
+ * says so itself, and a type deriving from a collection is a collection, so the set is closed transitively
+ * rather than stopped at one level.
+ */
+export function engineCollectionTypeNames({ root }) {
+  const declarations = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    const directory = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(absolute);
+        continue;
+      }
+      if (!entry.name.endsWith(".cs")) continue;
+      const source = readFileSync(absolute, "utf8");
+      for (const match of source.matchAll(TYPE_DECLARATION))
+        declarations.push({ name: match[1], bases: splitBases(match[2] ?? "") });
+    }
+  }
+  const names = new Set();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const declaration of declarations) {
+      if (names.has(declaration.name)) continue;
+      if (declaration.bases.some((base) => isCollectionType(base, names))) {
+        names.add(declaration.name);
+        grew = true;
+      }
+    }
+  }
+  return names;
+}
+
+/** The type index, from the same fail-closed root every other section resolves. */
+export function loadEngineCollectionTypeNames({ sourceRoot } = {}) {
+  const root = resolveStardewDecompileRoot({ repositoryRoot: REPOSITORY_ROOT, root: sourceRoot });
+  return engineCollectionTypeNames({ root });
+}
 
 /**
  * The collection population, derived from the decompiled assembly.
+ *
+ * Three owners, because the state lives in three places: a location's own members, the ACTOR's members
+ * (the pack, the friendships, the quest log, the recipe books, the mail keys), and the game-wide members
+ * on `Game1` - whose statics ARE the world (`Game1.locations`, `Game1.objectData`), so statics count
+ * there and nowhere else: `Farmer.hairStyleMetadata` is class data, not this farmer's state.
  *
  * Two members whose names differ only in case are ONE collection: `animals` is the net field and
  * `Animals` the property over it, so reporting `Animals` as never read while `animals` is read
  * everywhere would be a finding about a spelling, not about the world.
  */
-export function locationCollectionPopulation({ gameLocation, game1 }) {
+export function locationCollectionPopulation({ gameLocation, farmer = "", game1, collectionTypes = new Set() }) {
   const population = [];
   const seen = new Set();
-  for (const line of gameLocation.split("\n")) {
-    const declared = declarationOf(line);
-    if (declared === null) continue;
-    if (!NETWORKED_COLLECTION_TYPE.test(declared.type)) continue;
-    const key = declared.name.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    population.push({ id: declared.name, type: declared.type });
-  }
-  if (/public\s+static\s+IList<GameLocation>\s+locations\b/u.test(game1))
-    population.push({ id: GAME1_LOCATIONS, type: "IList<GameLocation>" });
+  const add = (owner, file, source, { statics }) => {
+    let lineNumber = 0;
+    for (const text of source.split("\n")) {
+      lineNumber += 1;
+      const declared = declarationOf(text);
+      if (declared === null) continue;
+      if (!statics && declared.isStatic) continue;
+      if (!isCollectionType(declared.type, collectionTypes)) continue;
+      const id = owner === "GameLocation" ? declared.name : `${owner}.${declared.name}`;
+      const key = id.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      population.push({
+        id,
+        owner,
+        member: declared.name,
+        type: declared.type,
+        evidence: `${file}:${lineNumber}`,
+      });
+    }
+  };
+  add("GameLocation", "GameLocation.cs", gameLocation, { statics: false });
+  add("Farmer", "Farmer.cs", farmer, { statics: false });
+  add("Game1", "Game1.cs", game1, { statics: true });
   return population;
 }
 
 /**
- * One `public <modifiers> <type> <name>;` declaration as `{ type, name }`, or null.
+ * One `public <modifiers> <type> <name>;` declaration as `{ type, name, isStatic }`, or null.
  *
  * The modifiers are stripped one at a time rather than matched as a prefix, because a generic type's
  * argument list contains spaces (`NetLongDictionary<FarmAnimal, NetRef<FarmAnimal>>`) and a single
@@ -1386,30 +1542,56 @@ function declarationOf(line) {
   const withoutVisibility = line.replace(/^\s*public\s+/u, "");
   if (withoutVisibility === line) return null;
   let rest = withoutVisibility;
+  let isStatic = false;
   for (;;) {
     const modifier = /^(\w+)\s+/u.exec(rest);
     if (modifier === null) break;
-    if (modifier[1] === "static" || modifier[1] === "const") return null;
-    if (!["readonly", "virtual", "override", "new", "sealed", "abstract", "event", "volatile", "unsafe", "extern", "partial", "required"].includes(modifier[1]))
+    if (modifier[1] === "const") return null;
+    if (modifier[1] === "static") isStatic = true;
+    if (!["readonly", "static", "virtual", "override", "new", "sealed", "abstract", "event", "volatile", "unsafe", "extern", "partial", "required"].includes(modifier[1]))
       break;
     rest = rest.slice(modifier[0].length);
   }
+  // A MEMBER's declared type is a type name, never a parameter list. A method signature reaches the `=`
+  // of a DEFAULT PARAMETER value - `ShowPagedResponses(string prompt, List<...> responses, bool
+  // auto_select_single_choice = false)` - and was read as a `List` member named `auto_select_single_choice`
+  // until this test said a declared type may not open a parameter list.
   const declaration = /^(.+?)\s+(\w+)\s*(?:\{|;|=)/u.exec(rest);
-  return declaration === null ? null : { type: declaration[1].trim(), name: declaration[2] };
+  if (declaration === null || /[()]/u.test(declaration[1])) return null;
+  return { type: declaration[1].trim(), name: declaration[2], isStatic };
+}
+
+/**
+ * The read test for one population entry: a `Discover*` body that names the member.
+ *
+ * A `Game1` member is declared on the game-wide type, so only `Game1.locations` is that collection. A
+ * location's or an actor's member is read through whatever holds it (`location.objects`, `player.Items`),
+ * which is `collectionsRead`'s existing test - the classification is one instrument, not a new one.
+ */
+function game1ReadPattern(member) {
+  return new RegExp(`\\bGame1\\s*\\??\\s*\\.\\s*${member}\\b`, "u");
 }
 
 /** Which discovery reads which collection, and which collection nothing reads. */
 export function collectionCoverage({ discoveries, population }) {
-  const memberIds = population.map((entry) => entry.id).filter((id) => !id.includes("."));
+  const memberNames = population.filter((entry) => entry.owner !== "Game1").map((entry) => entry.member);
+  const game1Patterns = population
+    .filter((entry) => entry.owner === "Game1")
+    .map((entry) => [entry, game1ReadPattern(entry.member)]);
   const readers = new Map(population.map((entry) => [entry.id, []]));
   for (const discovery of discoveries) {
-    const reads = new Set(collectionsRead(discovery.body, memberIds));
-    if (READS_GAME1_LOCATIONS.test(discovery.body)) reads.add(GAME1_LOCATIONS);
-    for (const collection of reads) readers.get(collection)?.push(discovery.name);
+    const named = collectionsRead(discovery.body, memberNames);
+    for (const entry of population)
+      if (entry.owner !== "Game1" && named.has(entry.member)) readers.get(entry.id).push(discovery.name);
+    for (const [entry, pattern] of game1Patterns)
+      if (pattern.test(discovery.body)) readers.get(entry.id).push(discovery.name);
   }
   return population.map((entry) => ({
     id: entry.id,
+    owner: entry.owner,
+    member: entry.member,
     type: entry.type,
+    evidence: entry.evidence,
     readBy: readers.get(entry.id).length,
     readers: [...new Set(readers.get(entry.id))].sort(),
   }));
@@ -2662,7 +2844,7 @@ function findDecompiledSource(root, name) {
 export function loadDecompiledSources({ sourceRoot } = {}) {
   const root = resolveStardewDecompileRoot({ repositoryRoot: REPOSITORY_ROOT, root: sourceRoot });
   const decompiled = {};
-  for (const name of new Set(TILE_CHANNELS.map((channel) => channel.engine.file).concat(["GameLocation.cs", "Game1.cs"]))) {
+  for (const name of new Set(TILE_CHANNELS.map((channel) => channel.engine.file).concat(["GameLocation.cs", "Farmer.cs", "Game1.cs"]))) {
     const file = findDecompiledSource(root, name);
     if (file === null) throw new Error(`stardew_observation_decompiled_source_missing:${name}:${root}`);
     decompiled[name] = readFileSync(file, "utf8");
@@ -2679,6 +2861,7 @@ export function loadDecompiledSources({ sourceRoot } = {}) {
 export function observeActionGaps({
   sources = readModSources(),
   decompiled = loadDecompiledSources(),
+  collectionTypes = loadEngineCollectionTypeNames(),
   surface = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SURFACE_PATH), "utf8")),
   models = readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_MODELS_PATH), "utf8"),
   schema = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SCHEMA_PATH), "utf8")),
@@ -2694,7 +2877,9 @@ export function observeActionGaps({
   // A - collections
   const population = locationCollectionPopulation({
     gameLocation: decompiled["GameLocation.cs"],
+    farmer: decompiled["Farmer.cs"],
     game1: decompiled["Game1.cs"],
+    collectionTypes,
   });
   const collectionRows = collectionCoverage({ discoveries: parseDiscoveries(sources), population });
   for (const row of collectionRows)
@@ -2703,7 +2888,7 @@ export function observeActionGaps({
         code: `collection_never_read:${row.id}`,
         kind: "collection",
         id: row.id,
-        detail: `\`location.${row.id}\` (${row.type}) is a replicated location collection and no Discover* reads it; either a family is invisible or the collection belongs in the baseline with its reason`,
+        detail: `\`${row.id}\` (${row.type} at ${row.evidence}) is a public engine collection and no Discover* reads it; either a family is invisible or the collection belongs in the baseline with its reason`,
       });
   for (const row of collectionRows)
     if (row.readBy > 0 && excused("collection", row.id))
@@ -3048,7 +3233,7 @@ function parseArgs(argv) {
  * and it is printed from the SAME run that produced that JSON - never as a second opinion.
  */
 export function writeObservationSummary(observation, write = (text) => process.stderr.write(text)) {
-  write(`observation gaps: ${observation.collections.population.length} replicated location collections\n`);
+  write(`observation gaps: ${observation.collections.population.length} engine collections\n`);
   write(
     `  A collections       ${observation.collections.read.length} read, ${observation.collections.neverRead.length} never read${
       observation.collections.neverRead.length > 0 ? ` (${observation.collections.neverRead.join(", ")})` : ""
@@ -3092,7 +3277,7 @@ export function writeObservationSummary(observation, write = (text) => process.s
   for (const finding of observation.findings) write(`  ${finding.code}: ${finding.detail}\n`);
   write(
     observation.ok
-      ? "  green: every replicated collection, tile channel, action target and handler mutation is published or recorded\n"
+      ? "  green: every engine collection, tile channel, action target and handler mutation is published or recorded\n"
       : `  ${observation.ungranted.length} ungranted observation gap(s)\n`,
   );
 }
@@ -3110,7 +3295,12 @@ if (directRun) {
       : null;
     const parser = await createSelectorParser();
     const selectorArtifact = await analyzeTileActionSelectorTree({ sourceRoot: options["source-root"], parser });
-    const observation = observeActionGaps({ decompiled: loadDecompiledSources({ sourceRoot: options["source-root"] }) });
+    // Both inputs are resolved from the SAME `--source-root`: the type index that decides whether a member
+    // is a collection and the sources the members are declared in must come from one tree.
+    const observation = observeActionGaps({
+      decompiled: loadDecompiledSources({ sourceRoot: options["source-root"] }),
+      collectionTypes: loadEngineCollectionTypeNames({ sourceRoot: options["source-root"] }),
+    });
     const artifact = reconcile({ selectorArtifact, remainingReport, register, catalog, methodResolution, observation });
     const serialized = `${JSON.stringify(artifact, null, options.pretty ? 2 : 0)}\n`;
     if (options.out) {

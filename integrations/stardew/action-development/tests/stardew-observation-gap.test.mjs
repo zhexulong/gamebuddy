@@ -173,6 +173,10 @@ function observe(overrides = {}) {
   return observeActionGaps({
     sources: fixture([DISCOVER_OBJECTS_ONLY]),
     decompiled: DECOMPILED,
+    // The named-type half of the collection test (`Inventory : IList<Item>`) needs the decompiled tree; the
+    // fixtures declare their collection types locally, so an empty index is the fixture's own statement and
+    // keeps this suite runnable on a checkout without `ref/external`.
+    collectionTypes: new Set(),
     surface: SURFACE,
     models: MODELS,
     schema: SCHEMA,
@@ -192,6 +196,99 @@ test("the collection population is derived from the decompiled type, not from a 
   );
   // `Objects` is the property over `objects`: one collection, one row.
   assert.equal(population.filter((entry) => entry.id.toLowerCase() === "objects").length, 1);
+});
+
+/**
+ * The actor's own members, in the shapes the type test has to tell apart: the pack behind an `Inventory`
+ * (a named type that declares `IList<Item>`), a replicated string dictionary, a single-object holder, a
+ * STATIC collection, and a method whose parameter list names a `List`.
+ */
+const FARMER = `
+public class Farmer
+{
+	public readonly NetRef<Inventory> netItems = new NetRef<Inventory>(new Inventory());
+	public readonly NetStringDictionary<Friendship, NetRef<Friendship>> friendshipData = new NetStringDictionary<Friendship, NetRef<Friendship>>();
+	public readonly NetRef<Horse> mount = new NetRef<Horse>();
+	public static Dictionary<int, HairStyleMetadata> hairStyleMetadata = new Dictionary<int, HairStyleMetadata>();
+
+	public Inventory Items => netItems.Value;
+
+	public void ShowPagedResponses(string prompt, List<KeyValuePair<string, string>> responses, bool autoSelectSingleChoice = false)
+	{
+	}
+}
+`;
+
+/** `Game1`'s statics are the world: the location list, a content cache and a scheduling queue. */
+const GAME1_WORLD = `
+public static IList<GameLocation> locations;
+public static IDictionary<string, ObjectData> objectData = new Dictionary<string, ObjectData>();
+public static Queue<Action> morningQueue = new Queue<Action>();
+`;
+
+const GAME_LOCATION_WORLD = `
+public class GameLocation
+{
+	public readonly NetCollection<Building> buildings;
+	public static IList<string> defaultCrabPotFishTypes;
+}
+`;
+
+/** A discovery that reads the PACK, so the pack is read and its sibling on the same actor is not. */
+const DISCOVER_PACK = `    internal static IReadOnlyList<BridgeInventoryItemFact> DiscoverInventoryItemFacts(Farmer player)
+    {
+        return player.Items.Select((item, slot) => new BridgeInventoryItemFact("id", slot, "(O)1", "Stone")).ToArray();
+    }`;
+
+/** `Inventory : IList<Item>` - the one type fact that makes the pack a collection. */
+const INVENTORY_SOURCE = `public class Inventory : INetObject<NetFields>, IList<Item>, ICollection<Item> { }`;
+
+test("the collection population reaches the actor: the pack is in it, a member nothing reads reds", () => {
+  const collectionTypes = new Set(["Inventory"]);
+  const population = locationCollectionPopulation({
+    gameLocation: GAME_LOCATION_WORLD,
+    farmer: FARMER,
+    game1: GAME1_WORLD,
+    collectionTypes,
+  });
+  const ids = population.map((entry) => entry.id);
+
+  // The defect this population was widened for: the pack is attached to the PLAYER, and a population derived
+  // from `GameLocation` alone cannot see it. `Inventory` names no container genus in its own declaration, so the
+  // type fact comes from the type's base list (`INVENTORY_SOURCE`), not from a name in this file.
+  assert.ok(ids.includes("Farmer.Items"), `population: ${ids.join(", ")}`);
+  assert.equal(population.find((entry) => entry.id === "Farmer.Items").type, "Inventory");
+  assert.match(population.find((entry) => entry.id === "Farmer.Items").evidence, /^Farmer\.cs:\d+$/u);
+
+  // `Game1`'s statics are the world map and its caches; a `Farmer`'s statics are class data, and a single-object
+  // holder (`NetRef<Horse>`) is not a collection at all.
+  assert.ok(ids.includes("Game1.locations"));
+  assert.ok(ids.includes("Game1.objectData"));
+  assert.ok(ids.includes("Game1.morningQueue"));
+  assert.ok(!ids.includes("Farmer.hairStyleMetadata"), "a Farmer's static collection is class data, not its state");
+  assert.ok(!ids.includes("GameLocation.defaultCrabPotFishTypes"));
+  assert.ok(!ids.includes("Farmer.mount"), "a `NetRef<Horse>` holds one object");
+  // A method's parameter list names a `List`, and a declaration is not a member.
+  assert.ok(!ids.includes("Farmer.autoSelectSingleChoice"), `population: ${ids.join(", ")}`);
+
+  const rows = collectionCoverage({ discoveries: parseDiscoveries(fixture([DISCOVER_PACK])), population });
+  const pack = rows.find((row) => row.id === "Farmer.Items");
+  assert.deepEqual(pack.readers, ["DiscoverInventoryItemFacts"], "the pack is read by a publisher, so it is not a gap");
+  assert.equal(rows.find((row) => row.id === "Farmer.friendshipData").readBy, 0);
+
+  const report = observe({
+    sources: fixture([DISCOVER_PACK]),
+    decompiled: { ...DECOMPILED, "GameLocation.cs": GAME_LOCATION_WORLD, "Farmer.cs": FARMER, "Game1.cs": GAME1_WORLD },
+    collectionTypes,
+  });
+  const codes = report.findings.filter((finding) => finding.kind === "collection").map((finding) => finding.code);
+  assert.ok(codes.includes("collection_never_read:Farmer.friendshipData"), codes.join(", "));
+  assert.ok(!codes.includes("collection_never_read:Farmer.Items"), "a read collection is not a finding");
+  assert.match(
+    report.findings.find((finding) => finding.code === "collection_never_read:Farmer.friendshipData").detail,
+    /Farmer\.cs:\d+/u,
+    "the finding carries the declaration line the reader has to open",
+  );
 });
 
 test("a discovery that reads objects but not furniture reports the furniture collection", () => {
@@ -498,7 +595,7 @@ test("the human summary names each section and every ungranted gap, on the same 
   writeObservationSummary(observe(), (text) => lines.push(text));
   const text = lines.join("");
 
-  assert.match(text, /observation gaps: 5 replicated location collections/);
+  assert.match(text, /observation gaps: 5 engine collections/);
   assert.match(text, /A collections\s+1 read, 4 never read \(buildings, furniture, animals, Game1\.locations\)/);
   assert.match(text, /B tile channels\s+0 read, 3 never read/);
   assert.match(text, /C addressability\s+1 target-bearing actions, 0 without a published family/);

@@ -23,9 +23,9 @@ import {
  */
 
 const SUMMARY = [
-  "observation gaps: 19 replicated location collections",
-  "  A collections       12 read, 7 never read",
-  "  green: every replicated collection, tile channel, action target and handler mutation is published or recorded",
+  "observation gaps: 122 engine collections",
+  "  A collections       20 read, 102 never read",
+  "  green: every engine collection, tile channel, action target and handler mutation is published or recorded",
   "",
 ].join("\n");
 
@@ -120,7 +120,7 @@ test("a measured run carries the summary the analyzer printed, and every step's 
       }),
   });
   assert.equal(result.status, "measured");
-  assert.match(result.summary, /^observation gaps: 19 replicated location collections/mu);
+  assert.match(result.summary, /^observation gaps: 122 engine collections/mu);
   assert.deepEqual(
     result.steps.map((step) => [step.name, step.exitCode]),
     [
