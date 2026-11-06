@@ -69,6 +69,10 @@ export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
 export const L0_GATES = Object.freeze([
   "tools/check-catalog-fact-ownership.mjs",
   "tools/audit-stardew-discovery-channels.mjs",
+  // The consumer side of the same question: discovery asks whether the chain from the Mod to the tool description is
+  // complete, and this one asks whether the model can ASK about the family at all - a description that names a family
+  // consumes it while a full `observe` stays the only way to read its values.
+  "tools/check-stardew-observation-consumers.mjs",
   // The totality audit: 148 ms, and it asks whether each defect CLASS has a rule, deriving its
   // population from the declarations rather than a list. A gate nobody schedules is a gate that
   // cannot fail, which is why it is here rather than in a document.

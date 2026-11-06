@@ -265,6 +265,7 @@
     "test:stardew-native-transition-ledger": "node --test tools/stardew-native-transition-ledger.test.mjs",
     "test:stardew-native-virtual-member-invocation-register": "node --test tools/stardew-native-virtual-member-invocation-register.test.mjs",
     "test:stardew-native-virtual-receiver-register": "node --test tools/stardew-native-virtual-receiver-register.test.mjs",
+    "test:stardew-observation-consumers": "node --test tools/check-stardew-observation-consumers.test.mjs",
     "test:stardew-player-command-equivalence-audit": "node --test tools/stardew-player-command-equivalence-audit.test.mjs",
     "test:stardew-player-command-graph": "node --test tools/stardew-player-command-graph.test.mjs",
     "test:stardew-player-reachable-exits": "node --test integrations/stardew/action-development/tests/stardew-player-reachable-exits.test.mjs",
