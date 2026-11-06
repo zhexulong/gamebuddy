@@ -45,10 +45,16 @@ export const EVIDENCE_STATE = Object.freeze({
  */
 export function judgeObserved({ observed, ok, reason }) {
   if (observed !== true) {
-    return Object.freeze({ state: EVIDENCE_STATE.unobserved, reason: typeof reason === "string" && reason.length > 0 ? reason : "not_observed" });
+    return Object.freeze({
+      state: EVIDENCE_STATE.unobserved,
+      reason: typeof reason === "string" && reason.length > 0 ? reason : "not_observed",
+    });
   }
   if (ok !== true) {
-    return Object.freeze({ state: EVIDENCE_STATE.failed, reason: typeof reason === "string" && reason.length > 0 ? reason : "observation_failed" });
+    return Object.freeze({
+      state: EVIDENCE_STATE.failed,
+      reason: typeof reason === "string" && reason.length > 0 ? reason : "observation_failed",
+    });
   }
   return Object.freeze({ state: EVIDENCE_STATE.verified, reason: null });
 }
@@ -62,14 +68,7 @@ export function judgeObserved({ observed, ok, reason }) {
  * must say so explicitly AND name the reason, which keeps the decision visible in
  * the artifact instead of hidden in a branch.
  */
-export function judgeExpectation({
-  expectation,
-  observed,
-  ok,
-  reason,
-  absentIsExpected = false,
-  absentReason,
-}) {
+export function judgeExpectation({ expectation, observed, ok, reason, absentIsExpected = false, absentReason }) {
   if (expectation === null || expectation === undefined) {
     if (absentIsExpected !== true) {
       return Object.freeze({ state: EVIDENCE_STATE.unobserved, reason: "no_expectation_configured" });
@@ -97,7 +96,10 @@ export function rollupVerdicts(verdicts) {
   if (failed.length > 0) return Object.freeze({ state: EVIDENCE_STATE.failed, reasons: failed.map((v) => v.reason) });
   const unobserved = list.filter((v) => v?.state !== EVIDENCE_STATE.verified);
   if (unobserved.length > 0) {
-    return Object.freeze({ state: EVIDENCE_STATE.unobserved, reasons: unobserved.map((v) => v?.reason ?? "not_observed") });
+    return Object.freeze({
+      state: EVIDENCE_STATE.unobserved,
+      reasons: unobserved.map((v) => v?.reason ?? "not_observed"),
+    });
   }
   return Object.freeze({ state: EVIDENCE_STATE.verified, reasons: [] });
 }

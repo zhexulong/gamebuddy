@@ -45,6 +45,13 @@ const RUNTIME_ROOT_EVIDENCE = [
   /^contexts\/[^/]+\/data\/cortexkit\/magic-context\/magic-context\.log$/,
   /^contexts\/[^/]+\/surface-sessions\/[^/]+\/companion-run-manifest\.json$/,
   /^contexts\/[^/]+\/surface-sessions\/[^/]+\/identity-profile-binding\.json$/,
+  // What the provider RENDERED into each assembled request (`createRenderedEnvironmentFactsProvider`,
+  // `host/src/runtime-core.internal.ts`). `<runtime-environment>` exists only inside a request, so without
+  // this file a run's artifact cannot answer a prompt-level question at all - measured on round18: `位置:`,
+  // `脚下` and `待浇水` appeared zero times in the session. Both layouts are listed because a runtime may
+  // mount with or without a surface session id, which decides the directory this record lives in.
+  /^contexts\/[^/]+\/surface-sessions\/[^/]+\/environment-facts\.jsonl$/,
+  /^contexts\/[^/]+\/environment-facts\.jsonl$/,
   /^contexts\/[^/]+\/surface-sessions\/[^/]+\/sessions\/.+\.jsonl$/,
   /^contexts\/[^/]+\/\.cortexkit\/magic-context\.jsonc$/,
 ];

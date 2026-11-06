@@ -7,6 +7,14 @@ import { test } from "node:test";
 
 import { DEFAULT_LIVE_RUN_ROOT, LIVE_RUN_ROOT_ENV, openLiveRunCapture, resolveLiveRunRoot } from "./capture.mjs";
 
+/**
+ * The Host's own filename for what the environment provider RENDERED into each assembled request
+ * (`ENVIRONMENT_FACTS_RECORD_FILENAME`, host/src/runtime-core.internal.ts). `round-verdict.mjs` reads rows 2
+ * and 5 from it, so if the capture stops keeping it those two criteria go back to reading a session that by
+ * construction never contained the block.
+ */
+const ENVIRONMENT_FACTS_RECORD = "environment-facts.jsonl";
+
 async function scratch(t) {
   const dir = await mkdtemp(join(tmpdir(), "live-run-capture-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -111,6 +119,33 @@ test("the file budget truncates loudly instead of filling the disk", async (t) =
   const copySkips = summary.skipped.filter((entry) => typeof entry.path === "string");
   assert.ok(copySkips.length > 0, "copy skips present");
   assert.ok(copySkips.every((entry) => entry.reason === "max_files"));
+});
+
+test("the rendered environment record travels with the run, beside the session it describes", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  const contextDir = join(source, "contexts", "abc");
+  await mkdir(join(contextDir, "surface-sessions", "s", "sessions"), { recursive: true });
+  // Both layouts the Host can write: with a surface session id (a Game activation) and without one.
+  const line = `${JSON.stringify({ schema: "gamebuddy_environment_facts_render/v1", revision: 7, bytes: 3, text: "x" })}\n`;
+  await writeFile(join(contextDir, "surface-sessions", "s", ENVIRONMENT_FACTS_RECORD), line, "utf8");
+  await writeFile(join(contextDir, ENVIRONMENT_FACTS_RECORD), line, "utf8");
+
+  const capture = await openLiveRunCapture({ kind: "game-ladder", root });
+  await capture.captureRuntimeRoot(source);
+  await capture.close();
+
+  assert.equal(
+    await readFile(
+      join(capture.dir, "runtime-root", "contexts", "abc", "surface-sessions", "s", ENVIRONMENT_FACTS_RECORD),
+      "utf8",
+    ),
+    line,
+  );
+  assert.equal(
+    await readFile(join(capture.dir, "runtime-root", "contexts", "abc", ENVIRONMENT_FACTS_RECORD), "utf8"),
+    line,
+  );
 });
 
 test("a missing source is recorded as a failure and never throws", async (t) => {

@@ -82,7 +82,11 @@ test("assessCapturedIdentityProfile finds the deep runtime-root profile and retu
   const dir = await scratch(t);
   const deep = join(dir, "runtime-root", "contexts", "abc", "surface-sessions", "s");
   await mkdir(deep, { recursive: true });
-  await writeFile(join(dir, "runtime-root", "contexts", "abc", "identity-profile.json"), JSON.stringify(emptyDefaultProfile), "utf8");
+  await writeFile(
+    join(dir, "runtime-root", "contexts", "abc", "identity-profile.json"),
+    JSON.stringify(emptyDefaultProfile),
+    "utf8",
+  );
   await writeFile(join(deep, "session.jsonl"), "{}", "utf8");
 
   const assessed = await assessCapturedIdentityProfile(dir);

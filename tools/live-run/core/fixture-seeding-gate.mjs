@@ -46,7 +46,10 @@ export function parseDebugInputLiterals(source) {
 export function findFoldedDebugCommandLiterals(source) {
   const offenders = [];
   for (const literal of parseDebugInputLiterals(source)) {
-    const tokens = literal.trim().split(/\s+/u).filter((token) => token.length > 0);
+    const tokens = literal
+      .trim()
+      .split(/\s+/u)
+      .filter((token) => token.length > 0);
     if (tokens.length < 2) continue;
     if (ARGUMENT_BLIND_COMMANDS.includes(tokens[0])) offenders.push(literal);
   }

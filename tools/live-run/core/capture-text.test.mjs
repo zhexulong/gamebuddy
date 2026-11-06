@@ -38,7 +38,10 @@ test("the collector is bounded in memory, not only on disk", () => {
   const collector = createLiveRunTextCollector({ maxEntries: 3 });
   for (let index = 0; index < 10; index += 1) collector.push("companion", `turn ${index}`);
   assert.equal(collector.size, 3);
-  assert.deepEqual(collector.entries().map((entry) => entry.text), ["turn 7", "turn 8", "turn 9"]);
+  assert.deepEqual(
+    collector.entries().map((entry) => entry.text),
+    ["turn 7", "turn 8", "turn 9"],
+  );
   // Empty text is not an entry: a silent turn is not a word.
   collector.push("companion", "");
   assert.equal(collector.size, 3);
@@ -55,9 +58,18 @@ test("the side file reports what it kept and enforces the entry cap", () => {
   assert.equal(side.schema, "example_transcript/v1");
   assert.equal(side.entryCount, 2);
   assert.equal(side.maxCharsPerEntry, LIVE_RUN_TEXT_MAX_CHARS);
-  assert.deepEqual(side.entries.map((entry) => entry.text), ["line 3", "line 4"]);
-  assert.deepEqual(side.entries.map((entry) => entry.chars), [6, 6]);
-  assert.throws(() => buildLiveRunTextSideFile({ schema: "", runId: "r", entries: [] }), /live_run_text_schema_invalid/);
+  assert.deepEqual(
+    side.entries.map((entry) => entry.text),
+    ["line 3", "line 4"],
+  );
+  assert.deepEqual(
+    side.entries.map((entry) => entry.chars),
+    [6, 6],
+  );
+  assert.throws(
+    () => buildLiveRunTextSideFile({ schema: "", runId: "r", entries: [] }),
+    /live_run_text_schema_invalid/,
+  );
 });
 
 test("the side file sits beside the report, whatever the report is called", () => {

@@ -72,7 +72,10 @@ export function assessIdentityProfile(profile) {
  * Returns `profileRead: false` when the capture has no profile (disposable
  * roots, or a broken capture) — that is a GAP, never an assertion.
  */
-export async function assessCapturedIdentityProfile(captureDir, { readFileImpl = readFile, readdirImpl = readdir } = {}) {
+export async function assessCapturedIdentityProfile(
+  captureDir,
+  { readFileImpl = readFile, readdirImpl = readdir } = {},
+) {
   let entries;
   try {
     entries = await readdirImpl(captureDir, { withFileTypes: true });
@@ -90,7 +93,8 @@ export async function assessCapturedIdentityProfile(captureDir, { readFileImpl =
       } catch {
         continue;
       }
-      for (const child of children) stack.push({ name: `${entry.name}${sep}${child.name}`, isDirectory: child.isDirectory() });
+      for (const child of children)
+        stack.push({ name: `${entry.name}${sep}${child.name}`, isDirectory: child.isDirectory() });
     } else if (entry.name.endsWith("identity-profile.json")) {
       profileCandidates.push(entry.name);
     }

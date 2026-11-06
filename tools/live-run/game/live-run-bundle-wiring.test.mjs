@@ -43,7 +43,10 @@ test("the action trace records the game clock at dispatch, from the bridge snaps
 
 test("the runner writes its bundle through the shared validator, and names a refusal", () => {
   assert.match(SOURCE, /import \{ writeEvidenceBundle \} from "\.\.\/\.\.\/lib\/evidence-bundle\.mjs";/);
-  assert.match(SOURCE, /import \{ buildFailureSnapshot, buildReproPlan \} from "\.\.\/\.\.\/lib\/failure-dump\.mjs";/);
+  assert.match(
+    SOURCE,
+    /import \{ buildFailureSnapshot, buildReproPlan, classifyFailure \} from "\.\.\/\.\.\/lib\/failure-dump\.mjs";/,
+  );
   assert.match(SOURCE, /async function writeRunBundle\(\{/);
   assert.match(
     SOURCE,
@@ -135,7 +138,7 @@ test("the world snapshot and the capability face are sampled during the run, not
   assert.match(SOURCE, /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: null, component: null \},/);
   assert.match(
     SOURCE,
-    /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: errorMessage, component: "runner" \},/,
+    /settlement: \{ snapshot: lastObservedSnapshot, reasonCode: thrown\.reasonCode, component: "runner" \},/,
   );
   assert.match(
     SOURCE,

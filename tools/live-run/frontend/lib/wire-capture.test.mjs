@@ -1,4 +1,11 @@
 /*
+ * red-proof: fixture  the unanimity rules are asserted against capture files written for the
+ * test, not against a real run. A second line declaring a different writer reddens the assertion that
+ * a disagreeing capture is refused with both writers named; a line declaring none reddens the
+ * assertion that an unnamed line is refused. Each fixture is the defect the reader exists to catch, so
+ * a reader that accepted either would fail here rather than in a run.
+ *
+/*
  * The failure paths are the reason this module exists as its own unit: a recorder that cannot start must
  * leave the run measuring what it measured before, and must say by name that nothing is recorded. Both
  * readings are asserted here against the environment the launched child inherits, because a switch written

@@ -59,7 +59,12 @@ test("absence is only a pass when declared expected AND named", () => {
 test("a configured expectation that was never observed stays unobserved even when the caller claims success", () => {
   const configured = judgeExpectation({ expectation: { profileId: "x", revision: 1 }, observed: false, ok: true });
   assert.equal(configured.state, EVIDENCE_STATE.unobserved);
-  const wrong = judgeExpectation({ expectation: { profileId: "x" }, observed: true, ok: false, reason: "profile_mismatch" });
+  const wrong = judgeExpectation({
+    expectation: { profileId: "x" },
+    observed: true,
+    ok: false,
+    reason: "profile_mismatch",
+  });
   assert.equal(wrong.state, EVIDENCE_STATE.failed);
   assert.equal(wrong.reason, "profile_mismatch");
 });
