@@ -68,7 +68,7 @@ test("plan_shape surfaces the precondition, so the companion learns it before be
   const actions = planActionsFromRegistrations([
     registrationWithApproach("enter_exit", { relation: "adjacent", withinTiles: 1 }),
   ]);
-  const shape = planShape(actions, { actionId: "enter_exit" });
+  const shape = planShape(actions, { actionIds: ["enter_exit"] });
   assert.equal(shape.ok, true);
   if (!shape.ok) return;
   assert.deepEqual(shape.actions[0]?.approachRequirement, { declared: true, relation: "adjacent", withinTiles: 1 });
@@ -99,7 +99,7 @@ test("self_walked says the action closes the distance, and states no distance", 
   });
 
   // And it survives `plan_shape`, which is where the model reads it.
-  const shape = planShape(actions, { actionId: "cut_weeds" });
+  const shape = planShape(actions, { actionIds: ["cut_weeds"] });
   assert.equal(shape.ok, true);
   if (!shape.ok) return;
   assert.deepEqual(shape.actions[0]?.approachRequirement, {

@@ -111,7 +111,7 @@ test(
 
       // The declaring half: `pickup_forage` enforces `forage_target_out_of_range` beyond Chebyshev 1,
       // and says so before the companion is refused.
-      const declaring = planShape(actions, { actionId: "pickup_forage" });
+      const declaring = planShape(actions, { actionIds: ["pickup_forage"] });
       assert.equal(declaring.ok, true);
       if (!declaring.ok) return;
       assert.deepEqual(declaring.actions[0]?.approachRequirement, {
@@ -123,7 +123,7 @@ test(
       // The measured defect's own action, through the same pipeline: `cut_weeds` walks the actor in, so the answer
       // states the relation and states NO distance. Before this relation existed the same frame answered
       // `approach_requirement_undeclared` - thirteen times in one run - which the model cannot tell from "no constraint".
-      const selfWalked = planShape(actions, { actionId: "cut_weeds" });
+      const selfWalked = planShape(actions, { actionIds: ["cut_weeds"] });
       assert.equal(selfWalked.ok, true);
       if (!selfWalked.ok) return;
       assert.deepEqual(selfWalked.actions[0]?.approachRequirement, {
@@ -134,7 +134,7 @@ test(
 
       // The undeclared half, through the same pipeline: `move_to_tile` has no standing precondition, and the answer
       // names the silence rather than inventing "stand anywhere".
-      const silent = planShape(actions, { actionId: "move_to_tile" });
+      const silent = planShape(actions, { actionIds: ["move_to_tile"] });
       assert.equal(silent.ok, true);
       if (!silent.ok) return;
       assert.deepEqual(silent.actions[0]?.approachRequirement, {
