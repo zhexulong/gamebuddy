@@ -607,6 +607,8 @@ test("a fact about her own body is never dropped while a fact about the world su
   for (let index = 0; index < 20; index += 1)
     villagerWhereabouts.push({
       npcName: `F${index}`,
+      // The row carries the id the action layer accepts, so a reader can build a node from this line alone.
+      targetId: `villager_F${index}`,
       displayName: "阿".repeat(16),
       location: "Farm",
       x: 80 + index,
