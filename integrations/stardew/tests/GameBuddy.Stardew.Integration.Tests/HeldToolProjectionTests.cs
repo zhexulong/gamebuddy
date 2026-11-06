@@ -58,7 +58,7 @@ public sealed class HeldToolProjectionTests
         // The live failure this closes: the model read `snapshot.toolSlots` for the word "Scythe" and got `(W)47`,
         // which no label can ever say, so it guessed and the plan threw. The category is the word an action's own
         // `tool:<category>` claim uses, so a caller satisfying `tool:scythe` reads it rather than inferring it.
-        IList<Item?> items = new List<Item?> { Scythe(), Pickaxe(upgradeLevel: 0), Lantern() };
+        IList<Item?> items = new List<Item?> { Scythe(), Pickaxe(upgradeLevel: 0), Lantern(), Wand() };
 
         IReadOnlyList<BridgeToolSlot> slots = ToolSlots(items);
 
@@ -68,8 +68,10 @@ public sealed class HeldToolProjectionTests
         slots[0].Category.Should().NotBe("weapon");
         // The identity stays published beside the category: `(W)47` is honest about WHICH item this is.
         slots[0].Label.Should().Be("(W)47");
-        // A tool the one mapping has no word for says so rather than guessing the nearest-looking one.
-        slots[2].Category.Should().Be("unknown");
+        // The lantern gained its own word with `toggle_tool_light`, so `tool:lantern` is resolvable from this list.
+        slots[2].Category.Should().Be("lantern");
+        // A tool the one mapping truly has no word for says so rather than guessing the nearest-looking one.
+        slots[3].Category.Should().Be("unknown");
         FarmhandActionCatalog.ToolEnum.Should().NotContain("unknown", "`unknown` is the absence of a claim word");
     }
 
@@ -147,8 +149,11 @@ public sealed class HeldToolProjectionTests
     /// <summary>A scythe is a MeleeWeapon whose own id says so, never the type alone.</summary>
     private static MeleeWeapon Scythe() => SeedTool<MeleeWeapon>("(W)47", 0);
 
-    /// <summary>A tool the category mapping has no word for: it is a `Tool`, and no claim names it.</summary>
+    /// <summary>The word `toggle_tool_light` gave the lantern: a claim now names it.</summary>
     private static Lantern Lantern() => SeedTool<Lantern>("(T)Lantern", 0);
+
+    /// <summary>A tool the category mapping has no word for: it is a `Tool`, and no claim names it.</summary>
+    private static Wand Wand() => SeedTool<Wand>("(T)Wand", 0);
 
     private static T SeedTool<T>(string qualifiedItemId, int upgradeLevel)
         where T : Tool

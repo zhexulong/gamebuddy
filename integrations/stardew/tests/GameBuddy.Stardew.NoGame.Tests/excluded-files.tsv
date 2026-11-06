@@ -51,6 +51,7 @@ destinationsearchtests.cs	mod-assembly	Navigation, DerivedDestinationSet, Destin
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 EnterExitDoorGateTests.cs	mod-assembly	Handlers
 FacilityActionTests.cs	mod-assembly	Handlers
+ToolLightActionTests.cs	mod-assembly	LocalExecutionReceipt, ToolRefusalCode
 FarmhandExecutionJournalTests.cs	mod-assembly	FarmhandExecutionAdmission, FarmhandExecutionJournalRecord, FarmhandExecutionJournalState, FarmhandExecutionReceipt, IModGlobalDataPersistence
 FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
 HeldRequestAbsorptionTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState

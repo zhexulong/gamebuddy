@@ -71,8 +71,6 @@ public sealed class WorldObjectActionTests
         "remove_placed_item_target_not_found",
         "remove_placed_item_target_changed",
         "remove_placed_item_target_not_removable",
-        "remove_placed_item_tool_not_equipped_in_requested_slot",
-        "remove_placed_item_tool_not_axe_or_pickaxe",
         "remove_placed_item_tool_cannot_remove_target",
         "remove_placed_item_out_of_range",
         // containers
@@ -82,8 +80,6 @@ public sealed class WorldObjectActionTests
         "break_container_source_target_not_found",
         "break_container_source_target_changed",
         "break_container_source_not_a_container",
-        "break_container_source_tool_not_equipped_in_requested_slot",
-        "break_container_source_tool_not_heavy_hitter",
         "break_container_source_out_of_range",
     };
 
@@ -158,7 +154,7 @@ public sealed class WorldObjectActionTests
     }
 
     [Fact]
-    public void Handler_RemovesWithTheNamedSeamTool_AndRefusesEveryWrongToolByName()
+    public void Handler_RemovesWithTheDeclaredSeamTool_AndRestoresTheActorsSelection()
     {
         string source = ReadHandlerSource();
         string code = StripLineComments(source);
@@ -167,7 +163,7 @@ public sealed class WorldObjectActionTests
 
         // The swing goes through the one shared native tool boundary, so the seam really is
         // the tool's DoFunction and not a Mod-side object edit.
-        executed.Should().Contain("UseNativeToolOnTile(tool!, location, targetX, targetY, Game1.player, staminaBefore)");
+        executed.Should().Contain("UseNativeToolOnTile(tool, location, targetX, targetY, Game1.player, staminaBefore)");
 
         // NEGATIVE: the action must never reach performToolAction/performRemoveAction itself
         // or delete the object by hand — those are the seam's own steps, owned by the game.
@@ -180,18 +176,29 @@ public sealed class WorldObjectActionTests
             removalBody.Should().NotContain("performRemoveAction(");
         code.Should().NotContain("objects.Remove(");
 
-        // The named slot must really hold the equipped seam tool, and the object must really
-        // be removable by it: two separate questions, two separate terminal codes. The
-        // 2026-10-06 break_rock_source regression (a missing CurrentToolIndex check) is why
-        // the equipped-slot half is asserted explicitly.
-        code.Should().Contain("Game1.player.CurrentToolIndex != slot");
-        code.Should().Contain("ReferenceEquals(Game1.player.CurrentTool, candidate)");
-        code.Should().Contain("\"remove_placed_item_tool_not_axe_or_pickaxe\"");
+        // The tool is TAKEN, not demanded: the action's own row claims `tool:axe_or_pickaxe`, the selection runs
+        // through the one declared-tool path, and which of the two actually removes THIS object is the object's own
+        // answer. A refusal that survives names something the caller can act on (`tool_not_owned:axe_or_pickaxe` from
+        // the claim, `tool_cannot_remove_target` from the object) - never the hand the actor happened to be using.
+        executed.Should().Contain("TrySelectDeclaredTool(Game1.player, \"remove_placed_item\"");
+        executed.Should().Contain("ResolveDeclaredTool(Game1.player.Items, \"remove_placed_item\")");
+        executed.Should().Contain("candidate => RemovesThisObject(candidate, target)");
         executed.Should().Contain("\"remove_placed_item_tool_cannot_remove_target\"");
         executed.Should().Contain("\"remove_placed_item_target_not_removable\"");
+        int selected = StripLineComments(executed).IndexOf("TrySelectDeclaredTool(Game1.player, \"remove_placed_item\"", StringComparison.Ordinal);
+        int @finally = StripLineComments(executed).IndexOf("finally", StringComparison.Ordinal);
+        int restore = StripLineComments(executed).IndexOf("RestoreToolSelection(Game1.player, selection)", StringComparison.Ordinal);
+        @finally.Should().BeGreaterThan(selected, "the restore is unconditional, so it cannot sit on the success path");
+        restore.Should().BeGreaterThan(@finally, "the restore lives inside that finally");
+        foreach (string removalBody in new[] { body, executed })
+        {
+            removalBody.Should().NotContain("CurrentToolIndex",
+                "the equipped-slot demand this replaced refused a request that owned the tool");
+            removalBody.Should().NotContain("not_equipped");
+        }
 
         // The postcondition is the object being GONE, re-read from the world.
-        int nativeCall = executed.IndexOf("UseNativeToolOnTile(tool!", StringComparison.Ordinal);
+        int nativeCall = executed.IndexOf("UseNativeToolOnTile(tool,", StringComparison.Ordinal);
         int reRead = executed.IndexOf("bool removed = !location.objects.TryGetValue(tile,", StringComparison.Ordinal);
         int success = executed.IndexOf("\"placed_item_removed\"", StringComparison.Ordinal);
         nativeCall.Should().BeGreaterThanOrEqualTo(0, "the native swing must be the writer");
@@ -208,8 +215,9 @@ public sealed class WorldObjectActionTests
         string source = ReadHandlerSource();
         string code = StripLineComments(source);
         string executed = MethodBody(source, "private LocalExecutionReceipt ExecuteBreakContainerSource(");
+        string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalBreakContainerSource(");
 
-        executed.Should().Contain("UseNativeToolOnTile(tool!, location, targetX, targetY, Game1.player, staminaBefore)");
+        executed.Should().Contain("UseNativeToolOnTile(tool, location, targetX, targetY, Game1.player, staminaBefore)");
         executed.Should().Contain("bool gone = !location.objects.TryGetValue(tile,");
         executed.Should().Contain("\"container_source_broken\"");
         executed.Should().Contain("\"break_container_source_postcondition_unavailable\"");
@@ -217,11 +225,25 @@ public sealed class WorldObjectActionTests
         // the cosmetic radial chunks cannot be mistaken for them.
         executed.Should().Contain("ItemDropDebrisSince(location, debrisBefore)");
         code.Should().Contain("!string.IsNullOrEmpty(debris?.itemId.Value)");
-        // A container is this action's subject only when it IS one, and the tool must satisfy
-        // the seam's own precondition rather than a Mod list.
+        // A container is this action's subject only when it IS one, and the tool is TAKEN from the pack rather than
+        // demanded in the hand: this row claims `tool:heavy_hitter`, whose predicate is the game's own
+        // (`Tool.isHeavyHitter`, in `ExecutionManager.ToolRequirementPredicates`), so no Mod list and no held-slot check
+        // survives in the handler.
         executed.Should().Contain("probe is not BreakableContainer");
-        code.Should().Contain("\"break_container_source_tool_not_heavy_hitter\"");
-        code.Should().Contain("candidate.isHeavyHitter()");
+        executed.Should().Contain("TrySelectDeclaredTool(Game1.player, \"break_container\"");
+        string executedCode = StripLineComments(executed);
+        int selected = executedCode.IndexOf("TrySelectDeclaredTool(Game1.player, \"break_container\"", StringComparison.Ordinal);
+        int native = executedCode.IndexOf("UseNativeToolOnTile(tool,", StringComparison.Ordinal);
+        int @finally = executedCode.IndexOf("finally", StringComparison.Ordinal);
+        int restore = executedCode.IndexOf("RestoreToolSelection(Game1.player, selection)", StringComparison.Ordinal);
+        native.Should().BeGreaterThan(selected, "the native swing runs with the declared tool in hand");
+        @finally.Should().BeGreaterThan(native, "the restore is unconditional, so it cannot sit on the success path");
+        restore.Should().BeGreaterThan(@finally, "the restore lives inside that finally");
+        foreach (string containerBody in new[] { body, executed })
+        {
+            containerBody.Should().NotContain("CurrentToolIndex");
+            containerBody.Should().NotContain("not_equipped");
+        }
     }
 
     [Fact]

@@ -374,15 +374,11 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "remove_placed_item_target_not_removable",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};big_craftable={target.bigCraftable.Value.ToString().ToLowerInvariant()};slot={slot}");
-        if (!TryDescribeLaneRemovalTool(slot, out Tool? tool, out string toolRefusal, out string toolEvidence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, toolEvidence);
-        if (!RemovesThisObject(tool!, target))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "remove_placed_item_tool_cannot_remove_target",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};tool={DescribeTool(tool) ?? "none"};tool_kind={LaneRemovalToolKind(tool!)};slot={slot}");
+        // Ask before walking: a pack that carries neither of the two tools this action's claim names (`tool:axe_or_pickaxe`)
+        // is refused now rather than after an approach leg it could never finish. Which of the two actually removes THIS
+        // object is a target fact, decided in the execution body.
+        if (ResolveDeclaredTool(Game1.player.Items, "remove_placed_item").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         // 5.2: out of the native tool reach, walk in rather than refuse. Every
         // position-independent check above is re-run after the walk.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
@@ -433,15 +429,18 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "remove_placed_item_target_not_removable",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};big_craftable={target.bigCraftable.Value.ToString().ToLowerInvariant()};slot={slot}");
-        if (!TryDescribeLaneRemovalTool(slot, out Tool? tool, out string toolRefusal, out string toolEvidence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, toolEvidence);
-        if (!RemovesThisObject(tool!, target))
+        // The tool is not the caller's to name. The claim says "an Axe OR a Pickaxe"; which of the two THIS action needs is
+        // the object's own answer (`RemovesThisObject` mirrors Object.performToolAction's guards), so the narrowing is a
+        // fact about the target while the selection still runs through the one declared-tool path.
+        if (ResolveDeclaredTool(Game1.player.Items, "remove_placed_item").RefusalCode is { } ownedRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ownedRefusal, $"slot={slot}");
+        if (!TrySelectDeclaredTool(Game1.player, "remove_placed_item", candidate => RemovesThisObject(candidate, target), out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "remove_placed_item_tool_cannot_remove_target",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};tool={DescribeTool(tool) ?? "none"};tool_kind={LaneRemovalToolKind(tool!)};slot={slot}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};item={target.QualifiedItemId};type={target.Type ?? "none"};fragility={target.Fragility};tool_refusal={toolRefusalCode};slot={slot}");
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
             return this.RememberTerminal(
                 requestId,
@@ -453,6 +452,7 @@ internal sealed partial class ExecutionManager
         string itemId = target.QualifiedItemId;
         int debrisBefore = ItemDropDebrisCount(location);
         float staminaBefore = Game1.player.Stamina;
+        Tool tool = selection.Tool;
         // One native swing settles an ordinary crafted object (Axe.cs:87-95 /
         // Pickaxe.cs:236-244 run performRemoveAction and remove it in the same call), but
         // a SupplyCrate carries its own hit budget (Object.cs:1192-1304). The loop is
@@ -463,7 +463,7 @@ internal sealed partial class ExecutionManager
         // (`Object.cs:1192-1304`), so the loop cannot know how many swings it will take and prices its own cap.
         ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
             Game1.player.Stamina,
-            ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, tool!.IsEfficient) * maximumSwingCount);
+            ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, tool.IsEfficient) * maximumSwingCount);
         if (!stamina.Allowed)
             return this.RememberTerminal(
                 requestId,
@@ -478,7 +478,7 @@ internal sealed partial class ExecutionManager
                 && location.objects.TryGetValue(tile, out StardewValley.Object? still)
                 && ReferenceEquals(still, target))
             {
-                UseNativeToolOnTile(tool!, location, targetX, targetY, Game1.player, staminaBefore);
+                UseNativeToolOnTile(tool, location, targetX, targetY, Game1.player, staminaBefore);
                 swingCount++;
             }
         }
@@ -489,7 +489,11 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "remove_placed_item_native_exception",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={slot};swings={swingCount};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={selection.Slot};swings={swingCount};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
         }
 
         float staminaAfter = Game1.player.Stamina;
@@ -497,7 +501,7 @@ internal sealed partial class ExecutionManager
         bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? after) || after is null;
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};type={target.Type ?? "none"};"
-            + $"tool={DescribeTool(tool) ?? "none"};tool_kind={LaneRemovalToolKind(tool!)};slot={slot};swings={swingCount};"
+            + $"tool={DescribeTool(tool) ?? "none"};tool_kind={LaneRemovalToolKind(tool)};slot={selection.Slot};swings={swingCount};"
             + $"removed={removed.ToString().ToLowerInvariant()};tile_object_after={(removed ? "none" : after!.QualifiedItemId)};"
             + $"drops={string.Join("|", drops)};drop_count={drops.Count};"
             + $"stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)}";
@@ -693,8 +697,11 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "break_container_source_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildBreakableContainerTargetId(location, targetX, targetY, probe)};item={probe.QualifiedItemId}");
-        if (!TryDescribeHeavyHitterSlot(slot, out Tool? tool, out string toolRefusal, out string toolEvidence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, toolEvidence);
+        // Ask before walking: a pack that carries no tool this container's seam accepts (`tool:heavy_hitter`) is refused
+        // now rather than after an approach leg the action could never finish. The slot the caller named is recorded,
+        // never obeyed.
+        if (ResolveDeclaredTool(Game1.player.Items, "break_container").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         // 5.2: out of the native tool reach, walk in rather than refuse.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
@@ -744,8 +751,12 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "break_container_source_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};published={expectedTargetId};live={BuildBreakableContainerTargetId(location, targetX, targetY, container)};item={container.QualifiedItemId}");
-        if (!TryDescribeHeavyHitterSlot(slot, out Tool? tool, out string toolRefusal, out string toolEvidence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, toolEvidence);
+        // The tool is not the caller's to name: this action's row claims `tool:heavy_hitter`, so the handler takes the best
+        // owned tool the container's own seam accepts (`BreakableContainer.cs:118` asks the game's predicate) and puts the
+        // actor's own selection back in the `finally` below.
+        if (!TrySelectDeclaredTool(Game1.player, "break_container", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, $"slot={slot}");
+        Tool tool = selection.Tool;
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
             return this.RememberTerminal(
                 requestId,
@@ -766,7 +777,7 @@ internal sealed partial class ExecutionManager
         // so the loop prices its cap rather than guessing the real count.
         ToolStaminaVerdict containerStamina = ToolStaminaGuard.Check(
             Game1.player.Stamina,
-            ToolStaminaGuard.PerSwingCharge(Game1.player.MiningLevel, tool!.IsEfficient) * maximumSwingCount);
+            ToolStaminaGuard.PerSwingCharge(Game1.player.MiningLevel, tool.IsEfficient) * maximumSwingCount);
         if (!containerStamina.Allowed)
             return this.RememberTerminal(
                 requestId,
@@ -781,7 +792,7 @@ internal sealed partial class ExecutionManager
                 && location.objects.TryGetValue(tile, out StardewValley.Object? still)
                 && ReferenceEquals(still, container))
             {
-                UseNativeToolOnTile(tool!, location, targetX, targetY, Game1.player, staminaBefore);
+                UseNativeToolOnTile(tool, location, targetX, targetY, Game1.player, staminaBefore);
                 swingCount++;
             }
         }
@@ -792,7 +803,11 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Uncertain,
                 "break_container_source_native_exception",
-                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={slot};swings={swingCount};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+                $"target={expectedTargetId};tile={targetX},{targetY};location={location.NameOrUniqueName};item={itemId};slot={selection.Slot};swings={swingCount};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
         }
 
         float staminaAfter = Game1.player.Stamina;
@@ -800,7 +815,7 @@ internal sealed partial class ExecutionManager
         bool gone = !location.objects.TryGetValue(tile, out StardewValley.Object? after) || after is null;
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};type={container.GetType().Name};"
-            + $"tool={DescribeTool(tool) ?? "none"};slot={slot};swings={swingCount};container_gone={gone.ToString().ToLowerInvariant()};"
+            + $"tool={DescribeTool(tool) ?? "none"};slot={selection.Slot};swings={swingCount};container_gone={gone.ToString().ToLowerInvariant()};"
             + $"tile_object_after={(gone ? "none" : after!.QualifiedItemId)};drops={string.Join("|", drops)};drop_count={drops.Count};"
             + $"stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)}";
         return gone
@@ -841,61 +856,6 @@ internal sealed partial class ExecutionManager
             return false;
         }
         source = candidate;
-        return true;
-    }
-
-    /// <summary>
-    /// The named slot's tool, or the named reason it is not one of this action's two
-    /// native seams. `Axe.DoFunction` and `Pickaxe.DoFunction` are the only two bodies
-    /// that reach an object's <c>performToolAction</c> + <c>performRemoveAction</c> pair
-    /// for this action's purposes, so a hoe, a weapon or an empty slot is refused by
-    /// name instead of being left to no-op natively.
-    /// </summary>
-    private static bool TryDescribeLaneRemovalTool(int slot, out Tool? tool, out string reasonCode, out string evidence)
-    {
-        tool = null;
-        reasonCode = "accepted";
-        evidence = string.Empty;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Tool candidate || !ReferenceEquals(Game1.player.CurrentTool, candidate))
-        {
-            reasonCode = "remove_placed_item_tool_not_equipped_in_requested_slot";
-            evidence = $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};current_slot={Game1.player.CurrentToolIndex};current_tool={DescribeTool(Game1.player.CurrentTool) ?? "none"}";
-            return false;
-        }
-        if (candidate is not Axe && candidate is not Pickaxe)
-        {
-            reasonCode = "remove_placed_item_tool_not_axe_or_pickaxe";
-            evidence = $"slot={slot};tool={DescribeTool(candidate) ?? "none"};tool_kind={LaneRemovalToolKind(candidate)}";
-            return false;
-        }
-        tool = candidate;
-        return true;
-    }
-
-    /// <summary>
-    /// The named slot's tool when it satisfies the container seam's own precondition
-    /// (<c>BreakableContainer.cs:118</c> <c>t.isHeavyHitter()</c>). The predicate is the
-    /// game's, not a Mod list: whatever Tool subclass answers true natively is admitted,
-    /// and a scythe or a club is admitted exactly as the native branch admits it.
-    /// </summary>
-    private static bool TryDescribeHeavyHitterSlot(int slot, out Tool? tool, out string reasonCode, out string evidence)
-    {
-        tool = null;
-        reasonCode = "accepted";
-        evidence = string.Empty;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Tool candidate || !ReferenceEquals(Game1.player.CurrentTool, candidate))
-        {
-            reasonCode = "break_container_source_tool_not_equipped_in_requested_slot";
-            evidence = $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};current_slot={Game1.player.CurrentToolIndex};current_tool={DescribeTool(Game1.player.CurrentTool) ?? "none"}";
-            return false;
-        }
-        if (!candidate.isHeavyHitter())
-        {
-            reasonCode = "break_container_source_tool_not_heavy_hitter";
-            evidence = $"slot={slot};tool={DescribeTool(candidate) ?? "none"};tool_kind={candidate.GetType().Name}";
-            return false;
-        }
-        tool = candidate;
         return true;
     }
 

@@ -604,7 +604,9 @@ internal sealed partial class ExecutionManager
     /// claim?), <see cref="DescribeToolCategory"/> (what did the handler take and put back?) and the slot list's
     /// published category - so a claim, a receipt and the snapshot can never name the same tool two different ways.
     /// A scythe is a MeleeWeapon, so it is tested before `weapon`; the words partition the vocabulary, which is what
-    /// makes `weapon` mean "a weapon that is not a scythe".
+    /// makes `weapon` mean "a weapon that is not a scythe". `lantern` is the one word here that is not a resource tool:
+    /// `toggle_tool_light` drives the actor's own lantern, and the action could only take it from the pack if the pack
+    /// could name it.
     /// </summary>
     internal static string? ToolCategory(Tool? tool) => tool switch
     {
@@ -616,6 +618,8 @@ internal sealed partial class ExecutionManager
         Shears => "shears",
         MilkPail => "milk_pail",
         Pan => "pan",
+        Lantern => "lantern",
+        Raft => "raft",
         MeleeWeapon weapon when weapon.isScythe() => "scythe",
         MeleeWeapon or Slingshot => "weapon",
         _ => null,
@@ -671,8 +675,41 @@ internal sealed partial class ExecutionManager
         if (claim is null)
             return new DeclaredToolResolution(string.Empty, -1, $"tool_requirement_undeclared:{actionId}");
         (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
-        return ResolveOwnedTool(items, claim.Key["tool:".Length..], minimum, maximum);
+        string word = claim.Key["tool:".Length..];
+        return ResolveOwnedTool(items, word, tool => SatisfiesToolRequirement(tool, word), minimum, maximum);
     }
+
+    /// <summary>
+    /// The words a `tool:` claim may use that are NOT one category, each with the native question it asks. ONE table, for
+    /// the same reason <see cref="ToolCategory"/> is one: the claim word, the refusal word (`tool_not_owned:&lt;word&gt;`)
+    /// and the predicate the resolver runs have to be the same fact, or a caller is told to fetch a tool the handler was
+    /// never looking for.
+    ///
+    /// <para>
+    /// A word earns a place here only when no category can say it. <c>axe_or_pickaxe</c> is a SET - two categories, and a
+    /// claim names one. <c>heavy_hitter</c> is the game's own predicate (<c>Tool.isHeavyHitter</c>: MeleeWeapon, Hoe, Axe,
+    /// Pickaxe) and is asked of the game rather than re-derived as a list of categories, so a modded Tool overriding it is
+    /// admitted exactly as the native branch admits it. <c>heavy_hitter_not_melee_weapon</c> is the cask's own guard
+    /// (<c>Cask.cs:43</c>: <c>t.isHeavyHitter() &amp;&amp; !(t is MeleeWeapon)</c>), which is why a scythe opens a container
+    /// but not a cask.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, Func<Tool, bool>> ToolRequirementPredicates =
+        new Dictionary<string, Func<Tool, bool>>(StringComparer.Ordinal)
+        {
+            ["axe_or_pickaxe"] = tool => tool is Axe or Pickaxe,
+            ["heavy_hitter"] = tool => tool.isHeavyHitter(),
+            ["heavy_hitter_not_melee_weapon"] = tool => tool.isHeavyHitter() && tool is not MeleeWeapon,
+        };
+
+    /// <summary>
+    /// Whether a tool satisfies the WORD a claim names: a predicate above, or a category from <see cref="ToolCategory"/>.
+    /// The category half is delegated rather than restated, so every tool keeps exactly one category name.
+    /// </summary>
+    internal static bool SatisfiesToolRequirement(Tool tool, string word) =>
+        ToolRequirementPredicates.TryGetValue(word, out Func<Tool, bool>? predicate)
+            ? predicate(tool)
+            : MatchesToolCategory(tool, word);
 
     /// <summary>
     /// The one ranking behind both readings of "which tool does this need": the tool a row's `tool:` claim declares,
@@ -690,14 +727,23 @@ internal sealed partial class ExecutionManager
     /// report `need 2, have 0` without recomputing the ranking at the call site.
     /// </para>
     /// </summary>
-    internal static DeclaredToolResolution ResolveOwnedTool(IList<Item?> items, string category, int minimum, int maximum = int.MaxValue)
+    internal static DeclaredToolResolution ResolveOwnedTool(IList<Item?> items, string category, int minimum, int maximum = int.MaxValue) =>
+        ResolveOwnedTool(items, category, tool => MatchesToolCategory(tool, category), minimum, maximum);
+
+    /// <summary>
+    /// The same ranking, with the QUESTION passed in instead of assumed: a claim word may be a category (matched by
+    /// <see cref="MatchesToolCategory"/>), a set of categories, a native predicate, or a category narrowed by the target the
+    /// action is about to swing at. One loop, one ranking, one refusal vocabulary - a second selection path would be a
+    /// second place for "which tool" to disagree with the claim the caller was shown.
+    /// </summary>
+    internal static DeclaredToolResolution ResolveOwnedTool(IList<Item?> items, string word, Func<Tool, bool> satisfies, int minimum, int maximum)
     {
         int bestSlot = -1;
         int bestLevel = -1;
         int ownedLevel = -1;
         for (int slot = 0; slot < items.Count; slot++)
         {
-            if (items[slot] is not Tool tool || !MatchesToolCategory(tool, category))
+            if (items[slot] is not Tool tool || !satisfies(tool))
                 continue;
             ownedLevel = Math.Max(ownedLevel, tool.UpgradeLevel);
             // The declared tier decides which owned tool satisfies it; among those, the best one wins and ties go to the
@@ -711,14 +757,14 @@ internal sealed partial class ExecutionManager
             }
         }
         if (bestSlot >= 0)
-            return new DeclaredToolResolution(category, bestSlot, null, ownedLevel);
+            return new DeclaredToolResolution(word, bestSlot, null, ownedLevel);
         if (ownedLevel < 0)
-            return new DeclaredToolResolution(category, -1, $"tool_not_owned:{category}", ownedLevel);
+            return new DeclaredToolResolution(word, -1, $"tool_not_owned:{word}", ownedLevel);
         // Owned, but not at a level the declaration permits: `need` is its own floor and `have` the best owned one.
         return new DeclaredToolResolution(
-            category,
+            word,
             -1,
-            $"tool_upgrade_insufficient:{category}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}",
+            $"tool_upgrade_insufficient:{word}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}",
             ownedLevel);
     }
 
@@ -733,11 +779,38 @@ internal sealed partial class ExecutionManager
         Farmer farmer,
         string actionId,
         out DeclaredToolSelection selection,
+        out string refusalCode) =>
+        TrySelectDeclaredTool(farmer, actionId, _ => true, out selection, out refusalCode);
+
+    /// <summary>
+    /// The same selection, narrowed by a fact only the TARGET can answer - <c>remove_placed_item</c> needs a tool that
+    /// removes THIS object, and the pack may hold both an Axe and a Pickaxe while only one of them works on it. The
+    /// narrowing can only NARROW: a tool must still satisfy the action's own claim word first, so the refusal a caller
+    /// reads is still the claim's own <c>tool_not_owned:&lt;word&gt;</c> when the pack carries nothing that qualifies.
+    /// </summary>
+    private static bool TrySelectDeclaredTool(
+        Farmer farmer,
+        string actionId,
+        Func<Tool, bool> alsoSatisfies,
+        out DeclaredToolSelection selection,
         out string refusalCode)
     {
         selection = default;
         refusalCode = string.Empty;
-        DeclaredToolResolution resolution = ResolveDeclaredTool(farmer.Items, actionId);
+        FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
+        if (claim is null)
+        {
+            refusalCode = $"tool_requirement_undeclared:{actionId}";
+            return false;
+        }
+        (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
+        string word = claim.Key["tool:".Length..];
+        DeclaredToolResolution resolution = ResolveOwnedTool(
+            farmer.Items,
+            word,
+            tool => SatisfiesToolRequirement(tool, word) && alsoSatisfies(tool),
+            minimum,
+            maximum);
         if (resolution.RefusalCode is not null)
         {
             refusalCode = resolution.RefusalCode;

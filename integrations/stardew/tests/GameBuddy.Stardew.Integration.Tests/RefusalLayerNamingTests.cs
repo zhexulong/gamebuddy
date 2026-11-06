@@ -352,6 +352,8 @@ public sealed class RefusalLayerNamingTests
         SeedTool<Pan>("(T)Pan", 0),
         SeedTool<MeleeWeapon>("(W)47", 0),
         SeedTool<MeleeWeapon>("(W)4", 0),
+        SeedTool<Lantern>("(T)Lantern", 0),
+        SeedTool<Raft>("(T)Raft", 0),
     };
 
     /// <summary>A tool whose identity and level are the only things the declaration is resolved against.</summary>

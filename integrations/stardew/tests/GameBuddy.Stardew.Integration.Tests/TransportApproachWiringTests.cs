@@ -148,20 +148,30 @@ public sealed class TransportApproachWiringTests
     }
 
     [Fact]
-    public void Raft_ExecutionReChecksTheRaftAndTheWaterTile_BeforeTheNativeLaunch()
+    public void Raft_ExecutionTakesTheDeclaredRaft_TheWaterTile_AndTheRestoreInThatOrder()
     {
         string executed = MethodBody(Source(), "private LocalExecutionReceipt ExecuteUseRaft(");
 
-        // The raft can leave the hand while the actor walks, and the tile's identity is the water tile
-        // itself, so both are re-read rather than carried.
-        int equipped = executed.IndexOf("\"raft_not_equipped_in_requested_slot\"", StringComparison.Ordinal);
+        // The raft is the tool this action's own registration claims (`tool:raft`), so the handler takes it out of the
+        // pack instead of refusing a request whose pack already carries one. The water tile and the reach test are then
+        // re-read on the arrival, because the walk takes ticks.
+        int selected = executed.IndexOf("TrySelectDeclaredTool(player, \"use_raft\"", StringComparison.Ordinal);
         int water = executed.IndexOf("\"raft_target_not_water\"", StringComparison.Ordinal);
         int range = executed.IndexOf("\"raft_target_out_of_range\"", StringComparison.Ordinal);
         int native = executed.IndexOf("raft.DoFunction(", StringComparison.Ordinal);
-        equipped.Should().BeGreaterThanOrEqualTo(0);
-        water.Should().BeGreaterThan(equipped, "the slot is re-checked before the tile means anything");
+        int @finally = executed.IndexOf("finally", StringComparison.Ordinal);
+        int restore = executed.IndexOf("RestoreToolSelection(player, selection)", StringComparison.Ordinal);
+
+        selected.Should().BeGreaterThanOrEqualTo(0, "the raft comes from the action's own claim, not the caller's guess");
+        water.Should().BeGreaterThan(selected, "the tool is settled before the tile means anything");
         range.Should().BeGreaterThan(water);
         native.Should().BeGreaterThan(range, "the native launch must never run from outside the radius");
+        @finally.Should().BeGreaterThan(native, "the restore is unconditional, so it cannot sit on the success path");
+        restore.Should().BeGreaterThan(@finally, "the restore lives inside that finally");
+
+        // NEGATIVE: the held-slot demand this replaced is unreachable for a pack that holds a raft.
+        executed.Should().NotContain("CurrentToolIndex");
+        executed.Should().NotContain("not_equipped");
     }
 
     // ---- the declaration stops claiming a precondition the action no longer has ----

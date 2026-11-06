@@ -34,12 +34,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
-/// <b>What this rule cannot cover.</b> Five actions require a tool by a native PREDICATE rather than a category -
-/// <c>clear_cask</c> and <c>break_container</c> (any <c>isHeavyHitter()</c> tool), <c>remove_placed_item</c> (an Axe OR
-/// a Pickaxe), <c>toggle_tool_light</c> (a Lantern) and <c>use_raft</c> (a Raft) - and a <c>tool:&lt;category&gt;</c> claim
-/// cannot name a predicate, nor "either of two categories". They still publish the held-slot contract, and they are
-/// PRINTED by <see cref="TheActionsWhoseToolRequirementIsAPredicateAreNamed"/> rather than absorbed, so the remaining gap
-/// is a named line in this suite's output instead of an assumption that the class is closed.
+/// <b>What this rule cannot cover (yet).</b> Three actions require a tool by a native PREDICATE rather than a category -
+/// <c>clear_cask</c> and <c>break_container</c> (any <c>isHeavyHitter()</c> tool) and <c>remove_placed_item</c> (an Axe OR
+/// a Pickaxe) - and a <c>tool:&lt;category&gt;</c> claim cannot name a predicate, nor "either of two categories". They
+/// still publish the held-slot contract, and they are PRINTED by
+/// <see cref="TheActionsWhoseToolRequirementIsAPredicateAreNamed"/> rather than absorbed, so the remaining gap is a named
+/// line in this suite's output instead of an assumption that the class is closed. Two names have already left that list:
+/// <c>toggle_tool_light</c> (2026-11-06) and <c>use_raft</c> drive ONE tool subclass each - a Lantern and a Raft - so
+/// each needed a word in the vocabulary (<c>lantern</c>, <c>raft</c>) rather than a predicate, and both now declare it.
 /// </para>
 ///
 /// <para>
@@ -101,19 +103,23 @@ public sealed class ToolPreconditionUniformityTests
             }
 
             string body = EnclosingMethodBody(File.ReadAllText(file), index);
+            // COMMENTS STRIPPED FIRST: the ratchet is about what the handler DOES. A prose line that says `finally` or
+            // names the refusal it replaced would otherwise satisfy the assertion it is describing, and a handler that
+            // still demanded the held slot would pass because a comment about the old shape mentioned it.
+            string bodyCode = StripLineComments(body);
             // The receiver is the handler's own local (`Game1.player` in most, a resolved `Farmer` in the ones that read
             // the pack through it), so the property asserted is that the actor's selection is put back - not one spelling
             // of who the actor was.
-            body.Should().Contain("RestoreToolSelection(",
+            bodyCode.Should().Contain("RestoreToolSelection(",
                 $"{actionId} puts the index the actor held back");
-            body.Should().Contain("finally", $"{actionId} restores on EVERY exit, including the refusals after the switch");
+            bodyCode.Should().Contain("finally", $"{actionId} restores on EVERY exit, including the refusals after the switch");
             foreach (string spelling in HeldToolSpellings)
             {
-                body.Should().NotContain(spelling,
+                bodyCode.Should().NotContain(spelling,
                     $"{actionId} must not refuse for the tool it happens to be holding - it takes the one its claim names");
             }
 
-            body.Should().NotContain("Game1.player.Items[slot]",
+            bodyCode.Should().NotContain("Game1.player.Items[slot]",
                 $"{actionId} must not read a tool out of the slot the caller named");
         }
 
@@ -282,6 +288,15 @@ public sealed class ToolPreconditionUniformityTests
 
         throw new InvalidOperationException("the handler body is not balanced");
     }
+
+    /// <summary>Code without `//` line comments: a prose line cannot satisfy a structural pin.</summary>
+    private static string StripLineComments(string text) => string.Join(
+        "\n",
+        text.Split('\n').Select(line =>
+        {
+            int comment = line.IndexOf("//", StringComparison.Ordinal);
+            return comment == -1 ? line : line.Substring(0, comment);
+        }));
 
     /// <summary>Every production source file of the Mod, tests and build output excluded.</summary>
     private static IReadOnlyList<string> ModSourceFiles()
