@@ -269,6 +269,69 @@ public sealed class TargetFamilyCompletenessTests
         villager.GiftsThisWeek.Should().Be(2);
     }
 
+    /// <summary>
+    /// A bush is a `LargeTerrainFeature`, and `location.largeTerrainFeatures` is the only collection the engine
+    /// inserts one into (GameLocation.cs:17403-17421). A bush stored there has to be published, because a bush the
+    /// snapshot omits is a bush the companion cannot harvest, shake or even see.
+    ///
+    /// <para>
+    /// This is the exact shape the observation-gap report named as `collection_never_read:largeTerrainFeatures`
+    /// while the discovery walked `location.terrainFeatures` - a collection a bush cannot stand in in a saved game.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void BushPublishesABushStoredInLargeTerrainFeatures()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(1, 2);
+        world.PlaceHarvestableBush(x: 3, y: 2);
+
+        BridgeBushTarget bush = world.BushTargets().Should().ContainSingle().Subject;
+
+        bush.X.Should().Be(3);
+        bush.Y.Should().Be(2);
+        bush.Location.Should().Be("ProbeFarm");
+        bush.TargetId.Should().StartWith("bush_");
+    }
+
+    /// <summary>
+    /// One bush is ONE row. `largeTerrainFeatures` and `terrainFeatures` are both keyed by tile, so a bush reachable
+    /// from both is the same bush at the same tile and cannot be published twice: the model would otherwise be
+    /// offered two targets that are one, and a plan naming either would look like a second bush to harvest.
+    /// </summary>
+    [Fact]
+    public void BushReachableFromBothCollectionsIsPublishedOnce()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(1, 2);
+        StardewValley.TerrainFeatures.Bush bush = world.PlaceHarvestableBush(x: 3, y: 2);
+        world.PlaceBushInTerrainFeatures(x: 3, y: 2, bush);
+
+        world.BushTargets().Should().ContainSingle("one bush at one tile is one target, however many collections reach it");
+    }
+
+    /// <summary>
+    /// The row published from `largeTerrainFeatures` carries the identity the execution path resolves, so the Host
+    /// contract is unchanged: the id comes from the one `BuildBushTargetId` function both halves already share, and
+    /// `TryGetHarvestableBush` - the native re-check every `harvest_bush` request begins with - accepts it.
+    /// </summary>
+    [Fact]
+    public void BushPublishedFromLargeTerrainFeaturesIsTheIdExecutionAccepts()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(1, 2);
+        world.PlaceHarvestableBush(x: 3, y: 2);
+        string targetId = world.BushTargets().Should().ContainSingle().Subject.TargetId;
+
+        MethodInfo tryGet = typeof(ExecutionManager)
+            .GetMethod("TryGetHarvestableBush", BindingFlags.NonPublic | BindingFlags.Static)!;
+        object?[] arguments = { world.Farm, 3, 2, targetId, null };
+        bool accepted = (bool)tryGet.Invoke(null, arguments)!;
+
+        accepted.Should().BeTrue("the id the snapshot publishes is the id the handler re-checks the bush against");
+        arguments[4].Should().BeOfType<StardewValley.TerrainFeatures.Bush>();
+    }
+
     /// <summary>One item a fixture puts into a chest: the two facts the retrieve projection reads.</summary>
     internal readonly record struct ChestItem(string QualifiedItemId, int Stack);
 
@@ -656,20 +719,27 @@ public sealed class TargetFamilyCompletenessTests
         }
 
         /// <summary>
-        /// A mature bush in bloom, built the way the engine builds one.
+        /// A mature bush in bloom, built the way the engine builds one and stored where the engine stores one.
         ///
         /// `Bush.size == 4` makes `inBloom()` return `readyForHarvest()` and `readyForHarvest()` return
         /// `tileSheetOffset == 1` (Bush.cs:230-235, :196-199) - both shipped predicates, neither needing a
-        /// `Data/WildTrees` row. The constructor is bypassed because it dereferences `location.map.RequireLayer("Front")`,
-        /// a layer the harness map does not carry.
+        /// `Data/WildTrees` row. The collection is `location.largeTerrainFeatures`, because `Bush` is a
+        /// `LargeTerrainFeature` and that is the only place the engine inserts one (GameLocation.cs:17403-17421).
         /// </summary>
-        internal void PlaceHarvestableBush(int x, int y)
+        internal StardewValley.TerrainFeatures.Bush PlaceHarvestableBush(int x, int y)
         {
-            // The REAL constructor, now that the map declares the `Front` layer it reads.
             var bush = new StardewValley.TerrainFeatures.Bush(new Vector2(x, y), StardewValley.TerrainFeatures.Bush.walnutBush, this.Farm, datePlantedOverride: 0);
             bush.tileSheetOffset.Value = 1;
-            this.Farm.terrainFeatures[new Vector2(x, y)] = bush;
+            this.Farm.largeTerrainFeatures.Add(bush);
+            return bush;
         }
+
+        /// <summary>
+        /// The same bush in `location.terrainFeatures` - a state a saved game cannot hold, kept so the cases below
+        /// can build the world where one bush is reachable from both collections.
+        /// </summary>
+        internal void PlaceBushInTerrainFeatures(int x, int y, StardewValley.TerrainFeatures.Bush bush) =>
+            this.Farm.terrainFeatures[new Vector2(x, y)] = bush;
 
         /// <summary>
         /// A fruit tree carrying fruit, built the way the engine builds one.
@@ -816,6 +886,9 @@ public sealed class TargetFamilyCompletenessTests
 
         internal BridgeChestsSummary ChestsSummary() =>
             (BridgeChestsSummary)Discover("SummarizeChests");
+
+        internal IReadOnlyList<BridgeBushTarget> BushTargets() =>
+            (IReadOnlyList<BridgeBushTarget>)Discover("DiscoverBushTargets");
 
         internal IReadOnlyList<BridgeNpcRelationshipTarget> NpcRelationshipTargets() =>
             (IReadOnlyList<BridgeNpcRelationshipTarget>)Discover("DiscoverNpcRelationshipTargets");
@@ -969,7 +1042,8 @@ public sealed class TargetFamilyCompletenessTests
         /// <summary>Why a family published nothing, so a vacuous round trip names the world it was run against.</summary>
         internal string Describe(string family) =>
             $"{family} published 0 rows against objects={this.Farm.objects.Count()} "
-            + $"terrainFeatures={this.Farm.terrainFeatures.Count()} characters={this.Farm.characters.Count} "
+            + $"terrainFeatures={this.Farm.terrainFeatures.Count()} largeTerrainFeatures={this.Farm.largeTerrainFeatures.Count} "
+            + $"characters={this.Farm.characters.Count} "
             + $"debris={this.Farm.debris.Count} warps={this.Farm.warps.Count} buildings={this.Farm.buildings.Count} "
             + $"actor={this.Actor.Tile.X},{this.Actor.Tile.Y}";
 

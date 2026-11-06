@@ -588,13 +588,7 @@ string? bodyProgramUnavailableReason = null,
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "execution_request", out reasonCode)) return false;
         BridgeExecutionRequest request = envelope!.Payload;
         if (!IsStructurallyValidExecutionRequest(request, out reasonCode)) return false;
-        string fingerprint = request.Action switch
-        {
-            "navigate_to_destination" => $"{request.RequestId}:{request.Action}:{request.Args.Destination?.Kind}:{request.Args.Destination?.Label}:{request.Args.Destination?.Ref}:{request.ExpectedRevision}",
-            "express_emote" => $"{request.RequestId}:{request.Action}:{request.Args.Emote}:{request.ExpectedRevision}",
-            "face_direction" => $"{request.RequestId}:{request.Action}:{request.Args.Direction}:{request.ExpectedRevision}",
-            _ => $"{request.RequestId}:{request.Action}:{request.Args.X}:{request.Args.Y}:{request.Args.Slot}:{request.Args.ExpectedQualifiedItemId}:{request.Args.ExpectedTargetId}:{request.Args.SceneTarget?.ObservationId}:{request.Args.SceneTarget?.Ref}:{request.ExpectedRevision}"
-        };
+        string fingerprint = ExecutionRequestFingerprint.Of(request);
         // Replays return a durable receipt but remain current bridge requests:
         // they must satisfy the same owner-thread, published-capability, revision,
         // and deadline gates before the ledger is consulted.

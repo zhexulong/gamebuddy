@@ -1,0 +1,301 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "pet_farm_animal",
+  "fixtureScenario": "native_pet_farm_animal_v1",
+  "resolvedRunner": "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/pet-farm-animal/run.log",
+    "durable": false,
+    "note": "The runner prints its result to stdout and writes nothing durable. This bundle is that stdout object, verbatim; the path it was captured at is gitignored and will not survive. `.tmp/pet-farm-animal/run2.log` holds a second passing run against a different coop and animal, so the result is not a one-target coincidence."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "reasonCode": "farm_animal_petted",
+    "target": {
+      "targetId": "farm_animal_b36fb24577dbfbdc",
+      "x": 9,
+      "y": 4,
+      "animalType": "White Chicken",
+      "friendship": 0
+    },
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "farm_animal_petted",
+      "revision": 7,
+      "hasEvidence": true
+    },
+    "evidence": {
+      "location": "Coop3e9f1f3b-2228-4889-8ef4-6bd809dafe4f",
+      "target": "farm_animal_b36fb24577dbfbdc",
+      "animal": "2021983916",
+      "type": "White Chicken",
+      "tile": "9,4",
+      "friendship_before": "0",
+      "friendship_after": "15",
+      "friendship_floor": "15",
+      "happiness_before": "255",
+      "happiness_after": "255",
+      "was_auto_pet_before": "false",
+      "was_pet": "true",
+      "time_of_day": "1200"
+    },
+    "friendship": {
+      "before": 0,
+      "after": 15,
+      "floor": 15,
+      "autoPettedBefore": false,
+      "branch": 15,
+      "professorBoost": false,
+      "applied": true
+    },
+    "freshPostcondition": {
+      "revision": 7,
+      "location": "Coop3e9f1f3b-2228-4889-8ef4-6bd809dafe4f",
+      "tile": {
+        "x": 8,
+        "y": 5
+      },
+      "actionable": true,
+      "actorDispositionKind": "idle",
+      "pettedTargetGone": true,
+      "familyEmptied": true,
+      "worldAgrees": true
+    },
+    "secondAttempt": {
+      "state": "rejected",
+      "reasonCode": "farm_animal_already_petted_today",
+      "alreadyPettedRefused": true
+    },
+    "animalAfterPet": {
+      "before": [
+        {
+          "name": "滴答",
+          "kind": "animal",
+          "distance": 6,
+          "direction": "East",
+          "reachable": true,
+          "actionHint": null
+        }
+      ],
+      "after": [
+        {
+          "name": "滴答",
+          "kind": "animal",
+          "distance": 2,
+          "direction": "East",
+          "reachable": true,
+          "actionHint": null
+        }
+      ],
+      "sameAnimal": true
+    },
+    "trace": [
+      {
+        "phase": "observed",
+        "revision": 0,
+        "location": "Coop3e9f1f3b-2228-4889-8ef4-6bd809dafe4f",
+        "tile": {
+          "x": 5,
+          "y": 6
+        },
+        "actionable": true,
+        "actorDispositionKind": "idle",
+        "capabilities": [
+          "accept_daily_quest",
+          "accept_special_order",
+          "answer_dialogue",
+          "bait_crab_pot",
+          "break_container",
+          "break_rock",
+          "build_farm_building",
+          "chest_retrieve",
+          "chest_store",
+          "chop_stump",
+          "chop_tree",
+          "claim_mail_attachment",
+          "claim_museum_reward",
+          "clear_cask",
+          "clear_debris",
+          "clear_fish_pond",
+          "clear_hoedirt",
+          "collect_animal_product",
+          "collect_building_chest_output",
+          "collect_crab_pot_output",
+          "color_placed_object",
+          "cook_recipe",
+          "craft_item",
+          "cut_grass",
+          "cut_weeds",
+          "deposit_silo_hay",
+          "dig_artifact_spot",
+          "dismiss_modal",
+          "dismount_transport",
+          "dress_mannequin",
+          "dye_clothing_with_item",
+          "enter_exit",
+          "enter_mine",
+          "equip_tool",
+          "equip_wearable",
+          "express_emote",
+          "face_direction",
+          "feed_animal",
+          "fertilize_tile",
+          "harvest_bush",
+          "harvest_crop",
+          "harvest_fruit_tree",
+          "interact_npc_with_item",
+          "load_building_chest",
+          "machine_collect_output",
+          "machine_inspect",
+          "machine_load",
+          "mount_transport",
+          "move_to_tile",
+          "name_entity",
+          "navigate_to_destination",
+          "npc_relationship",
+          "pan_ore",
+          "pet_animal",
+          "pet_farm_animal",
+          "pickup_forage",
+          "pickup_item",
+          "place_crab_pot",
+          "place_owned_object",
+          "place_wood_fence",
+          "plant_sapling",
+          "plant_seed",
+          "redeem_prize_ticket",
+          "refill_watering_can",
+          "remove_placed_item",
+          "respond_level_up",
+          "ride_bus",
+          "ride_minecart",
+          "scythe_crop",
+          "select_mine_elevator_floor",
+          "send_multiplayer_chat",
+          "set_sign_display",
+          "shake_tree",
+          "ship_item",
+          "shop_purchase",
+          "sleep",
+          "tailor_clothing",
+          "take_pedestal_item",
+          "talk_to_npc",
+          "till_soil",
+          "toggle_animal_door",
+          "toggle_fence_gate",
+          "toggle_tool_light",
+          "travel",
+          "unequip_wearable",
+          "use_item",
+          "use_obelisk",
+          "use_raft",
+          "use_warp_item",
+          "water_crop",
+          "water_pet_bowl",
+          "water_slime_hutch_trough",
+          "withdraw_silo_hay",
+          "find_destination",
+          "inspect_world_map",
+          "observe_scene",
+          "inspect_self",
+          "cancel_active_execution"
+        ],
+        "farmAnimalPetTargetCount": 1
+      },
+      {
+        "phase": "observed_scene_before",
+        "animals": [
+          {
+            "name": "滴答",
+            "kind": "animal",
+            "distance": 6,
+            "direction": "East",
+            "reachable": true,
+            "actionHint": null
+          }
+        ]
+      },
+      {
+        "phase": "pet_farm_animal",
+        "action": "pet_farm_animal",
+        "target": {
+          "targetId": "farm_animal_b36fb24577dbfbdc",
+          "x": 9,
+          "y": 4,
+          "animalType": "White Chicken",
+          "friendship": 0
+        },
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "accepted",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "observed_evidence",
+        "action": "pet_farm_animal",
+        "state": "succeeded",
+        "reasonCode": "farm_animal_petted",
+        "evidence": {
+          "location": "Coop3e9f1f3b-2228-4889-8ef4-6bd809dafe4f",
+          "target": "farm_animal_b36fb24577dbfbdc",
+          "animal": "2021983916",
+          "type": "White Chicken",
+          "tile": "9,4",
+          "friendship_before": "0",
+          "friendship_after": "15",
+          "friendship_floor": "15",
+          "happiness_before": "255",
+          "happiness_after": "255",
+          "was_auto_pet_before": "false",
+          "was_pet": "true",
+          "time_of_day": "1200"
+        }
+      },
+      {
+        "phase": "second_attempt",
+        "action": "pet_farm_animal",
+        "target": "farm_animal_b36fb24577dbfbdc",
+        "receipt": {
+          "state": "rejected",
+          "reasonCode": "farm_animal_already_petted_today",
+          "revision": 8,
+          "hasEvidence": true
+        },
+        "evidence": {
+          "target": "farm_animal_b36fb24577dbfbdc",
+          "animal": "2021983916",
+          "time_of_day": "1200"
+        }
+      },
+      {
+        "phase": "observed_scene_after",
+        "animals": [
+          {
+            "name": "滴答",
+            "kind": "animal",
+            "distance": 2,
+            "direction": "East",
+            "reachable": true,
+            "actionHint": null
+          }
+        ]
+      }
+    ],
+    "durationMs": 984
+  },
+  "whatThisProves": [
+    "The Mod really ran the coop animal's own check through the game thread: the receipt is `succeeded/farm_animal_petted`, and the runner asserts that terminal before this object is printed.",
+    "The animal's friendship moved in the game's own field: `friendship_before=0` -> `friendship_after=15`, with `friendship_floor=15` and `was_pet=true`.",
+    "The Mod did not fake it: the SAME target a second time is `rejected/farm_animal_already_petted_today`, so the first receipt came from a real once-per-day native transition.",
+    "The fresh postcondition agrees: `pettedTargetGone=true`, `familyEmptied=true`, `worldAgrees=true`, actor idle, revision 7.",
+    "The fixture advertised the action for the run (`farmAnimalPetTargetCount: 1`, `pet_farm_animal` among the observation's capabilities) through the fixture's own Experimental opt-in, not through a Host-side widening."
+  ],
+  "whatThisDoesNotProve": [
+    "No cancellation, deadline, watchdog, replay or migration coverage.",
+    "No shared-world coverage of the friendship grant. The derived multiplayer sensitivity register names `FarmAnimal`'s per-pet `grantedFriendshipForPet` flag as the reason a second farmer's pet in the same day would grant 0 friendship, so single-player evidence is the whole claim here.",
+    "The `nativeNotices` / native-refusal channel is exercised by the second attempt's receipt only; the run did not capture a game-drawn message."
+  ]
+}

@@ -39,6 +39,15 @@ if (-not $wtFull.StartsWith($stageFull + [System.IO.Path]::DirectorySeparatorCha
 if (Test-Path $Worktree) {
   git -C $Repo worktree remove --force $Worktree 2>&1 | ForEach-Object { Log ("  | remove: " + $_) }
   Remove-Item $Worktree -Recurse -Force -ErrorAction SilentlyContinue
+  # Windows can refuse `worktree remove` with `Invalid argument` while the administrative record survives, and
+  # then `worktree add` only says `fatal: already exists` - two sentences that name neither the cause nor the
+  # remedy. Prune the record, and if the directory really is still there, say so instead of adding.
+  git -C $Repo worktree prune 2>&1 | ForEach-Object { Log ("  | prune: " + $_) }
+  if (Test-Path $Worktree) {
+    Log "  pin_worktree_not_removed: $Worktree survived `worktree remove --force` and `worktree prune`; this --out cannot be reused, so pass a fresh one"
+    Log "DONE-PIN-FAIL (previous worktree could not be cleared)"
+    exit 1
+  }
   Log "  cleared previous worktree at $Worktree"
 }
 

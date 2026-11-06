@@ -12,31 +12,38 @@ export const ST_CARD_DECODER_LIMITS_V1 = Object.freeze({
   textBytes: 2_097_152,
   examplesBytes: 2_097_152,
   characterBookBytes: 16_777_216,
-  characterBookEntryBytes: 16_384,
+  characterBookEntryBytes: 65_536,
   characterBookTitleBytes: 256,
   characterBookEntries: Number.POSITIVE_INFINITY,
   /**
    * The card's own `system_prompt`, carried as the companion's performance
-   * directive. Tighter than `textBytes` on purpose: this text lands in the
-   * stable Tier-1 prefix sent on every turn, and it is third-party input. A
-   * longer directive is refused (not truncated) and the refusal is counted.
+   * directive. This text lands in the stable Tier-1 prefix sent on every turn,
+   * so the bound exists to stop a blowup - not to police how much direction a
+   * card may carry. Measured 2026-11-05: a card with paired examples and an
+   * anti-quoting rule reached 8,645 bytes and the 8 KiB bound dropped the whole
+   * directive silently (`character_voice_too_long` -> `characterVoice=none`),
+   * which is a persona disappearing without the author being told. Chinese is
+   * three bytes per character in UTF-8, so the old bound was ~2,730 characters -
+   * less than one thorough performance guide. 64 KiB is ~21,800 characters, which
+   * is room for the largest card voice we have seen with two orders of magnitude
+   * to spare; the window, not this constant, is what makes a prefix expensive.
    */
-  cardVoiceBytes: 8_192,
+  cardVoiceBytes: 65_536,
   /**
    * The card's inert `extensions` object, measured on its JSON text exactly as the
    * decoder applies it (`JSON.stringify(value).length`). Open by design, so the
    * bound only stops a blowup; the export re-applies this same rule so a card it
    * writes is one the decoder keeps whole.
    */
-  cardExtensionsJsonChars: 8_192,
+  cardExtensionsJsonChars: 65_536,
   /**
    * The card's own closing direction (`post_history_instructions`), carried as the
-   * companion's own durable record. Tighter than `textBytes` on purpose: this text
-   * is third-party prose the companion surface appends after the transcript on
-   * every turn, outside the cached prefix. A longer one is refused at import by
-   * name (`post_history_instructions_too_long`), never truncated.
+   * companion's own durable record. This text is third-party prose the companion
+   * surface appends after the transcript on every turn, outside the cached prefix,
+   * so it costs per turn rather than once - bounded at 16 KiB (~5,460 characters)
+   * and refused by name (`post_history_instructions_too_long`), never truncated.
    */
-  postHistoryInstructionsBytes: 4_096,
+  postHistoryInstructionsBytes: 16_384,
 });
 
 /**

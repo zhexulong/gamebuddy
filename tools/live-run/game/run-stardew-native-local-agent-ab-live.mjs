@@ -25,6 +25,7 @@ import { freemem as freeMemory } from "node:os";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+import { turnSettled } from "../../lib/turn-settled.mjs";
 import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -3978,7 +3979,12 @@ try {
               }),
             );
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
-            if (walked.settled !== true) break;
+            //
+            // `settled` lives on the TURN, not on the `{ turn, status }` envelope `runAgentTurn` returns. Read the
+            // envelope's own field and the test is `undefined !== true`: every day broke after its first turn, which
+            // is what made day 2 look idle (`next_day_produced_no_farm_work`) and left the scheduled player lines
+            // unreachable (`no_reply_recorded` on all four). One accessor, so the shape is asserted in one place.
+            if (!turnSettled(walked)) break;
             // The player drops in - and this must NOT wait for the turn to end.
             //
             // Written the other way first, and it never fired: `round28` ran seventeen minutes with 119 assistant

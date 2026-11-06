@@ -101,6 +101,7 @@
     "pendingLevelUpChoices": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },
     "pendingLevelUps": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },
     "petTargets": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },
+    "farmAnimalPetTargets": { "bytes": 0, "share": 0, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine", "note": "zero because the family did not exist in the measured run (the build that produced it had no pet_farm_animal); it is not a measured cost, and the weighted gate therefore has nothing to weigh until a run carries the field" },
     "scytheCropTargets": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },
     "signTargets": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },
     "siloTargets": { "bytes": 360, "share": 0.014, "uses": 0, "runId": ".live-runs/game-ladder/2026-10-31T19-26-54-087Z-multiday_routine" },

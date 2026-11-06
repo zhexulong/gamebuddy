@@ -24,7 +24,22 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   // own JSON-text ceiling for the field.
   assert.equal(fields.extensions.eligibility, "companion_artifact");
   assert.equal(fields.extensions.maxBytes, ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars, 8_192);
+  // These are floors, not the values: the number belongs to the manifest alone. What the floor encodes is
+  // the incident that set it - a real card carrying paired examples and an anti-quoting rule reached
+  // 8,645 bytes of UTF-8 (Chinese is three bytes per character) and the old 8 KiB bound dropped her whole
+  // performance directive without telling anyone. A bound that a normal card can hit is not a blow-up guard.
+  assert.ok(
+    ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes >= 65_536,
+    "a card voice below 64 KiB is one a real card can outgrow",
+  );
+  assert.ok(
+    ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes >= 16_384,
+    "post-history prose is appended every turn; 4 KiB was two paragraphs",
+  );
+  assert.ok(
+    ST_CARD_DECODER_LIMITS_V1.cardExtensionsJsonChars >= 65_536,
+    "extensions are open by design; the bound only stops a blow-up",
+  );
   assert.equal(fields.creator_notes.decision, "preserved_opaque");
   // The card's own closing direction is no longer `never_runtime`: it is accepted,
   // bounded at 4 KB, and kept as her own record beside her scenario and openings.
@@ -32,7 +47,6 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(fields.post_history_instructions.decision, "accepted_typed");
   assert.equal(fields.post_history_instructions.eligibility, "companion_artifact");
   assert.equal(fields.post_history_instructions.maxBytes, ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.postHistoryInstructionsBytes, 4_096);
   assert.equal(fields.regex_scripts.decision, "dropped_unsupported");
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesJson, 2_097_152);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.inputBytesPng, 33_554_432);
@@ -43,10 +57,9 @@ test("ST-card compatibility manifest publishes the decoder's exact byte bounds",
   assert.equal(ST_CARD_DECODER_LIMITS_V1.nameBytes, 256);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.textBytes, 2_097_152);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.examplesBytes, 2_097_152);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes, 16_384);
+  assert.ok(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes >= 65_536, "one World Book entry can be a chapter");
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookTitleBytes, 256);
   assert.equal(ST_CARD_DECODER_LIMITS_V1.characterBookEntries, Number.POSITIVE_INFINITY);
-  assert.equal(ST_CARD_DECODER_LIMITS_V1.cardVoiceBytes, 8_192);
 });
 
 test("selected L3 contract limits profile use and interchange to the version-locked inert subset", () => {

@@ -1517,6 +1517,34 @@ test("a card's system_prompt becomes the profile's characterVoice and reaches th
   assert.equal("characterVoice" in candidateToIdentityProfile(previewStCard({ data: { name: "Plain" } }), 1), false);
 });
 
+test("a real card's system_prompt survives import, because 8 KiB was one performance guide", () => {
+  // Measured 2026-11-05: a card carrying paired before/after examples and an anti-quoting rule reached
+  // 8,645 bytes of UTF-8 - 2,882 Chinese characters at three bytes each - and the old 8 KiB ceiling turned
+  // the whole directive into `undefined`, so the compiled preset had `characterVoice=none` and the card's
+  // author was never told. The exact byte length is the point of this test, not a number near it.
+  const directive =
+    "动率先于言：每次发言开头必须包含环境描写与身体动作细节，包裹在 * * 中；禁止把自己写成评价者或旁白。".repeat(60);
+  const bytes = Buffer.byteLength(directive, "utf8");
+  assert.ok(bytes > 8_192 && bytes < 65_536, `fixture must reproduce the measured overshoot, got ${bytes}`);
+
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: { name: "琥珀", description: "农场伙伴。", system_prompt: directive },
+  });
+  const profile = candidateToIdentityProfile(preview, 1);
+  assert.equal(
+    profile.characterVoice?.text,
+    directive,
+    "a directive past the old ceiling must arrive whole, not as none",
+  );
+  assert.equal(profile.characterVoice?.source, "card");
+  assert.equal(
+    preview.losses.some((loss) => loss.reason === "character_voice_too_long"),
+    false,
+  );
+  assert.ok(buildChatCompanionSystemPrompt(profile, "zh-CN").includes("动率先于言"));
+});
+
 test("the card's system_prompt keeps its macros and renders through the same table as the persona", () => {
   const preview = previewStCard({
     spec: "chara_card_v3",

@@ -1,0 +1,105 @@
+{
+  "schema": "gamebuddy-stardew-native-local-live-run-evidence/v1",
+  "action": "use_mine_ladder",
+  "fixtureScenario": "native_mine_use_ladder_exit_v1",
+  "resolvedRunner": "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
+  "recordedFrom": {
+    "artifact": ".tmp/use-mine-ladder-rerun-result.json",
+    "durable": false,
+    "note": "The runner prints its result to stdout and writes nothing durable. This bundle is that stdout object, verbatim; the path it was captured at is gitignored and will not survive, which is why the record had to be made here before the status could be promoted."
+  },
+  "run": {
+    "state": "passed",
+    "topology": "native_local_player_fixture",
+    "executionId": "f1a3798c3374459d86f3fedb401f298a",
+    "requestId": "native_local_use_mine_ladder_use_mine_ladder_1793764527136_1",
+    "receipt": {
+      "state": "succeeded",
+      "reasonCode": "mine_left",
+      "revision": 3,
+      "hasEvidence": true
+    },
+    "reasonCode": "mine_left",
+    "ladder": {
+      "targetId": "mine_entrance_534407549fcc37f5",
+      "x": 10,
+      "y": 3
+    },
+    "standing": "10,4",
+    "beforeLocation": "UndergroundMine1",
+    "beforeLevel": 1,
+    "afterLocation": "Mine",
+    "afterLevel": null,
+    "question": "ExitMine",
+    "response": "Leave",
+    "terminalFrom": null,
+    "trace": [
+      {
+        "phase": "reach_exit_ladder",
+        "action": "move_to_tile",
+        "args": {
+          "x": 10,
+          "y": 4
+        },
+        "requestId": "native_local_use_mine_ladder_reach_exit_ladder_1793764527022_0",
+        "receipt": {
+          "state": "succeeded",
+          "reasonCode": "target_reached",
+          "revision": 1,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "use_mine_ladder",
+        "action": "use_mine_ladder",
+        "args": {
+          "x": 10,
+          "y": 3,
+          "expectedTargetId": "mine_entrance_534407549fcc37f5"
+        },
+        "requestId": "native_local_use_mine_ladder_use_mine_ladder_1793764527136_1",
+        "receipt": {
+          "state": "accepted",
+          "reasonCode": "mine_exit_pending",
+          "revision": 2,
+          "hasEvidence": true
+        }
+      },
+      {
+        "phase": "terminal",
+        "state": "succeeded",
+        "reasonCode": "mine_left",
+        "revision": 3,
+        "evidence": "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave"
+      }
+    ],
+    "before": {
+      "revision": 1,
+      "actionable": true,
+      "capabilityCount": 98,
+      "hasLocation": true,
+      "hasTile": true,
+      "activeExecution": null
+    },
+    "after": {
+      "revision": 3,
+      "actionable": false,
+      "capabilityCount": 98,
+      "hasLocation": true,
+      "hasTile": true,
+      "activeExecution": null
+    },
+    "durationMs": 2968
+  },
+  "whatThisProves": [
+    "The Mod really ran `MineShaft.checkAction` case 115 on the game thread: the receipt is `succeeded/mine_left`, and the action's own terminal is asserted by the shared-harness runner before this object is printed.",
+    "The native question was answered rather than assumed: the evidence string carries `question=ExitMine;response=Leave`, which the Mod only writes after it settled the game's own ExitMine question.",
+    "The actor left: `beforeLocation` is UndergroundMine1 (beforeLevel 1) and `afterLocation` is the Mine entrance (afterLevel null), with `expected=Mine:23,8;actual=Mine:23,8`.",
+    "Revisions advance monotonically 1 -> 2 -> 3 with no `activeExecution` left behind."
+  ],
+  "whatThisDoesNotProve": [
+    "No cancellation, deadline, watchdog, replay or migration coverage.",
+    "No shared-world coverage. The seam is mp-insensitive per the derived multiplayer sensitivity register, so single-player native-local is the topology this action requires.",
+    "The ladder-down direction is a different action and a different runner; `enter_mine_ladder` is covered separately."
+  ]
+}

@@ -6,11 +6,14 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { turnSettled } from "../../lib/turn-settled.mjs";
 import { resolveLiveRunRoot } from "../core/capture.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import {
   assessMultiDayBaseline,
   classifyNight,
+  NIGHT_CAUSE_ENGINE,
+  NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
 } from "../../lib/multiday-baseline.mjs";
@@ -22,6 +25,7 @@ import {
   COMPANION_SLEEP_REFUSED,
   COMPANION_SLEPT_HOST_PLAYER_DID_NOT,
   judgeUncrossedNight,
+  sleepReceiptOf,
   sleepVerdictCase,
   summarizeCrossings,
 } from "./night-verdict.mjs";
@@ -1945,6 +1949,20 @@ test("a night's terminal is read from the receipt the fact log actually holds", 
 });
 
 /**
+ * The RECORDED shape a receipt takes in the fact log: its identity flattened onto the entry and the receipt itself
+ * kept whole under `worldFactPayload` (`recordedReceipt`). One spelling, because several night fixtures need it.
+ */
+const asRecordedFact = (receipt) =>
+  Object.freeze({
+    type: "execution_receipt",
+    reasonCode: receipt.reasonCode,
+    requestId: receipt.requestId,
+    executionId: receipt.executionId,
+    evidence: receipt.evidence,
+    worldFactPayload: receipt,
+  });
+
+/**
  * Round 18's night, as its own artifacts describe it, driven through the REAL watcher.
  *
  * The run (`2026-10-31T19-26-54-087Z-multiday_routine`) crossed two nights and published `terminal: null, cause:
@@ -1979,20 +1997,11 @@ test("a night the Mod crossed through Body Program reaches the record with its o
   });
   // The RECORDED shape, exactly as `timeline.jsonl` holds it: the identity flattened onto the entry, the receipt
   // itself (and with it the terminal `state`) kept whole under `worldFactPayload`.
-  const asRecorded = (receipt) =>
-    Object.freeze({
-      type: "execution_receipt",
-      reasonCode: receipt.reasonCode,
-      requestId: receipt.requestId,
-      executionId: receipt.executionId,
-      evidence: receipt.evidence,
-      worldFactPayload: receipt,
-    });
-  const acceptedFact = asRecorded({ ...advanceReceipt, state: "accepted", reasonCode: "accepted" });
-  const terminalFact = asRecorded(advanceReceipt);
+  const acceptedFact = asRecordedFact({ ...advanceReceipt, state: "accepted", reasonCode: "accepted" });
+  const terminalFact = asRecordedFact(advanceReceipt);
   // The refusal `sleep` mints when the actor is not indoors/standing/free - the ordinary way a companion's
   // attempt comes back named and the DAY goes on.
-  const refusedFact = asRecorded({
+  const refusedFact = asRecordedFact({
     ...advanceReceipt,
     executionId: "9a1c0b7f5d2e4a63b0f7c1d2e3f40516",
     requestId: "6d0f4c9a7e2b18d3c5a4f6e8b0d12345",
@@ -2064,6 +2073,7 @@ test("a night the Mod crossed through Body Program reaches the record with its o
         watchRollover,
         nightCause,
         parseReceiptEvidence,
+        sleepReceiptOf,
         TERMINAL_STATES,
         judgeUncrossedNight,
         sleepVerdictCase,
@@ -2185,6 +2195,164 @@ test("a night the Mod crossed through Body Program reaches the record with its o
 });
 
 /**
+ * Night 1 of `2026-11-05T15-02-34-974Z-multiday_routine`, driven through the REAL watcher.
+ *
+ * The run crossed both nights it was asked for, nobody passed out, and day 1 was still published as `cause: "engine"`
+ * - so the baseline could only answer `night_mechanism_unobserved` about a night that ended exactly as intended. The
+ * night's own receipts say otherwise: `sleep` accepted with `target=own_bed` at 23:14:37, the lifecycle walked to bed
+ * and answered the native Sleep prompt, the calendar crossed 5 -> 6 at 23:15:49 while that lifecycle waited for a
+ * `day_started` it never observed, and its terminal arrived `blocked/lifecycle_deadline_exceeded` with
+ * `entered_via=native_sleep_prompt`.
+ *
+ * `crossingTerminal` keeping only `succeeded/day_advanced` is right - a blocked lifecycle is not the night's terminal.
+ * What was wrong is that the receipt was then DROPPED, so the record could say nothing about how the day ended.
+ */
+test("a night her own sleep ended, crossed by the calendar, carries her sleep onto the record (2026-11-05)", async () => {
+  const SLEEP_REQUEST_ID = "7b73b4de8a1e442d939503fdb580825c";
+  const SLEEP_ACCEPTED = Object.freeze({
+    executionId: "b9f626512e844c868d3afed8ee7f441b",
+    requestId: SLEEP_REQUEST_ID,
+    actionId: "sleep",
+    state: "accepted",
+    reasonCode: "accepted",
+    revision: 1887,
+    evidence: Object.freeze({ detail: "target=own_bed;never_direct_new_day=true" }),
+  });
+  const SLEEP_LIFECYCLE_TERMINAL = Object.freeze({
+    ...SLEEP_ACCEPTED,
+    state: "blocked",
+    reasonCode: "lifecycle_deadline_exceeded",
+    revision: 1888,
+    evidence: Object.freeze({
+      detail:
+        "state=blocked;reason=lifecycle_deadline_exceeded;topology=single_player;entered_via=native_sleep_prompt;" +
+        "saving_observed=false;saved_observed=false;day_started_observed=false;save_boundary_not_observed=true;" +
+        "shipping_summary_settled=committed;day_before=4;days_before=5;day_after=5;days_after=6",
+    }),
+  });
+  // The settlement summary that night held, committed by the lifecycle - as the day record carries it.
+  const SETTLEMENT_MENU = Object.freeze({ menuType: "ShippingMenu", decision: "wait", clearedAt: 1793892226449 });
+
+  /** One night: her receipts reach the bridge, and the CALENDAR crosses - in that order, as they did live. */
+  const runNight = async ({ herReceipts }) => {
+    const actionTrace = [];
+    const factLog = [];
+    const bridgeDisconnections = [];
+    const beforeCrossing = Object.freeze({
+      revision: 1887,
+      dayOfMonth: 5,
+      timeOfDay: 2220,
+      actionable: true,
+      actorDispositionKind: "free",
+      actorDispositionDetail: null,
+      activeExecution: null,
+    });
+    const afterCrossing = Object.freeze({ ...beforeCrossing, revision: 1889, dayOfMonth: 6, timeOfDay: 600 });
+    let worldNow = beforeCrossing;
+    const client = {
+      get state() {
+        return { snapshot: worldNow };
+      },
+      observe: async () => ({ ...worldNow }),
+    };
+    const timers = [];
+    if (herReceipts) timers.push(setTimeout(() => factLog.push(asRecordedFact(SLEEP_ACCEPTED)), 20));
+    timers.push(
+      setTimeout(() => {
+        if (herReceipts) factLog.push(asRecordedFact(SLEEP_LIFECYCLE_TERMINAL));
+      }, 40),
+    );
+    // The crossing belongs to the CALENDAR, after her terminal: the lifecycle was still in `AwaitingDayStart`.
+    timers.push(
+      setTimeout(() => {
+        worldNow = afterCrossing;
+      }, 70),
+    );
+    const [, , , watchNightRollover] = extractRunnerFunction(
+      RUNNER_SOURCE,
+      ["recordedReceipt", "terminalReceiptFor", "watchNightThroughPassOut", "watchNightRollover"],
+      {
+        actionTrace,
+        factLog,
+        bridgeDisconnections,
+        client,
+        sampleModHeartbeat: () => ({ count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: 0 }),
+        // Not spent, not unknown: the day itself is not what ended, the night is.
+        readWorldClock: () => ({ spent: false, minutes: 1380, unknown: false, timeOfDay: 2220, source: "snapshot" }),
+        watchRollover,
+        nightCause,
+        parseReceiptEvidence,
+        sleepReceiptOf,
+        TERMINAL_STATES,
+        judgeUncrossedNight,
+        sleepVerdictCase,
+        MOD_HEARTBEAT_STALL_MS: 90_000,
+        MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
+        MULTIDAY_POLL_INTERVAL_MS: 5,
+        MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
+        MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
+      },
+    );
+    try {
+      return await watchNightRollover(1);
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+    }
+  };
+
+  /** The day record the loop builds from one night, plus the fields `onDay` adds. */
+  const dayRecord = (night) => ({
+    day: 1,
+    terminal: night.terminal ?? null,
+    after: night.after ?? null,
+    menus: [SETTLEMENT_MENU],
+    nextDayAccomplishedActionIds: ["cut_weeds"],
+    cause: night.cause ?? null,
+    sleepReceipt: night.sleepReceipt ?? null,
+  });
+
+  const slept = await runNight({ herReceipts: true });
+  assert.equal(slept.terminal, null, "a blocked lifecycle is not the night's crossing terminal");
+  assert.equal(slept.release, "calendar_advanced", "the calendar is what crossed it");
+  assert.equal(
+    slept.cause,
+    NIGHT_CAUSE_SLEEP_UNSETTLED,
+    "her own sleep ended the day; only the crossing was the calendar's",
+  );
+  assert.equal(slept.sleepReceipt.requestId, SLEEP_REQUEST_ID, "the receipt is her own sleep dispatch");
+  assert.equal(slept.sleepReceipt.target, "own_bed", "at her own bed, as the accepted receipt said");
+  assert.equal(
+    parseReceiptEvidence(slept.sleepReceipt.evidence).entered_via,
+    "native_sleep_prompt",
+    "and the lifecycle named what entered it",
+  );
+
+  // The record this produces is no longer a night nobody can explain - and the day after it still had to hold work.
+  const record = dayRecord(slept);
+  const assessment = assessMultiDayBaseline({ dayRecords: [record, { ...record, day: 2 }], daysRequested: 2 });
+  assert.ok(
+    !assessment.violations.some((entry) => entry.code === "night_mechanism_unobserved"),
+    `her sleep is a mechanism; got ${JSON.stringify(assessment.violations)}`,
+  );
+  assert.equal(assessment.unobservedNights, 0);
+  assert.equal(assessment.passOutNights, 0, "the engine did not take this night");
+  assert.equal(assessment.daysCrossed, 2);
+
+  // THE GUARD: the same night with her receipts ABSENT is still an unobserved crossing, as round17's was.
+  const unexplained = await runNight({ herReceipts: false });
+  assert.equal(unexplained.cause, NIGHT_CAUSE_ENGINE);
+  assert.equal(unexplained.sleepReceipt, null, "nothing observed a sleep, so nothing is published as one");
+  const unexplainedRecord = dayRecord(unexplained);
+  assert.ok(
+    assessMultiDayBaseline({
+      dayRecords: [unexplainedRecord, { ...unexplainedRecord, day: 2 }],
+      daysRequested: 2,
+    }).violations.some((entry) => entry.code === "night_mechanism_unobserved"),
+    "an unattributed crossing is still a blocked night",
+  );
+});
+
+/**
  * A night that did not cross is reported by the case that explains it.
  *
  * The watcher used to answer `companion_did_not_sleep` for EVERY night the world's clock spent without a crossing, so
@@ -2232,15 +2400,6 @@ test("a night she slept through and the host player did not is not reported as h
   });
   // The RECORDED shape `timeline.jsonl` holds: identity flattened onto the entry, receipt whole under
   // `worldFactPayload` (`recordedReceipt`).
-  const asRecorded = (receipt) =>
-    Object.freeze({
-      type: "execution_receipt",
-      reasonCode: receipt.reasonCode,
-      requestId: receipt.requestId,
-      executionId: receipt.executionId,
-      evidence: receipt.evidence,
-      worldFactPayload: receipt,
-    });
 
   const runNight = async (receipts) => {
     const factLog = [];
@@ -2276,7 +2435,7 @@ test("a night she slept through and the host player did not is not reported as h
     // (`factStart`) - and a fixture that pre-loads them would be testing a window the watcher never opens.
     const timers = [
       setTimeout(() => {
-        for (const receipt of receipts) factLog.push(asRecorded(receipt));
+        for (const receipt of receipts) factLog.push(asRecordedFact(receipt));
         engineClock = at(2210, false);
       }, 20),
       setTimeout(() => {
@@ -2296,6 +2455,7 @@ test("a night she slept through and the host player did not is not reported as h
         watchRollover,
         nightCause,
         parseReceiptEvidence,
+        sleepReceiptOf,
         TERMINAL_STATES,
         judgeUncrossedNight,
         sleepVerdictCase,
@@ -3143,4 +3303,18 @@ test("one action dispatched through both channels is one accomplishment", () => 
     },
   )[2];
   assert.deepEqual(accomplishedSince(0), ["break_rock", "cut_weeds"], "one action, counted once");
+});
+
+test("a settled turn keeps the day going, and the single accessor is what says so", () => {
+  // The day loop used to read `walked.settled` on the `{ turn, status }` envelope and break after the first turn
+  // of every day: `undefined !== true`. Day 2 was then judged idle and the scheduled player lines were never
+  // reached. The shape has one accessor so a second caller cannot spell it differently.
+  const settledTurn = { turn: { settled: true, reason: null }, status: null };
+  const unsettledTurn = { turn: { settled: false, reason: "agent_turn_timeout" }, status: null };
+
+  assert.equal(turnSettled(settledTurn), true);
+  assert.equal(turnSettled(unsettledTurn), false);
+  // The old reading, kept here so the difference is visible: the envelope has no such field.
+  assert.equal(settledTurn.settled, undefined);
+  assert.equal(settledTurn.settled === true, false);
 });
