@@ -1051,11 +1051,17 @@ public sealed partial class ModEntry : Mod
                 state.BridgeSession,
                 new RouteReenteringBodyProgramExecutor(router, state.Executions))
             {
-                // The world decides when a successor may be dispatched. A predecessor often settles on the same frame
-                // its native animation starts, and re-entering the actor then is refused with `player_not_actionable`
-                // (one frame after a harvest, measured 2026-10-19); a refused node cannot be retried, so the pump waits
-                // a tick instead of stopping the chain. Same trio the flat path treats as not-actionable.
-                CanDispatchNow = static () => Game1.player is { CanMove: true } && Game1.activeClickableMenu is null && !Game1.eventUp,
+                // The world decides when a successor may be dispatched, and it answers PER ACTION: a predecessor often
+                // settles on the same frame its native animation starts, and re-entering the actor then is refused with
+                // `player_not_actionable` (one frame after a harvest, measured 2026-10-19); a refused node cannot be
+                // retried, so the pump waits a tick instead of stopping the chain. The action id is the argument because
+                // an open modal is the WORKING PRECONDITION of the family that closes it - a world-only answer deferred
+                // `dismiss_modal` until the modal it exists to dismiss timed out.
+                CanDispatchNow = static actionId => BodyProgramDispatchGate.IsDispatchable(
+                    actionId,
+                    cutsceneUp: Game1.eventUp,
+                    modalUp: Game1.activeClickableMenu is not null || Game1.dialogueUp,
+                    actorCanMove: Game1.player is { CanMove: true }),
                 // One window, two waiters: the pump defers a node for exactly the number of ticks the flat
                 // admission holds a parked action for, so the two cannot drift apart.
                 MaxCadenceDeferrals = WorldModel.TransientRetryWindowTicks,
@@ -1134,6 +1140,10 @@ public sealed partial class ModEntry : Mod
         this.MarkTickPhase("window_mode");
         Volatile.Write(ref this.tickWatchdogPhase, "window_mode");
         this.ApplyWindowModeTick();
+        // Before any role or lifecycle gate, because this is the one piece of presentation that must run on EVERY
+        // client: the human watching the companion is on the host client, which returns below without ever reaching
+        // the AI-screen work.
+        this.FollowCompanionBubbles();
         // This gate must precede bootstrap, binding, producer, and bridge work.
         if (this.provisioningConfigurationRejected)
         {
@@ -2404,16 +2414,13 @@ public sealed partial class ModEntry : Mod
     /// broadcast IS the sync and there is no world state to mirror.
     /// </para>
     /// <para>
-    /// Two costs this seam has and <c>showTextAboveHead</c> does not, named here so
-    /// nobody "fixes" the appearance by reaching for a frame it cannot draw: the text
-    /// is bare <c>SpriteText.drawString</c> glyphs, not the framed scroll bubble NPCs get
-    /// from <c>drawStringWithScrollCenteredAt</c>; and the text branch of
-    /// <c>TemporaryAnimatedSprite.draw</c> ignores <c>attachedCharacter</c>, so the
-    /// position is fixed at spawn and the line stays where she stood rather than
-    /// following her as she walks. Only the second is visible in play; both are
-    /// accepted for an engine-native primitive that needs no new transport. A third,
-    /// smaller one: the sprite goes out on its loop count rather than fading, so the
-    /// line ends on a cut where an NPC's bubble fades over its last 400ms.
+    /// The APPEARANCE is now three things the engine alone could not give a text sprite: a panel behind the glyphs
+    /// (white text on snow and in the dark was unreadable), a position re-derived from her every frame (the text branch
+    /// of <c>TemporaryAnimatedSprite.draw</c> draws at <c>GlobalToLocal(position)</c> and never reads
+    /// <c>attachedCharacter</c>, so a spawn-time position hangs in the air behind her), and an alpha that follows the
+    /// line's own elapsed ticks rather than a loop count that ends on a cut. <see cref="CompanionBubble"/> owns all
+    /// three, and <see cref="FollowCompanionBubbles"/> is the per-frame half - the only code in the Mod that runs on
+    /// every client, because the human watching the companion is on the HOST client, which never reaches this method.
     /// </para>
     /// <para>
     /// Topology: only the AI screen reaches this method (the host role has no bridge),
@@ -2460,30 +2467,18 @@ public sealed partial class ModEntry : Mod
         {
             Point standing = farmhand.StandingPixel;
             int width = SpriteText.getWidthOfString(text);
-            // Vanilla's own overhead-text placement (NPC.drawAboveAlwaysFrontLayer):
-            // centred on the standing pixel, one sprite height plus 64px above it.
-            TemporaryAnimatedSprite bubble = new(
-                0,
-                CompanionBubbleDurationMs / (float)CompanionBubbleTicks,
-                1,
-                CompanionBubbleTicks,
-                new Vector2(standing.X - width / 2f, standing.Y - farmhand.Sprite.SpriteHeight * 4 - 64),
-                flicker: false,
-                flipped: false)
-            {
-                text = text,
-                // The engine's marker for "render this sprite as text".
-                extraInfoForEndBehavior = -777,
-                drawAboveAlwaysFront = true,
-                layerDepth = 1f,
-            };
-            multiplayer.broadcastSprites(location, bubble);
+            int height = SpriteText.getHeightOfString(text);
+            // Two sprites, one line: the panel is drawn by the engine (a stretched interior tile of the vanilla small
+            // bubble, so the receiving client reloads it from its asset name), and the glyph run sits on top of it.
+            TemporaryAnimatedSprite panel = CompanionBubble.PanelSprite(farmhand, width, height);
+            TemporaryAnimatedSprite line = CompanionBubble.TextSprite(farmhand, text, width);
+            multiplayer.broadcastSprites(location, panel, line);
             // The engine's receipt is the broadcast returning; what it does with the sprite afterwards is not reported by
             // the engine, so this line is the last fact this Mod owns about the bubble. It names the tile and the text
             // length rather than the text - the line is already in the chat log, and repeating it here would log the
             // companion's speech twice.
             this.Monitor.Log(
-                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};ticks={CompanionBubbleTicks}",
+                $"[companion-bubble] broadcast;location={location.NameOrUniqueName};tile={standing.X},{standing.Y};chars={text.Length};ticks={CompanionBubble.Ticks}",
                 LogLevel.Trace);
         }
         catch (Exception exception)
@@ -2493,10 +2488,29 @@ public sealed partial class ModEntry : Mod
         }
     }
 
-    // NPC.showTextAboveHead's own duration default, and the tick count the sprite
-    // counts down at; one duration, two spellings would drift.
-    private const int CompanionBubbleDurationMs = 3000;
-    private const int CompanionBubbleTicks = 30;
+    /// <summary>
+    /// The per-frame half of every live companion bubble: where the speaker is now, and how far into its life the line
+    /// is. Runs for the whole world, on every client that renders it - the AI client because it owns her body, and the
+    /// human's host client because that is where she is being watched.
+    ///
+    /// <para>
+    /// It walks the location's own sprite list because the bubble is NOT here: on the host client the sprite was
+    /// recreated from the wire, so there is no reference to hold. The walk is one integer and one null check per
+    /// sprite - the same list the engine itself walks every frame to draw them - and it touches nothing that is not
+    /// one of ours (<see cref="CompanionBubble.IsCompanionBubble"/>).
+    /// </para>
+    /// </summary>
+    private void FollowCompanionBubbles()
+    {
+        if (!Context.IsWorldReady || Game1.currentLocation is not GameLocation location)
+            return;
+        foreach (TemporaryAnimatedSprite sprite in location.temporarySprites)
+        {
+            if (!CompanionBubble.IsCompanionBubble(sprite) || sprite.attachedCharacter is not Character speaker)
+                continue;
+            CompanionBubble.Follow(sprite, speaker);
+        }
+    }
 
     /// <summary>
     /// Best-effort embodied companion presentation. Turns the companion to
@@ -2887,7 +2901,6 @@ public sealed partial class ModEntry : Mod
     /// </summary>
     internal static bool ShouldComposeBodyProgramController(BodyProgramJournalOpenStatus openStatus) =>
         openStatus is BodyProgramJournalOpenStatus.Empty or BodyProgramJournalOpenStatus.Opened or BodyProgramJournalOpenStatus.RecoveryRequired;
-
     private static BodyProgramPolicyIdentity GetBodyProgramPolicyIdentity(FarmhandCapabilityPublication publication)
     {
         ArgumentNullException.ThrowIfNull(publication);
