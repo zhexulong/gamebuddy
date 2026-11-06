@@ -36,11 +36,26 @@ export const ADMISSION_HOLD_CODES = Object.freeze([
 ]);
 
 /**
+ * The prefix of a refusal that ends a QUEUED request's bounded wait: `waiting_for_body:<owner code>`.
+ *
+ * The Mod parks a request that collides with the actor's own in-flight work and dispatches it when that work ends, so
+ * this code is only ever minted by the wait RUNNING OUT - and the owner the wait was for is the suffix, repeated in the
+ * receipt's evidence as `owner_action=`. It is a body hold all the same: what refused the request was the body being
+ * occupied. Kept beside the table rather than in it, because its population is a prefix with unbounded members, and
+ * the drift test beside this file reads the spelling back out of the Mod's own source.
+ */
+export const WAITING_FOR_BODY_PREFIX = "waiting_for_body:";
+
+/**
  * Whether a refusal reason code means "the actor's body is held", as opposed to some other failure.
  *
  * Runners assert this rather than one literal code: WHICH hold it is belongs to the Mod's decision table, while
  * "it was refused because the actor is held, not for an unrelated reason" is what the gate is actually about.
  */
 export function isAdmissionHold(reasonCode) {
-  return typeof reasonCode === "string" && ADMISSION_HOLD_CODES.includes(reasonCode);
+  return (
+    typeof reasonCode === "string" &&
+    (ADMISSION_HOLD_CODES.includes(reasonCode) ||
+      (reasonCode.startsWith(WAITING_FOR_BODY_PREFIX) && reasonCode.length > WAITING_FOR_BODY_PREFIX.length))
+  );
 }

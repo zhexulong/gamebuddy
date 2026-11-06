@@ -647,13 +647,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal delegate void HeldRequestResolver(string requestId, LocalExecutionReceipt? refusal);
 
     /// <summary>
-    /// One parked request: the action identity the request was dispatched with, the execution the admission
-    /// minted for it, the hold it was parked for, and when the bounded wait started.
+    /// One parked request: the action identity the request was dispatched with, the execution the admission minted for
+    /// it, the hold it was parked for, and when the bounded wait started.
     /// </summary>
     private sealed record HeldRequest(
         string ActionId,
         string ExecutionId,
-        LocalDispositionKind Hold,
         string HoldCode,
         string HoldEvidence,
         long ParkedAtUnixMs);
@@ -750,7 +749,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <c>committed</c>, which is the conservative reading rather than a claim that nothing can happen to them.
     /// </para>
     /// </summary>
-    private BodyOwner DescribeBodyOwner()
+    private BodyOwner DescribeBodyOwner() =>
+        this.PeekBodyOwner() ?? new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
+
+    /// <summary>
+    /// The owner of the body right now, or <see langword="null"/> when nothing of this actor's own is in flight.
+    ///
+    /// <para>
+    /// Null is the fact a WAIT needs: the parked-wait pump re-reads this every tick, so "the body is free again" and
+    /// "who was in the way" are one answer from one describer rather than a second predicate that could disagree with
+    /// the refusal that parked the request. <see cref="DescribeBodyOwner"/> keeps the non-null shape the refusal
+    /// vocabulary and the snapshot's occupant projection read.
+    /// </para>
+    /// </summary>
+    private BodyOwner? PeekBodyOwner()
     {
         var owners = new List<(string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe)>();
         if (this.activeNavigate is not null || this.activeNavigationCoordinator is not null)
@@ -815,9 +827,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activePedestalTaking is not null)
             owners.Add((BodyOwnedByActivity, this.activePedestalTaking.ExecutionId, "take_pedestal_item", false, "committed", false));
 
-        // The guards make this unreachable; keeping the bare code honest rather than inventing an owner.
+        // The guards make this unreachable; the caller decides what an unnameable hold reads as.
         if (owners.Count == 0)
-            return new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
+            return null;
 
         (string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe) owner = owners[0];
         string evidence = $"owner_execution_id={OwnerToken(owner.ExecutionId)};owner_action={OwnerToken(owner.Action)};interruptible={(owner.Interruptible ? "true" : "false")};phase={owner.Phase};cancel_safe={(owner.CancelSafe ? "true" : "false")}";
@@ -832,25 +844,56 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static string OwnerToken(string? value) => string.IsNullOrEmpty(value) ? "unknown" : value;
 
+    /// <summary>
+    /// The hold a request waits out when the actor's OWN in-flight execution owns the body, named after that owner and
+    /// carrying the owner's own evidence (`owner_execution_id`, `owner_action`).
+    ///
+    /// <para>
+    /// The name is derived from the owner code rather than spelled again, so the wait and the refusal vocabulary cannot
+    /// drift. It travels on the existing receipt fields - <c>reasonCode</c> plus the evidence detail string - which is
+    /// why no wire field was added for it.
+    /// </para>
+    /// </summary>
+    internal const string WaitingForBodyPrefix = "waiting_for_body:";
+
+    private static string WaitingForBodyHold(string ownerCode) => $"{WaitingForBodyPrefix}{ownerCode}";
+
+    /// <summary>
+    /// Whether a request that collides with this owner may WAIT for it instead of being refused.
+    ///
+    /// <para>
+    /// These are the executions whose whole life is one short intent of the actor's own: an in-flight local move and the
+    /// activity family (petting, animal produce, item use, pickup, pedestal taking). They end on their own inside the
+    /// bounded window, so the collision is a QUEUE. The other owners are not queued: a ride, a map transition, a
+    /// navigation or a committed night outlives the window every time, so parking behind one would delay the same named
+    /// refusal and hold a request that cannot be dispatched in time. A request whose admission tuple is JOURNALLED is
+    /// refused for a different reason - a different lineage owns it, and a later dispatch would read as a lost-receipt
+    /// recovery - which <see cref="RejectBodyOwned"/> checks beside this one.
+    /// </para>
+    /// </summary>
+    private static bool IsQueueableBodyOwner(string ownerCode) =>
+        ownerCode is BodyOwnedByMovement or BodyOwnedByActivity;
+
     /// <summary>Mints the named body-exclusivity refusal through the single owner describer.</summary>
     ///
-    /// One ownership is parked instead of refused: an in-flight local move. It is the only body-ownership that clears on
-    /// its own inside the bounded window - the owner table itself declares it interruptible (<see cref="LocalMoveOwner" />)
-    /// - so a follow-up that arrives while the current move finishes waits the way a Transient animation hold does,
-    /// rather than being paid for with a model round-trip whose median is 3.4 s and whose p90 is 25 s. Measured
-    /// 2026-10-19 by the hold-absorption gate: a follow-up sent 400 ms into an in-flight move came back
-    /// `body_owned_by_movement`. Every other holder - a mount, a bus ride, an owned overnight, a day advance, the body
-    /// program - does not clear inside the window and keeps the same named refusal it always had.
+    /// One ownership is parked instead of refused: a collision with the actor's OWN in-flight work is a queue. Measured
+    /// 2026-10-19 by the hold-absorption gate, a follow-up sent 400 ms into an in-flight move came back
+    /// `body_owned_by_movement`; measured 2026-10-19 19:31, a request that met a background `pickup_item` came back
+    /// `body_owned_by_activity` and the run went quiet. Either way the Mod already knows the owner clears inside the
+    /// bounded window and pays the wait itself rather than the model round-trip whose median is 3.4 s and whose p90 is
+    /// 25 s. Everything else - a mount, a bus ride, an owned overnight, a day advance, a journalled admission - keeps
+    /// the named refusal it always had. The two exceptions are checked here, together, because they answer one question:
+    /// may this request wait for that owner?
     /// </summary>
     private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId)
     {
         BodyOwner owner = this.DescribeBodyOwner();
-        if (owner.ReasonCode == BodyOwnedByMovement
+        if (IsQueueableBodyOwner(owner.ReasonCode)
             && this.heldRequestResolver is not null
             // A durable admission is never waited out: its tuple is journalled WITHOUT a receipt, so re-dispatching it
             // later would read as a lost-receipt recovery rather than a first dispatch.
             && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-            return this.ParkHeldRequest(requestId, executionId, LocalDispositionKind.Transient, owner.ReasonCode, owner.Evidence);
+            return this.ParkHeldRequest(requestId, executionId, WaitingForBodyHold(owner.ReasonCode), owner.Evidence);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence);
     }
 
@@ -942,7 +985,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // lost-receipt recovery rather than a first dispatch. Those are the candidate actions, which
                 // carry no actionability gate of their own and so never arrive here.
                 && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-                return this.ParkHeldRequest(requestId, executionId, disposition, holdCode, holdEvidence);
+                return this.ParkHeldRequest(requestId, executionId, holdCode, holdEvidence);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
         }
 
@@ -971,16 +1014,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Parks one request whose actor is Transiently held and answers it with the marker the bridge reads as
-    /// "still waiting", instead of starting the native effect: the wait is the Mod's, and the request is
-    /// dispatched through the path it arrived on the moment the body frees. The marker is returned rather than
-    /// stored or published, so the request's single published identity is the one its dispatch (or its
-    /// refusal) mints, and the Host never sees a transition for an action that has not started.
+    /// Parks one request whose body is held and answers it with the marker the bridge reads as "still waiting", instead
+    /// of starting the native effect: the wait is the Mod's, and the request is dispatched through the path it arrived
+    /// on the moment the body frees. The marker is returned rather than stored or published, so the request's single
+    /// published identity is the one its dispatch (or its refusal) mints, and the Host never sees a transition for an
+    /// action that has not started.
     /// </summary>
     private LocalExecutionReceipt ParkHeldRequest(
         string requestId,
         string executionId,
-        LocalDispositionKind hold,
         string holdCode,
         string holdEvidence)
     {
@@ -991,7 +1033,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.heldRequestsByRequestId[requestId] = new HeldRequest(
                 actionId,
                 executionId,
-                hold,
                 holdCode,
                 holdEvidence,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -999,12 +1040,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Re-attempts every parked request, once per game tick. The actor is re-read through the same authority
-    /// the admission reads, so the wait's two ends cannot disagree with the gate that parked the request: the
-    /// moment the actor is actionable the request goes back to the bridge, which dispatches it through the
-    /// path it arrived on - every revision, deadline, profile and ownership check runs again at THAT moment,
-    /// because this is a wait and not a replay. Past <see cref="WorldModel.TransientRetryWindowMs"/> the wait
-    /// ends in the same named refusal the admission would have returned on arrival.
+    /// Re-attempts every parked request, once per game tick. The body is re-read through the same authority the
+    /// admission reads, so the wait's two ends cannot disagree with the gate that parked the request: the moment it is
+    /// free the request goes back to the bridge, which dispatches it through the path it arrived on - every revision,
+    /// deadline, profile and ownership check runs again at THAT moment, because this is a wait and not a replay. Past
+    /// <see cref="WorldModel.TransientRetryWindowMs"/> the wait ends in the named hold the admission captured on
+    /// arrival.
     /// </summary>
     internal void PumpHeldRequests()
     {
@@ -1013,7 +1054,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
         {
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            (LocalDispositionKind Kind, string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
+            (string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
             if (hold is null)
             {
                 this.heldRequestsByRequestId.Remove(requestId);
@@ -1027,7 +1068,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // evidence are the pair the admission captured on arrival - byte for byte the refusal the Agent
             // would have read then; a world that changed behind the wait is named as it is NOW, because
             // pointing the Agent at a hold that has ended would give it the wrong countermeasure.
-            (string holdCode, string holdEvidence) = hold.Value.Kind == held.Hold
+            (string holdCode, string holdEvidence) = hold.Value.HoldCode == held.HoldCode
                 ? (held.HoldCode, held.HoldEvidence)
                 : (hold.Value.HoldCode, hold.Value.HoldEvidence);
             this.heldRequestsByRequestId.Remove(requestId);
@@ -1051,10 +1092,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// The hold the actor is under right now, or null when it is actionable. Read through the same authority
-    /// the admission reads, so the wait can never dispatch into a body the admission would have refused.
+    /// The hold the body is under right now, or null when it is free. Read through the same authority the admission
+    /// reads, so the wait can never dispatch into a body the admission would have refused.
+    ///
+    /// <para>
+    /// Two things can hold the body, and this asks about BOTH: the actor's disposition (a menu, a cutscene, a tool
+    /// swing) and an execution of the actor's own that owns it. The second is what makes a queued request wait for the
+    /// owner that parked it instead of dispatching on the next tick straight back into `body_owned_by_activity`, and the
+    /// code it reports is the wait's own name for that owner.
+    /// </para>
     /// </summary>
-    private (LocalDispositionKind Kind, string HoldCode, string HoldEvidence)? ReadCurrentHold()
+    private (string HoldCode, string HoldEvidence)? ReadCurrentHold()
     {
         if (!this.TryGetBoundActor(out Farmer? boundActor, out _) || boundActor is null)
             return null;
@@ -1062,9 +1110,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ActorDisposition disposition = WorldModel.Classify(facts);
         LocalDispositionKind projected = ProjectAdmissionDisposition(disposition, boundActor);
         if (projected == LocalDispositionKind.Idle)
-            return null;
+            return this.PeekBodyOwner() is { } owner
+                ? (WaitingForBodyHold(owner.ReasonCode), owner.Evidence)
+                : null;
         (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentBodyHold(disposition, facts, boundActor.CanMove);
-        return (projected, holdCode, holdEvidence);
+        return (holdCode, holdEvidence);
     }
 
     /// <summary>
@@ -2841,6 +2891,27 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// Whether this crop tile wants water RIGHT NOW.
+    ///
+    /// <para>
+    /// `HoeDirt.needsWatering()` is NOT that answer on its own: it is a fact about the CROP KIND (`Crop.GetData().NeedsWatering`,
+    /// `HoeDirt.cs:380-387`) and it says `true` for a tile that was watered this morning just as loudly as for one that is
+    /// dry. Water is the tile's own `state`, and `HoeDirt.isWatered()` is the predicate for it (`HoeDirt.cs:391-394`). A
+    /// caller that publishes or accepts "needs water" from `needsWatering()` alone therefore answers what the crop wants,
+    /// not what the farm still needs - and a count built that way never falls when the tile IS watered.
+    /// </para>
+    ///
+    /// <para>
+    /// One spelling for the two PUBLISHING readers that must agree: the whole-map count
+    /// (<c>DiscoverWateringWhereabouts</c>) and the bounded target list (<c>DiscoverCropTargets</c>). If they disagree,
+    /// the state block advertises tiles the target list does not. `water_crop`'s own guard stays written out at its
+    /// refusal site, because it must say WHY it refused a tile and the coverage gate reads that decision there.
+    /// </para>
+    /// </summary>
+    internal static bool CropNeedsWater(StardewValley.TerrainFeatures.HoeDirt dirt) =>
+        dirt.crop is not null && dirt.needsWatering() && !dirt.isWatered();
+
+    /// <summary>
     /// How many crops need water on each map, and the nearest one.
     ///
     /// <para>
@@ -2849,8 +2920,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// answering it from the radius-limited list produced a false zero (measured 2026-10-31).
     /// </para>
     /// <para>
-    /// "Needs water" is the engine's own predicate, `HoeDirt.needsWatering()` (`HoeDirt.cs:419-433`), not a re-derivation:
-    /// the same call `DiscoverCropTargets` makes, so the two families cannot disagree about what dry means.
+    /// "Needs water" is <see cref="CropNeedsWater"/> - the crop's own need predicate AND the tile's live watered state,
+    /// the same pair `DiscoverCropTargets` and `water_crop` read, so the count cannot advertise a tile the action refuses.
     /// </para>
     /// </summary>
     private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts()
@@ -2872,7 +2943,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
                     || dirt.crop is null
                     || dirt.crop.dead.Value
-                    || !dirt.needsWatering())
+                    || !CropNeedsWater(dirt))
                     continue;
                 needsWaterCount++;
                 // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
@@ -4685,8 +4756,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // from the engine's own predicates on this dirt instead of leaving the reader to infer them from the filter.
         return NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
-                && dirt.needsWatering()
-                && !dirt.isWatered()
+                && CropNeedsWater(dirt)
                 && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
             .Take(64)
             .Select(pair =>
