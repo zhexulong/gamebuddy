@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+
+import { isMachineTargetFact } from "./protocol-target-facts.js";
 
 import {
   MAX_BODY_PROGRAM_NODES,
@@ -1644,7 +1647,8 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "enter_exit"] },
       now,
     ),
-    "invalid_door_target",
+    null,
+    "an edge exit's door/warp source is `-1`; the snapshot publishes it, so asking for it is legal",
   );
   assert.equal(
     validateExecutionRequest(
@@ -1652,8 +1656,26 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] },
       now,
     ),
-    "invalid_warp_source",
+    null,
+    "the same for a plain warp: `snapshot.warps[]` publishes the edge source and the Mod resolves it exactly",
   );
+  // The floor is the warp SOURCE floor, not "any negative": one tile further out is still refused by name, and a
+  // WALK target keeps the in-map floor - `move_to_tile(-1, ...)` is not a request the Mod can run.
+  for (const [action, args, code] of [
+    ["travel", { x: -2, y: 10 }, "invalid_warp_source"],
+    ["enter_exit", { x: -2, y: 11 }, "invalid_door_target"],
+    ["move_to_tile", { x: -1, y: 10 }, "invalid_target_tile"],
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest(
+        { ...valid, action, args },
+        { ...snapshot, capabilities: [...snapshot.capabilities, action] },
+        now,
+      ),
+      code,
+      `${action} must still refuse an off-map tile it cannot use`,
+    );
+  }
   // `ride_minecart` is its own action: the station tile AND one advertised
   // objective are both mandatory, so a missing selector is malformed rather than
   // an ordinary warp. An unknown ID, a stale ID from another snapshot, or a
@@ -4464,4 +4486,56 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     ),
     "invalid_snapshot:minecartTargets",
   );
+});
+
+/**
+ * A machine target row publishes what its own `Data/Machines` rows declare it takes, and its three states are distinct: a
+ * bounded list, an EMPTY list (the machine data was read and declares no load input) and an explicit `null` (the data
+ * could not answer). Collapsing any two of those is the defect the field exists to prevent - a furnace published as a
+ * loadable target with no statement of inputs is how coffee beans were aimed at one (measured 2026-10-31).
+ *
+ * The cap is not restated here: it is read out of the language-neutral wire schema, so this test fails when the schema
+ * and the Host validator drift apart instead of pinning today's number twice.
+ */
+test("a machine row's published acceptance is bounded by the wire schema and keeps unknown apart from nothing", async () => {
+  const schema = JSON.parse(
+    await readFile(new URL("../../protocol/bridge-v1.schema.json", import.meta.url), "utf8"),
+  ) as { $defs: { machineAcceptance: { properties: { inputs: { maxItems: number } } } } };
+  const maxItems = schema.$defs.machineAcceptance.properties.inputs.maxItems;
+  assert.ok(maxItems > 0, "the schema must cap the acceptance list, or an unbounded frame is admissible");
+
+  const row = {
+    targetId: "machine_0123456789abcdef",
+    x: 5,
+    y: 6,
+    qualifiedItemId: "(BC)13",
+    displayName: "Furnace",
+    readyForHarvest: false,
+    minutesUntilReady: 0,
+    accepts: { inputs: ["(O)378 x5", "(O)380 x5"], omitted: 0 },
+  };
+
+  assert.equal(isMachineTargetFact(row), true, "the furnace row states its own inputs");
+  assert.equal(isMachineTargetFact({ ...row, accepts: null }), true, "unknown is a published fact");
+  assert.equal(
+    isMachineTargetFact({ ...row, accepts: { inputs: [], omitted: 0 } }),
+    true,
+    "a machine that declares no load input publishes an empty list, which is not the same fact as null",
+  );
+  assert.equal(
+    isMachineTargetFact({
+      ...row,
+      accepts: { inputs: Array.from({ length: maxItems }, () => "(O)378 x5"), omitted: 3 },
+    }),
+    true,
+    "the schema's cap is the validator's cap",
+  );
+
+  for (const bad of [
+    { ...row, accepts: { inputs: Array.from({ length: maxItems + 1 }, () => "(O)378 x5"), omitted: 0 } },
+    { ...row, accepts: { inputs: [""], omitted: 0 } },
+    { ...row, accepts: { inputs: [], omitted: -1 } },
+    { ...row, accepts: { inputs: [], omitted: 0, extra: 1 } },
+  ])
+    assert.equal(isMachineTargetFact(bad), false, `refused: ${JSON.stringify(bad.accepts).slice(0, 80)}`);
 });

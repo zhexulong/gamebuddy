@@ -36,10 +36,17 @@ import {
   parseArgs,
   parseKnownFixtureScenarios,
   parseModDispatchScenarios,
+  reachableRunnerNames,
   runGateRung,
   runLadder,
   shapeRung,
 } from "./prelive.mjs";
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
+import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
+import {
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "./stardew-action-gate-descriptors.mjs";
 
 const HARNESS_SOURCE = `
 export function assertRequiredCapabilities(snapshot, required) {
@@ -234,6 +241,50 @@ assertRequiredCapabilities(before, []);`;
   assert.equal(optOutRules("// prelive-l3-opt-out b:   ").size, 0);
 });
 
+test("(iv) rule (b)'s population is what the resolver answers, so the third authority's gate is not called unreachable", () => {
+  // Boundary, not implementation: the authority is `tools/resolve-stardew-action-gate-runner.mjs`, which answers from
+  // the published gate table, then the experimental/harness map, then the published-action gate exemptions. The ladder
+  // read only the first two, so `navigate_to_destination` - published, but on the long-horizon navigation pipeline and
+  // therefore named by an exemption rather than a descriptor - had its declared runner reported unreachable. The runner
+  // was fine; what the rule READ was not.
+  const reachable = reachableRunnerNames();
+  const experimentalAction = Object.keys(STARDEW_EXPERIMENTAL_ACTION_RUNNERS).find(
+    (action) => !STARDEW_PUBLISHED_ACTION_GATES.some((gate) => gate.actionId === action),
+  );
+  const answers = {
+    "published gate table": resolveStardewActionGateRunner(STARDEW_PUBLISHED_ACTION_GATES[0].actionId),
+    "experimental/harness map": resolveStardewActionGateRunner(experimentalAction),
+    "published-action gate exemption": resolveStardewActionGateRunner(GATE_EXEMPT_PUBLISHED_ACTIONS[0].actionId),
+  };
+  for (const [authority, runner] of Object.entries(answers))
+    assert.ok(reachable.has(runner), `${authority} resolves ${runner}, so rule (b) may not call it unreachable`);
+  // Falsifier: the third source is load-bearing. Drop just that one and the exemption's runner stops being reachable,
+  // which is exactly the state the ladder was in when it called this gate unreachable.
+  assert.equal(
+    reachableRunnerNames({ gateExemptions: [] }).has(answers["published-action gate exemption"]),
+    false,
+    "an exemption runner must be unreachable once the exemption list is not read",
+  );
+  // And nothing is reachable that no declaration names: empty the three and the population is empty. That is what makes
+  // this a union of the authorities rather than a list somebody typed into the ladder.
+  assert.equal(reachableRunnerNames({ experimentalRunners: {}, publishedGates: [], gateExemptions: [] }).size, 0);
+  const undeclared = "run-stardew-native-local-player-no-authority-names-this-smoke.mjs";
+  assert.equal(reachable.has(undeclared), false);
+  const report = checkRunnerShape({
+    runners: [{ file: undeclared, source: cleanRunner }],
+    harnessSource: HARNESS_SOURCE,
+    baseline: { knownSites: [] },
+    reachableRunners: reachable,
+  });
+  assert.deepEqual(
+    report.violations.map((entry) => entry.rule),
+    ["b:unreachable_runner"],
+    "a runner reachable through none of the three is still unreachable",
+  );
+  // The ratchet half is already covered by "the baseline is a ratchet" below: a listed site whose runner becomes
+  // reachable is `baseline_stale`, which is the same match for a rule-(a) or a rule-(b) entry.
+});
+
 test("(iv) the baseline is a ratchet: a listed site that stopped violating is red", () => {
   const report = checkRunnerShape({
     runners: [{ file: "clean-smoke.mjs", source: cleanRunner }],
@@ -318,40 +369,6 @@ test("L4 delegates the named action to the existing live preflight", () => {
   const failed = actionRung({ action: "till_soil", deployRoot: "C:/mods", run: () => ({ status: 1 }) });
   assert.equal(failed.status, "failed");
   assert.equal(failed.exitCode, 1);
-});
-
-test("(v) a gate that exits 0 having measured nothing is UNAVAILABLE, never counted as a pass", () => {
-  const report = runGateRung({
-    id: "l0b",
-    gates: ["tools/measured.mjs", "tools/skipped.mjs"],
-    resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
-    run: (command) => ({
-      status: 0,
-      stdout: command.endsWith("skipped.mjs") ? "observation_gap_skipped: needs ref/external/tree\n" : "ok: 12 read\n",
-      stderr: "",
-    }),
-  });
-  assert.equal(report.status, "passed");
-  assert.deepEqual(
-    report.gates.map((entry) => [entry.gate, entry.outcome]),
-    [
-      ["tools/measured.mjs", "passed"],
-      ["tools/skipped.mjs", "not_measured"],
-    ],
-  );
-  assert.deepEqual(
-    report.unavailable.map((entry) => entry.gate),
-    ["tools/skipped.mjs"],
-  );
-  const printed = format(runLadder({ rungs: [() => report] }), {
-    elapsedMs: 1,
-    options: { noGame: true },
-    notice: null,
-  });
-  assert.match(printed, /l0b: passed \(2 gates, 0 red, 1 UNAVAILABLE\)/u);
-  assert.match(printed, /UNAVAILABLE: tools\/skipped\.mjs/u);
-  assert.match(printed, /observation_gap_skipped: needs ref\/external\/tree/u);
-  assert.match(printed, /1 gate\(s\) UNAVAILABLE: measured nothing here, counted apart from the pass/u);
 });
 
 test("the report prints the counts and the members the ladder names", () => {

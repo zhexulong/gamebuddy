@@ -94,14 +94,24 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
       return client.state;
     },
   };
-  const [observe, execution, catalog, search] = createStardewObservationTools(connection);
+  const [observe, lookup, execution, catalog, search] = createStardewObservationTools(connection);
   assert.ok(
-    observe !== undefined && execution !== undefined && catalog !== undefined && search !== undefined,
-    "the four leading observation tools must be mounted",
+    observe !== undefined &&
+      lookup !== undefined &&
+      execution !== undefined &&
+      catalog !== undefined &&
+      search !== undefined,
+    "the five leading observation tools must be mounted",
   );
   assert.deepEqual(
-    [observe.name, execution.name, catalog.name, search.name],
-    ["stardew_observe", "stardew_execution_status", "stardew_interaction_catalog", "stardew_search_interactions"],
+    [observe.name, lookup.name, execution.name, catalog.name, search.name],
+    [
+      "stardew_observe",
+      "stardew_look_up",
+      "stardew_execution_status",
+      "stardew_interaction_catalog",
+      "stardew_search_interactions",
+    ],
   );
   const unavailable = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
   // The failure text must name the cause and what to do; a constant sentence

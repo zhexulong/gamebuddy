@@ -24,10 +24,14 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
-        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
+        // Ask before walking: a pack that cannot satisfy the action's own `tool:watering_can` claim is refused now
+        // rather than after an approach leg the action could never finish, and a can that needs no water is refused
+        // before the walk for the same reason. The slot the caller named is recorded, never obeyed.
+        DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "refill_watering_can");
+        if (can.RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusal, slot));
+        if (Game1.player.Items[can.Slot] is not WateringCan ownedCan || ownedCan.IsBottomless || ownedCan.WaterLeft >= ownedCan.waterCanMax)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={can.Slot}");
         GameLocation location = Game1.player.currentLocation;
         if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
@@ -54,30 +58,50 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Executes refill_watering_can against the current world, re-validating the can
-    /// and the water tile because an approach leg may have taken several ticks. Shared
-    /// by the in-range path and the post-approach path.
+    /// Executes refill_watering_can against the current world, re-validating the can and the
+    /// water tile because an approach leg may have taken several ticks. The can is not the
+    /// caller's to name: the action's own registration claims `tool:watering_can`, so this
+    /// selects the best owned can it needs and restores the actor's own selection afterwards.
+    /// Shared by the in-range path and the post-approach path.
     /// </summary>
     private LocalExecutionReceipt ExecuteRefillWateringCan(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
-        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
-        int before = wateringCan.WaterLeft;
-        int max = wateringCan.waterCanMax;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
-        int after = wateringCan.WaterLeft;
-        bool succeeded = ReferenceEquals(Game1.player.Items[slot], wateringCan) && before < max && after == max;
-        string evidence = $"target={expectedTargetId};slot={slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable", evidence);
+        // Selection facts are deliberately NOT published here: this action takes the can its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasRefillWateringCanCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must
+        // extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "refill_watering_can", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not WateringCan wateringCan)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
+            int before = wateringCan.WaterLeft;
+            int max = wateringCan.waterCanMax;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
+            int after = wateringCan.WaterLeft;
+            bool succeeded = ReferenceEquals(Game1.player.Items[selection.Slot], wateringCan) && before < max && after == max;
+            evidence = $"target={expectedTargetId};slot={selection.Slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -1210,6 +1234,276 @@ internal sealed partial class ExecutionManager
         return receipt;
     }
 
+    /// <summary>
+    /// Break exactly one large stump, hollow log, boulder or meteorite through the native
+    /// `ResourceClump.performToolAction` seam (ResourceClump.cs:140).
+    ///
+    /// <para>
+    /// The clump's own `parentSheetIndex` decides WHICH tool it accepts and the minimum upgrade that branch demands
+    /// (ResourceClump.cs:150-234), so the requirement travels with the TARGET, not with the action row: the request
+    /// carries no `slot`, the actor need not be holding anything, and the tool the clump demands is resolved, selected
+    /// and restored by this handler. That is the shape every tool action moved to in 4a4012db; `clear_debris` is the
+    /// older spelling of this same native seam and still obeys the caller's slot.
+    /// </para>
+    /// <para>
+    /// ONE CALL SETTLES ONE CLUMP. A hit removes `Math.Max(1f, (upgradeLevel + 1) * 0.75f)` from `health`
+    /// (ResourceClump.cs:147) and only the hit that reaches zero runs `destroy` and takes the clump out of
+    /// `location.resourceClumps` (GameLocation.cs:16263-16270). A clump that needs more than one hit is therefore
+    /// swung at until it falls inside this one request - the repeated native seam a holding player executes - and both
+    /// the removal and the drop are read back from the location afterwards rather than assumed.
+    /// </para>
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalBreakResourceClump(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    {
+        if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing)) return existing;
+        this.revision++;
+        string executionId = Guid.NewGuid().ToString("N");
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        // Shared mechanical admission (identity → actionability → deadline → body exclusivity). Geometry, target
+        // identity, the tool requirement and the postcondition stay action-specific. Physical: this drives a tool.
+        if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!TryFindBreakableClump(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.ResourceClump? clump, out string toolKind, out int requiredUpgrade))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clump_target_moved", DescribeClumpTargetRefusal(targetX, targetY));
+        // Ask before walking, exactly as the declared-tool actions do: a pack that cannot satisfy THIS clump's own
+        // requirement is refused now rather than after an approach leg it could never finish. Resolving it needs the
+        // clump, which is why this preflight follows the identity check rather than preceding it.
+        DeclaredToolResolution packTool = ResolveOwnedTool(Game1.player.Items, toolKind, requiredUpgrade);
+        if (packTool.RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ClumpToolRefusalCode(toolRefusal), DescribeClumpToolRefusal(expectedTargetId, targetX, targetY, clump!.parentSheetIndex.Value, toolKind, requiredUpgrade, packTool));
+        // A ResourceClump spans multiple tiles and is impassable, so the reach test is the one the native swing needs -
+        // one Chebyshev step from ANY footprint tile (GameLocation.cs:16265 matches the clump by bounding box) - while
+        // the opaque clump-origin identity stays the freshness binding. Out of reach is walked to, not refused.
+        if (!IsDebrisFootprintWithinChebyshev(Game1.player, clump!, 1))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "break_resource_clump",
+                location,
+                ((int)clump!.Tile.X, (int)clump.Tile.Y),
+                DebrisFootprint(clump),
+                expectedTargetId,
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteBreakResourceClump(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteBreakResourceClump(executionId, requestId, targetX, targetY, expectedTargetId);
+    }
+
+    /// <summary>
+    /// Executes break_resource_clump against the current world, re-resolving the clump, its reach and its tool
+    /// requirement because an approach leg may have taken several ticks and any of the three can have changed while the
+    /// actor walked. Shared by the in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteBreakResourceClump(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (!TryFindBreakableClump(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.ResourceClump? clump, out string toolKind, out int requiredUpgrade))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clump_target_moved", DescribeClumpTargetRefusal(targetX, targetY));
+        if (!IsDebrisFootprintWithinChebyshev(Game1.player, clump!, 1))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clump_out_of_range", $"target={targetX},{targetY};reach=1;approach=did_not_arrive;blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{FootprintChebyshevDistance(Game1.player, clump!)}").Format()}");
+        if (!TrySelectRequiredTool(Game1.player, toolKind, requiredUpgrade, out DeclaredToolSelection selection, out DeclaredToolResolution packTool, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ClumpToolRefusalCode(toolRefusalCode), DescribeClumpToolRefusal(expectedTargetId, targetX, targetY, clump!.parentSheetIndex.Value, toolKind, requiredUpgrade, packTool));
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
+        try
+        {
+            int parent = clump!.parentSheetIndex.Value;
+            float healthBefore = clump.health.Value;
+            float staminaBefore = Game1.player.Stamina;
+            // The exact number of native hits this clump needs, from the engine's own damage formula and the health it
+            // is carrying right now - a clump already damaged by an earlier request needs fewer.
+            float damagePerSwing = Math.Max(1f, (selection.Tool.UpgradeLevel + 1) * 0.75f);
+            int swingsRequired = Math.Max(1, (int)Math.Ceiling(healthBefore / damagePerSwing));
+            // +4 rather than a fixed ceiling: the count is derived from live state, so a small headroom covers a
+            // fractional-health clump and still ends a target the tool cannot finish in a named refusal instead of a
+            // loop. It is not a budget on the action - one request clears one clump.
+            int swingCap = swingsRequired + 4;
+            // The stamina red line, priced against the swings this clump actually needs. The engine does not refuse a
+            // swing for lack of stamina; it lets it run negative and then faints the actor (Game1.cs:6452), which halves
+            // next day's stamina and ends a multi-day routine. Same guard, same refusal code as `chop_stump`.
+            int skillLevel = selection.Tool is Axe ? Game1.player.ForagingLevel : Game1.player.MiningLevel;
+            ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
+                staminaBefore,
+                ToolStaminaGuard.EstimatedCost(swingsRequired, skillLevel, selection.Tool.IsEfficient));
+            if (!stamina.Allowed)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    stamina.ReasonCode,
+                    $"target={expectedTargetId};parent={parent};swings_required={swingsRequired};{stamina.Evidence};blocked_by={new RefusalLayerToken(RefusalLayerKind.Stamina, toolKind).Format()}");
+
+            (int X, int Y) swingTile = NearestFootprintTile(Game1.player, clump);
+            int swingCount = 0;
+            int droppedBefore = CountDroppedItemDebris(location);
+            StardewValley.TerrainFeatures.ResourceClump? standing = clump;
+            while (standing is not null && standing.health.Value > 0f && swingCount < swingCap)
+            {
+                droppedBefore = CountDroppedItemDebris(location);
+                UseNativeToolOnTile(selection.Tool, location, swingTile.X, swingTile.Y, Game1.player, staminaBefore);
+                // ResourceClump.performToolAction ignores a second hit from a swing identity it has already seen
+                // (`lastToolHitTicker == t.swingTicker`, ResourceClump.cs:142-146); vanilla advances the ticker in
+                // Tool.endUsing after the animation. This direct game-thread adapter advances it after each bounded
+                // native hit so every swing is a distinct one.
+                selection.Tool.swingTicker++;
+                swingCount++;
+                standing = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
+            }
+
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float perSwingStaminaCost = ToolStaminaGuard.PerSwingCharge(skillLevel, selection.Tool.IsEfficient);
+            StardewValley.TerrainFeatures.ResourceClump? remaining = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
+            bool clumpRemoved = remaining is null;
+            float healthAfter = remaining?.health.Value ?? 0f;
+            bool dropObserved = CountDroppedItemDebris(location) > droppedBefore;
+            // Both halves are required, and both are read from the location the swings just changed: the clump left the
+            // collection (GameLocation.cs:16267 removes it when `performToolAction` returns true) AND the destroying
+            // swing left an item drop behind. A clump that survived the cap is `Uncertain`, never a claimed success, and
+            // the receipt says which half failed.
+            bool succeeded = clumpRemoved && dropObserved;
+            evidence["location"] = location.NameOrUniqueName;
+            evidence["target"] = expectedTargetId;
+            evidence["tile"] = $"{targetX},{targetY}";
+            evidence["parent"] = parent.ToString(CultureInfo.InvariantCulture);
+            evidence["required_upgrade"] = requiredUpgrade.ToString(CultureInfo.InvariantCulture);
+            evidence["tool"] = toolKind;
+            evidence["health_before"] = healthBefore.ToString("0.##", CultureInfo.InvariantCulture);
+            evidence["health_after"] = healthAfter.ToString("0.##", CultureInfo.InvariantCulture);
+            evidence["swings"] = swingCount.ToString(CultureInfo.InvariantCulture);
+            evidence["clump_removed"] = clumpRemoved.ToString().ToLowerInvariant();
+            evidence["drop_observed"] = dropObserved.ToString().ToLowerInvariant();
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = (perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture);
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? "clump_broken" : "postcondition_not_observed";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.BreakResourceClump, evidence));
+    }
+
+    /// <summary>
+    /// The detail one `clump_target_moved` carries: the tile that was asked for, and the layer that refused it. A clump
+    /// that is no longer in the collection is a WORLD fact (the caller re-observes), not a bad request.
+    /// </summary>
+    private static string DescribeClumpTargetRefusal(int targetX, int targetY)
+    {
+        string token = new RefusalLayerToken(RefusalLayerKind.Clump, $"absent@{targetX},{targetY}").Format();
+        return $"target={targetX},{targetY};blocked_by={token}";
+    }
+
+    /// <summary>
+    /// How many Chebyshev steps the actor is from the NEAREST tile of a multi-tile clump's footprint - the number the
+    /// reach test compares, reported so an out-of-range refusal says how far rather than only "not in reach".
+    /// </summary>
+    internal static int FootprintChebyshevDistance(Farmer actor, StardewValley.TerrainFeatures.ResourceClump clump) =>
+        DebrisFootprint(clump).Min(tile => Math.Max(Math.Abs(tile.X - (int)actor.Tile.X), Math.Abs(tile.Y - (int)actor.Tile.Y)));
+
+    /// <summary>
+    /// The clump one opaque target id names, together with the tool requirement its own native switch states.
+    ///
+    /// <para>
+    /// It answers false both for a clump that is no longer there and for one this action does not own - a green rain
+    /// bush lives in the same `resourceClumps` collection (`ResourceClump.IsGreenRainBush`, ResourceClump.cs:131-138)
+    /// but takes no tool at all and is another family's target. Both are target-identity failures for this action, so
+    /// the caller refuses them with one word instead of swinging at a bush.
+    /// </para>
+    /// </summary>
+    private static bool TryFindBreakableClump(
+        StardewValley.GameLocation location,
+        int targetX,
+        int targetY,
+        string expectedTargetId,
+        out StardewValley.TerrainFeatures.ResourceClump? clump,
+        out string toolKind,
+        out int requiredUpgrade)
+    {
+        clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
+        toolKind = string.Empty;
+        requiredUpgrade = 0;
+        return clump is not null && TryGetDebrisToolRequirement(clump, out toolKind, out requiredUpgrade);
+    }
+
+    /// <summary>
+    /// The footprint tile to swing at: the one nearest the actor, ties to the lowest row then the lowest column.
+    ///
+    /// <para>
+    /// Any footprint tile hits the clump, because `GameLocation.performToolAction` matches it by bounding box
+    /// (GameLocation.cs:16265) - but the swing and the reach test must name the SAME tile. The reach test asks whether
+    /// the actor is one step from ANY footprint tile, so an actor beside the far corner of a 2x2 boulder is in reach
+    /// while the anchor is two tiles away; swinging at the anchor from there would pass the admission and hit nothing.
+    /// </para>
+    /// </summary>
+    internal static (int X, int Y) NearestFootprintTile(Farmer actor, StardewValley.TerrainFeatures.ResourceClump clump)
+    {
+        int actorX = (int)actor.Tile.X;
+        int actorY = (int)actor.Tile.Y;
+        (int X, int Y) best = ((int)clump.Tile.X, (int)clump.Tile.Y);
+        int bestDistance = int.MaxValue;
+        foreach ((int X, int Y) tile in DebrisFootprint(clump))
+        {
+            int distance = Math.Max(Math.Abs(tile.X - actorX), Math.Abs(tile.Y - actorY));
+            if (distance < bestDistance || (distance == bestDistance && (tile.Y, tile.X).CompareTo((best.Y, best.X)) < 0))
+            {
+                bestDistance = distance;
+                best = tile;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// How many DROPPED ITEMS the location is currently carrying as loose debris.
+    ///
+    /// <para>
+    /// Counting `location.debris` entries would not answer this: every swing at a clump also spawns four texture chunks
+    /// (`Game1.createRadialDebris(location, debrisType, ..., resource: false)`, ResourceClump.cs:243), so the collection
+    /// grows by four whether or not anything was dropped. The drops this action waits for are the ones that carry an
+    /// Item - `createItemDebris` (Game1.cs:10736-10745) and the `item: true` radial path (:10767-10782), which is what
+    /// `destroy` reaches for every clump index it publishes (:299-307, :337-341, :374-390) - and the dust carries none,
+    /// so the item-carrying subset is exactly the native drop. An axe carrying ShavingEnchantment also ejects a 709 on
+    /// its own (:236-242), which is why the sample is taken immediately before the destroying swing rather than once at
+    /// the start.
+    /// </para>
+    /// </summary>
+    private static int CountDroppedItemDebris(StardewValley.GameLocation location) =>
+        location.debris.Count(entry => entry?.item is not null);
+
+    /// <summary>
+    /// The reason word for a pack that cannot satisfy one clump's native tool requirement.
+    ///
+    /// <para>
+    /// `ResolveOwnedTool` is the ONE place that compares an owned level against a required one, and its word for the miss
+    /// is `tool_upgrade_insufficient:&lt;category&gt;:&lt;need&gt;:&lt;have&gt;` - right for an action row that declares a
+    /// tier, and misleading here: the caller cannot satisfy it by re-reading the observation, because the CLUMP needs a
+    /// better axe and every clump this action publishes carries its own `required_upgrade`. So the action names the miss
+    /// in its own vocabulary and keeps the resolver's exact numbers in the detail.
+    /// </para>
+    /// </summary>
+    internal static string ClumpToolRefusalCode(string resolutionRefusal) =>
+        resolutionRefusal.StartsWith("tool_upgrade_insufficient:", StringComparison.Ordinal)
+            ? "clump_tool_too_weak"
+            : resolutionRefusal;
+
+    /// <summary>The detail one refused clump-tool request carries, from the same resolution that refused it.</summary>
+    private static string DescribeClumpToolRefusal(string expectedTargetId, int targetX, int targetY, int parent, string toolKind, int requiredUpgrade, DeclaredToolResolution resolution)
+    {
+        string token = new RefusalLayerToken(RefusalLayerKind.Tool, toolKind).Format();
+        string refusedBy = resolution.RefusalCode ?? $"tool_not_selected:{resolution.Category}";
+        return $"target={expectedTargetId};tile={targetX},{targetY};parent={parent};tool={toolKind};required_upgrade={requiredUpgrade};best_owned_upgrade={resolution.OwnedUpgrade};tool_refusal={refusedBy};blocked_by={token}";
+    }
+
     private static StardewValley.TerrainFeatures.ResourceClump? FindDebrisTarget(StardewValley.GameLocation location, int targetX, int targetY, string expectedTargetId, out int clumpIndex)
     {
         clumpIndex = -1;
@@ -1291,6 +1585,10 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        // Ask before walking: a pack that cannot satisfy the action's own `tool:scythe` claim is refused now rather
+        // than after an approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
+        if (ResolveDeclaredTool(Game1.player.Items, "scythe_crop").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusal, slot));
         if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
         {
             // Out of the native interaction radius: walk in and then swing, like `harvest_crop` and
@@ -1360,61 +1658,79 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is null
-            || weapon.ItemId == "66"
-            || !ScytheCropTarget(
-                hasCrop: true,
-                forageCrop: dirt.crop.forageCrop.Value,
-                readyForHarvest: dirt.readyForHarvest(),
-                harvestMethod: dirt.crop.GetHarvestMethod(),
-                dead: dirt.crop.dead.Value,
-                out bool deadCrop)
-            || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
+        // Selection facts are deliberately NOT published here: this action takes the scythe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
+        // `scythe_crop` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
+        // Whoever adds those keys must extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "scythe_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not MeleeWeapon weapon || !weapon.isScythe())
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+                || dirt.crop is null
+                || weapon.ItemId == "66"
+                || !ScytheCropTarget(
+                    hasCrop: true,
+                    forageCrop: dirt.crop.forageCrop.Value,
+                    readyForHarvest: dirt.readyForHarvest(),
+                    harvestMethod: dirt.crop.GetHarvestMethod(),
+                    dead: dirt.crop.dead.Value,
+                    out bool deadCrop)
+                || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
 
-        StardewValley.Crop crop = dirt.crop;
-        string? harvestId = crop.indexOfHarvest.Value;
-        string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
-        string? harvestQualifiedItemId = harvestId is null ? null : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
-        // Native scythe harvest drops the crop as ground debris
-        // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
-        // into the player inventory, and HoeDirt.performToolAction always
-        // returns false for this path. The real postcondition is therefore
-        // crop-gone + a matching ground drop, not inventory growth.
-        //
-        // A DEAD crop takes the engine's other branch (HoeDirt.cs:732-735): destroyCrop and no drop at all,
-        // because Crop.harvest refuses a dead crop outright (Crop.cs:484-491). Its postcondition is the one
-        // thing that branch guarantees - the crop is gone - and it promises nothing to the pack.
-        int debrisBefore = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
-        float staminaBefore = Game1.player.Stamina;
-        dirt.performToolAction(weapon, 0, tile);
+            StardewValley.Crop crop = dirt.crop;
+            string? harvestId = crop.indexOfHarvest.Value;
+            string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
+            string? harvestQualifiedItemId = harvestId is null ? null : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
+            // Native scythe harvest drops the crop as ground debris
+            // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
+            // into the player inventory, and HoeDirt.performToolAction always
+            // returns false for this path. The real postcondition is therefore
+            // crop-gone + a matching ground drop, not inventory growth.
+            //
+            // A DEAD crop takes the engine's other branch (HoeDirt.cs:732-735): destroyCrop and no drop at all,
+            // because Crop.harvest refuses a dead crop outright (Crop.cs:484-491). Its postcondition is the one
+            // thing that branch guarantees - the crop is gone - and it promises nothing to the pack.
+            int debrisBefore = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+            float staminaBefore = Game1.player.Stamina;
+            dirt.performToolAction(weapon, 0, tile);
 
-        int debrisAfter = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
-        bool debrisGained = debrisAfter > debrisBefore;
-        // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
-        // terrainFeature, so the postcondition is crop-gone (crop is null or
-        // the HoeDirt itself was removed), not HoeDirt-gone.
-        bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            || !ReferenceEquals(afterFeature, dirt)
-            || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // Scythe harvest goes through HoeDirt.performToolAction with a MeleeWeapon;
-        // no native path deducts stamina for a melee swing, so the expected
-        // embodied cost is exactly zero.
-        float expectedStaminaCost = 0f;
-        // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
-        bool succeeded = cropGone && (deadCrop || debrisGained);
-        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
-        if (!succeeded)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "scythe_crop_harvest_postcondition_unavailable", evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, deadCrop ? "dead_crop_cleared" : "scythe_crops_harvested", evidence);
+            int debrisAfter = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+            bool debrisGained = debrisAfter > debrisBefore;
+            // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
+            // terrainFeature, so the postcondition is crop-gone (crop is null or
+            // the HoeDirt itself was removed), not HoeDirt-gone.
+            bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                || !ReferenceEquals(afterFeature, dirt)
+                || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // Scythe harvest goes through HoeDirt.performToolAction with a MeleeWeapon;
+            // no native path deducts stamina for a melee swing, so the expected
+            // embodied cost is exactly zero.
+            float expectedStaminaCost = 0f;
+            // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
+            bool succeeded = cropGone && (deadCrop || debrisGained);
+            evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = !succeeded
+                ? "scythe_crop_harvest_postcondition_unavailable"
+                : deadCrop ? "dead_crop_cleared" : "scythe_crops_harvested";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>

@@ -30,8 +30,14 @@ $lifecycleResultPath = [IO.Path]::GetFullPath($LifecycleResultFile)
 $packageRoot = Join-Path (Join-Path $PSScriptRoot "..") "integrations/stardew/action-development"
 $equipToolChild = Join-Path $packageRoot "scenarios/equip-tool-live-child.mjs"
 $lifecycleResultWriter = Join-Path $packageRoot "scenarios/write-lifecycle-result.mjs"
-. (Join-Path $PSScriptRoot "lib/stardew-mod-config.ps1")
-$clientConfig = Get-GameBuddyStardewModConfigPath $ModsPath
+# The Mod folder name comes from its ONE owner (tools/lib/stardew-mod-folder.mjs). Written out here as
+# `GameBuddy.Stardew` it disagreed with the folder the fixture library deploys to, so every run refused at
+# input_validation with "Missing harness path: ...\mods\GameBuddy.Stardew\config.json" - and creating that
+# folder instead would have made SMAPI load the same UniqueID twice and start WITHOUT the mod.
+$modFolderModule = ([uri]::new((Join-Path $PSScriptRoot 'lib/stardew-mod-folder.mjs'))).AbsoluteUri
+$modFolder = node --input-type=module -e "import { STARDEW_MOD_FOLDER } from '$modFolderModule'; process.stdout.write(STARDEW_MOD_FOLDER)"
+if ([string]::IsNullOrWhiteSpace($modFolder)) { throw "Could not read STARDEW_MOD_FOLDER from $modFolderModule." }
+$clientConfig = Join-Path (Join-Path $ModsPath $modFolder.Trim()) "config.json"
 $backupName = "native-local-$($Action.Replace('_', '-'))-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"

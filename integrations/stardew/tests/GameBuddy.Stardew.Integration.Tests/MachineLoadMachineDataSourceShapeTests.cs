@@ -71,12 +71,17 @@ public sealed class MachineLoadMachineDataSourceShapeTests
     public void TheInputRefusalNamesTheInputsTheMachinesDataAccepts()
     {
         string source = Read(MachineActions);
-        string describe = MethodBody(source, "private static string DescribeAcceptedMachineInputs(");
+        // The same trigger rows CanApplyOutput walks (MachineDataUtility.cs:65-102), read for prose only. The enumeration
+        // moved into the one helper the published machine row also reads, so it is asserted there exactly once.
+        string rules = MethodBody(source, "private static IReadOnlyList<MachineInputTriggerRule>? ReadMachineInputTriggerRules(");
+        rules.Should().Contain("trigger.RequiredItemId");
+        rules.Should().Contain("trigger.RequiredTags");
+        rules.Should().Contain("trigger.RequiredCount");
 
-        // The same trigger rows CanApplyOutput walks (MachineDataUtility.cs:65-102), read for prose only.
-        describe.Should().Contain("trigger.RequiredItemId");
-        describe.Should().Contain("trigger.RequiredTags");
-        describe.Should().Contain("trigger.RequiredCount");
+        string describe = MethodBody(source, "private static string DescribeAcceptedMachineInputs(");
+        describe.Should().Contain(
+            "ReadMachineInputAcceptance(machine)",
+            "a refusal names the same derived set the machine's published row carries, never a second walk of the rows");
 
         string refusal = MethodBody(source, "private static (string ReasonCode, string Detail)? MachineLoadRefusal(");
         refusal.Should().Contain(

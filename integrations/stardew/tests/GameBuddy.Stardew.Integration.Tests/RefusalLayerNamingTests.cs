@@ -44,6 +44,12 @@ public sealed class RefusalLayerNamingTests
     {
         "DescribeDeclaredToolRefusal",
         "DescribeApproachRange",
+        "DescribeClumpToolRefusal",
+        "DescribeClumpTargetRefusal",
+        "GeodeRefusal",
+        // The furniture-and-decoration lane's one renderer: two of its refusals are produced by a shared
+        // `TryDescribe*` predicate, so the field has to be rendered where the CALL is for the gate to see it.
+        "DescribeRefusalLayer",
     };
 
     /// <summary>
@@ -72,7 +78,7 @@ public sealed class RefusalLayerNamingTests
         // The words ARE the enum: one declaration, and the switch that renders it throws for anything else, so a layer
         // the Mod could not name is a programming error rather than a token nobody declared.
         RefusalLayerKind[] layers = Enum.GetValues<RefusalLayerKind>();
-        layers.Should().HaveCount(13, "every layer the probe asks has exactly one wire word");
+        layers.Should().HaveCount(14, "every layer the probe asks has exactly one wire word");
         RefusalLayerKind.None.ToWireValue().Should().Be("none", "the absence of a refusal keeps the word the model already reads");
 
         IReadOnlyList<string> words = RefusalLayerWire.All;

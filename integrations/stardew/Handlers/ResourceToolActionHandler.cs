@@ -29,6 +29,13 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "break_resource_clump" => this.executions.RequestLocalBreakResourceClump(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "chop_tree" => this.executions.RequestLocalChopTreeSource(
                 request.RequestId,
                 request.Args.Slot ?? 0,
@@ -94,6 +101,14 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "remove_placed_item" => this.executions.RequestLocalRemovePlacedItem(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "move_placed_furniture" => this.executions.RequestLocalMovePlacedFurniture(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "rotate_furniture" => this.executions.RequestLocalRotateFurniture(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "remove_fence" => this.executions.RequestLocalRemoveFence(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "put_item_in_fish_tank" => this.executions.RequestLocalPutItemInFishTank(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
+
+            "place_item_on_pedestal" => this.executions.RequestLocalPlaceItemOnPedestal(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
 
             "place_owned_object" => this.executions.RequestLocalPlaceOwnedObject(request.RequestId, request.Args.Slot ?? 0, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedQualifiedItemId ?? string.Empty, request.Args.ExpectedTargetId ?? string.Empty, request.DeadlineMs),
             "color_placed_object" => this.executions.RequestLocalColorPlacedObject(request.RequestId, (int)(request.Args.X ?? 0), (int)(request.Args.Y ?? 0), request.Args.ExpectedTargetId ?? string.Empty, request.Args.ColorSelection ?? 0, request.DeadlineMs),
@@ -169,6 +184,12 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.LeftSlot ?? 0,
                 request.Args.RightSlot ?? 0,
                 request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
+            "open_geode" => this.executions.RequestLocalOpenGeode(
+                request.RequestId,
+                request.Args.Slot ?? 0,
+                request.Args.ExpectedQualifiedItemId ?? string.Empty,
                 request.DeadlineMs),
 
             _ => new LocalExecutionReceipt(Guid.NewGuid().ToString("N"), request.RequestId, ExecutionState.Blocked, "unsupported_action", ledger.CurrentRevision, null),

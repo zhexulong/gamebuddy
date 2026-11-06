@@ -670,8 +670,28 @@ internal sealed partial class ExecutionManager
         FarmhandActionResourceTemplateClaim? claim = DeclaredToolClaim(actionId);
         if (claim is null)
             return new DeclaredToolResolution(string.Empty, -1, $"tool_requirement_undeclared:{actionId}");
-        string category = claim.Key["tool:".Length..];
         (int minimum, int maximum) = DeclaredToolUpgradeBounds(claim.Value);
+        return ResolveOwnedTool(items, claim.Key["tool:".Length..], minimum, maximum);
+    }
+
+    /// <summary>
+    /// The one ranking behind both readings of "which tool does this need": the tool a row's `tool:` claim declares,
+    /// and the tool a CLUMP's own native switch demands.
+    ///
+    /// <para>
+    /// The second caller is why this is a parameterised resolver rather than the body of
+    /// <see cref="ResolveDeclaredTool"/>. `ResourceClump.performToolAction` decides the family and the minimum upgrade
+    /// from `parentSheetIndex` (ResourceClump.cs:150-234), so no single claim on an action row can state it - but the
+    /// QUESTION is the same one, and answering it with a second hand-written loop beside this one is the two-spellings
+    /// defect this file already carries scars from. `minimum`/`maximum` come from whichever declaration owns the fact.
+    /// </para>
+    /// <para>
+    /// <paramref name="OwnedUpgrade"/> on the answer is the best level the pack actually carries, so a refusal can
+    /// report `need 2, have 0` without recomputing the ranking at the call site.
+    /// </para>
+    /// </summary>
+    internal static DeclaredToolResolution ResolveOwnedTool(IList<Item?> items, string category, int minimum, int maximum = int.MaxValue)
+    {
         int bestSlot = -1;
         int bestLevel = -1;
         int ownedLevel = -1;
@@ -680,7 +700,7 @@ internal sealed partial class ExecutionManager
             if (items[slot] is not Tool tool || !MatchesToolCategory(tool, category))
                 continue;
             ownedLevel = Math.Max(ownedLevel, tool.UpgradeLevel);
-            // The claim's tier decides which owned tool satisfies it; among those, the best one wins and ties go to the
+            // The declared tier decides which owned tool satisfies it; among those, the best one wins and ties go to the
             // smallest slot, which is the same ranking equip_tool resolves a category with.
             if (tool.UpgradeLevel < minimum || tool.UpgradeLevel > maximum)
                 continue;
@@ -691,14 +711,15 @@ internal sealed partial class ExecutionManager
             }
         }
         if (bestSlot >= 0)
-            return new DeclaredToolResolution(category, bestSlot, null);
+            return new DeclaredToolResolution(category, bestSlot, null, ownedLevel);
         if (ownedLevel < 0)
-            return new DeclaredToolResolution(category, -1, $"tool_not_owned:{category}");
-        // Owned, but not at a level the claim permits: `need` is the claim's own floor and `have` the best owned one.
+            return new DeclaredToolResolution(category, -1, $"tool_not_owned:{category}", ownedLevel);
+        // Owned, but not at a level the declaration permits: `need` is its own floor and `have` the best owned one.
         return new DeclaredToolResolution(
             category,
             -1,
-            $"tool_upgrade_insufficient:{category}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}");
+            $"tool_upgrade_insufficient:{category}:{minimum.ToString(CultureInfo.InvariantCulture)}:{ownedLevel.ToString(CultureInfo.InvariantCulture)}",
+            ownedLevel);
     }
 
     /// <summary>
@@ -722,6 +743,46 @@ internal sealed partial class ExecutionManager
             refusalCode = resolution.RefusalCode;
             return false;
         }
+        return SelectResolvedTool(farmer, resolution, out selection, out refusalCode);
+    }
+
+    /// <summary>
+    /// Takes the tool that satisfies a requirement resolved from the TARGET rather than from the action row - the
+    /// `break_resource_clump` case, where the family and the upgrade floor come from the clump's own native switch.
+    /// Selection, postcondition and restore are the ones every declared-tool action already runs, and the resolution
+    /// travels back with the selection so a caller's refusal can report `need`/`have` without resolving twice.
+    /// </summary>
+    private static bool TrySelectRequiredTool(
+        Farmer farmer,
+        string category,
+        int minimumUpgrade,
+        out DeclaredToolSelection selection,
+        out DeclaredToolResolution resolution,
+        out string refusalCode)
+    {
+        selection = default;
+        refusalCode = string.Empty;
+        resolution = ResolveOwnedTool(farmer.Items, category, minimumUpgrade);
+        if (resolution.RefusalCode is not null)
+        {
+            refusalCode = resolution.RefusalCode;
+            return false;
+        }
+        return SelectResolvedTool(farmer, resolution, out selection, out refusalCode);
+    }
+
+    /// <summary>
+    /// The selection half shared by both entry points: hold the resolved slot, prove the engine agrees, and report what
+    /// was displaced. It spends no stamina, advances no time and mutates no world state.
+    /// </summary>
+    private static bool SelectResolvedTool(
+        Farmer farmer,
+        DeclaredToolResolution resolution,
+        out DeclaredToolSelection selection,
+        out string refusalCode)
+    {
+        selection = default;
+        refusalCode = string.Empty;
         Tool tool = (Tool)farmer.Items[resolution.Slot]!;
         int previousSlot = farmer.CurrentToolIndex;
         Tool? previousTool = previousSlot >= 0 && previousSlot < farmer.Items.Count ? farmer.Items[previousSlot] as Tool : null;
@@ -1528,7 +1589,7 @@ internal sealed partial class ExecutionManager
 }
 
 /// <summary>What one action's pack answers for its declared tool, before anything is switched.</summary>
-internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode)
+internal readonly record struct DeclaredToolResolution(string Category, int Slot, string? RefusalCode, int OwnedUpgrade = -1)
 {
     /// <summary>
     /// The layer detail a refusal of this claim carries on `blocked_by`: the tool CATEGORY the action's own row named.
@@ -1612,6 +1673,13 @@ internal static class ToolActionEvidence
         "location", "target", "tile", "tool_selected", "slot", "tool_before", "slot_before", "before_watered",
         "after_watered", "water_before", "water_after", "water_consumed", "stamina_before", "stamina_after",
         "stamina_delta", "expected_stamina_cost", "tool_restored",
+    });
+
+    internal static readonly IReadOnlyList<string> BreakResourceClump = Array.AsReadOnly(new[]
+    {
+        "location", "target", "tile", "parent", "required_upgrade", "tool", "tool_selected", "slot",
+        "tool_before", "slot_before", "health_before", "health_after", "swings", "clump_removed", "drop_observed",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
     /// <summary>

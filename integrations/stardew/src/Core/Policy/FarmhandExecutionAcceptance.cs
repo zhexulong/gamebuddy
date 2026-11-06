@@ -11,6 +11,7 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// instead of a parallel consumer-side chain.
 /// </summary>
 public sealed record FarmhandExecutionAcceptanceFacts(
+    int MinimumTileCoordinate = 0,
     int MaximumTileCoordinate = 1000,
     int MaximumInventorySlot = 36,
     int MaximumQualifiedItemIdLength = 128,
@@ -114,8 +115,8 @@ public static class FarmhandExecutionAcceptance
         BridgeExecutionArgs args,
         Func<BridgeNavigationDestinationSelector?, bool>? destinationValidator) => argument.Name switch
     {
-        "x" => IsBoundedIntegerCoordinate(args.X, facts.MaximumTileCoordinate),
-        "y" => IsBoundedIntegerCoordinate(args.Y, facts.MaximumTileCoordinate),
+        "x" => IsBoundedIntegerCoordinate(args.X, facts.MinimumTileCoordinate, facts.MaximumTileCoordinate),
+        "y" => IsBoundedIntegerCoordinate(args.Y, facts.MinimumTileCoordinate, facts.MaximumTileCoordinate),
         "slot" => args.Slot is { } slot && slot >= 0 && slot <= facts.MaximumInventorySlot,
         // A container id is the published opaque identity `BuildContainerTargetId` mints. It is checked
         // with the same grammar as every other opaque id: a caller cannot address a container by naming a
@@ -161,11 +162,11 @@ public static class FarmhandExecutionAcceptance
         _ => false,
     };
 
-    private static bool IsBoundedIntegerCoordinate(float? value, int maximum) =>
+    private static bool IsBoundedIntegerCoordinate(float? value, int minimum, int maximum) =>
         value is { } coordinate
         && float.IsFinite(coordinate)
         && coordinate == MathF.Floor(coordinate)
-        && coordinate >= 0f
+        && coordinate >= minimum
         && coordinate <= maximum;
 
     private static bool IsValidSceneBinding(ObservationBindingV1? target) => target is not null

@@ -4,6 +4,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+
+/**
+ * The Mod's own registration table: the ONE source every reading in this module parses.
+ *
+ * It was spelled out three times before, once per reader, so a reader pointed at a copy was one edit away from
+ * measuring a different catalog than its siblings.
+ */
 const REGISTRATIONS_PATH = resolve(
   root,
   "integrations",
@@ -13,15 +20,21 @@ const REGISTRATIONS_PATH = resolve(
   "Policy",
   "FarmhandActionDefinitions.cs",
 );
-/** The `Registrations = Array.AsReadOnly(new[] { ... });` body, which is the whole catalog. */
-const REGISTRATIONS_BODY = /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/u;
-/** One registration begins at its own constructor call, so the body splits into entries. */
-const REGISTRATION_ENTRY = /(?=\b(?:E|R|Registration)\()/u;
-/** The action id and the family, which every registration form carries first. */
-const REGISTRATION_ID_AND_FAMILY = /\b(?:E|R|Registration)\(\s*"([a-z][a-z0-9_]{1,127})",\s*"([a-z][a-z0-9_]{1,127})"/u;
+
+/**
+ * The `Registrations` array body. Every reader in this module starts here, so "what the catalog is" has one
+ * spelling (the declaration) rather than one per call site.
+ */
+const REGISTRATIONS_BODY = /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/;
 
 function fail(code) {
   throw new Error(`stardew_published_action_registry_${code}`);
+}
+
+function registrationsBody(source) {
+  const body = source.match(REGISTRATIONS_BODY)?.[1];
+  if (!body) fail("missing_mod_registrations");
+  return body;
 }
 
 /**
@@ -70,11 +83,9 @@ export async function readPublishedStardewActionIds({
    */
   enforceGateExemptions = registrationsPath === REGISTRATIONS_PATH,
 } = {}) {
-  const source = await readFile(registrationsPath, "utf8");
-  const body = source.match(REGISTRATIONS_BODY)?.[1];
-  if (!body) fail("missing_mod_registrations");
+  const body = registrationsBody(await readFile(registrationsPath, "utf8"));
 
-  const entries = body.split(REGISTRATION_ENTRY);
+  const entries = body.split(/(?=\b(?:E|R|Registration)\()/);
   const publishedIds = [];
   const exempted = [];
 
@@ -118,6 +129,45 @@ export async function readAllPublishedExecutionStardewActionIds(options) {
 }
 
 /**
+ * The action FAMILY each Mod registration declares, read from the registration table itself.
+ *
+ * The family is the second argument of every `E(...)` / `Registration(...)` row, so this is the Mod's own
+ * vocabulary rather than a taxonomy a caller wrote down: `host/src/games/stardew/stardew-action-families.ts`
+ * names the same table as the authority for the family names it offers a player, and this reads the same rows
+ * for the action each one holds. A hand-written map here would be a second spelling of the catalog, and it
+ * would go stale the way the hand-written experimental list did.
+ *
+ * SYNCHRONOUS on purpose: `tools/lib/multiday-daily-tasks.mjs` builds its sweep groups at module load, so an
+ * async reader would force every importer (including `tools/check-stardew-task-action-coverage.mjs`'s
+ * population reading) through a top-level await for a fact already on disk.
+ *
+ * EVERY registration is included, whatever its lifecycle: the map answers "which family does this action
+ * belong to", which is true of an experimental action too. A caller that wants the published subset filters
+ * its own population, as the sweep builder does.
+ *
+ * FAILS CLOSED. A body that does not parse, or one that declares not a single row carrying a family, is a
+ * named refusal - never an empty map, which would read as "the catalog has no actions" and silently build no
+ * sweep tasks at all.
+ */
+export function readStardewActionFamilies({ registrationsPath = REGISTRATIONS_PATH } = {}) {
+  const body = registrationsBody(readFileSync(registrationsPath, "utf8"));
+  const familyOf = new Map();
+  for (const match of body.matchAll(
+    /\b(?:E|Registration)\(\s*"([a-z][a-z0-9_]{1,127})",\s*"([a-z][a-z0-9_]{1,127})",\s*(?:\d+,\s*)?FarmhandActionHandlerGroup\./gu,
+  )) {
+    const [, actionId, family] = match;
+    const claimed = familyOf.get(actionId);
+    // Two rows for one action in ONE family is a duplicate, not a disagreement; two families is the catalog
+    // telling a caller two different things about the same action, so it is refused rather than last-wins.
+    if (claimed !== undefined && claimed !== family)
+      fail(`action_declares_two_families:${actionId}:${claimed}:${family}`);
+    familyOf.set(actionId, family);
+  }
+  if (familyOf.size === 0) fail("registrations_declare_no_action_family");
+  return familyOf;
+}
+
+/**
  * The Mod registrations whose lifecycle is exactly `Experimental`.
  *
  * This is the only thing a fixture may name in `ExperimentalActions`: a policy
@@ -127,12 +177,10 @@ export async function readAllPublishedExecutionStardewActionIds(options) {
  * one did (all 17 of its entries had been promoted before anyone noticed).
  */
 export async function readExperimentalStardewActionIds({ registrationsPath = REGISTRATIONS_PATH } = {}) {
-  const source = await readFile(registrationsPath, "utf8");
-  const body = source.match(REGISTRATIONS_BODY)?.[1];
-  if (!body) fail("missing_mod_registrations");
+  const body = registrationsBody(await readFile(registrationsPath, "utf8"));
 
   const ids = [];
-  for (const entry of body.split(REGISTRATION_ENTRY)) {
+  for (const entry of body.split(/(?=\b(?:E|R|Registration)\()/)) {
     const match = entry.match(/\b(?:E|Registration)\(\s*"([a-z][a-z0-9_]{1,127})"/);
     if (!match) continue;
     if (!entry.includes("FarmhandActionLifecycle.Experimental")) continue;
@@ -144,37 +192,4 @@ export async function readExperimentalStardewActionIds({ registrationsPath = REG
   // push-only policy: every promoted action removes itself here.
   if (new Set(ids).size !== ids.length) fail("invalid_experimental_set");
   return Object.freeze(ids);
-}
-
-/**
- * The family the Mod's own registration catalog declares for every registered action.
- *
- * `host/src/games/stardew/stardew-action-families.ts` names this file as the authority for the
- * family vocabulary, and the Mod refuses a WHOLE action policy that names a family it does not
- * define (`ActionPolicyEngine.ValidateActionPolicy`) - so a reader that guessed a family would be
- * wrong about more than a label. This one reads the declaration itself.
- *
- * It is a separate reader from `readPublishedStardewActionIds` because it answers a different
- * question. That one asks what is published and therefore skips `Experimental`; this one must also
- * place the experimental registrations, because the daily-task sweep has to account for every
- * published action including the ones a run cannot yet dispatch. It also sees the read-only `R(id,
- * family)` registrations, which the published reader deliberately skips.
- *
- * Synchronous, because its caller (`tools/lib/multiday-daily-tasks.mjs`) builds the task rotation at
- * module load. A missing or unparsable catalog throws rather than returning an empty map: an empty
- * map would silently produce a rotation with no sweep tasks.
- */
-export function readStardewActionFamilies({ registrationsPath = REGISTRATIONS_PATH } = {}) {
-  const source = readFileSync(registrationsPath, "utf8");
-  const body = source.match(REGISTRATIONS_BODY)?.[1];
-  if (!body) fail("missing_mod_registrations");
-
-  const families = new Map();
-  for (const entry of body.split(REGISTRATION_ENTRY)) {
-    const match = entry.match(REGISTRATION_ID_AND_FAMILY);
-    if (match === null) continue;
-    families.set(match[1], match[2]);
-  }
-  if (families.size === 0) fail("invalid_family_set");
-  return families;
 }

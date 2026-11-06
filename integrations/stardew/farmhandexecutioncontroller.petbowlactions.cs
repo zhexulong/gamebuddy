@@ -41,9 +41,13 @@ internal sealed partial class ExecutionManager
         // target identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (Game1.player.CurrentTool is not WateringCan wateringCan)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped", null);
-        if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
+        // Ask before walking: the can is the action's own declared tool, so a pack that cannot satisfy the
+        // `tool:watering_can` claim is refused now rather than after an approach leg the action could never finish,
+        // and a can with nothing to spend is refused for the same reason.
+        DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "water_pet_bowl");
+        if (can.RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "water_pet_bowl", toolRefusal));
+        if (Game1.player.Items[can.Slot] is not WateringCan ownedCan || (ownedCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
 
         GameLocation location = Game1.player.currentLocation;
@@ -78,41 +82,57 @@ internal sealed partial class ExecutionManager
 
     /// <summary>
     /// Executes water_pet_bowl against the current world, re-validating the can and the
-    /// bowl because an approach leg may have taken several ticks. Shared by the in-range
-    /// path and the post-approach path.
+    /// bowl because an approach leg may have taken several ticks. The can is not the
+    /// caller's to name: the action's own registration claims `tool:watering_can`, so this
+    /// selects the best owned can it needs and restores the actor's own selection afterwards.
+    /// Shared by the in-range path and the post-approach path.
     /// </summary>
     private LocalExecutionReceipt ExecuteWaterPetBowl(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
-        if (Game1.player.CurrentTool is not WateringCan wateringCan)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped", null);
-        if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
+        // Selection facts are deliberately NOT published here: this action takes the can its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasWateringToolCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
+        // that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "water_pet_bowl", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "water_pet_bowl", toolRefusalCode));
+        LocalExecutionReceipt receipt;
+        try
+        {
+            if (selection.Tool is not WateringCan wateringCan)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
 
-        GameLocation location = Game1.player.currentLocation;
-        if (ResolvePetBowl(location, targetX, targetY) is not { } bowl
-            || !string.Equals(BuildPetBowlTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_target_unavailable", $"target={targetX},{targetY}");
-        if (bowl.watered.Value)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_already_watered", $"target={targetX},{targetY}");
+            GameLocation location = Game1.player.currentLocation;
+            if (ResolvePetBowl(location, targetX, targetY) is not { } bowl
+                || !string.Equals(BuildPetBowlTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_target_unavailable", $"target={targetX},{targetY}");
+            if (bowl.watered.Value)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_bowl_already_watered", $"target={targetX},{targetY}");
 
-        bool beforeWatered = bowl.watered.Value;
-        int beforeWater = wateringCan.WaterLeft;
-        // Observed, not asserted: the native watering path must not mount a menu.
-        bool menuBefore = Game1.activeClickableMenu is not null;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // WateringCan covers power with toolPower.Value (tap => 0), so a basic can
-        // tap costs 2*(0+1) - Farming*0.1, identical to water_crop.
-        float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-        bool afterWatered = bowl.watered.Value;
-        bool menuOpened = Game1.activeClickableMenu is not null && !menuBefore;
-        bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
-        ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = state == ExecutionState.Succeeded ? "pet_bowl_watered" : "pet_bowl_water_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_menu_opened={menuOpened.ToString().ToLowerInvariant()}");
+            bool beforeWatered = bowl.watered.Value;
+            int beforeWater = wateringCan.WaterLeft;
+            // Observed, not asserted: the native watering path must not mount a menu.
+            bool menuBefore = Game1.activeClickableMenu is not null;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // WateringCan covers power with toolPower.Value (tap => 0), so a basic can
+            // tap costs 2*(0+1) - Farming*0.1, identical to water_crop.
+            float expectedStaminaCost = wateringCan.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
+            bool afterWatered = bowl.watered.Value;
+            bool menuOpened = Game1.activeClickableMenu is not null && !menuBefore;
+            bool waterConsumed = wateringCan.IsBottomless || wateringCan.WaterLeft < beforeWater || Game1.player.hasWateringCanEnchantment;
+            ExecutionState state = !beforeWatered && afterWatered ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            string reasonCode = state == ExecutionState.Succeeded ? "pet_bowl_watered" : "pet_bowl_water_postcondition_unavailable";
+            receipt = new(executionId, requestId, state, reasonCode, this.revision,
+                $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};before_watered={beforeWatered.ToString().ToLowerInvariant()};after_watered={afterWatered.ToString().ToLowerInvariant()};water_before={beforeWater};water_after={wateringCan.WaterLeft};water_consumed={waterConsumed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_menu_opened={menuOpened.ToString().ToLowerInvariant()}");
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;

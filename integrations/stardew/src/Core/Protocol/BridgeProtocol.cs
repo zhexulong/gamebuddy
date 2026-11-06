@@ -2059,7 +2059,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             "equip_tool" => new[] { "tool" },
         "pickup_forage" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget" },
         "pickup_item" or "harvest_crop" => new[] { "x", "y", "expectedQualifiedItemId", "expectedTargetId" },
-            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" => new[] { "x", "y", "expectedTargetId" },
+            "water_crop" or "water_pet_bowl" or "water_slime_hutch_trough" or "machine_inspect" or "machine_collect_output" or "npc_relationship" or "pet_animal" or "pet_farm_animal" or "harvest_bush" or "harvest_fruit_tree" or "shake_tree" or "take_pedestal_item" or "toggle_fence_gate" or "break_resource_clump" => new[] { "x", "y", "expectedTargetId" },
         // talk_to_npc names the villager through the NPC family's opaque target id
         // (the same one npc_relationship/interact_npc_with_item publish) plus the tile
         // it was published at, which is only the approach leg's destination: the Mod
@@ -2111,6 +2111,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // BOTH inventory slots and the opaque pair identity discovery published. There is no coordinate:
         // the subject is the actor's own backpack, not a world tile.
         "tailor_clothing" or "dye_clothing_with_item" => new[] { "leftSlot", "rightSlot", "expectedTargetId" },
+        // open_geode is a backpack transaction as well, but it names ONE slot: the geode carried to the
+        // blacksmith's counter. There is no coordinate - the counter is Clint's own dialogue case
+        // (GameLocation.cs:12345-12346) - and no opaque target id: the geode is named by the slot's own
+        // live item, which the Mod re-reads and refuses by name when it is not a geode.
+        "open_geode" => new[] { "slot", "expectedQualifiedItemId" },
         // The chest repaint: a world tile locates the chest and the palette index is the colour itself.
         // Only the 21 palette colours are writable, so no RGB value is accepted.
         "color_placed_object" => new[] { "x", "y", "expectedTargetId", "colorSelection" },
@@ -2156,6 +2161,18 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // GameLocation.cs:8084-8093, takes the first free one), so a caller-supplied slot would be a value
         // nothing reads.
         "move_placed_furniture" => new[] { "x", "y", "expectedTargetId" },
+        // Turning a placed piece names the same tile and the same `placed_furniture` id, and nothing else: the
+        // rotation it ends up with is the action's own cycle, not a caller-supplied angle. A free-form angle would
+        // have to pretend to accept orientations the game does not have (`Furniture.rotate`, Furniture.cs:1153-1162,
+        // advances by 1 or 2 and wraps at 4, and refuses to run at all below `rotations >= 2`).
+        "rotate_furniture" => new[] { "x", "y", "expectedTargetId" },
+        // The fence removal names the tile, the tool slot the swing goes through, and the fence's own object target id -
+        // the same id `remove_placed_item` publishes for it, because it is the same physical thing.
+        "remove_fence" => new[] { "x", "y", "slot", "expectedTargetId" },
+        // The tank deposit names the tile, the pack slot holding the item, that item's own identity and the tank's
+        // `placed_furniture` id: the native method reads the HELD item, so the slot is what selects the stack and the id
+        // is what proves the stack is still the one the caller saw.
+        "put_item_in_fish_tank" or "place_item_on_pedestal" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
     "answer_dialogue" => new[] { "responseKey" },
 
         // The actor's own attachment state. dismount_transport carries NO arguments: its subject

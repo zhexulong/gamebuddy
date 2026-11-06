@@ -592,9 +592,8 @@ export function deriveActionSourceProjection(sources) {
     registrations.filter((registration) => registration.kind === "execution").map((registration) => registration.actionId),
   );
   const declaredHandlerIds = Object.values(nativeOwnership).flat();
-  if (declaredHandlerIds.some((actionId) => !canonicalExecutionIds.has(actionId))) {
-    fail("native_handler_non_execution_action");
-  }
+  const unmatchedHandlerIds = declaredHandlerIds.filter((actionId) => !canonicalExecutionIds.has(actionId));
+  if (unmatchedHandlerIds.length > 0) fail("native_handler_non_execution_action:" + [...new Set(unmatchedHandlerIds)].sort().join(","));
   assertUnique(declaredHandlerIds, "native_handler_action_duplicates");
   for (const [group, ids] of Object.entries(nativeOwnership)) nativeOwnership[group] = sorted(ids);
 

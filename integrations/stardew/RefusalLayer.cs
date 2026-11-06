@@ -63,6 +63,18 @@ internal enum RefusalLayerKind
 
     /// <summary>A building footprint covers the tile.</summary>
     Building = 12,
+
+    /// <summary>
+    /// The actor's own stamina cannot pay for the swings the action needs.
+    ///
+    /// <para>
+    /// Not a world layer, and it earned its place the hard way: the engine does not refuse a swing for lack of stamina,
+    /// it lets it run negative and then faints the actor (<c>Game1.cs:6452</c>), which halves next day's stamina. A
+    /// handler that prices the action and refuses early is naming a fact no other layer can carry, and leaving it bare
+    /// made it indistinguishable from "nothing is in the way".
+    /// </para>
+    /// </summary>
+    Stamina = 13,
 }
 
 /// <summary>
@@ -91,6 +103,7 @@ internal static class RefusalLayerWire
         RefusalLayerKind.Clump => "clump",
         RefusalLayerKind.Large => "large",
         RefusalLayerKind.Building => "building",
+        RefusalLayerKind.Stamina => "stamina",
         _ => throw new ArgumentOutOfRangeException(nameof(layer)),
     };
 

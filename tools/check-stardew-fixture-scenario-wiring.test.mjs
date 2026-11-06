@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   checkStardewFixtureScenarioWiring,
+  extractFixtureScenarioIds,
   extractPreAttachmentAllowlist,
 } from "./check-stardew-fixture-scenario-wiring.mjs";
 
@@ -20,8 +21,15 @@ const REAL_ENTRY = fs
   .join("\n");
 const REAL_CONFIG = fs.readFileSync(path.join(root, "integrations/stardew/ModConfig.cs"), "utf8");
 
-/** A minimal pair of sources with the three lists under our control. */
-function sources({ known, allowlist = known, dispatch = known, preAllowlist = [] }) {
+/**
+ * A minimal pair of sources with the three lists under our control, plus the
+ * tools-side declaration of which scenario a run asks for.
+ *
+ * `tools` defaults to the same set the config gate knows, so a test that is about
+ * a Mod-side list keeps its violation list to that list alone. A test about the
+ * tools -> Mod direction passes its own `tools`.
+ */
+function sources({ known, allowlist = known, dispatch = known, preAllowlist = [], tools = known }) {
   const list = (names) => names.map((n) => `"${n}"`).join(" or ");
   const entry = [
     ...preAllowlist.map((n) => `if (fixture.FixtureScenario == "${n}") { return; }`),
@@ -29,7 +37,13 @@ function sources({ known, allowlist = known, dispatch = known, preAllowlist = []
     ...dispatch.map((n) => `if (fixture.FixtureScenario == "${n}") { /* recipe */ }`),
   ].join("\n");
   const config = `KnownFixtureScenarios = new[]\n{\n    "", ${known.map((n) => `"${n}"`).join(", ")},\n};`;
-  return { modEntrySource: entry, modConfigSource: config };
+  const library = [
+    "export function fixtureScenario(actions, action) {",
+    ...tools.map((n) => `  if (action === "${n}") return "${n}";`),
+    '  return "";',
+    "}",
+  ].join("\n");
+  return { modEntrySource: entry, modConfigSource: config, fixtureLibrarySource: library };
 }
 
 test("the real repository wiring is consistent", () => {
@@ -50,8 +64,11 @@ test("a scenario accepted by config but refused before arming is reported", () =
 });
 
 test("a scenario with no dispatcher block is reported as armed without a recipe", () => {
+  // `tools: ["a_v1"]` keeps the tools -> Mod direction out of this assertion: the
+  // property under test is the Mod-side list, and b_v1 is deliberately a scenario
+  // no run asks for here.
   const report = checkStardewFixtureScenarioWiring(
-    sources({ known: ["a_v1", "b_v1"], allowlist: ["a_v1", "b_v1"], dispatch: ["a_v1"] }),
+    sources({ known: ["a_v1", "b_v1"], allowlist: ["a_v1", "b_v1"], dispatch: ["a_v1"], tools: ["a_v1"] }),
   );
   assert.deepEqual(
     report.violations.filter((v) => v.scenario === "b_v1").map((v) => v.issue),
@@ -96,8 +113,69 @@ test('the `is "X"` dispatcher spelling is recognised', () => {
     'if (fixture.FixtureScenario is "b_v1") { }',
   ].join("\n");
   const config = 'KnownFixtureScenarios = new[]\n{\n    "", "a_v1", "b_v1",\n};';
-  const report = checkStardewFixtureScenarioWiring({ modEntrySource: entry, modConfigSource: config });
+  const library = 'export function fixtureScenario(actions, action) {\n  return "";\n}';
+  const report = checkStardewFixtureScenarioWiring({
+    modEntrySource: entry,
+    modConfigSource: config,
+    fixtureLibrarySource: library,
+  });
   assert.equal(report.state, "passed", JSON.stringify(report.violations, null, 2));
+});
+
+// The direction that hid `native_open_geode_v1`: the tools side asked for a
+// scenario the Mod had never heard of, and the three Mod-side loops stayed green
+// because they only iterate Mod-side sets.
+test("a scenario the tools side arms but the Mod has no scenario for is reported", () => {
+  const report = checkStardewFixtureScenarioWiring(sources({ known: ["a_v1"], tools: ["a_v1", "native_geode_v1"] }));
+  assert.equal(report.state, "failed");
+  assert.deepEqual(
+    report.violations
+      .filter((v) => v.scenario === "native_geode_v1")
+      .map((v) => v.issue)
+      .sort(),
+    ["armed_by_the_tools_side_but_config_rejects", "armed_by_the_tools_side_but_no_recipe"],
+  );
+});
+
+test("a scenario the tools side arms and the Mod accepts is not reported", () => {
+  // The green half of the same guard: without it, a checker that reports every
+  // tools-side scenario would look identical on the red case.
+  const report = checkStardewFixtureScenarioWiring(sources({ known: ["a_v1", "b_v1"] }));
+  assert.equal(report.state, "passed", JSON.stringify(report.violations, null, 2));
+});
+
+test("a tools-side scenario with a config entry but no recipe is named as the recipe gap", () => {
+  const report = checkStardewFixtureScenarioWiring(
+    sources({ known: ["a_v1", "b_v1"], allowlist: ["a_v1", "b_v1"], dispatch: ["a_v1"], tools: ["a_v1", "b_v1"] }),
+  );
+  assert.deepEqual(
+    report.violations
+      .filter((v) => v.scenario === "b_v1" && v.issue.startsWith("armed_by_the_tools_side"))
+      .map((v) => v.issue),
+    ["armed_by_the_tools_side_but_no_recipe"],
+  );
+});
+
+test("a missing fixtureScenario fails loudly instead of checking an empty population", () => {
+  const report = checkStardewFixtureScenarioWiring({
+    ...sources({ known: ["a_v1"] }),
+    fixtureLibrarySource: "export function somethingElse() {}",
+  });
+  assert.deepEqual(report.violations.filter((v) => v.issue === "tools_fixture_scenario_function_missing").length, 1);
+});
+
+test("the extractor reads the function's own returns and drops the empty answer", () => {
+  const library = [
+    "export function fixtureScenario(actions, action) {",
+    '  if (action === "a") return "one_v1";',
+    '  if (actions.includes("b")) return "two_v1";',
+    '  return "";',
+    "}",
+    "export function other() {",
+    '  return "not_a_scenario";',
+    "}",
+  ].join("\n");
+  assert.deepEqual([...extractFixtureScenarioIds(library)].sort(), ["one_v1", "two_v1"]);
 });
 
 test("the allowlist group is cut at the first paren outside a string literal", () => {

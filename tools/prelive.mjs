@@ -47,6 +47,7 @@ import {
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "./stardew-action-gate-descriptors.mjs";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
@@ -73,8 +74,6 @@ export const L0_GATES = Object.freeze([
   "tools/check-stardew-task-action-coverage.mjs",
   "tools/check-game-context-pressure.mjs",
   "tools/check-live-run-verdict-guards.mjs",
-  // The live-run artifacts' own vocabulary: an exception message in a `reasonCode` slot is why a real run's failure had
-  // no diagnosable site, and this reads the harness sources for that shape before a game is launched.
   "tools/check-failure-reason-codes.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
@@ -680,10 +679,16 @@ function firstParamName(body) {
  * (a) A runner may not base an assertion on ONE-SHOT `observeFresh({ actionable: true })`. A warp in flight is not a
  *     world that cannot be acted on, and treating it as one cost a live run. The wait helper (`waitForActionable`)
  *     is what distinguishes "not yet" from "not possible".
- * (b) The runner must be reachable from the descriptor map, or carry an inline opt-out stating why it is auxiliary.
+ * (b) The runner must be reachable from a resolver declaration, or carry an inline opt-out stating why it is auxiliary.
+ *     "A resolver declaration" is the union `tools/resolve-stardew-action-gate-runner.mjs` reads: the published gate
+ *     table, the experimental/harness map, and the published-action gate exemptions.
  *
- * A violation is (file, line, fact) where `fact` is the world fact the assertion reads. Rule (a) sites are listed
- * in `tools/prelive-l3-baseline.json`; that baseline is a ratchet - an unlisted site is red, and a listed site that no
+ *     This rule first read only the two descriptor maps, and the exemption list - which declares the runner that covers
+ *     a published action the descriptor shape cannot carry (`navigate_to_destination`) - went unseen, so a resolvable
+ *     gate was reported unreachable. The defect was the ladder's boundary, not the runner.
+ *
+ * A violation is (file, line, fact) where `fact` is the world fact the assertion reads. Rule (a) sites, and the rule-(b)
+ * sites whose file no resolver declaration names, are listed in `tools/prelive-l3-baseline.json`; that baseline is a ratchet - an unlisted site is red, and a listed site that no
  * longer violates is red too, so the number can only go down. The baseline records HOW each site was classified, so
  * the classification can be checked rather than trusted.
  */
@@ -796,9 +801,14 @@ function runnerFiles(directory = TOOLS) {
     .sort();
 }
 
-function reachableRunnerNames() {
-  const names = new Set(Object.values(STARDEW_EXPERIMENTAL_ACTION_RUNNERS));
-  for (const gate of STARDEW_PUBLISHED_ACTION_GATES) if (gate?.runner) names.add(gate.runner);
+export function reachableRunnerNames({
+  experimentalRunners = STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  publishedGates = STARDEW_PUBLISHED_ACTION_GATES,
+  gateExemptions = GATE_EXEMPT_PUBLISHED_ACTIONS,
+} = {}) {
+  const names = new Set(Object.values(experimentalRunners));
+  for (const gate of publishedGates) if (gate?.runner) names.add(gate.runner);
+  for (const exempt of gateExemptions) if (exempt?.runner) names.add(exempt.runner);
   return names;
 }
 

@@ -134,7 +134,7 @@ public sealed class FarmhandBodyProgramController
     }
 
     /// <summary>
-    /// Whether a native action may be dispatched on THIS tick, supplied by the host that owns the world.
+    /// Whether the host that owns the world may hand THIS node's action to it on this tick.
     ///
     /// Why the program path needs it: a successor is dispatched as soon as its predecessor settles, and a
     /// predecessor often settles on the same frame its native animation starts. Re-entering the actor during that
@@ -143,9 +143,16 @@ public sealed class FarmhandBodyProgramController
     /// refusal is now an honest node failure rather than a poisoned scope, but a failure stops the successor chain,
     /// so the pass is SKIPPED while the world is mid-animation instead of forcing a refusal a node cannot retry.
     ///
+    /// Why the ACTION is the argument and not the tick: "the world is busy" is not one fact. A menu holds the body
+    /// against every action that needs it, and is the WORKING PRECONDITION of the handful that exist to close it
+    /// (`dismiss_modal`, `answer_dialogue`, `respond_level_up` - <see cref="FarmhandActionCatalog.ModalResolvingActionIds"/>).
+    /// A world-only gate deferred those nodes for the whole cadence window, so the pump waited out the modal it was
+    /// itself able to dismiss; the flat admission (which reads the same catalog family) never had that defect. The
+    /// pump therefore asks the host per ACTION and lets the host's own answer name which holds are per-action.
+    ///
     /// Null means "always dispatchable", which is what a harness without a world wants.
     /// </summary>
-    public Func<bool>? CanDispatchNow { get; init; }
+    public Func<string, bool>? CanDispatchNow { get; init; }
 
     /// <summary>
     /// How many passes one node ATTEMPT may be deferred for the world's sake.
@@ -298,7 +305,7 @@ public sealed class FarmhandBodyProgramController
             // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
             // the admission and strand the node awaiting a result that no longer exists. The deferral is bounded, so a
             // world that never becomes ready delays a node instead of holding it for ever.
-            if (this.CanDispatchNow is { } canDispatch && !canDispatch())
+            if (this.CanDispatchNow is { } canDispatch && !canDispatch(ActionIdOf(current, node.NodeId)))
             {
                 string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;
@@ -418,6 +425,17 @@ public sealed class FarmhandBodyProgramController
 
     private static string AttemptKey(string programId, string nodeId, int nodeAttempt) =>
         $"{programId}\u001f{nodeId}\u001f{nodeAttempt}";
+
+    /// <summary>
+    /// The catalog action a journal node runs.
+    ///
+    /// The journal node does NOT carry it: its identity is the node id, and the durable node record is deliberately
+    /// action-free so a resumed program cannot disagree with the catalog it was verified against. The descriptor set
+    /// the program was verified into does carry it, and every journal node is created from that descriptor set
+    /// (`OpenBodyProgramJournalAuthority`), so this lookup is total for a live program.
+    /// </summary>
+    private static string ActionIdOf(BodyProgramJournalProgram program, string nodeId) =>
+        program.Program.Nodes.Single(descriptor => descriptor.NodeId == nodeId).ActionId;
 
     /// <summary>
     /// When the executor returns the null continuation sentinel, the node stays

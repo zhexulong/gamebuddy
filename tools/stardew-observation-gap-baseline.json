@@ -38,11 +38,6 @@
       "reason": "the location's ambient light sources. `toggle_tool_light` publishes the actor's OWN held light (`lanternSlots`); a location's shared lights are map ambience no action changes"
     },
     {
-      "kind": "channel",
-      "id": "TouchAction",
-      "reason": "the engine dispatches a Back-layer `TouchAction` when the player walks onto a tile (`GameLocation.performTouchAction`), and no Mod source reads it: transitions read `location.warps`, `location.doors` and the `Action` property, so a touch-only interaction is not modelled. Recorded as debt - closing it is a Mod change, not a baseline edit"
-    },
-    {
       "kind": "addressability",
       "id": "move_to_tile",
       "reason": "its target IS the raw `x`/`y` pair, which is the address itself; there is no opaque id to publish and no family to read"
@@ -213,16 +208,6 @@
       "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
     },
     {
-      "kind": "quadrant",
-      "id": "MineElevatorFloorTargets",
-      "reason": "the elevator's floor list, and a per-turn line is the wrong instrument for it. The family is published only while the actor stands ON the elevator tile (`TryFindMineElevatorTile` scans the level's Buildings layer for tile 112, and the discovery returns nothing anywhere else), so the fact is available exactly where the action is; and the rows are every selectable floor - up to 25 ids (`mine_elevator_floor_<n>`), ~600 bytes - which a line would pay on every turn of the run for one call, while a capped line would hide the floors above the cap. Read on demand at the elevator"
-    },
-    {
-      "kind": "quadrant",
-      "id": "ShopTargets",
-      "reason": "shops whose owner is CURRENTLY present. This is the one family here a short line could in principle carry, and it is still not the fix: the set is derived from shop hours and NPC schedules (`ShopBuilder.GetCurrentOwners`), so a per-turn line would restate schedule state on every turn, and `shop_purchase` already names the counter tile in its `shop_counter_out_of_reach` refusal (`owner_tile=x,y;actor_tile=...`), which is the delivery - no observe is forced to find the tile. If a line is ever written it should carry owner, tile and shopId, and this entry is what would have to be deleted"
-    },
-    {
       "kind": "field",
       "id": "harvest_crop:crop:harvestTargets",
       "reason": "`BridgeHarvestTarget` is a crop row: `crop` is the row's own subject and `cropId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
@@ -241,6 +226,26 @@
       "kind": "field",
       "id": "water_crop:needsWatering:cropTargets",
       "reason": "`watered` publishes the same fact: a row is published only after `HoeDirt.needsWatering()` held, and `watered: false` states that half of it in the row itself, so the predicate's own name is the only thing missing"
+    },
+    {
+      "id": "open_geode:activeClickableMenu",
+      "reason": "GeodeMenu IS the interaction: the handler opens it, the native receiveLeftClick path runs inside it, and the receipt names the menu plus what the engine announced (nativeNotices). The menu object is modal state on the operation, not a world fact an action could address.",
+      "kind": "mutation"
+    },
+    {
+      "id": "put_item_in_fish_tank:CurrentToolIndex",
+      "reason": "the handler selects the tool slot the native call needs and restores it in a finally; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see",
+      "kind": "mutation"
+    },
+    {
+      "id": "put_item_in_fish_tank:localDepositedItem",
+      "reason": "a local variable of the handler: the deposited Object is the argument the caller already named (`expectedQualifiedItemId`), and the durable fact is the tank's contents, re-read through the `placed_furniture` row",
+      "kind": "mutation"
+    },
+    {
+      "id": "rotate_furniture:TileLocation",
+      "reason": "`GetAdditionalFurniturePlacementStatus` WRITES `tileLocation` while it answers (:1475), and the handler restores it before re-reading (:188, :218); the piece's position is identity, already carried by `worldObjectTargets.x/y`, and the changed fact is `rotation`/`rotations`",
+      "kind": "mutation"
     }
   ]
 }
