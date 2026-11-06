@@ -2546,12 +2546,15 @@
    name.
    ========================================================================== */
 
-  /* The documented scrim: `#0007`, no blur (design/26 §4.2, §6.1). The shared
-   `.backdrop-overlay` is another surface's primitive, so the composed drawer
-   sets its own value instead of changing it under a different lane. */
+  /* The scrim: 72% black with a 4 px blur, replacing the documented `#0007` with no
+   blur (design/26 §4.2, §6.1). At 47% black a roster card's own text stayed legible
+   through the scrim, and while the drawer slid in over the cards it read as one line
+   sliced lengthwise. The shared `.backdrop-overlay` is another surface's primitive,
+   so the composed drawer sets its own value instead of changing it under a different
+   lane. */
   .composed-drawer-backdrop {
-    background-color: #0007;
-    backdrop-filter: none;
+    background-color: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
   }
 
   /* Exactly one drawer at a time, anchored right, full height, safe-area aware. */

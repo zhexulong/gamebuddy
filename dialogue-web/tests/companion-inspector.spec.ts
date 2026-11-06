@@ -338,3 +338,31 @@ test("the inspector shows four groups with no editor, and its writes are her pic
   const rosterControl = page.getByTestId("characters-surface").locator("[data-companion-entry] [data-companion-inspect]").first();
   await expect(rosterControl).toHaveAttribute("aria-label", /\S/u);
 });
+
+/**
+ * The inspector's scrim: the drawer covers the roster behind it, so the cards under
+ * the drawer never read as a second, half-legible column of text.
+ *
+ * The failure this holds: the composed scrim was `#0007` - 47% black, no blur - so a
+ * roster card's own text stayed legible through it and, while the drawer slid in
+ * over the cards, read as one line sliced lengthwise. The reading is the COMPUTED
+ * value, because a rule that loses the cascade to a later layer computes the old
+ * number while its source still looks correct.
+ */
+test("the inspector's scrim covers the cards behind it", async ({ page }) => {
+  await stubCharacters(page, [{ handle: otherHandle, name: "Mira", isCurrent: false }], {
+    [otherHandle]: absentProfile("Mira"),
+  });
+  await openCharacters(page);
+  await openInspector(page, "Mira");
+
+  const backdrop = page.getByTestId("companion-inspector-backdrop");
+  await expect(backdrop).toBeVisible();
+  const scrim = await backdrop.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { backgroundColor: style.backgroundColor, backdropFilter: style.backdropFilter };
+  });
+  console.log(`[companion-inspector-scrim] ${JSON.stringify(scrim)}`);
+  expect(scrim.backgroundColor, "72% black between the drawer and the roster").toBe("rgba(0, 0, 0, 0.72)");
+  expect(scrim.backdropFilter, "and blurred, so the text behind it is not sliced").toBe("blur(4px)");
+});
