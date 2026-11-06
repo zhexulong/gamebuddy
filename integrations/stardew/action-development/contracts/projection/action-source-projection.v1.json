@@ -567,6 +567,15 @@
             "relation": "adjacent",
             "withinTiles": 1
           },
+          "sceneTarget": {
+            "type": "ObservationBinding",
+            "version": 1,
+            "required": true,
+            "requiredProperties": [
+              "observationId",
+              "ref"
+            ]
+          },
           "targetFamily": "forageTargets"
         },
         "handlerGroup": null
