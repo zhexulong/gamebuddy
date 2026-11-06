@@ -2,86 +2,166 @@
 
 # 🎮 GameBuddy
 
-**Next-Generation Embodied AI Game Companion**  
-*与你并肩游玩、自然交谈、具身于游戏世界的下一代开源 AI 游戏伴侣*
+**AIRP for all — 一个跨越 Chat、Game 与 Voice 的长期 AI 角色伴侣**
+
+*不是浮在游戏画面上的聊天窗，而是一个有连续身份、记得共同经历、并能沿着受约束的原生游戏接口真正行动的开源角色伴侣。*
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D24.13.0-green.svg)](https://nodejs.org/)
-[![pnpm](https://img.shields.io/badge/pnpm-11.x-orange.svg)](https://pnpm.io/)
-[![.NET](https://img.shields.io/badge/.NET-8.0-purple.svg)](https://dotnet.microsoft.com/)
+[![Windows](https://img.shields.io/badge/Platform-Windows_10%2F11_x64-0078D4.svg)](#-安装)
 [![Stardew Valley](https://img.shields.io/badge/Game-Stardew_Valley_1.6.x-brightgreen.svg)](https://www.stardewvalley.net/)
 [![SMAPI](https://img.shields.io/badge/Mod-SMAPI_4.x-blueviolet.svg)](https://smapi.io/)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D24.13.0-green.svg)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-11.x-orange.svg)](https://pnpm.io/)
 
-[特性亮点](#-特性亮点) • [致敬与灵感](#-致敬与参考-acknowledgements) • [系统架构](#-系统架构) • [模块结构](#-代码库结构) • [快速开始](#-快速开始) • [开发路线](#-开发路线-roadmap) • [许可证](#-许可证)
+[为什么](#-为什么是-gamebuddy) • [能力边界](#-当前能力边界) • [安装](#-安装) • [从源码运行](#-从源码运行) • [架构](#-架构) • [路线图](#-路线图) • [致谢](#-致敬与参考)
 
 </div>
 
 ---
 
-## 💡 为什么是 GameBuddy？
+## 💡 为什么是 GameBuddy
 
-现有的各类 AI 游戏助手往往只是一个**浮在游戏画面上的通用聊天浮窗**：它们看不懂游戏内部状态、无法在游戏里真正行动，更无法与玩家产生真正的“并肩冒险”羁绊。
+大多数 AI 游戏助手只是一个**浮在画面上的通用聊天窗**：看不懂游戏内部状态，不能在游戏里真正行动，也无法把一次对话延续成一段关系。
 
-**GameBuddy 的核心突破是“具身化（Embodied Agency）”与“酒馆级情感互动（Tavern-Style RP）”的深度融合：**
-1. **真正的游戏身体**：AI 不再是悬浮聊天窗，而是通过原生游戏模组作为正式玩家（如星露谷物语中的真实 Farmhand）踏入游戏世界，拥有真实的物理碰撞、自主寻路、工具使用与农务操作能力；
-2. **酒馆级人设与沉浸感**：深度借鉴并兼容 **SillyTavern（酒馆）** 角色卡与对话机制，具备丰富的情感表达、开场白分支与记忆沉浸，且所有对话都与当下游戏事件紧密相连；
-3. **全双工实时语音交互**：支持低延迟 PTT（Push-To-Talk）、语音打断与流式语音合成，让玩家在游玩过程中无需切出打字，像与真人联机好友一般自然交谈。
+GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某次会话里的临时人设，而是一个在多个产品表面持续存在的身份。
 
----
+1. **一个连续身份，不是三个互不相干的产品。**
+   Chat、Game、Voice 可以同时运行、各自启停、互不接管。绑定同一 continuity 时，它们共享同一份身份与受治理的长期 Memory；原始聊天记录、实时游戏状态、执行能力和行动回执始终各自独立。
 
-## ✨ 特性亮点
+2. **真实具身，不是画面外的建议。**
+   在《星露谷物语》中，伴侣以原生 Farmhand 身份进入世界：真实的碰撞、寻路、工具与农务操作。每个会改变世界的动作都在游戏线程重新校验 scope、policy、revision、deadline 与实时前置条件，并在执行后给出 action-owned receipt、evidence 和 fresh postcondition。
 
-### 🚜 1. 具身游戏智能 (Embodied In-Game Agent)
-* **原生游戏引擎接缝**：以《星露谷物语》（Stardew Valley 1.6 + SMAPI）为首个落地范例，AI 伴侣以正式受控 Farmhand 身份加入。
-* **物理行动与感知**：具备自主 A* 寻路（`travel`）、农田耕作（`till_soil`）、工具装备（`equip_tool`）、道具交互等真实行动力。
-* **严格的状态机与收据回执**：告别大模型的幻觉式操作。每次操作均通过 C# 原生接缝进行前置校验与后置权威验证（Receipt Verification），确保游戏进度安全可靠。
+3. **长会话是一等公民。**
+   STOP 与 `/redirect` 是带 epoch 的显式控制；未知结果不会被伪装成成功或盲目重放；AI 崩溃、controller EOF 和普通关闭不会杀死玩家的游戏世界；重连必须经过 fresh authentication 与观察同步，恢复期间状态可见、动作保持暂停。
 
-### 🎭 2. 酒馆级角色与对话系统 (Tavern-Inspired Engine)
-* **深度兼容 SillyTavern 规范**：支持角色卡（Character Cards）、世界书（Lorebooks）、多变体开场白与人设指令注入。
-* **双向情境感知（Bi-directional Awareness）**：伴侣不仅能陪你闲聊，还能实时感知游戏事件（“体力耗尽了”、“下雨了”、“农作物成熟了”），并在对话中主动关切或庆祝。
-* **游戏伴生 UI (`dialogue-web`)**：专为游戏并肩场景设计的极简侧边栏界面，支持紧凑停靠、立绘情绪反馈、实时思绪气泡与操作回执展示。
+4. **酒馆级的角色表达。**
+   兼容 SillyTavern 角色卡、世界书与开场白；对话与当下游戏事件相连，而不是各说各话。
 
-### 🎙️ 3. 全双工低延迟语音网关 (Voice Gateway)
-* **流畅语音对话**：专为游戏场景定制的低延迟音频通道，支持按键通话（PTT）与流式端点检测（VAD）。
-* **智能打断与取消**：玩家开麦说话时自动打断伴侣当前的朗读，保证对话自然不冲突。
-* **高表现力 TTS**：接入先进的流式拟真语音引擎（如 MiMo TTS、EdgeTTS），伴随游戏情绪动态变化声调。
-
-### 🛡️ 4. 严格确定的安全与权限防线
-* **Fail-Closed 架构**：伴侣宿主（Companion Host）与游戏内部隔离，只能执行显式注册并经过安全审计的 `Game Action`，绝不向大模型暴露任意文件系统或底层 Shell 权限。
+5. **安全默认值写在架构里，而不是写在提示词里。**
+   伴侣运行时以显式 allowlist 启动，不继承 Shell、文件、Git 或网络工具；游戏侧只暴露显式注册并经过审计的 typed Game Action，Host 不能凭模型文本扩大权限。
 
 ---
 
-## 🏛️ 系统架构
+## 🧭 当前能力边界
+
+第一条、也是当前唯一正式支持的游戏集成是 **Stardew Valley 1.6 + SMAPI 4.x（Windows x64）**。“AIRP for all”指同一个长期角色跨越产品表面，不代表已支持所有游戏。
+
+| 能力 | 状态 |
+| :--- | :--- |
+| Stardew 原生 Farmhand（碰撞、寻路、工具、农务） | ✅ 首个正式集成 |
+| Typed Game Action + receipt / evidence / fresh postcondition | ✅ |
+| Chat：角色卡、伙伴管理、会话、草稿保持 | ✅ |
+| 世界书：条目管理与绑定 | 🚧 管理能力存在；selective Lorebook 仍是独立 release-candidate |
+| 长期 Memory：章节折叠、语义记忆、跨会话召回 | ✅ |
+| 跨表面连续性（Chat ↔ Game 同一身份） | ✅ 绑定同一 continuity 时 |
+| 语音：PTT 状态机、流式 TTS、打断 | 🚧 预览；ASR 需要本机资产或自备云端 key |
+| Windows 安装包（per-user、免 Node/.NET 运行时） | 🚧 可构建并通过干净机沙箱验收；签名公开发行通道仍在收敛 |
+| 多游戏 / 社区 Connector | ⬜ 尚未支持（Host 已留 integration seam，但不是通用游戏协议） |
+| macOS / Linux | ⬜ 尚未支持 |
+
+模型由玩家自备：GameBuddy 不提供自己的模型端点。首次启动时在「设置 → 连接与模型」中接入你自己的 provider 与 API key。
+
+---
+
+## 📦 安装
+
+### 玩家安装（Windows 10 / 11 x64）
+
+安装包是 per-user、自包含的：不要求本机装有 Node、.NET 或本仓库副本。
+
+1. 运行 `GameBuddy.Setup.exe`，按向导完成安装。
+2. 启动 GameBuddy，在「游戏安装」中选择你的《星露谷物语》文件夹。
+3. 如果该文件夹还没有模组加载器，按界面提示让 GameBuddy 安装自带的 SMAPI；随后安装伴侣 Mod。
+4. 在「设置 → 连接与模型」中填入你自己的 provider、模型与 API key。
+5. 按「与伙伴一起玩」启动游戏会话；如果存档里还没有可用小屋，按提示选择一间。
+
+完整的首次运行、数据位置、卸载与排障说明见 **[玩家安装与首次运行](guides/player-install.md)**。
+
+> 当前公开渠道的签名安装包与自动更新仍在收敛；在它开放之前，可以用下面的命令构建本地预览安装包。预览包不用于分发。
+
+### 构建本地安装包
+
+```bash
+pnpm install
+pnpm build
+pnpm build:player-distribution
+# 产物：desktop/dist/setup/GameBuddy.Setup.exe
+```
+
+干净机安装验收（可选，需要 Windows Sandbox）：
+
+```bash
+pnpm run:sandbox-level3 -- --setup desktop/dist/setup/GameBuddy.Setup.exe
+```
+
+---
+
+## 🛠️ 从源码运行
+
+适合想改代码、跑测试或做游戏集成的贡献者。
+
+### 环境要求
+
+- Windows 10 / 11 (x64)
+- Node.js `>= 24.13.0 < 25`
+- pnpm `>= 11.1.3 < 12`
+- .NET 8 SDK（构建桌面外壳与 Stardew Mod）
+- 《星露谷物语》1.6.x + SMAPI 4.5+
+
+### 常用命令
+
+```bash
+pnpm install
+
+# 构建 Host、前端与语音协议
+pnpm build
+
+# 桌面外壳 / 安装包
+pnpm build:desktop-launcher
+pnpm build:player-distribution
+
+# 质量门禁（格式、lint、类型、边界、C# 核心与集成测试）
+pnpm quality:check
+```
+
+更细的开发流程、测试调用方式、live-run 与沙盒工具索引，见 **[开发指南](guides/development.md)**。
+
+---
+
+## 🏛️ 架构
 
 ```mermaid
 flowchart TB
-    subgraph PlayerLayer["玩家交互层 (Player Interaction)"]
-        Player["玩家 (Player)"]
-        WebUI["伴侣界面 (Dialogue Web - Tavern UI)<br/>停靠于游戏侧边"]
-        Mic["麦克风 / 扬声器 (PTT Voice)"]
+    subgraph PlayerLayer["玩家交互层"]
+        Player["玩家"]
+        ChatUI["Chat / Tavern 界面"]
+        GameUI["Game 界面"]
+        Mic["麦克风 / 扬声器"]
     end
 
-    subgraph HostLayer["Companion Host 智能核心 (Node.js / TypeScript)"]
-        Director["对话编排器 (Dialogue Director)<br/>SillyTavern 角色卡 / 角色设定"]
-        Memory["长程记忆引擎 (Magic Context)<br/>SQLite 实体存储 / 章节折叠 / 记忆召回"]
-        PiRuntime["Agent 宿主内核 (Pi Coding-Agent SDK)<br/>受限会话状态机 / 工具派发"]
-        VoiceGW["语音网关 (Pi-Koe / Voice Gateway)<br/>VAD / PTT / 音频流分发"]
-        ActionRouter["动作调度器 (Game Action Router)<br/>权限校验 / 确定性前置检查"]
+    subgraph HostLayer["Companion Host (Node.js / TypeScript)"]
+        Identity["身份与连续性 (Identity / Continuity)"]
+        Memory["长期 Memory (Magic Context)<br/>章节折叠 / 语义记忆 / 召回"]
+        PiRuntime["受限 Pi Runtime<br/>显式工具 allowlist"]
+        VoiceGW["Voice Gateway<br/>PTT / ASR / TTS"]
+        ActionRouter["Game Action Router<br/>policy / 前置检查 / 回执"]
     end
 
-    subgraph GameLayer["游戏原生具身层 (Stardew Valley / C# SMAPI)"]
-        Bridge["IPC 通讯管道 (Named Pipe Bridge)"]
-        BodyCtrl["具身控制器 (Farmhand Body Controller)"]
-        NativeSeam["SMAPI 原生游戏接缝 (Physical Seams)<br/>寻路 / 工具 / 耕作 / 世界感知"]
-        GameEngine["Stardew Valley 1.6 游戏本体"]
+    subgraph GameLayer["游戏侧 (Stardew Valley / C# SMAPI)"]
+        Bridge["命名管道 Bridge"]
+        BodyCtrl["Farmhand Body Controller"]
+        NativeSeam["原生游戏接缝<br/>游戏线程重新校验 / postcondition"]
+        GameEngine["Stardew Valley 1.6"]
     end
 
-    Player <--> WebUI
+    Player <--> ChatUI
+    Player <--> GameUI
     Player <--> Mic
-    WebUI <--> Director
+    ChatUI <--> Identity
+    GameUI <--> ActionRouter
     Mic <--> VoiceGW
-    Director <--> Memory
-    Director <--> PiRuntime
+    Identity <--> Memory
+    Identity <--> PiRuntime
     PiRuntime <--> ActionRouter
     ActionRouter <--> Bridge
     Bridge <--> BodyCtrl
@@ -89,119 +169,72 @@ flowchart TB
     NativeSeam <--> GameEngine
 ```
 
----
+三条不变量让“陪伴”不等于“放手让模型操作电脑”：
 
-## 🧩 核心技术栈与开源基座 (Core Technology Stack)
-
-GameBuddy 采用分层解耦的工程体系，核心能力由以下坚固底座支撑：
-
-| 组件 / 依赖 | 源码与归属 | 职责与在项目中的角色 |
-| :--- | :--- | :--- |
-| **Pi Coding-Agent SDK** | `@earendil-works/pi-coding-agent`<br>(底层智能体 SDK) | **智能体宿主运行时**。驱动受限的 Companion Session 状态机、工具派发与模型流式通讯，提供严格隔离的沙盒执行环境。 |
-| **Magic Context** | `@cortexkit/pi-magic-context`<br>(`vendor/magic-context`) | **长程记忆与上下文折叠引擎**。基于本地 SQLite 实现自动分章归档（Historian）、实体记忆管理以及世界书条目（WorldBook）的动态召回，杜绝多轮游玩的上下文爆炸。 |
-| **Pi-Koe** | `vendor/pi-koe`<br>(**第一方自研 Submodule**) | **伴侣原生语音中枢**。针对游戏交互场景研发的低延迟语音中枢（开源项目 `zhexulong/pi-koe`），提供按键通话（PTT）状态机、流式语音输出与打断流控。 |
-| **SMAPI 4.x & .NET 8** | `Pathoschild.Stardew.ModBuildConfig`<br>(开源社区) | **游戏原生模组构建管线**。负责构建将 AI 实体挂载进《星露谷物语》的 C# 原生二进制插件与事件钩子。 |
+- **游戏世界拥有最终权威。** 前置条件、执行结果与 postcondition 都由游戏侧给出；Host 只做受限投影，不能铸造权限或伪造完成。
+- **未知副作用不重放。** 只有游戏权威确认“未被接受”时才允许重送同一请求；超时与断线走 receipt-backed recovery，而不是换一个身份重试。
+- **恢复是可见状态，不是静默修复。** 断线、暂停和需要重新观察时，界面显示权威状态与下一步；不会假装任务仍在进行。
 
 ---
 
-## 📂 代码库结构
+## 🧩 代码库结构
 
 ```text
 ai-game-companion/
-├── host/                  # Companion Host 智能核心：基于 Pi SDK 与 Magic Context 驱动
-├── dialogue-web/          # 伴侣前端界面：紧凑停靠式侧边栏、酒馆角色卡交互、聊天流
-├── integrations/
-│   └── stardew/           # C# SMAPI 原生游戏模组：Farmhand 具身控制、动作执行、游戏感知
-├── packages/              # 共享领域包 (例如 game-action-program 动作契约与校验器)
-├── protocol/              # 跨语言通讯协议：IPC 命名管道契约与 Schema 描述
-├── desktop/               # Windows 桌面宿主外壳：侧边停靠、生命周期守护与进程协调
+├── host/                  # Companion Host：身份、Memory、Pi runtime、Game Action 路由
+├── dialogue-web/          # 产品界面：Chat / Tavern / Game 组合表面
+├── integrations/stardew/  # C# SMAPI Mod：Farmhand 具身、typed actions、原生校验
+├── packages/              # 共享契约（如 Game Action Program 模型与校验器）
+├── protocol/              # 跨语言 Bridge 协议与 schema
+├── desktop/               # Windows 桌面外壳与安装器
+├── voice-gateway/         # 本地语音网关（PTT / ASR / TTS）
 ├── vendor/
-│   ├── pi-koe/            # [第一方 Submodule] 自研 Pi 原生低延迟语音中枢 (zhexulong/pi-koe)
-│   └── magic-context/     # [定制 Fork] CortexKit 长程记忆引擎分支 (@cortexkit/pi-magic-context)
-├── assets/
-│   └── tavern/presets/    # 预设的伴侣角色卡与提示词模版 (SillyTavern 兼容)
-├── fixtures/              # 测试基准集：包含场景回放、角色卡与协议验证样本
-└── tools/                 # 自动化工程门禁、状态机审计与端到端验证工具链
+│   ├── pi-koe/            # 第一方语音中枢（submodule）
+│   └── magic-context/     # 长期 Memory 引擎（定制 fork）
+├── assets/tavern/         # 角色卡与提示词预设
+├── fixtures/              # 场景、角色卡与协议验证样本
+├── tools/                 # 门禁、live-run、沙盒与诊断工具
+└── guides/                # 玩家安装与开发文档
 ```
 
 ---
 
-## 🚀 快速开始
+## 🗺️ 路线图
 
-### 1. 环境准备
-确保本机已安装以下基线环境：
-* **操作系统**：Windows 10 / 11 (x64)
-* **Node.js**：`>= 24.13.0`
-* **包管理器**：`pnpm >= 11.1.3`
-* **.NET SDK**：`.NET 8.0 SDK`
-* **游戏环境**：《星露谷物语》(Stardew Valley 1.6.x) + [SMAPI 4.5+](https://smapi.io/)
-
-### 2. 克隆与安装
-
-```bash
-git clone https://github.com/zhexulong/gamebuddy.git
-cd gamebuddy
-
-# 安装依赖
-pnpm install
-```
-
-### 3. 构建项目
-
-```bash
-# 构建全部模块 (Host, Dialogue Web, Voice Protocol)
-pnpm build
-
-# 运行代码规范与端到端质量门禁
-pnpm quality:check
-```
-
-### 4. 运行伴侣界面
-
-```bash
-# 启动伴侣网页端
-pnpm --filter @gamebuddy/dialogue-web dev
-
-# 启动伴侣核心宿主
-pnpm --filter @gamebuddy/companion-host start
-```
+- [x] **Stardew 具身与可信行动（能力层）**
+  - [x] 命名管道 Bridge、Farmhand 生命周期与原生行动
+  - [x] 游戏线程重新校验、action-owned receipt / evidence / postcondition
+  - [x] 执行恢复：同一 lineage 查询、未知结果不重放、跨日继续
+- [x] **Chat 与长期角色**
+  - [x] SillyTavern 角色卡、世界书、开场白与伙伴管理
+  - [x] 长期 Memory 章节折叠与语义记忆
+  - [x] Chat / Game 共享 continuity 的跨表面连续性
+- [ ] **发布收敛**
+  - [ ] 签名公开发行通道与自动更新
+  - [ ] 安装 → 识别游戏 → 部署 Mod → 首次真实行动 的完整玩家旅程验收
+  - [ ] 语音输入资产与完整语音体验验收
+- [ ] **生态**
+  - [ ] 社区游戏 Connector
+  - [ ] 跨游戏的通用 Companion Protocol
 
 ---
 
-## 🗺️ 开发路线 (Roadmap)
+## 💖 致敬与参考
 
-- [x] **Phase 1: 具身游戏接缝**
-  - [x] SMAPI Named-Pipe 双向低延迟通讯通道
-  - [x] Farmhand 原生身体接入与生命周期同步
-  - [x] 核心游戏动作实现：寻路导航 (`travel`)、农务耕作 (`till_soil`)、装备切换 (`equip_tool`)
-- [x] **Phase 2: 酒馆级对话与界面**
-  - [x] 兼容 SillyTavern 角色卡与分支开场白机制
-  - [x] 紧凑停靠式伴侣 Web UI（支持立绘、状态指示、动作实时气泡）
-  - [x] 游戏事件驱动的主动对话触发器
-- [ ] **Phase 3: 即时语音交互与音画同步**
-  - [x] PTT 按键流控与状态机
-  - [x] 流式 TTS 语音输出与动态打断
-  - [ ] 实时语音输入链路与文字降级通道
-- [ ] **Phase 4: 多游戏通用生态**
-  - [ ] 跨游戏通用的 Companion Protocol 抽象
-  - [ ] 本地长期情境记忆与情感图谱演进
+- **[SillyTavern](https://github.com/SillyTavern/SillyTavern)**：角色卡（Character Cards V2）、世界书与人设引导的业界标杆。GameBuddy 借鉴了它的表达规范，并把这份沉浸感延伸到真实游戏世界。
+- **[AIRI](https://github.com/moeru-ai/airi)**：AI 角色在场感与跨平台分发的先行者。GameBuddy 走的是另一条互补路线：让长期角色身份接入真实世界状态与可验证行动。
+- **[Pi Coding-Agent SDK](https://github.com/earendil-works/pi)**：受限智能体宿主运行时，负责会话状态机、工具派发与流式通讯。
+- **[CortexKit Magic Context](https://github.com/cortexkit/magic-context)**：本地 SQLite 长期记忆、章节折叠与情境召回。
+- **[SMAPI](https://smapi.io/)** 与 Stardew Modding 社区：让原生具身成为可能。
+- **[CharacterHub / Chub AI](https://chub.ai/)** 与角色卡创作者社区：默认伴侣「琥珀（Kohaku）」遵循 CCv2 规范，面向具身陪伴设计。
 
 ---
 
-## 💖 致敬与参考 (Acknowledgements)
+## 📄 许可证
 
-GameBuddy 的诞生深受以下杰出开源项目、社区与创作者的启发，在此致以诚挚敬意：
+核心源代码使用 **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)**。
 
-* **[SillyTavern (酒馆)](https://github.com/SillyTavern/SillyTavern)**：业界标杆级的 LLM 角色扮演前端。GameBuddy 在角色卡协议规范（Character Cards V2）、世界书（WorldBook / Lorebook）机制、人设引导和酒馆对话美学上深度借鉴了 SillyTavern 的设计，旨在将酒馆的沉浸感从纯文本对话扩展到具备游戏实体的交互维度。
-* **[CharacterHub / Chub AI](https://chub.ai/) 与类脑社区**：丰富的开源角色卡创作者生态与理论研究。GameBuddy 默认内置原创全年龄标杆伴侣「琥珀（Kohaku）」，其人设遵循酒馆 CCv2 规范与多层性格引擎架构，专为星露谷具身陪伴打造。
-* **[Pi Coding-Agent SDK](https://github.com/earendil-works/pi)** & **[CortexKit (Magic Context)](https://github.com/cortexkit/magic-context)**：感谢 Pi 团队构建的精悍智能体宿主运行时，以及 CortexKit 打造的基于本地 SQLite 章节折叠、实体记忆与情境召回的 Magic Context 记忆引擎，为游戏伴侣的长程连续性提供了坚实基座。
-* **开源大模型社区**：感谢开源模型社区为游戏伴侣的端到端思考与语言生成提供的坚实支持。
+- 核心框架与服务（`host`、`dialogue-web`、`integrations`、`desktop`、`packages`）：AGPL-3.0。
+- 官方角色预设（`assets/tavern/presets/default-companion`）：CC0-1.0，详见该目录的 `ATTRIBUTION.md`；第三方导入内容遵循其原始授权。
 
----
-
-## 📄 许可证 (License)
-
-本项目核心源代码基于 **[GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE)** 协议开源。
-
-* **核心框架与服务** (`host`, `dialogue-web`, `integrations`, `desktop`, `packages`): 遵循 AGPL-3.0 开源协议。
-* **官方角色预设内容** (`assets/tavern/presets/default-companion`): 官方原创伴侣设定遵循 CC0-1.0 (Public Domain Dedication) 公共领域协议，详见对应目录下的 `ATTRIBUTION.md`。第三方用户自行导入的预设遵从各自原始授权。
+请不要在 Issue、日志或截图中提交 API key、角色卡私密内容或完整游戏存档。
