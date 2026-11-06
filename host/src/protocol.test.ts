@@ -2209,26 +2209,116 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_machine_target",
   );
+  // A machine load is the load the machine's own rows offered. The row is where `slot` and the item come from, so the
+  // request must name that pair; two different machines prove the rule is the ROW's, not one hard-coded Keg.
+  const machineLoadCapability = { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] };
+  const machineLoadSnapshot = {
+    ...machineLoadCapability,
+    machineTargets: [
+      {
+        targetId: "machine_deadbeef",
+        x: 10,
+        y: 12,
+        qualifiedItemId: "(BC)12",
+        displayName: "Keg",
+        readyForHarvest: false,
+        minutesUntilReady: 0,
+        loadInputSlot: 5,
+        loadInputQualifiedItemId: "(O)433",
+        loadInputStack: 5,
+      },
+      {
+        targetId: "machine_fumacedeed",
+        x: 11,
+        y: 12,
+        qualifiedItemId: "(BC)13",
+        displayName: "Furnace",
+        readyForHarvest: false,
+        minutesUntilReady: 0,
+        loadInputSlot: 2,
+        loadInputQualifiedItemId: "(O)378",
+        loadInputStack: 1,
+      },
+    ],
+  } as const;
+  assert.equal(validateExecutionRequest(machineLoad, machineLoadSnapshot, now), null);
   assert.equal(
     validateExecutionRequest(
-      machineLoad,
-      { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] },
+      {
+        ...machineLoad,
+        args: { slot: 2, x: 11, y: 12, expectedQualifiedItemId: "(O)378", expectedTargetId: "machine_fumacedeed" },
+      },
+      machineLoadSnapshot,
       now,
     ),
     null,
+    "a furnace's own row is as loadable as a Keg's",
+  );
+  // ...and each machine REFUSES the other's pair: what decides is the row, not a list of items this Host knows.
+  assert.equal(
+    validateExecutionRequest(
+      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)378" } },
+      machineLoadSnapshot,
+      now,
+    ),
+    "machine_load_input_not_published",
+    "the Keg row does not publish the furnace's input",
   );
   assert.equal(
     validateExecutionRequest(
-      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] },
+      {
+        ...machineLoad,
+        args: { slot: 2, x: 11, y: 12, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_fumacedeed" },
+      },
+      machineLoadSnapshot,
+      now,
+    ),
+    "machine_load_input_not_published",
+    "the furnace row does not publish the Keg's input",
+  );
+  // A malformed identity never travels into a native call, whatever the row says.
+  assert.equal(
+    validateExecutionRequest(
+      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "coffee beans" } },
+      machineLoadSnapshot,
       now,
     ),
     "invalid_machine_load_target",
   );
+  // ...and a well-formed item that the row did not publish is refused rather than reconciled onto the slot.
+  assert.equal(
+    validateExecutionRequest(
+      { ...machineLoad, args: { ...machineLoad.args, expectedQualifiedItemId: "(O)472" } },
+      machineLoadSnapshot,
+      now,
+    ),
+    "machine_load_input_not_published",
+  );
+  assert.equal(
+    validateExecutionRequest({ ...machineLoad, args: { ...machineLoad.args, slot: 4 } }, machineLoadSnapshot, now),
+    "machine_load_input_not_published",
+    "the slot the action loads is the slot the row published, not one the caller chose",
+  );
+  // A machine the snapshot no longer lists is the Mod's to refuse from the live world: an already-loaded machine is
+  // "busy", and a re-sent request must reach the Mod so it can replay the receipt of the load that already ran.
+  assert.equal(
+    validateExecutionRequest(machineLoad, machineLoadCapability, now),
+    null,
+    "a snapshot with no machine rows says nothing about this machine; the Mod re-resolves it by its opaque id",
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...machineLoad, args: { ...machineLoad.args, expectedTargetId: "machine_absentdeadbeef" } },
+      machineLoadSnapshot,
+      now,
+    ),
+    null,
+    "a target the snapshot no longer lists is refused by the Mod from the live world, so a retry can reach its receipt",
+  );
   assert.equal(
     validateExecutionRequest(
       { ...machineLoad, args: { ...machineLoad.args, unexpected: true } },
-      { ...snapshot, capabilities: [...snapshot.capabilities, "machine_load"] },
+      machineLoadSnapshot,
       now,
     ),
     "invalid_args",
@@ -4023,6 +4113,62 @@ test("snapshot admits weather and harvestWhereabouts and rejects malformed value
     ),
     "invalid_snapshot:harvestWhereabouts",
   );
+});
+
+test("a whereabouts row carries BOTH tile coordinates or NEITHER, and never one of them", () => {
+  // The count is a fact every loaded map has; the nearest tile is a fact only the map the actor stands on has, so an
+  // off-map row publishes its count alone (the Mod omits the pair). Half an address - one axis of a tile - names no place
+  // at all, and admitting it would let a reader draw a coordinate out of `x` and a stale one out of `y`.
+  const base = {
+    revision: 5,
+    location: "FarmHouse",
+    tile: { x: 10, y: 11 },
+    stamina: 270,
+    exhausted: false,
+    health: 100,
+    actionable: true,
+    capabilities: [],
+    catalogRevision: 1,
+    enabledActionIds: [],
+    presentationLocale: "en-US",
+    timeOfDay: 600,
+    dayOfMonth: 1,
+    seasonIndex: 0,
+    year: 1,
+    activeExecution: null,
+  };
+  const diagnose = (payload: Record<string, unknown>, id: string): string | null =>
+    diagnoseBridgeMessage(newEnvelope("snapshot", scope, { ...base, ...payload }, id, now), scope, now);
+
+  const families = [
+    {
+      field: "harvestWhereabouts",
+      count: { readyForHarvestCount: 3 },
+    },
+    {
+      field: "wateringWhereabouts",
+      count: { needsWaterCount: 12 },
+    },
+  ];
+  for (const family of families) {
+    assert.equal(
+      diagnose({ [family.field]: [{ location: "Farm", ...family.count }] }, `${family.field}_offmap`),
+      "accepted",
+    );
+    assert.equal(
+      diagnose(
+        { [family.field]: [{ location: "Farm", ...family.count, nearestX: 4, nearestY: 9 }] },
+        `${family.field}_here`,
+      ),
+      "accepted",
+    );
+    for (const half of [{ nearestX: 4 }, { nearestY: 9 }])
+      assert.equal(
+        diagnose({ [family.field]: [{ location: "Farm", ...family.count, ...half }] }, `${family.field}_half`),
+        `invalid_snapshot:${family.field}`,
+        `${family.field} admitted half a tile: ${JSON.stringify(half)}`,
+      );
+  }
 });
 
 test("a snapshot taken while an execution is in flight carries the body owner, its PHASE, and the cancel safety that follows from it", () => {

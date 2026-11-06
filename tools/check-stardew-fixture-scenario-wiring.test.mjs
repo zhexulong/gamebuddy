@@ -3,7 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkStardewFixtureScenarioWiring, extractPreAttachmentAllowlist } from "./check-stardew-fixture-scenario-wiring.mjs";
+import {
+  checkStardewFixtureScenarioWiring,
+  extractPreAttachmentAllowlist,
+} from "./check-stardew-fixture-scenario-wiring.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -61,7 +64,10 @@ test("an allowlisted scenario the config gate rejects is reported", () => {
     sources({ known: ["a_v1"], allowlist: ["a_v1", "ghost_v1"], dispatch: ["a_v1", "ghost_v1"] }),
   );
   assert.deepEqual(
-    report.violations.filter((v) => v.scenario === "ghost_v1").map((v) => v.issue).sort(),
+    report.violations
+      .filter((v) => v.scenario === "ghost_v1")
+      .map((v) => v.issue)
+      .sort(),
     ["allowlisted_but_config_rejects", "dispatched_but_config_rejects"],
   );
 });
@@ -81,7 +87,7 @@ test("a scenario handled by an earlier returning block may be absent from the al
   assert.equal(report.state, "passed", JSON.stringify(report.violations, null, 2));
 });
 
-test("the `is \"X\"` dispatcher spelling is recognised", () => {
+test('the `is "X"` dispatcher spelling is recognised', () => {
   // Some blocks are written as `FixtureScenario is "x"` (pattern matching) rather
   // than `==`. Missing that spelling made the checker report false positives.
   const entry = [

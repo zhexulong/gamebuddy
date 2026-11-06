@@ -618,6 +618,33 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "talk_to_npc_talked",
     "native_talk_to_npc_v1",
   ),
+  // The way OUT of a shaft. Its own runner because its proof is the opposite fact from the
+  // ladder-down gate: the actor must be OUTSIDE every MineShaft afterwards.
+  gate(
+    "use_mine_ladder",
+    1,
+    "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
+    "mine_left",
+    "native_mine_use_ladder_exit_v1",
+  ),
+  // Picking an already-placed piece of furniture up, through the game's own
+  // `GameLocation.removeQueuedFurniture`. The fixture world is the ordinary one - the piece is the
+  // game's own starter furniture, not something the fixture placed.
+  gate(
+    "move_placed_furniture",
+    1,
+    "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
+    "placed_furniture_picked_up",
+  ),
+  // One coop animal petted through `FarmAnimal.pet`: the +15 friendship and the `wasPet` marker are
+  // read straight from the engine, and a second attempt on the same animal is refused by name.
+  gate(
+    "pet_farm_animal",
+    1,
+    "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+    "farm_animal_petted",
+    "native_pet_farm_animal_v1",
+  ),
 ]);
 
 /**
@@ -698,15 +725,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // Second gate for an already-live-verified action: the LADDER path into a shaft, which the
   // published enter_mine gate (the Mine entrance map) does not cover.
   enter_mine_ladder: "run-stardew-native-local-player-enter-mine-ladder-smoke.mjs",
-  // The way OUT of a shaft. Its own runner because its proof is the opposite fact from the
-  // ladder-down gate: the actor must be OUTSIDE every MineShaft afterwards.
-  use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
-  // Picking an already-placed piece of furniture up, through the game's own
-  // `GameLocation.removeQueuedFurniture`. EXPERIMENTAL because the Mod catalog registers it on that
-  // rung: the descriptor table is the published set, and this runner is what its live gate will
-  // resolve. The fixture world is the ordinary one - the piece is the game's own starter furniture,
-  // not something the fixture placed.
-  move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
   // `talk_to_npc` owes a SHARED-WORLD live run, not another native-local one: the multiplayer
   // sensitivity register derives its native seam (`NPC.checkAction`) as mp-semantic, because the
   // conversation branch is gated on `who.IsLocalPlayer` and the same method's pause differs under
@@ -780,10 +798,6 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // each earns its live gate; every runner is the dedicated smoke runner in tools/.
   // probe: directly reads the scene observation (observe_scene) and prints every affordance's reachability.
   scene_reachable_probe: "run-stardew-native-local-player-scene-reachable-probe-smoke.mjs",
-  // `pet_farm_animal` is registered Experimental in the Mod catalog and has a native-local slice: one coop animal petted
-  // through `FarmAnimal.pet`, the +15 friendship and the `wasPet` marker read straight from the engine, and a second
-  // attempt on the same animal refused by name. The fixture supplies one coop and one animal; the pet is production's.
-  pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
 });
 
 /**

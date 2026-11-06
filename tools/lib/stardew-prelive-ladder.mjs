@@ -327,20 +327,27 @@ export async function readPreliveHarnessStaleness({ repositoryRoot = PRELIVE_REP
 export function evaluatePreliveHarnessRung(staleness, { repositoryRoot = PRELIVE_REPOSITORY_ROOT } = {}) {
   const artifact = staleness?.outputs?.path ?? join(repositoryRoot, "host", "dist-test");
   const newestInput = staleness?.inputs?.path ?? "(no compiled input found)";
+  // The freshness verdict states its own comparison, because which RULE answered (content hashes or modification
+  // times) changes what the reader has to do; restating it here from mtimes would tell a content mismatch to
+  // touch the artifact.
+  const stated = typeof staleness?.detail === "string" ? staleness.detail : undefined;
   if (staleness?.stale !== true)
     return {
       rung: 3,
       passed: true,
       code: null,
-      detail: `host artifact is current: newest input ${newestInput} is not newer than the newest emitted module ${staleness?.outputs?.path ?? "unknown"}`,
+      detail:
+        stated ??
+        `host artifact is current: newest input ${newestInput} is not newer than the newest emitted module ${staleness?.outputs?.path ?? "unknown"}`,
     };
   const reason = staleness.reason ?? "stale_artifact";
   // A missing artifact has no modification time to compare, so it is reported as a fact rather than as a
   // comparison against an invented timestamp.
   const comparison =
-    staleness.outputs?.path === undefined
+    stated ??
+    (staleness.outputs?.path === undefined
       ? `artifact ${artifact} does not exist`
-      : `newest input ${newestInput} @${new Date(staleness.inputs?.mtimeMs ?? 0).toISOString()} vs artifact ${artifact} @${new Date(staleness.outputs.mtimeMs).toISOString()}`;
+      : `newest input ${newestInput} @${new Date(staleness.inputs?.mtimeMs ?? 0).toISOString()} vs artifact ${artifact} @${new Date(staleness.outputs.mtimeMs).toISOString()}`);
   return {
     rung: 3,
     passed: false,
@@ -496,10 +503,7 @@ if (import.meta.main) {
     // caller that reads the JSON, and never mistaken for "the checker itself failed".
     const repositoryRoot = argumentValue("--repository-root", argv);
     const rootOptions = repositoryRoot === undefined ? undefined : { repositoryRoot: resolve(repositoryRoot) };
-    payload = evaluatePreliveHarnessRung(
-      await readPreliveHarnessStaleness(rootOptions),
-      rootOptions,
-    );
+    payload = evaluatePreliveHarnessRung(await readPreliveHarnessStaleness(rootOptions), rootOptions);
   } else if (mode === "config") {
     const timeoutSeconds = numberArgument("--timeout-seconds", argv, Number.NaN);
     if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) usage("config mode requires --timeout-seconds");

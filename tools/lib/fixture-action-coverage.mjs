@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS: the multi-day night died on the `LevelUpMenu` because the lane's enabled-action set did not
  * contain `respond_level_up` - an action the harness itself dispatches, and the only thing that can close that menu
- * (`advance_day` waits for `DayStarted`, which waits for the menu, which waits for a bridge request). The set is
+ * (`sleep` waits for `DayStarted`, which waits for the menu, which waits for a bridge request). The set is
  * hand-maintained YAML-ish source, nothing joined it to the published surface, and the failure surfaced as the
  * CALLER's 45 s timer because the Mod's capability refusal had no correlation id (measured 2026-10-17, run g22:
  * four dispatches, zero receipts).
@@ -33,12 +33,12 @@ export function parseFixtureActionSets(source) {
 /**
  * Every lane whose run the live runner can require, and the actions that run cannot work without.
  *
- * The trio for the multi-day lane is the night's own causal chain, not a preference: `advance_day` performs the
+ * The trio for the multi-day lane is the night's own causal chain, not a preference: `sleep` performs the
  * night, `dismiss_modal` closes the settlement menu the rollover raises, and `respond_level_up` closes the level-up
  * menu raised in the same window - and closing those is what lets the night finish.
  */
 export const REQUIRED_LANE_ACTIONS = Object.freeze({
-  play_session_multi_day: Object.freeze(["advance_day", "dismiss_modal", "respond_level_up"]),
+  play_session_multi_day: Object.freeze(["sleep", "dismiss_modal", "respond_level_up"]),
 });
 
 /**

@@ -36,7 +36,7 @@ import {
   parseArgs,
   parseKnownFixtureScenarios,
   parseModDispatchScenarios,
-  runContractTriad,
+  runGateRung,
   runLadder,
   shapeRung,
 } from "./prelive.mjs";
@@ -249,7 +249,7 @@ test("(v) a clean tree is green, end to end through every rung", () => {
   const ladder = runLadder({
     rungs: [
       () =>
-        runContractTriad({
+        runGateRung({
           gates: ["tools/check-a.mjs", "tools/audit-b.mjs"],
           resolveCommand: () => ({ command: "node tools/check-a.mjs", discovered: false }),
           run: () => ({ status: 0, stdout: "", stderr: "" }),
@@ -287,7 +287,7 @@ test("(v) the ladder stops at the first red rung and does not run the ones after
 });
 
 test("(v) L0 reports each gate's exit code by name", () => {
-  const report = runContractTriad({
+  const report = runGateRung({
     gates: ["tools/green.mjs", "tools/red.mjs"],
     resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
     run: (command) => ({ status: command.endsWith("green.mjs") ? 0 : 1, stdout: "", stderr: "" }),
@@ -320,11 +320,45 @@ test("L4 delegates the named action to the existing live preflight", () => {
   assert.equal(failed.exitCode, 1);
 });
 
+test("(v) a gate that exits 0 having measured nothing is UNAVAILABLE, never counted as a pass", () => {
+  const report = runGateRung({
+    id: "l0b",
+    gates: ["tools/measured.mjs", "tools/skipped.mjs"],
+    resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
+    run: (command) => ({
+      status: 0,
+      stdout: command.endsWith("skipped.mjs") ? "observation_gap_skipped: needs ref/external/tree\n" : "ok: 12 read\n",
+      stderr: "",
+    }),
+  });
+  assert.equal(report.status, "passed");
+  assert.deepEqual(
+    report.gates.map((entry) => [entry.gate, entry.outcome]),
+    [
+      ["tools/measured.mjs", "passed"],
+      ["tools/skipped.mjs", "not_measured"],
+    ],
+  );
+  assert.deepEqual(
+    report.unavailable.map((entry) => entry.gate),
+    ["tools/skipped.mjs"],
+  );
+  const printed = format(runLadder({ rungs: [() => report] }), {
+    elapsedMs: 1,
+    options: { noGame: true },
+    notice: null,
+  });
+  assert.match(printed, /l0b: passed \(2 gates, 0 red, 1 UNAVAILABLE\)/u);
+  assert.match(printed, /UNAVAILABLE: tools\/skipped\.mjs/u);
+  assert.match(printed, /observation_gap_skipped: needs ref\/external\/tree/u);
+  assert.match(printed, /1 gate\(s\) UNAVAILABLE: measured nothing here, counted apart from the pass/u);
+});
+
 test("the report prints the counts and the members the ladder names", () => {
   const ladder = runLadder({
     rungs: [
       () =>
-        runContractTriad({
+        runGateRung({
           gates: ["tools/check-a.mjs"],
           resolveCommand: () => ({ command: "node tools/check-a.mjs", discovered: false }),
           run: () => ({ status: 0, stdout: "", stderr: "" }),

@@ -73,6 +73,9 @@ export const L0_GATES = Object.freeze([
   "tools/check-stardew-task-action-coverage.mjs",
   "tools/check-game-context-pressure.mjs",
   "tools/check-live-run-verdict-guards.mjs",
+  // The live-run artifacts' own vocabulary: an exception message in a `reasonCode` slot is why a real run's failure had
+  // no diagnosable site, and this reads the harness sources for that shape before a game is launched.
+  "tools/check-failure-reason-codes.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
   "tools/check-prelive-gate-registry.mjs",

@@ -115,13 +115,21 @@ export function checkStardewFixtureScenarioWiring({ modEntrySource, modConfigSou
 
   for (const scenario of allowlist) {
     if (!known.has(scenario)) {
-      add("allowlisted_but_config_rejects", scenario, "in the allowlist but missing from KnownFixtureScenarios, so config rejects it first");
+      add(
+        "allowlisted_but_config_rejects",
+        scenario,
+        "in the allowlist but missing from KnownFixtureScenarios, so config rejects it first",
+      );
     }
   }
 
   for (const scenario of dispatcher) {
     if (!known.has(scenario)) {
-      add("dispatched_but_config_rejects", scenario, "ModEntry dispatches it but KnownFixtureScenarios omits it, so config rejects it first");
+      add(
+        "dispatched_but_config_rejects",
+        scenario,
+        "ModEntry dispatches it but KnownFixtureScenarios omits it, so config rejects it first",
+      );
     }
   }
 

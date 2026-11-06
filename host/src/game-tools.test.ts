@@ -1096,7 +1096,7 @@ test("published harvest_crop mounts only from a live capability and forwards the
   });
 });
 
-test("published chop_tree_source mounts only from a live Mod capability and forwards the exact source target", async () => {
+test("published chop_tree mounts only from a live Mod capability and forwards the exact source target", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
@@ -1105,9 +1105,9 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
       return {
         connected: true,
         sessionId: "session_01",
-        capabilities: ["chop_tree_source"],
+        capabilities: ["chop_tree"],
         catalogRevision: 1,
-        enabledActionIds: ["chop_tree_source"],
+        enabledActionIds: ["chop_tree"],
         snapshot: {
           revision: 3,
           location: "Farm",
@@ -1116,9 +1116,9 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
           exhausted: false,
           health: 100,
           actionable: true,
-          capabilities: ["chop_tree_source"],
+          capabilities: ["chop_tree"],
           catalogRevision: 1,
-          enabledActionIds: ["chop_tree_source"],
+          enabledActionIds: ["chop_tree"],
           presentationLocale: "en-US",
           timeOfDay: 600,
           dayOfMonth: 1,
@@ -1152,7 +1152,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  const mountedTool = tools.find((candidate) => candidate.name === "stardew_chop_tree_source");
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_chop_tree");
   assert.ok(mountedTool);
   await mountedTool!.execute(
     "test",
@@ -1171,7 +1171,7 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
   assert.deepEqual(received, {
     requestId: "request_tree_chop_01",
     idempotencyKey: "idempotency_tree_chop_01",
-    action: "chop_tree_source",
+    action: "chop_tree",
     args: { slot: 4, x: 39, y: 19, expectedTargetId: "tree_chop_01" },
     expectedRevision: 3,
     deadlineMs: (received as { deadlineMs: number }).deadlineMs,
@@ -1184,13 +1184,13 @@ test("published chop_tree_source mounts only from a live Mod capability and forw
     },
   };
   const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-    (tool) => tool.name === "stardew_chop_tree_source",
+    (tool) => tool.name === "stardew_chop_tree",
   );
   // Constant mount: the tool stays declared; execution-time admission rejects it.
   assert.equal(stillMounted, true);
 });
 
-test("published break_rock_source mounts only from a live Mod capability and forwards the exact source target", async () => {
+test("published break_rock mounts only from a live Mod capability and forwards the exact source target", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
@@ -1199,9 +1199,9 @@ test("published break_rock_source mounts only from a live Mod capability and for
       return {
         connected: true,
         sessionId: "session_01",
-        capabilities: ["break_rock_source"],
+        capabilities: ["break_rock"],
         catalogRevision: 1,
-        enabledActionIds: ["break_rock_source"],
+        enabledActionIds: ["break_rock"],
         snapshot: {
           revision: 3,
           location: "Farm",
@@ -1210,9 +1210,9 @@ test("published break_rock_source mounts only from a live Mod capability and for
           exhausted: false,
           health: 100,
           actionable: true,
-          capabilities: ["break_rock_source"],
+          capabilities: ["break_rock"],
           catalogRevision: 1,
-          enabledActionIds: ["break_rock_source"],
+          enabledActionIds: ["break_rock"],
           presentationLocale: "en-US",
           timeOfDay: 600,
           dayOfMonth: 1,
@@ -1246,7 +1246,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
     },
   };
   const tools = createStardewActionTools(integration, undefined, () => testAdmission(integration));
-  const mountedTool = tools.find((candidate) => candidate.name === "stardew_break_rock_source");
+  const mountedTool = tools.find((candidate) => candidate.name === "stardew_break_rock");
   assert.ok(mountedTool);
   await mountedTool!.execute(
     "test",
@@ -1265,7 +1265,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
   assert.deepEqual(received, {
     requestId: "request_rock_01",
     idempotencyKey: "idempotency_rock_01",
-    action: "break_rock_source",
+    action: "break_rock",
     args: { slot: 4, x: 39, y: 19, expectedTargetId: "rock_source_01" },
     expectedRevision: 3,
     deadlineMs: (received as { deadlineMs: number }).deadlineMs,
@@ -1278,7 +1278,7 @@ test("published break_rock_source mounts only from a live Mod capability and for
     },
   };
   const stillMounted = createStardewActionTools(unavailable, undefined, () => testAdmission(unavailable)).some(
-    (tool) => tool.name === "stardew_break_rock_source",
+    (tool) => tool.name === "stardew_break_rock",
   );
   // Constant mount: the tool stays declared; execution-time admission rejects it.
   assert.equal(stillMounted, true);
@@ -1362,7 +1362,7 @@ test("published machine_inspect mounts only from a live capability and forwards 
   });
 });
 
-test("published machine_load mounts only from a live capability and forwards the fixed Coffee Bean contract", async () => {
+test("published machine_load mounts only from a live capability and forwards the input the machine row accepts", async () => {
   let received: unknown = null;
   const integration: MoveCapableIntegration = {
     scope,
@@ -1392,6 +1392,21 @@ test("published machine_load mounts only from a live capability and forwards the
           year: 1,
           weather: "sunny",
           activeExecution: null,
+          // A furnace row, not a Keg: what a load may name is the machine's own published input.
+          machineTargets: [
+            {
+              targetId: "machine_target_01",
+              x: 14,
+              y: 37,
+              qualifiedItemId: "(BC)13",
+              displayName: "Furnace",
+              readyForHarvest: false,
+              minutesUntilReady: 0,
+              loadInputSlot: 2,
+              loadInputQualifiedItemId: "(O)378",
+              loadInputStack: 1,
+            },
+          ],
         },
         latestReceipt: null,
         latestReasonCode: null,
@@ -1420,10 +1435,10 @@ test("published machine_load mounts only from a live capability and forwards the
   await mountedTool!.execute(
     "test",
     {
-      slot: 5,
+      slot: 2,
       x: 14,
       y: 37,
-      expectedQualifiedItemId: "(O)433",
+      expectedQualifiedItemId: "(O)378",
       expectedTargetId: "machine_target_01",
       requestId: "request_machine_load_01",
       idempotencyKey: "idempotency_machine_load_01",
@@ -1436,7 +1451,7 @@ test("published machine_load mounts only from a live capability and forwards the
     requestId: "request_machine_load_01",
     idempotencyKey: "idempotency_machine_load_01",
     action: "machine_load",
-    args: { slot: 5, x: 14, y: 37, expectedQualifiedItemId: "(O)433", expectedTargetId: "machine_target_01" },
+    args: { slot: 2, x: 14, y: 37, expectedQualifiedItemId: "(O)378", expectedTargetId: "machine_target_01" },
     expectedRevision: 3,
     deadlineMs: (received as { deadlineMs: number }).deadlineMs,
   });

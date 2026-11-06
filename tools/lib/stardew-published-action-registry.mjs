@@ -1,8 +1,24 @@
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const REGISTRATIONS_PATH = resolve(
+  root,
+  "integrations",
+  "stardew",
+  "src",
+  "Core",
+  "Policy",
+  "FarmhandActionDefinitions.cs",
+);
+/** The `Registrations = Array.AsReadOnly(new[] { ... });` body, which is the whole catalog. */
+const REGISTRATIONS_BODY = /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/u;
+/** One registration begins at its own constructor call, so the body splits into entries. */
+const REGISTRATION_ENTRY = /(?=\b(?:E|R|Registration)\()/u;
+/** The action id and the family, which every registration form carries first. */
+const REGISTRATION_ID_AND_FAMILY = /\b(?:E|R|Registration)\(\s*"([a-z][a-z0-9_]{1,127})",\s*"([a-z][a-z0-9_]{1,127})"/u;
 
 function fail(code) {
   throw new Error(`stardew_published_action_registry_${code}`);
@@ -45,38 +61,20 @@ export const GATE_EXEMPT_PUBLISHED_ACTIONS = Object.freeze([
  * gate descriptor coverage. It never publishes capabilities or affects routing.
  */
 export async function readPublishedStardewActionIds({
-  registrationsPath = resolve(
-    root,
-    "integrations",
-    "stardew",
-    "src",
-    "Core",
-    "Policy",
-    "FarmhandActionDefinitions.cs",
-  ),
+  registrationsPath = REGISTRATIONS_PATH,
   /**
    * Whether to also verify the exemption list against this source. The
    * exemptions name actions in the real Mod registry, so they are only
    * meaningful when reading that registry; a synthetic source passed to
    * exercise the parser carries no exemption obligations.
    */
-  enforceGateExemptions = registrationsPath === resolve(
-    root,
-    "integrations",
-    "stardew",
-    "src",
-    "Core",
-    "Policy",
-    "FarmhandActionDefinitions.cs",
-  ),
+  enforceGateExemptions = registrationsPath === REGISTRATIONS_PATH,
 } = {}) {
   const source = await readFile(registrationsPath, "utf8");
-  const body = source.match(
-    /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/,
-  )?.[1];
+  const body = source.match(REGISTRATIONS_BODY)?.[1];
   if (!body) fail("missing_mod_registrations");
 
-  const entries = body.split(/(?=\b(?:E|R|Registration)\()/);
+  const entries = body.split(REGISTRATION_ENTRY);
   const publishedIds = [];
   const exempted = [];
 
@@ -95,14 +93,11 @@ export async function readPublishedStardewActionIds({
   // The exemption must match reality: an entry that no longer exists, or one
   // that has become experimental, is a stale carve-out and must be removed.
   if (enforceGateExemptions) {
-    const stale = GATE_EXEMPT_PUBLISHED_ACTIONS.map((entry) => entry.actionId).filter(
-      (id) => !exempted.includes(id),
-    );
+    const stale = GATE_EXEMPT_PUBLISHED_ACTIONS.map((entry) => entry.actionId).filter((id) => !exempted.includes(id));
     if (stale.length > 0) fail(`stale_gate_exemptions:${stale.join(",")}`);
   }
 
-  if (publishedIds.length === 0 || new Set(publishedIds).size !== publishedIds.length)
-    fail("invalid_published_set");
+  if (publishedIds.length === 0 || new Set(publishedIds).size !== publishedIds.length) fail("invalid_published_set");
   return Object.freeze(publishedIds);
 }
 
@@ -131,25 +126,13 @@ export async function readAllPublishedExecutionStardewActionIds(options) {
  * Reading the catalog keeps the list from going stale the way the hand-written
  * one did (all 17 of its entries had been promoted before anyone noticed).
  */
-export async function readExperimentalStardewActionIds({
-  registrationsPath = resolve(
-    root,
-    "integrations",
-    "stardew",
-    "src",
-    "Core",
-    "Policy",
-    "FarmhandActionDefinitions.cs",
-  ),
-} = {}) {
+export async function readExperimentalStardewActionIds({ registrationsPath = REGISTRATIONS_PATH } = {}) {
   const source = await readFile(registrationsPath, "utf8");
-  const body = source.match(
-    /\bRegistrations\b\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/,
-  )?.[1];
+  const body = source.match(REGISTRATIONS_BODY)?.[1];
   if (!body) fail("missing_mod_registrations");
 
   const ids = [];
-  for (const entry of body.split(/(?=\b(?:E|R|Registration)\()/)) {
+  for (const entry of body.split(REGISTRATION_ENTRY)) {
     const match = entry.match(/\b(?:E|Registration)\(\s*"([a-z][a-z0-9_]{1,127})"/);
     if (!match) continue;
     if (!entry.includes("FarmhandActionLifecycle.Experimental")) continue;
@@ -161,4 +144,37 @@ export async function readExperimentalStardewActionIds({
   // push-only policy: every promoted action removes itself here.
   if (new Set(ids).size !== ids.length) fail("invalid_experimental_set");
   return Object.freeze(ids);
+}
+
+/**
+ * The family the Mod's own registration catalog declares for every registered action.
+ *
+ * `host/src/games/stardew/stardew-action-families.ts` names this file as the authority for the
+ * family vocabulary, and the Mod refuses a WHOLE action policy that names a family it does not
+ * define (`ActionPolicyEngine.ValidateActionPolicy`) - so a reader that guessed a family would be
+ * wrong about more than a label. This one reads the declaration itself.
+ *
+ * It is a separate reader from `readPublishedStardewActionIds` because it answers a different
+ * question. That one asks what is published and therefore skips `Experimental`; this one must also
+ * place the experimental registrations, because the daily-task sweep has to account for every
+ * published action including the ones a run cannot yet dispatch. It also sees the read-only `R(id,
+ * family)` registrations, which the published reader deliberately skips.
+ *
+ * Synchronous, because its caller (`tools/lib/multiday-daily-tasks.mjs`) builds the task rotation at
+ * module load. A missing or unparsable catalog throws rather than returning an empty map: an empty
+ * map would silently produce a rotation with no sweep tasks.
+ */
+export function readStardewActionFamilies({ registrationsPath = REGISTRATIONS_PATH } = {}) {
+  const source = readFileSync(registrationsPath, "utf8");
+  const body = source.match(REGISTRATIONS_BODY)?.[1];
+  if (!body) fail("missing_mod_registrations");
+
+  const families = new Map();
+  for (const entry of body.split(REGISTRATION_ENTRY)) {
+    const match = entry.match(REGISTRATION_ID_AND_FAMILY);
+    if (match === null) continue;
+    families.set(match[1], match[2]);
+  }
+  if (families.size === 0) fail("invalid_family_set");
+  return families;
 }

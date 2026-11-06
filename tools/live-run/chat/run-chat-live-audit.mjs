@@ -65,6 +65,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+import { classifyFailure } from "../../lib/failure-dump.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 // The session-record parse has ONE spelling, shared with `tools/perf/report-run-cost.mjs`: a second copy of it would
 // quote different tokens for the same run the day either learns a new usage field.
@@ -316,10 +317,14 @@ export async function prepareReportTarget(path) {
   return join(canonicalParent, basename(path));
 }
 
-function safeReasonCode(error) {
-  const value = error instanceof Error ? error.message : String(error);
-  return /^[a-z0-9_:.-]{1,160}$/i.test(value) ? value : "chat_audit_runner_internal_error";
-}
+/**
+ * A thrown error's CODE, from the one classifier the Game runner also uses (`tools/lib/failure-dump.mjs`).
+ *
+ * What stood here was a shape test over the message (`/^[a-z0-9_:.-]{1,160}$/`), which accepted any runtime message
+ * that happened to contain no spaces: that is not a closed vocabulary, it is a message that got lucky. A Chat run and a
+ * Game run now spell a thrown error's outcome the same way, and the message itself stays out of the code.
+ */
+const failureCode = (error) => classifyFailure(error).reasonCode;
 
 // ── Run admission: what a Chat run refuses BEFORE it launches anything ──
 //
@@ -787,7 +792,7 @@ export async function admitWireCaptureRun({ runtimeRoot, agentDir, stub, env = p
     return Object.freeze({
       ok: false,
       stage: "wire_connection_failed",
-      refusal: `wire_capture_connection_failed:${safeReasonCode(error)}`,
+      refusal: `wire_capture_connection_failed:${failureCode(error)}`,
       readiness: null,
     });
   }
@@ -1413,7 +1418,7 @@ export function classifyStartupStderr(stderr) {
 }
 
 export function classifyStartupFailure(error, stderr) {
-  const reason = safeReasonCode(error);
+  const reason = failureCode(error);
   if (!reason.startsWith("dialogue_exited_before_ready:") && reason !== "dialogue_start_timeout") return reason;
   return classifyStartupStderr(stderr) ?? reason;
 }
@@ -1978,7 +1983,7 @@ export async function openBrowserHalf({ launchUrl, origin, environment }) {
     body = await response.json().catch(() => undefined);
     if (!response.ok) return skip(`browser_session_state_read_failed:${response.status}`);
   } catch (error) {
-    return skip(`browser_session_state_unreachable:${safeReasonCode(error)}`);
+    return skip(`browser_session_state_unreachable:${failureCode(error)}`);
   }
   const csrf = body?.csrfToken ?? body?.chat?.csrfToken;
   if (typeof csrf !== "string" || csrf.length === 0) return skip("browser_session_csrf_absent");
@@ -2024,7 +2029,7 @@ async function captureBrowserEvidence({ session, origin, client, environment }) 
   ]) {
     const shot = await session
       .screenshot(join(shotsDir, name), { fullPage })
-      .catch((error) => ({ ok: false, reason: safeReasonCode(error) }));
+      .catch((error) => ({ ok: false, reason: failureCode(error) }));
     if (shot.ok === true) shots.push({ label, path: shot.path, fullPage });
   }
   environment.browserEvidence = Object.freeze({
@@ -2482,7 +2487,7 @@ export function readRunUsage({ personaCwd }) {
   try {
     ({ usages } = readUsages(sessionRecord));
   } catch (error) {
-    return unobserved(`session_record_unreadable:${safeReasonCode(error)}`, sessionRecord);
+    return unobserved(`session_record_unreadable:${failureCode(error)}`, sessionRecord);
   }
   // A record holding no provider turn is unobserved too: there is no number to publish, and a zero would be a
   // measurement nobody took.
@@ -2585,9 +2590,9 @@ export async function main(argv = process.argv.slice(2)) {
     try {
       probeManifest = loadProbeManifest(await readFile(parsed.probeManifestPath, "utf8"));
     } catch (error) {
-      console.error(
-        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
-      );
+      // The classified record, not just its code: a blocked run has to name what threw and where, or the artifact
+      // cannot be diagnosed. `...thrown` is the same shape the Game runner's failure record publishes.
+      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", ...classifyFailure(error) }));
       return 2;
     }
   }
@@ -2630,7 +2635,7 @@ export async function main(argv = process.argv.slice(2)) {
     admission = Object.freeze({
       ok: false,
       stage: "admission_failed",
-      refusal: safeReasonCode(error),
+      refusal: failureCode(error),
       readiness: null,
     });
   }
@@ -2695,7 +2700,7 @@ export async function main(argv = process.argv.slice(2)) {
   // it observed, and this only supplies a boundary reason for a run that could
   // not start at all.
   process.on("unhandledRejection", (reason) => {
-    environment.boundaryReason ??= safeReasonCode(reason);
+    environment.boundaryReason ??= failureCode(reason);
   });
   let child;
   let launch;
@@ -2713,7 +2718,7 @@ export async function main(argv = process.argv.slice(2)) {
       probeManifest,
     });
   } catch (error) {
-    environment.boundaryReason ??= safeReasonCode(error);
+    environment.boundaryReason ??= failureCode(error);
   } finally {
     await stop(child).catch(() => undefined);
     launch?.dispose();
@@ -2888,9 +2893,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = code;
     })
     .catch((error) => {
-      console.error(
-        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
-      );
+      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", ...classifyFailure(error) }));
       process.exitCode = 2;
     });
 }

@@ -156,6 +156,24 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["friendship_callback", "true"],
     ],
   },
+  pet_farm_animal: {
+    reasonCode: "farm_animal_petted",
+    fields: [
+      ["location", "Barn"],
+      ["target", "farm_animal_0123456789abcdef"],
+      ["animal", "41"],
+      ["type", "White Chicken"],
+      ["tile", "4,5"],
+      ["friendship_before", "120"],
+      ["friendship_after", "135"],
+      ["friendship_floor", "135"],
+      ["happiness_before", "60"],
+      ["happiness_after", "90"],
+      ["was_auto_pet_before", "false"],
+      ["was_pet", "true"],
+      ["time_of_day", "900"],
+    ],
+  },
   sleep: {
     reasonCode: "day_advanced",
     // The producer's own shape, duplicate `topology` included: the base list
