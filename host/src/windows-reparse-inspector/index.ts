@@ -37,13 +37,17 @@ export type WindowsPathObjectIdentity = Readonly<{
   fileId: string;
 }>;
 
-export type WindowsPathSecurity = Readonly<WindowsPathObjectIdentity & {
-  currentUserOwner: boolean;
-}>;
+export type WindowsPathSecurity = Readonly<
+  WindowsPathObjectIdentity & {
+    currentUserOwner: boolean;
+  }
+>;
 
 /** Mints the build-only capability from the sole repository-relative helper pair. */
 async function createBuildWindowsReparseInspector(): Promise<WindowsReparseInspectorCapability> {
-  return await createFixedInspector(resolve(repositoryRoot, "host", "native", "windows-reparse-inspector", ".dist", rid));
+  return await createFixedInspector(
+    resolve(repositoryRoot, "host", "native", "windows-reparse-inspector", ".dist", rid),
+  );
 }
 
 /**
@@ -87,7 +91,7 @@ export async function assertNoWindowsReparse(
   capability: WindowsReparseInspectorCapability | undefined,
   absolutePath: string,
 ): Promise<void> {
-  if (await inspectWindowsReparse(capability, absolutePath) === "reparse") throw unavailable();
+  if ((await inspectWindowsReparse(capability, absolutePath)) === "reparse") throw unavailable();
 }
 
 /** Returns the strict handle-derived identity of one exact local-drive path object. */
@@ -118,8 +122,26 @@ export async function inspectWindowsPathSecurity(
     path: absolutePath,
   });
   const parsed = parseStrictJson(response);
-  if (!isRecord(parsed) || parsed.schemaVersion !== strictSecurityProtocolVersion || parsed.operation !== "inspect_path_security_v3" || parsed.status !== "ok") throw unavailable();
-  if (!exactKeys(parsed, ["schemaVersion", "operation", "status", "objectKind", "isReparsePoint", "currentUserOwner", "volumeIdentity", "fileId"])) throw unavailable();
+  if (
+    !isRecord(parsed) ||
+    parsed.schemaVersion !== strictSecurityProtocolVersion ||
+    parsed.operation !== "inspect_path_security_v3" ||
+    parsed.status !== "ok"
+  )
+    throw unavailable();
+  if (
+    !exactKeys(parsed, [
+      "schemaVersion",
+      "operation",
+      "status",
+      "objectKind",
+      "isReparsePoint",
+      "currentUserOwner",
+      "volumeIdentity",
+      "fileId",
+    ])
+  )
+    throw unavailable();
   if (typeof parsed.currentUserOwner !== "boolean") throw unavailable();
   return Object.freeze({
     ...parseIdentityObject({
@@ -147,12 +169,28 @@ export async function inspectWindowsPathIdentityChain(
     path: absolutePath,
   });
   const value = parseStrictJson(response);
-  if (!isRecord(value) || !exactKeys(value, ["schemaVersion", "operation", "status", "components"])) throw unavailable();
-  if (value.schemaVersion !== strictIdentityProtocolVersion || value.operation !== "inspect_path_chain_v2" || value.status !== "ok" || !Array.isArray(value.components)) throw unavailable();
-  if (value.components.length !== expectedCount || value.components.length === 0 || value.components.length > maximumChainComponents) throw unavailable();
+  if (!isRecord(value) || !exactKeys(value, ["schemaVersion", "operation", "status", "components"]))
+    throw unavailable();
+  if (
+    value.schemaVersion !== strictIdentityProtocolVersion ||
+    value.operation !== "inspect_path_chain_v2" ||
+    value.status !== "ok" ||
+    !Array.isArray(value.components)
+  )
+    throw unavailable();
+  if (
+    value.components.length !== expectedCount ||
+    value.components.length === 0 ||
+    value.components.length > maximumChainComponents
+  )
+    throw unavailable();
   const components = value.components.map(parseIdentityObject);
   const leafVolumeIdentity = components.at(-1)?.volumeIdentity;
-  if (leafVolumeIdentity === undefined || components.some((component) => component.volumeIdentity !== leafVolumeIdentity)) throw unavailable();
+  if (
+    leafVolumeIdentity === undefined ||
+    components.some((component) => component.volumeIdentity !== leafVolumeIdentity)
+  )
+    throw unavailable();
   for (let index = 0; index < components.length - 1; index++) {
     if (components[index]?.objectKind !== "directory") throw unavailable();
   }
@@ -169,7 +207,13 @@ async function createFixedInspector(pairRoot: string): Promise<WindowsReparseIns
     lstat(executable).catch(() => undefined),
     lstat(manifest).catch(() => undefined),
   ]);
-  if (!binaryState?.isFile() || binaryState.isSymbolicLink() || !manifestState?.isFile() || manifestState.isSymbolicLink()) throw unavailable();
+  if (
+    !binaryState?.isFile() ||
+    binaryState.isSymbolicLink() ||
+    !manifestState?.isFile() ||
+    manifestState.isSymbolicLink()
+  )
+    throw unavailable();
   let rawManifest: Buffer;
   let binary: Buffer;
   try {
@@ -337,8 +381,25 @@ async function invokeHelper(state: InspectorState, requestValue: object): Promis
 
 function parseIdentityResponse(value: Buffer, operation: "inspect_identity_v2"): WindowsPathObjectIdentity {
   const parsed = parseStrictJson(value);
-  if (!isRecord(parsed) || parsed.schemaVersion !== strictIdentityProtocolVersion || parsed.operation !== operation || parsed.status !== "ok") throw unavailable();
-  if (!exactKeys(parsed, ["schemaVersion", "operation", "status", "objectKind", "isReparsePoint", "volumeIdentity", "fileId"])) throw unavailable();
+  if (
+    !isRecord(parsed) ||
+    parsed.schemaVersion !== strictIdentityProtocolVersion ||
+    parsed.operation !== operation ||
+    parsed.status !== "ok"
+  )
+    throw unavailable();
+  if (
+    !exactKeys(parsed, [
+      "schemaVersion",
+      "operation",
+      "status",
+      "objectKind",
+      "isReparsePoint",
+      "volumeIdentity",
+      "fileId",
+    ])
+  )
+    throw unavailable();
   return parseIdentityObject({
     objectKind: parsed.objectKind,
     isReparsePoint: parsed.isReparsePoint,
@@ -348,9 +409,20 @@ function parseIdentityResponse(value: Buffer, operation: "inspect_identity_v2"):
 }
 
 function parseIdentityObject(value: unknown): WindowsPathObjectIdentity {
-  if (!isRecord(value) || !exactKeys(value, ["objectKind", "isReparsePoint", "volumeIdentity", "fileId"])) throw unavailable();
-  if ((value.objectKind !== "directory" && value.objectKind !== "regular_file") || typeof value.isReparsePoint !== "boolean") throw unavailable();
-  if (typeof value.volumeIdentity !== "string" || !hex64.test(value.volumeIdentity) || typeof value.fileId !== "string" || !hex128.test(value.fileId)) throw unavailable();
+  if (!isRecord(value) || !exactKeys(value, ["objectKind", "isReparsePoint", "volumeIdentity", "fileId"]))
+    throw unavailable();
+  if (
+    (value.objectKind !== "directory" && value.objectKind !== "regular_file") ||
+    typeof value.isReparsePoint !== "boolean"
+  )
+    throw unavailable();
+  if (
+    typeof value.volumeIdentity !== "string" ||
+    !hex64.test(value.volumeIdentity) ||
+    typeof value.fileId !== "string" ||
+    !hex128.test(value.fileId)
+  )
+    throw unavailable();
   return Object.freeze({
     objectKind: value.objectKind,
     isReparsePoint: value.isReparsePoint,
@@ -366,7 +438,8 @@ function parseStrictJson(value: Buffer): unknown {
   } catch {
     throw unavailable();
   }
-  if (!text.endsWith("\n") || text.slice(0, -1).includes("\n") || text.includes("\r") || text.charCodeAt(0) === 0xfeff) throw unavailable();
+  if (!text.endsWith("\n") || text.slice(0, -1).includes("\n") || text.includes("\r") || text.charCodeAt(0) === 0xfeff)
+    throw unavailable();
   const json = text.slice(0, -1);
   try {
     const parsed = JSON.parse(json) as unknown;
@@ -388,12 +461,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function assertStrictWindowsDrivePath(value: string): void {
   if (process.platform !== "win32") throw unavailable();
-  if (value.length === 0 || value.length > 32 * 1024 || !/^[A-Za-z]:\\/.test(value) || value.startsWith("\\\\")) throw unavailable();
+  if (value.length === 0 || value.length > 32 * 1024 || !/^[A-Za-z]:\\/.test(value) || value.startsWith("\\\\"))
+    throw unavailable();
   if (strictWindowsDriveRoot.test(value)) return;
   const components = value.slice(3).split("\\");
   if (components.length === 0 || components.length > maximumChainComponents - 1) throw unavailable();
   for (const component of components) {
-    if (component.length === 0 || component === "." || component === ".." || /[\\/:*?<>"\u0000]/.test(component)) throw unavailable();
+    if (component.length === 0 || component === "." || component === ".." || /[\\/:*?<>"\u0000]/.test(component))
+      throw unavailable();
   }
 }
 
@@ -407,9 +482,10 @@ function productionSpawn(command: string, args: readonly string[]): ChildProcess
   // CreateProcessW rejects them with ENOENT. Prefix with the extended-length
   // marker so Node can spawn the helper.
   const marker = String.fromCharCode(92, 92, 63, 92);
-  const extended = process.platform === "win32" && isAbsolute(command) && command.length >= 240 && !command.startsWith(marker)
-    ? marker + command
-    : command;
+  const extended =
+    process.platform === "win32" && isAbsolute(command) && command.length >= 240 && !command.startsWith(marker)
+      ? marker + command
+      : command;
   return spawn(extended, [...args], { shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
 }
 

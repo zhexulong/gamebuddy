@@ -99,7 +99,13 @@ function launcher(): TestLauncher {
       capabilities: ["activate"],
       capabilityRevision: 1,
       registrations: [
-        { actionId: "activate", familyId: "interaction", identityVersion: 1, lifecycle: "published", kind: "execution" },
+        {
+          actionId: "activate",
+          familyId: "interaction",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
       ],
       snapshotRevision: 1,
       activeExecution: null,

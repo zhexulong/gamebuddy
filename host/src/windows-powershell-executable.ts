@@ -18,9 +18,7 @@ import { join } from "node:path";
  * it there is no safe guess and callers must fail with their own bounded code
  * rather than silently falling back to PATH.
  */
-export function resolveWindowsPowerShell(
-  environment: NodeJS.ProcessEnv = process.env,
-): string | undefined {
+export function resolveWindowsPowerShell(environment: NodeJS.ProcessEnv = process.env): string | undefined {
   const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT ?? environment.windir;
   if (typeof systemRoot !== "string" || systemRoot.length === 0) return undefined;
   return join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");

@@ -13,7 +13,10 @@ test("a killed execFile is a timeout", () => {
 });
 
 test("a missing executable is named as such rather than as a generic failure", () => {
-  assert.equal(describeOwnerIdentityQueryFailure(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" })), "no_executable");
+  assert.equal(
+    describeOwnerIdentityQueryFailure(Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" })),
+    "no_executable",
+  );
 });
 
 test("PowerShell stderr is carried, flattened and bounded", () => {

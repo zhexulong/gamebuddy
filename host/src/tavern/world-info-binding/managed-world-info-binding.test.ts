@@ -8,7 +8,15 @@ import { createManagedWorldInfoBindingResolver } from "./managed-world-info-bind
 const first = {
   publicTitle: "Pelican Town",
   summary: "A small valley town.",
-  entries: [{ scope: "setting" as const, publicTitle: "Square", summary: "Town center.", keys: ["square", "town"], constant: true }],
+  entries: [
+    {
+      scope: "setting" as const,
+      publicTitle: "Square",
+      summary: "Town center.",
+      keys: ["square", "town"],
+      constant: true,
+    },
+  ],
 };
 
 test("managed resolver binds the exact immutable revision and never re-resolves as latest", async () => {

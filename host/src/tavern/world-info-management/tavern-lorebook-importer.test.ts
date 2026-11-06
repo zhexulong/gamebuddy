@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  cleanLorebookText,
-  importTavernLorebook,
-  keysFromTitle,
-} from "./tavern-lorebook-importer.js";
+import { cleanLorebookText, importTavernLorebook, keysFromTitle } from "./tavern-lorebook-importer.js";
 import { createWorldInfoManagementRepository, type WorldInfoManagementRepository } from "./world-info-management.js";
 import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
 import { rm } from "node:fs/promises";
@@ -41,7 +37,7 @@ test("cleanLorebookText cannot be bypassed into tag or comment morphology", () =
   // (`</script >`), and a comment may sit inside what a regex sees as a tag.
   const bypassShapes = [
     "<scr<script>ipt>",
-    "<scr<script>ipt>alert(\"xss\")",
+    '<scr<script>ipt>alert("xss")',
     "</script >",
     "<scr<!-- -->ipt>",
     "<scr<!-- -->ipt",

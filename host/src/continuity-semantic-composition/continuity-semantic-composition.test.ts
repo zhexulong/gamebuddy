@@ -157,7 +157,10 @@ test(
 
       const reopened = await createInitialChatResumeSemanticProductionAuthorityFromDeploymentManifest(manifest);
       try {
-        await assert.rejects(reopened.resumeInitialChatWithContent(content.port), /tavern_exact_content_receipt_mismatch/);
+        await assert.rejects(
+          reopened.resumeInitialChatWithContent(content.port),
+          /tavern_exact_content_receipt_mismatch/,
+        );
         assert.equal((await reopened.resumeInitialChat())?.phase, "content_verified");
       } finally {
         await reopened.close();

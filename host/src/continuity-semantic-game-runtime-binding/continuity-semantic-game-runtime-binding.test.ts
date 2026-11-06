@@ -83,7 +83,15 @@ function fixture(
       sessionId: "session_01",
       capabilities: ["activate"],
       capabilityRevision: 1,
-      registrations: [{ actionId: "activate", familyId: "interaction", identityVersion: 1, lifecycle: "published", kind: "execution" }],
+      registrations: [
+        {
+          actionId: "activate",
+          familyId: "interaction",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
       catalogRevision: 1,
       enabledActionIds: ["activate"],
       snapshotRevision: 1,
@@ -635,8 +643,16 @@ test("creates one exact stable Stardew recovery identity from actual receipt-bac
     t.skip("receipt-backed runtime binding requires Windows owner identity");
     return;
   }
-  const firstFixture = fixture(() => undefined, () => undefined, "stardew");
-  const secondFixture = fixture(() => undefined, () => undefined, "stardew");
+  const firstFixture = fixture(
+    () => undefined,
+    () => undefined,
+    "stardew",
+  );
+  const secondFixture = fixture(
+    () => undefined,
+    () => undefined,
+    "stardew",
+  );
   const firstBinding = await createGameRuntimeBindingFromReceiptBackedLaunch(
     Object.freeze({
       manifest: await manifest(),
@@ -680,10 +696,26 @@ test("binds Stardew recovery context only to a branded receipt-backed execution"
     t.skip("receipt-backed runtime binding requires Windows owner identity");
     return;
   }
-  const current = fixture(() => undefined, () => undefined, "stardew");
+  const current = fixture(
+    () => undefined,
+    () => undefined,
+    "stardew",
+  );
   const receiptRecovery = Object.freeze({
-    scope: Object.freeze({ product: "stardew" as const, continuityId: "continuity_01", integrationId: "stardew" as const, saveId: "save_01", worldId: "world_01" }),
-    bindingIdentity: Object.freeze({ product: "stardew" as const, continuityId: "continuity_01", integrationId: "stardew" as const, saveId: "save_01", worldId: "world_01" }),
+    scope: Object.freeze({
+      product: "stardew" as const,
+      continuityId: "continuity_01",
+      integrationId: "stardew" as const,
+      saveId: "save_01",
+      worldId: "world_01",
+    }),
+    bindingIdentity: Object.freeze({
+      product: "stardew" as const,
+      continuityId: "continuity_01",
+      integrationId: "stardew" as const,
+      saveId: "save_01",
+      worldId: "world_01",
+    }),
     queryExecutionReceipt: async () => {
       throw new Error("fixture receipt recovery is not invoked");
     },
@@ -720,7 +752,11 @@ test("rejects arbitrary frozen matching tuples and forged execution lookalikes",
   });
   assert.throws(() => createStableGameRuntimeBindingIdentity(source as never), /execution/);
 
-  const executionPrincipal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
+  const executionPrincipal = Object.freeze({
+    continuityId: "continuity_01",
+    companionId: "companion_01",
+    playerId: "player_01",
+  });
   const executionWorld = Object.freeze({ integrationId: "stardew", saveId: "save_01", worldId: "world_01" });
   const ownerIdentity = brandRuntimeOwnerIdentity({ processId: 1, creationTime100ns: "1" });
   const execution = Object.freeze({
@@ -736,13 +772,15 @@ test("rejects arbitrary frozen matching tuples and forged execution lookalikes",
   assert.throws(() => createStableGameRuntimeBindingIdentity(execution as never), /execution/);
 });
 
-
 test("receipt-backed binding rejects a non-Stardew execution", async (t) => {
   if (process.platform !== "win32") {
     t.skip("receipt-backed runtime binding requires Windows owner identity");
     return;
   }
-  const arcadeFixture = fixture(() => undefined, () => undefined);
+  const arcadeFixture = fixture(
+    () => undefined,
+    () => undefined,
+  );
   const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(
     Object.freeze({
       manifest: await manifest(),

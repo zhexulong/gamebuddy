@@ -6,7 +6,6 @@ import {
   materializeExactChatRuntime,
 } from "./continuity-semantic-chat-runtime-materializer.internal.js";
 
-
 export function createTestChatRuntimeMaterializer(
   factory: (
     input: Readonly<{

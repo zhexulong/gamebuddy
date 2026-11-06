@@ -153,7 +153,14 @@ export class LocalVoiceGatewayClient implements VoiceSpeechPort {
   #trackVoiceSurface(value: VoiceGatewayEventV2): void {
     if (value.type !== "playback_observation") return;
     const status = value.terminalStatus;
-    if (status === "completed" || status === "cancelled" || status === "failed_before_side_effect" || status === "not_accepted" || status === "unknown_after_admission" || status === "quarantined") {
+    if (
+      status === "completed" ||
+      status === "cancelled" ||
+      status === "failed_before_side_effect" ||
+      status === "not_accepted" ||
+      status === "unknown_after_admission" ||
+      status === "quarantined"
+    ) {
       if (this.#surfaceActiveJobs > 0) this.#surfaceActiveJobs -= 1;
     }
   }

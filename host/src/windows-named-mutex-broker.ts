@@ -399,8 +399,7 @@ export class WindowsNamedMutexBroker {
     // exceeds it) would otherwise fail the launch and surface as an
     // unattributable `windows_named_mutex_broker_exit`.
     const powershell = resolvePowershellExecutable();
-    if (powershell === undefined)
-      throw new WindowsNamedMutexBrokerError("windows_named_mutex_powershell_unavailable");
+    if (powershell === undefined) throw new WindowsNamedMutexBrokerError("windows_named_mutex_powershell_unavailable");
     let sidecarDiagnostic = "";
     const child = spawn(
       powershell,
@@ -413,8 +412,7 @@ export class WindowsNamedMutexBroker {
     // only ever observed the generic exit code.
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
-      if (sidecarDiagnostic.length < MAX_SIDECAR_STDERR_BYTES)
-        sidecarDiagnostic = `${sidecarDiagnostic}${chunk}`;
+      if (sidecarDiagnostic.length < MAX_SIDECAR_STDERR_BYTES) sidecarDiagnostic = `${sidecarDiagnostic}${chunk}`;
     });
     createInterface({ input: child.stdout, crlfDelay: Infinity, terminal: false }).on("line", (line) =>
       this.handleLine(line),

@@ -9,10 +9,7 @@ import {
 import { assertReceiptBackedLaunch, type IntegrationLaunchHandle } from "../integration-launcher.js";
 import type { IntegrationWorldScope } from "../game-integration-adapter.js";
 import type { CompanionIdentity } from "../runtime.js";
-import type {
-  ExecutionReceipt,
-  ExecutionReceiptQuery,
-} from "../protocol.js";
+import type { ExecutionReceipt, ExecutionReceiptQuery } from "../protocol.js";
 import { isExactReceiptRecoveryPort } from "../stardew-execution-recovery-supervisor.js";
 import type { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import {
@@ -58,7 +55,6 @@ export type StardewRecoveryBindingContextRecord = Readonly<{
 }>;
 const recoveryContextBrand = new WeakSet<object>();
 const recoveryContextRecords = new WeakMap<object, StardewRecoveryBindingContextRecord>();
-
 
 export { createWindowsRuntimeOwnerIdentityPort } from "./continuity-semantic-game-runtime-binding.windows-owner-identity.js";
 
@@ -283,16 +279,20 @@ export function createStardewRecoveryBindingContext(
   if (
     !sameStableIdentity(receiptRecovery.scope, identity) ||
     !sameStableIdentity(receiptRecovery.bindingIdentity, identity)
-  ) throw new Error("invalid_stardew_recovery_binding_context");
+  )
+    throw new Error("invalid_stardew_recovery_binding_context");
   const context = Object.freeze(Object.create(null)) as StardewRecoveryBindingContext;
   recoveryContextBrand.add(context);
-  recoveryContextRecords.set(context, Object.freeze({
-    journal,
-    identity,
-    scope: receiptRecovery.scope,
-    bindingIdentity: receiptRecovery.bindingIdentity,
-    queryExecutionReceipt: receiptRecovery.queryExecutionReceipt,
-  }));
+  recoveryContextRecords.set(
+    context,
+    Object.freeze({
+      journal,
+      identity,
+      scope: receiptRecovery.scope,
+      bindingIdentity: receiptRecovery.bindingIdentity,
+      queryExecutionReceipt: receiptRecovery.queryExecutionReceipt,
+    }),
+  );
   return context;
 }
 
@@ -304,7 +304,6 @@ export function readStardewRecoveryBindingContext(value: unknown): StardewRecove
   if (record === undefined) throw new Error("invalid_stardew_recovery_binding_context");
   return record;
 }
-
 
 /** Validates the exact durable identity shape without admitting runtime facts. */
 export function assertStableGameRuntimeBindingIdentity(
@@ -331,7 +330,6 @@ function sameStableIdentity(left: StableGameRuntimeBindingIdentity, right: Stabl
     left.worldId === right.worldId
   );
 }
-
 
 function exactWorldScope(
   value: unknown,

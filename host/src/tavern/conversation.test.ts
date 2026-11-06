@@ -70,7 +70,12 @@ test("Tavern conversation explicitly creates a blank exact-surface thread and du
       return state;
     },
   };
-  const creation: ProfileAwareChatThreadCreationCapability = { createExplicit: async (request) => { calls.push(`create:${request.opening}`); return state; } };
+  const creation: ProfileAwareChatThreadCreationCapability = {
+    createExplicit: async (request) => {
+      calls.push(`create:${request.opening}`);
+      return state;
+    },
+  };
   const conversation = await createTavernConversation(store, binding, creation);
   await conversation.appendPlayer({ messageId: "player_01", text: "Hello", occurredAtMs: 2 });
   await conversation.commitResponse(
@@ -274,7 +279,12 @@ test("semantic content port returns an immutable exact receipt only after durabl
       return state;
     },
   };
-  const creation: ProfileAwareChatThreadCreationCapability = { createExplicit: async (request) => { calls.push(`create:${request.chatThreadId}`); return state; } };
+  const creation: ProfileAwareChatThreadCreationCapability = {
+    createExplicit: async (request) => {
+      calls.push(`create:${request.chatThreadId}`);
+      return state;
+    },
+  };
   const port = createTavernSemanticChatContentPort(store, creation);
   const opened = await port.createExplicit(binding);
   const canonicalBinding = JSON.stringify({
@@ -335,7 +345,12 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(existing, { createExplicit: async () => { throw new Error("chat_thread_already_exists"); } }).createExplicit(binding),
+    () =>
+      createTavernSemanticChatContentPort(existing, {
+        createExplicit: async () => {
+          throw new Error("chat_thread_already_exists");
+        },
+      }).createExplicit(binding),
     (error: unknown) =>
       error instanceof TavernExactContentError && error.code === "tavern_exact_content_already_exists",
   );
@@ -361,11 +376,21 @@ test("semantic content port classifies exact missing and existing without confla
     },
   };
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(unavailable, { createExplicit: async () => { throw new Error("storage_unavailable"); } }).resumeExact(binding),
+    () =>
+      createTavernSemanticChatContentPort(unavailable, {
+        createExplicit: async () => {
+          throw new Error("storage_unavailable");
+        },
+      }).resumeExact(binding),
     /storage_unavailable/,
   );
   await assert.rejects(
-    () => createTavernSemanticChatContentPort(unavailable, { createExplicit: async () => { throw new Error("storage_unavailable"); } }).createExplicit(binding),
+    () =>
+      createTavernSemanticChatContentPort(unavailable, {
+        createExplicit: async () => {
+          throw new Error("storage_unavailable");
+        },
+      }).createExplicit(binding),
     /storage_unavailable/,
   );
 });

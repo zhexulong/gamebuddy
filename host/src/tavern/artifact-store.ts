@@ -151,7 +151,9 @@ export class TavernArtifactStore {
         if (latest === undefined && expectedRevision === 0) {
           if (buildNext(1).revision !== 1) throw options.invalidArtifact();
           try {
-            return options.project((await store.write(revisionPath(1), buildNext(1), options.validateArtifact)).artifact);
+            return options.project(
+              (await store.write(revisionPath(1), buildNext(1), options.validateArtifact)).artifact,
+            );
           } catch (error) {
             if (error instanceof TavernRevisionConflict) throw options.conflict();
             throw error;

@@ -50,7 +50,11 @@ async function capability() {
       return () => now++;
     })(),
   );
-  const reader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } };
+  const reader = {
+    async readExact() {
+      return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  };
   const creation = createProfileAwareChatThreadCreationCapability(store, reader);
   return { root, store, creation, capability: createInitialChatExactContentCapability(store, reader) };
 }
@@ -76,7 +80,11 @@ function durableDatabasePath(root: string): string {
  */
 function reopen(root: string) {
   const store = createChatThreadStore(root, "a".repeat(64), () => 10);
-  const reader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } };
+  const reader = {
+    async readExact() {
+      return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  };
   return { store, port: createInitialChatExactContentPort(createInitialChatExactContentCapability(store, reader)) };
 }
 async function assertNoDurableThreadArtifacts(root: string, rejectedResult: unknown): Promise<void> {
@@ -201,7 +209,12 @@ test("collision does not fall back and broad not-found Error text cannot create"
       // answer that lets a caller create new content over the damage.
       await assert.rejects(
         () =>
-          reopened.port.resumeExact(missing.chatThreadId, missing.companionId, missing.continuityId, missing.chatSurfaceSessionId),
+          reopened.port.resumeExact(
+            missing.chatThreadId,
+            missing.companionId,
+            missing.continuityId,
+            missing.chatSurfaceSessionId,
+          ),
         (error: unknown) =>
           !expectCode("chat_thread_not_found")(error) && /(?:sqlite|database|malformed)/i.test(String(error)),
       );
@@ -256,7 +269,11 @@ test("genuine stores reject proxy and spread clones without durable artifacts or
     for (const candidate of [new Proxy(fixture.store, {}), { ...fixture.store }]) {
       let rejectedResult: unknown;
       assert.throws(() => {
-        rejectedResult = createInitialChatExactContentCapability(candidate as never, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
+        rejectedResult = createInitialChatExactContentCapability(candidate as never, {
+          async readExact() {
+            return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+          },
+        });
       }, /untrusted_chat_thread_store/);
       await assertNoDurableThreadArtifacts(fixture.root, rejectedResult);
     }
@@ -301,7 +318,15 @@ test("fake stores, capabilities, and receipts are rejected", async () => {
     resumeExact: async () => ({ kind: "found", receipt: {} }),
     createExplicit: async () => ({ kind: "created" }),
   });
-  assert.throws(() => createInitialChatExactContentCapability(fake as never, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } }), /untrusted_chat_thread_store/);
+  assert.throws(
+    () =>
+      createInitialChatExactContentCapability(fake as never, {
+        async readExact() {
+          return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+        },
+      }),
+    /untrusted_chat_thread_store/,
+  );
   assert.throws(
     () => createInitialChatExactContentPort(fake as never),
     /untrusted_initial_chat_exact_content_capability/,

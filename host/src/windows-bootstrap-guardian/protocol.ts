@@ -1,8 +1,4 @@
-type WindowsBootstrapGuardianOperation =
-  | "arm_attempt"
-  | "launch_role"
-  | "contain_role"
-  | "recover_attempt";
+type WindowsBootstrapGuardianOperation = "arm_attempt" | "launch_role" | "contain_role" | "recover_attempt";
 type WindowsBootstrapGuardianRole = "player_host" | "ai_client";
 export type WindowsBootstrapGuardianCategory =
   | "armed"
@@ -20,9 +16,12 @@ type GuardianCorrelation = Readonly<{
 }>;
 
 export type ArmAttemptRequest = GuardianCorrelation & Readonly<{ operation: "arm_attempt" }>;
-export type LaunchRoleRequest = GuardianCorrelation & Readonly<{ operation: "launch_role"; role: WindowsBootstrapGuardianRole }>;
-export type ContainRoleRequest = GuardianCorrelation & Readonly<{ operation: "contain_role"; role: WindowsBootstrapGuardianRole }>;
-export type RecoverAttemptRequest = GuardianCorrelation & Readonly<{ operation: "recover_attempt"; recoveryInstanceId: string }>;
+export type LaunchRoleRequest = GuardianCorrelation &
+  Readonly<{ operation: "launch_role"; role: WindowsBootstrapGuardianRole }>;
+export type ContainRoleRequest = GuardianCorrelation &
+  Readonly<{ operation: "contain_role"; role: WindowsBootstrapGuardianRole }>;
+export type RecoverAttemptRequest = GuardianCorrelation &
+  Readonly<{ operation: "recover_attempt"; recoveryInstanceId: string }>;
 export type WindowsBootstrapGuardianRequest =
   | ArmAttemptRequest
   | LaunchRoleRequest
@@ -35,7 +34,10 @@ const EXACT_REQUEST_KEYS: ReadonlyMap<WindowsBootstrapGuardianOperation, readonl
   ["arm_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId"]],
   ["launch_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
   ["contain_role", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "role"]],
-  ["recover_attempt", ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"]],
+  [
+    "recover_attempt",
+    ["schemaVersion", "operation", "guardianInstanceId", "guardianEpoch", "attemptId", "recoveryInstanceId"],
+  ],
 ]);
 
 /** Validates and reconstructs the redacted Task 1 request. It grants no native
@@ -47,7 +49,8 @@ export function validateGuardianRequest(input: unknown): WindowsBootstrapGuardia
   const expectedKeys = EXACT_REQUEST_KEYS.get(operation as WindowsBootstrapGuardianOperation);
   if (expectedKeys === undefined) throw invalid();
   const ownKeys = Object.keys(input);
-  if (ownKeys.length !== expectedKeys.length || !expectedKeys.every((key) => Object.hasOwn(input, key))) throw invalid();
+  if (ownKeys.length !== expectedKeys.length || !expectedKeys.every((key) => Object.hasOwn(input, key)))
+    throw invalid();
   if (input.schemaVersion !== 1 || input.operation !== operation) throw invalid();
   const common = {
     schemaVersion: 1 as const,
@@ -56,15 +59,21 @@ export function validateGuardianRequest(input: unknown): WindowsBootstrapGuardia
     attemptId: validateOpaqueCorrelation(input.attemptId),
   };
   switch (operation) {
-    case "arm_attempt": return Object.freeze({ ...common, operation });
+    case "arm_attempt":
+      return Object.freeze({ ...common, operation });
     case "launch_role":
     case "contain_role": {
       if (input.role !== "player_host" && input.role !== "ai_client") throw invalid();
       return Object.freeze({ ...common, operation, role: input.role });
     }
     case "recover_attempt":
-      return Object.freeze({ ...common, operation, recoveryInstanceId: validateOpaqueCorrelation(input.recoveryInstanceId) });
-    default: throw invalid();
+      return Object.freeze({
+        ...common,
+        operation,
+        recoveryInstanceId: validateOpaqueCorrelation(input.recoveryInstanceId),
+      });
+    default:
+      throw invalid();
   }
 }
 
@@ -73,7 +82,8 @@ function validateOpaqueCorrelation(value: unknown): string {
   return value;
 }
 function validateGuardianEpoch(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_GUARDIAN_EPOCH) throw invalid();
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_GUARDIAN_EPOCH)
+    throw invalid();
   return value;
 }
 function isRecord(value: unknown): value is Record<string, unknown> {

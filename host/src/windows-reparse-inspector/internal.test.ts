@@ -5,9 +5,9 @@ import test from "node:test";
 import { createInspectorCapability, inspectorState, type SpawnHelper } from "./internal.js";
 import { inspectWindowsReparse } from "./index.js";
 
-const spawnHelper: SpawnHelper = ((() => {
+const spawnHelper: SpawnHelper = (() => {
   throw new Error("test-only-helper-must-not-spawn");
-}) as unknown) as SpawnHelper;
+}) as unknown as SpawnHelper;
 
 /**
  * The regression this pins: the production build holds two instances of this module

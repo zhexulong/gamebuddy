@@ -23,7 +23,11 @@ test.after(() => {
 });
 
 const hash = "a".repeat(64);
-const profileReader = { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: hash }; } };
+const profileReader = {
+  async readExact() {
+    return { profileId: "profile", revision: 1, canonicalHash: hash };
+  },
+};
 async function setup() {
   const root = await canonicalTestRoot("tavern-library-");
   const identity = { playerId: "player", companionId: "companion", continuityId: "continuity" };
@@ -431,7 +435,6 @@ test("createNewChat consumes provisioned scenario and first greeting opening wit
   }
 });
 
-
 test("New Chat opening variants are recorded on the unlocked chat, read back durably, and refused once sealed", async () => {
   const { root, paths, artifacts, service, threads } = await setup();
   try {
@@ -472,9 +475,7 @@ test("New Chat opening variants are recorded on the unlocked chat, read back dur
     assert.equal(reread.messages[0]?.greetingSource?.variantId, "greeting-2");
     assert.equal(reread.messages[0]?.text, "Good to see you again.");
     assert.equal(
-      reread.thread.openingSelection.kind === "greeting"
-        ? reread.thread.openingSelection.source.variantId
-        : null,
+      reread.thread.openingSelection.kind === "greeting" ? reread.thread.openingSelection.source.variantId : null,
       "greeting-2",
     );
 

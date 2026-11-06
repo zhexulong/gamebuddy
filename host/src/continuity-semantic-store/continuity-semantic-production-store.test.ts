@@ -136,11 +136,12 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
       continuityIdentityId: principal.continuityId,
     });
     assert.throws(
-      () => store.completeGameSessionBinding({
-        creationRequestId: "create-incomplete",
-        gameSessionId: incomplete.gameSessionId,
-        expectedRevision: 1,
-      }),
+      () =>
+        store.completeGameSessionBinding({
+          creationRequestId: "create-incomplete",
+          gameSessionId: incomplete.gameSessionId,
+          expectedRevision: 1,
+        }),
       /game_session_world_binding_missing/,
     );
     assert.equal(store.readGameSessionMetadata({ gameSessionId: incomplete.gameSessionId })?.status, "pending");
@@ -224,10 +225,11 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
         operationId: "bind-01",
       });
       assert.equal(terminal.status, "terminal");
-      assert.deepEqual(
-        reopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }),
-        { ...resumable, status: "failed", revision: 3 },
-      );
+      assert.deepEqual(reopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }), {
+        ...resumable,
+        status: "failed",
+        revision: 3,
+      });
       assert.deepEqual(reopenedStore.listResumableGameSessions(), []);
       assert.deepEqual(
         reopenedStore.markGameSessionWorldBindingTerminal({
@@ -253,10 +255,11 @@ test("Game session world binding is durable, exact, idempotent, and redacted", (
           }),
           terminal,
         );
-        assert.deepEqual(
-          terminalReopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }),
-          { ...resumable, status: "failed", revision: 3 },
-        );
+        assert.deepEqual(terminalReopenedStore.readGameSessionMetadata({ gameSessionId: session.gameSessionId }), {
+          ...resumable,
+          status: "failed",
+          revision: 3,
+        });
         assert.deepEqual(terminalReopenedStore.listResumableGameSessions(), []);
       } finally {
         terminalReopenedControl.close();
@@ -302,9 +305,9 @@ test("Pure Game materialization rejects terminal binding with failed revision 2 
     control.close();
     const db = new DatabaseSync(join(root, "gamebuddy-continuity-v1.sqlite"));
     try {
-      db.prepare(
-        "UPDATE production_game_session_metadata SET status='failed',revision=2 WHERE game_session_id=?",
-      ).run(session.gameSessionId);
+      db.prepare("UPDATE production_game_session_metadata SET status='failed',revision=2 WHERE game_session_id=?").run(
+        session.gameSessionId,
+      );
     } finally {
       db.close();
     }
@@ -624,9 +627,7 @@ test("A world slot held by a live session is rejected for a second session and r
  * would have to invent the handle of a dead attempt, which is the guess this
  * ruling forbids.
  */
-test(
-  "A slot abandoned by a dead holder is released by that holder's own handle plus a native lease verdict that the holder is gone",
-  () => {
+test("A slot abandoned by a dead holder is released by that holder's own handle plus a native lease verdict that the holder is gone", () => {
   const root = canonicalTestRootSync("production-game-session-slot-wedge-");
   const control = openProductionContinuityStore({ runtimeRoot: root });
   let controlClosed = false;
@@ -840,10 +841,11 @@ test(
           }),
         /game_session_world_binding_slot_handle_mismatch/,
       );
-      assert.deepEqual(
-        reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }),
-        { ...first, status: "resumable", revision: 2 },
-      );
+      assert.deepEqual(reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }), {
+        ...first,
+        status: "resumable",
+        revision: 2,
+      });
       assert.deepEqual(
         reopenedStore.releaseGameSessionWorldBindingSlot({
           integrationId: "stardew",
@@ -861,10 +863,11 @@ test(
       );
       // The released holder landed on the canonical settled pair, and its row is
       // still there: nothing was deleted.
-      assert.deepEqual(
-        reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }),
-        { ...first, status: "failed", revision: 3 },
-      );
+      assert.deepEqual(reopenedStore.readGameSessionMetadata({ gameSessionId: first.gameSessionId }), {
+        ...first,
+        status: "failed",
+        revision: 3,
+      });
       assert.deepEqual(reopenedStore.listResumableGameSessions(), []);
       assert.equal(
         reopenedStore.readGameSessionWorldBinding({ gameSessionId: first.gameSessionId, integrationId: "stardew" })
@@ -996,16 +999,29 @@ test("World-slot release requires the holder's own handle and a native lease ver
     // A slot nobody holds, and the same slot under another integration, are not
     // this operation's business.
     assert.equal(
-      outcome({ integrationId: "stardew", bindingRef: "Farm_000000000", holderHandle: "holder-release-holder", proof: deadProof }),
+      outcome({
+        integrationId: "stardew",
+        bindingRef: "Farm_000000000",
+        holderHandle: "holder-release-holder",
+        proof: deadProof,
+      }),
       "game_session_world_binding_slot_missing",
     );
     assert.equal(
-      outcome({ integrationId: "other-integration", bindingRef: "Farm_771002311", holderHandle: "holder-release-holder", proof: deadProof }),
+      outcome({
+        integrationId: "other-integration",
+        bindingRef: "Farm_771002311",
+        holderHandle: "holder-release-holder",
+        proof: deadProof,
+      }),
       "game_session_world_binding_slot_missing",
     );
     // The slot alone is not enough: the handle is the holder's identity, not a
     // second name for the slot.
-    assert.equal(outcome(release("holder-release-other", deadProof)), "game_session_world_binding_slot_handle_mismatch");
+    assert.equal(
+      outcome(release("holder-release-other", deadProof)),
+      "game_session_world_binding_slot_handle_mismatch",
+    );
     // A caller-asserted boolean, an unminted look-alike, a structured clone of
     // a real verdict, a caller-asserted verdict STRING and a missing proof are
     // all no proof at all. The clone and the string below are carried in an
@@ -1030,10 +1046,7 @@ test("World-slot release requires the holder's own handle and a native lease ver
       outcome(release("holder-release-holder", { verdict: "holder_gone", holderHandle: "holder-release-holder" })),
       "game_session_world_binding_slot_proof_invalid",
     );
-    assert.equal(
-      outcome(release("holder-release-holder", undefined)),
-      "game_session_world_binding_slot_proof_invalid",
-    );
+    assert.equal(outcome(release("holder-release-holder", undefined)), "game_session_world_binding_slot_proof_invalid");
     // The held direction of the native probe refuses, and is never read as
     // optimistically gone. It is named for what the probe established - the
     // lease was not shown free - and not as "the holder is alive", which a held
@@ -1148,7 +1161,10 @@ test("World-slot release requires the holder's own handle and a native lease ver
     });
     // Terminal is sticky and a repeated call is a bounded refusal, never a no-op
     // that reports success for a call that released nothing.
-    assert.equal(outcome(release("holder-release-holder", deadProof)), "game_session_world_binding_slot_holder_terminal");
+    assert.equal(
+      outcome(release("holder-release-holder", deadProof)),
+      "game_session_world_binding_slot_holder_terminal",
+    );
     // The repaired product outcome: the slot is free for the next create.
     const successor = store.createGameSessionMetadata({
       creationRequestId: "release-create-successor",

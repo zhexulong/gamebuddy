@@ -1,5 +1,8 @@
 import type { AcceptedTurnAuthoredContextPlan } from "../chat-thread-store.js";
-import type { PublicWorldInfoProjection, WorldInfoManagementRepository } from "../world-info-management/world-info-management.js";
+import type {
+  PublicWorldInfoProjection,
+  WorldInfoManagementRepository,
+} from "../world-info-management/world-info-management.js";
 import { createHash } from "node:crypto";
 import { canonicalHash } from "../artifact-store.js";
 
@@ -30,18 +33,33 @@ export async function verifyManagedWorldInfoHistoryIntegrity(
   // provenance key from the retained repository catalog before reading exact
   // history. This verifier never installs or publishes a source.
   const publicSources = await repository.list();
-  const histories = await Promise.all(publicSources.map(async (item) => [item.publicTitle, await repository.history(item.publicTitle)] as const));
+  const histories = await Promise.all(
+    publicSources.map(async (item) => [item.publicTitle, await repository.history(item.publicTitle)] as const),
+  );
   for (const source of plan.stableSources) {
     if (source.kind !== "lorebook_constant") continue;
     const revision = Number(source.revision);
-    const matchingHistory = histories.find(([publicTitle]) =>
-      managedWorldInfoSourceId(publicTitle, revision, source.canonicalHash) === source.sourceId);
+    const matchingHistory = histories.find(
+      ([publicTitle]) => managedWorldInfoSourceId(publicTitle, revision, source.canonicalHash) === source.sourceId,
+    );
     const history = matchingHistory?.[1] ?? [];
     const candidate = history.find((item) => item.revision === revision);
-    const hashMatches = candidate !== undefined && canonicalHash(canonicalProjection(candidate)) === source.canonicalHash;
-    facts.push(Object.freeze({ sourceId: source.sourceId, revision: source.revision, canonicalHash: source.canonicalHash, present: candidate !== undefined, hashMatches }));
+    const hashMatches =
+      candidate !== undefined && canonicalHash(canonicalProjection(candidate)) === source.canonicalHash;
+    facts.push(
+      Object.freeze({
+        sourceId: source.sourceId,
+        revision: source.revision,
+        canonicalHash: source.canonicalHash,
+        present: candidate !== undefined,
+        hashMatches,
+      }),
+    );
   }
-  return Object.freeze({ intact: facts.every((fact) => fact.present && fact.hashMatches), facts: Object.freeze(facts) });
+  return Object.freeze({
+    intact: facts.every((fact) => fact.present && fact.hashMatches),
+    facts: Object.freeze(facts),
+  });
 }
 
 function managedWorldInfoSourceId(publicTitle: string, revision: number, hash: string): string {

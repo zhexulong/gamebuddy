@@ -213,6 +213,59 @@ test("the card's own system_prompt is carried into the shipped profile as charac
   assert.equal(profile.profileId, "gamebuddy.companion.default");
 });
 
+/**
+ * The card's own machine field for her farmer sprite (`extensions.gamebuddy.stardew.farmer_appearance`),
+ * as the committed card declares it.
+ */
+type StardewFarmerAppearance = Readonly<{
+  hair: number;
+  hair_color: Readonly<{ r: number; g: number; b: number }>;
+  shirt: string;
+  pants: string;
+  boots: string;
+  hat: string;
+}>;
+
+function committedAppearance(): StardewFarmerAppearance {
+  const card = committedAsset("card.json") as {
+    data: { extensions?: { gamebuddy?: { stardew?: { farmer_appearance?: StardewFarmerAppearance } } } };
+  };
+  const appearance = card.data.extensions?.gamebuddy?.stardew?.farmer_appearance;
+  assert.ok(appearance !== undefined, "the reviewed card must declare the machine field this test is about");
+  return appearance;
+}
+
+test("the card's prompt prose states no sprite texture code, because the machine field is where those live", () => {
+  // The persona text is prompt text, not metadata: `description` becomes
+  // `profile.persona.core`, which `renderIdentityProfile` prints into the Tier-1 prefix of
+  // BOTH surfaces as `Core disposition: …`. The shipped card shipped the sprite mapping
+  // inside it - `Hairstyle #12（茶褐色短发，RGB: 139, 90, 43）` and the four garment ids -
+  // so the model read texture ids as part of who she is and could say them out loud.
+  //
+  // Nothing reads those ids: `extensions` rides to `card-extensions.json` as inert data
+  // (`companion-card-export.ts`) and the shipped preset does not carry `extensions` at
+  // all, while the Mod's own C# never reads `farmer_appearance`. The values survive in
+  // the machine field, which is the only place a machine could want them.
+  const appearance = committedAppearance();
+  const promptText = DEFAULT_COMPANION_PRESET.profile.persona?.core ?? "";
+  assert.notEqual(promptText, "", "the card's persona text is what reaches the prompt");
+  // Derived from the card's OWN machine field rather than from a code quoted here, so a
+  // card that changes her hair fails this line by naming the value that leaked.
+  const codes = [
+    `#${appearance.hair}`,
+    `RGB: ${appearance.hair_color.r}, ${appearance.hair_color.g}, ${appearance.hair_color.b}`,
+    appearance.shirt,
+    appearance.pants,
+    appearance.boots,
+    appearance.hat,
+  ];
+  for (const code of codes)
+    assert.ok(
+      !promptText.includes(code),
+      `the card's prompt prose restates the machine value ${JSON.stringify(code)}, which the player can hear her say`,
+    );
+});
+
 test("the shipped compiled preset also matches the WORKING-TREE card and world book (editing-time check, not committed parity)", async () => {
   assertPresetMatches(
     convertedPreset(await workingTreeAsset("card.json"), await workingTreeAsset("worldbook.json")),

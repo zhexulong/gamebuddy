@@ -97,7 +97,7 @@ function bootRuntime(store: Store, selected: { chatThreadId: string | null; chat
 function tearDownRuntime(store: Store) {
   const permit0 = store.readChatCatalog();
   void permit0;
-  return (store as any);
+  return store as any;
 }
 
 function tearDown(store: Store, bootstrapOperationId: string) {

@@ -14,9 +14,7 @@ import { runDesktopHostBootstrap } from "../wire/desktop-runtime-bootstrap.inter
  */
 function boundedFailureCode(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  return /^[a-z][a-z0-9_.:-]{2,159}$/i.test(message)
-    ? message
-    : "desktop_host_entry_failed";
+  return /^[a-z][a-z0-9_.:-]{2,159}$/i.test(message) ? message : "desktop_host_entry_failed";
 }
 
 if (import.meta.main) {

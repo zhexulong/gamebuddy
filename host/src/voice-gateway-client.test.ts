@@ -784,7 +784,13 @@ test("v2 streaming lane sends stream_speech_chunk and receives pushed playback o
             type: "health",
             protocolVersion: 1,
             status: "ready",
-            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 3,
+            },
           });
         else if (request.type === "stream_speech_chunk") {
           const chunkRequest = request as unknown as {
@@ -817,9 +823,19 @@ test("v2 streaming lane sends stream_speech_chunk and receives pushed playback o
     await client.streamSpeechChunk("session_v2", "speech_v2_1", 0, "你好。", true, Date.now() + 60_000);
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 20)); // let the write land
     const chunk = seen.find((request) => (request as { type: string }).type === "stream_speech_chunk") as
-      | { sessionId: string; connectionEpoch: number; speechJobId: string; deltaText: string; isFinalChunk: boolean; chunkIndex: number }
+      | {
+          sessionId: string;
+          connectionEpoch: number;
+          speechJobId: string;
+          deltaText: string;
+          isFinalChunk: boolean;
+          chunkIndex: number;
+        }
       | undefined;
-    assert.ok(chunk !== undefined, `stream_speech_chunk must be sent over the wire; seen=${JSON.stringify(seen.map((request) => (request as { type?: string }).type))}`);
+    assert.ok(
+      chunk !== undefined,
+      `stream_speech_chunk must be sent over the wire; seen=${JSON.stringify(seen.map((request) => (request as { type?: string }).type))}`,
+    );
     assert.equal(chunk.sessionId, "session_v2");
     assert.equal(chunk.connectionEpoch, 3, "v2 lane uses the core gateway epoch as connectionEpoch");
     assert.equal(chunk.speechJobId, "speech_v2_1");
@@ -856,7 +872,13 @@ test("quarantined gateway_state revokes audio admission for graceful text fallba
             type: "health",
             protocolVersion: 1,
             status: "ready",
-            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 4 },
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 4,
+            },
           });
         else if (request.type === "speech_enqueue") reply(socket, request.requestId, { type: "accepted", value: true });
       }
@@ -916,7 +938,13 @@ test("voice surface reader projects unavailable before health, then ready, then 
             type: "health",
             protocolVersion: 1,
             status: "ready",
-            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 5 },
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 5,
+            },
           });
         else if (request.type === "speech_enqueue") reply(socket, request.requestId, { type: "accepted", value: true });
       }
@@ -974,10 +1002,21 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
             type: "health",
             protocolVersion: 1,
             status: "ready",
-            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 3,
+            },
           });
         else if (request.type === "stream_speech_chunk") {
-          const chunkRequest = request as unknown as { sessionId: string; connectionEpoch: number; speechJobId: string; isFinalChunk: boolean };
+          const chunkRequest = request as unknown as {
+            sessionId: string;
+            connectionEpoch: number;
+            speechJobId: string;
+            isFinalChunk: boolean;
+          };
           // The real v2 runtime pushes one terminal observation per job (after
           // the final chunk), not one per chunk. Mirror that so the surface
           // counter is exercised like production.
@@ -1013,9 +1052,7 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
     assert.deepEqual(reader(), Object.freeze({ state: "speaking" }), "multi-chunk deltas stay one speaking surface");
     await sink.finalize();
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
-    const chunks = seen.filter(
-      (request) => (request as { type?: string }).type === "stream_speech_chunk",
-    ) as Array<{
+    const chunks = seen.filter((request) => (request as { type?: string }).type === "stream_speech_chunk") as Array<{
       chunkIndex: number;
       deltaText: string;
       isFinalChunk: boolean;
@@ -1036,7 +1073,11 @@ test("chat voice streaming sink streams deltas as contiguous v2 chunks and final
     assert.ok(chunks[0]?.speechJobId.startsWith("chat_turn_turn_0001_"), "the job id is scoped to the turn");
     assert.ok(chunks[0]?.sessionId.startsWith("chat_turn_turn_0001"), "the session id is scoped to the turn");
     // The single terminal observation (pushed for the final chunk) settles the turn.
-    assert.deepEqual(reader(), Object.freeze({ state: "ready" }), "the single terminal observation settles a multi-chunk turn");
+    assert.deepEqual(
+      reader(),
+      Object.freeze({ state: "ready" }),
+      "the single terminal observation settles a multi-chunk turn",
+    );
     client.close();
   } finally {
     peer?.destroy();
@@ -1065,7 +1106,13 @@ test("chat voice streaming sink cancels the exact job and idles an empty job", a
             type: "health",
             protocolVersion: 1,
             status: "ready",
-            capabilities: { providerId: "fake-tts", modelRevision: "v1", perUtteranceDirection: false, ready: true, epoch: 3 },
+            capabilities: {
+              providerId: "fake-tts",
+              modelRevision: "v1",
+              perUtteranceDirection: false,
+              ready: true,
+              epoch: 3,
+            },
           });
       }
     });

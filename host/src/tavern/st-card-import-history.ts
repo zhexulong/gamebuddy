@@ -67,8 +67,7 @@ export function createStCardImportHistoryService(
       );
       return Object.freeze(
         [...entries].sort(
-          (left, right) =>
-            right.occurredAtMs - left.occurredAtMs || right.importId.localeCompare(left.importId, "en"),
+          (left, right) => right.occurredAtMs - left.occurredAtMs || right.importId.localeCompare(left.importId, "en"),
         ),
       );
     },
@@ -112,10 +111,6 @@ function project(artifact: unknown): StCardImportHistoryEntry {
 
 function isHistoryRecord(value: unknown): value is StCardImportHistoryRecord {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "importId" in value &&
-    "occurredAtMs" in value &&
-    "counts" in value
+    typeof value === "object" && value !== null && "importId" in value && "occurredAtMs" in value && "counts" in value
   );
 }

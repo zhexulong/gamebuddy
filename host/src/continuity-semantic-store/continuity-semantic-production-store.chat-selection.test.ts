@@ -58,11 +58,7 @@ function fixture(label: string) {
   };
 }
 
-function receiptFor(
-  chatThreadId: string,
-  chatSurfaceSessionId: string,
-  fill: string,
-): TavernExactContentReceipt {
+function receiptFor(chatThreadId: string, chatSurfaceSessionId: string, fill: string): TavernExactContentReceipt {
   return Object.freeze({
     chatThreadId,
     chatSurfaceSessionId,
@@ -188,9 +184,7 @@ function settleCreate(store: Store, target: Readonly<{ chatThreadId: string; cha
       expected: { ...verified.vector },
     }),
   );
-  store.clearChatSelectionIntent(
-    Object.freeze({ expected: { ...store.readChatCatalog().vector } }),
-  );
+  store.clearChatSelectionIntent(Object.freeze({ expected: { ...store.readChatCatalog().vector } }));
 }
 
 test("a recorded expected selection is settled as the chain the successor admission accepts", () => {
@@ -270,9 +264,7 @@ test("a select expectation names an existing verified Chat and is settled by the
     assert.equal(recorded.activeSelection?.chatThreadId, initial.chatThreadId);
 
     const settleTarget = store.readChatCatalog();
-    store.selectChat(
-      Object.freeze({ operationId: "settle-select", ...second, expected: { ...settleTarget.vector } }),
-    );
+    store.selectChat(Object.freeze({ operationId: "settle-select", ...second, expected: { ...settleTarget.vector } }));
     store.clearChatSelectionIntent(Object.freeze({ expected: { ...store.readChatCatalog().vector } }));
     const settled = store.readChatCatalog();
     assert.equal(settled.expectedSelection, null);

@@ -4,7 +4,7 @@ import { once } from "node:events";
 
 if (process.platform !== "win32") throw new Error("durable acceptance requires real Windows production mounting");
 
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -32,14 +32,18 @@ async function cleanupTestRoot(root: string): Promise<void> {
 async function fixture() {
   const root = await canonicalTestRoot("gamebuddy-p4-");
   const store = createChatThreadStore(root, key, () => 100);
-  const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) }; } });
+  const creation = createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() {
+      return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
   await creation.createExplicit({
     chatThreadId: command.chatThreadId,
     companionId: command.companionId,
     continuityId: command.continuityId,
     chatSurfaceSessionId: command.chatSurfaceSessionId,
-     opening: "blank",
-   });
+    opening: "blank",
+  });
   return { root, store };
 }
 
@@ -68,10 +72,7 @@ function manifest(root: string): HostDeploymentManifest {
 
 test("player turn acceptor rejects forged mounted leases before access", () => {
   const forged = Object.freeze({}) as MountedChatRuntimeLease;
-  assert.throws(
-    () => createPlayerTurnAcceptor(manifest("unused"), forged),
-    /p4_durable_turn_acceptance_unavailable/,
-  );
+  assert.throws(() => createPlayerTurnAcceptor(manifest("unused"), forged), /p4_durable_turn_acceptance_unavailable/);
 });
 
 test("public player turn acceptor calls only its private bridge, never raw store or coordinator internals", async () => {

@@ -31,17 +31,21 @@ async function runHelper(input: string) {
   child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
   child.stderr.on("data", (chunk) => stderr.push(Buffer.from(chunk)));
   let stdinError: NodeJS.ErrnoException | undefined;
-  child.stdin.on("error", (error: NodeJS.ErrnoException) => { stdinError = error; });
+  child.stdin.on("error", (error: NodeJS.ErrnoException) => {
+    stdinError = error;
+  });
   child.stdin.end(input);
   const result = await Promise.race([
     new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit, rejectExit) => {
       child.once("error", rejectExit);
       child.once("close", (code, signal) => resolveExit({ code, signal }));
     }),
-    new Promise<never>((_, rejectTimeout) => setTimeout(() => {
-      child.kill();
-      rejectTimeout(new Error("windows_guardian_integration_timeout"));
-    }, 10_000)),
+    new Promise<never>((_, rejectTimeout) =>
+      setTimeout(() => {
+        child.kill();
+        rejectTimeout(new Error("windows_guardian_integration_timeout"));
+      }, 10_000),
+    ),
   ]);
   if (stdinError !== undefined && stdinError.code !== "EOF" && stdinError.code !== "EPIPE") throw stdinError;
   return { ...result, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
@@ -52,7 +56,9 @@ test("published Guardian fails closed without exact private mode and rejects del
     t.skip("Windows-only compiled Guardian integration");
     return;
   }
-  try { await access(helperPath); } catch {
+  try {
+    await access(helperPath);
+  } catch {
     t.skip("published Guardian helper is missing; run the Windows builder first");
     return;
   }

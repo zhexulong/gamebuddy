@@ -99,10 +99,7 @@ test.after(() => {
  * this store's own mounted-route registrations. The store must be the only live
  * registrant for its route while this runs.
  */
-async function prepareRunningTurn(
-  root: string,
-  store: ReturnType<typeof createChatThreadStore>,
-): Promise<string> {
+async function prepareRunningTurn(root: string, store: ReturnType<typeof createChatThreadStore>): Promise<string> {
   const creation = createProfileAwareChatThreadCreationCapability(store, profileReader);
   await creation.createExplicit({
     chatThreadId: "thread_01",

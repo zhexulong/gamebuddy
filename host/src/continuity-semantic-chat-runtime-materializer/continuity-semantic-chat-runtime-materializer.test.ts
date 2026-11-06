@@ -15,17 +15,15 @@ import {
 import type { ChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.js";
 import { createTestChatRuntimeBinding } from "../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.test-support.js";
 import type { ProductionChatRuntimePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
-import {
-  closeMaterializedChatRuntime,
-} from "./continuity-semantic-chat-runtime-materializer.internal.js";
-import {
-  createTestChatRuntimeMaterializer,
-} from "./continuity-semantic-chat-runtime-materializer.test-support.js";
+import { closeMaterializedChatRuntime } from "./continuity-semantic-chat-runtime-materializer.internal.js";
+import { createTestChatRuntimeMaterializer } from "./continuity-semantic-chat-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 type AuthoredStablePlanProjection = ReturnType<TavernAuthoredContextRuntimeCapability["prepare"]>;
 type AuthoredStableSourceRef = Parameters<TavernAuthoredContextRuntimeCapability["assertInstall"]>[1][number];
-type AuthoredVolatileSourceRef = NonNullable<Parameters<TavernAuthoredContextRuntimeCapability["assertInstall"]>[2]>[number];
+type AuthoredVolatileSourceRef = NonNullable<
+  Parameters<TavernAuthoredContextRuntimeCapability["assertInstall"]>[2]
+>[number];
 
 const emptyAuthoredContextProjection: AuthoredStablePlanProjection = Object.freeze({
   sourceRefs: Object.freeze([] as AuthoredStableSourceRef[]),
@@ -46,11 +44,8 @@ function authoredContextCapability(
       _volatileRefs?: readonly AuthoredVolatileSourceRef[],
     ) => undefined,
     clearVolatileForTurn: (_durableTurnId: string) => undefined,
-    materializeVolatileForTurn: (
-      _turnId: string,
-      _acceptedPlayerText: string,
-      _boundedVisibleTail: string,
-    ) => Object.freeze({ refs: Object.freeze([] as AuthoredVolatileSourceRef[]), tokenCount: 0 }),
+    materializeVolatileForTurn: (_turnId: string, _acceptedPlayerText: string, _boundedVisibleTail: string) =>
+      Object.freeze({ refs: Object.freeze([] as AuthoredVolatileSourceRef[]), tokenCount: 0 }),
     clear: async () => undefined,
     ...overrides,
   });
@@ -135,9 +130,9 @@ test("Chat materializer source graph has the sole production Chat runtime owner 
   assert.equal(publicSource.includes("createCompanionRuntime"), false);
   assert.equal(publicSource.includes("factory:") || publicSource.includes("factory("), false);
   assert.equal(internalSource.includes("createCompanionRuntime"), false);
-   assert.equal(publicSource.includes("tavernStableContextSnapshot"), false);
-   assert.equal(publicSource.includes("publishGameBuddyAuthoredStableCatalog"), false);
-   assert.equal(publicSource.includes("gameOperationalGateNonceSha256"), false);
+  assert.equal(publicSource.includes("tavernStableContextSnapshot"), false);
+  assert.equal(publicSource.includes("publishGameBuddyAuthoredStableCatalog"), false);
+  assert.equal(publicSource.includes("gameOperationalGateNonceSha256"), false);
   assert.equal(publicSource.includes("clearGameOperationalGateMarker"), false);
   assert.match(publicSource, /tavernNarrativeGateNonceSha256/);
   assert.equal(internalSource.includes("clearGameOperationalGateMarker"), false);
@@ -199,20 +194,22 @@ test("reverse disposal aggregates authored capability clear and Pi disposal fail
   const clearError = new Error("clear_failed");
   const disposeError = new Error("dispose_failed");
   await assert.rejects(
-    closeMaterializedChatRuntime(Object.freeze({
-      authoredContextCapability: authoredContextCapability({
-        clear: async () => {
-          events.push("clear");
-          throw clearError;
-        },
+    closeMaterializedChatRuntime(
+      Object.freeze({
+        authoredContextCapability: authoredContextCapability({
+          clear: async () => {
+            events.push("clear");
+            throw clearError;
+          },
+        }),
+        session: Object.freeze({
+          dispose: () => {
+            events.push("dispose");
+            throw disposeError;
+          },
+        }),
       }),
-      session: Object.freeze({
-        dispose: () => {
-          events.push("dispose");
-          throw disposeError;
-        },
-      }),
-    })),
+    ),
     (error: unknown) => {
       assert.ok(error instanceof AggregateError);
       assert.deepEqual(error.errors, [clearError, disposeError]);

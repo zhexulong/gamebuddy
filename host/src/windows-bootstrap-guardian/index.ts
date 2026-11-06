@@ -240,13 +240,13 @@ function verifyInventorySync(raw: Buffer, helperSha256: string, manifestBytes: B
   if (!isRecord(parsed) || parsed.schema !== inventorySchema || !Array.isArray(parsed.entries)) throw unavailable();
   const helperPath = `${pairDestination}/${helperFileName}`;
   const manifestPath = `${pairDestination}/${manifestFileName}`;
-  if (parsed.entries.filter((entry) => entry?.path === helperPath).length !== 1
-    || parsed.entries.filter((entry) => entry?.path === manifestPath).length !== 1) throw unavailable();
-  const helperMatches = parsed.entries.filter((entry) =>
-    isVerifiedPairEntry(entry, helperPath, helperSha256),
-  );
-  const manifestMatches = parsed.entries.filter((entry) =>
-    isVerifiedPairEntry(entry, manifestPath, helperSha256),  );
+  if (
+    parsed.entries.filter((entry) => entry?.path === helperPath).length !== 1 ||
+    parsed.entries.filter((entry) => entry?.path === manifestPath).length !== 1
+  )
+    throw unavailable();
+  const helperMatches = parsed.entries.filter((entry) => isVerifiedPairEntry(entry, helperPath, helperSha256));
+  const manifestMatches = parsed.entries.filter((entry) => isVerifiedPairEntry(entry, manifestPath, helperSha256));
   if (helperMatches.length !== 1 || manifestMatches.length !== 1) throw unavailable();
   if (helperMatches[0]!.sha256 !== helperSha256) throw unavailable();
   if (manifestMatches[0]!.sha256 !== createHash("sha256").update(manifestBytes).digest("hex")) throw unavailable();
@@ -279,7 +279,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-
 async function invokeGuardian(
   capability: WindowsBootstrapGuardianCapability,
   request: WindowsBootstrapGuardianRequest,
@@ -297,7 +296,6 @@ function mintGuardianCapability(state: FixedPairFacts): WindowsBootstrapGuardian
   states.set(capability, state);
   return capability;
 }
-
 
 function unavailable(): Error {
   return new Error("windows_bootstrap_guardian_unavailable");

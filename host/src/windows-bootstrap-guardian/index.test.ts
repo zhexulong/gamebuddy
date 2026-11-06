@@ -28,9 +28,30 @@ const exactArmRequest: ArmAttemptRequest = Object.freeze({
 
 const validRequests = [
   exactArmRequest,
-  { schemaVersion: 1, operation: "launch_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "player_host" },
-  { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "ai_client" },
-  { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
+  {
+    schemaVersion: 1,
+    operation: "launch_role",
+    guardianInstanceId: OPAQUE,
+    guardianEpoch: 1,
+    attemptId: OPAQUE_2,
+    role: "player_host",
+  },
+  {
+    schemaVersion: 1,
+    operation: "contain_role",
+    guardianInstanceId: OPAQUE,
+    guardianEpoch: 1,
+    attemptId: OPAQUE_2,
+    role: "ai_client",
+  },
+  {
+    schemaVersion: 1,
+    operation: "recover_attempt",
+    guardianInstanceId: OPAQUE,
+    guardianEpoch: 1,
+    attemptId: OPAQUE_2,
+    recoveryInstanceId: OPAQUE,
+  },
 ] as const;
 
 test("guardian validates and reconstructs every fixed redacted request grammar", () => {
@@ -43,14 +64,63 @@ test("guardian rejects path, pid, token, bridge, lease substitution, unknown rol
     { schemaVersion: 1, operation: "launch_role", guardianEpoch: 99 },
     { ...exactArmRequest, guardianInstanceId: "C:\\leak.exe" },
     { ...exactArmRequest, leaseName: "substituted-lease" },
-    { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, bridgeToken: "secret" },
-    { schemaVersion: 1, operation: "contain_role", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, role: "bridge" },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 0, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1.5, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
-    { schemaVersion: 1, operation: "begin_recovery", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: OPAQUE },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2 },
-    { schemaVersion: 1, operation: "recover_attempt", guardianInstanceId: OPAQUE, guardianEpoch: 1, attemptId: OPAQUE_2, recoveryInstanceId: "gamebuddy-stardew-token" },
-  ]) assert.throws(() => validateGuardianRequest(request), /windows_bootstrap_guardian_invalid_request/);
+    {
+      schemaVersion: 1,
+      operation: "contain_role",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1,
+      attemptId: OPAQUE_2,
+      bridgeToken: "secret",
+    },
+    {
+      schemaVersion: 1,
+      operation: "contain_role",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1,
+      attemptId: OPAQUE_2,
+      role: "bridge",
+    },
+    {
+      schemaVersion: 1,
+      operation: "recover_attempt",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 0,
+      attemptId: OPAQUE_2,
+      recoveryInstanceId: OPAQUE,
+    },
+    {
+      schemaVersion: 1,
+      operation: "recover_attempt",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1.5,
+      attemptId: OPAQUE_2,
+      recoveryInstanceId: OPAQUE,
+    },
+    {
+      schemaVersion: 1,
+      operation: "begin_recovery",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1,
+      attemptId: OPAQUE_2,
+      recoveryInstanceId: OPAQUE,
+    },
+    {
+      schemaVersion: 1,
+      operation: "recover_attempt",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1,
+      attemptId: OPAQUE_2,
+    },
+    {
+      schemaVersion: 1,
+      operation: "recover_attempt",
+      guardianInstanceId: OPAQUE,
+      guardianEpoch: 1,
+      attemptId: OPAQUE_2,
+      recoveryInstanceId: "gamebuddy-stardew-token",
+    },
+  ])
+    assert.throws(() => validateGuardianRequest(request), /windows_bootstrap_guardian_invalid_request/);
 });
 
 test("guardian operations reject forged capabilities", async () => {
@@ -81,7 +151,13 @@ test(
 test("production Guardian modules expose no spawn or capability registrar seam", async () => {
   const production = await import("./index.js");
   const protocol = await import("./protocol.js");
-  for (const name of ["createGuardianCapability", "registerGuardianCapability", "createTestWindowsBootstrapGuardian", "invokeGuardianProtocol", "spawnHelper"]) {
+  for (const name of [
+    "createGuardianCapability",
+    "registerGuardianCapability",
+    "createTestWindowsBootstrapGuardian",
+    "invokeGuardianProtocol",
+    "spawnHelper",
+  ]) {
     assert.equal(name in production, false);
     assert.equal(name in protocol, false);
   }
@@ -159,7 +235,7 @@ test(
     const fixture = await makePublishedPairFixture();
     try {
       const capability = await createPublishedWindowsBootstrapGuardian(fixture.root);
-       assert.equal(typeof capability, "object");
+      assert.equal(typeof capability, "object");
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -174,10 +250,7 @@ test(
       const sha256 = createHash("sha256").update(helperBytes).digest("hex");
       await writeFile(resolve(pairRoot, publishedHelperFileName), helperBytes);
       await writeFile(resolve(pairRoot, publishedManifestFileName), fixtureCanonicalManifest(sha256), "utf8");
-      await assert.rejects(
-        createPublishedWindowsBootstrapGuardian(root),
-        /windows_bootstrap_guardian_unavailable/,
-      );
+      await assert.rejects(createPublishedWindowsBootstrapGuardian(root), /windows_bootstrap_guardian_unavailable/);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -259,18 +332,23 @@ test(
       await expectRejected((parsed) => {
         parsed.entries[1].sha256 = "0".repeat(64);
       });
-  // Duplicate entries for either canonical path are ambiguous and fail closed.
-       await expectRejected((parsed) => {
-         parsed.entries.push({ ...parsed.entries[0] });
-       });
-       await expectRejected((parsed) => {
-         parsed.entries.push({ ...parsed.entries[1] });
-       });
-       // Unrelated entries are allowed in the full production inventory.
-        const restored = JSON.parse(original);
-        restored.entries.push({ path: "other/file", type: "file", sha256: "0".repeat(64), origin: { kind: "typescript_emit" } });
-        await writeFile(inventoryPath, JSON.stringify(restored), "utf8");
-       await createPublishedWindowsBootstrapGuardian(fixture.root);
+      // Duplicate entries for either canonical path are ambiguous and fail closed.
+      await expectRejected((parsed) => {
+        parsed.entries.push({ ...parsed.entries[0] });
+      });
+      await expectRejected((parsed) => {
+        parsed.entries.push({ ...parsed.entries[1] });
+      });
+      // Unrelated entries are allowed in the full production inventory.
+      const restored = JSON.parse(original);
+      restored.entries.push({
+        path: "other/file",
+        type: "file",
+        sha256: "0".repeat(64),
+        origin: { kind: "typescript_emit" },
+      });
+      await writeFile(inventoryPath, JSON.stringify(restored), "utf8");
+      await createPublishedWindowsBootstrapGuardian(fixture.root);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -304,10 +382,7 @@ test(
         throw error;
       }
       assert.equal((await lstat(fixture.pairRoot)).isSymbolicLink(), true);
-      await assert.rejects(
-        armAttempt(capability, exactArmRequest),
-        /windows_bootstrap_guardian_unavailable/,
-      );
+      await assert.rejects(armAttempt(capability, exactArmRequest), /windows_bootstrap_guardian_unavailable/);
       await assert.rejects(
         createPublishedWindowsBootstrapGuardian(fixture.root),
         /windows_bootstrap_guardian_unavailable/,
@@ -328,10 +403,7 @@ test(
       // A helper replaced after mint must fail closed before the next operation:
       // the capability never caches an unchecked pair bytes.
       await writeFile(fixture.helperPath, Buffer.from("replacement-helper-bytes", "utf8"));
-      await assert.rejects(
-        armAttempt(capability, exactArmRequest),
-        /windows_bootstrap_guardian_unavailable/,
-      );
+      await assert.rejects(armAttempt(capability, exactArmRequest), /windows_bootstrap_guardian_unavailable/);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -348,10 +420,7 @@ test(
       // Tampering the manifest after mint must fail closed on the next operation:
       // the canonical manifest must byte-exactly match the helper digest.
       await writeFile(fixture.manifestPath, fixtureCanonicalManifest("0".repeat(64)), "utf8");
-      await assert.rejects(
-        armAttempt(capability, exactArmRequest),
-        /windows_bootstrap_guardian_unavailable/,
-      );
+      await assert.rejects(armAttempt(capability, exactArmRequest), /windows_bootstrap_guardian_unavailable/);
       // A fresh mint over the tampered manifest is equally rejected.
       await assert.rejects(
         createPublishedWindowsBootstrapGuardian(fixture.root),

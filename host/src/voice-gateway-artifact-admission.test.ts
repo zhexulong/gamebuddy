@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseVoiceGatewayArtifactAdmission, validateVoiceGatewayArtifactAdmission } from "./voice-gateway-artifact-admission.js";
+import {
+  parseVoiceGatewayArtifactAdmission,
+  validateVoiceGatewayArtifactAdmission,
+} from "./voice-gateway-artifact-admission.js";
 
 const valid = {
   schema: "gamebuddy-host-voice-gateway-admission/v1",
-  generation: "gen-1", inventoryDigest: "a".repeat(64), entryPath: "bin/gateway.js",
-  entrySha256: "b".repeat(64), protocolPath: "protocol/schema.json", protocolSha256: "c".repeat(64),
-  nodeVersion: "v24.20.0", platform: "win32", arch: "x64",
+  generation: "gen-1",
+  inventoryDigest: "a".repeat(64),
+  entryPath: "bin/gateway.js",
+  entrySha256: "b".repeat(64),
+  protocolPath: "protocol/schema.json",
+  protocolSha256: "c".repeat(64),
+  nodeVersion: "v24.20.0",
+  platform: "win32",
+  arch: "x64",
 };
 
 test("accepts and parses a valid voice gateway artifact", () => {
@@ -18,12 +27,21 @@ test("rejects unknown keys", () => {
 });
 
 test("rejects traversal paths", () => {
-  assert.throws(() => validateVoiceGatewayArtifactAdmission({ ...valid, entryPath: "bin/../gateway.js" }), /unsafe artifact path/);
-  assert.throws(() => validateVoiceGatewayArtifactAdmission({ ...valid, protocolPath: "/etc/schema.json" }), /unsafe artifact path/);
+  assert.throws(
+    () => validateVoiceGatewayArtifactAdmission({ ...valid, entryPath: "bin/../gateway.js" }),
+    /unsafe artifact path/,
+  );
+  assert.throws(
+    () => validateVoiceGatewayArtifactAdmission({ ...valid, protocolPath: "/etc/schema.json" }),
+    /unsafe artifact path/,
+  );
 });
 
 test("rejects a wrong platform", () => {
-  assert.throws(() => validateVoiceGatewayArtifactAdmission({ ...valid, platform: "linux" }), /unsupported artifact runtime/);
+  assert.throws(
+    () => validateVoiceGatewayArtifactAdmission({ ...valid, platform: "linux" }),
+    /unsupported artifact runtime/,
+  );
 });
 
 test("rejects secret fields", () => {
@@ -32,5 +50,8 @@ test("rejects secret fields", () => {
 
 test("rejects invalid and trailing JSON", () => {
   assert.throws(() => parseVoiceGatewayArtifactAdmission("{not-json"), /invalid voice gateway admission artifact/);
-  assert.throws(() => parseVoiceGatewayArtifactAdmission(`${JSON.stringify(valid)} trailing`), /invalid voice gateway admission artifact/);
+  assert.throws(
+    () => parseVoiceGatewayArtifactAdmission(`${JSON.stringify(valid)} trailing`),
+    /invalid voice gateway admission artifact/,
+  );
 });
