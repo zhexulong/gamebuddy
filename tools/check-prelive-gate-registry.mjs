@@ -164,13 +164,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:totality",
   },
   {
-    path: "tools/audit-totality-head.mjs",
-    reason:
-      "report: exports its class list to tools/audit-totality.mjs and has no CLI of its own - running it is measured " +
-      "exit 0 with no output at all, so a rung would count a gate that measures nothing",
-    runsIn: "on-demand",
-  },
-  {
     path: "tools/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +

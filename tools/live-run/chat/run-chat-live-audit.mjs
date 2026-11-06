@@ -65,6 +65,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+// A thrown error's own text is never a reason code. `classifyFailure` decides the closed class and keeps the
+// message in `errorMessage` beside the class, stack and first frame - the ONE spelling the tree already uses
+// (`tools/check-failure-reason-codes.mjs` gates every `tools/live-run` consumer on it).
+import { classifyFailure } from "../../lib/failure-dump.mjs";
 import { OPERATOR_GATEWAY_PROVIDER_ID } from "../../lib/operator-gateway.mjs";
 // The session-record parse has ONE spelling, shared with `tools/perf/report-run-cost.mjs`: a second copy of it would
 // quote different tokens for the same run the day either learns a new usage field.
@@ -2585,9 +2589,7 @@ export async function main(argv = process.argv.slice(2)) {
     try {
       probeManifest = loadProbeManifest(await readFile(parsed.probeManifestPath, "utf8"));
     } catch (error) {
-      console.error(
-        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
-      );
+      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", ...classifyFailure(error) }));
       return 2;
     }
   }
@@ -2888,9 +2890,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exitCode = code;
     })
     .catch((error) => {
-      console.error(
-        JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", reasonCode: safeReasonCode(error) }),
-      );
+      console.error(JSON.stringify({ schema: HARNESS_OUTCOME_SCHEMA, state: "blocked", ...classifyFailure(error) }));
       process.exitCode = 2;
     });
 }

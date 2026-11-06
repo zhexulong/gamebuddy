@@ -145,6 +145,13 @@ export const TARGET_FIELD = Object.freeze({
   // publishes `placed_furniture` rows with `slot: -1`, because no tool lifts one - the pickup is the
   // action that does.
   move_placed_furniture: "WorldObjectTargets",
+  // The furniture-and-decoration wave names its target through the same array: the rotation and the
+  // fence removal act on a `placed_furniture` row, and the tank and pedestal name the piece that holds
+  // the item. Same projection, four more consumers.
+  rotate_furniture: "WorldObjectTargets",
+  remove_fence: "WorldObjectTargets",
+  put_item_in_fish_tank: "WorldObjectTargets",
+  place_item_on_pedestal: "WorldObjectTargets",
   break_container: "WorldObjectTargets",
   shop_purchase: "ShopTargets",
   // The building-chest pair. Both name a chest a BUILDING declares in its own data
@@ -162,6 +169,10 @@ export const TARGET_FIELD = Object.freeze({
   // the Mod/Host/schema legs. `build_farm_building` already had its row and was the
   // one that reached `missing_envelope_schema_field`.
   clear_fish_pond: "FishPondTargets",
+  // `open_geode` takes no tile: its whole address is a backpack slot and the item id that slot must hold, which is
+  // exactly what `inventoryItemFacts` rows carry (`BridgeInventoryItemFact(slot, qualifiedItemId, name, stack)`). The
+  // counter it cracks at is the location's own, so there is no entity family to name here.
+  open_geode: "InventoryItemFacts",
   accept_daily_quest: "DailyQuestTargets",
   accept_special_order: "SpecialOrderTargets",
   claim_museum_reward: "MuseumRewardTargets",
