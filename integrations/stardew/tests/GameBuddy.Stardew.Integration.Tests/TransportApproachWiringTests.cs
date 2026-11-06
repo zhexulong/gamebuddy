@@ -174,25 +174,28 @@ public sealed class TransportApproachWiringTests
         executed.Should().NotContain("not_equipped");
     }
 
-    // ---- the declaration stops claiming a precondition the action no longer has ----
+    // ---- the declaration says which side closes the distance ------------------
 
     [Theory]
     [InlineData("mount_transport")]
     [InlineData("enter_mine")]
     [InlineData("use_mine_ladder")]
-    public void ASelfHealingActionPublishesNoApproachRequirement(string actionId)
+    public void ASelfWalkingActionDeclaresSelfWalked(string actionId)
     {
         // `approachRequirement` is published through `plan_shape`. Once the action walks in itself, "you
         // must already stand beside this" is a false sentence in front of the companion: it would spend a
-        // separate `move_to_tile` on a precondition the action now satisfies on its own.
+        // separate `move_to_tile` on a precondition the action now satisfies on its own. Declaring NOTHING was
+        // the other wrong answer - the wire then said `approach_requirement_undeclared`, which the model cannot
+        // tell from "no constraint" (measured: thirteen such answers for `cut_weeds` in one run).
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == actionId);
-        registration.Descriptor!.Approach.Should().BeNull(
-            $"{actionId} walks in itself, so it declares no standing precondition");
+        registration.Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirement("self_walked", null),
+            $"{actionId} walks in itself, so it declares that instead of a standing precondition");
 
         FarmhandActionDescriptorProjection published = FarmhandActionSurfacePublication.Actions
             .Single(candidate => candidate.ActionId == actionId);
-        published.Approach.Should().BeNull($"{actionId} publishes no approach requirement");
+        published.Approach.Should().Be(new FarmhandActionApproachRequirementProjection("self_walked"),
+            $"{actionId} publishes the same relation, with no distance");
     }
 
     [Theory]
@@ -202,11 +205,12 @@ public sealed class TransportApproachWiringTests
     [InlineData("use_obelisk")]
     public void ACrossMapOrOpaqueTransition_KeepsItsDeclaredApproachRequirement(string actionId)
     {
-        // The other direction, so the two deletions above cannot widen into every action that happens to
-        // sit in the same family: these still refuse from afar and still publish that fact.
+        // The other direction, so the `self_walked` declarations above cannot widen into every action that happens to
+        // sit in the same family: these still refuse from afar and still publish that fact, with the distance the
+        // handler enforces.
         FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == actionId);
-        registration.Descriptor!.Approach.Should().Be(new FarmhandActionApproachRequirement("adjacent", 1));
+        registration.Descriptor!.Approach.Should().Be(FarmhandActionApproachRequirement.Adjacent);
     }
 
     // -------------------------------------------------------------------------

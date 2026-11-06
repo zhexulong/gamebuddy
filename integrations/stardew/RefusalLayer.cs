@@ -304,9 +304,9 @@ internal static class RefusalProbe
     /// The actor is outside the spatial relation the action's row declares.
     ///
     /// <para>
-    /// Both halves come from the declaration: the relation word and the distance the row allows. An action that
-    /// declares no approach is not out of range - its handler walks the actor in itself - so this layer stays silent
-    /// rather than refusing work the action does.
+    /// Both halves come from the declaration: the relation word and the distance the row allows. An action that declares
+    /// `self_walked` states no distance - its handler walks the actor in itself - so this layer stays silent rather than
+    /// refusing work the action does.
     /// </para>
     /// </summary>
     private static RefusalLayerToken OutsideDeclaredRange(FarmhandActionRegistration? action, Vector2 tile, Vector2? actorTile)

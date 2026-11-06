@@ -19,8 +19,9 @@ import { parseStrictBridgeJson } from "./strict-bridge-json.js";
  * see it, because the tests that pinned `plan_shape` hand-built a registration the Mod could not send.
  *
  * This test removes the hand-built registration: it runs the Mod's OWN `hello_ack` serializer, validates the frame
- * with the Host's strict wire contract, and asks `plan_shape` what it now knows. Two actions, one pipeline: the one
- * that declares `adjacent,1` must arrive declared, and the one that declares nothing must arrive undeclared.
+ * with the Host's strict wire contract, and asks `plan_shape` what it now knows. Three actions, one pipeline: the one
+ * that declares `adjacent,1`, the one that declares `self_walked` because its handler closes the distance, and the one
+ * that declares nothing at all.
  */
 
 const scope: Scope = {
@@ -117,6 +118,18 @@ test(
         declared: true,
         relation: "adjacent",
         withinTiles: 1,
+      });
+
+      // The measured defect's own action, through the same pipeline: `cut_weeds` walks the actor in, so the answer
+      // states the relation and states NO distance. Before this relation existed the same frame answered
+      // `approach_requirement_undeclared` - thirteen times in one run - which the model cannot tell from "no constraint".
+      const selfWalked = planShape(actions, { actionId: "cut_weeds" });
+      assert.equal(selfWalked.ok, true);
+      if (!selfWalked.ok) return;
+      assert.deepEqual(selfWalked.actions[0]?.approachRequirement, {
+        declared: true,
+        relation: "self_walked",
+        withinTiles: null,
       });
 
       // The undeclared half, through the same pipeline: `move_to_tile` has no standing precondition, and the answer

@@ -89,8 +89,16 @@ public sealed record FarmhandActionPostcondition(string Name);
 /// Where the body must stand before the action can happen, in the Mod's own words. Published because a
 /// precondition the Mod enforces and never declares can only be learned by being refused - measured
 /// 2026-10-25, `enter_exit` refused with `door_out_of_range` from six tiles away.
+///
+/// <para>
+/// `withinTiles` is OMITTED when the relation states no distance (`self_walked`), because the Host refuses an explicit
+/// `null`: `{relation}` and `{relation, withinTiles: 0}` are different claims, and the serializer must not turn the
+/// first into the second.
+/// </para>
 /// </summary>
-public sealed record FarmhandActionApproachRequirementProjection(string Relation, int? WithinTiles);
+public sealed record FarmhandActionApproachRequirementProjection(
+    string Relation,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WithinTiles = null);
 
 /// <summary>
 /// The ObservationBinding/v1 requirement in the Mod's own words: which target properties a caller must supply, and
