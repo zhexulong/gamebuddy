@@ -53,12 +53,24 @@ function run(command, args, options) {
   });
 }
 
+/** What the reporter uses to rewrite its progress line: cursor up, erase line, colour. Not whitespace. */
+const ANSI_ESCAPE = /\u001B\[[0-9;]*[A-Za-z]/gu;
+
 /** The lines the journey prints as its reading, kept verbatim so nothing here restates them. */
 function readingLines(stdout) {
-  return String(stdout ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("MEASURE ") || line.startsWith("unassessed: "));
+  return (
+    String(stdout ?? "")
+      // The escapes come first: Playwright's `line` reporter prefixes every rewritten line with `ESC[1A ESC[2K`,
+      // so a real reading arrived as `\u001b[1A\u001b[2KMEASURE inventory […]` and `trim()` - which strips
+      // whitespace, not control sequences - left the prefix in place. Every MEASURE line after the first then
+      // failed `startsWith("MEASURE ")`. That is how this gate read `fields: 0` on a run that had measured five
+      // surfaces, and reported it as passed.
+      .replace(ANSI_ESCAPE, "")
+      // A carriage return is also a boundary here, not decoration.
+      .split(/\r\n|\r|\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("MEASURE ") || line.startsWith("unassessed: "))
+  );
 }
 
 /** The fields found per surface, as the journey reported them. */
@@ -81,7 +93,8 @@ function unassessed(stdout) {
 /** A failing assertion's first line, which is where Playwright puts the named violation. */
 function failures(stdout) {
   return String(stdout ?? "")
-    .split("\n")
+    .replace(ANSI_ESCAPE, "")
+    .split(/\r\n|\r|\n/u)
     .map((line) => line.trim())
     .filter((line) => /^\+\s+"/u.test(line))
     .map((line) => line.replace(/^\+\s+"/u, "").replace(/",?$/u, ""));
