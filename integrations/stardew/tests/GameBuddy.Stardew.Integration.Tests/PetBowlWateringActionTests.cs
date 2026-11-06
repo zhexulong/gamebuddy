@@ -109,6 +109,17 @@ public sealed class PetBowlWateringActionTests
 
         // The tool-family gate requires the agent half of the mutation on any
         // tool-driven succeeded receipt (WateringCan deducts stamina in DoFunction).
+        // The can is the action's OWN declared tool (`tool:watering_can`), so this handler takes it out of the pack,
+        // selects it for the native call and restores the actor's selection in a finally. `watering_can_not_equipped`
+        // is gone rather than renamed: requiring the actor to be holding the can was a precondition on its hand, and
+        // the refusal that survives is the resolver's `tool_not_owned:watering_can`.
+        body.Should().Contain("ResolveDeclaredTool(Game1.player.Items, \"water_pet_bowl\")");
+        executed.Should().Contain("TrySelectDeclaredTool(Game1.player, \"water_pet_bowl\"");
+        executed.Should().Contain("RestoreToolSelection(Game1.player, selection)");
+        executed.Should().Contain("finally");
+        executed.Should().NotContain("watering_can_not_equipped");
+        executed.Should().NotContain("CurrentTool");
+        executed.Should().Contain("tool_not_selected:");
         executed.Should().Contain("stamina_before");
         executed.Should().Contain("stamina_after");
         executed.Should().Contain("stamina_delta");

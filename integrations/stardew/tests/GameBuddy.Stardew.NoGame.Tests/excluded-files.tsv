@@ -62,6 +62,9 @@ LevelUpMilestoneChoiceTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, IClic
 LevelUpProfessionPairTests.cs	mod-assembly	ExecutionManager
 LocalPipeBridgeOutboundQueueTests.cs	mod-assembly	LocalPipeBridge, PipeOutbound, PipeOutboundCompletion
 MailboxDiscoveryAndApproachTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
+FixedInteractionPointMineTileSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3053-3124, the checkAction switch); /ref/ is gitignored, so a hosted checkout has no reference tree
+FixedInteractionPointMineMappingTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057 switch (getTileIndexAt(tileLocation, "Buildings", "mine")), the only authority for which mine tile index is a fixed interaction point); /ref/ is gitignored, so a hosted checkout has no reference tree
+FixedInteractionPointSnapshotTests.cs	mod-assembly	ExecutionManager, Farmer, GameLocation, Game1, Netcode, Xna, xTile
 MineExitLadderSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057/:3073-3081, GameLocation.cs :12388-12400); /ref/ is gitignored, so a hosted checkout has no reference tree
 MineLadderDescentTests.cs	mod-assembly	ExecutionManager
 ModalAdmissionTests.cs	mod-assembly	ExecutionManager, Farmer, FarmhandExecutionJournalState, IClickableMenu, IModGlobalDataPersistence

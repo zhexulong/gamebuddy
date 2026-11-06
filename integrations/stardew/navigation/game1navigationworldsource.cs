@@ -278,7 +278,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     }
 
     private static bool InRange(int x, int y, int targetX, int targetY) =>
-        CoordinateInRange(x, y) && CoordinateInRange(targetX, targetY);
+        SourceCoordinateInRange(x, y) && CoordinateInRange(targetX, targetY);
 
     /// <summary>
     /// A coordinate INSIDE a map. Arrival tiles are ordinary map cells, so the floor is zero.
@@ -289,7 +289,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     /// </para>
     /// </summary>
     private static bool CoordinateInRange(int x, int y) =>
-        x >= 0 && y >= 0 && x <= MaximumTileCoordinate && y <= MaximumTileCoordinate;
+        FarmhandWarpCoordinateRange.IsPublishableDestination(x, y);
 
     /// <summary>
     /// A warp SOURCE coordinate, where `-1` is legal because it is the native engine's own encoding for an edge exit.
@@ -301,15 +301,13 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     /// dropped every one of them, so Town's published `warps` contained Beach alone and `navigate_to_destination` to the
     /// Farm was a legal `destination_unreachable` - hit three times by a companion trying to get home.
     /// </para>
+    /// <para>
+    /// The range itself lives in <see cref="FarmhandWarpCoordinateRange"/> because execution acceptance and the
+    /// snapshot publisher read the same fact; keeping a copy here is how the two spellings came to disagree.
+    /// </para>
     /// </summary>
     private static bool SourceCoordinateInRange(int x, int y) =>
-        x >= -1 && y >= -1 && x <= MaximumTileCoordinate && y <= MaximumTileCoordinate;
-
-    /// <summary>
-    /// The largest legal tile index any coordinate may carry, source or destination. One bound for both checks, so a
-    /// later reader cannot tighten one of them and leave the other.
-    /// </summary>
-    private const int MaximumTileCoordinate = 1000;
+        FarmhandWarpCoordinateRange.IsPublishableSource(x, y);
 
     /// <summary>
     /// Every transition this location declares, before either consumer decides whether it may use it.

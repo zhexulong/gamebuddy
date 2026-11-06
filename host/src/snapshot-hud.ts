@@ -105,6 +105,39 @@ type SnapshotHudLine = Readonly<{
       fields: ["mailboxTargets", "location"],
       render: mailboxOf,
     },
+    {
+      // WATER ON THIS MAP, the third of the same quadrant error: `refillWateringCanTargets` is a whole-map scan of the
+      // engine's own `CanRefillWateringCanOnTile`, so a pond ten tiles away is a fact that never moves - and the only way
+      // to ask for it was an observe of the entire map.
+      //
+      // One row is printed, the nearest, because that is the one a refill plan walks to: the Mod publishes the nearest
+      // rows first and caps the list, so a line that printed all eight would pay ~300 bytes every turn for one call.
+      name: "refill water",
+      fields: ["refillWateringCanTargets", "tile"],
+      render: refillWaterOf,
+    },
+    {
+      // A SHOP IS A PLACE, NOT A DISCOVERY.
+      //
+      // `shopTargets` is published from the map's own shop data (`Location` plus the owner's tile), so it is map-fixed: the
+      // same shop sits at the same counter all day. `shop_purchase` needs the shop's opaque id, and before this line the
+      // only way to learn that this map has a shop at all was an observe of everything. One row, the one whose location is
+      // where the companion stands, with the id the action takes.
+      name: "shop",
+      fields: ["shopTargets", "location"],
+      render: shopHereOf,
+    },
+    {
+      // THE MINE'S ELEVATOR IS A FIXED TABLE OF FLOORS.
+      //
+      // `mineElevatorFloorTargets` comes from a whole-layer scan inside `TryFindMineElevatorTile` - not a radius - so the
+      // floor list is the same every turn the level is unchanged, and `ride_mine_elevator` needs one of these ids. The
+      // current floor is marked rather than implied: a list without it makes the companion read the whole ladder to work
+      // out where it already is.
+      name: "mine floors",
+      fields: ["mineElevatorFloorTargets", "location"],
+      render: mineFloorsOf,
+    },
   ]);
 
 /**
@@ -225,6 +258,64 @@ function mailboxOf(snapshot: Snapshot): string {
   const here = rows.find((row) => row.location === snapshot.location);
   if (here === undefined) return "none here";
   return `${here.pendingCount} pending at (${here.x}, ${here.y}) ${here.targetId}`;
+}
+
+/**
+ * The refill-water line: the nearest water tile on this map and the id `refill_watering_can` takes.
+ *
+ * Two shapes, each said plainly:
+ *
+ *   water on this map   `nearest (12, 20) watering_can_refill_0123456789abcdef (+7 more)`
+ *   none                `none here` - a fact, not an absence: this map has no tile the engine will refill from
+ *
+ * The nearest row is DERIVED from the actor's tile by the same rule the Mod sorts by (Chebyshev distance, then x, then
+ * y), never taken from the wire array's own order: a reordered array is the same world, and the block is folded into the
+ * cached history, so it must render the same bytes.
+ */
+function refillWaterOf(snapshot: Snapshot): string {
+  const rows = snapshot.refillWateringCanTargets ?? [];
+  const actor = snapshot.tile;
+  const distance = (row: Readonly<{ x: number; y: number }>): number =>
+    Math.max(Math.abs(row.x - actor.x), Math.abs(row.y - actor.y));
+  const [nearest] = [...rows].sort(
+    (left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y,
+  );
+  if (nearest === undefined) return "none here";
+  const rest = rows.length - 1;
+  return `nearest (${nearest.x}, ${nearest.y}) ${nearest.targetId}${rest > 0 ? ` (+${String(rest)} more)` : ""}`;
+}
+
+/**
+ * The shop line: the shop the companion is standing in, its stock count, and the id `shop_purchase` takes.
+ *
+ *   here   `Woody's shop at (12, 8) 34 items shop_1a2b…`
+ *   none   `none here` - a fact: this map has no shop counter, so a purchase is not a thing to try
+ *
+ * The row is chosen by the location the companion stands in, never by array order, because the block is folded into the
+ * cached history and must render the same bytes for the same world.
+ */
+function shopHereOf(snapshot: Snapshot): string {
+  const rows = snapshot.shopTargets ?? [];
+  const here = rows.find((row) => row.location === snapshot.location);
+  if (here === undefined) return "none here";
+  return `${here.ownerName} at (${here.ownerTileX}, ${here.ownerTileY}) ${here.stockCount} items ${here.targetId}`;
+}
+
+/**
+ * The mine-elevator line: the floors this level's elevator reaches, and which one the companion is on.
+ *
+ *   floors   `5, 10, 15 (here: 15)`
+ *   none     `none here` - a fact: this level has no elevator, so `ride_mine_elevator` has nothing to accept
+ *
+ * Floors are printed in the order the game's own table holds them, which is ascending, and the mark is derived from the
+ * row's own `isCurrentFloor` rather than from a guess about the actor's depth.
+ */
+function mineFloorsOf(snapshot: Snapshot): string {
+  const rows = snapshot.mineElevatorFloorTargets ?? [];
+  if (rows.length === 0) return "none here";
+  const floors = rows.map((row) => String(row.floor)).join(", ");
+  const here = rows.find((row) => row.isCurrentFloor);
+  return here === undefined ? floors : `${floors} (here: ${String(here.floor)})`;
 }
 
 function heldToolOf(snapshot: Snapshot): string {

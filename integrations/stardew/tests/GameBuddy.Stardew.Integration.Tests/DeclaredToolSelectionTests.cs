@@ -56,8 +56,78 @@ public sealed class DeclaredToolSelectionTests
         // till_soil takes no `slot` argument but drives the actor's own hoe, which the handler now takes from this claim
         // rather than requiring the caller to equip it first.
         Claim("till_soil").Should().Be(new FarmhandActionResourceTemplateClaim("tool:hoe", FarmhandResourceTemplateValue.AnyUpgrade));
+        // The five measured 2026-11-05: each demanded a tool the pack already held. `scythe_crop`, `refill_watering_can`
+        // and `pan_ore` published `ToolSlotMeaning` ("must also be `snapshot.currentToolSlot`") and refused
+        // `*_not_equipped_in_requested_slot`; `water_pet_bowl` and `water_slime_hutch_trough` demanded the watering can
+        // with NO slot argument at all, so nothing on their surface mentioned a tool. All five now state the category.
+        Claim("scythe_crop").Should().Be(new FarmhandActionResourceTemplateClaim("tool:scythe", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("refill_watering_can").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("pan_ore").Should().Be(new FarmhandActionResourceTemplateClaim("tool:pan", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("water_pet_bowl").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
+        Claim("water_slime_hutch_trough").Should().Be(new FarmhandActionResourceTemplateClaim("tool:watering_can", FarmhandResourceTemplateValue.AnyUpgrade));
         // An action that claims no tool answers no claim: the handler never invents one from its own id.
         Claim("use_raft").Should().BeNull();
+    }
+
+    [Fact]
+    public void EveryDeclaredToolActionAnswersAnUnsatisfiablePackWithTheCategoryWord()
+    {
+        // The refusal that SURVIVES has to name something real and reachable. `*_not_equipped_in_requested_slot` told
+        // the model it should have equipped first - work the action is supposed to do for it, and a plan node died on
+        // it; `tool_not_owned:<category>` says the pack cannot satisfy the claim at all, so no different request can
+        // repair it. Population: the catalog, so an action added tomorrow is enrolled without touching this file.
+        IReadOnlyList<FarmhandActionRegistration> declared = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Descriptor?.ResourceTemplate
+                .Any(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal)) == true)
+            .ToArray();
+        declared.Should().NotBeEmpty("the catalog must declare tool actions, or this gate reads nothing");
+
+        // One seeded representative per published category, and the vocabulary check that keeps the loop honest: a
+        // category the surface can name but this map cannot build would silently narrow the population below.
+        var representatives = new Dictionary<string, Tool>(StringComparer.Ordinal)
+        {
+            ["axe"] = Axe(upgradeLevel: 0),
+            ["pickaxe"] = Pickaxe(upgradeLevel: 0),
+            ["hoe"] = Hoe(),
+            ["watering_can"] = WateringCan(),
+            ["fishing_rod"] = FishingRod(),
+            ["scythe"] = Scythe(),
+            ["weapon"] = Sword(),
+            ["shears"] = Shears(),
+            ["milk_pail"] = MilkPail(),
+            ["pan"] = Pan(),
+        };
+        FarmhandActionCatalog.ToolEnum.Should().BeEquivalentTo(representatives.Keys);
+
+        var wrongWords = new List<string>();
+        foreach (FarmhandActionRegistration registration in declared)
+        {
+            string category = registration.Descriptor!.ResourceTemplate
+                .First(claim => claim.Key.StartsWith("tool:", StringComparison.Ordinal)).Key["tool:".Length..];
+            // An empty pack, and a pack holding every OTHER category: neither may answer anything but the one word.
+            // The second case is also what separates "you own no scythe" from "you own the wrong tool" - the action
+            // must not borrow the neighbour's tool to avoid refusing.
+            foreach (IList<Item?> pack in new IList<Item?>[]
+            {
+                new List<Item?>(),
+                representatives.Where(entry => !string.Equals(entry.Key, category, StringComparison.Ordinal))
+                    .Select(entry => (Item?)entry.Value)
+                    .ToList(),
+            })
+            {
+                DeclaredToolResolution resolution = Resolve(pack, registration.ActionId);
+                if (!string.Equals(resolution.RefusalCode, $"tool_not_owned:{category}", StringComparison.Ordinal))
+                    wrongWords.Add($"{registration.ActionId} (expected tool_not_owned:{category}, got {resolution.RefusalCode ?? "no refusal"})");
+            }
+
+            // The second pack is the one that matters: a handler that borrowed the neighbour's tool would answer
+            // `no refusal` for a pack holding every tool except the one its claim names.
+        }
+
+        wrongWords.Should().BeEmpty(
+            "a pack that holds no tool of the claimed category must be refused with `tool_not_owned:<category>` - the "
+                + "one word that says the pack cannot be repaired by a different request:\n  "
+                + string.Join("\n  ", wrongWords));
     }
 
     [Fact]

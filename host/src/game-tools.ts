@@ -13,6 +13,7 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import { LOOKUP_SUBJECTS, lookUp, noSnapshot } from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
@@ -206,6 +207,41 @@ export function createStardewObservationTools(
       };
     },
   });
+  /**
+   * A question about the state this session already holds, not a new observation.
+   *
+   * `stardew_observe` asks the Mod; this answers from the snapshot the last observation admitted, so it costs a tool call
+   * and no bridge round trip. It is mounted beside the observation tools because it is the same kind of thing - read-only,
+   * constant, and never an action - and it is deliberately NOT one of the adapter's action tools: `runtime-core.internal.ts`
+   * strips those when a composition declares `planActionSurface`, and a question about the world is not a step in a plan.
+   */
+  const lookup = defineTool({
+    name: "stardew_look_up",
+    label: "Look Up Stardew",
+    description:
+      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
+    parameters: Type.Object(
+      {
+        // The subject vocabulary is the module's own table, so a subject cannot be advertised here and refused there.
+        subject: literalUnionSchema(LOOKUP_SUBJECTS.map((subject) => Type.Literal(subject))),
+        query: Type.Optional(Type.String({ minLength: 0, maxLength: 64 })),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (_toolCallId, params) => {
+      const asked = params as Readonly<{ subject?: unknown; query?: unknown }>;
+      const state = integration.state;
+      const snapshot = state.connected ? state.snapshot : null;
+      const answer =
+        snapshot === null
+          ? noSnapshot(state.latestReasonCode ?? "integration_not_ready")
+          : lookUp(snapshot, String(asked.subject), typeof asked.query === "string" ? asked.query : "");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(answer) }],
+        details: { answer, available: snapshot !== null, snapshotRevision: snapshot?.revision ?? null },
+      };
+    },
+  });
   const execution = defineTool({
     name: "stardew_execution_status",
     label: "Stardew Execution Status",
@@ -362,7 +398,7 @@ export function createStardewObservationTools(
     );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [observe, execution, catalog, search];
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search];
   {
     // constant mount; readiness re-checked at execution
     tools.push(
@@ -2833,6 +2869,142 @@ export function createStardewActionTools(
             y: params.y,
             slot: params.slot,
             expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "rotate_furniture");
+    if (registration?.descriptor && isModDescriptorComplete("rotate_furniture", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("rotate_furniture", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.rotate_furniture,
+          label: "Rotate placed furniture",
+          description:
+            "Turn one already-placed piece of furniture one step through its own rotation cycle, in place. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; there is no angle to name, because the piece's own `rotations` data decides whether it alternates or steps. A piece with fewer than two rotations is refused by name (`furniture_rotation_unsupported`), never reported as a turn that did nothing, and success is the piece's rotation changed while it still stands on the same tile.",
+          parameters: schema,
+          action: "rotate_furniture",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "remove_fence");
+    if (registration?.descriptor && isModDescriptorComplete("remove_fence", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("remove_fence", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.remove_fence,
+          label: "Remove a placed fence",
+          description:
+            "Take one placed fence or fence gate off its tile with the tool the fence's own data accepts. x, y, expectedTargetId and the TOOL's slot must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Fence.performToolAction answers false on every branch, including the one that destroyed the fence, so success is the fence GONE from the location plus the drops it produced; a tool that cannot remove that exact fence is refused by name (`remove_fence_tool_cannot_remove_target`).",
+          parameters: schema,
+          action: "remove_fence",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "put_item_in_fish_tank");
+    if (registration?.descriptor && isModDescriptorComplete("put_item_in_fish_tank", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("put_item_in_fish_tank", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.put_item_in_fish_tank,
+          label: "Put an item in a fish tank",
+          description:
+            "Put one backpack item into a placed fish tank, letting the tank's own CanBeDeposited rule decide whether it may hold it. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported, never as a success.",
+          parameters: schema,
+          action: "put_item_in_fish_tank",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "place_item_on_pedestal");
+    if (registration?.descriptor && isModDescriptorComplete("place_item_on_pedestal", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("place_item_on_pedestal", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.place_item_on_pedestal,
+          label: "Place an item on a pedestal",
+          description:
+            "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the id names the `empty_pedestal` row, because a pedestal already holding something has no such row. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because its own branch would knock the standing item off, and success is the pedestal's heldObject being this item while the pack lost exactly one.",
+          parameters: schema,
+          action: "place_item_on_pedestal",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            slot: params.slot,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "break_resource_clump");
+    if (registration?.descriptor && isModDescriptorComplete("break_resource_clump", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("break_resource_clump", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.break_resource_clump,
+          label: "Break a large stump, log or boulder",
+          description:
+            "Use the Axe or Pickaxe a large stump, hollow log, boulder or meteorite demands on it, one call swinging until the clump is gone. x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result - never invent or guess coordinates. There is no slot to name: the handler selects the tool the clump's own switch requires and restores the previous selection, and a pack that cannot supply the level it needs is refused by name (`clump_tool_too_weak`). Success is the clump GONE, not the swing's return value.",
+          parameters: schema,
+          action: "break_resource_clump",
+          toArgs: (params) => ({
+            x: params.x,
+            y: params.y,
+            expectedTargetId: params.expectedTargetId,
+          }),
+        }),
+      );
+    }
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "open_geode");
+    if (registration?.descriptor && isModDescriptorComplete("open_geode", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("open_geode", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.open_geode,
+          label: "Open a geode",
+          description:
+            "Crack one carried geode at the blacksmith's own counter, through the game's GeodeMenu, so the machine's assignment and fee decide what comes out. slot and expectedQualifiedItemId must be copied exactly from the `inventoryItemFacts` row of the MOST RECENT observe result, and the slice is checked against that id before anything is consumed, so a stale pair is refused rather than opening a different item. There is no target id and no tile: the counter is the location's own. A counter out of reach, a fee the actor cannot pay and a full backpack are each refused by name, and success is the geode gone and the reward in the pack.",
+          parameters: schema,
+          action: "open_geode",
+          toArgs: (params) => ({
+            slot: params.slot,
+            expectedQualifiedItemId: params.expectedQualifiedItemId,
           }),
         }),
       );

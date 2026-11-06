@@ -230,6 +230,49 @@ test("a walk to another tile does not stand in for the transition's own tile", (
   );
 });
 
+/**
+ * AN EDGE EXIT IS NAMED BY THE TILE OUTSIDE THE MAP, AND THE WALK GOES TO THE EDGE INSTEAD.
+ *
+ * <p>
+ * A map declares an edge exit's source outside the grid (`-1 53 BusStop` for the west edge), and `snapshot.warps[]`
+ * publishes exactly that source, so an author copies `{ sourceX: -1, sourceY: 53 }`. Two things then have to be true at
+ * once, and they are two different tiles: the transition's node carries `-1`, because that is the warp's identity and the
+ * Mod resolves it by exact source match, while the prepended walk carries `0`, because `-1` is a boundary rather than a
+ * cell and no `move_to_tile` accepts it.
+ * </p>
+ * <p>
+ * The snapshot row is read through the same predicate the wire uses (`isWarp` -> `isWarpSourceCoordinate`), so this test
+ * fails the moment the published source range and the compiled plan disagree.
+ * </p>
+ */
+test("an edge exit is travelled to from the map's own edge, and the walk never names the off-map tile", () => {
+  const edgeWarps = [
+    { sourceX: -1, sourceY: 53, targetLocation: "BusStop", targetX: 20, targetY: 12, accessible: true },
+  ];
+  for (const [actionId, expected] of [
+    ["travel", { walkX: "0", walkY: "53", sourceX: "-1", sourceY: "53" }],
+    ["enter_exit", { walkX: "0", walkY: "53", sourceX: "-1", sourceY: "53" }],
+  ] as const) {
+    const nodes = nodesOf(compile(`builder.${actionId}({ x: -1, y: 53 });`, { warps: edgeWarps } as Partial<Snapshot>));
+    assert.deepEqual(
+      nodes.map((node) => node.actionId),
+      ["move_to_tile", actionId],
+      `${actionId} still gets the compiler's walk before the transition`,
+    );
+    assert.deepEqual(nodes[0]!.arguments, {
+      x: { type: "integer", canonicalValue: expected.walkX },
+      y: { type: "integer", canonicalValue: expected.walkY },
+    });
+    assert.deepEqual(nodes[1]!.arguments, {
+      x: { type: "integer", canonicalValue: expected.sourceX },
+      y: { type: "integer", canonicalValue: expected.sourceY },
+    });
+    // The plan the compiler produced is one the Mod's own request validator accepts end to end: the walk names an in-map
+    // tile and the transition names the warp's real source.
+    assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  }
+});
+
 test("a plan with no transition is exactly the plan the script wrote", () => {
   const nodes = nodesOf(
     compile(WATER_BY_DOOR, {
@@ -448,11 +491,11 @@ test("a builder method generated from the published surface rejects a wrong, mis
   );
   assert.equal(
     refusalOf(compile("builder.move_to_tile({ x: 10 });")),
-    "plan_script_missing_argument:move_to_tile.y:integer[non_negative]:snapshot.tile.y",
+    "plan_script_missing_argument:move_to_tile.y:integer[whole]:snapshot.tile.y",
   );
   assert.equal(
     refusalOf(compile("builder.move_to_tile({ x: '10', y: 10 });")),
-    "plan_script_argument_not_canonical:move_to_tile.x:integer[non_negative]:snapshot.tile.x:got:string(10)",
+    "plan_script_argument_not_canonical:move_to_tile.x:integer[whole]:snapshot.tile.x:got:string(10)",
   );
   // A real action that the Mod declares read-only has no method at all, and the refusal names it: a plan is made of
   // executions, and an observation is not a step the Mod can run.

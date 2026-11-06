@@ -68,10 +68,21 @@ public sealed class ItemTileActionTests
         "warp_item_native_exception",
     };
 
+    /// <summary>
+    /// Every failure mode each action can produce has its own terminal code, so a receipt never collapses "there is no
+    /// pan owned" into "this tile has no panning site", or "this object is not a warp totem" into "the destination does
+    /// not exist".
+    ///
+    /// <para>
+    /// The two tool codes that used to live here (`pan_not_owned_in_slot`, `pan_not_equipped_in_requested_slot`) are
+    /// gone rather than renamed: the pan is the action's own declared tool, so the one tool refusal it can still produce
+    /// is the resolver's `tool_not_owned:pan` - a word this handler never spells, which is why it is pinned through
+    /// <c>ResolveDeclaredTool</c> in <see cref="PanOre_ResolvesTheSitesOwnPredicateAndProvesBothWorldFacts"/> instead of
+    /// through this array.
+    /// </para>
+    /// </summary>
     private static readonly string[] PanOreReasonCodes =
     {
-        "pan_not_owned_in_slot",
-        "pan_not_equipped_in_requested_slot",
         "pan_site_not_available",
         "pan_site_changed",
         "pan_site_not_water",
@@ -148,10 +159,17 @@ public sealed class ItemTileActionTests
         foreach (string failureCode in PanOreReasonCodes)
             body.Should().Contain($"\"{failureCode}\"", $"the action must be able to report {failureCode}");
 
-        // The tool must be EQUIPPED, which is two separate refusals: not owned, not held.
-        body.Should().Contain("player.Items[slot] is not Pan pan");
-        body.Should().Contain("player.CurrentToolIndex != slot");
-        body.Should().Contain("ReferenceEquals(player.CurrentTool, pan)");
+        // The pan is the action's OWN declared tool: the handler resolves `tool:pan` out of the pack, selects it for the
+        // native call and restores the actor's selection afterwards. The number the caller sends is recorded, never
+        // obeyed - a pack holding a pan is never refused for the tool the actor happened to be holding.
+        body.Should().Contain("ResolveDeclaredTool(player.Items, \"pan_ore\")");
+        body.Should().Contain("TrySelectDeclaredTool(player, \"pan_ore\"");
+        body.Should().Contain("RestoreToolSelection(player, selection)");
+        body.Should().Contain("finally");
+        body.Should().NotContain("CurrentToolIndex != slot");
+        body.Should().NotContain("not_equipped");
+        // ... and the action still refuses a pack that holds no pan at all, by the one word that names it.
+        body.Should().Contain("tool_not_selected:");
 
         // The site is the game's own state, not a client tile: re-resolved, compared, and
         // confirmed water through the game's own predicate.

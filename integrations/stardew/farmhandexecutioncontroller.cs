@@ -599,8 +599,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// by a request arriving while the cross-day lifecycle owns the body (measured 2026-10-17, run g18: the
     /// companion walked to its bed, the night was saved, the lifecycle waited in `AwaitingDayStart`, and every
     /// `respond_level_up` was refused because the family still listed only the two 7.4.2 placeholders).
+    ///
+    /// DERIVED, not listed. This was a hand-written array of the same three ids the catalog already marks with
+    /// <see cref="FarmhandActionHandlerGroup.Modal"/>; two spellings of one fact meant the pump's own gate could
+    /// (and did) stay blind to a member added to the catalog. The order is the catalog's, sorted, so the frozen
+    /// equality pin still names every member and still fails when one appears or disappears.
     /// </summary>
-    internal static readonly string[] ModalActionFamily = { "answer_dialogue", "dismiss_modal", "respond_level_up" };
+    internal static readonly string[] ModalActionFamily = FarmhandActionCatalog.ModalResolvingActionIds
+        .OrderBy(actionId => actionId, StringComparer.Ordinal)
+        .ToArray();
 
     /// <summary>
     /// WIA disposition projection for admission (§4.2). Local stand-in for Lane
@@ -2250,11 +2257,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 .Where(warp => !warp.npcOnly.Value
                     && !string.IsNullOrWhiteSpace(warp.TargetName)
                     // The SOURCE may be `-1` on one axis: that is how a map declares an edge exit (walking off the west
-                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares six of its nine exits
-                    // that way. Requiring both axes non-negative published only the south Beach warps, so the snapshot
-                    // the model read named a single exit and every route home looked impossible.
-                    && warp.X >= -1 && warp.Y >= -1 && warp.X <= 1000 && warp.Y <= 1000
-                    && warp.TargetX >= 0 && warp.TargetY >= 0 && warp.TargetX <= 1000 && warp.TargetY <= 1000)
+                    // edge warps from `X = -1`, off the north edge from `Y = -1`). Town declares three of its exits
+                    // that way. The range is the ONE declaration of that fact (`FarmhandWarpCoordinateRange`), shared
+                    // with the navigation topology and with execution acceptance, so a warp published here is a warp
+                    // `travel`/`enter_exit` will admit.
+                    && FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
+                    && FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
                 // The leg's accessibility, from the SAME authority the navigation topology filters its edges with
                 // (`Game1NavigationWorldSource.IsLocationAccessible`, fail-closed), so an agent can tell a usable exit
                 // from a locked door instead of probing. `null` is never produced: an unmeasurable leg fails closed to
@@ -2282,7 +2290,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? DiscoverCrabPotCollectTargets(player) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
-            advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) ? DiscoverDebrisTargets(player) : null,
+            (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player) : null,
+            // `break_rock`, not `break_rock_source`: the capability word is the ACTION ID, and the old spelling meant this
+            // discovery never ran, so the family it publishes was empty in every snapshot.
             advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
             advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? DiscoverClearHoeDirtTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? DiscoverArtifactSpotTargets(player) : null,
@@ -2311,7 +2321,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
             chestsSummary,
-            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
+            // `put_item_in_fish_tank` and `place_item_on_pedestal` name the PACK SLOT their item is taken from, and this row is where that number and the
+            // item identity beside it are published - the tank's own `worldObjectTargets` row carries the tile, never the slot.
+            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
             advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
@@ -2368,11 +2380,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmBuildingTargets: advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player) : null,
             // The world-object lane's single shared projection: placement candidates, removable and
-            // non-removable objects, breakable containers and placed furniture, published while ANY of the four
-            // actions is advertised because all four name targets from this one array. `move_placed_furniture`
-            // carries its own term: a caller that can only pick furniture up advertises none of the other three,
-            // and the rows it needs are the `placed_furniture` ones this family is the only home for.
-            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
+            // non-removable objects, breakable containers, placed furniture and empty pedestals,
+            // published while ANY action that names a target from this one array is advertised -
+            // including the furniture and pedestal actions, which are the only ways to act on the
+            // pieces this array is the sole publication of.
+            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
             // The disposition this tick, read from the value Update() already computed: publishing a
             // second computation would be a second authority.
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
@@ -2391,7 +2403,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
             // The slot the tool-family actions' `slot` argument must name, and the slot's occupant whatever it is.
             CurrentToolSlot: player.CurrentToolIndex,
-            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex)
+            CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
+            // The map's own fixed interaction points: whole-map, no entities, no reachability. Published
+            // unconditionally for the same reason `warps` is - a location's topology is not a slice of one
+            // action, and a companion without `enter_mine` still has to name the way out of a mine. The
+            // count of what the cap left out rides beside the list, so truncation is stated.
+            FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
+            FixedInteractionPointsOmitted: fixedInteractionPointsOmitted
         );
     }
 
@@ -3056,7 +3074,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     // reaches zero (Object.cs:2581-2585), so a ready machine that holds something is collectable whatever
                     // it is - the state, not a Keg id, is what the collect action needs.
                     machine.readyForHarvest.Value && machine.MinutesUntilReady == 0 && machine.heldObject.Value is not null,
-                    machine.GetMachineData() is not null);
+                    machine.GetMachineData() is not null,
+                    // What THIS machine takes, from its own Data/Machines rows - the same derivation the load refusal
+                    // names. Every object with machine data used to be published as a load target with no statement of
+                    // its inputs, so a furnace reached the model looking like it took coffee beans (measured 2026-10-31).
+                    // null here means the machine's data could not answer, which is not the same fact as "takes nothing".
+                    Accepts: ReadMachineInputAcceptance(machine));
                 if (machine.heldObject.Value is null && !machine.readyForHarvest.Value && machine.MinutesUntilReady <= 0 && IsMachineInteractionObject(machine))
                 {
                     for (int slot = 0; slot < player.Items.Count; slot++)
@@ -3781,15 +3804,51 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         })
         .ToArray();
 
-    private static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
+    /// <summary>
+    /// The cap on published refill tiles. Equal to the Host's `maxItems` for `refillWateringCanTargets`;
+    /// one entry past it would close the bridge rather than shorten the list.
+    /// </summary>
+    private const int MaximumRefillWateringCanTargets = 8;
+
+    /// <summary>
+    /// The tiles a watering can can be refilled at, WHOLE MAP, nearest first.
+    ///
+    /// <para>
+    /// The scan used to stop at <see cref="TargetDiscoveryRadius"/>, which is right for an entity and wrong
+    /// for water: a pond is a map feature, and on a farm the nearest water is routinely ten to twenty tiles
+    /// away. Measured 2026-11-04: the family published ZERO refill targets on a farm whose pond sat outside
+    /// the six-tile ring, so a watering plan dead-ended on an empty can while the map had water the actor
+    /// could walk to. Reachability is decided by the WALK, never by this list - the radius only ever decided
+    /// which water a snapshot mentioned.
+    /// </para>
+    ///
+    /// <para>
+    /// Nearest first, then X, then Y, and the cap keeps the nearest: every dropped row is therefore strictly
+    /// farther than every published one, which is the one truncation a refill plan cannot be misled by - it
+    /// walks to the closest water and refills there. The predicate is the engine's own
+    /// <c>GameLocation.CanRefillWateringCanOnTile</c> (<c>GameLocation.cs:2293</c>), so a water tile, a
+    /// <c>WaterSource</c> property and an indoor kitchen all arrive through the same authority the tool itself
+    /// uses rather than through a second reading of the map data.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<BridgeRefillWateringCanTarget> DiscoverRefillWateringCanTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeRefillWateringCanTarget>();
-        List<BridgeRefillWateringCanTarget> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= Math.Min(1000, player.TilePoint.X + TargetDiscoveryRadius) && result.Count < 8; x++)
-        for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(1000, player.TilePoint.Y + TargetDiscoveryRadius) && result.Count < 8; y++)
-            if (location.CanRefillWateringCanOnTile(x, y)) result.Add(new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, x, y), x, y));
-        return result;
+        if (location?.map is null) return Array.Empty<BridgeRefillWateringCanTarget>();
+        if (location.map.Layers.Count == 0) return Array.Empty<BridgeRefillWateringCanTarget>();
+        int width = location.map.Layers[0].LayerWidth;
+        int height = location.map.Layers[0].LayerHeight;
+        List<(int X, int Y)> candidates = new();
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            if (location.CanRefillWateringCanOnTile(x, y)) candidates.Add((x, y));
+        return candidates
+            .OrderBy(tile => ChebyshevDistance(player, tile.X, tile.Y))
+            .ThenBy(tile => tile.X)
+            .ThenBy(tile => tile.Y)
+            .Take(MaximumRefillWateringCanTargets)
+            .Select(tile => new BridgeRefillWateringCanTarget(BuildRefillWateringCanTargetId(location, tile.X, tile.Y), tile.X, tile.Y))
+            .ToArray();
     }
 
     private static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)

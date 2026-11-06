@@ -266,6 +266,31 @@ public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, str
 public sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
 
 /// <summary>
+/// One interaction point the MAP ITSELF fixes at a tile: a mine level's ladder, a shop counter, a
+/// television. Not an entity, and not a warp: it has no <c>location.objects</c> row and no
+/// <c>location.warps</c> entry, so a radius-bounded entity discovery can never publish it.
+///
+/// <para>
+/// <see cref="Kind"/> is a token from the closed vocabulary in
+/// <c>GameBuddy.Stardew.Core.Policy.FixedInteractionPointKinds</c>, mirrored by the wire schema's
+/// enum. <see cref="ActionWord"/> is the engine's own first word at that tile (<c>MinecartTransport</c>
+/// out of <c>Action: MinecartTransport Default</c>), and <c>null</c> where the engine carries no word
+/// - a mine ladder is a tile INDEX, not a property, so it has nothing to quote.
+/// </para>
+/// </summary>
+public sealed record BridgeFixedInteractionPoint(
+    int X,
+    int Y,
+    string Kind,
+    // NEVER omitted. The bridge's own serializer drops a null member
+    // (`BridgeProtocol.JsonOptions.DefaultIgnoreCondition = WhenWritingNull`), and the wire schema REQUIRES this
+    // member: a null that vanished would fail `hasExactKeys` on the Host and refuse the WHOLE snapshot with
+    // `invalid_snapshot:fixedInteractionPoints`. A mine ladder has no engine word, so null is the honest value and
+    // it has to reach the wire.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActionWord
+);
+
+/// <summary>
 /// One native forage object. <see cref="IsForage"/> is <c>Object.isForage()</c> at publish time - the predicate that is
 /// the only difference between this family and <see cref="BridgeItemTarget"/>.
 /// </summary>
@@ -339,8 +364,18 @@ public sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, 
 /// its own <c>Data/Machines</c> rows, which is what makes it a machine `machine_inspect`/`machine_load` can address
 /// rather than an ordinary placed object.
 /// </para>
+///
+/// <para>
+/// <see cref="Accepts"/> is what the machine's own <c>Data/Machines</c> rows declare it takes, derived from the same
+/// trigger rows the load refusal names. It is published because the row otherwise promised only "this is a machine":
+/// measured 2026-10-31, a furnace reached the model as a load target with no statement of inputs and the model loaded
+/// coffee beans into it. It is written even when null, because <c>null</c> means the machine data could not answer -
+/// which is a different fact from an empty list (the data was read and declares no load input), and the pipeline's
+/// default is to omit nulls, which would collapse the two into one absent key.
+/// </para>
 /// </summary>
-public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady, bool MachineData);
+public sealed record BridgeMachineTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, bool ReadyForHarvest, int MinutesUntilReady, string? HeldObjectQualifiedItemId, string? LastInputQualifiedItemId, int? LoadInputSlot, string? LoadInputQualifiedItemId, int? LoadInputStack, bool? CollectOutputReady, bool MachineData,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] MachineInputAcceptance? Accepts = null);
 
 public sealed record BridgeTreeChopSourceTarget(string TargetId, string Location, int X, int Y, string TreeType, int GrowthStage, float Health, bool Stump, bool Moss, bool Tapped);
 
@@ -795,7 +830,16 @@ public sealed record BridgeSnapshot(
     // sibling projection.
     // Defaulted and LAST for the same reason as its siblings above.
     int? CurrentToolSlot = null,
-    string? CurrentToolSlotItem = null);
+    string? CurrentToolSlotItem = null,
+    // The map's OWN fixed interaction points, whole-map and small: no entities, no reachability. Every
+    // other family in this record is either an entity within `TargetDiscoveryRadius` or a table the engine
+    // keeps for itself (`warps`, `doorTargets`); a mine level's ladder tile is in neither, which is why a
+    // companion that entered a mine could name no way out. `fixedInteractionPointsOmitted` counts the
+    // points the cap left out, so truncation is stated rather than silent.
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already
+    // closed by the parameters before them.
+    IReadOnlyList<BridgeFixedInteractionPoint>? FixedInteractionPoints = null,
+    int? FixedInteractionPointsOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

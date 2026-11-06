@@ -75,11 +75,11 @@ namespace GameBuddy.Stardew;
 // land within one). A named tile that is not the live point is a refusal, never a pan of
 // a neighbouring site.
 //
-// The tool half is verified as EQUIPPED before the call, the same shape `use_raft`
-// admits against (`raft_not_equipped_in_requested_slot`,
-// farmhandexecutioncontroller.transportactions.cs): a pan in the slot that is not the
-// held tool cannot be driven by the native tool ingress, so "not owned" and "not
-// equipped" are two different refusals rather than one.
+// The tool half is the action's OWN declared tool (`tool:pan`), resolved out of the pack,
+// selected for the native call and restored in a `finally`. It used to be verified as
+// EQUIPPED first, the shape `use_raft` still demands (`raft_not_equipped_in_requested_slot`):
+// a pan in the named slot that was not the held tool was refused, which made holding the
+// right tool a precondition the caller could not see on the surface.
 //
 // POSTCONDITION. The seam is `void` and its generated result list is a local, so the
 // decision is the pair of world facts the seam itself writes, re-read after the call:
@@ -91,8 +91,9 @@ namespace GameBuddy.Stardew;
 // end with a NEW site (Pan.cs:108-118), so "the site is Point.Zero" is not a legal
 // postcondition and only "it is not the site that was panned" is.
 //
-// FAILURE MODES: no pan in the named slot (`pan_not_owned_in_slot`), a pan that is not
-// the held tool (`pan_not_equipped_in_requested_slot`), no panning site here at all --
+// FAILURE MODES: no pan anywhere in the pack (`tool_not_owned:pan`, from the resolver), a
+// resolved slot that does not hold a pan (`tool_not_selected:pan`), no panning site here at
+// all --
 // which is also the state left behind by a pan (`pan_site_not_available`), the named
 // tile is not the live site (`pan_site_changed`), it is not water
 // (`pan_site_not_water`), the actor is too far from it (`pan_site_out_of_range`), the
@@ -477,95 +478,104 @@ internal sealed partial class ExecutionManager
 
         Farmer player = Game1.player;
         GameLocation location = player.currentLocation;
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not Pan pan)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pan_not_owned_in_slot", $"slot={slot}");
-        // The native tool ingress drives the HELD tool, so a pan that is in the pack but
-        // not equipped is a named refusal rather than a pan the native path could not
-        // have produced -- the check `break_rock_source` had to restore.
-        if (player.CurrentToolIndex != slot || !ReferenceEquals(player.CurrentTool, pan))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "pan_not_equipped_in_requested_slot",
-                $"slot={slot};current_tool_slot={player.CurrentToolIndex.ToString(CultureInfo.InvariantCulture)};current_tool={DescribeTool(player.CurrentTool) ?? "none"}");
-
-        Point site = location.orePanPoint.Value;
-        if (site.Equals(Point.Zero))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "pan_site_not_available",
-                $"location={location.NameOrUniqueName};ore_pan_point=0,0;tile={targetX},{targetY}");
-        if (site.X != targetX || site.Y != targetY)
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "pan_site_changed",
-                $"published={targetX},{targetY};live={site.X},{site.Y};location={location.NameOrUniqueName}");
-        if (!location.isWaterTile(targetX, targetY))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "pan_site_not_water",
-                $"tile={targetX},{targetY};location={location.NameOrUniqueName};is_water=false");
-        if (!IsTileWithinChebyshevRadius(player, targetX, targetY, PanNativeReachTiles))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "pan_site_out_of_range",
-                $"tile={targetX},{targetY};actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach={PanNativeReachTiles.ToString(CultureInfo.InvariantCulture)}");
-
-        int timesPannedBefore = (int)player.stats.Get("TimesPanned");
-        int occupiedBefore = CountOccupiedInventorySlots(player);
-        int unitsBefore = CountInventoryUnits(player);
-        Point siteBefore = site;
+        // Ask before resolving the site: a pack that cannot satisfy the action's own `tool:pan` claim is refused now,
+        // and the pan the actor happens to be holding is not the question. The slot the caller named is recorded,
+        // never obeyed.
+        if (ResolveDeclaredTool(player.Items, "pan_ore").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusal, slot));
+        // Selection facts are deliberately NOT published here: this action takes the pan its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
+        // `pan_ore` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
+        // Whoever adds those keys must extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(player, "pan_ore", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
         try
         {
-            // THE SEAM. Public, synchronous, no menu and no input edge: the pan's own
-            // `x,y` parameters are overwritten inside it, so the coordinates passed here
-            // are the native call's own convention (`use_raft` passes the same shape) and
-            // the site it acts on is the point re-resolved above.
-            pan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, player);
-        }
-        catch (Exception nativeException)
-        {
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Uncertain,
-                "pan_native_exception",
-                $"slot={slot};tile={targetX},{targetY};site={siteBefore.X},{siteBefore.Y};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
-        }
+            // The native tool ingress drives the HELD tool, which is now this handler's own selection rather than the
+            // caller's request: `TrySelectDeclaredTool` dropped its reference check into the selection's postcondition.
+            if (selection.Tool is not Pan pan)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            Point site = location.orePanPoint.Value;
+            if (site.Equals(Point.Zero))
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "pan_site_not_available",
+                    $"location={location.NameOrUniqueName};ore_pan_point=0,0;tile={targetX},{targetY}");
+            if (site.X != targetX || site.Y != targetY)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "pan_site_changed",
+                    $"published={targetX},{targetY};live={site.X},{site.Y};location={location.NameOrUniqueName}");
+            if (!location.isWaterTile(targetX, targetY))
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "pan_site_not_water",
+                    $"tile={targetX},{targetY};location={location.NameOrUniqueName};is_water=false");
+            if (!IsTileWithinChebyshevRadius(player, targetX, targetY, PanNativeReachTiles))
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "pan_site_out_of_range",
+                    $"tile={targetX},{targetY};actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach={PanNativeReachTiles.ToString(CultureInfo.InvariantCulture)}");
 
-        Point siteAfter = location.orePanPoint.Value;
-        int timesPannedAfter = (int)player.stats.Get("TimesPanned");
-        int occupiedAfter = CountOccupiedInventorySlots(player);
-        int unitsAfter = CountInventoryUnits(player);
-        bool siteMoved = !siteAfter.Equals(siteBefore);
-        bool statAdvanced = timesPannedAfter == timesPannedBefore + 1;
-        // `addItemsByMenuIfNecessary` opens an ItemGrabMenu when the pack cannot take the
-        // whole result set; that overflow is the game's own disposition and is reported,
-        // not collected here.
-        bool overflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;
-        bool panned = siteMoved && statAdvanced;
-        string evidence =
-            $"slot={slot};tool={DescribeTool(pan) ?? "pan"};tile={targetX},{targetY};location={location.NameOrUniqueName};"
-            + $"site_before={siteBefore.X},{siteBefore.Y};site_after={siteAfter.X},{siteAfter.Y};site_moved={siteMoved.ToString().ToLowerInvariant()};"
-            + $"times_panned_before={timesPannedBefore.ToString(CultureInfo.InvariantCulture)};times_panned_after={timesPannedAfter.ToString(CultureInfo.InvariantCulture)};"
-            + $"pan_output_overflow={overflowPending.ToString().ToLowerInvariant()};"
-            + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
-            + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(
-            requestId,
-            executionId,
-            panned ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            panned ? "ore_panned" : "pan_postcondition_unavailable",
-            evidence);
+            int timesPannedBefore = (int)player.stats.Get("TimesPanned");
+            int occupiedBefore = CountOccupiedInventorySlots(player);
+            int unitsBefore = CountInventoryUnits(player);
+            Point siteBefore = site;
+            try
+            {
+                // THE SEAM. Public, synchronous, no menu and no input edge: the pan's own
+                // `x,y` parameters are overwritten inside it, so the coordinates passed here
+                // are the native call's own convention (`use_raft` passes the same shape) and
+                // the site it acts on is the point re-resolved above.
+                pan.DoFunction(location, targetX * 64 + 32, targetY * 64 + 32, 1, player);
+            }
+            catch (Exception nativeException)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Uncertain,
+                    "pan_native_exception",
+                    $"slot={selection.Slot};tile={targetX},{targetY};site={siteBefore.X},{siteBefore.Y};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+            }
+
+            Point siteAfter = location.orePanPoint.Value;
+            int timesPannedAfter = (int)player.stats.Get("TimesPanned");
+            int occupiedAfter = CountOccupiedInventorySlots(player);
+            int unitsAfter = CountInventoryUnits(player);
+            bool siteMoved = !siteAfter.Equals(siteBefore);
+            bool statAdvanced = timesPannedAfter == timesPannedBefore + 1;
+            // `addItemsByMenuIfNecessary` opens an ItemGrabMenu when the pack cannot take the
+            // whole result set; that overflow is the game's own disposition and is reported,
+            // not collected here.
+            bool overflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;
+            bool panned = siteMoved && statAdvanced;
+            evidence =
+                $"slot={selection.Slot};tool={DescribeTool(pan) ?? "pan"};tile={targetX},{targetY};location={location.NameOrUniqueName};"
+                + $"site_before={siteBefore.X},{siteBefore.Y};site_after={siteAfter.X},{siteAfter.Y};site_moved={siteMoved.ToString().ToLowerInvariant()};"
+                + $"times_panned_before={timesPannedBefore.ToString(CultureInfo.InvariantCulture)};times_panned_after={timesPannedAfter.ToString(CultureInfo.InvariantCulture)};"
+                + $"pan_output_overflow={overflowPending.ToString().ToLowerInvariant()};"
+                + $"inventory_slots_before={occupiedBefore.ToString(CultureInfo.InvariantCulture)};inventory_slots_after={occupiedAfter.ToString(CultureInfo.InvariantCulture)};"
+                + $"inventory_units_before={unitsBefore.ToString(CultureInfo.InvariantCulture)};inventory_units_after={unitsAfter.ToString(CultureInfo.InvariantCulture)}";
+            state = panned ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = panned ? "ore_panned" : "pan_postcondition_unavailable";
+        }
+        finally
+        {
+            RestoreToolSelection(player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>

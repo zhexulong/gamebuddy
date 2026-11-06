@@ -129,6 +129,49 @@ export function isRefillWateringCanTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * The CLOSED vocabulary of location-fixed interaction points, mirrored by the Mod's
+ * `FixedInteractionPointKinds` and by the wire schema's own `enum` for the same field.
+ *
+ * <p>
+ * The schema is the authority: `schema-contract.test.ts` compares this set with the schema's enum, so a
+ * token added on one side alone fails there by name instead of producing `invalid_snapshot` on a real map.
+ * The four `mine_*` words name the Buildings-layer tile indices `MineShaft.checkAction` dispatches on
+ * (`MineShaft.cs:3057-3096`); `action_tile` and `touch_action_tile` name the engine's two tile properties.
+ * </p>
+ */
+export const FIXED_INTERACTION_POINT_KINDS: ReadonlySet<string> = new Set([
+  "mine_elevator",
+  "mine_ladder_up",
+  "mine_ladder_down",
+  "mine_shaft",
+  "action_tile",
+  "touch_action_tile",
+]);
+
+/**
+ * One interaction point the MAP fixes at a tile: a mine ladder, a shop counter, a television.
+ *
+ * <p>
+ * `actionWord` is the engine's own first word at that tile (`MinecartTransport` out of
+ * `Action: MinecartTransport Default`) and is `null` where the engine carries no word at all - a mine
+ * ladder is a tile INDEX, so it has nothing to quote. It is required-but-nullable rather than optional:
+ * `hasExactKeys` then proves the Mod sends the member, and a null reads as "no word" instead of as
+ * "this Mod is too old to have one".
+ * </p>
+ */
+export function isFixedInteractionPointFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["x", "y", "kind", "actionWord"]) &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.kind === "string" &&
+    FIXED_INTERACTION_POINT_KINDS.has(value.kind) &&
+    (value.actionWord === null || isBoundedNonEmptyString(value.actionWord, 64))
+  );
+}
+
 export function isPetBowlTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -574,6 +617,30 @@ export function isRockSourceTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * What one machine's rows declare it takes: the derived entries, and how many the cap withheld.
+ *
+ * `inputs` is the machine's own `Data/Machines` `ItemPlacedInMachine` trigger rows in the machine's order (an item id, a
+ * `tag:` selector, or `any`), each with the count the row consumes; `omitted` counts what the cap withheld. Empty
+ * `inputs` means the machine declares no load input - which is NOT the same fact as a `null` acceptance beside it.
+ *
+ * The cap is the language-neutral wire cap (`protocol/bridge-v1.schema.json`
+ * `$defs.machineAcceptance.properties.inputs.maxItems`) and the Mod's `MachineInputAcceptance.InputLimit`; this validator
+ * is bound to the same number, and `protocol.test.ts` reads it out of the schema rather than trusting this comment.
+ */
+export const MACHINE_ACCEPTANCE_INPUT_LIMIT = 8;
+
+export function isMachineAcceptanceFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["inputs", "omitted"]) &&
+    Array.isArray(value.inputs) &&
+    value.inputs.length <= MACHINE_ACCEPTANCE_INPUT_LIMIT &&
+    value.inputs.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 64) &&
+    isNonNegativeSafeInteger(value.omitted)
+  );
+}
+
 export function isMachineTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -590,6 +657,7 @@ export function isMachineTargetFact(value: unknown): boolean {
       "loadInputQualifiedItemId",
       "loadInputStack",
       "collectOutputReady",
+      "accepts",
       "displayName",
       "machineData",
     ]) &&
@@ -622,6 +690,10 @@ export function isMachineTargetFact(value: unknown): boolean {
       typeof value.collectOutputReady === "boolean") &&
     // Optional at the wire: `Object.GetMachineData() is not null`, the answer that makes this object a machine.
     (value.machineData === undefined || typeof value.machineData === "boolean") &&
+    // What the machine's own Data/Machines rows declare it takes. ABSENT is not a fourth state here: the Mod writes the
+    // key even when it cannot answer, so `null` is "the data could not answer" and `{"inputs": []}` is "it takes
+    // nothing" - two facts a reader must be able to tell apart. Absent only means a Mod build older than the field.
+    (value.accepts === undefined || value.accepts === null || isMachineAcceptanceFact(value.accepts)) &&
     // The three load fields are one fact: the slot that holds the input, the item it holds, and the count the machine's
     // own rows consume. Half a load is not a smaller promise, it is an unusable one, so all three appear together.
     ((value.loadInputSlot === undefined &&
@@ -1393,13 +1465,24 @@ export function isMailboxTargetFact(value: unknown): boolean {
  * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
  * missing or malformed array must fail closed rather than read as a transport fault. */
 
-/** The world-object lane's projection. Every member is always written (the Mod omits nulls,
- * which is why `kind`, `slot`, `qualifiedItemId` and `displayName` are required here), and a
- * missing or malformed array must fail closed rather than read as a transport fault. */
+/** The world-object lane's projection. Every member is always written (the Mod omits nulls by
+ * default, which is why `rotation` and `rotations` carry `JsonIgnoreCondition.Never` on the Mod
+ * side), and a missing or malformed array must fail closed rather than read as a transport fault. */
 export function isWorldObjectTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "kind", "location", "x", "y", "slot", "qualifiedItemId", "displayName"]) &&
+    hasExactKeys(value, [
+      "targetId",
+      "kind",
+      "location",
+      "x",
+      "y",
+      "slot",
+      "qualifiedItemId",
+      "displayName",
+      "rotation",
+      "rotations",
+    ]) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     // `placed_furniture` is a piece standing in `location.furniture` - where the room's own bed, sofa and rug live, and
@@ -1412,7 +1495,11 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
       value.kind === "removable_object" ||
       value.kind === "non_removable_object" ||
       value.kind === "breakable_container" ||
-      value.kind === "placed_furniture") &&
+      value.kind === "placed_furniture" ||
+      // `empty_pedestal` is a pedestal standing in `location.objects` that holds NOTHING, which is the only state
+      // `place_item_on_pedestal` can address. `pedestalTargets` cannot supply it: that family is the TAKE projection and
+      // carries only a pedestal that already holds an item, binding that item's identity and stack.
+      value.kind === "empty_pedestal") &&
     typeof value.location === "string" &&
     typeof value.x === "number" &&
     Number.isSafeInteger(value.x) &&
@@ -1423,8 +1510,25 @@ export function isWorldObjectTargetFact(value: unknown): boolean {
     value.slot >= -1 &&
     typeof value.qualifiedItemId === "string" &&
     value.qualifiedItemId.length > 0 &&
-    typeof value.displayName === "string"
+    typeof value.displayName === "string" &&
+    // `rotation`/`rotations` are the piece's live `currentRotation` and its own cycle length. They are
+    // `null` for every kind that is not furniture, and `null` is the ONLY absence this accepts: a 0 or
+    // -1 sentinel would pass `Number.isSafeInteger`, and 0 is a legal rotation, so the sentinel would
+    // be silently readable as a value. A furniture row that carries no rotation is refused rather than
+    // published without the fact the rotation postcondition reads.
+    isCurrentRotationFact(value.rotation) &&
+    isRotationCycleFact(value.rotations) &&
+    (value.kind !== "placed_furniture" || (value.rotation !== null && value.rotations !== null)) &&
+    (value.kind === "placed_furniture" || (value.rotation === null && value.rotations === null))
   );
+}
+/** `Furniture.currentRotation`: one quarter-turn of the engine's own cycle, or the explicit `null`. */
+function isCurrentRotationFact(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 3);
+}
+/** `Furniture.rotations`: how many quarter-turns the piece's own data allows (Data/Furniture's 0, 2 or 4). */
+function isRotationCycleFact(value: unknown): value is number | null {
+  return value === null || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 4);
 }
 /** One posted help-wanted quest the actor can name: the opaque id it was published under, the native
  * quest type, and the title a human would recognize. */

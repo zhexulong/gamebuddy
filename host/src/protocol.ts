@@ -32,6 +32,7 @@ import {
   isFertilizerTargetFact,
   isFiniteNumber,
   isFishPondTargetFact,
+  isFixedInteractionPointFact,
   isFoodTargetFact,
   isForageTargetFact,
   isGrassTargetFact,
@@ -332,6 +333,31 @@ export type Snapshot = Readonly<{
     targetX: number;
     targetY: number;
   }>[];
+  /**
+   * The map's OWN fixed interaction points, WHOLE MAP and without entities: a mine level's ladder tiles,
+   * a shop counter, a television.
+   *
+   * <p>
+   * Every other family on this type is either an entity within the Mod's six-tile discovery radius or a
+   * table the engine keeps for itself (`warps`, `doorTargets`). A mine level's ladder-up is a
+   * Buildings-layer TILE INDEX, so it is in neither, and no radius ever reaches it from anywhere - which
+   * is why a companion in a mine could name no way out. `kind` is the closed vocabulary the wire schema
+   * declares; `actionWord` is the engine's own first word at that tile and is null where it carries none.
+   * Older Mod snapshots may omit the field.
+   * </p>
+   */
+  fixedInteractionPoints?: readonly Readonly<{
+    x: number;
+    y: number;
+    kind: string;
+    actionWord: string | null;
+  }>[];
+  /**
+   * The fixed interaction points the Mod's cap left out of `fixedInteractionPoints`, so a truncated list
+   * says so instead of reading as the whole map. Absent on a Mod older than the field; null when the
+   * family itself was not measured.
+   */
+  fixedInteractionPointsOmitted?: number | null;
   /** Current live tiles that the target-version Hoe can potentially till. `hoeDirt` is `GameLocation.GetHoeDirtAtTile` for the tile, the fact `till_soil` refuses on. */
   soilTiles?: readonly Readonly<{ x: number; y: number; hoeDirt?: boolean }>[];
   /**
@@ -693,6 +719,14 @@ export type Snapshot = Readonly<{
     loadInputStack?: number | null;
     collectOutputReady?: boolean | null;
     machineData?: boolean;
+    /**
+     * What this machine's own `Data/Machines` rows declare it takes, published so a caller does not have to guess: a
+     * furnace says five copper ore, not coffee beans. Empty `inputs` means the machine declares no load input; `null`
+     * means its data could not answer, which is a different fact from "takes nothing"; `omitted` counts what the cap
+     * withheld. The live load hint (`loadInputSlot`/`loadInputQualifiedItemId`) stays the machine's own probe of the
+     * carried stack, so the declaration and the current affordance are two answers to two questions.
+     */
+    accepts?: Readonly<{ inputs: readonly string[]; omitted: number }> | null;
   }>[];
   /** Nearby live NPCs with an existing Farmhand friendship record; inspection is read-only. */
   npcRelationshipTargets?: readonly Readonly<{
@@ -934,7 +968,8 @@ export type Snapshot = Readonly<{
 
   /** One object the world-object lane can act on at a world tile, plus the backpack slot that
    * acts. `kind` is what the live object IS for this lane ('placement_candidate',
-   * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture'); `slot`
+   * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture', 'empty_pedestal');
+   * `slot`
    * is the backpack slot the named action must act through, or -1 when the actor owns no tool for
    * it. */
   worldObjectTargets?: readonly Readonly<{
@@ -946,6 +981,11 @@ export type Snapshot = Readonly<{
     slot: number;
     qualifiedItemId: string;
     displayName: string;
+    /** The piece's live `currentRotation`, and the size of its own rotation cycle. Both are
+     * `null` for every kind that is not a piece of furniture - never 0 and never -1, because 0
+     * is a legal rotation and a sentinel that reads as a value gets compared as one. */
+    rotation: number | null;
+    rotations: number | null;
   }>[];
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
@@ -1073,6 +1113,10 @@ export type ExecutionRequest = Readonly<{
     | "place_owned_object"
     | "remove_placed_item"
     | "move_placed_furniture"
+    | "rotate_furniture"
+    | "remove_fence"
+    | "put_item_in_fish_tank"
+    | "place_item_on_pedestal"
     | "break_container"
     | "use_obelisk"
     | "toggle_animal_door"
@@ -1084,6 +1128,7 @@ export type ExecutionRequest = Readonly<{
     | "redeem_prize_ticket"
     | "tailor_clothing"
     | "dye_clothing_with_item"
+    | "open_geode"
     | "color_placed_object"
     | "send_multiplayer_chat"
     | "name_entity"
@@ -1109,6 +1154,7 @@ export type ExecutionRequest = Readonly<{
     | "place_crab_pot"
     | "bait_crab_pot"
     | "clear_debris"
+    | "break_resource_clump"
     | "machine_inspect"
     | "machine_load"
     | "machine_collect_output"
@@ -1792,6 +1838,8 @@ export const SNAPSHOT_KEYS = [
   "activeExecution",
   "warps",
   "doorTargets",
+  "fixedInteractionPoints",
+  "fixedInteractionPointsOmitted",
   "soilTiles",
   "toolSlots",
   "wateringCanFacts",
@@ -2688,6 +2736,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "redeem_prize_ticket" &&
     value.action !== "tailor_clothing" &&
     value.action !== "dye_clothing_with_item" &&
+    value.action !== "open_geode" &&
     value.action !== "color_placed_object" &&
     value.action !== "build_farm_building" &&
     value.action !== "send_multiplayer_chat" &&
@@ -2695,6 +2744,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
     value.action !== "move_placed_furniture" &&
+    value.action !== "rotate_furniture" &&
+    value.action !== "remove_fence" &&
+    value.action !== "put_item_in_fish_tank" &&
+    value.action !== "place_item_on_pedestal" &&
     value.action !== "break_container" &&
     value.action !== "use_warp_item" &&
     value.action !== "pan_ore" &&
@@ -2725,6 +2778,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "place_crab_pot" &&
     value.action !== "bait_crab_pot" &&
     value.action !== "clear_debris" &&
+    value.action !== "break_resource_clump" &&
     value.action !== "machine_inspect" &&
     value.action !== "machine_load" &&
     value.action !== "machine_collect_output" &&
@@ -2810,14 +2864,16 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "travel") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
-    // A WARP TILE the actor stands on, so it is an ORDINARY MAP CELL: `isTileCoordinate`, not the release below.
+    // A WARP SOURCE tile, so the range is the one the snapshot publishes edge exits in - NOT `isTileCoordinate`.
     //
-    // A map may declare an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), but that coordinate is the
-    // BOUNDARY EVENT, not a tile anyone occupies - the actor walks to a legal cell beside it and the engine warps on the
-    // edge. `SelectSafeApproachTarget` is what resolves that neighbour, so the model still names a real tile here. The
-    // snapshot release below exists so the model can SEE the edge exits at all; this validator is about what it may ask
-    // for, and `-1` is not something it can stand on.
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_warp_source";
+    // A map declares an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), and `snapshot.warps[]`
+    // publishes exactly that source because that is what the location's warp table holds. `travel` names the tile the
+    // actor leaves FROM and the Mod resolves the warp by exact source match
+    // (`farmhandexecutioncontroller.movementactions.cs`, `ResolveLocationWarp`), so requiring an in-map tile here
+    // refused the very exit the snapshot had just advertised: the model copied `{sourceX, sourceY}` and the Host
+    // answered `invalid_warp_source`. `isWarpSourceCoordinate` is this side's one declaration of that range and is
+    // already what the `warps` rows are validated with, so reading and asking now agree.
+    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_warp_source";
   } else if (value.action === "use_raft") {
     const args = value.args;
     if (!hasExactKeys(args, ["slot", "x", "y"])) return "invalid_args";
@@ -2977,6 +3033,15 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     if (!hasExactKeys(value.args, ["leftSlot", "rightSlot", "expectedTargetId"])) return "invalid_execution_request";
     if (!isNonNegativeSafeInteger(value.args.leftSlot) || !isNonNegativeSafeInteger(value.args.rightSlot))
       return "invalid_execution_request";
+  } else if (value.action === "open_geode") {
+    // The geode travels to the blacksmith's counter as the CURSOR item, so the request names the one
+    // backpack slot it comes from and the id it expects to find there. No coordinate: the counter is
+    // Clint's own dialogue case (`Game1.activeClickableMenu = new GeodeMenu()`,
+    // GameLocation.cs:12345-12346), and no opaque target id: the slot's own live item identifies it.
+    // The Mod's own wire parser pins exactly this shape (BridgeProtocol.ExecutionArgumentProperties).
+    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
+    if (!isNonNegativeSafeInteger(value.args.slot)) return "invalid_execution_request";
+    if (!isBoundedNonEmptyString(value.args.expectedQualifiedItemId, 128)) return "invalid_execution_request";
   } else if (value.action === "ride_bus") {
     // The ticket machine of the current location is the whole input: there is no
     // client-supplied target to validate, so the args must be exactly empty.
@@ -2984,7 +3049,10 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
   } else if (value.action === "enter_exit") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_door_target";
+    // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit
+    // lives at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a
+    // transition leaves from.
+    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_door_target";
   } else if (value.action === "till_soil") {
     if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
 
@@ -3156,6 +3224,18 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
         : value.action === "bait_crab_pot"
           ? "invalid_bait_crab_pot_target"
           : "invalid_crab_pot_target";
+  } else if (value.action === "break_resource_clump") {
+    // The clump's own native switch decides which tool it needs, so the wire carries no `slot`: the handler resolves,
+    // selects and restores the tool itself.
+    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+
+    if (
+      !isTileCoordinate(value.args.x) ||
+      !isTileCoordinate(value.args.y) ||
+      typeof value.args.expectedTargetId !== "string" ||
+      !isOpaqueId(value.args.expectedTargetId)
+    )
+      return "invalid_clump_target";
   } else if (value.action === "clear_debris") {
     if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
 
@@ -3583,6 +3663,9 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "fishPondTargets", maxItems: 16, accepts: isFishPondTargetFact },
   { field: "warps", maxItems: 512, accepts: isWarp },
   { field: "doorTargets", maxItems: 64, accepts: isWarp },
+  // The map's own fixed interaction points. `isWarp` is the wrong shape here on purpose: a ladder tile names
+  // no destination, so this family carries a closed `kind` instead of a target location.
+  { field: "fixedInteractionPoints", maxItems: 64, accepts: isFixedInteractionPointFact },
   { field: "soilTiles", maxItems: 64, accepts: isSoilTile },
   { field: "toolSlots", maxItems: 36, accepts: isToolSlotFact },
   { field: "forageTargets", maxItems: 64, accepts: isForageTargetFact },
@@ -3756,6 +3839,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
       value.artifactSpotFarmSourceCount < 0)
   )
     return "invalid_snapshot:artifactSpotFarmSourceCount";
+  // The count of fixed interaction points the Mod's cap left out. Beside the family it counts, the same way
+  // `artifactSpotFarmSourceCount` sits beside its own: one number, checked as a non-negative integer.
+  if (
+    value.fixedInteractionPointsOmitted !== undefined &&
+    value.fixedInteractionPointsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)
+  )
+    return "invalid_snapshot:fixedInteractionPointsOmitted";
   // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
   // not measure it (the container actions were not advertised); a present one must be the whole shape.
   if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
@@ -3820,6 +3911,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
       (typeof value.artifactSpotFarmSourceCount === "number" &&
         Number.isSafeInteger(value.artifactSpotFarmSourceCount) &&
         value.artifactSpotFarmSourceCount >= 0)) &&
+    (value.fixedInteractionPointsOmitted === undefined ||
+      value.fixedInteractionPointsOmitted === null ||
+      isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)) &&
     (value.chestsSummary === undefined || isChestsSummaryFact(value.chestsSummary)) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
@@ -3857,10 +3951,15 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
     value.action === "redeem_prize_ticket" ||
     value.action === "tailor_clothing" ||
     value.action === "dye_clothing_with_item" ||
+    value.action === "open_geode" ||
     value.action === "color_placed_object" ||
     value.action === "place_owned_object" ||
     value.action === "remove_placed_item" ||
     value.action === "move_placed_furniture" ||
+    value.action === "rotate_furniture" ||
+    value.action === "remove_fence" ||
+    value.action === "put_item_in_fish_tank" ||
+    value.action === "place_item_on_pedestal" ||
     value.action === "break_container" ||
     value.action === "equip_wearable" ||
     value.action === "unequip_wearable" ||
@@ -3903,6 +4002,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "place_crab_pot" ||
       value.action === "bait_crab_pot" ||
       value.action === "clear_debris" ||
+      value.action === "break_resource_clump" ||
       value.action === "machine_inspect" ||
       value.action === "machine_load" ||
       value.action === "machine_collect_output" ||
@@ -3959,6 +4059,10 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     value.action !== "place_owned_object" &&
     value.action !== "remove_placed_item" &&
     value.action !== "move_placed_furniture" &&
+    value.action !== "rotate_furniture" &&
+    value.action !== "remove_fence" &&
+    value.action !== "put_item_in_fish_tank" &&
+    value.action !== "place_item_on_pedestal" &&
     value.action !== "break_container"
   )
     return null;
@@ -3970,6 +4074,31 @@ function validateWorldObjectActionArgs(value: unknown): string | null {
     if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
     if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_placement_tile";
     if (!isToolSlot(args.slot)) return "invalid_placement_slot";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
+      return "invalid_placement_item";
+  } else if (value.action === "rotate_furniture") {
+    // Turning a placed piece names the tile and the piece's own opaque `placed_furniture` id, and nothing
+    // else. No slot and no angle: which rotation the turn lands on is the piece's own cycle
+    // (`Furniture.rotate`, Furniture.cs:1153-1162), so a caller-supplied angle would have to pretend to
+    // accept orientations the game does not have.
+    if (!hasExactKeys(args, ["x", "y", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+  } else if (value.action === "place_item_on_pedestal") {
+    // The same item shape as the tank deposit: the tile, the pack slot the item is taken from, that item's wire
+    // identity and the pedestal's own target id.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
+    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
+      return "invalid_placement_item";
+  } else if (value.action === "put_item_in_fish_tank") {
+    // The tank deposit names the tile, the pack slot holding the item, that item's wire identity and the tank's
+    // `placed_furniture` id. All four are mandatory: the native method deposits whatever the actor is HOLDING
+    // (`who.ActiveObject`/`who.CurrentItem`, FishTankFurniture.cs:235), so the slot is what selects the stack and the
+    // id is what proves the stack is still the one the caller saw.
+    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
+    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
+    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
     if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
       return "invalid_placement_item";
   } else if (value.action === "move_placed_furniture") {

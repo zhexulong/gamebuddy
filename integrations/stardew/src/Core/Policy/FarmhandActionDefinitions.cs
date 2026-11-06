@@ -181,12 +181,13 @@ public static class FarmhandActionCatalog
     });
 
     /// <summary>
-    /// The SAME claim shape as <see cref="EmbodiedActorResource"/>, with the TOOL the handler requires the actor to be
-    /// holding as its subject: `tool:&lt;category&gt;` plus the upgrade-level requirement that handler enforces. It is a
-    /// resource claim and not a new descriptor field because it names a native resource the action needs; the one
-    /// fact the Host cannot derive from the world and therefore could not plan around (it used to guess, then eat a
+    /// The SAME claim shape as <see cref="EmbodiedActorResource"/>, with the TOOL the handler needs as its subject:
+    /// `tool:&lt;category&gt;` plus the upgrade-level requirement that handler enforces. It is a resource claim and not a
+    /// new descriptor field because it names a native resource the action needs; the one fact the Host cannot derive
+    /// from the world and therefore could not plan around (it used to guess, then eat a
     /// `*_not_equipped_in_requested_slot` refusal). Category vocabulary is <see cref="FarmhandActionCatalog.ToolEnum"/>,
-    /// the same one `equip_tool` selects on, so a planner can satisfy the claim with the action it already has.
+    /// the same one `equip_tool` selects on, so a planner can satisfy the claim with the action it already has - and
+    /// the handler takes that tool out of the pack instead of requiring it in the actor's hand.
     /// </summary>
     private static IReadOnlyList<FarmhandActionResourceTemplateClaim> ToolResource(string category, FarmhandResourceTemplateValue upgrade) => Array.AsReadOnly(new[]
     {
@@ -307,11 +308,73 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // by the parent.
         E("move_placed_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "placed_furniture_picked_up", "GameLocation.removeQueuedFurniture"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
         E("break_container", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "container_source_broken", "BreakableContainer.performToolAction"), FarmhandActionLifecycle.LiveVerified, "worldObjectTargets"),
+        // TURNING A PLACED PIECE IS THE MISSING HALF OF PLACEMENT. The lane can put a piece down
+        // (`place_owned_object`), pick it up (`move_placed_furniture`) and repaint a chest
+        // (`color_placed_object`), but nothing could turn what is already standing, so every layout the
+        // companion built stayed the way the first tile happened to orient it.
+        //
+        // It is NOT `place_owned_object` with an extra argument: that action's subject is a placement
+        // CANDIDATE (a tile plus a backpack slot, the object does not exist yet), and this one's subject is
+        // a piece ALREADY in `location.furniture`, named by the same opaque `placed_furniture` id
+        // `move_placed_furniture` takes. No slot is declared, because no item is involved.
+        //
+        // `furniture_rotated` is the observed postcondition: the piece's own `currentRotation` read AFTER the
+        // native call differs from the value read before it, the rotated footprint is the one the game's own
+        // `Furniture.canBePlacedHere` accepts, and the piece is still standing on the tile it was named on.
+        // A rotation that would push the piece into a neighbour is put BACK and refused by name
+        // (`furniture_rotation_blocked_by_occupant`), never reported as a success the world does not show.
+        //
+        // Registered `Experimental` for the same reason as its sibling: it stays off the Agent surface until
+        // it passes its own native-local live gate, and promotion is a separate catalog edit.
+        E("rotate_furniture", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the piece standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the item, so it is also what proves the piece is still the one you saw.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "furniture_rotated", "Furniture.rotate"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // TAKING A FENCE DOWN IS NOT `remove_placed_item` WITH A FENCE IN FRONT OF IT. The fence's own write is
+        // `Fence.performToolAction` (Fence.cs:436-474), which overrides the Object-shaped guards that action mirrors:
+        // the question "can this tool break THIS fence" is answered by `Fence.IsValidRemovalTool` (Fence.cs:478-513)
+        // from `Data/Fences`, and a GATE is a separate branch that only an Axe or a Pickaxe reaches (:447-454).
+        // `remove_placed_item`'s `RemovesThisObject` knows none of that, so it would admit a tool the fence refuses and
+        // report an uncertain postcondition twelve swings later instead of naming the reason.
+        //
+        // The native method ALSO returns false on every branch, including the one that destroyed the fence (:473), so
+        // success can only be the fence being GONE from `location.objects` plus the drops it produced.
+        //
+        // The target id is the object identity `remove_placed_item` already publishes for the same fence
+        // (`BuildPlacedItemTargetId`): one fence, one id, whichever action takes it down.
+        E("remove_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque object target id of the fence on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fence_removed", "Fence.performToolAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // A FISH TANK IS FURNITURE, and it is the only thing that decides what it will hold. `FishTankFurniture`
+        // lives in `location.furniture` (GameLocation.cs:452), so the target id is the same `placed_furniture` id the
+        // pickup and the rotation take - one piece, one id. The deposit itself is the tank's own
+        // `checkForAction` (FishTankFurniture.cs:220-268), whose acceptance rule (`CanBeDeposited`, :270-309) reads
+        // `Data/Aquarium` for the normal case and a closed vanilla id list plus a hat branch for the rest; this action
+        // does not restate any of it.
+        //
+        // The item is named by the SLOT it occupies, because the native method reads the HELD item
+        // (`who.ActiveObject`/`who.CurrentItem`, :235). `expectedQualifiedItemId` binds the stack, so a slot whose
+        // contents changed under a waiting request is refused rather than depositing something the caller never named.
+        //
+        // `fish_tank_item_deposited` is the observed postcondition: the tank's own `heldItems` grew by exactly one with
+        // this item at the end, and the pack lost exactly one. A deposit the engine took the item for but never
+        // completed is put back the way the native failure callback does it (:255-263) and reported as
+        // `fish_tank_deposit_not_observed`, never as a success.
+        E("put_item_in_fish_tank", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `placed_furniture` target id of the tank standing on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "fish_tank_item_deposited", "FishTankFurniture.checkForAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
+        // PUTTING SOMETHING ON A PEDESTAL IS THE PEDESTAL'S OWN DECISION, and its seam has one branch a caller must never
+        // reach: while it already holds an item, `performObjectDropInAction` KNOCKS THAT ITEM OFF and answers false
+        // (ItemPedestal.cs:97-101). So an occupied pedestal is refused BY NAME before the call, and the remaining
+        // acceptance is the pedestal's own two guards asked through `probe: true` - the item must be trashable (:93-96) and
+        // must be EXACTLY a plain `Object` (:102), which excludes hats, clothing and furniture.
+        //
+        // The pedestal is an OBJECT in `location.objects`, not furniture, and its identity here is published as
+        // `worldObjectTargets` kind `empty_pedestal`. `pedestalTargets` cannot supply it: that family is the TAKE
+        // projection and carries only a pedestal that already holds something.
+        //
+        // `pedestal_item_placed` is the observed postcondition: the pedestal's own `heldObject` is this item and the pack
+        // lost exactly one. `match`/`locked` are reported because the pedestal writes them itself when the item it wants
+        // lands, so the caller can see it just satisfied a shrine rather than merely decorating.
+        E("place_item_on_pedestal", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string", null, "The opaque `empty_pedestal` target id of the pedestal on this tile, copied from the `worldObjectTargets` entry of the MOST RECENT observe result. It binds the location, the tile and the pedestal itself.") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "pedestal_item_placed", "ItemPedestal.performObjectDropInAction"), FarmhandActionLifecycle.Experimental, "worldObjectTargets"),
         // Declares the axe its handler requires, like break_rock declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.
         E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
-        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
+        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
@@ -319,11 +382,26 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             EmbodiedActorResource, "write", "arrived_at_destination",
             WatchdogMs: NavigationWatchdogMs)),
         E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(CarriedToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
+        // The same ResourceClumps, addressed the way every other tool action is now addressed: no `slot`, and the
+        // handler resolves, selects and restores the tool itself. `clear_debris` above still obeys the caller's slot
+        // and still needs the named slot to hold a usable tool, which is the contract that killed whole plan chains
+        // (4a4012db); this row is the shape those actions moved to.
+        //
+        // It declares NO `tool:` claim, and that is the honest registration rather than an omission: WHICH tool a clump
+        // needs is a property of the clump (`ResourceClump.performToolAction`, ResourceClump.cs:150-234 - 600 needs an
+        // Axe at upgrade 1, 602 an Axe at 2, 672 a Pickaxe at 2, 148/622 a Pickaxe at 3, 752-758 any Pickaxe), and a
+        // row that claimed one family would be wrong for every clump of the other. The requirement therefore travels
+        // with the TARGET, from the same one table the native switch is mirrored in, and the refusal is named
+        // `clump_tool_too_weak` instead of the slot-and-holding words the old contract used.
+        // `Experimental`, not `Published`: a gate descriptor is a promise that this action has its own live-run gate
+        // (check-stardew-action-promotion.mjs:150-156), and no live gate has been run for it. Promotion to
+        // LiveVerified is the parent's step and lands with that gate, the way move_placed_furniture's did.
+        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Target(), FarmhandActionLifecycle.Experimental, "debrisTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental, "farmAnimalPetTargets"),
-        E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),
-        E("water_slime_hutch_trough", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "slimeHutchTroughTargets"),
+        E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),
+        E("water_slime_hutch_trough", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified, "slimeHutchTroughTargets"),
         E("interact_npc_with_item", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         // Talking is the OTHER half of NPC.checkAction (NPC.cs:2464) and is its own
         // action rather than an optional argument on the gift action, because the
@@ -359,7 +437,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // mailbox claim is the TALK/claim verb on a map Action tile. All three stay
         // Experimental until each passes its own native-local live gate.
         E("use_warp_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "warp_item_arrived", "Object.performUseAction"), FarmhandActionLifecycle.LiveVerified, "warpItemTargets"),
-        E("pan_ore", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "ore_panned", "Pan.DoFunction"), FarmhandActionLifecycle.LiveVerified, "panSites"),
+        E("pan_ore", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, AutoSelectedToolSlotMeaning), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), ToolResource("pan", FarmhandResourceTemplateValue.AnyUpgrade), "write", "ore_panned", "Pan.DoFunction"), FarmhandActionLifecycle.LiveVerified, "panSites"),
         E("claim_mail_attachment", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mail_claimed", "GameLocation.mailbox"), FarmhandActionLifecycle.LiveVerified, "mailboxTargets"),
         // The building-chest pair. Some buildings declare their OWN storage in Data/Buildings
         // (BuildingData.Chests: the Mill's Input/Output, the Junimo Hut's Output), reached by
@@ -373,7 +451,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // to LiveVerified is a separate catalog edit owned by the parent.
         E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestLoad(), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
         E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestCollect(), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
-        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
+        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),
@@ -535,7 +613,34 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // parent. See farmhandexecutioncontroller.tailoringactions.cs.
         E("tailor_clothing", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_tailored", "TailoringMenu.CraftItem"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
         E("dye_clothing_with_item", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("leftSlot", "integer"), new FarmhandActionArgument("rightSlot", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "clothing_dyed", "TailoringMenu.DyeItems"), FarmhandActionLifecycle.LiveVerified, "tailoringTargets"),
+        // The blacksmith's geode counter. The geode is NOT a menu slot: `GeodeMenu` holds it as the CURSOR
+        // item (`heldItem`, GeodeMenu.cs:133) and mints the treasure from it inside its own update
+        // (:373-385, delivered at :230). So the request names the BACKPACK slot the geode comes from plus
+        // the id it expects to find there, and no coordinate: the counter is Clint's own dialogue case
+        // (GameLocation.cs:12345-12346, `Game1.activeClickableMenu = new GeodeMenu()`), not a world tile.
+        // Experimental: no live gate yet, and promotion to LiveVerified is a separate catalog edit owned
+        // by the parent. See farmhandexecutioncontroller.geodeactions.cs.
+        E("open_geode", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "The backpack slot holding the geode, taken from the observation inventory row."), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "GeodeMenu.receiveLeftClick"), FarmhandActionLifecycle.Experimental),
     });
+
+    /// <summary>
+    /// Every registered action whose WORKING PRECONDITION is an open modal - the set the registration's own
+    /// handler group already declares (<see cref="FarmhandActionHandlerGroup.Modal"/>).
+    ///
+    /// It is derived here rather than written out beside each gate that needs it, because two gates DO need it and
+    /// they have to agree: the flat admission decides which actions may be admitted while a menu is up, and the
+    /// Body Program pump decides which nodes may be dispatched while one is up. A hand-written second list would let
+    /// the pump refuse the very node that exists to close the menu the pump is waiting for - which is what it did:
+    /// `dismiss_modal` parked for the whole cadence window whenever a modal was open. Deriving from the catalog means
+    /// registering an action as modal-resolving is ONE edit, and both gates move together.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ModalResolvingActionIds = new HashSet<string>(
+        Registrations.Where(registration => registration.HandlerGroup == FarmhandActionHandlerGroup.Modal).Select(registration => registration.ActionId),
+        StringComparer.Ordinal);
+
+    /// <summary>Whether an action's working precondition is an open modal. Unknown ids are not.</summary>
+    public static bool IsModalResolving(string? actionId) => actionId is not null && ModalResolvingActionIds.Contains(actionId);
+
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
@@ -564,6 +669,15 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// its handler selects the tool its own claim names and restores the actor's selection afterwards, so a slot that
     /// differs from `currentToolSlot` is recorded rather than refused. `InventoryAddressabilityTests` reads each published
     /// claim and fails when an action's slot description and its enforcement disagree.
+    /// </para>
+    ///
+    /// <para>
+    /// WHO STILL PUBLISHES THIS SENTENCE, and why it is a gap rather than a design: the five actions whose requirement is
+    /// a native PREDICATE rather than a category - `clear_cask` and `break_container` (any `isHeavyHitter()` tool),
+    /// `remove_placed_item` (an Axe OR a Pickaxe), `toggle_tool_light` (a Lantern) and `use_raft` (a Raft). A
+    /// `tool:&lt;category&gt;` claim names one category and cannot say "any of these", so those handlers still demand the
+    /// hand. `ToolPreconditionUniformityTests.TheActionsWhoseToolRequirementIsAPredicateAreNamed` prints them on every
+    /// run; that list shrinking is the measure of this gap closing, and it is what stops the sentence from spreading.
     /// </para>
     /// </summary>
     private const string ToolSlotMeaning = "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you.";
@@ -605,7 +719,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// action family in this catalog uses `x`/`y` for the tile being acted on, which makes the wrong reading the
     /// natural one.
     /// </summary>
-    private const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
+    public const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
     /// <summary>
@@ -629,6 +743,11 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         "write",
         "native_action_postcondition")
     {
+        // A transition's x/y is the warp SOURCE tile, and an edge exit's source lies one tile OUTSIDE the map, so this
+        // action's coordinate floor is the producer's own source floor rather than the walk-target one. Every other
+        // action using x/y keeps the default 0: an off-map tile is never a walk target.
+        Acceptance = new FarmhandExecutionAcceptanceFacts(
+            MinimumTileCoordinate: FarmhandWarpCoordinateRange.MinimumSourceCoordinate),
         Approach = entersDoor ? new FarmhandActionApproachRequirement("adjacent", 1) : null,
     };
 

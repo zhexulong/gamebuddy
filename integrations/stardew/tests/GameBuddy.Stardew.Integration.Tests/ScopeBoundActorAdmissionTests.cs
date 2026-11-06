@@ -61,6 +61,7 @@ public sealed class ScopeBoundActorAdmissionTests
     };
 
     [Theory]
+    [InlineData("break_resource_clump")]
     [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
@@ -127,6 +128,7 @@ public sealed class ScopeBoundActorAdmissionTests
 
     [Theory]
     [InlineData("bait_crab_pot")]
+    [InlineData("break_resource_clump")]
     [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
@@ -175,6 +177,7 @@ public sealed class ScopeBoundActorAdmissionTests
 
     [Theory]
     [InlineData("bait_crab_pot")]
+    [InlineData("break_resource_clump")]
     [InlineData("break_rock")]
     [InlineData("chest_retrieve")]
     [InlineData("chest_store")]
@@ -392,6 +395,8 @@ public sealed class ScopeBoundActorAdmissionTests
         "fertilize_tile" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)368", ExpectedTargetId = "fertilizer_target_1" },
         "harvest_crop" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedQualifiedItemId = "(O)24", ExpectedTargetId = "harvest_target_1" },
         "clear_debris" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "debris_target_1" },
+        // No `slot`: the clump's own native switch decides which tool the handler selects.
+        "break_resource_clump" => new BridgeExecutionArgs { X = 5, Y = 5, ExpectedTargetId = "debris_target_1" },
         "place_wood_fence" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)322", ExpectedTargetId = "fence_target_1" },
         "place_crab_pot" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)710", ExpectedTargetId = "crab_pot_target_1" },
         "bait_crab_pot" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)685", ExpectedTargetId = "bait_target_1" },

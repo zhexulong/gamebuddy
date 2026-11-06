@@ -89,7 +89,7 @@ public sealed class DeclaredArgumentAcceptanceTests
     /// list rather than one value; the coverage test below reports what is unperturbable rather
     /// than pretending to cover it.
     /// </summary>
-    private static IReadOnlyList<string> InvalidValuesFor(FarmhandActionArgument argument)
+    private static IReadOnlyList<string> InvalidValuesFor(FarmhandActionDescriptor descriptor, FarmhandActionArgument argument)
     {
         if (argument.Enum is { Count: > 0 })
         {
@@ -101,7 +101,11 @@ public sealed class DeclaredArgumentAcceptanceTests
             {
                 "quantity" => new[] { "0" },    // nothing may ask for zero units
                 "slot" => new[] { "99999" },    // far outside MaximumInventorySlot
-                _ => new[] { "-1" },            // below the coordinate floor
+                // One below the coordinate floor the ACTION declares. The floor belongs to the descriptor (a
+                // transition's x/y is a warp SOURCE tile, and an edge exit's source is `-1`), so a value this test
+                // hard-coded would be the wrong perturbation for half the registry - and would pin the floor here
+                // as a second spelling of a fact the registry owns.
+                _ => new[] { ((descriptor.Acceptance ?? FarmhandExecutionAcceptance.Default).MinimumTileCoordinate - 1).ToString(System.Globalization.CultureInfo.InvariantCulture) },
             },
             "string" => argument.Name switch
             {
@@ -276,7 +280,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Kind == FarmhandOperationKind.Execution && registration.Descriptor is not null)
             .SelectMany(registration => registration.Descriptor!.Arguments
-                .SelectMany(argument => InvalidValuesFor(argument)
+                .SelectMany(argument => InvalidValuesFor(registration.Descriptor!, argument)
                     .Select(invalid => new object[] { registration.ActionId, argument.Name, invalid })));
 
     [Theory]
@@ -288,7 +292,7 @@ public sealed class DeclaredArgumentAcceptanceTests
         FarmhandActionDescriptor descriptor = registration.Descriptor!;
 
         FarmhandActionArgument target = descriptor.Arguments.First(argument => argument.Name == argumentName);
-        InvalidValuesFor(target).Should().Contain(
+        InvalidValuesFor(descriptor, target).Should().Contain(
             invalid,
             $"'{invalid}' must be a value this test derives for {actionId}.{argumentName}");
 
@@ -331,12 +335,12 @@ public sealed class DeclaredArgumentAcceptanceTests
     {
         var declarations = FarmhandActionCatalog.Registrations
             .Where(r => r.Kind == FarmhandOperationKind.Execution && r.Descriptor is not null)
-            .SelectMany(r => r.Descriptor!.Arguments.Select(a => (r.ActionId, Argument: a)))
+            .SelectMany(r => r.Descriptor!.Arguments.Select(a => (r.ActionId, Descriptor: r.Descriptor!, Argument: a)))
             .ToList();
         declarations.Should().NotBeEmpty();
 
         List<string> uncovered = declarations
-            .Where(d => InvalidValuesFor(d.Argument).Count == 0)
+            .Where(d => InvalidValuesFor(d.Descriptor, d.Argument).Count == 0)
             .Select(d => d.ActionId + "." + d.Argument.Name)
             .ToList();
 

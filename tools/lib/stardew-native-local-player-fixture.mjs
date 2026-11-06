@@ -475,6 +475,9 @@ export function fixtureActions(action) {
   // The fixture already puts the actor beside the shop owner inside trading hours, so
   // the whole contract is the purchase itself.
   if (action === "shop_purchase") return ["shop_purchase"];
+  // The geode slice supplies the pack fact (one geode) and the exit that leads to Clint's counter;
+  // reaching the counter and cracking the geode remain typed production actions.
+  if (action === "open_geode") return ["move_to_tile", "travel", "open_geode"];
   // The elevator fixture already leaves the actor on a mine floor that carries the
   // elevator tile, so the whole contract is the floor selection.
   if (action === "select_mine_elevator_floor") return ["select_mine_elevator_floor"];
@@ -482,6 +485,11 @@ export function fixtureActions(action) {
   // Pickaxe before attachment. Travel/movement/equipment and each hit remain
   // independently typed production actions.
   if (action === "clear_debris") return ["move_to_tile", "travel", "equip_tool", "clear_debris"];
+  // Same Given as `clear_debris` (one intact 2x2 `parentSheetIndex=752` ResourceClump on the Farm)
+  // because that is the only pre-attachment recipe that establishes a real clump. `equip_tool` is
+  // here for the action's own contract: it picks and restores the tool the CLUMP demands, so the
+  // slice proves it works while the actor is deliberately holding a different one.
+  if (action === "break_resource_clump") return ["move_to_tile", "travel", "equip_tool", "break_resource_clump"];
   if (action === "enter_exit") return ["move_to_tile", "enter_exit"];
   // The hold-absorption gate drives the till-soil contract and a follow-up at the same tile, so it runs in that world.
   if (action === "hold_absorption") return ["move_to_tile", "travel", "equip_tool", "till_soil"];
@@ -763,6 +771,12 @@ export function fixtureActions(action) {
   // farmhandexecutioncontroller.cs, the `WorldObjectTargets:` row of the snapshot projection). The
   // runner never invokes it.
   if (action === "move_placed_furniture") return ["move_placed_furniture", "remove_placed_item"];
+  // The rotation slice names a PIECE, and its target comes from the same shared `worldObjectTargets`
+  // projection - which the Mod now publishes for `rotate_furniture` itself, so no sibling action is
+  // advertised to drag the projection in. The fixture arms one turnable piece and one the engine will
+  // not turn (`ModEntry.Fixtures.RotateFurniture.cs`); the run proves both.
+  if (action === "rotate_furniture") return ["rotate_furniture"];
+  if (action === "remove_fence") return ["remove_fence"];
   if (action === "enter_mine") return ["enter_mine"];
   // WIA world-interruption proofs (world-interruption-arbitration.md §4.1 ② /
   // §4.3): the SAME published move_to_tile action runs over fixtures that stage
@@ -831,6 +845,10 @@ export function fixtureScenario(actions, action) {
   // world-object fallback below - a world whose actor is warped to the Farm, where no furniture
   // stands at all.
   if (action === "move_placed_furniture") return "";
+  // The rotation slice owns a world of its own: two pieces of the game's own furniture beside the
+  // actor, one whose `rotations` allows a turn and one whose does not.
+  if (action === "rotate_furniture") return "native_rotate_furniture_v1";
+  if (action === "remove_fence") return "native_remove_fence_v1";
 
   // The requested harness action can select a distinct scenario for the SAME
   // action set: the built-in kitchen fridge is the chest store/take intent over a
@@ -851,6 +869,9 @@ export function fixtureScenario(actions, action) {
   // Action-keyed, before every includes() fallback: the farm-animal pet needs its own Given (one coop, exactly one animal,
   // the actor in its ring), which no other action's world carries.
   if (action === "pet_farm_animal") return "native_pet_farm_animal_v1";
+  // Action-keyed, before every includes() fallback: the geode world is its own Given (one geode in
+  // the pack plus the shop exit), and no other action's world carries either fact.
+  if (action === "open_geode") return "native_open_geode_v1";
   if (action === "select_mine_elevator_floor") return "native_mine_elevator_v1";
   // The building-chest pair needs its own world: a finished building whose DATA declares a Load
   // and a Collect chest, with the Load chest empty, the Collect chest stocked, and the actor
@@ -978,6 +999,7 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("clear_hoedirt")) return "native_clear_hoedirt_v1";
   if (actions.includes("dig_artifact_spot")) return "native_dig_artifact_spot_v1";
   if (actions.includes("clear_debris")) return "native_clear_debris_resource_clump_v1";
+  if (action === "break_resource_clump") return "native_clear_debris_resource_clump_v1";
   if (actions.includes("refill_watering_can")) return "native_refill_watering_can_v1";
   if (actions.includes("water_pet_bowl")) return "native_water_pet_bowl_v1";
   if (actions.includes("water_slime_hutch_trough")) return "native_water_slime_hutch_trough_v1";

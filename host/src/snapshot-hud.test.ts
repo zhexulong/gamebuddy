@@ -80,6 +80,9 @@ test("the state block is byte-identical for two turns in the same world", () => 
       "- ripe crops: 3 on Farm (nearest 12,20)",
       "- mine ladders: none here",
       "- mailbox: none here",
+      "- refill water: none here",
+      "- shop: none here",
+      "- mine floors: none here",
       "]",
     ].join("\n"),
   );
@@ -191,6 +194,26 @@ test("every printed field is a declared snapshot field, and no line reads an und
     ["harvestWhereabouts", [{ location: "Desert", readyForHarvestCount: 7 }]],
     ["mineEntranceTargets", [{ targetId: "mine_entrance_0123456789abcdef", x: 12, y: 3 }]],
     ["mailboxTargets", [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }]],
+    ["refillWateringCanTargets", [{ targetId: "watering_can_refill_0123456789abcdef", x: 12, y: 3 }]],
+    [
+      "shopTargets",
+      [
+        {
+          targetId: "shop_0123456789abcdef",
+          shopId: "SeedShop",
+          ownerName: "Pierre",
+          location: "Farm",
+          ownerTileX: 4,
+          ownerTileY: 5,
+          ownerInReach: false,
+          stockCount: 34,
+        },
+      ],
+    ],
+    [
+      "mineElevatorFloorTargets",
+      [{ targetId: "mine_elevator_5_0123456789abcdef", floor: 5, isCurrentFloor: false, isMineEntrance: false }],
+    ],
   ]);
   // The fixture carries no `actorDispositionKind`, so `actionable` is the field that decides the body line. A
   // disposition would shadow it, and the gate would then be silent about a declared field that stopped being read.
@@ -474,4 +497,53 @@ test("the mailbox line changes when mail arrives and not before", () => {
     mailboxTargets: [{ targetId: "mailbox_ffffffffffffffff", location: "Farm", x: 3, y: 4, pendingCount: 3 }],
   });
   assert.deepEqual(changedLineNames(one, more), ["mailbox"]);
+});
+
+/**
+ * The refill-water line: the third map-fixed family an action targets, and the same quadrant error as the other two.
+ *
+ * `refillWateringCanTargets` is a whole-map scan of the engine's own `CanRefillWateringCanOnTile`, so a pond outside
+ * the entity radius is invisible to `cropTargets` and nothing moved it into the per-turn block - `refill_watering_can`
+ * names `expectedTargetId`, and the id only ever arrived in an observe of the whole map.
+ */
+const refillSnapshot: Snapshot = {
+  ...baseSnapshot,
+  refillWateringCanTargets: [
+    { targetId: "watering_can_refill_ffffffffffffffff", x: 40, y: 41 },
+    { targetId: "watering_can_refill_0123456789abcdef", x: 9, y: 11 },
+  ],
+};
+
+test("the nearest water on this map is named every turn, by the actor's tile rather than the wire's order", () => {
+  const rendered = lineValues(formatSnapshotHud(refillSnapshot)).get("refill water");
+  assert.equal(
+    rendered,
+    "nearest (9, 11) watering_can_refill_0123456789abcdef (+1 more)",
+    "the nearest row is what a refill plan walks to, and the rest are counted rather than dropped",
+  );
+
+  // One unchanged world, the wire array the other way round: the block is folded into the cached history, so it must
+  // render the same bytes. The Mod sorts nearest-first, but an order that arrived on the wire is not a fact to trust.
+  const reordered = formatSnapshotHud({
+    ...refillSnapshot,
+    refillWateringCanTargets: [...(refillSnapshot.refillWateringCanTargets ?? [])].reverse(),
+  });
+  assert.equal(reordered, formatSnapshotHud(refillSnapshot));
+});
+
+test("a map with no water states it, and states it in the same bytes twice", () => {
+  // Empty is a fact (this map has no tile the engine refills from), never an empty string: a blank value reads as
+  // "no opinion" and sends the model to an observe to find out which it is.
+  const dry = formatSnapshotHud({ ...baseSnapshot, refillWateringCanTargets: [] });
+  assert.equal(lineValues(dry).get("refill water"), "none here");
+  // Absent and empty are one world: the Mod sends the family only while `refill_watering_can` is advertised.
+  assert.equal(formatSnapshotHud(baseSnapshot), dry);
+  assert.equal(formatSnapshotHud({ ...baseSnapshot, refillWateringCanTargets: [] }), dry);
+
+  const one = formatSnapshotHud(refillSnapshot);
+  assert.equal(lineValues(one).get("refill water")?.startsWith("nearest (9, 11) "), true);
+  assert.ok(
+    Buffer.byteLength(lineValues(one).get("refill water") ?? "", "utf8") < 90,
+    "one row plus a count, bound at the source",
+  );
 });

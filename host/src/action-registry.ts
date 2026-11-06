@@ -38,10 +38,40 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["world_object"],
   ),
   actionAdapter(
+    "rotate_furniture",
+    "Rotate placed furniture",
+    "Turn one already-placed piece of furniture one step through its own rotation cycle, in place. Read the `placed_furniture` target id and its tile from the `worldObjectTargets` entry of the most recent observation; there is no angle argument, because the piece's own `rotations` data decides whether it alternates 0 <-> 2 or steps 0 -> 1 -> 2 -> 3 -> 0. A piece with fewer than two rotations is refused by name (`furniture_rotation_unsupported`), never reported as a turn that did nothing, and the postcondition is the piece's `currentRotation` changed with the piece still standing on the same tile.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "remove_fence",
+    "Remove a placed fence",
+    "Take one placed fence or fence gate off its tile with the tool the game's own fence data accepts. Read the object target id, its tile and the tool slot from the `worldObjectTargets` entry of the most recent observation. The fence's own `performToolAction` returns false on every branch, including the one that destroyed it, so the postcondition is the fence GONE from the location's objects plus the drops it produced; a tool that cannot remove that exact fence is refused by name (`remove_fence_tool_cannot_remove_target`), never reported as an uncertain result after the swings.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "put_item_in_fish_tank",
+    "Put an item in a fish tank",
+    "Put one backpack item into a placed fish tank, letting the tank's own `CanBeDeposited` rule decide whether it may hold it. Read the tank's `placed_furniture` target id and tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. The postcondition is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported as `fish_tank_deposit_not_observed`, never as a success.",
+    ["world_object"],
+  ),
+  actionAdapter(
+    "place_item_on_pedestal",
+    "Place an item on a pedestal",
+    "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. Read the `empty_pedestal` target id, its tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because the pedestal's own branch knocks the standing item off and answers false; the postcondition is the pedestal's `heldObject` being this item while the pack lost exactly one.",
+    ["world_object"],
+  ),
+  actionAdapter(
     "break_container",
     "Break a container",
     "Break one breakable container (a mine barrel or crate) with the equipped heavy hitter. Read the opaque target id and its tile from the `worldObjectTargets` entries of the most recent observation. The native call returns false even when it destroys the container, so the receipt's postcondition is the container being GONE plus the drops the game produced.",
     ["world_object"],
+  ),
+  actionAdapter(
+    "open_geode",
+    "Open a geode",
+    "Crack one carried geode at the blacksmith's own counter, through the game's GeodeMenu, so the machine's own assignment and fee decide what comes out. `slot` and `expectedQualifiedItemId` must be copied exactly from the `inventoryItemFacts` row of the MOST RECENT observe result: the slice the geode occupies is checked against that id before anything is consumed, so a stale pair is refused rather than opening a different item. The fee is charged and the reward is placed in the backpack by the menu itself; a counter the actor cannot reach, a fee it cannot pay and a full backpack are each refused by name, and the postcondition is the geode gone and the reward in the pack.",
+    ["inventory_slot", "geode"],
   ),
   actionAdapter("move_to_tile", "Move to a Stardew tile", "Move the Farmhand to a live, structured target tile.", [
     "tile",
@@ -274,6 +304,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "clear_debris",
     "Clear a debris clump",
     "Use the equipped Axe or Pickaxe on a live adjacent ResourceClump; each hit returns its own receipt and only clump removal completes the action.",
+    ["debris", "tool"],
+  ),
+  actionAdapter(
+    "break_resource_clump",
+    "Break a large stump, log or boulder",
+    "Use the Axe or Pickaxe this clump's own native requirement demands on a live large stump, hollow log, boulder or meteorite. x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result (never invent or guess coordinates). The handler selects that tool and restores the actor's own selection, so the request names no slot and the actor need not be holding it; a pack that cannot supply the level the clump needs is refused clump_tool_too_weak. One call swings until the clump is gone and returns succeeded/clump_broken, or uncertain/postcondition_not_observed when the clump survived.",
     ["debris", "tool"],
   ),
   actionAdapter(
@@ -638,6 +674,8 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   pet_farm_animal: "stardew_pet_farm_animal",
   sleep: "stardew_sleep",
   clear_debris: "stardew_clear_debris",
+  break_resource_clump: "stardew_break_resource_clump",
+  open_geode: "stardew_open_geode",
   npc_relationship: "stardew_npc_relationship",
   water_pet_bowl: "stardew_water_pet_bowl",
   dismiss_modal: "stardew_dismiss_modal",
@@ -676,6 +714,10 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   place_owned_object: "stardew_place_owned_object",
   remove_placed_item: "stardew_remove_placed_item",
   move_placed_furniture: "stardew_move_placed_furniture",
+  rotate_furniture: "stardew_rotate_furniture",
+  remove_fence: "stardew_remove_fence",
+  put_item_in_fish_tank: "stardew_put_item_in_fish_tank",
+  place_item_on_pedestal: "stardew_place_item_on_pedestal",
   break_container: "stardew_break_container",
   use_obelisk: "stardew_use_obelisk",
   accept_special_order: "stardew_accept_special_order",
@@ -783,7 +825,13 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "place_owned_object",
   "remove_placed_item",
   "move_placed_furniture",
+  "rotate_furniture",
+  "remove_fence",
+  "put_item_in_fish_tank",
+  "place_item_on_pedestal",
   "break_container",
+  "break_resource_clump",
+  "open_geode",
   "equip_wearable",
   "unequip_wearable",
   "dismount_transport",
@@ -920,10 +968,57 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
     if (publishedPostconditionName(descriptor) !== "placed_furniture_picked_up") return false;
     return true;
   }
+  if (actionId === "rotate_furniture") {
+    // The same tile-and-target shape as the pickup, because it names the same physical piece; the rotation
+    // the call lands on is the piece's own cycle, so there is no angle argument to admit.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "furniture_rotated") return false;
+    return true;
+  }
+  if (actionId === "remove_fence") {
+    // The tool shape, like the sibling removal: the tile, the tool slot and the fence's own object target.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "fence_removed") return false;
+    return true;
+  }
+  if (actionId === "place_item_on_pedestal") {
+    // The item shape, with the pedestal's own target rather than a tank's.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "pedestal_item_placed") return false;
+    return true;
+  }
+  if (actionId === "put_item_in_fish_tank") {
+    // The item shape: the tile, the pack slot the item is taken from, that item's identity and the tank's target.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
+      return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "fish_tank_item_deposited") return false;
+    return true;
+  }
   if (actionId === "break_container") {
     if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
     if (descriptor.effect !== "write") return false;
     if (publishedPostconditionName(descriptor) !== "container_source_broken") return false;
+    return true;
+  }
+  if (actionId === "break_resource_clump") {
+    // A clump is cleared with a tool its own native switch picks, so the request names no slot: the
+    // identity-locked target plus the tile it was published at is the whole input, and the tool family the
+    // clump demands is re-derived on the game thread rather than trusted from the caller.
+    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
+    return true;
+  }
+  if (actionId === "open_geode") {
+    // A backpack transaction with no tile: the slice the geode occupies and that geode's own wire identity.
+    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId"])) return false;
+    if (descriptor.effect !== "write") return false;
+    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
     return true;
   }
   if (actionId === "express_emote") {

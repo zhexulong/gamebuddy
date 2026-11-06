@@ -1146,7 +1146,7 @@ public sealed class BodyProgramControllerPumpTests
         var admission = new ImmediateAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
         bool dispatchable = false;
-        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = () => dispatchable };
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = _ => dispatchable };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // Tick 1: the world is mid-animation (a predecessor's native cooldown - measured one frame after a harvest, and
@@ -1173,7 +1173,7 @@ public sealed class BodyProgramControllerPumpTests
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new ImmediateAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
-        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = () => false };
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = _ => false };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // The world never becomes ready. Waiting is bounded (the native cooldown is about a second; an unbounded wait
@@ -1181,6 +1181,58 @@ public sealed class BodyProgramControllerPumpTests
         for (int pass = 0; pass < 200; pass += 1) controller.Update();
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
             .Should().Be(BodyProgramNodeState.Succeeded);
+    }
+
+    [Fact]
+    public void TheCadenceGateIsAskedWithTheNodesOwnCatalogAction()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var asked = new List<string>();
+        // The host answers for ONE action: the world is held against everything except the node's own action. That is
+        // the shape of the defect this pin exists for - a menu holds the body and is the working precondition of the
+        // action that closes it - so the pump must ask per action and honour a per-action yes.
+        const string dispatchableAction = "machine_inspect";
+        var controller = new FarmhandBodyProgramController(authority, admission, executor)
+        {
+            CanDispatchNow = actionId =>
+            {
+                asked.Add(actionId);
+                return string.Equals(actionId, dispatchableAction, StringComparison.Ordinal);
+            },
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+
+        // The gate was asked with the CATALOG action of the node awaiting dispatch, not with the node id (which is
+        // `inspect`) and not with a constant: the host can only apply a per-action rule if it is told the action.
+        asked.Should().Contain(dispatchableAction);
+        asked.Should().NotContain("inspect");
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.Succeeded, "the world allowed this action, so waiting a cadence tick for it would be the modal-dismissal defect in miniature");
+    }
+
+    [Fact]
+    public void AWorldOnlyNoDefersTheNodeEvenWhenTheActionWouldHaveBeenAllowed()
+    {
+        // FALSIFIER for the pin above: the same program, the same world, and a gate that answers NO for this action.
+        // The node is then deferred - which is what proves the pump is applying the action-specific answer rather
+        // than dispatching every node it can.
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        var controller = new FarmhandBodyProgramController(authority, admission, executor)
+        {
+            CanDispatchNow = actionId => !string.Equals(actionId, "machine_inspect", StringComparison.Ordinal),
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        controller.Update();
+
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
     }
 
     [Fact]
