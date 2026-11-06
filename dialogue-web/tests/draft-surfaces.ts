@@ -479,6 +479,18 @@ export async function prepareSurface(
     }
     await expect(region.locator("#character-voice-text")).toBeVisible();
   }
+  if (surface.name === "chats") {
+    // The list is a READ, and the rename editor lives on a ROW: while the route is still in flight
+    // the surface renders no text field and no revealer at all, and the pencil then turns up during
+    // the opener walk - reported as an editor nobody declared, although the control carries its own
+    // `data-draft-revealer` the whole time. Read on 2026-11-06 from the same tree: one run mounted
+    // faster than the route answered and read `chats: pressing button[data-draft-revealer] reveals
+    // input[data-testid], which no declared editor reaches` with `onArrival=0`, the next read
+    // `input[data-testid] -> declared (on arrival)`. Faster than the route answers is not a surface
+    // with no editor: waiting for the row the list renders is the surface's own answer to "do the
+    // fields this gate is about exist yet", and no timer has to guess it.
+    await expect(region.getByTestId("chat-item").first()).toBeVisible();
+  }
   if (surface.name === "memory") {
     // Manual authoring is the one control a player has to open, so the surface reads as the
     // companion's notebook rather than as a form. Guarded for the same reason as above.
