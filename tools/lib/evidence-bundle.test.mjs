@@ -213,7 +213,7 @@ test("the request frame a replay needs cannot be dropped", () => {
   assert.ok(codesFor(mismatched, { actionTrace: TRACE }).includes("action_trace_records_mismatch"));
 });
 
-test("the verdict vocabulary is the loop's own, not a second list", () => {
+test("the verdict vocabulary is the loop's own plus the one outcome the loop cannot decide", () => {
   const produced = [
     deriveLoopVerdict({ timedOut: false, exitCode: 0, driverState: "action_passed", loopResult: { agentTurns: 2 } }),
     deriveLoopVerdict({ timedOut: false, exitCode: 0, driverState: "action_passed", loopResult: {} }),
@@ -227,10 +227,35 @@ test("the verdict vocabulary is the loop's own, not a second list", () => {
   ].map((verdict) => verdict.state);
   for (const state of produced)
     assert.ok(EVIDENCE_BUNDLE_VERDICT_STATES.includes(state), `${state} is not in the bundle's vocabulary`);
-  assert.deepEqual([...new Set(produced)].sort(), [...EVIDENCE_BUNDLE_VERDICT_STATES].sort());
+  // `killed` is the one state the loop cannot derive - nothing external interrupts the loop itself - so it joins the
+  // set here rather than being given a second vocabulary. A new loop state still fails, and so does a vocabulary entry
+  // that neither the loop nor the signal trap produces.
+  assert.ok(!produced.includes("killed"), "the loop must never decide a run was killed");
+  assert.deepEqual([...new Set([...produced, "killed"])].sort(), [...EVIDENCE_BUNDLE_VERDICT_STATES].sort());
   assert.ok(
     codesFor(bundle({ verdict: { state: "green", rubric: { broken: [], unmeasured: [] } } })).includes(
       "verdict_state_unknown",
+    ),
+  );
+});
+
+test("a run interrupted from outside is its own verdict, and may not pose as a failure", () => {
+  // An external SIGTERM/SIGINT is not a measurement of the product: nothing about the companion was decided, so the
+  // bundle needs neither a failure snapshot nor a replay, and the state must be sayable rather than squeezed into
+  // `blocked` (where every aggregate would read it as a defect).
+  const killed = bundle({
+    verdict: {
+      state: "killed",
+      reasonCode: "run_killed_by_signal:SIGTERM",
+      rubric: { broken: [], unmeasured: [] },
+    },
+  });
+  assert.deepEqual(codesFor(killed), []);
+  // ...and the reverse: a run that publishes `killed` beside a failure dump is claiming a failure moment nobody
+  // observed, which is exactly how an interrupt would end up counted as a product defect.
+  assert.ok(
+    codesFor(bundle({ verdict: killed.verdict, failure: failing().failure })).includes(
+      "killed_run_published_a_failure",
     ),
   );
 });
