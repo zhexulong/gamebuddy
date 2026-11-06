@@ -10,6 +10,12 @@
 # ...); `game` means it is declared nowhere in this repository, so the game, SMAPI, xTile, XNA or
 # LiteNetLib provides it. Reproduce with a compile of the suite against Core only.
 #
+# A file's diagnostics can stop at its first unresolved game type, so a name declared in this
+# repository may never be printed even though the code uses it. Where a `mod-assembly` row names
+# such a name, it was measured twice: compile the file against Core alone, then match the
+# identifiers it actually uses (comments and string literals stripped) against the declarations
+# under integrations/stardew. A file whose only unresolved names are game names stays `game`.
+#
 # `reference-tree` is the other measurement, for a file the compiler ACCEPTS: it compiles against
 # Core alone but its source reads the decompiled game under /ref/, which is gitignored, so a hosted
 # checkout has no tree for it to read and it cannot run in this lane whatever the compiler says.
@@ -27,17 +33,20 @@ ApproachClassificationTests.cs	mod-assembly	Navigation, Xna, ExecutionManager, F
 AudioSilenceContractTests.cs	game	IAudioCategory, Options, StardewValley
 BodyHoldAttributionTests.cs	mod-assembly	ActorWorldFacts
 BodyOwnerNamingTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, FarmhandExecutionJournalState, IModGlobalDataPersistence
+BreakResourceClumpActionTests.cs	mod-assembly	Handlers, Netcode, StardewValley, Item, DeclaredToolResolution
 BridgeReceiptProjectionTests.cs	mod-assembly	BridgeSession
 bridgeruntimeattestationderivationtests.cs	mod-assembly	ModEntry, BridgeRuntimeAttestation
 bridgesessionpublicationtests.cs	mod-assembly	BridgeSession, LocalPipeBridge
 BuildingChestActionTests.cs	mod-assembly	Handlers
 CandidateActionExecutionTests.cs	mod-assembly	Handlers, BridgeHello, FarmhandExecutionJournalState, IModGlobalDataPersistence
 CandidateActionLifecycleFixTests.cs	mod-assembly	Handlers, BridgeHello, BridgeSession, ExecutionManager, Farmer
+ChestStoreCarriedItemTests.cs	mod-assembly	Netcode, StardewValley, Farmer, Item, ExecutionManager
 ClaimMuseumRewardActionTests.cs	mod-assembly	Handlers
 ClearDebrisApproachTests.cs	mod-assembly	ExecutionManager
 ClearDebrisOrthogonalityTests.cs	mod-assembly	Handlers
 ClearStepMoveTests.cs	mod-assembly	Xna, Farmer, Game1, GameLocation, LocalMoveSpec
 CompanionCabinProvisioningTests.cs	mod-assembly	CompanionCabinProvisioning, CompanionCabinState, CabinFootprint, CabinPadFact, CompanionCabinFact
+CompanionOverheadBubbleSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (NPC.cs:1372 showTextAboveHead signature); /ref/ is gitignored, so a hosted checkout has no reference tree
 CompanionPresentationRefusalTests.cs	mod-assembly	CompanionPresentationPolicyTests
 ConfigScopePersistTests.cs	mod-assembly	ModConfig, StardewModdingAPI
 ContainerActionTests.cs	mod-assembly	Handlers
@@ -49,11 +58,17 @@ DeclaredToolSelectionTests.cs	mod-assembly	Axe, DeclaredToolResolution, FishingR
 DestinationSearchByteBudgetEquivalenceTests.cs	mod-assembly	Navigation, DestinationSearchResult, NavigationBindingContext
 destinationsearchtests.cs	mod-assembly	Navigation, DerivedDestinationSet, DestinationSearchResult, NavigationBindingContext, NavigationSourceNode
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
+EdgeExitWarpSourceTests.cs	game	StardewValley
 EnterExitDoorGateTests.cs	mod-assembly	Handlers
+ExecutionIdempotencyIdentityTests.cs	mod-assembly	Netcode, StardewValley, BridgeHello, ExecutionManager, BridgeSession
+ExecutionRequestFingerprintCoverageTests.cs	mod-assembly	ExecutionRequestFingerprint
 FacilityActionTests.cs	mod-assembly	Handlers
-ToolLightActionTests.cs	mod-assembly	LocalExecutionReceipt, ToolRefusalCode
+FarmAnimalPetActionTests.cs	mod-assembly	FarmhandExecutionJournal, AdmissionActionabilityProfile
 FarmhandExecutionJournalTests.cs	mod-assembly	FarmhandExecutionAdmission, FarmhandExecutionJournalRecord, FarmhandExecutionJournalState, FarmhandExecutionReceipt, IModGlobalDataPersistence
 FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
+FixedInteractionPointMineMappingTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057 switch (getTileIndexAt(tileLocation, "Buildings", "mine")), the only authority for which mine tile index is a fixed interaction point); /ref/ is gitignored, so a hosted checkout has no reference tree
+FixedInteractionPointMineTileSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3053-3124, the checkAction switch); /ref/ is gitignored, so a hosted checkout has no reference tree
+FixedInteractionPointSnapshotTests.cs	mod-assembly	ExecutionManager, Farmer, GameLocation, Game1, Netcode, Xna, xTile
 HeldRequestAbsorptionTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState
 HeldToolProjectionTests.cs	game	Axe, Farmer, Hoe, Item, Lantern
 HollowRingStepOutTests.cs	mod-assembly	ExecutionManager, FarmhandExecutionJournal
@@ -62,10 +77,8 @@ ItemTileActionTests.cs	mod-assembly	Handlers
 LevelUpMilestoneChoiceTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, IClickableMenu, LevelUpMenu
 LevelUpProfessionPairTests.cs	mod-assembly	ExecutionManager
 LocalPipeBridgeOutboundQueueTests.cs	mod-assembly	LocalPipeBridge, PipeOutbound, PipeOutboundCompletion
+MagnetPickupItemTests.cs	mod-assembly	Xna, Netcode, StardewModdingAPI, StardewValley, Game1
 MailboxDiscoveryAndApproachTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
-FixedInteractionPointMineTileSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3053-3124, the checkAction switch); /ref/ is gitignored, so a hosted checkout has no reference tree
-FixedInteractionPointMineMappingTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057 switch (getTileIndexAt(tileLocation, "Buildings", "mine")), the only authority for which mine tile index is a fixed interaction point); /ref/ is gitignored, so a hosted checkout has no reference tree
-FixedInteractionPointSnapshotTests.cs	mod-assembly	ExecutionManager, Farmer, GameLocation, Game1, Netcode, Xna, xTile
 MineExitLadderSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057/:3073-3081, GameLocation.cs :12388-12400); /ref/ is gitignored, so a hosted checkout has no reference tree
 MineLadderDescentTests.cs	mod-assembly	ExecutionManager
 ModalAdmissionTests.cs	mod-assembly	ExecutionManager, Farmer, FarmhandExecutionJournalState, IClickableMenu, IModGlobalDataPersistence
@@ -75,6 +88,7 @@ ModEntryBodyProgramJournalRootTests.cs	mod-assembly	ModEntry, StardewModdingAPI
 ModTraceExportTests.cs	mod-assembly	ModTrace, ModTraceRecorder
 MoveApproachSubstitutionTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
 MoveLocationChangeReleaseTests.cs	mod-assembly	NavigationWarpLifecycle, DummyMonitor, ExecutionManager
+MovePlacedFurnitureActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 NativeFarmingContractTests.cs	mod-assembly	StardewModdingAPI, Handlers
 NativeItemPredicateTests.cs	mod-assembly	NativeItemPredicates
 nativelanendpointtargetsurfacetests.cs	game	StardewValley
@@ -88,15 +102,21 @@ NavigationReferenceStoreTests.cs	mod-assembly	Navigation, NavigationBindingConte
 NavigationRoutePlannerTests.cs	mod-assembly	Navigation, NavigationDestinationBinding, NavigationOrdinaryWarpLegs, NavigationOrdinaryWarpTopology, NavigationTransitionLeg
 NpcDialoguePagerTests.cs	mod-assembly	StardewModdingAPI, Sensory, BridgeSession, Dialogue, DialogueBox
 NpcGiftActionTests.cs	mod-assembly	Handlers
+OffMapWhereaboutsPublishingTests.cs	mod-assembly	Xna, Netcode, StardewValley, Game1, ExecutionManager
 PetBowlWateringActionTests.cs	mod-assembly	Handlers
+PlaceItemOnPedestalActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 PlaySessionFixturePlacementTests.cs	game	Xna, Point
 ProgramControllerCompositionTests.cs	mod-assembly	ModEntry
 ProvisioningConfigCompatibilityTests.cs	mod-assembly	NativeChatIngressPolicy, FarmhandProvisionerConfig, HostFarmhandProvisioningConfig
+PutItemInFishTankActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 ReachabilityProbeTests.cs	game	Xna
 ReachableApproachTests.cs	game	Xna
-RequestedSlotRefusalEvidenceTests.cs	game	Axe, Hoe, Item, StardewValley, Tool
+RefusalLayerNamingTests.cs	mod-assembly	Xna, StardewValley, Item, Tool, RefusalLayerKind
+RemoveFenceActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 RideBusActionTests.cs	mod-assembly	ExecutionManager, Farmer, Netcode, StardewValley
 RideMinecartActionTests.cs	mod-assembly	Handlers
+RockSourceSwingOutcomeTests.cs	mod-assembly	Xna, Netcode, StardewValley, RockSourceSwing, ExecutionManager
+RotateFurnitureActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 SaplingApproachWiringTests.cs	mod-assembly	Xna, ExecutionManager, Farm, Farmer, Game1
 SaplingPlantTests.cs	mod-assembly	Handlers
 SceneObservationDenseKindTests.cs	mod-assembly	Navigation, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext
@@ -108,6 +128,7 @@ SceneObservationWorldLayerTests.cs	mod-assembly	Navigation, StardewValley
 SceneReachabilityTests.cs	mod-assembly	Navigation, SceneAffordanceKind, SceneAffordanceSource, SceneObservationContext, SceneObservationInput
 ScopeBoundActorAdmissionTests.cs	mod-assembly	Handlers, ExecutionManager, FarmhandExecutionJournalState, IModGlobalDataPersistence, Netcode
 ScytheActionTests.cs	mod-assembly	Handlers
+ScytheDeadCropTargetTests.cs	mod-assembly	StardewValley, ExecutionManager
 SendMultiplayerChatTests.cs	mod-assembly	CompanionSessionHosting, ExecutionManager, Farmer, LocalizedContentManager, Multiplayer
 SettlementMenuTerminalTests.cs	mod-assembly	ModEntry
 SettlementWithoutLifecycleTests.cs	game	IClickableMenu, StardewValley
@@ -118,13 +139,19 @@ ShopOpeningPreflightTests.cs	mod-assembly	Navigation
 ShopPurchaseCurrencySourceShapeTests.cs	reference-tree	StardewValleyDecompiled (ShopMenu.cs :304/:371/:885-888, Utility.cs :4217); /ref/ is gitignored, so a hosted checkout has no reference tree
 SleepAndAdvanceDayLifecycleTests.cs	mod-assembly	SleepAndAdvanceDayLifecycleConfig
 SlimeHutchTroughActionTests.cs	mod-assembly	Handlers
+SnapshotLoopbackExportTests.cs	mod-assembly	TargetFamilyCompletenessTests, TargetFamilyWorld
 StardewBodyControllerPathGoalTests.cs	mod-assembly	StardewBodyController
 StumpActionTests.cs	mod-assembly	Handlers
 TalkToNpcActionTests.cs	mod-assembly	Handlers
+TargetFamilyCompletenessTests.cs	mod-assembly	Xna, Netcode, StardewValley, Game1, Farmer
+TargetFamilyRoundTripTests.cs	mod-assembly	Xna, Netcode, StardewValley, TargetFamilyCompletenessTests, TargetRoundTripProbe
+TargetRoundTripProbe.cs	mod-assembly	Handlers, Netcode, StardewValley, TargetFamilyCompletenessTests, TargetFamilyWorld
 TaskDeliveryActionTests.cs	mod-assembly	Handlers
 TerminalReceiptObservabilityTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager
 TileOpenedShopTests.cs	mod-assembly	ExecutionManager
 ToggleAnimalDoorActionTests.cs	mod-assembly	Handlers
+TransitionTileIsResolvableSourceShapeTests.cs	game	Xna, StardewValley
+TreeChopSourceIdentityTests.cs	mod-assembly	Xna, Netcode, StardewValley, Game1, ExecutionManager
 UseItemConsumableOnlyTests.cs	mod-assembly	Handlers
 UseObeliskActionTests.cs	mod-assembly	ExecutionManager, Farmer, StardewValley
 VirtualConnectivityEdgeTests.cs	mod-assembly	Navigation, NavigationDestinationBinding, NavigationOrdinaryWarpLegs, NavigationOrdinaryWarpTopology, NavigationTransitionLeg

@@ -267,7 +267,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter(
     "chop_tree",
     "Chop a tree",
-    "Use one equipped Axe swing on a live ordinary mature tree; source transformation is the completion boundary.",
+    "Chop one live ordinary mature tree: the Mod swings the equipped Axe until the tree is felled. Felling is the completion boundary, and the receipt names the health pair and the swing count.",
     ["tree_source", "tool"],
   ),
   actionAdapter("express_emote", "Express an emote", "Express a character emote in the game world.", [

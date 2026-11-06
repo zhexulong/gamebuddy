@@ -3366,6 +3366,7 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     "stump_before",
     "stump_after",
     "source_transformed",
+    "swings",
     "stamina_before",
     "stamina_after",
     "stamina_delta",
@@ -3373,16 +3374,25 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
+  // The action fells the tree inside ONE request now, so `health_before` is whatever durability the live tree carried
+  // (ten for a mature tree, not the fixture's one) and `swings` is the number of native hits that took it to the
+  // engine's felled state (`stump = true; health = 5f`, Tree.cs:1489-1497). The completion boundary is still the world:
+  // the tree LEFT its standing state, and the receipt names the health pair and the swing count that did it.
+  const healthBefore = finiteEvidenceValue(evidence.health_before);
+  const swings = integerEvidenceValue(evidence.swings);
   return (
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "axe" &&
     validSlot(evidence.slot) &&
     hasBoundedNonemptyEvidenceValue(evidence.tree) &&
-    evidence.health_before === "1" &&
+    healthBefore !== null &&
+    healthBefore > 0 &&
     evidence.health_after === "5" &&
     evidence.stump_before === "false" &&
     evidence.stump_after === "true" &&
     evidence.source_transformed === "true" &&
+    swings !== null &&
+    swings >= 1 &&
     hasStaminaConservationEvidence(evidence)
   );
 }

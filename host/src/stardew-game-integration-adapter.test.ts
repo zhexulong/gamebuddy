@@ -101,7 +101,7 @@ test("plant, refill, break, and chop completion evidence reject opaque sentinels
     [
       "chop_tree",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
       "slot=3",
       "slot=999",
     ],
@@ -171,7 +171,7 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "chop_tree",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
       ["target", "tree"],
     ],
     [
