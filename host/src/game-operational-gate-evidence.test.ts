@@ -46,7 +46,10 @@ function fact(index: 1 | 2, overrides: Partial<WorldFact> = {}): WorldFact {
   });
 }
 
-function state(currentReceipt: IntegrationExecutionReceipt | null, overrides: Partial<IntegrationStateView> = {}): IntegrationStateView {
+function state(
+  currentReceipt: IntegrationExecutionReceipt | null,
+  overrides: Partial<IntegrationStateView> = {},
+): IntegrationStateView {
   return Object.freeze({
     connected: true,
     sessionId: "bridge_session_01",
@@ -102,12 +105,7 @@ function setup(
     module,
     state: Object.freeze({}),
   });
-  const projection = createGameOperationalGateEvidenceProjection(
-    module,
-    connection,
-    events,
-    stopSource,
-  );
+  const projection = createGameOperationalGateEvidenceProjection(module, connection, events, stopSource);
   return {
     projection,
     emit: (value: WorldFact) => factListener?.(value),
@@ -142,9 +140,18 @@ test("operational Game v2 evidence is an exact content-free schema", () => {
   assert.equal(validateGameOperationalGateEvidence({ ...value, receiptId: "leak" }), null);
   assert.equal(validateGameOperationalGateEvidence({ ...value, terminalState: "blocked" }), null);
   assert.equal(validateGameOperationalGateEvidence({ ...value, stopSettled: false }), null);
-  assert.equal(validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, count: 1 } }), null);
-  assert.equal(validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, distinctActionCount: 1 } }), null);
-  assert.equal(validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, evidence: {} } }), null);
+  assert.equal(
+    validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, count: 1 } }),
+    null,
+  );
+  assert.equal(
+    validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, distinctActionCount: 1 } }),
+    null,
+  );
+  assert.equal(
+    validateGameOperationalGateEvidence({ ...value, transitions: { ...value.transitions, evidence: {} } }),
+    null,
+  );
 });
 
 test("v2 projection requires two exact fresh Mod transitions followed by STOP settlement", async () => {

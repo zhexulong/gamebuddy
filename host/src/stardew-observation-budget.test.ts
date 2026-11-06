@@ -142,6 +142,39 @@ test("an observation drops the coordinates and the redundant flag of villagers o
   assert.equal(abigail.inCurrentLocation, true, "a row that IS here keeps every field, flag included");
 });
 
+test("an observation publishes a container's contents whole, whatever the budget does to other families", async () => {
+  // The bound is the one layer between the Mod and the model that TRIMS families, so this is where a
+  // "reasonable" per-container window would reappear even after the wire stopped carrying one. The ruling is that
+  // perception mirrors the world: a container's contents are a fact about that container, and a companion told about
+  // 16 of 36 items cannot plan the other 20. Both directions are asserted - the count survives, and so do the item ids
+  // themselves, because a bound that kept the count and dropped the rows would satisfy the first alone.
+  const items = Array.from({ length: 36 }, (_, slot) => ({
+    slot,
+    qualifiedItemId: `(O)${100 + slot}`,
+    displayName: `Item ${slot}`,
+    stack: slot + 1,
+  }));
+  const chest = {
+    chestId: "chest_0123456789abcdef",
+    x: 62,
+    y: 18,
+    displayName: "Chest",
+    isFridge: false,
+    items,
+  };
+  const { published, budget } = await observe({ ...snapshot, chests: [chest] });
+  assert.deepEqual(published.chests, [chest]);
+  assert.equal((published.chests as readonly { items: readonly unknown[] }[])[0]!.items.length, items.length);
+  assert.deepEqual(
+    (published.chests as readonly { items: readonly { qualifiedItemId: string }[] }[])[0]!.items.map(
+      (item) => item.qualifiedItemId,
+    ),
+    items.map((item) => item.qualifiedItemId),
+  );
+  // Nothing was withheld, because a container is not a family this bound shortens.
+  assert.equal("chests" in budget, false, "the budget has no per-container withholding to report");
+});
+
 test("an observation publishes only currently craftable recipes and counts the rest", async () => {
   const { published } = await observe(snapshot);
   const crafting = published.craftingRecipeTargets as readonly Readonly<{ targetId: string }>[];

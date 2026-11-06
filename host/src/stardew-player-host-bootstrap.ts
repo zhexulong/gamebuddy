@@ -1,6 +1,4 @@
-const stardewPlayerHostBootstrapClaimBrand: unique symbol = Symbol(
-  "stardewPlayerHostBootstrapClaim",
-);
+const stardewPlayerHostBootstrapClaimBrand: unique symbol = Symbol("stardewPlayerHostBootstrapClaim");
 void stardewPlayerHostBootstrapClaimBrand;
 
 export type StardewPlayerHostBootstrapRequest = Readonly<{

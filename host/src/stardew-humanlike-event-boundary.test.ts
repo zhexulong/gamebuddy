@@ -269,7 +269,10 @@ test("event pump keeps one world fact per stable eventId even when the transport
   assert.equal(batch.worldFacts.length, 1);
   assert.equal(batch.worldFacts[0]?.eventId, eventId);
   assert.equal(batch.worldFacts[0]?.revision, 2);
-  assert.deepEqual(batch.events.map((entry) => entry.eventId), [eventId]);
+  assert.deepEqual(
+    batch.events.map((entry) => entry.eventId),
+    [eventId],
+  );
 });
 
 test("event pump preserves stable event ID across repeated frames and reconnects", () => {
@@ -442,12 +445,12 @@ test("event pump sorts world facts deterministically by observedTick -> revision
   };
 
   const expectedEventIds = [
-    "fact_a",      // tick 100
+    "fact_a", // tick 100
     "fact_b_rev1", // tick 200, rev 1
     "fact_b_rev2", // tick 200, rev 2
-    "fact_c",      // tick 300
-    "fact_d_1",    // tick 400, rev 1, eventId d_1
-    "fact_d_2",    // tick 400, rev 1, eventId d_2
+    "fact_c", // tick 300
+    "fact_d_1", // tick 400, rev 1, eventId d_1
+    "fact_d_2", // tick 400, rev 1, eventId d_2
   ];
 
   assert.deepEqual(

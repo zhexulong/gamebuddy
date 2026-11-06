@@ -136,9 +136,10 @@ export type ContainedGameRuntime = Readonly<{
  * drive is what makes the member implementable at all, so this refinement is
  * exactly the difference between a core runtime and a bound one.
  */
-export type RecoverableContainedGameRuntime = ContainedGameRuntime & Readonly<{
-  recover(operation: RecoveryOperation): Promise<RedactedRecoveryOutcome>;
-}>;
+export type RecoverableContainedGameRuntime = ContainedGameRuntime &
+  Readonly<{
+    recover(operation: RecoveryOperation): Promise<RedactedRecoveryOutcome>;
+  }>;
 
 /**
  * The durable containment transition refuses to record a role as contained a

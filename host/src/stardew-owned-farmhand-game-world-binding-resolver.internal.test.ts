@@ -13,7 +13,11 @@ import {
   type WorldBindingReader,
 } from "./stardew-owned-farmhand-game-world-binding-resolver.internal.js";
 
-const principal = { continuityId: "continuity-resolver", companionId: "companion-resolver", playerId: "player-resolver" } as const;
+const principal = {
+  continuityId: "continuity-resolver",
+  companionId: "companion-resolver",
+  playerId: "player-resolver",
+} as const;
 const bootstrap: ProductionBootstrapInput = {
   principal,
   bootstrapOperationId: "bootstrap-resolver",
@@ -39,7 +43,10 @@ function registerBinding(
 }
 
 /** The store's own close guard: a control that swallowed an assertion failure is still closed before rmSync. */
-async function withControl(root: string, body: (control: ReturnType<typeof openProductionContinuityStore>) => Promise<void>): Promise<void> {
+async function withControl(
+  root: string,
+  body: (control: ReturnType<typeof openProductionContinuityStore>) => Promise<void>,
+): Promise<void> {
   const control = openProductionContinuityStore({ runtimeRoot: root });
   let controlClosed = false;
   try {

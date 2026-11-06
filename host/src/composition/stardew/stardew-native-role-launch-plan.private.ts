@@ -73,23 +73,46 @@ export function isFullyQualifiedWindowsPath(value: string): boolean {
  * would be rejected by the native Guardian, so the plan fails closed here.
  */
 export function modelStardewNativeRoleLaunchPlan(input: StardewNativeRoleLaunchPlanInput): StardewNativeRoleLaunchPlan {
-  if (typeof input.guardianInstanceId !== "string" || input.guardianInstanceId.length === 0 || input.guardianInstanceId.length > 1024) throw new Error("stardew_native_launch_plan_guardian_instance_invalid");
-  if (!Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1) throw new Error("stardew_native_launch_plan_guardian_epoch_invalid");
-  if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024) throw new Error("stardew_native_launch_plan_attempt_invalid");
-  if (!Number.isSafeInteger(input.deadlineUnixMs) || input.deadlineUnixMs <= Date.now() || input.deadlineUnixMs - Date.now() > 2_147_483_647) throw new Error("stardew_native_launch_plan_deadline_invalid");
-  if (input.role !== "player_host" && input.role !== "ai_client") throw new Error("stardew_native_launch_plan_role_invalid");
+  if (
+    typeof input.guardianInstanceId !== "string" ||
+    input.guardianInstanceId.length === 0 ||
+    input.guardianInstanceId.length > 1024
+  )
+    throw new Error("stardew_native_launch_plan_guardian_instance_invalid");
+  if (!Number.isSafeInteger(input.guardianEpoch) || input.guardianEpoch < 1)
+    throw new Error("stardew_native_launch_plan_guardian_epoch_invalid");
+  if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024)
+    throw new Error("stardew_native_launch_plan_attempt_invalid");
+  if (
+    !Number.isSafeInteger(input.deadlineUnixMs) ||
+    input.deadlineUnixMs <= Date.now() ||
+    input.deadlineUnixMs - Date.now() > 2_147_483_647
+  )
+    throw new Error("stardew_native_launch_plan_deadline_invalid");
+  if (input.role !== "player_host" && input.role !== "ai_client")
+    throw new Error("stardew_native_launch_plan_role_invalid");
   if (!isFullyQualifiedWindowsPath(input.executable)) throw new Error("stardew_native_launch_plan_executable_invalid");
   if (!isFullyQualifiedWindowsPath(input.cwd)) throw new Error("stardew_native_launch_plan_cwd_invalid");
   const args = Array.isArray(input.arguments) ? input.arguments : [...input.arguments];
-  if (args.length > 128 || args.some((argument) => typeof argument !== "string" || argument.length === 0 || argument.length > 4096 || argument.includes("\0"))) throw new Error("stardew_native_launch_plan_arguments_invalid");
-  if (typeof input.environment !== "object" || input.environment === null || Array.isArray(input.environment)) throw new Error("stardew_native_launch_plan_environment_invalid");
+  if (
+    args.length > 128 ||
+    args.some(
+      (argument) =>
+        typeof argument !== "string" || argument.length === 0 || argument.length > 4096 || argument.includes("\0"),
+    )
+  )
+    throw new Error("stardew_native_launch_plan_arguments_invalid");
+  if (typeof input.environment !== "object" || input.environment === null || Array.isArray(input.environment))
+    throw new Error("stardew_native_launch_plan_environment_invalid");
   const environment: Record<string, string> = {};
   const seen = new Set<string>();
   for (const [name, value] of Object.entries(input.environment)) {
-    if (!STARDEW_NATIVE_ENVIRONMENT_ALLOWLIST.has(name)) throw new Error("stardew_native_launch_plan_environment_key_disallowed");
+    if (!STARDEW_NATIVE_ENVIRONMENT_ALLOWLIST.has(name))
+      throw new Error("stardew_native_launch_plan_environment_key_disallowed");
     if (seen.has(name.toLowerCase())) throw new Error("stardew_native_launch_plan_environment_duplicate");
     seen.add(name.toLowerCase());
-    if (typeof value !== "string" || value.includes("\0")) throw new Error("stardew_native_launch_plan_environment_value_invalid");
+    if (typeof value !== "string" || value.includes("\0"))
+      throw new Error("stardew_native_launch_plan_environment_value_invalid");
     environment[name] = value;
   }
   for (const key of STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS) {

@@ -55,11 +55,12 @@ test("Task 1: the shipped product catalog cannot select Stardew from raw operato
   assert.deepEqual(PRODUCT_INTEGRATION_CATALOG.ids, []);
   assert.equal(PRODUCT_INTEGRATION_CATALOG.get("stardew"), undefined);
   await assert.rejects(
-    () => PRODUCT_INTEGRATION_CATALOG.select(
-      "stardew",
-      { pipeName: "gamebuddy_stardew", bridgeToken: "0123456789abcdef" },
-      { configDirectory: "C:/profile" },
-    ),
+    () =>
+      PRODUCT_INTEGRATION_CATALOG.select(
+        "stardew",
+        { pipeName: "gamebuddy_stardew", bridgeToken: "0123456789abcdef" },
+        { configDirectory: "C:/profile" },
+      ),
     (error) => {
       assert.ok(error instanceof Error, "a rejected direct selection must raise");
       assert.match(error.message, /integration_not_registered/);

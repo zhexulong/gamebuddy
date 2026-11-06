@@ -6,6 +6,7 @@ import { dirname, join, relative } from "node:path";
 import { renderRuntimeEnvironmentBlock, setRuntimeEnvironmentFacts } from "@cortexkit/pi-magic-context/memory";
 import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
+  composeGameEnvironmentFacts,
   createRenderedEnvironmentFactsProvider,
   environmentFactsRecordPath,
   type EnvironmentFactsRenderRecord,
@@ -543,6 +544,64 @@ test("formatGameEnvironmentFacts stays a bounded line even with pathological nam
 });
 
 /**
+ * THE DROP ORDER IS A RULE, NOT THE ORDER THE FACTS HAPPEN TO BE COMPOSED IN.
+ *
+ * `stamina` is composed LAST, so a cap that dropped facts from the END spent the one fact about her own body
+ * first: a companion whose world line grew could not see her own stamina, and nothing in the line said so. The
+ * mitigation at the time was an arithmetic argument that the rest of the line "fits"; the next world block
+ * (interactable tiles) is exactly what makes such an argument false, so the protection has to be the order
+ * itself.
+ *
+ * The population is the composer's own subjects - every fact it can render, classified by the half of the line
+ * it speaks about - rather than a list of formatter names here, so a world fact added later is covered without
+ * editing this test, and a fact that stops declaring its subject fails to compile.
+ */
+test("a fact about her own body is never dropped while a fact about the world survives", () => {
+  // Pressure of the shape a real turn produces: many locations with thirsty crops and a map full of walkable
+  // villagers spend the whole-map answers' bytes, which is what a farm and a Town afternoon already do.
+  const wateringWhereabouts = [];
+  for (let index = 0; index < 14; index += 1)
+    wateringWhereabouts.push({ location: `Somewhere${index}`, needsWaterCount: 7, nearestX: 10, nearestY: 20 });
+  const villagerWhereabouts = [];
+  for (let index = 0; index < 20; index += 1)
+    villagerWhereabouts.push({
+      npcName: `F${index}`,
+      displayName: "阿".repeat(16),
+      location: "Farm",
+      x: 80 + index,
+      y: 90,
+      inCurrentLocation: true,
+    });
+  const source = sampleSnapshot(31, {
+    stamina: 270,
+    exhausted: false,
+    currentTool: "(T)Hoe",
+    currentToolSlot: 2,
+    toolSlots: [{ slot: 2, label: "(T)Hoe", upgradeLevel: 2, category: "hoe" }],
+    wateringWhereabouts,
+    villagerWhereabouts,
+  });
+
+  const facts = composeGameEnvironmentFacts(source, true);
+  const body = facts.filter((fact) => fact.subject === "body").map((fact) => fact.text);
+  const world = facts.filter((fact) => fact.subject === "world").map((fact) => fact.text);
+  assert.ok(body.length > 0, "this snapshot carries facts about her own body");
+  assert.ok(world.length > 0, "and about the world she is standing in");
+
+  const rendered = renderGameEnvironmentFactsObservation(source, true);
+  assert.ok(rendered.dropped.length > 0, `the line really is over its cap here: ${rendered.text}`);
+  assert.ok(
+    world.some((text) => rendered.text.includes(text)),
+    `some world fact survived, so nobody may claim her body was the only thing left to spend: ${rendered.text}`,
+  );
+  assert.deepEqual(
+    body.filter((text) => !rendered.text.includes(text)),
+    [],
+    `a fact about her own body was dropped while a world fact survived; dropped: ${rendered.dropped.join(" | ")}`,
+  );
+});
+
+/**
  * Unwatered crops: `cropTargets` is already the Mod's bounded Chebyshev-6 list
  * of them, so the count is a plain read. ABSENT is "not measured" (the family is
  * only published when `water_crop` is advertised) and must stay silent, while a
@@ -632,6 +691,61 @@ test("formatGameEnvironmentFacts counts the location's chests, says which locati
   // An absent summary means the container actions were not advertised, and says nothing.
   const unmeasured = formatGameEnvironmentFacts(base, false);
   assert.ok(!unmeasured.includes("chests here"), `an absent summary says nothing: ${unmeasured}`);
+});
+
+/**
+ * The room's own form, rendered from the value rather than stated as a fixed fact.
+ *
+ * Measured 2026-11-05 (day 2, 18:00, starter farmhouse): "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" -
+ * the house has no kitchen and no stove, and nothing in the line said so. `cookingStationTargets` is the Mod's own
+ * scan of the current map for the vanilla kitchen action tile, and the house gains that kitchen WITH its upgrade,
+ * so the fact follows the house. A hard-coded "no kitchen" would become a lie the day the player upgrades, and
+ * this asserts the line changes with it. ABSENT (the Mod did not publish the family, because `cook_recipe` is not
+ * advertised) stays silent, like every other unmeasured family; a measured empty list is an answer.
+ */
+test("the environment line says whether there is a kitchen here, and follows the house's own form", () => {
+  const base = {
+    timeOfDay: 1800,
+    dayOfMonth: 2,
+    seasonIndex: 0,
+    year: 1,
+    weather: "sunny",
+    location: "FarmHouse",
+    tile: { x: 5, y: 5 },
+  };
+  const station = (stationKind: "kitchen" | "cookout_kit", location: string) => ({
+    targetId: `cooking_station_${stationKind}`,
+    location,
+    x: 4,
+    y: 5,
+    stationKind,
+  });
+
+  const starter = formatGameEnvironmentFacts({ ...base, cookingStationTargets: [] }, true);
+  assert.ok(starter.includes("厨房: 无"), `the starter house is one room with no kitchen: ${starter}`);
+
+  const upgraded = formatGameEnvironmentFacts(
+    { ...base, cookingStationTargets: [station("kitchen", "FarmHouse")] },
+    true,
+  );
+  assert.ok(upgraded.includes("厨房: 有"), `the upgraded house has its kitchen: ${upgraded}`);
+  assert.ok(!upgraded.includes("厨房: 无"), `and the line must not keep the starter's answer: ${upgraded}`);
+
+  // A placed cookout kit is a stove outdoors, not the house's kitchen.
+  const kitOnly = formatGameEnvironmentFacts(
+    { ...base, location: "Farm", cookingStationTargets: [station("cookout_kit", "Farm")] },
+    true,
+  );
+  assert.ok(kitOnly.includes("厨房: 无"), `a cookout kit is not a kitchen: ${kitOnly}`);
+
+  const english = formatGameEnvironmentFacts({ ...base, cookingStationTargets: [] }, false);
+  assert.ok(english.includes("kitchen: none"), `both languages carry the fact: ${english}`);
+
+  const unmeasured = formatGameEnvironmentFacts(base, false);
+  assert.ok(
+    !unmeasured.includes("kitchen"),
+    `an unpublished family means the Mod did not measure it, and the line says nothing: ${unmeasured}`,
+  );
 });
 
 test("formatGameEnvironmentFacts localizes stamina and marks persistent fatigue", () => {
@@ -832,9 +946,11 @@ test("an empty render is recorded as an empty render rather than omitted", () =>
  * "Did the line ever exceed the byte cap, and what was dropped" is answerable only from the observer:
  * the rendered line has already lost whatever the cap removed, so the survivors cannot name it.
  *
- * This is not a cosmetic question. The fact the cap drops FIRST is the unwatered count, so a companion
- * whose line was bounded can be looking at a farm it has no unwatered fact about - and a reader of the
- * record is the only one who can tell that from "the farm was watered".
+ * This is not a cosmetic question. The cap spends WORLD facts first - the whole-map watering answer is the
+ * longest of them, so it is the first to go - and a companion whose line was bounded can be looking at a farm
+ * it has no unwatered fact about, which a reader of the record is the only one who can tell from "the farm was
+ * watered". Her own body is the last thing the cap touches, so the fact she is most likely to act on is never
+ * the one the record reports as lost.
  */
 test("the record names the facts the byte cap dropped, and its text is exactly the rendered line", () => {
   const long = "阿".repeat(16);
@@ -878,12 +994,23 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
     formatGameEnvironmentFacts(source as GameEnvironmentFactsSource, true),
     "one implementation: the observation cannot disagree with the prompt it describes",
   );
-  assert.equal(observation.dropped.length, 2, `the cap dropped something here, and says what: ${observation.text}`);
+  assert.ok(observation.dropped.length > 0, `the cap dropped something here, and says what: ${observation.text}`);
   assert.ok(
     observation.dropped[0]?.startsWith("本图待浇水作物: 0"),
     `the unwatered fact is the first thing the cap costs: ${String(observation.dropped[0])}`,
   );
-  assert.equal(observation.dropped[1], "体力: 270", "and stamina is the second");
+  // Nothing about her own body is on that list, whatever the cap had to spend: the declared drop order
+  // spends world facts first, so the fact she is most likely to act on survives the bound.
+  const bodyFacts = composeGameEnvironmentFacts(source as GameEnvironmentFactsSource, true)
+    .filter((fact) => fact.subject === "body")
+    .map((fact) => fact.text);
+  assert.deepEqual(
+    observation.dropped.filter((text) => bodyFacts.includes(text)),
+    [],
+    `the cap spends world facts before her own body: ${observation.dropped.join(" | ")}`,
+  );
+  assert.ok(observation.text.includes("体力: 270"), `her stamina is on the line: ${observation.text}`);
+  assert.ok(observation.text.includes("手持: 锄头"), `so is the tool in her hand: ${observation.text}`);
   for (const droppedFact of observation.dropped)
     assert.equal(
       observation.text.includes(droppedFact),

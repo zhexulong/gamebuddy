@@ -45,7 +45,12 @@ test("production roots never reference the removed entry or the chat-live machin
   assert.ok(!("start:dialogue" in packageScripts));
   assert.ok(!JSON.stringify(packageScripts).includes("dialogue-web-main.js"));
 
-  for (const machineFile of ["tsconfig.chat-live.json", "scripts/build-chat-live-artifact.mjs", "scripts/start-chat-live-artifact.mjs", "scripts/chat-live-artifact-support.mjs"]) {
+  for (const machineFile of [
+    "tsconfig.chat-live.json",
+    "scripts/build-chat-live-artifact.mjs",
+    "scripts/start-chat-live-artifact.mjs",
+    "scripts/chat-live-artifact-support.mjs",
+  ]) {
     await assert.rejects(readFile(resolve(hostRoot, machineFile), "utf8"), { code: "ENOENT" });
   }
 });

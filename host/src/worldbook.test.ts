@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   createWorldBookTools,
   readWorldBook,
@@ -39,6 +40,12 @@ const book = validateWorldBook({
   ],
 });
 
+/** One world-book tool call, with the arguments and context the Pi tool seam passes. */
+function executeQuery(tool: ToolDefinition | undefined, params: unknown) {
+  assert.ok(tool);
+  return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
+}
+
 test("WorldBook catalog/query are bounded and current-world scoped", async () => {
   const [catalog, query] = createWorldBookTools(
     { metadata: worldBookMetadata(book), book },
@@ -65,7 +72,7 @@ test("WorldBook catalog/query are bounded and current-world scoped", async () =>
   await assert.rejects(() => execute(query, {}), /worldbook_query_selector_required/);
 });
 
-test("WorldBook query renders macros and omits an entry that cannot be rendered", async () => {
+test("WorldBook query renders macros, omits an entry it cannot render, and names what it dropped", async () => {
   // The failure this catches: the query tool used to return `entry.content`
   // verbatim, so a `{{user}}`-bearing entry reached the model as a literal brace
   // placeholder in a tool result.
@@ -100,12 +107,118 @@ test("WorldBook query renders macros and omits an entry that cannot be rendered"
     assert.ok(tool);
     return tool.execute("call", params as never, new AbortController().signal, () => {}, {} as never);
   };
-  const rendered = await execute(query, { entryId: "macro" });
-  const renderedEntry = JSON.parse((rendered.content[0]! as { text: string }).text).entries[0] as { content: string };
-  assert.equal(renderedEntry.content, "Kohaku and you farm together.");
-  assert.doesNotMatch(renderedEntry.content, /\{\{/u);
-  const omitted = await execute(query, { entryId: "broken" });
-  assert.deepEqual(JSON.parse((omitted.content[0]! as { text: string }).text).entries, []);
+  let diagnostics = "";
+  const stderrWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const rendered = await execute(query, { entryId: "macro" });
+    // `User`, not `you`: the unnamed player is a persona NAME, which is what SillyTavern substitutes for `{{user}}`
+    // and what agrees with a third-person card's own verb (see `playerReferenceWord`). This expectation was written
+    // against the older pronoun fallback.
+    const renderedEntry = JSON.parse((rendered.content[0]! as { text: string }).text).entries[0] as { content: string };
+    assert.equal(renderedEntry.content, "Kohaku and User farm together.");
+    assert.doesNotMatch(renderedEntry.content, /\{\{/u);
+    const omitted = await execute(query, { entryId: "broken" });
+    assert.deepEqual(JSON.parse((omitted.content[0]! as { text: string }).text).entries, []);
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+  // Dropped, but not in silence: the entry and the token behind it are both named, so the player can go and edit the
+  // card instead of finding an entry missing with no explanation.
+  assert.match(diagnostics, /omitting entry broken/u);
+  assert.match(diagnostics, /\{\{unknown\}\}/u);
+  assert.match(diagnostics, /not a macro this product recognises/u);
+});
+
+/**
+ * The defect this pins: `authoredEntries` dropped any entry whose render still carried a macro, and
+ * `renderWorldBookText` DELIBERATELY leaves bucket 2 literal - each macro there with its reason in
+ * `LEFT_LITERAL_STANDARD_MACROS` (no clock, no dice, no conversation yet). A card that wrote 现在是{{time}} therefore had
+ * that whole entry vanish with nothing said about it: the author's intent, and a third of the world book, lost as if it
+ * were a typo.
+ */
+test("an entry that writes a standard left-literal macro is kept, with the macro still literal", async () => {
+  const clockBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_clock",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: [
+      {
+        entryId: "clock",
+        title: "一天的时辰",
+        content: "现在是{{time}}，田里还湿着。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const [, query] = createWorldBookTools({ metadata: worldBookMetadata(clockBook), book: clockBook }, undefined, {
+    char: "琥珀",
+  });
+  let diagnostics = "";
+  const stderrWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  let served: readonly { entryId: string; content: string }[];
+  try {
+    const response = await executeQuery(query, { entryId: "clock" });
+    served = JSON.parse((response.content[0]! as { text: string }).text).entries;
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+  assert.equal(served.length, 1, "the entry survives its bucket-2 macro instead of being dropped");
+  assert.equal(served[0]!.content, "现在是{{time}}，田里还湿着。");
+  assert.match(served[0]!.content, /\{\{time\}\}/u, "the author's own macro text is what the reader sees");
+  // Nothing was lost, so nothing is reported: the report is for drops, not for the authored text being authored.
+  assert.equal(diagnostics, "");
+});
+
+/**
+ * The other half of the same report: an entry the RUN has no value for is not the same fact as an entry carrying a token
+ * this product never knew. `{{char}}` with no companion name yet is a standard macro with nothing to fill it (telling the
+ * player their card lost it would be false), while `{{not_a_macro}}` is their own typo or an extension.
+ */
+test("an entry the run has no value for is reported as standard, not as a macro the product does not know", async () => {
+  const charBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_char",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: [
+      {
+        entryId: "unnamed",
+        title: "雨",
+        content: "{{char}} 在雨里等着。",
+        scope: "setting",
+        provenance: "st-card-import",
+        tokenBudget: "small",
+      },
+    ],
+  });
+  const [, query] = createWorldBookTools({ metadata: worldBookMetadata(charBook), book: charBook });
+  let diagnostics = "";
+  const stderrWrite = process.stderr.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    diagnostics += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const response = await executeQuery(query, { entryId: "unnamed" });
+    assert.deepEqual(JSON.parse((response.content[0]! as { text: string }).text).entries, []);
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+  assert.match(diagnostics, /omitting entry unnamed/u);
+  assert.match(diagnostics, /\{\{char\}\}/u);
+  assert.match(diagnostics, /standard SillyTavern macro this run has no value for/u);
+  assert.doesNotMatch(diagnostics, /not a macro this product recognises/u);
 });
 
 test("a world-book entry carries the card's secondary selection gate and refuses a malformed one", () => {

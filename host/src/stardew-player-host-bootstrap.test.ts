@@ -1,18 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type {
-  StardewAiClientProcessSpawn,
-} from "./stardew-ai-client-process-owner.js";
-import type {
-  StardewPlayerHostBootstrapClaim,
-} from "./stardew-player-host-bootstrap.js";
+import type { StardewAiClientProcessSpawn } from "./stardew-ai-client-process-owner.js";
+import type { StardewPlayerHostBootstrapClaim } from "./stardew-player-host-bootstrap.js";
 import { createStardewPrivateBootstrapComposerTestSupport } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
 
 type AssertFalse<T extends false> = T;
-type ClaimCannotBeStructurallyMinted = AssertFalse<
-  object extends StardewPlayerHostBootstrapClaim ? true : false
->;
+type ClaimCannotBeStructurallyMinted = AssertFalse<object extends StardewPlayerHostBootstrapClaim ? true : false>;
 void (0 as unknown as ClaimCannotBeStructurallyMinted);
 
 const neverSpawn: StardewAiClientProcessSpawn = () => {
@@ -96,7 +90,10 @@ test("only one unexpired pending bootstrap exists and revoke permits a replaceme
   const { broker } = createHarness();
   const first = broker.confirm(request());
 
-  assert.throws(() => broker.confirm({ ...request(), browserSessionId: "browser-2" }), /stardew_bootstrap_already_active/);
+  assert.throws(
+    () => broker.confirm({ ...request(), browserSessionId: "browser-2" }),
+    /stardew_bootstrap_already_active/,
+  );
   first.revoke();
   assert.deepEqual(first.readView(), { schemaVersion: 1, state: "revoked" });
 

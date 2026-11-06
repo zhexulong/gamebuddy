@@ -81,9 +81,7 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
 test("Preview and operational gate sources do not import the product materializer", async () => {
   const testDirectory = dirname(fileURLToPath(import.meta.url));
   const sourceRoot = testDirectory.endsWith("src") ? testDirectory : resolve(testDirectory, "..", "src");
-  const checked = [
-    "farmhand-companion-preview.ts",
-  ];
+  const checked = ["farmhand-companion-preview.ts"];
   assert.ok(checked.length >= 1);
   for (const leaf of checked) {
     const source = await readFile(join(sourceRoot, leaf), "utf8");

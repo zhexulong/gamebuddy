@@ -15,51 +15,59 @@ import type {
   GuardianRecoveryRole,
 } from "../../auth/desktop-guardian-session.internal.js";
 
-type RuntimeBinding = ContainmentCorrelation & ContainmentOperationWaitBudget & Readonly<{
-  /**
-   * The attempt's native arm binding facts, read from the composition's own arm
-   * frame. They are the arm operation's own input and deliberately NOT the launch
-   * authorization: the arm body is built from these facts (plus the approved
-   * executable), so the launch facts bag never becomes the arm body.
-   */
-  readonly armFacts: TypedPrivateGameFacts;
-}>;
+type RuntimeBinding = ContainmentCorrelation &
+  ContainmentOperationWaitBudget &
+  Readonly<{
+    /**
+     * The attempt's native arm binding facts, read from the composition's own arm
+     * frame. They are the arm operation's own input and deliberately NOT the launch
+     * authorization: the arm body is built from these facts (plus the approved
+     * executable), so the launch facts bag never becomes the arm body.
+     */
+    readonly armFacts: TypedPrivateGameFacts;
+  }>;
 
 /**
  * Composition-owned platform port. It receives typed game facts and owns the
  * translation to its authenticated platform transport.
  */
 export type ContainedGameRuntimePlatform = Readonly<{
-  arm(input: Readonly<{
-    readonly guardianInstanceId: string;
-    readonly guardianEpoch: number;
-    readonly attemptId: string;
-    readonly operationWaitBudgetMs: number;
-    /** The attempt's native arm binding facts; the arm body is built from these. */
-    readonly armFacts: TypedPrivateGameFacts;
-    /**
-     * The launch authorization produced for this attempt. The arm body takes
-     * ONLY its approved executable from it: the attested installation executable
-     * is the one fact the native arm parser needs that is not an arm binding
-     * fact, and no other launch fact may enter the arm body.
-     */
-    readonly authorization: TypedPrivateGameFacts;
-  }>): Promise<void>;
-  launch(input: Readonly<{
-    readonly guardianInstanceId: string;
-    readonly guardianEpoch: number;
-    readonly attemptId: string;
-    readonly deadlineUnixMs: number;
-    readonly role: ContainmentRole;
-    readonly authorization: TypedPrivateGameFacts;
-  }>): Promise<void>;
-  contain(input: Readonly<{
-    readonly guardianInstanceId: string;
-    readonly guardianEpoch: number;
-    readonly attemptId: string;
-    readonly operationWaitBudgetMs: number;
-    readonly role: ContainmentRole;
-  }>): Promise<void>;
+  arm(
+    input: Readonly<{
+      readonly guardianInstanceId: string;
+      readonly guardianEpoch: number;
+      readonly attemptId: string;
+      readonly operationWaitBudgetMs: number;
+      /** The attempt's native arm binding facts; the arm body is built from these. */
+      readonly armFacts: TypedPrivateGameFacts;
+      /**
+       * The launch authorization produced for this attempt. The arm body takes
+       * ONLY its approved executable from it: the attested installation executable
+       * is the one fact the native arm parser needs that is not an arm binding
+       * fact, and no other launch fact may enter the arm body.
+       */
+      readonly authorization: TypedPrivateGameFacts;
+    }>,
+  ): Promise<void>;
+  launch(
+    input: Readonly<{
+      readonly guardianInstanceId: string;
+      readonly guardianEpoch: number;
+      readonly attemptId: string;
+      readonly deadlineUnixMs: number;
+      readonly role: ContainmentRole;
+      readonly authorization: TypedPrivateGameFacts;
+    }>,
+  ): Promise<void>;
+  contain(
+    input: Readonly<{
+      readonly guardianInstanceId: string;
+      readonly guardianEpoch: number;
+      readonly attemptId: string;
+      readonly operationWaitBudgetMs: number;
+      readonly role: ContainmentRole;
+    }>,
+  ): Promise<void>;
   /**
    * One bounded recovery conversation with the recovery transport.
    *
@@ -71,19 +79,21 @@ export type ContainedGameRuntimePlatform = Readonly<{
    * composition owns their encoding into platform frames, so no platform frame
    * representation enters this module.
    */
-  recover(input: Readonly<{
-    readonly guardianInstanceId: string;
-    readonly guardianEpoch: number;
-    readonly attemptId: string;
-    readonly operationWaitBudgetMs: number;
-    readonly recoveryInstanceId: string;
-    /** Typed facts of the exact recovery lease binding the native gate must acquire. */
-    readonly gateFacts: TypedPrivateGameFacts;
-    /** Durable recovering CAS; the successor facts it returns are the post-CAS binding. */
-    readonly beginRecovery: () => Promise<TypedPrivateGameFacts>;
-    /** Durable per-role containment CAS, before that role's recovery CAS acknowledgement. */
-    readonly roleContained: (role: GuardianRecoveryRole) => Promise<void>;
-  }>): Promise<GuardianRecoveryAck>;
+  recover(
+    input: Readonly<{
+      readonly guardianInstanceId: string;
+      readonly guardianEpoch: number;
+      readonly attemptId: string;
+      readonly operationWaitBudgetMs: number;
+      readonly recoveryInstanceId: string;
+      /** Typed facts of the exact recovery lease binding the native gate must acquire. */
+      readonly gateFacts: TypedPrivateGameFacts;
+      /** Durable recovering CAS; the successor facts it returns are the post-CAS binding. */
+      readonly beginRecovery: () => Promise<TypedPrivateGameFacts>;
+      /** Durable per-role containment CAS, before that role's recovery CAS acknowledgement. */
+      readonly roleContained: (role: GuardianRecoveryRole) => Promise<void>;
+    }>,
+  ): Promise<GuardianRecoveryAck>;
   /**
    * Protected terminal settlement for one attempt. The platform owns what a
    * settlement durably records and proves; the generic runtime only guarantees
@@ -92,19 +102,23 @@ export type ContainedGameRuntimePlatform = Readonly<{
    * `launchedRoles` names exactly those roles the runtime actually launched, so
    * a platform never has to invent or guess what to record as contained.
    */
-  settle(input: Readonly<{
-    readonly guardianInstanceId: string;
-    readonly guardianEpoch: number;
-    readonly attemptId: string;
-    readonly operationWaitBudgetMs: number;
-    readonly launchedRoles: readonly ContainmentRole[];
-  }>): Promise<void>;
+  settle(
+    input: Readonly<{
+      readonly guardianInstanceId: string;
+      readonly guardianEpoch: number;
+      readonly attemptId: string;
+      readonly operationWaitBudgetMs: number;
+      readonly launchedRoles: readonly ContainmentRole[];
+    }>,
+  ): Promise<void>;
   close(): Promise<void>;
 }>;
 
 type InternalAuthorization = (privateGameFacts: TypedPrivateGameFacts) => void;
 
-const rejected = (message: string): never => { throw new Error(`contained game runtime: ${message}`); };
+const rejected = (message: string): never => {
+  throw new Error(`contained game runtime: ${message}`);
+};
 
 export function createContainedGameRuntime(
   platform: ContainedGameRuntimePlatform,
@@ -133,12 +147,19 @@ export function createContainedGameRuntime(
   };
   const serialize = <T>(task: () => Promise<T>): Promise<T> => {
     const next = operation.then(task, task);
-    operation = next.then(() => undefined, () => undefined);
+    operation = next.then(
+      () => undefined,
+      () => undefined,
+    );
     return next;
   };
 
   const runtime: ContainedGameRuntime = Object.freeze({
-    launchRole(role, launchOperation: RoleLaunchOperation, produceAuthorization: TypedPrivateGameAuthorizationProducer) {
+    launchRole(
+      role,
+      launchOperation: RoleLaunchOperation,
+      produceAuthorization: TypedPrivateGameAuthorizationProducer,
+    ) {
       return serialize(async () => {
         const deadlineUnixMs = launchOperation.deadlineUnixMs;
         ensureOpen(deadlineUnixMs);
@@ -170,7 +191,12 @@ export function createContainedGameRuntime(
         ensureOpen(deadlineUnixMs);
         if (!armed) {
           armAttempted = true;
-          await platform.arm({ ...bindingSnapshot, operationWaitBudgetMs: binding.operationWaitBudgetMs, armFacts: binding.armFacts, authorization: authorizedValue });
+          await platform.arm({
+            ...bindingSnapshot,
+            operationWaitBudgetMs: binding.operationWaitBudgetMs,
+            armFacts: binding.armFacts,
+            authorization: authorizedValue,
+          });
           armed = true;
         }
         ensureOpen(deadlineUnixMs);
@@ -241,9 +267,7 @@ export function createContainedGameRuntime(
             // Name exactly the roles that reached `launched`; the guard above
             // already proved each of them is contained, and a role that never
             // launched is never reported as contained.
-            launchedRoles: [...roleStates.entries()]
-              .filter(([, state]) => state === "contained")
-              .map(([role]) => role),
+            launchedRoles: [...roleStates.entries()].filter(([, state]) => state === "contained").map(([role]) => role),
           });
           return Object.freeze({ status: "settled" as const });
         } catch {
@@ -262,7 +286,9 @@ export function createContainedGameRuntime(
       // `if (closed) return operation.then(() => undefined)` returned a resolved
       // promise after a rejected close, which faked success.
       closed = true;
-      return serialize(async () => { await platform.close(); });
+      return serialize(async () => {
+        await platform.close();
+      });
     },
   });
   return runtime;

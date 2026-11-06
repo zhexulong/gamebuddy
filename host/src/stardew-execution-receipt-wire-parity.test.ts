@@ -44,30 +44,19 @@ const projectPath = resolve(
   hostRoot,
   "../integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/GameBuddy.Stardew.Core.Tests.csproj",
 );
-const testFilter = "FullyQualifiedName=GameBuddy.Stardew.Core.Tests.BridgeReceiptWireParityTests.MachineInspectWorldNotReadyReceipt_SerializesForHostWireParity";
+const testFilter =
+  "FullyQualifiedName=GameBuddy.Stardew.Core.Tests.BridgeReceiptWireParityTests.MachineInspectWorldNotReadyReceipt_SerializesForHostWireParity";
 
 test("source-built Stardew execution receipt passes the Host strict validator", { timeout: 150_000 }, () => {
   const root = mkdtempSync(join(tmpdir(), "gamebuddy-execution-receipt-wire-"));
   const outputPath = join(root, "execution-receipt.json");
   try {
     try {
-      execFileSync(
-        "dotnet",
-        [
-          "test",
-          projectPath,
-          "--no-restore",
-          "--filter",
-          testFilter,
-          "--verbosity",
-          "minimal",
-        ],
-        {
-          cwd: resolve(hostRoot, ".."),
-          env: { ...process.env, GAMEBUDDY_EXECUTION_RECEIPT_WIRE_OUTPUT: outputPath },
-          stdio: "pipe",
-        },
-      );
+      execFileSync("dotnet", ["test", projectPath, "--no-restore", "--filter", testFilter, "--verbosity", "minimal"], {
+        cwd: resolve(hostRoot, ".."),
+        env: { ...process.env, GAMEBUDDY_EXECUTION_RECEIPT_WIRE_OUTPUT: outputPath },
+        stdio: "pipe",
+      });
     } catch (error) {
       const commandError = error as { stdout?: Buffer | string; stderr?: Buffer | string; status?: number | null };
       const redact = (value: Buffer | string | undefined) =>

@@ -15,27 +15,34 @@ import {
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
 
 type Assert<T extends true> = T;
-type HasExactKeys<T, TKeys extends PropertyKey> =
-  Exclude<keyof T, TKeys> extends never
-    ? Exclude<TKeys, keyof T> extends never
-      ? true
-      : false
-    : false;
-type DesktopPrivateHostCompositionHasOnlyLifecycle = Assert<
-  HasExactKeys<DesktopPrivateHostComposition, "close">
->;
+type HasExactKeys<T, TKeys extends PropertyKey> = Exclude<keyof T, TKeys> extends never
+  ? Exclude<TKeys, keyof T> extends never
+    ? true
+    : false
+  : false;
+type DesktopPrivateHostCompositionHasOnlyLifecycle = Assert<HasExactKeys<DesktopPrivateHostComposition, "close">>;
 // The compile-time facade assertion above is only meaningful if it is
 // evaluated; this binding keeps it in the emitted type check.
 const facadeHasOnlyLifecycle: DesktopPrivateHostCompositionHasOnlyLifecycle = true;
 
 test("desktop product composition builds the Stardew game owner only through the registered catalog provider", async () => {
-  const sourcePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts");
+  const sourcePath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "src",
+    "composition",
+    "desktop-host-composition.ts",
+  );
   const source = await readFile(sourcePath, "utf8");
   // Main assertion: the generic composition never directly constructs a game
   // assembly; the Stardew lifecycle owner is built exclusively through the
   // provider registered in PRODUCT_INTEGRATION_CATALOG.
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
-  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s);
+  assert.match(
+    source,
+    /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s,
+  );
   assert.doesNotMatch(source, /createStardewProductionLifecycleCoordinator\(/);
   // Secondary regression guards: retired Guardian-era seams never reappear in
   // the generic composition closure.
@@ -45,11 +52,21 @@ test("desktop product composition builds the Stardew game owner only through the
 
   let closeCalls = 0;
   const session = Object.freeze({
-    arm: async () => { throw new Error("unused"); },
-    launch: async () => { throw new Error("unused"); },
-    contain: async () => { throw new Error("unused"); },
-    recover: async () => { throw new Error("unused"); },
-    close: async () => { closeCalls += 1; },
+    arm: async () => {
+      throw new Error("unused");
+    },
+    launch: async () => {
+      throw new Error("unused");
+    },
+    contain: async () => {
+      throw new Error("unused");
+    },
+    recover: async () => {
+      throw new Error("unused");
+    },
+    close: async () => {
+      closeCalls += 1;
+    },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
 
@@ -66,11 +83,21 @@ test("desktop product composition builds the Stardew game owner only through the
 test("desktop composition retains the typed root capability and closes the authenticated session once", async () => {
   let closeCalls = 0;
   const session = Object.freeze({
-    arm: async () => { throw new Error("unused"); },
-    launch: async () => { throw new Error("unused"); },
-    contain: async () => { throw new Error("unused"); },
-    recover: async () => { throw new Error("unused"); },
-    close: async () => { closeCalls += 1; },
+    arm: async () => {
+      throw new Error("unused");
+    },
+    launch: async () => {
+      throw new Error("unused");
+    },
+    contain: async () => {
+      throw new Error("unused");
+    },
+    recover: async () => {
+      throw new Error("unused");
+    },
+    close: async () => {
+      closeCalls += 1;
+    },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session);
 
@@ -83,34 +110,55 @@ test("desktop composition retains the typed root capability and closes the authe
   assert.equal(closeCalls, 1);
 });
 test("desktop product composition wires the semantic authority, Chat runtime, and Stardew lifecycle owner into reverse-order children", async () => {
-  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
-  assert.match(source, /createSharedSemanticProductionAuthorityFromDeploymentManifest\(\s*input\.manifest,\s*input\.gameSessionMode,\s*\.\.\.\(mountOptions === undefined \? \[\] : \[mountOptions\]\),\s*\)/);
+  const source = await readFile(
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /createSharedSemanticProductionAuthorityFromDeploymentManifest\(\s*input\.manifest,\s*input\.gameSessionMode,\s*\.\.\.\(mountOptions === undefined \? \[\] : \[mountOptions\]\),\s*\)/,
+  );
   assert.match(source, /input\.publishLaunchUrl\?\.\(presentationAdmission\.launchUrl\)/);
   assert.match(source, /createChatSemanticFacadeFromSharedAuthority\(shared\.chat\)/);
   assert.match(source, /startMountedChatRuntime\(\)/);
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
-  assert.match(source, /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s);
+  assert.match(
+    source,
+    /provider\.createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)/s,
+  );
   // The mounted Chat runtime is constructed before the lifecycle coordinator, so
   // a coordinator construction failure still drains the started Chat runtime
   // (not just the unmounted facade) alongside the shared owner.
-  assert.match(source, /await mountedFacade\.startMountedChatRuntime\(\);[\s\S]*?lifecycleCoordinator = await provider\.createLifecycleCoordinator/);
+  assert.match(
+    source,
+    /await mountedFacade\.startMountedChatRuntime\(\);[\s\S]*?lifecycleCoordinator = await provider\.createLifecycleCoordinator/,
+  );
   // The presentation admission owner is built from the provider's presentation
   // projection after the lifecycle owner; a provider that exposes no projection
   // fails closed rather than inventing one, and the projection is consumed only
   // as the Host-owned assembly input of the presentation child.
-  assert.match(source, /const presentation = lifecycleCoordinator\.presentation;\s*if \(presentation === undefined\) throw new Error\("game_integration_presentation_projection_unavailable"\);/);
+  assert.match(
+    source,
+    /const presentation = lifecycleCoordinator\.presentation;\s*if \(presentation === undefined\) throw new Error\("game_integration_presentation_projection_unavailable"\);/,
+  );
   // The composed reference-game admission still derives the artifact root in place
   // (5086882f fixed the same two-levels-up derivation for the hoisted local the
   // chat-only/management variant shares), and 46160994 added `chatSelection` as its
   // last argument so the composed surface mounts `chat.select` over the same shared
   // authority the mounted Chat lane owns.
-  assert.match(source, /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*chatSelection: shared\.chat,\s*\}\)/s);
+  assert.match(
+    source,
+    /presentationAdmission = await startDesktopPresentationAdmission\(\{\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*manifest: input\.manifest,\s*hostArtifactRoot: resolve\(dirname\(fileURLToPath\(import\.meta\.url\)\), "\.\."\),\s*bootstrapToken: randomBytes\(32\)\.toString\("base64url"\),\s*eventStream: createChatEventStream\(\),\s*lease: mountedLease,\s*presentation,\s*chatSelection: shared\.chat,\s*\}\)/s,
+  );
   // The presentation child is registered after the Game owner, the Chat runtime,
   // and the shared authority, so the reverse-order aggregation closes the one
   // listener before the Chat runtime, the Game owner, and the shared authority
   // it serves, mirroring the reference entry's server -> facade -> coordinator ->
   // shared close order.
-  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/);
+  assert.match(
+    source,
+    /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/,
+  );
   assert.match(source, /await presentationAdmission\?\.close\(\)/);
   assert.match(source, /await lifecycleCoordinator\?\.close\(\)/);
   assert.match(source, /await shared\?\.close\(\)/);
@@ -118,7 +166,10 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   // child (or its unmounted facade when the mount never completed), before the
   // lifecycle owner, the shared authority, and the authenticated session,
   // preserving the construction error.
-  assert.match(source, /await presentationAdmission\?\.close\(\);\s*\}\s*catch \{\s*\/\/ Preserve the product construction failure\.\s*\}\s*try \{\s*if \(chatRuntime !== undefined\) await chatRuntime\.close\(\);\s*else await chatFacade\?\.close\(\);[\s\S]*?await lifecycleCoordinator\?\.close\(\);[\s\S]*?await shared\?\.close\(\);[\s\S]*?await session\.close\(\);/);
+  assert.match(
+    source,
+    /await presentationAdmission\?\.close\(\);\s*\}\s*catch \{\s*\/\/ Preserve the product construction failure\.\s*\}\s*try \{\s*if \(chatRuntime !== undefined\) await chatRuntime\.close\(\);\s*else await chatFacade\?\.close\(\);[\s\S]*?await lifecycleCoordinator\?\.close\(\);[\s\S]*?await shared\?\.close\(\);[\s\S]*?await session\.close\(\);/,
+  );
   // The generic composition never constructs the Stardew launch assemblies or
   // imports game modules directly; the provider owns them.
   assert.doesNotMatch(source, /createStardewProductionLifecycleCoordinator\(/);
@@ -129,7 +180,10 @@ test("desktop product composition wires the semantic authority, Chat runtime, an
   assert.doesNotMatch(source, /process\.env/);
   assert.doesNotMatch(source, /dataRoot|bootstrapId|programRoot|principal\s*:/);
   assert.doesNotMatch(source, /export\s*\{/);
-  assert.doesNotMatch(source, /export\s+(?:type|interface|function|const)\s+(?:createSharedSemanticProductionAuthorityFromDeploymentManifest|createStardewProductionLifecycleCoordinator|DesktopGuardianSession|DesktopGuardianSessionBinding)/);
+  assert.doesNotMatch(
+    source,
+    /export\s+(?:type|interface|function|const)\s+(?:createSharedSemanticProductionAuthorityFromDeploymentManifest|createStardewProductionLifecycleCoordinator|DesktopGuardianSession|DesktopGuardianSessionBinding)/,
+  );
 });
 
 test("composition facade close runs the presentation, Chat, Game, and shared children exactly once in reverse registration order", async () => {
@@ -140,17 +194,51 @@ test("composition facade close runs the presentation, Chat, Game, and shared chi
   let presentationCloseCalls = 0;
   let sessionCloseCalls = 0;
   const children: DesktopHostCompositionChild[] = [
-    { step: "release_shared_authority", close: async () => { sharedCloseCalls += 1; calls.push("shared"); } },
-    { step: "drain_game_lifecycle", close: async () => { coordinatorCloseCalls += 1; calls.push("coordinator"); } },
-    { step: "drain_chat_runtime", close: async () => { chatCloseCalls += 1; calls.push("chat"); } },
-    { step: "stop_admission", close: async () => { presentationCloseCalls += 1; calls.push("presentation"); } },
+    {
+      step: "release_shared_authority",
+      close: async () => {
+        sharedCloseCalls += 1;
+        calls.push("shared");
+      },
+    },
+    {
+      step: "drain_game_lifecycle",
+      close: async () => {
+        coordinatorCloseCalls += 1;
+        calls.push("coordinator");
+      },
+    },
+    {
+      step: "drain_chat_runtime",
+      close: async () => {
+        chatCloseCalls += 1;
+        calls.push("chat");
+      },
+    },
+    {
+      step: "stop_admission",
+      close: async () => {
+        presentationCloseCalls += 1;
+        calls.push("presentation");
+      },
+    },
   ];
   const session = Object.freeze({
-    arm: async () => { throw new Error("unused"); },
-    launch: async () => { throw new Error("unused"); },
-    contain: async () => { throw new Error("unused"); },
-    recover: async () => { throw new Error("unused"); },
-    close: async () => { sessionCloseCalls += 1; },
+    arm: async () => {
+      throw new Error("unused");
+    },
+    launch: async () => {
+      throw new Error("unused");
+    },
+    contain: async () => {
+      throw new Error("unused");
+    },
+    recover: async () => {
+      throw new Error("unused");
+    },
+    close: async () => {
+      sessionCloseCalls += 1;
+    },
   });
   const composition = createDesktopPrivateHostComposition(rootLayoutCapability, session, children);
   assert.deepEqual(Object.keys(composition), ["close"]);
@@ -196,7 +284,10 @@ type CompositionDrainFixtureScenario =
   | "gate-chat-only-surface";
 
 function runCompositionDrainFixture(scenario: CompositionDrainFixtureScenario): Promise<CompositionDrainFixtureResult> {
-  const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "desktop-host-composition-drain-fixture-worker.js");
+  const fixturePath = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "desktop-host-composition-drain-fixture-worker.js",
+  );
   return new Promise<CompositionDrainFixtureResult>((resolveResult, rejectResult) => {
     const child = spawn(process.execPath, ["--experimental-test-module-mocks", fixturePath, scenario], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -209,9 +300,16 @@ function runCompositionDrainFixture(scenario: CompositionDrainFixtureScenario): 
       rejectResult(new Error(`composition_drain_fixture_timeout:${scenario}`));
     }, 30_000);
     timeout.unref();
-    child.stdout.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", (error) => { clearTimeout(timeout); rejectResult(error); });
+    child.stdout.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectResult(error);
+    });
     child.once("close", (code) => {
       clearTimeout(timeout);
       if (code !== 0) {
@@ -335,18 +433,30 @@ test("desktop product composition builds the management surface with the mounted
 });
 
 test("desktop product composition source selects the Chat-only/management variants without any Stardew coordinator assembly", async () => {
-  const source = await readFile(resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"), "utf8");
+  const source = await readFile(
+    resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "composition", "desktop-host-composition.ts"),
+    "utf8",
+  );
   // The assembly input carries the surface selection; chat-only and management
   // never reach PRODUCT_INTEGRATION_CATALOG, and the composed-reference-game
   // surface keeps the single Stardew coordinator assembly.
   assert.match(source, /surface\?: DesktopHostSurface/);
   assert.match(source, /const surface = input\.surface \?\? "composed-reference-game";/);
   assert.match(source, /if \(surface === "chat-only" \|\| surface === "management"\) \{/);
-  assert.match(source, /surface === "chat-only"\s*\? await startChatOnlyPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)\s*: await startTavernManagementPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)/);
+  assert.match(
+    source,
+    /surface === "chat-only"\s*\? await startChatOnlyPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.voiceSurface === undefined \? \{\} : \{ voiceSurface: input\.voiceSurface \}\),\s*\.\.\.\(input\.speechSink === undefined \? \{\} : \{ speechSink: input\.speechSink \}\),\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)\s*: await startTavernManagementPresentationAdmission\(\{\s*\.\.\.variantInput,\s*\.\.\.\(input\.listVoiceOutputDevices === undefined\s*\? \{\}\s*: \{ listVoiceOutputDevices: input\.listVoiceOutputDevices \}\),\s*\}\)/,
+  );
   assert.match(source, /startChatOnlyPresentationAdmission|startTavernManagementPresentationAdmission/);
   // The Chat-only variants register only the shared authority, Chat runtime,
   // and presentation admission as children; no game child participates.
-  assert.match(source, /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/);
+  assert.match(
+    source,
+    /createDesktopPrivateHostComposition\(rootLayoutCapability, session, \[\s*\{ step: "release_shared_authority"[\s\S]*?\{ step: "stop_admission"[\s\S]*?\]\)/,
+  );
   assert.doesNotMatch(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)[\s\S]*?surface === "chat-only"/);
-  assert.doesNotMatch(source, /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)[\s\S]*?surface === "chat-only"/);
+  assert.doesNotMatch(
+    source,
+    /createLifecycleCoordinator\(\{\s*manifest: input\.manifest,\s*game: shared\.game,\s*folderPicker,\s*runtimeCollaborator,\s*\}\)[\s\S]*?surface === "chat-only"/,
+  );
 });

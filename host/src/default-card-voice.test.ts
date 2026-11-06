@@ -177,6 +177,25 @@ test("the card's own directive states a register, and states it as speech", () =
   );
 });
 
+test("the card's directive explicitly rejects itinerary reporting and state-machine logging", () => {
+  const directive = DEFAULT_COMPANION_PRESET.profile.characterVoice?.text ?? "";
+  assert.match(
+    directive,
+    /拒绝.*(汇报|报备)|对讲机/u,
+    "the card directive must explicitly forbid walkie-talkie telemetry and itinerary reporting",
+  );
+  assert.match(
+    directive,
+    /去班味|冷幽默/u,
+    "the card directive must demand the companion's actual persona tone (post-workplace dry humour)",
+  );
+  assert.doesNotMatch(
+    directive,
+    /要：「啊？行，我过去。」/u,
+    "the directive must not offer flat robotic compliance as a positive example",
+  );
+});
+
 /**
  * The two clauses of the card's directive whose ORDER is the invariant.
  *

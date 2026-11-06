@@ -111,9 +111,7 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
         credentials: "same-origin",
       });
     } catch (error) {
-      throw new ComposedReferenceGameProtocolError(
-        error instanceof Error ? error.message : "network_error",
-      );
+      throw new ComposedReferenceGameProtocolError(error instanceof Error ? error.message : "network_error");
     }
 
     if (!response.ok) {
@@ -129,11 +127,7 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
         typeof (problem as Record<string, unknown>).code === "string"
       ) {
         const p = problem as { code: string; requestId?: string };
-        throw new ComposedReferenceGameProblemError(
-          p.code,
-          response.status,
-          p.requestId ?? "unknown",
-        );
+        throw new ComposedReferenceGameProblemError(p.code, response.status, p.requestId ?? "unknown");
       }
       throw new ComposedReferenceGameProtocolError("unknown_problem");
     }
@@ -163,26 +157,38 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
     if (!/^[A-Za-z0-9_-]+$/.test(value) || value.length % 4 === 1) return false;
     const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     const finalValue = alphabet.indexOf(value[value.length - 1]!);
-    return value.length % 4 === 0 ||
-      (value.length % 4 === 2 ? finalValue % 16 === 0 : finalValue % 4 === 0);
+    return value.length % 4 === 0 || (value.length % 4 === 2 ? finalValue % 16 === 0 : finalValue % 4 === 0);
   };
   const isCanonicalBase64UrlBytes = (value: unknown, byteLength: number): value is string =>
     typeof value === "string" &&
-    value.length === Math.ceil(byteLength * 8 / 6) &&
+    value.length === Math.ceil((byteLength * 8) / 6) &&
     isCanonicalUnpaddedBase64Url(value);
   const isChoiceHandle = (value: unknown): value is string => isCanonicalBase64UrlBytes(value, 32);
   const isIdempotencyKey = (value: unknown): value is string => isCanonicalBase64UrlBytes(value, 16);
 
   function validateCabinChoices(value: unknown): StardewCabinChoicesV1 {
-    if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "choices"]) || value.apiVersion !== 1 || !Array.isArray(value.choices) || value.choices.length > 64) {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "choices"]) ||
+      value.apiVersion !== 1 ||
+      !Array.isArray(value.choices) ||
+      value.choices.length > 64
+    ) {
       throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choices");
     }
     for (const choice of value.choices) {
-      if (!isRecord(choice) ||
-          !hasExactKeys(choice, ["displayLabel", "availability", "choiceHandle", "expiresAtMs"]) ||
-          typeof choice.displayLabel !== "string" || choice.displayLabel.length === 0 || choice.displayLabel.length > 128 ||
-          choice.availability !== "available" || !isChoiceHandle(choice.choiceHandle) ||
-          typeof choice.expiresAtMs !== "number" || !Number.isSafeInteger(choice.expiresAtMs) || choice.expiresAtMs < 0) {
+      if (
+        !isRecord(choice) ||
+        !hasExactKeys(choice, ["displayLabel", "availability", "choiceHandle", "expiresAtMs"]) ||
+        typeof choice.displayLabel !== "string" ||
+        choice.displayLabel.length === 0 ||
+        choice.displayLabel.length > 128 ||
+        choice.availability !== "available" ||
+        !isChoiceHandle(choice.choiceHandle) ||
+        typeof choice.expiresAtMs !== "number" ||
+        !Number.isSafeInteger(choice.expiresAtMs) ||
+        choice.expiresAtMs < 0
+      ) {
         throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choice");
       }
     }
@@ -190,7 +196,12 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
   }
 
   function validateCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {
-    if (!isRecord(value) || !hasExactKeys(value, ["apiVersion", "status"]) || value.apiVersion !== 1 || value.status !== "manifest_admitted") {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, ["apiVersion", "status"]) ||
+      value.apiVersion !== 1 ||
+      value.status !== "manifest_admitted"
+    ) {
       throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation");
     }
     return value as StardewCabinConfirmationV1;
@@ -225,19 +236,30 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
     },
 
     async confirmStardewCabin(request: StardewCabinConfirmationRequestV1): Promise<StardewCabinConfirmationV1> {
-      if (!hasExactKeys(request as Record<string, unknown>, ["apiVersion", "idempotencyKey", "choiceHandle", "confirmed"]) ||
-          request.apiVersion !== 1 || !isIdempotencyKey(request.idempotencyKey) ||
-          !isChoiceHandle(request.choiceHandle) || request.confirmed !== true) {
+      if (
+        !hasExactKeys(request as Record<string, unknown>, [
+          "apiVersion",
+          "idempotencyKey",
+          "choiceHandle",
+          "confirmed",
+        ]) ||
+        request.apiVersion !== 1 ||
+        !isIdempotencyKey(request.idempotencyKey) ||
+        !isChoiceHandle(request.choiceHandle) ||
+        request.confirmed !== true
+      ) {
         throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_confirmation_request");
       }
       if (csrfToken === undefined) {
         throw new ComposedReferenceGameProtocolError("missing_composed_session");
       }
-      return validateCabinConfirmation(await fetchJson(stardewCabinConfirmPath, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
-        body: JSON.stringify(request),
-      }));
+      return validateCabinConfirmation(
+        await fetchJson(stardewCabinConfirmPath, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+          body: JSON.stringify(request),
+        }),
+      );
     },
   });
 }

@@ -80,7 +80,9 @@ async function runOperationalGate(deploymentManifestRef: string, operationalNonc
   }
 
   let taskIngress: ReturnType<typeof createProductionGameTaskIngressController> | undefined;
-  let operationalGateEvidencePromise: Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">> | undefined;
+  let operationalGateEvidencePromise:
+    | Promise<Omit<GameOperationalGateEvidence, "nonceSha256" | "piSessionId">>
+    | undefined;
   try {
     // Arm durable enter/ingress: the headless lease releases its committed
     // ingress only now, after the coordinated Player Host/AI attach completed.

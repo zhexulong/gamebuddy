@@ -8,7 +8,15 @@ function receipt(
   revision: number,
   evidence: ExecutionReceipt["evidence"] = { detail: state },
 ): ExecutionReceipt {
-  return { executionId: "execution_01", requestId: "request_01", actionId: "move_to_tile", state, reasonCode: state, revision, evidence };
+  return {
+    executionId: "execution_01",
+    requestId: "request_01",
+    actionId: "move_to_tile",
+    state,
+    reasonCode: state,
+    revision,
+    evidence,
+  };
 }
 
 test("receipt replay accepts authoritative terminal paths with monotonic revisions", () => {
@@ -101,6 +109,10 @@ test("receipt replay stores and returns an immutable deep snapshot", () => {
   assert.equal(Object.isFrozen(stored.evidence), true);
   assert.equal(Object.isFrozen(evidence.nested), true);
   assert.equal(Object.isFrozen(evidence.trail), true);
-  assert.throws(() => { evidence.nested.target = "mutated_return"; }, TypeError);
-  assert.throws(() => { evidence.trail.push("mutated_return"); }, TypeError);
+  assert.throws(() => {
+    evidence.nested.target = "mutated_return";
+  }, TypeError);
+  assert.throws(() => {
+    evidence.trail.push("mutated_return");
+  }, TypeError);
 });

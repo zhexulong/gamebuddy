@@ -23,8 +23,20 @@ function integration(overrides: Partial<StardewBridgeConnection["state"]> = {}):
       sessionId: "session_01",
       capabilities: ["inspect_world_map", "find_destination"],
       catalogRegistrations: [
-        { actionId: "inspect_world_map", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" },
-        { actionId: "find_destination", familyId: "world_navigation", identityVersion: 1, lifecycle: "published", kind: "read_only" },
+        {
+          actionId: "inspect_world_map",
+          familyId: "world_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "read_only",
+        },
+        {
+          actionId: "find_destination",
+          familyId: "world_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "read_only",
+        },
       ],
       catalogRevision: 1,
       enabledActionIds: [],
@@ -74,16 +86,33 @@ test("observe-scene tool mounts only from a fresh Mod read-only capability and r
     state: {
       ...fixture.state,
       capabilities: ["observe_scene"],
-      catalogRegistrations: [{ actionId: "observe_scene", familyId: "world_perception", identityVersion: 1, lifecycle: "published" as const, kind: "read_only" as const }],
+      catalogRegistrations: [
+        {
+          actionId: "observe_scene",
+          familyId: "world_perception",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "read_only" as const,
+        },
+      ],
       snapshot: { ...fixture.state.snapshot!, capabilities: ["observe_scene"] },
     },
     observeScene: async () => {
       calls++;
       return {
-         observationId: "observation_01",
-         currentLocation: "Farm",
-         currentRegion: "outdoor",
-        affordances: [{ ref: "sr1_AAAAAAAAAAAAAAAA", kind: "chest" as const, name: "Chest", distance: 1, direction: "East" as const, actionHint: "inspect" }],
+        observationId: "observation_01",
+        currentLocation: "Farm",
+        currentRegion: "outdoor",
+        affordances: [
+          {
+            ref: "sr1_AAAAAAAAAAAAAAAA",
+            kind: "chest" as const,
+            name: "Chest",
+            distance: 1,
+            direction: "East" as const,
+            actionHint: "inspect",
+          },
+        ],
         summary: "A chest is nearby.",
         partial: false,
         truncatedReason: null,
@@ -158,15 +187,18 @@ test("find-destination tool mounts from its own Mod read-only publication and fo
   assert.ok(tool);
   const result = await tool.execute("find_01", { query: "mine" }, new AbortController().signal, () => {}, {} as never);
   assert.deepEqual(request, { operation: "find_destination", args: { query: "mine" } });
-  assert.equal(result.content[0]?.type === "text" ? result.content[0].text : "", JSON.stringify({
-    status: "resolved",
-    reason: "exact_current_locale",
-    entries: null,
-    nextCursor: null,
-    candidates: null,
-    destination: { kind: "label", label: "Mine", ref: null },
-    unlockState: "unknown",
-  }));
+  assert.equal(
+    result.content[0]?.type === "text" ? result.content[0].text : "",
+    JSON.stringify({
+      status: "resolved",
+      reason: "exact_current_locale",
+      entries: null,
+      nextCursor: null,
+      candidates: null,
+      destination: { kind: "label", label: "Mine", ref: null },
+      unlockState: "unknown",
+    }),
+  );
 });
 
 test("navigate-to-destination mounts only from its live Mod execution publication and forwards the strict selector", async () => {
@@ -220,11 +252,9 @@ test("navigate-to-destination mounts only from its live Mod execution publicatio
     },
   };
 
-  const tool = createStardewActionTools(
-    executionIntegration,
-    undefined,
-    () => admission,
-  ).find((candidate) => candidate.name === "stardew_navigate_to_destination");
+  const tool = createStardewActionTools(executionIntegration, undefined, () => admission).find(
+    (candidate) => candidate.name === "stardew_navigate_to_destination",
+  );
   assert.ok(tool);
   const result = await tool.execute(
     "navigate_01",
@@ -266,21 +296,16 @@ test("navigate-to-destination mounts only from its live Mod execution publicatio
     () => {},
     {} as never,
   );
-  assert.match(
-    deniedByKind.content[0]?.type === "text" ? deniedByKind.content[0].text : "",
-    /action_policy_denied/,
-  );
+  assert.match(deniedByKind.content[0]?.type === "text" ? deniedByKind.content[0].text : "", /action_policy_denied/);
 
   const deniedPolicy = {
     policyVersion: 1,
     deniedActions: ["navigate_to_destination"],
     deniedFamilies: [],
   } satisfies ActionPolicy;
-  const deniedTool = createStardewActionTools(
-    executionIntegration,
-    deniedPolicy,
-    () => admission,
-  ).find((candidate) => candidate.name === "stardew_navigate_to_destination");
+  const deniedTool = createStardewActionTools(executionIntegration, deniedPolicy, () => admission).find(
+    (candidate) => candidate.name === "stardew_navigate_to_destination",
+  );
   assert.ok(deniedTool);
   const deniedByPolicy = await deniedTool!.execute(
     "navigate_denied_policy",
@@ -394,9 +419,7 @@ test("mounted world-map tool rechecks the live publication before bridge write",
     ...fixture,
     get state() {
       const state = fixture.state;
-      return withdrawn
-        ? { ...state, capabilities: [], snapshot: { ...state.snapshot!, capabilities: [] } }
-        : state;
+      return withdrawn ? { ...state, capabilities: [], snapshot: { ...state.snapshot!, capabilities: [] } } : state;
     },
     navigationRead: async () => {
       writes++;
@@ -421,7 +444,6 @@ test("mounted world-map tool rechecks the live publication before bridge write",
   assert.equal(writes, 0);
 });
 
-
 test("navigation tools stay mounted and reject missing bridge, revision drift, and every exact registration mismatch", async () => {
   const mismatches = [
     { lifecycle: "experimental" },
@@ -432,13 +454,9 @@ test("navigation tools stay mounted and reject missing bridge, revision drift, a
   ] as const;
   for (const mismatch of mismatches) {
     const registrations = integration().state.catalogRegistrations!.map((registration) =>
-      registration.actionId === "find_destination"
-        ? { ...registration, ...mismatch }
-        : registration,
+      registration.actionId === "find_destination" ? { ...registration, ...mismatch } : registration,
     );
-    const tools = createStardewObservationTools(
-      integration({ catalogRegistrations: registrations as never }),
-    );
+    const tools = createStardewObservationTools(integration({ catalogRegistrations: registrations as never }));
     const tool = tools.find((candidate) => candidate.name === "stardew_find_destination");
     assert.ok(tool, "constant mount keeps the tool declared");
     await assert.rejects(
@@ -464,9 +482,8 @@ test("navigation tools stay mounted and reject missing bridge, revision drift, a
     }
   }
   assert.equal(
-    createStardewObservationTools(missingRead).some((tool) =>
-      tool.name.startsWith("stardew_inspect_world_map") ||
-      tool.name.startsWith("stardew_find_destination"),
+    createStardewObservationTools(missingRead).some(
+      (tool) => tool.name.startsWith("stardew_inspect_world_map") || tool.name.startsWith("stardew_find_destination"),
     ),
     true,
   );

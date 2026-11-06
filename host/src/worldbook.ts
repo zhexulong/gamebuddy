@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { hasUnrenderedMacro, renderWorldBookText } from "./tavern/macro-engine.js";
+import {
+  isLeftLiteralStandardMacro,
+  isStandardSillyTavernMacro,
+  namedMacros,
+  renderWorldBookText,
+  unrenderedMacros,
+} from "./tavern/macro-engine.js";
 
 const WORLDBOOK_SCHEMA_VERSION = 1 as const;
 const MAX_ENTRIES = 128;
@@ -215,24 +221,50 @@ function visibleEntries(book: WorldBook, scope?: WorldBookQueryScope): readonly 
 }
 
 /**
- * The visible entries with their macros rendered as authored content. An entry
- * the macro set cannot fully render is omitted: a tool result must never carry a
- * raw `{{...}}` placeholder the companion would read literally.
+ * The visible entries with their macros rendered as authored content.
+ *
+ * A tool result must never carry a raw `{{...}}` placeholder the companion would read literally, so an entry that still
+ * carries one is withheld from the answer. What counts as "cannot be rendered here" is not "anything survived" though:
+ * bucket 2 - the standard macros this engine deliberately leaves literal, each with its reason in
+ * `LEFT_LITERAL_STANDARD_MACROS` (`{{time}}`, `{{date}}`, `{{random}}`, `{{original}}`, `{{model}}`, `{{idle_duration}}`,
+ * `{{lastmessage}}`) - is a card author writing the normal thing, and "现在是{{time}}" is their intent at a seam with no
+ * clock. That entry is KEPT with the macro still literal, because a reader of the prose is better than the player silently
+ * losing a whole world-book entry; it was dropped in silence before this rule existed.
+ *
+ * Everything else is dropped, and named. Two different facts live there and a report that merged them would be lying
+ * about one of them: a bucket-1 macro the run had no value for (`{{char}}` with no companion name yet) is standard and
+ * the run simply holds nothing to fill it with, while a token in neither table (`{{not_a_macro}}`) is a typo or an
+ * extension this product does not recognise at all.
  */
 function authoredEntries(
   book: WorldBook,
   scope: WorldBookQueryScope | undefined,
   macros: Readonly<{ char: string | null }>,
 ): readonly WorldBookEntry[] {
-  return visibleEntries(book, scope)
-    .map((entry) =>
-      Object.freeze({
-        ...entry,
-        title: renderWorldBookText(entry.title, macros),
-        content: renderWorldBookText(entry.content, macros),
-      }),
-    )
-    .filter((entry) => !hasUnrenderedMacro(entry.title) && !hasUnrenderedMacro(entry.content));
+  const entries: WorldBookEntry[] = [];
+  for (const entry of visibleEntries(book, scope)) {
+    const title = renderWorldBookText(entry.title, macros);
+    const content = renderWorldBookText(entry.content, macros);
+    const surviving = [...new Set([...unrenderedMacros(title), ...unrenderedMacros(content)])];
+    const blocking = surviving.filter((token) => !isLeftLiteralStandardMacro(token));
+    if (blocking.length === 0) {
+      entries.push(Object.freeze({ ...entry, title, content }));
+      continue;
+    }
+    process.stderr.write(`[worldbook] omitting entry ${entry.entryId}: ${whyUnrenderable(blocking)}\n`);
+  }
+  return entries;
+}
+
+/** What one entry's surviving macros mean, in the words of the table they came from. */
+function whyUnrenderable(blocking: readonly string[]): string {
+  const unfilled = blocking.filter(isStandardSillyTavernMacro);
+  const unrecognised = blocking.filter((token) => !isStandardSillyTavernMacro(token));
+  const parts: string[] = [];
+  if (unfilled.length > 0)
+    parts.push(`${namedMacros(unfilled)} (a standard SillyTavern macro this run has no value for)`);
+  if (unrecognised.length > 0) parts.push(`${namedMacros(unrecognised)} (not a macro this product recognises)`);
+  return `it carries ${parts.join(" and ")}`;
 }
 function validateEntry(value: unknown): WorldBookEntry {
   if (

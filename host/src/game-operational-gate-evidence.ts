@@ -269,7 +269,9 @@ function evidenceFromFinalState(
   });
 }
 
-function succeededReceipt(value: IntegrationExecutionReceipt): value is IntegrationExecutionReceipt & { revision: number } {
+function succeededReceipt(
+  value: IntegrationExecutionReceipt,
+): value is IntegrationExecutionReceipt & { revision: number } {
   return (
     typeof value.requestId === "string" &&
     identifier(value.requestId) &&

@@ -34,11 +34,13 @@ type SpawnCall = Readonly<{
   options: Parameters<StardewAiClientProcessSpawn>[2];
 }>;
 
-function createHarness(input: Readonly<{
-  probe?: (pid: number, call: number) => ProbeResult;
-  kill?: (call: number) => boolean;
-  pid?: number;
-}> = {}) {
+function createHarness(
+  input: Readonly<{
+    probe?: (pid: number, call: number) => ProbeResult;
+    kill?: (call: number) => boolean;
+    pid?: number;
+  }> = {},
+) {
   const spawnCalls: SpawnCall[] = [];
   const probeCalls: number[] = [];
   const killCalls: number[] = [];
@@ -60,9 +62,7 @@ function createHarness(input: Readonly<{
   const rawProbe: StardewAiClientProcessProbe = (probedPid) => {
     probeCalls.push(probedPid);
     const call = ++probeCall;
-    return input.probe === undefined
-      ? { pid: probedPid, creationDate: CREATION }
-      : input.probe(probedPid, call);
+    return input.probe === undefined ? { pid: probedPid, creationDate: CREATION } : input.probe(probedPid, call);
   };
   const composition = createStardewPrivateBootstrapComposerTestSupport({
     rawSpawn,
@@ -149,31 +149,31 @@ test("structural empty reservation lookalike is rejected by closed composition",
   owner.reserveAiClientLaunch();
 
   await assert.rejects(
-    composition.reserveExternalPlayerHostPhaseA(
-      ".",
-      claim,
-      Object.freeze({}) as StardewAiClientLaunchReservation,
-    ),
+    composition.reserveExternalPlayerHostPhaseA(".", claim, Object.freeze({}) as StardewAiClientLaunchReservation),
     /stardew_ai_client_reservation_not_registered/,
   );
 });
 
 test("launch uses exact executable/args/cwd, hardened spawn options, and manager generation env", async () => {
   const harness = createHarness();
-  const claim = harness.composition.broker.confirm({
-    playerId: "player-1",
-    companionId: "companion-1",
-    browserSessionId: "browser-1",
-    expiresAtMs: 5_000,
-  }).consume("browser-1");
+  const claim = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
   const reservation = harness.owner.reserveAiClientLaunch();
   const owner = await reserve(harness.composition, claim, reservation);
 
-  const result = owner.consumeAiClientLaunch((launch) => launch({
-    executable: EXE,
-    args: ["--mode", "farmhand"],
-    cwd: CWD,
-  }));
+  const result = owner.consumeAiClientLaunch((launch) =>
+    launch({
+      executable: EXE,
+      args: ["--mode", "farmhand"],
+      cwd: CWD,
+    }),
+  );
 
   assert.deepEqual(result, { status: { kind: "awaiting_ai_client_attestation" } });
   assert.equal(harness.spawnCalls.length, 1);
@@ -192,7 +192,11 @@ test("spawn identity probe failures kill the exact spawned handle and expose no 
   for (const scenario of [
     { name: "missing", probe: () => null, error: /probe_failed_no_process/ },
     { name: "pid mismatch", probe: () => ({ pid: 9999, creationDate: CREATION }), error: /probe_pid_mismatch/ },
-    { name: "missing creation", probe: (pid: number) => ({ pid, creationDate: "" }), error: /probe_invalid_creation_identity/ },
+    {
+      name: "missing creation",
+      probe: (pid: number) => ({ pid, creationDate: "" }),
+      error: /probe_invalid_creation_identity/,
+    },
   ] as const) {
     const harness = createHarness({ probe: scenario.probe });
     const phaseOwner = await reserveFresh(harness);
@@ -222,9 +226,7 @@ test("invalid spawned pid is killed before ownership is accepted", async () => {
 
 test("stop re-probes exact PID and creation identity before killing", async () => {
   const harness = createHarness({
-    probe: (pid, call) => call === 1
-      ? { pid, creationDate: CREATION }
-      : { pid, creationDate: CREATION },
+    probe: (pid, call) => (call === 1 ? { pid, creationDate: CREATION } : { pid, creationDate: CREATION }),
   });
   const phaseOwner = await reserveFresh(harness);
   phaseOwner.consumeAiClientLaunch((launch) => launch({ executable: EXE, args: ["start"] }));
@@ -261,7 +263,7 @@ test("probe absence and termination failure preserve ownership for retry", async
   let probeAvailable = false;
   let killSucceeds = false;
   const harness = createHarness({
-    probe: (pid, call) => call === 1 || probeAvailable ? { pid, creationDate: CREATION } : null,
+    probe: (pid, call) => (call === 1 || probeAvailable ? { pid, creationDate: CREATION } : null),
     kill: () => killSucceeds,
   });
   const phaseOwner = await reserveFresh(harness);
@@ -278,12 +280,14 @@ test("probe absence and termination failure preserve ownership for retry", async
 });
 
 async function reserveFresh(harness: ReturnType<typeof createHarness>) {
-  const claim = harness.composition.broker.confirm({
-    playerId: "player-1",
-    companionId: "companion-1",
-    browserSessionId: "browser-1",
-    expiresAtMs: 5_000,
-  }).consume("browser-1");
+  const claim = harness.composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
   const reservation = harness.owner.reserveAiClientLaunch();
   return reserve(harness.composition, claim, reservation);
 }
@@ -302,9 +306,10 @@ async function reserve(
   claim: Parameters<typeof composition.reserveExternalPlayerHostPhaseA>[1],
   reservation: Parameters<typeof composition.reserveExternalPlayerHostPhaseA>[2],
 ) {
-  const parent = process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string" && process.env.LOCALAPPDATA.length > 0
-    ? await realpath(process.env.LOCALAPPDATA)
-    : await realpath(tmpdir());
+  const parent =
+    process.platform === "win32" && typeof process.env.LOCALAPPDATA === "string" && process.env.LOCALAPPDATA.length > 0
+      ? await realpath(process.env.LOCALAPPDATA)
+      : await realpath(tmpdir());
   const root = await mkdtemp(join(parent, "gamebuddy-owner-test-"));
   temporaryRoots.push(root);
   return composition.reserveExternalPlayerHostPhaseA(root, claim, reservation);

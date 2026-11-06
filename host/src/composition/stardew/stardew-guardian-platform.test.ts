@@ -2,11 +2,23 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory, readStardewOwnerRecoveryDriver } from "./stardew-guardian-platform.js";
-import type { DesktopGuardianRecovery, DesktopGuardianSession, GuardianAck, GuardianRecoveryAck } from "../../containment/auth/desktop-guardian-session.internal.js";
+import {
+  createDesktopGuardianGameRuntimePlatform,
+  createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
+  readStardewOwnerRecoveryDriver,
+} from "./stardew-guardian-platform.js";
+import type {
+  DesktopGuardianRecovery,
+  DesktopGuardianSession,
+  GuardianAck,
+  GuardianRecoveryAck,
+} from "../../containment/auth/desktop-guardian-session.internal.js";
 import { STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS } from "./stardew-native-role-launch-plan.private.js";
 import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/game-runtime.js";
-import { containedRuntimeTeardownFromCollaborator, driveStardewOwnedPlayerHostRecovery } from "../../stardew-production-lifecycle-coordinator.internal.js";
+import {
+  containedRuntimeTeardownFromCollaborator,
+  driveStardewOwnedPlayerHostRecovery,
+} from "../../stardew-production-lifecycle-coordinator.internal.js";
 import {
   consumeStardewBootstrapGuardianOwnerBinding,
   createStardewBootstrapGuardianOwnerBinding,
@@ -56,13 +68,14 @@ const launchEnvironment = (): Record<string, string> => ({
 });
 
 /** Extra game facts (revision) prove the frame is the encoder output, not a raw facts JSON dump. */
-const launchFacts = (): TypedPrivateGameFacts => Object.freeze({
-  executable: "C:\\Stardew\\StardewModdingAPI.exe",
-  cwd: "C:\\Stardew",
-  arguments: Object.freeze(["--mods-path", "C:\\tmp\\transaction\\player-host\\Mods"]),
-  environment: launchEnvironment(),
-  revision: 7,
-});
+const launchFacts = (): TypedPrivateGameFacts =>
+  Object.freeze({
+    executable: "C:\\Stardew\\StardewModdingAPI.exe",
+    cwd: "C:\\Stardew",
+    arguments: Object.freeze(["--mods-path", "C:\\tmp\\transaction\\player-host\\Mods"]),
+    environment: launchEnvironment(),
+    revision: 7,
+  });
 
 /**
  * The attempt's native arm binding facts: the composition's own arm frame, whose
@@ -71,12 +84,13 @@ const launchFacts = (): TypedPrivateGameFacts => Object.freeze({
  * names are `Local\<leaf>` and distinct - exactly what the native arm parser
  * requires and nothing else.
  */
-const armFrameFacts = (): TypedPrivateGameFacts => Object.freeze({
-  revision: "11111111-1111-4111-8111-111111111111",
-  leaseName: "Local\\GameBuddy-Lease-1",
-  playerJobName: "Local\\GameBuddy-Player-1",
-  aiJobName: "Local\\GameBuddy-Ai-1",
-});
+const armFrameFacts = (): TypedPrivateGameFacts =>
+  Object.freeze({
+    revision: "11111111-1111-4111-8111-111111111111",
+    leaseName: "Local\\GameBuddy-Lease-1",
+    playerJobName: "Local\\GameBuddy-Player-1",
+    aiJobName: "Local\\GameBuddy-Ai-1",
+  });
 
 const GUID_D = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PARSE_LAUNCH_KEYS = [
@@ -101,7 +115,12 @@ function recordingSession(calls: RecordedCall[]): DesktopGuardianSession {
       return ack("arm");
     },
     launch: async (input) => {
-      calls.push({ operation: "launch", role: input.role, deadlineUnixMs: input.deadlineUnixMs, frame: input.privateFrame });
+      calls.push({
+        operation: "launch",
+        role: input.role,
+        deadlineUnixMs: input.deadlineUnixMs,
+        frame: input.privateFrame,
+      });
       return ack("launch", input.role);
     },
     contain: async (input) => {
@@ -170,10 +189,16 @@ test("composition-private platform relays arm facts and encodes launch exactly a
   assert.equal(decoded.executable, JSON.parse(new TextDecoder().decode(calls[0]!.frame)).approvedExecutable);
   assert.equal(decoded.cwd, "C:\\Stardew");
   assert.deepEqual(decoded.arguments, ["--mods-path", "C:\\tmp\\transaction\\player-host\\Mods"]);
-  assert.deepEqual(Object.keys(decoded.environment as Record<string, unknown>).sort(), [...STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS].sort());
+  assert.deepEqual(
+    Object.keys(decoded.environment as Record<string, unknown>).sort(),
+    [...STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS].sort(),
+  );
   assert.deepEqual(decoded.environment, launchEnvironment());
   assert.equal(calls[1]!.role, "player_host");
-  assert.deepEqual(calls.map(({ operation }) => operation), ["arm", "launch", "contain"]);
+  assert.deepEqual(
+    calls.map(({ operation }) => operation),
+    ["arm", "launch", "contain"],
+  );
 });
 
 test("every launch invocation mints a fresh GUID D planId so frames are never replayed", async () => {
@@ -193,22 +218,32 @@ test("every launch invocation mints a fresh GUID D planId so frames are never re
   assert.match(String(first), GUID_D);
   assert.match(String(second), GUID_D);
   assert.notEqual(first, second);
-  assert.deepEqual(Object.keys(JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).sort(), PARSE_LAUNCH_KEYS);
+  assert.deepEqual(
+    Object.keys(JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).sort(),
+    PARSE_LAUNCH_KEYS,
+  );
 });
 
 test("launch and arm fail closed before the native session when facts violate the ParseLaunch/ParseArm schema", async () => {
   const attempted: number[] = [];
   const arms: number[] = [];
-  const platform = createDesktopGuardianGameRuntimePlatform(Object.freeze({
-    arm: async () => { arms.push(1); return ack("arm"); },
-    launch: async (input) => {
-      attempted.push(1);
-      return ack("launch", input.role);
-    },
-    contain: async (input) => { return ack("contain", input.role); },
-    recover: async () => Object.freeze({ outcome: "contained" as const }),
-    close: async () => {},
-  }));
+  const platform = createDesktopGuardianGameRuntimePlatform(
+    Object.freeze({
+      arm: async () => {
+        arms.push(1);
+        return ack("arm");
+      },
+      launch: async (input) => {
+        attempted.push(1);
+        return ack("launch", input.role);
+      },
+      contain: async (input) => {
+        return ack("contain", input.role);
+      },
+      recover: async () => Object.freeze({ outcome: "contained" as const }),
+      close: async () => {},
+    }),
+  );
   const base = {
     guardianInstanceId: "guardian",
     guardianEpoch: 1,
@@ -222,19 +257,43 @@ test("launch and arm fail closed before the native session when facts violate th
   // never produce an arm_attempt frame. The ordinal-ignore-case equality gate
   // itself remains native-only (ParseLaunch).
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", revision: 7 }) }),
+    () =>
+      platform.arm({
+        ...base,
+        operationWaitBudgetMs: 1000,
+        armFacts: armFrameFacts(),
+        authorization: Object.freeze({ role: "player_host", revision: 7 }),
+      }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: "C:\\Stardew\\StardewModdingAPI.exe\0" }) }),
+    () =>
+      platform.arm({
+        ...base,
+        operationWaitBudgetMs: 1000,
+        armFacts: armFrameFacts(),
+        authorization: Object.freeze({ role: "player_host", executable: "C:\\Stardew\\StardewModdingAPI.exe\0" }),
+      }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: "relative\\StardewModdingAPI.exe" }) }),
+    () =>
+      platform.arm({
+        ...base,
+        operationWaitBudgetMs: 1000,
+        armFacts: armFrameFacts(),
+        authorization: Object.freeze({ role: "player_host", executable: "relative\\StardewModdingAPI.exe" }),
+      }),
     /arm authorization missing approved executable/,
   );
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: armFrameFacts(), authorization: Object.freeze({ role: "player_host", executable: `C:\\${"a".repeat(32_768)}.exe` }) }),
+    () =>
+      platform.arm({
+        ...base,
+        operationWaitBudgetMs: 1000,
+        armFacts: armFrameFacts(),
+        authorization: Object.freeze({ role: "player_host", executable: `C:\\${"a".repeat(32_768)}.exe` }),
+      }),
     /arm authorization missing approved executable/,
   );
   // The arm body is built from the arm binding facts, so a fact bag the native
@@ -242,7 +301,13 @@ test("launch and arm fail closed before the native session when facts violate th
   // Launch-side rejection remains the only arm rejection above; this one is the
   // arm binding's own.
   await assert.rejects(
-    () => platform.arm({ ...base, operationWaitBudgetMs: 1000, armFacts: Object.freeze({}), authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe" }) }),
+    () =>
+      platform.arm({
+        ...base,
+        operationWaitBudgetMs: 1000,
+        armFacts: Object.freeze({}),
+        authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe" }),
+      }),
     /arm authorization is missing revision/,
   );
   assert.equal(arms.length, 0);
@@ -251,23 +316,50 @@ test("launch and arm fail closed before the native session when facts violate th
     /missing executable/,
   );
   await assert.rejects(
-    () => platform.launch({ ...base, role: "player_host", authorization: Object.freeze({ executable: "relative.exe", cwd: "C:\\Stardew", arguments: [], environment: launchEnvironment() }) }),
+    () =>
+      platform.launch({
+        ...base,
+        role: "player_host",
+        authorization: Object.freeze({
+          executable: "relative.exe",
+          cwd: "C:\\Stardew",
+          arguments: [],
+          environment: launchEnvironment(),
+        }),
+      }),
     /executable_invalid/,
   );
   const withoutGeneration = launchEnvironment();
   delete withoutGeneration["GAMEBUDDY_STARDEW_LAUNCH_GENERATION"];
   await assert.rejects(
-    () => platform.launch({ ...base, role: "player_host", authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe", cwd: "C:\\Stardew", arguments: [], environment: withoutGeneration }) }),
+    () =>
+      platform.launch({
+        ...base,
+        role: "player_host",
+        authorization: Object.freeze({
+          executable: "C:\\Stardew\\StardewModdingAPI.exe",
+          cwd: "C:\\Stardew",
+          arguments: [],
+          environment: withoutGeneration,
+        }),
+      }),
     /environment_required_missing/,
   );
   await assert.rejects(
-    () => platform.launch({ ...base, role: "player_host", authorization: Object.freeze({ executable: "C:\\Stardew\\StardewModdingAPI.exe", cwd: "C:\\Stardew", arguments: [], environment: { ...launchEnvironment(), COMSPEC: "C:\\Windows\\System32\\cmd.exe" } }) }),
+    () =>
+      platform.launch({
+        ...base,
+        role: "player_host",
+        authorization: Object.freeze({
+          executable: "C:\\Stardew\\StardewModdingAPI.exe",
+          cwd: "C:\\Stardew",
+          arguments: [],
+          environment: { ...launchEnvironment(), COMSPEC: "C:\\Windows\\System32\\cmd.exe" },
+        }),
+      }),
     /environment_key_disallowed/,
   );
-  await assert.rejects(
-    () => platform.launch({ ...base, role: "npc", authorization: launchFacts() }),
-    /invalid role/,
-  );
+  await assert.rejects(() => platform.launch({ ...base, role: "npc", authorization: launchFacts() }), /invalid role/);
   assert.equal(attempted.length, 0);
 });
 
@@ -297,12 +389,24 @@ test("launch refuses a guardian epoch past int32 before the session sees a frame
   // The largest value the native can parse is still accepted, and it is the value
   // the encoded plan carries - so the bound is the native's, not a narrower guess.
   await platform.launch({ ...base, guardianEpoch: 2_147_483_647 });
-  assert.deepEqual(calls.map(({ operation }) => operation), ["launch"]);
-  assert.equal((JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).guardianEpoch, 2_147_483_647);
+  assert.deepEqual(
+    calls.map(({ operation }) => operation),
+    ["launch"],
+  );
+  assert.equal(
+    (JSON.parse(new TextDecoder().decode(calls[0]!.frame)) as Record<string, unknown>).guardianEpoch,
+    2_147_483_647,
+  );
   // The new bound must not widen the existing one: a non-positive epoch is still
   // refused, and it still mints no frame.
-  await assert.rejects(() => platform.launch({ ...base, guardianEpoch: 0 }), /stardew_native_launch_plan_guardian_epoch_invalid/);
-  assert.deepEqual(calls.map(({ operation }) => operation), ["launch"]);
+  await assert.rejects(
+    () => platform.launch({ ...base, guardianEpoch: 0 }),
+    /stardew_native_launch_plan_guardian_epoch_invalid/,
+  );
+  assert.deepEqual(
+    calls.map(({ operation }) => operation),
+    ["launch"],
+  );
 });
 
 /**
@@ -316,19 +420,24 @@ test("launch refuses a guardian epoch past int32 before the session sees a frame
  * body was and was not handed to the session.
  */
 test("recovery refuses an owner record revision past int32 and accepts int32 max", async () => {
-  const correlation = Object.freeze({ guardianInstanceId: "11111111-1111-4111-8111-111111111111", guardianEpoch: 1, attemptId: "22222222-2222-4222-8222-222222222222" });
+  const correlation = Object.freeze({
+    guardianInstanceId: "11111111-1111-4111-8111-111111111111",
+    guardianEpoch: 1,
+    attemptId: "22222222-2222-4222-8222-222222222222",
+  });
   const recoveryInstanceId = "33333333-3333-4333-8333-333333333333";
   const bindingRevision = "44444444-4444-4444-8444-444444444444";
   const leaseName = "Local\\GameBuddy-Lease-1";
-  const successorFacts = (ownerRecordRevision: number): TypedPrivateGameFacts => Object.freeze({
-    bindingRevision,
-    ownerRecordRevision,
-    leaseName,
-    playerJobName: "Local\\GameBuddy-Player-1",
-    aiJobName: "Local\\GameBuddy-Ai-1",
-    playerHostState: "armed",
-    aiClientState: "armed",
-  });
+  const successorFacts = (ownerRecordRevision: number): TypedPrivateGameFacts =>
+    Object.freeze({
+      bindingRevision,
+      ownerRecordRevision,
+      leaseName,
+      playerJobName: "Local\\GameBuddy-Player-1",
+      aiJobName: "Local\\GameBuddy-Ai-1",
+      playerHostState: "armed",
+      aiClientState: "armed",
+    });
   const run = async (ownerRecordRevision: number) => {
     let gateFrame: Uint8Array | undefined;
     let postCasFrame: Uint8Array | undefined;
@@ -339,7 +448,11 @@ test("recovery refuses an owner record revision past int32 and accepts int32 max
       contain: async (input) => ack("contain", input.role),
       recover: async (input) => {
         gateFrame = input.preCasFrame;
-        try { postCasFrame = await input.beginRecovery(); } catch (error) { postCasRefusal = error; }
+        try {
+          postCasFrame = await input.beginRecovery();
+        } catch (error) {
+          postCasRefusal = error;
+        }
         return Object.freeze({ outcome: "gate_held" as const });
       },
       close: async () => {},
@@ -356,21 +469,47 @@ test("recovery refuses an owner record revision past int32 and accepts int32 max
   };
 
   const refused = await run(2_147_483_648);
-  assert.match(String((refused.postCasRefusal as Error | undefined)?.message), /recovery fact ownerRecordRevision is not a positive integer/, "the bounded recovery fact code is the one this field already uses");
-  assert.equal(refused.postCasFrame, undefined, "an out-of-domain owner record revision must not produce a post-CAS body");
+  assert.match(
+    String((refused.postCasRefusal as Error | undefined)?.message),
+    /recovery fact ownerRecordRevision is not a positive integer/,
+    "the bounded recovery fact code is the one this field already uses",
+  );
+  assert.equal(
+    refused.postCasFrame,
+    undefined,
+    "an out-of-domain owner record revision must not produce a post-CAS body",
+  );
   // The only frame the platform produced here is the Host encoder's own five-key
   // gate body, which is what makes the refusal a post-CAS bound.
-  assert.deepEqual(Object.keys(JSON.parse(new TextDecoder().decode(refused.gateFrame)) as Record<string, unknown>).sort(), ["attemptId", "bindingRevision", "guardianEpoch", "guardianInstanceId", "leaseName"]);
+  assert.deepEqual(
+    Object.keys(JSON.parse(new TextDecoder().decode(refused.gateFrame)) as Record<string, unknown>).sort(),
+    ["attemptId", "bindingRevision", "guardianEpoch", "guardianInstanceId", "leaseName"],
+  );
 
   const accepted = await run(2_147_483_647);
   assert.equal(accepted.postCasRefusal, undefined, "the int32 max owner record revision must be accepted");
   const decoded = JSON.parse(new TextDecoder().decode(accepted.postCasFrame)) as Record<string, unknown>;
   assert.equal(decoded.ownerRecordRevision, 2_147_483_647);
-  assert.deepEqual(Object.keys(decoded).sort(), ["aiClientState", "aiJobName", "attemptId", "bindingRevision", "guardianEpoch", "guardianInstanceId", "leaseName", "ownerRecordRevision", "playerHostState", "playerJobName", "recoveryInstanceId"]);
+  assert.deepEqual(Object.keys(decoded).sort(), [
+    "aiClientState",
+    "aiJobName",
+    "attemptId",
+    "bindingRevision",
+    "guardianEpoch",
+    "guardianInstanceId",
+    "leaseName",
+    "ownerRecordRevision",
+    "playerHostState",
+    "playerJobName",
+    "recoveryInstanceId",
+  ]);
 
   // The bound must not widen what was already refused.
   const belowDomain = await run(0);
-  assert.match(String((belowDomain.postCasRefusal as Error | undefined)?.message), /recovery fact ownerRecordRevision is not a positive integer/);
+  assert.match(
+    String((belowDomain.postCasRefusal as Error | undefined)?.message),
+    /recovery fact ownerRecordRevision is not a positive integer/,
+  );
   assert.equal(belowDomain.postCasFrame, undefined);
 });
 
@@ -420,7 +559,9 @@ test("concurrent platform closes are joined onto a single session close", async 
     recover: async () => Object.freeze({ outcome: "contained" as const }),
     close: async () => {
       closeCalls += 1;
-      await new Promise<void>((resolveClose) => { release = resolveClose; });
+      await new Promise<void>((resolveClose) => {
+        release = resolveClose;
+      });
     },
   });
   const platform = createDesktopGuardianGameRuntimePlatform(session);
@@ -461,10 +602,13 @@ test("the owner-holding collaborator exposes a recovery drive that advances the 
   // recovery half: the exact gate correlation plus the durable transition port.
   assert.deepEqual(Object.keys(drive).sort(), ["recoveryGateBinding", "transitions"]);
   assert.equal(Object.isFrozen(drive), true);
-  assert.deepEqual({ ...drive.recoveryGateBinding }, {
-    bindingRevision: expectedGuardianBinding().bindingRevision,
-    leaseName: expectedGuardianBinding().leaseName,
-  });
+  assert.deepEqual(
+    { ...drive.recoveryGateBinding },
+    {
+      bindingRevision: expectedGuardianBinding().bindingRevision,
+      leaseName: expectedGuardianBinding().leaseName,
+    },
+  );
 
   // Driving the durable transition engine through that drive really advances
   // owner.json: this is the production authority, not a stub.
@@ -504,24 +648,35 @@ test("the platform recovery relay sends the exact tokenless pre-CAS and post-CAS
   const playerJobName = "Local\\GameBuddy-Test-PlayerJob-1";
   const aiJobName = "Local\\GameBuddy-Test-AiJob-1";
   const recoveryInstanceId = "53ee44a2-d70b-4a49-a857-1ca4883e5d2e";
-  const platform = createDesktopGuardianGameRuntimePlatform(Object.freeze({
-    arm: async () => ack("arm"),
-    launch: async (input) => ack("launch", input.role),
-    contain: async (input) => ack("contain", input.role),
-    recover: async (input) => {
-      // The session owns the conversation: it validates its own input, and the
-      // post-CAS body may only be requested once the gate is held.
-      assert.deepEqual(Object.keys(input).sort(), [
-        "attemptId", "beginRecovery", "guardianEpoch", "guardianInstanceId",
-        "operationWaitBudgetMs", "preCasFrame", "recoveryInstanceId", "roleContained",
-      ].sort());
-      frames.push({ operation: "preCas", frame: input.preCasFrame });
-      frames.push({ operation: "postCas", frame: await input.beginRecovery() });
-      await input.roleContained("playerHost");
-      return Object.freeze({ outcome: "contained" as const });
-    },
-    close: async () => {},
-  }));
+  const platform = createDesktopGuardianGameRuntimePlatform(
+    Object.freeze({
+      arm: async () => ack("arm"),
+      launch: async (input) => ack("launch", input.role),
+      contain: async (input) => ack("contain", input.role),
+      recover: async (input) => {
+        // The session owns the conversation: it validates its own input, and the
+        // post-CAS body may only be requested once the gate is held.
+        assert.deepEqual(
+          Object.keys(input).sort(),
+          [
+            "attemptId",
+            "beginRecovery",
+            "guardianEpoch",
+            "guardianInstanceId",
+            "operationWaitBudgetMs",
+            "preCasFrame",
+            "recoveryInstanceId",
+            "roleContained",
+          ].sort(),
+        );
+        frames.push({ operation: "preCas", frame: input.preCasFrame });
+        frames.push({ operation: "postCas", frame: await input.beginRecovery() });
+        await input.roleContained("playerHost");
+        return Object.freeze({ outcome: "contained" as const });
+      },
+      close: async () => {},
+    }),
+  );
 
   const acknowledgement = await platform.recover({
     guardianInstanceId: "guardian",
@@ -530,21 +685,25 @@ test("the platform recovery relay sends the exact tokenless pre-CAS and post-CAS
     operationWaitBudgetMs: 1000,
     recoveryInstanceId,
     gateFacts: Object.freeze({ bindingRevision, leaseName }),
-    beginRecovery: async () => Object.freeze({
-      bindingRevision,
-      ownerRecordRevision: 4,
-      leaseName,
-      playerJobName,
-      aiJobName,
-      playerHostState: "active",
-      aiClientState: "armed",
-    }),
-    roleContained: async (role) => { roleContainedCalls.push(role); },
+    beginRecovery: async () =>
+      Object.freeze({
+        bindingRevision,
+        ownerRecordRevision: 4,
+        leaseName,
+        playerJobName,
+        aiJobName,
+        playerHostState: "active",
+        aiClientState: "armed",
+      }),
+    roleContained: async (role) => {
+      roleContainedCalls.push(role);
+    },
   });
   assert.deepEqual(acknowledgement, { outcome: "contained" });
   assert.deepEqual(roleContainedCalls, ["playerHost"]);
 
-  const decode = (frame: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
+  const decode = (frame: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
   // Exactly the five tokenless keys the broker accepts and the native parser
   // reads once the supervisor injected the recovery token.
   assert.deepEqual(decode(frames[0]!.frame), {
@@ -625,7 +784,8 @@ test("the owner-held recovery is reachable through the coordinator adapter and d
   );
   const readRecord = async (): Promise<Record<string, unknown>> =>
     JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
-  const decode = (frame: Uint8Array): Record<string, unknown> => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
+  const decode = (frame: Uint8Array): Record<string, unknown> =>
+    JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
   const actor = "7b1f0c0e-1e6a-4d5a-9f2b-2a6d5e0c9a11";
   const conversations: RecordedRecovery[] = [];
   const session: DesktopGuardianSession = Object.freeze({
@@ -765,14 +925,18 @@ test("finalizing a driven recovery reaches the terminal record and releases the 
   // had already bound the registration pointer when the process died.
   const registrationPath = join(root, "stardew-installation-registration", "registration.json");
   await mkdir(dirname(registrationPath), { recursive: true });
-  await writeFile(registrationPath, JSON.stringify({
-    schema: "gamebuddy-stardew-installation-registration/v1",
-    binding: { rootLayoutVersion: 1 },
-    revision: 2,
-    state: "ready",
-    locator: "C:\\Games\\Stardew Valley",
-    activeAttempt: { bootstrapCorrelation: "bootstrap-1" },
-  }), "utf8");
+  await writeFile(
+    registrationPath,
+    JSON.stringify({
+      schema: "gamebuddy-stardew-installation-registration/v1",
+      binding: { rootLayoutVersion: 1 },
+      revision: 2,
+      state: "ready",
+      locator: "C:\\Games\\Stardew Valley",
+      activeAttempt: { bootstrapCorrelation: "bootstrap-1" },
+    }),
+    "utf8",
+  );
   const readRecord = async (): Promise<Record<string, unknown>> =>
     JSON.parse(await readFile(ownerPath(root), "utf8")) as Record<string, unknown>;
   const actor = "b9f1e0c2-7d34-4a58-9b21-3e6c8a0f5d17";
@@ -807,13 +971,18 @@ test("finalizing a driven recovery reaches the terminal record and releases the 
   // finalization refuses here rather than surfacing as an opaque transition
   // mismatch, and it writes nothing durable.
   await assert.rejects(
-    () => teardown.finalizeRecovered(owner, {
-      recoveryInstanceId: "not-an-actor",
-      readRecoveryBinding: async () => Object.freeze({}),
-    }),
+    () =>
+      teardown.finalizeRecovered(owner, {
+        recoveryInstanceId: "not-an-actor",
+        readRecoveryBinding: async () => Object.freeze({}),
+      }),
     /stardew_owner_recovery_actor_invalid/,
   );
-  assert.equal(await readFile(ownerPath(root), "utf8"), recoveringBytes, "a refused finalization writes nothing durable");
+  assert.equal(
+    await readFile(ownerPath(root), "utf8"),
+    recoveringBytes,
+    "a refused finalization writes nothing durable",
+  );
 
   await teardown.finalizeRecovered(owner, request);
   // The finalization is durable-only: it never re-drives the native recovery,
@@ -859,7 +1028,11 @@ test("finalizing a driven recovery reaches the terminal record and releases the 
     { code: "ENOENT" },
     "a repeated finalization rewrites nothing",
   );
-  assert.equal(await readFile(registrationPath, "utf8"), registrationBytes, "a repeated finalization never touches the registration");
+  assert.equal(
+    await readFile(registrationPath, "utf8"),
+    registrationBytes,
+    "a repeated finalization never touches the registration",
+  );
   assert.deepEqual(sessionCalls, ["recover"], "a repeated finalization never re-drives the native recovery");
 });
 
@@ -923,13 +1096,27 @@ test("a recovery refuses with a bounded error when the collaborator cannot drive
   // shape. It keeps the contain/close/settle behavior it always had and only the
   // recovery member refuses.
   const plainCollaborator: StardewPlayerHostRuntimeLaunchCollaborator = Object.freeze({
-    launchPlayerHost: async () => { throw new Error("test_reference_launch_unbound"); },
-    launchAiClient: async () => { throw new Error("test_reference_launch_unbound"); },
-    containPlayerHost: async () => { throw new Error("test_reference_contain_unbound"); },
-    containAiClient: async () => { throw new Error("test_reference_contain_unbound"); },
-    recovery: () => { throw new Error("test_reference_recovery_unbound"); },
-    settle: async () => { throw new Error("test_reference_settle_unbound"); },
-    close: async () => { throw new Error("test_reference_close_unbound"); },
+    launchPlayerHost: async () => {
+      throw new Error("test_reference_launch_unbound");
+    },
+    launchAiClient: async () => {
+      throw new Error("test_reference_launch_unbound");
+    },
+    containPlayerHost: async () => {
+      throw new Error("test_reference_contain_unbound");
+    },
+    containAiClient: async () => {
+      throw new Error("test_reference_contain_unbound");
+    },
+    recovery: () => {
+      throw new Error("test_reference_recovery_unbound");
+    },
+    settle: async () => {
+      throw new Error("test_reference_settle_unbound");
+    },
+    close: async () => {
+      throw new Error("test_reference_close_unbound");
+    },
   });
   const plainTeardown = containedRuntimeTeardownFromCollaborator(plainCollaborator);
   assert.equal(typeof plainTeardown.containAiClient, "function");
@@ -1062,7 +1249,9 @@ test("a recovery that does not reach terminal containment fails closed and is ne
   }>[] = [
     {
       name: "the session rejects the recovery",
-      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      recover: async () => {
+        throw new Error("test_session_recovery_rejected");
+      },
       expectedOutcome: { status: "unavailable" },
       expectedRecord: { state: "reserved", revision: 1, recovery: null, playerHost: "reserved", aiClient: "reserved" },
     },
@@ -1081,10 +1270,20 @@ test("a recovery that does not reach terminal containment fails closed and is ne
         // terminal (pinned by the mapping test below) and is NOT a failure, so the
         // generic failure has to be shown at the other role position.
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "unavailable" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "aiClient" as const,
+          classification: "unavailable" as const,
+        });
       },
       expectedOutcome: { status: "unavailable" },
-      expectedRecord: { state: "recovering", revision: 2, recovery: actor, playerHost: "reserved", aiClient: "reserved" },
+      expectedRecord: {
+        state: "recovering",
+        revision: 2,
+        recovery: actor,
+        playerHost: "reserved",
+        aiClient: "reserved",
+      },
     },
   ];
 
@@ -1176,7 +1375,11 @@ test("the native gate verdict is reported as its own outcome and no other failur
       name: "the player role was classified unavailable after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "playerHost" as const,
+          classification: "unavailable" as const,
+        });
       },
       expectedOutcome: { status: "ai_settled_player_preserved" },
     },
@@ -1184,13 +1387,19 @@ test("the native gate verdict is reported as its own outcome and no other failur
       name: "a role was quarantined after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "quarantined" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "aiClient" as const,
+          classification: "quarantined" as const,
+        });
       },
       expectedOutcome: { status: "unavailable" },
     },
     {
       name: "the authenticated session rejected the conversation",
-      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      recover: async () => {
+        throw new Error("test_session_recovery_rejected");
+      },
       expectedOutcome: { status: "unavailable" },
     },
     {
@@ -1278,7 +1487,11 @@ test("the broker's player-role early return is its own outcome and no other wire
       name: "the player role is unavailable after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "playerHost" as const,
+          classification: "unavailable" as const,
+        });
       },
       expectedOutcome: { status: "ai_settled_player_preserved" },
       passedGate: true,
@@ -1296,7 +1509,11 @@ test("the broker's player-role early return is its own outcome and no other wire
       name: "the player role is quarantined after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "quarantined" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "playerHost" as const,
+          classification: "quarantined" as const,
+        });
       },
       expectedOutcome: { status: "unavailable" },
       passedGate: true,
@@ -1305,7 +1522,11 @@ test("the broker's player-role early return is its own outcome and no other wire
       name: "the AI-client role is unavailable after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "unavailable" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "aiClient" as const,
+          classification: "unavailable" as const,
+        });
       },
       expectedOutcome: { status: "unavailable" },
       passedGate: true,
@@ -1314,14 +1535,20 @@ test("the broker's player-role early return is its own outcome and no other wire
       name: "the AI-client role is quarantined after the recovery ran",
       recover: async (input) => {
         await input.beginRecovery();
-        return Object.freeze({ outcome: "role_classified" as const, role: "aiClient" as const, classification: "quarantined" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "aiClient" as const,
+          classification: "quarantined" as const,
+        });
       },
       expectedOutcome: { status: "unavailable" },
       passedGate: true,
     },
     {
       name: "the authenticated session rejected the conversation",
-      recover: async () => { throw new Error("test_session_recovery_rejected"); },
+      recover: async () => {
+        throw new Error("test_session_recovery_rejected");
+      },
       expectedOutcome: { status: "unavailable" },
       passedGate: false,
     },

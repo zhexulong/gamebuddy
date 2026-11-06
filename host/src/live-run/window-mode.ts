@@ -11,7 +11,13 @@ export type StardewWindowMode = LiveRunWindowMode;
 
 /** True when the value is exactly one of the 5 live-run window modes. */
 export function isLiveRunWindowMode(value: unknown): value is LiveRunWindowMode {
-  return value === "visible" || value === "foreground" || value === "minimized" || value === "hidden" || value === "background";
+  return (
+    value === "visible" ||
+    value === "foreground" ||
+    value === "minimized" ||
+    value === "hidden" ||
+    value === "background"
+  );
 }
 
 /**

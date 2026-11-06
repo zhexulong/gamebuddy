@@ -17,7 +17,19 @@ import type { DesktopRootLayoutCapability } from "./desktop-host-composition.js"
  */
 
 const scenario = process.argv[2] ?? "";
-const counts = { shared: 0, lease: 0, facade: 0, session: 0, coordinator: 0, presentationStarts: 0, presentationCloses: 0, providerLookups: 0, readyPublished: 0, readyUrl: null as string | null, mountOptionsNonce: null as string | null };
+const counts = {
+  shared: 0,
+  lease: 0,
+  facade: 0,
+  session: 0,
+  coordinator: 0,
+  presentationStarts: 0,
+  presentationCloses: 0,
+  providerLookups: 0,
+  readyPublished: 0,
+  readyUrl: null as string | null,
+  mountOptionsNonce: null as string | null,
+};
 const constructionFailure = new Error("game_owner_construction_failed");
 
 const gateReadyNonce = "a".repeat(64);
@@ -25,22 +37,30 @@ const gateReadyNonce = "a".repeat(64);
 const sharedAuthority = Object.freeze({
   chat: Object.freeze({}),
   game: Object.freeze({}),
-  close: async () => { counts.shared += 1; },
+  close: async () => {
+    counts.shared += 1;
+  },
 });
 
 const chatFacade = Object.freeze({
   authority: "SEMANTIC" as const,
-  startChatRuntime: async () => { throw new Error("semantic_lane_unused"); },
+  startChatRuntime: async () => {
+    throw new Error("semantic_lane_unused");
+  },
   startMountedChatRuntime: async () => {
     if (scenario === "mount-failure") throw constructionFailure;
     return Object.freeze({
       runtimeSession: Object.freeze({ profile: Object.freeze({}) }),
       chatThreadId: "desktop-composition-drain",
       chatSurfaceSessionId: "desktop-composition-drain",
-      close: async () => { counts.lease += 1; },
+      close: async () => {
+        counts.lease += 1;
+      },
     });
   },
-  close: async () => { counts.facade += 1; },
+  close: async () => {
+    counts.facade += 1;
+  },
 });
 
 const catalog = Object.freeze({
@@ -51,11 +71,17 @@ const catalog = Object.freeze({
       createLifecycleCoordinator: async () => {
         if (scenario === "coordinator-failure") throw constructionFailure;
         if (scenario === "presentation-missing") {
-          return Object.freeze({ close: async () => { counts.coordinator += 1; } });
+          return Object.freeze({
+            close: async () => {
+              counts.coordinator += 1;
+            },
+          });
         }
         if (scenario === "presentation-failure") {
           return Object.freeze({
-            close: async () => { counts.coordinator += 1; },
+            close: async () => {
+              counts.coordinator += 1;
+            },
             presentation: Object.freeze({}),
           });
         }
@@ -66,10 +92,18 @@ const catalog = Object.freeze({
 });
 
 const session = Object.freeze({
-  arm: async () => { throw new Error("unused"); },
-  launch: async () => { throw new Error("unused"); },
-  contain: async () => { throw new Error("unused"); },
-  close: async () => { counts.session += 1; },
+  arm: async () => {
+    throw new Error("unused");
+  },
+  launch: async () => {
+    throw new Error("unused");
+  },
+  contain: async () => {
+    throw new Error("unused");
+  },
+  close: async () => {
+    counts.session += 1;
+  },
 });
 
 const input = Object.freeze(
@@ -97,19 +131,43 @@ const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
 
 async function main(): Promise<void> {
   const moduleDirectory = dirname(fileURLToPath(import.meta.url));
-  await mock.module(pathToFileURL(join(moduleDirectory, "..", "continuity-semantic-production-coordinator", "continuity-semantic-production-coordinator.js")).href, {
-    namedExports: {
-      createSharedSemanticProductionAuthorityFromDeploymentManifest: async (_manifest: unknown, _mode: unknown, options?: Readonly<{ tavernNarrativeGateNonceSha256?: string }>) => {
-        counts.mountOptionsNonce = options?.tavernNarrativeGateNonceSha256 ?? null;
-        return sharedAuthority;
+  await mock.module(
+    pathToFileURL(
+      join(
+        moduleDirectory,
+        "..",
+        "continuity-semantic-production-coordinator",
+        "continuity-semantic-production-coordinator.js",
+      ),
+    ).href,
+    {
+      namedExports: {
+        createSharedSemanticProductionAuthorityFromDeploymentManifest: async (
+          _manifest: unknown,
+          _mode: unknown,
+          options?: Readonly<{ tavernNarrativeGateNonceSha256?: string }>,
+        ) => {
+          counts.mountOptionsNonce = options?.tavernNarrativeGateNonceSha256 ?? null;
+          return sharedAuthority;
+        },
       },
     },
-  });
-  await mock.module(pathToFileURL(join(moduleDirectory, "..", "continuity-semantic-deployment-composition", "continuity-semantic-chat-facade.internal.js")).href, {
-    namedExports: {
-      createChatSemanticFacadeFromSharedAuthority: async () => chatFacade,
+  );
+  await mock.module(
+    pathToFileURL(
+      join(
+        moduleDirectory,
+        "..",
+        "continuity-semantic-deployment-composition",
+        "continuity-semantic-chat-facade.internal.js",
+      ),
+    ).href,
+    {
+      namedExports: {
+        createChatSemanticFacadeFromSharedAuthority: async () => chatFacade,
+      },
     },
-  });
+  );
   await mock.module(pathToFileURL(join(moduleDirectory, "..", "integration-catalog-product.js")).href, {
     namedExports: {
       PRODUCT_INTEGRATION_CATALOG: catalog,
@@ -128,7 +186,8 @@ async function main(): Promise<void> {
   await mock.module(pathToFileURL(join(moduleDirectory, "stardew", "stardew-guardian-platform.js")).href, {
     namedExports: {
       createDesktopGuardianGameRuntimePlatform: () => Object.freeze({ kind: "fixture_guardian_platform" }),
-      createStardewPlayerHostRuntimeLaunchCollaboratorFactory: () => Object.freeze({ kind: "fixture_runtime_collaborator" }),
+      createStardewPlayerHostRuntimeLaunchCollaboratorFactory: () =>
+        Object.freeze({ kind: "fixture_runtime_collaborator" }),
     },
   });
   await mock.module(pathToFileURL(join(moduleDirectory, "desktop-presentation-admission-owner.js")).href, {
@@ -138,7 +197,9 @@ async function main(): Promise<void> {
         counts.presentationStarts += 1;
         return Object.freeze({
           launchUrl: "http://127.0.0.1:1/#profile=composed-reference-game&boot=fixture",
-          close: async () => { counts.presentationCloses += 1; },
+          close: async () => {
+            counts.presentationCloses += 1;
+          },
         });
       },
       startChatOnlyPresentationAdmission: async () => {
@@ -146,7 +207,9 @@ async function main(): Promise<void> {
         counts.presentationStarts += 1;
         return Object.freeze({
           launchUrl: "http://127.0.0.1:1/#profile=reference&boot=fixture",
-          close: async () => { counts.presentationCloses += 1; },
+          close: async () => {
+            counts.presentationCloses += 1;
+          },
         });
       },
       startTavernManagementPresentationAdmission: async () => {
@@ -154,17 +217,25 @@ async function main(): Promise<void> {
         counts.presentationStarts += 1;
         return Object.freeze({
           launchUrl: "http://127.0.0.1:1/#profile=management&boot=fixture",
-          close: async () => { counts.presentationCloses += 1; },
+          close: async () => {
+            counts.presentationCloses += 1;
+          },
         });
       },
     },
   });
-  const { createDesktopProductComposition } = await import(pathToFileURL(join(moduleDirectory, "desktop-host-composition.js")).href);
+  const { createDesktopProductComposition } = await import(
+    pathToFileURL(join(moduleDirectory, "desktop-host-composition.js")).href
+  );
   let outcome: "unexpected_success" | "original_failure_propagated" | "different_failure" | "constructed";
   let errorMessage: string | undefined;
   try {
     const composition = await createDesktopProductComposition(rootLayoutCapability, session, input);
-    if (scenario === "chat-only-surface" || scenario === "management-surface" || scenario === "gate-chat-only-surface") {
+    if (
+      scenario === "chat-only-surface" ||
+      scenario === "management-surface" ||
+      scenario === "gate-chat-only-surface"
+    ) {
       // Surface-selected construction succeeds: close through the one product
       // facade so the test can observe the exact children close order.
       outcome = "constructed";

@@ -26,9 +26,9 @@ export type ProductControlTarget = Readonly<{
    * refuses). A `void` return stays supported for legacy test doubles, which
    * report no outcome and are therefore treated as accepted.
    */
-  acceptPlayerInput(input: Readonly<{ sourceEventId: string; text: string; locale: string }>): Promise<
-    Readonly<{ accepted: boolean; reasonCode?: string; turnOutcome?: CompanionTurnOutcome }> | void
-  >;
+  acceptPlayerInput(
+    input: Readonly<{ sourceEventId: string; text: string; locale: string }>,
+  ): Promise<Readonly<{ accepted: boolean; reasonCode?: string; turnOutcome?: CompanionTurnOutcome }> | void>;
   stopAll(input: Readonly<{ stopId: string; sourceEventId: string; reasonCode: string }>): Readonly<{
     admission: Readonly<{ accepted: boolean }>;
     /** Present for the Host-owned Pi lifecycle implementation; absent only in legacy test doubles. */
@@ -318,7 +318,8 @@ export function startCompanionControlServer(
           reply = {
             ok: true,
             accepted: "player_input",
-            turnOutcome: disposition !== undefined && disposition.accepted === true ? disposition.turnOutcome : "unobserved",
+            turnOutcome:
+              disposition !== undefined && disposition.accepted === true ? disposition.turnOutcome : "unobserved",
           };
         } else if (request.type === "stop_all") {
           // Keep this immediately adjacent to synchronous control admission:

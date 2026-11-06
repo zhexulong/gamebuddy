@@ -29,10 +29,7 @@ export type ProductionGameTaskDispatchV1 = Readonly<{
 }>;
 
 type ProductionGameTaskIngressTransport = Readonly<{
-  sendReady(
-    message: ProductionGameTaskReadyV1,
-    callback: (error: Error | null) => void,
-  ): boolean;
+  sendReady(message: ProductionGameTaskReadyV1, callback: (error: Error | null) => void): boolean;
   onMessage(listener: (message: unknown) => void): () => void;
   onDisconnect(listener: () => void): () => void;
 }>;
@@ -62,15 +59,7 @@ type ControllerOptions = Readonly<{
 }>;
 
 const READY_KEYS = ["gameSessionId", "kind", "nonceSha256", "piSessionId", "schema", "surface"] as const;
-const DISPATCH_KEYS = [
-  "gameSessionId",
-  "kind",
-  "nonceSha256",
-  "piSessionId",
-  "schema",
-  "surface",
-  "task",
-] as const;
+const DISPATCH_KEYS = ["gameSessionId", "kind", "nonceSha256", "piSessionId", "schema", "surface", "task"] as const;
 
 /** Returns a parsed immutable readiness record, or null for every protocol error. */
 export function parseProductionGameTaskReady(value: unknown): ProductionGameTaskReadyV1 | null {

@@ -23,7 +23,9 @@ import { hasStardewCompletionEvidence } from "./stardew-game-integration-adapter
  */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..", "..");
-const CORPUS = JSON.parse(readFileSync(join(ROOT, "host", "src", "test-fixtures", "stardew-live-receipts.json"), "utf8"));
+const CORPUS = JSON.parse(
+  readFileSync(join(ROOT, "host", "src", "test-fixtures", "stardew-live-receipts.json"), "utf8"),
+);
 const ADAPTER = readFileSync(join(ROOT, "host", "src", "stardew-game-integration-adapter.ts"), "utf8");
 
 /** The detail string the Mod emits: `key=value` joined by `;`, in the order it wrote them. */
@@ -43,7 +45,12 @@ function actionsWithARule(): string[] {
   return [...actions];
 }
 
-const receipts = CORPUS.receipts as Array<{ actionId: string; state: string; reasonCode: string; evidence: Record<string, string> }>;
+const receipts = CORPUS.receipts as Array<{
+  actionId: string;
+  state: string;
+  reasonCode: string;
+  evidence: Record<string, string>;
+}>;
 const withRule = new Set(actionsWithARule());
 
 test("the corpus is read from real runs, not written by hand", () => {

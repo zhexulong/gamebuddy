@@ -28,18 +28,18 @@ export type SemanticMainCommand = Readonly<
  * `--operational-nonce <sha256>`. Dead-owner recovery is CLI-only and has no
  * implicit or automatic route from normal entry.
  */
-export function parseSemanticMainCommand(
-  argv: readonly string[],
-): SemanticMainCommand {
+export function parseSemanticMainCommand(argv: readonly string[]): SemanticMainCommand {
   const manifestRef = argv[1];
   const nonce = argv[3];
-  if (argv.length === 4 &&
-      argv[0] === "--deployment-manifest-ref" &&
-      manifestRef !== undefined &&
-      validAbsolutePath(manifestRef) &&
-      argv[2] === "--operational-nonce" &&
-      nonce !== undefined &&
-      SHA256.test(nonce)) {
+  if (
+    argv.length === 4 &&
+    argv[0] === "--deployment-manifest-ref" &&
+    manifestRef !== undefined &&
+    validAbsolutePath(manifestRef) &&
+    argv[2] === "--operational-nonce" &&
+    nonce !== undefined &&
+    SHA256.test(nonce)
+  ) {
     return Object.freeze({
       kind: "enter",
       deploymentManifestRef: manifestRef,

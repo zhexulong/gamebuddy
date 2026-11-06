@@ -21,10 +21,7 @@
 
 import type { StardewCompatibilityStatus } from "./stardew-compatibility.js";
 import type { StardewAttachmentFlow } from "./stardew-attachment.js";
-import type {
-  StardewAiClientProcessOwner,
-  StopOwnedAiClientResult,
-} from "./stardew-ai-client-process-owner.js";
+import type { StardewAiClientProcessOwner, StopOwnedAiClientResult } from "./stardew-ai-client-process-owner.js";
 import type { StardewPlayerHostProcessOwner } from "./stardew-player-host-process-owner.js";
 
 // ── Public view types ───────────────────────────────────────────────────────
@@ -63,10 +60,11 @@ export type StardewRoleLifecycleReader = Readonly<{
   readRoleLifecycleView(): Promise<StardewRoleLifecycleView>;
 }>;
 
-export type StardewRoleLifecycleFacade = StardewRoleLifecycleReader & Readonly<{
-  /** Narrow process owner delegation: stop the owned AI-client child. */
-  stopOwnedAiClient(): StopOwnedAiClientResult;
-}>;
+export type StardewRoleLifecycleFacade = StardewRoleLifecycleReader &
+  Readonly<{
+    /** Narrow process owner delegation: stop the owned AI-client child. */
+    stopOwnedAiClient(): StopOwnedAiClientResult;
+  }>;
 
 type LastStopOutcome = "none" | "identity_unverified" | "termination_failed";
 
@@ -93,17 +91,16 @@ class StardewRoleLifecycleFacadeImpl implements StardewRoleLifecycleFacade {
     // must not alter the ai slot.
     let playerHost: StardewPlayerHostSlot;
     try {
-      const outcome = this.#attachment === null
-        ? undefined
-        : await this.#attachment.readCompatibilityOutcome();
-      playerHost = outcome === undefined
-        ? this.#composeOwnedPlayerHostSlot()
-        : Object.freeze({
-            state: "authenticated",
-            ownership: "player_external",
-            compatibility: outcome.status,
-            attachmentAllowed: outcome.attachmentAllowed,
-          });
+      const outcome = this.#attachment === null ? undefined : await this.#attachment.readCompatibilityOutcome();
+      playerHost =
+        outcome === undefined
+          ? this.#composeOwnedPlayerHostSlot()
+          : Object.freeze({
+              state: "authenticated",
+              ownership: "player_external",
+              compatibility: outcome.status,
+              attachmentAllowed: outcome.attachmentAllowed,
+            });
     } catch {
       // No raw error — only categorical projection.
       playerHost = Object.freeze({ state: "unavailable", ownership: "player_external" });

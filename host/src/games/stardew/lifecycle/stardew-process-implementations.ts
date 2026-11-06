@@ -62,7 +62,9 @@ function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate:
     // that wire this probe (inject the resolved executable).
     "powershell.exe",
     [
-      "-NoProfile", "-NonInteractive", "-Command",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
       `Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object ProcessId, CreationDate | ConvertTo-Json -Compress`,
     ],
     { shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], timeout: 10_000, encoding: "utf8" },
@@ -75,9 +77,17 @@ function probeWindowsProcess(pid: number): Readonly<{ pid: number; creationDate:
     if (!isRecord(parsed)) return null;
     const resultPid = parsed.ProcessId ?? parsed.pid;
     const creationDate = parsed.CreationDate ?? parsed.creationDate;
-    if (typeof resultPid !== "number" || resultPid <= 0 || typeof creationDate !== "string" || creationDate.length === 0) return null;
+    if (
+      typeof resultPid !== "number" ||
+      resultPid <= 0 ||
+      typeof creationDate !== "string" ||
+      creationDate.length === 0
+    )
+      return null;
     return { pid: resultPid, creationDate };
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

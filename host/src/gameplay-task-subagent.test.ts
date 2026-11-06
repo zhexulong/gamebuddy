@@ -12,11 +12,14 @@ import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import {
   admitGameplayAction,
   awaitTaskOwnedTerminalReceipt,
+  deriveTaskModelMaxTokens,
   GAMEPLAY_TASK_DELEGATE_BUDGET_MS,
   GameplayTaskSubagent,
   hasActionPostconditionEvidence,
   hasAuthoritativeCompletion,
   selectTaskOwnedCancellation,
+  TASK_MODEL_OUTPUT_TOKENS,
+  TASK_MODEL_PROMPT_TOKENS,
   type GameplayTaskResult,
 } from "./gameplay-task-subagent.js";
 import type { ExecutionWake, IntegrationLaunchHandle } from "./integration-launcher.js";
@@ -63,6 +66,31 @@ test("GameplayTaskSubagent exposes no mutable task trace before a Host-created t
   assert.equal(worker.lastTaskResult, null);
   worker.dispose();
   assert.equal(worker.activeTaskId, null);
+});
+
+/**
+ * The task model's output cap FOLLOWS its own window instead of restating a rounded share of it.
+ *
+ * The literal was `Math.floor(window * 0.4706)`, a hand-rounded copy of 128,000/272,000 - so it agreed
+ * with that pair only at the default. At the default it reproduces the pair exactly, which is the branch
+ * a regression would land on: only the shrunk windows expose the rounding.
+ */
+test("the task model's output cap is the quotient of its own window and output ceiling", () => {
+  assert.equal(
+    deriveTaskModelMaxTokens(TASK_MODEL_PROMPT_TOKENS),
+    TASK_MODEL_OUTPUT_TOKENS,
+    "the default window must reproduce the output ceiling exactly, or a shrunk window is not the only exposure",
+  );
+  // A window below the default is where a rounded share drifts: 100,000 x 0.4706 floors to 47,060, not 47,058.
+  assert.equal(
+    deriveTaskModelMaxTokens(100_000),
+    Math.floor((100_000 * TASK_MODEL_OUTPUT_TOKENS) / TASK_MODEL_PROMPT_TOKENS),
+    "a shrunk window must take the model's own share, not a rounded percentage of it",
+  );
+  // Never above the model's output ceiling, however large the window gets.
+  assert.equal(deriveTaskModelMaxTokens(10_000_000), TASK_MODEL_OUTPUT_TOKENS);
+  // Proportional: the cap tracks the window rather than staying fixed.
+  assert.ok(deriveTaskModelMaxTokens(136_000) < deriveTaskModelMaxTokens(TASK_MODEL_PROMPT_TOKENS));
 });
 
 test("completed worker report requires a succeeded evidenced receipt owned by the task", () => {

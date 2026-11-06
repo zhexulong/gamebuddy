@@ -75,19 +75,13 @@ export type CompanionModelConfig = Readonly<{
 
 function requireOpaqueSegment(label: string, value: string): string {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(value)) {
-    throw new Error(
-      `${label} must be a 1–128 character opaque identifier using only letters, digits, _ and -.`,
-    );
+    throw new Error(`${label} must be a 1–128 character opaque identifier using only letters, digits, _ and -.`);
   }
   return value;
 }
 
-function requiredGameId(
-  label: "saveId" | "worldId",
-  value: string | undefined,
-): string {
-  if (value === undefined)
-    throw new Error(`${label} is required when continuityId is absent.`);
+function requiredGameId(label: "saveId" | "worldId", value: string | undefined): string {
+  if (value === undefined) throw new Error(`${label} is required when continuityId is absent.`);
   return value;
 }
 
@@ -96,14 +90,8 @@ export function identityKey(identity: CompanionIdentity): string {
     identity.continuityId === undefined
       ? [
           requireOpaqueSegment("playerId", identity.playerId),
-          requireOpaqueSegment(
-            "saveId",
-            requiredGameId("saveId", identity.saveId),
-          ),
-          requireOpaqueSegment(
-            "worldId",
-            requiredGameId("worldId", identity.worldId),
-          ),
+          requireOpaqueSegment("saveId", requiredGameId("saveId", identity.saveId)),
+          requireOpaqueSegment("worldId", requiredGameId("worldId", identity.worldId)),
           requireOpaqueSegment("companionId", identity.companionId),
         ]
       : [
@@ -122,12 +110,9 @@ export function resolveRuntimePaths(
   const key = identityKey(identity);
   const resolvedRoot = resolve(root);
   const runtimeCwd = join(resolvedRoot, "contexts", key);
-  if (surfaceSessionId !== undefined)
-    requireOpaqueSegment("surfaceSessionId", surfaceSessionId);
+  if (surfaceSessionId !== undefined) requireOpaqueSegment("surfaceSessionId", surfaceSessionId);
   const sessionRoot =
-    surfaceSessionId === undefined
-      ? runtimeCwd
-      : join(runtimeCwd, "surface-sessions", surfaceSessionId);
+    surfaceSessionId === undefined ? runtimeCwd : join(runtimeCwd, "surface-sessions", surfaceSessionId);
 
   return {
     root: resolvedRoot,

@@ -102,41 +102,45 @@ function runParser(inputPath: string): Promise<void> {
   });
 }
 
-test("real Host execution request serializer output passes the strict C# wire contract", { timeout: 150_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-execution-request-wire-"));
-  const inputPath = join(root, "execution-request.json");
-  let testError: unknown;
-  try {
-    await assert.rejects(stat(inputPath), { code: "ENOENT" });
-    const request = newEnvelope(
-      "execution_request",
-      scope,
-      {
-        requestId: "req_host_navigation_request",
-        idempotencyKey: "idemp_host_navigation_request",
-        action: "navigate_to_destination",
-        args: { destination: { kind: "label", label: "Farm" } },
-        expectedRevision: 1,
-        deadlineMs: Date.now() + 30_000,
-      },
-      "corr_host_navigation_request",
-    );
-    const json = serializeBounded(request);
-    assert.ok(Buffer.byteLength(json, "utf8") > 0 && Buffer.byteLength(json, "utf8") <= 256 * 1024);
-    await writeFile(inputPath, json, { encoding: "utf8", flag: "wx", mode: 0o600 });
-    await runParser(inputPath);
-  } catch (error) {
-    testError = error;
-  }
+test(
+  "real Host execution request serializer output passes the strict C# wire contract",
+  { timeout: 150_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "gamebuddy-execution-request-wire-"));
+    const inputPath = join(root, "execution-request.json");
+    let testError: unknown;
+    try {
+      await assert.rejects(stat(inputPath), { code: "ENOENT" });
+      const request = newEnvelope(
+        "execution_request",
+        scope,
+        {
+          requestId: "req_host_navigation_request",
+          idempotencyKey: "idemp_host_navigation_request",
+          action: "navigate_to_destination",
+          args: { destination: { kind: "label", label: "Farm" } },
+          expectedRevision: 1,
+          deadlineMs: Date.now() + 30_000,
+        },
+        "corr_host_navigation_request",
+      );
+      const json = serializeBounded(request);
+      assert.ok(Buffer.byteLength(json, "utf8") > 0 && Buffer.byteLength(json, "utf8") <= 256 * 1024);
+      await writeFile(inputPath, json, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      await runParser(inputPath);
+    } catch (error) {
+      testError = error;
+    }
 
-  try {
-    await rm(root, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
-    await assert.rejects(stat(root), { code: "ENOENT" });
-  } catch (cleanupError) {
-    throw new AggregateError(
-      testError === undefined ? [cleanupError] : [testError, cleanupError],
-      "execution request wire parity cleanup failed",
-    );
-  }
-  if (testError !== undefined) throw testError;
-});
+    try {
+      await rm(root, { recursive: true, force: false, maxRetries: 3, retryDelay: 100 });
+      await assert.rejects(stat(root), { code: "ENOENT" });
+    } catch (cleanupError) {
+      throw new AggregateError(
+        testError === undefined ? [cleanupError] : [testError, cleanupError],
+        "execution request wire parity cleanup failed",
+      );
+    }
+    if (testError !== undefined) throw testError;
+  },
+);

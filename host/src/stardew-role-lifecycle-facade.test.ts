@@ -6,15 +6,15 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { StardewAiClientProcessOwner } from "./stardew-ai-client-process-owner.js";
-import type { StardewPlayerHostProcessOwner, StardewPlayerHostProcessStatus } from "./stardew-player-host-process-owner.js";
+import type {
+  StardewPlayerHostProcessOwner,
+  StardewPlayerHostProcessStatus,
+} from "./stardew-player-host-process-owner.js";
 import { StardewAttachmentFlow } from "./stardew-attachment.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { StardewExternalPlayerHostPhaseAOwner } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import { createStardewPrivateBootstrapComposerTestSupport } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.test-support.js";
-import {
-  createStardewRoleLifecycleFacade,
-  type StardewRoleLifecycleView,
-} from "./stardew-role-lifecycle-facade.js";
+import { createStardewRoleLifecycleFacade, type StardewRoleLifecycleView } from "./stardew-role-lifecycle-facade.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -53,9 +53,7 @@ function signed<T extends { signature: string }>(value: T): T {
   delete unsigned.signature;
   return {
     ...value,
-    signature: createHmac("sha256", SESSION_TOKEN)
-      .update(JSON.stringify(unsigned), "utf8")
-      .digest("base64url"),
+    signature: createHmac("sha256", SESSION_TOKEN).update(JSON.stringify(unsigned), "utf8").digest("base64url"),
   };
 }
 
@@ -82,15 +80,18 @@ async function withFixture(
   bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper));
   try {
     const composition = createStardewPrivateBootstrapComposerTestSupport({
-      rawSpawn: () => Object.freeze({
-        pid: 4321,
-        kill() {
-          kills.push(4321);
-          return true;
-        },
-      }),
+      rawSpawn: () =>
+        Object.freeze({
+          pid: 4321,
+          kill() {
+            kills.push(4321);
+            return true;
+          },
+        }),
       rawProbe: (pid) => probes.get(pid) ?? null,
-      rawPlayerHostSpawn: () => { throw new Error("unexpected_player_host_spawn"); },
+      rawPlayerHostSpawn: () => {
+        throw new Error("unexpected_player_host_spawn");
+      },
       rawPlayerHostProbe: () => null,
       createBootstrapIdentity: () => "lifecycle-bootstrap",
       createGuardianRevision: () => "guardian-revision-lifecycle-test",
@@ -103,18 +104,16 @@ async function withFixture(
       createPlayerHostLaunchGeneration: () => "unused-player-host-generation",
       nowMs: () => 1_000,
     });
-    const claim = composition.broker.confirm({
-      playerId: "player-1",
-      companionId: "companion-1",
-      browserSessionId: "browser-1",
-      expiresAtMs: 5_000,
-    }).consume("browser-1");
+    const claim = composition.broker
+      .confirm({
+        playerId: "player-1",
+        companionId: "companion-1",
+        browserSessionId: "browser-1",
+        expiresAtMs: 5_000,
+      })
+      .consume("browser-1");
     const reservation = composition.aiClientProcessOwner.reserveAiClientLaunch();
-    const phaseOwner = await composition.reserveExternalPlayerHostPhaseA(
-      runtimeRoot,
-      claim,
-      reservation,
-    );
+    const phaseOwner = await composition.reserveExternalPlayerHostPhaseA(runtimeRoot, claim, reservation);
     const facade = createStardewRoleLifecycleFacade(
       new StardewAttachmentFlow({
         sessionDirectory: directory,
@@ -139,11 +138,7 @@ async function withFixture(
   }
 }
 
-function assertView(
-  view: StardewRoleLifecycleView,
-  playerHost: unknown,
-  aiClient: unknown,
-): void {
+function assertView(view: StardewRoleLifecycleView, playerHost: unknown, aiClient: unknown): void {
   assert.deepEqual(view, { schemaVersion: 1, playerHost, aiClient });
   assert.equal(Object.isFrozen(view), true);
   assert.equal(Object.isFrozen(view.playerHost), true);
@@ -155,20 +150,25 @@ test("direct-owned Player Host pending, awaiting, and stopped states remain trut
     let status: StardewPlayerHostProcessStatus = { kind: "player_host_launch_pending" };
     const playerOwner: StardewPlayerHostProcessOwner = Object.freeze({
       readStatus: () => status,
-      reservePlayerHostLaunch: () => { throw new Error("not_exposed_by_facade"); },
+      reservePlayerHostLaunch: () => {
+        throw new Error("not_exposed_by_facade");
+      },
       stopOwnedPlayerHost: () => ({ kind: "no_owned_player_host" as const, killed: false as const }),
     });
     const facade = createStardewRoleLifecycleFacade(null, owner, playerOwner);
     assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
-      state: "pending", ownership: "gamebuddy_direct_spawn",
+      state: "pending",
+      ownership: "gamebuddy_direct_spawn",
     });
     status = { kind: "awaiting_player_host_attestation" };
     assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
-      state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn",
+      state: "awaiting_attestation",
+      ownership: "gamebuddy_direct_spawn",
     });
     status = { kind: "player_host_stopped" };
     assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {
-      state: "stopped", ownership: "gamebuddy_direct_spawn",
+      state: "stopped",
+      ownership: "gamebuddy_direct_spawn",
     });
   });
 });

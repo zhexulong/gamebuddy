@@ -46,22 +46,13 @@ export type StardewCompatibilityReasonCode =
   | "tuple_verified";
 
 /** A concrete runtime is either present, confirmed missing, or unknown. */
-type RuntimePresenceCheck =
-  | "confirmed_ok"
-  | "confirmed_failure"
-  | "unknown";
+type RuntimePresenceCheck = "confirmed_ok" | "confirmed_failure" | "unknown";
 
 /** The SMAPI loader is either healthy, confirmed failed, or unknown. */
-type LoaderStatusCheck =
-  | "confirmed_ok"
-  | "confirmed_failure"
-  | "unknown";
+type LoaderStatusCheck = "confirmed_ok" | "confirmed_failure" | "unknown";
 
 /** The bridge protocol major is confirmed matching, confirmed mismatched, or unknown. */
-type BridgeProtocolMajorCheck =
-  | "confirmed_ok"
-  | "confirmed_mismatch"
-  | "unknown";
+type BridgeProtocolMajorCheck = "confirmed_ok" | "confirmed_mismatch" | "unknown";
 
 /** The native multiplayer peer protocol supports not_applicable. */
 type NativeMultiplayerPeerCheck =
@@ -89,39 +80,34 @@ export type StardewCompatibilityOutcome = Readonly<{
   attachmentAllowed: boolean;
 }>;
 
-export const STARDEW_COMPATIBILITY_STATUSES: readonly StardewCompatibilityStatus[] =
-  Object.freeze([
-    "verified",
-    "compatible_unverified",
-    "below_minimum_warning",
-    "hard_incompatible",
-  ]);
+export const STARDEW_COMPATIBILITY_STATUSES: readonly StardewCompatibilityStatus[] = Object.freeze([
+  "verified",
+  "compatible_unverified",
+  "below_minimum_warning",
+  "hard_incompatible",
+]);
 
-export const STARDEW_COMPATIBILITY_REASONS: readonly StardewCompatibilityReasonCode[] =
-  Object.freeze([
-    "runtime_missing",
-    "loader_failure",
-    "bridge_protocol_major_mismatch",
-    "native_multiplayer_protocol_mismatch",
-    "smapi_below_minimum",
-    "tuple_not_verified",
-    "compatibility_evidence_incomplete",
-    "tuple_verified",
-  ]);
+export const STARDEW_COMPATIBILITY_REASONS: readonly StardewCompatibilityReasonCode[] = Object.freeze([
+  "runtime_missing",
+  "loader_failure",
+  "bridge_protocol_major_mismatch",
+  "native_multiplayer_protocol_mismatch",
+  "smapi_below_minimum",
+  "tuple_not_verified",
+  "compatibility_evidence_incomplete",
+  "tuple_verified",
+]);
 
 /** Status→reason coupling the verifier enforces (per-status closure). */
 export const STARDEW_COMPATIBILITY_REASONS_BY_STATUS: Readonly<
   Record<StardewCompatibilityStatus, readonly StardewCompatibilityReasonCode[]>
 > = Object.freeze({
-  verified: Object.freeze<readonly StardewCompatibilityReasonCode[]>([
-    "tuple_verified",
+  verified: Object.freeze<readonly StardewCompatibilityReasonCode[]>(["tuple_verified"]),
+  compatible_unverified: Object.freeze<readonly StardewCompatibilityReasonCode[]>([
+    "tuple_not_verified",
+    "compatibility_evidence_incomplete",
   ]),
-  compatible_unverified: Object.freeze<readonly StardewCompatibilityReasonCode[]>(
-    ["tuple_not_verified", "compatibility_evidence_incomplete"],
-  ),
-  below_minimum_warning: Object.freeze<readonly StardewCompatibilityReasonCode[]>(
-    ["smapi_below_minimum"],
-  ),
+  below_minimum_warning: Object.freeze<readonly StardewCompatibilityReasonCode[]>(["smapi_below_minimum"]),
   hard_incompatible: Object.freeze<readonly StardewCompatibilityReasonCode[]>([
     "runtime_missing",
     "loader_failure",
@@ -133,9 +119,7 @@ export const STARDEW_COMPATIBILITY_REASONS_BY_STATUS: Readonly<
 const SMAPI_VERSION_PATTERN =
   /^([0-9]{1,9})\.([0-9]{1,9})\.([0-9]{1,9})(?:\.[0-9]{1,9})?(?:[-+][A-Za-z0-9][A-Za-z0-9.\-+]*)?$/;
 
-const ADVISORY_MINIMUM_PARSED: ParsedSmapiVersion = parseSmapiVersion(
-  ADVISORY_MINIMUM_SMAPI_VERSION,
-)!;
+const ADVISORY_MINIMUM_PARSED: ParsedSmapiVersion = parseSmapiVersion(ADVISORY_MINIMUM_SMAPI_VERSION)!;
 
 /**
  * Deterministic decision cascade. Hard classes are evaluated first in the
@@ -162,42 +146,29 @@ const ADVISORY_MINIMUM_PARSED: ParsedSmapiVersion = parseSmapiVersion(
  *        c. otherwise (an identity fact is absent) ⇒
  *           `compatibility_evidence_incomplete`.
  */
-export function classifyStardewCompatibility(
-  facts: StardewCompatibilityFacts,
-): StardewCompatibilityOutcome {
-  if (facts.runtime === "confirmed_failure")
-    return outcome("hard_incompatible", "runtime_missing");
-  if (facts.loader === "confirmed_failure")
-    return outcome("hard_incompatible", "loader_failure");
+export function classifyStardewCompatibility(facts: StardewCompatibilityFacts): StardewCompatibilityOutcome {
+  if (facts.runtime === "confirmed_failure") return outcome("hard_incompatible", "runtime_missing");
+  if (facts.loader === "confirmed_failure") return outcome("hard_incompatible", "loader_failure");
   if (facts.bridgeProtocolMajor === "confirmed_mismatch")
     return outcome("hard_incompatible", "bridge_protocol_major_mismatch");
   if (facts.nativeMultiplayerPeer === "confirmed_mismatch")
-    return outcome(
-      "hard_incompatible",
-      "native_multiplayer_protocol_mismatch",
-    );
+    return outcome("hard_incompatible", "native_multiplayer_protocol_mismatch");
 
   const smapi = parseSmapiVersion(facts.smapiVersion);
-  if (smapi !== null && belowSmapiMinimum(smapi))
-    return outcome("below_minimum_warning", "smapi_below_minimum");
+  if (smapi !== null && belowSmapiMinimum(smapi)) return outcome("below_minimum_warning", "smapi_below_minimum");
 
   if (isExactVerifiedTuple(facts)) {
     if (
       facts.runtime === "confirmed_ok" &&
       facts.loader === "confirmed_ok" &&
       facts.bridgeProtocolMajor === "confirmed_ok" &&
-      (facts.nativeMultiplayerPeer === "confirmed_ok" ||
-        facts.nativeMultiplayerPeer === "not_applicable")
+      (facts.nativeMultiplayerPeer === "confirmed_ok" || facts.nativeMultiplayerPeer === "not_applicable")
     )
       return outcome("verified", "tuple_verified");
     return outcome("compatible_unverified", "compatibility_evidence_incomplete");
   }
 
-  if (
-    facts.gameVersion !== null &&
-    facts.gameBuildNumber !== null &&
-    facts.smapiVersion !== null
-  )
+  if (facts.gameVersion !== null && facts.gameBuildNumber !== null && facts.smapiVersion !== null)
     return outcome("compatible_unverified", "tuple_not_verified");
 
   return outcome("compatible_unverified", "compatibility_evidence_incomplete");
@@ -209,15 +180,12 @@ export function classifyStardewCompatibility(
  * and the `attachmentAllowed` invariant (`false` only for hard, otherwise
  * true). Returns null and therefore fail-closes on any violation.
  */
-export function validateStardewCompatibilityOutcome(
-  value: unknown,
-): StardewCompatibilityOutcome | null {
+export function validateStardewCompatibilityOutcome(value: unknown): StardewCompatibilityOutcome | null {
   if (!exactKeys(value, ["status", "reasonCode", "attachmentAllowed"])) return null;
   const { status, reasonCode, attachmentAllowed } = value;
   if (!oneOf(status, STARDEW_COMPATIBILITY_STATUSES)) return null;
   if (!oneOf(reasonCode, STARDEW_COMPATIBILITY_REASONS)) return null;
-  if (!oneOf(reasonCode, STARDEW_COMPATIBILITY_REASONS_BY_STATUS[status]))
-    return null;
+  if (!oneOf(reasonCode, STARDEW_COMPATIBILITY_REASONS_BY_STATUS[status])) return null;
   if (typeof attachmentAllowed !== "boolean") return null;
   if (attachmentAllowed !== (status !== "hard_incompatible")) return null;
   return Object.freeze({ status, reasonCode, attachmentAllowed });
@@ -272,10 +240,7 @@ function oneOf<T>(value: unknown, options: readonly T[]): value is T {
   return (options as readonly unknown[]).some((option) => option === value);
 }
 
-function exactKeys(
-  value: unknown,
-  keys: readonly string[],
-): value is Record<string, unknown> {
+function exactKeys(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
   return (
     typeof value === "object" &&
     value !== null &&

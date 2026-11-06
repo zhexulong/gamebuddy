@@ -51,10 +51,7 @@ export function desktopPresentationHandoffPipeName(bootstrapId: string): string 
  * the frame for the same reason it is on every other private wire here: it
  * keeps exactly one shape acceptable.
  */
-export function composeDesktopPresentationHandoffFrame(
-  bootstrapId: string,
-  launchUrl: string,
-): Buffer | undefined {
+export function composeDesktopPresentationHandoffFrame(bootstrapId: string, launchUrl: string): Buffer | undefined {
   if (!bootstrapIdPattern.test(bootstrapId)) return undefined;
   if (!isLoopbackLaunchUrl(launchUrl)) return undefined;
   const frame = Buffer.from(
@@ -76,9 +73,7 @@ export function composeDesktopPresentationHandoffFrame(
  * so a launcher that is not there - a developer gate, a fixture composition -
  * cannot observe or break the running product.
  */
-export function createDesktopPresentationHandoffPublisher(
-  bootstrapId: string,
-): (launchUrl: string) => void {
+export function createDesktopPresentationHandoffPublisher(bootstrapId: string): (launchUrl: string) => void {
   const pipeName = desktopPresentationHandoffPipeName(bootstrapId);
   return (launchUrl: string): void => {
     const frame = composeDesktopPresentationHandoffFrame(bootstrapId, launchUrl);

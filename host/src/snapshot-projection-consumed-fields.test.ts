@@ -4,10 +4,7 @@ import test from "node:test";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import type { Snapshot } from "./protocol.js";
-import {
-  projectGameSnapshotContext,
-  type GameSnapshotContextProjection,
-} from "./snapshot-projection.js";
+import { projectGameSnapshotContext, type GameSnapshotContextProjection } from "./snapshot-projection.js";
 
 /**
  * L2 consumer evidence for `card-l2-consumer-evidence.md` — now closed by
@@ -199,17 +196,9 @@ test("time and pet target fields reach the Agent only as an unfiltered observati
     },
   };
 
-  const observe = createStardewObservationTools(connection).find(
-    (candidate) => candidate.name === "stardew_observe",
-  );
+  const observe = createStardewObservationTools(connection).find((candidate) => candidate.name === "stardew_observe");
   if (observe === undefined) throw new Error("stardew_observe_tool_missing");
-  const result = await observe.execute(
-    "test",
-    {},
-    new AbortController().signal,
-    () => {},
-    {} as never,
-  );
+  const result = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
   const text = result.content[0]?.type === "text" ? result.content[0].text : "";
   const delivered = JSON.parse(text) as Readonly<{
     timeOfDay: number;

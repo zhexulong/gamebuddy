@@ -682,15 +682,39 @@ async function createProductionGameplayTaskSession(
  * and ignored, so a pressure measurement is reusable here too rather than a product-scale run.
  */
 const TASK_MODEL_WINDOW_ENV = "GAMEBUDDY_MAGIC_CONTEXT_TEST_MODEL_WINDOW";
+
+/**
+ * The task model's own geometry: a 272,000-token prompt cap with a 128,000-token output cap.
+ *
+ * Two facts about one model, stated once, so the output cap is their QUOTIENT rather than a rounded copy of it.
+ * It used to be the literal 0.4706, which agreed with this pair only at the default window: 100,000 gave 47,060
+ * where the quotient is 47,058, and 200,000 gave 94,120 where it is 94,117.
+ */
+export const TASK_MODEL_PROMPT_TOKENS = 272_000;
+export const TASK_MODEL_OUTPUT_TOKENS = 128_000;
+
+/**
+ * The output cap for a task model with `contextWindow` prompt tokens.
+ *
+ * Derived from the pair above so a shrunk window asks for proportionally less output and never more than the
+ * model's own output ceiling. The default window reproduces 128,000 exactly because it IS the numerator.
+ */
+export function deriveTaskModelMaxTokens(contextWindow: number): number {
+  return Math.min(
+    TASK_MODEL_OUTPUT_TOKENS,
+    Math.floor((contextWindow * TASK_MODEL_OUTPUT_TOKENS) / TASK_MODEL_PROMPT_TOKENS),
+  );
+}
+
 function declaredTaskModelWindow(): number {
   const raw = process.env[TASK_MODEL_WINDOW_ENV];
-  if (raw === undefined || raw.trim() === "") return 272_000;
+  if (raw === undefined || raw.trim() === "") return TASK_MODEL_PROMPT_TOKENS;
   const value = Number.parseInt(raw, 10);
   if (!Number.isSafeInteger(value) || value < 4_000) {
     process.stderr.write(
       `[gameplay-subagent] ignoring ${TASK_MODEL_WINDOW_ENV}=${JSON.stringify(raw)}: not an integer of at least 4000\n`,
     );
-    return 272_000;
+    return TASK_MODEL_PROMPT_TOKENS;
   }
   process.stderr.write(`[gameplay-subagent] fixture model window: ${value} tokens\n`);
   return value;
@@ -737,9 +761,10 @@ async function createTaskModelRuntime(agentDir: string, config: CompanionModelCo
                 },
                 input: ["text"],
                 contextWindow: declaredTaskModelWindow(),
-                // Travel with the window: a shrunk window must not ask the provider for a bigger output than
-                // its capacity, and 128k keeps the production ratio (.47) the same as the original fixed pair.
-                maxTokens: Math.min(128_000, Math.floor(declaredTaskModelWindow() * 0.4706)),
+                // Travel with the window: a shrunk window must not ask the provider for a bigger output than the
+                // model's own output ceiling, and the share is that model's own quotient - see
+                // `deriveTaskModelMaxTokens`.
+                maxTokens: deriveTaskModelMaxTokens(declaredTaskModelWindow()),
                 // Omitted when the catalog prices nothing: Pi's schema makes `cost` optional and bills an absent block at
                 // zero, which is visibly unpriced rather than a confident number about another model's invoice.
                 ...(declaredCost === undefined ? {} : { cost: declaredCost }),

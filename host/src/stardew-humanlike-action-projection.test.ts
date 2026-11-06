@@ -35,14 +35,31 @@ const scope: Scope = {
 };
 
 const MOD_EMOTE_ENUM_22 = Object.freeze([
-  "happy", "sad", "heart", "exclamation", "note", "sleep", "game", "question",
-  "x", "pause", "blush", "angry", "yes", "no", "sick", "laugh", "surprised",
-  "hi", "taunt", "uh", "music", "jar",
+  "happy",
+  "sad",
+  "heart",
+  "exclamation",
+  "note",
+  "sleep",
+  "game",
+  "question",
+  "x",
+  "pause",
+  "blush",
+  "angry",
+  "yes",
+  "no",
+  "sick",
+  "laugh",
+  "surprised",
+  "hi",
+  "taunt",
+  "uh",
+  "music",
+  "jar",
 ]);
 
-const MOD_DIRECTION_ENUM_4 = Object.freeze([
-  "up", "right", "down", "left",
-]);
+const MOD_DIRECTION_ENUM_4 = Object.freeze(["up", "right", "down", "left"]);
 
 const VALID_EXPRESS_EMOTE_DESCRIPTOR: ActionRegistrationDescriptor = Object.freeze({
   arguments: Object.freeze([
@@ -133,15 +150,17 @@ function createIntegration(options: {
   execute?: MoveCapableIntegration["execute"];
 }): MoveCapableIntegration {
   const catalogRegistrations = options.catalogRegistrations ?? TEST_MOD_REGISTRATIONS;
-  const execute = options.execute ?? (async (req: ExecutionRequest): Promise<ExecutionReceipt> => ({
-    executionId: "exec_test_01",
-    requestId: req.requestId,
-    actionId: req.action,
-    state: "succeeded",
+  const execute =
+    options.execute ??
+    (async (req: ExecutionRequest): Promise<ExecutionReceipt> => ({
+      executionId: "exec_test_01",
+      requestId: req.requestId,
+      actionId: req.action,
+      state: "succeeded",
       reasonCode: req.action === "express_emote" ? "emote_started" : "actor_facing_matches",
-    revision: options.revision ?? 1,
-    evidence: { detail: JSON.stringify({ ...req.args }) },
-  }));
+      revision: options.revision ?? 1,
+      evidence: { detail: JSON.stringify({ ...req.args }) },
+    }));
 
   return {
     scope,
@@ -588,7 +607,13 @@ test("stardew_express_emote forwards { emote } without exposing request/idempote
   const schemaKeys = Object.keys(emoteTool.parameters.properties ?? {});
   assert.deepEqual(schemaKeys, ["emote"], "Only emote should be visible to agent");
 
-  const result = await emoteTool.execute("call_1", { emote: "heart" }, new AbortController().signal, () => {}, {} as never);
+  const result = await emoteTool.execute(
+    "call_1",
+    { emote: "heart" },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
   assert.equal(executedRequest !== null, true);
   assert.equal((executedRequest as ExecutionRequest | null)?.action, "express_emote");
   assert.deepEqual((executedRequest as ExecutionRequest | null)?.args, { emote: "heart" });
@@ -668,7 +693,13 @@ test("pre-dispatch recheck: withdrawn capability fails closed at execution time"
 
   // Withdraw capability dynamically before invocation
   currentCaps = [];
-  const result = await emoteTool.execute("call_3", { emote: "happy" }, new AbortController().signal, () => {}, {} as never);
+  const result = await emoteTool.execute(
+    "call_3",
+    { emote: "happy" },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
   assert.equal((result.details as any).reasonCode, "capability_not_declared");
 });
 
@@ -734,7 +765,13 @@ test("pre-dispatch recheck: disconnected integration fails closed at execution t
 
   // Disconnect before execute
   connected = false;
-  const result = await emoteTool.execute("call_4", { emote: "happy" }, new AbortController().signal, () => {}, {} as never);
+  const result = await emoteTool.execute(
+    "call_4",
+    { emote: "happy" },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
   assert.equal((result.details as any).reasonCode, "integration_not_ready");
 });
 

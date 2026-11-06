@@ -55,10 +55,7 @@ test("treats doubled asterisks (markdown emphasis) as closed", () => {
 
 test("emits multiple sentences from one chunk in order", () => {
   const accumulator = new IncrementalSpeechAccumulator();
-  assert.deepEqual(accumulator.push("我这就去浇水。把杂草拔了。然后"), [
-    "我这就去浇水。",
-    "把杂草拔了。",
-  ]);
+  assert.deepEqual(accumulator.push("我这就去浇水。把杂草拔了。然后"), ["我这就去浇水。", "把杂草拔了。"]);
   assert.equal(accumulator.flush(), "然后");
 });
 

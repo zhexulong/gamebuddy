@@ -5,11 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
-import {
-  diagnoseBridgeMessage,
-  validateBridgeMessage,
-  type Scope,
-} from "./protocol.js";
+import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./protocol.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
 const scope: Scope = {

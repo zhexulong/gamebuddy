@@ -116,6 +116,9 @@ const HOST_HELPERS: ReadonlyMap<string, Interval> = new Map([
     { low: { value: 0, inclusive: true }, high: { value: Number.MAX_SAFE_INTEGER, inclusive: true } },
   ],
   ["isFiniteNumber", UNBOUNDED],
+  // A machine's own trigger-row consumption count: positive, and bounded above by the Host's ceiling rather than by a
+  // game fact (`MachineOutputTriggerRule.RequiredCount`).
+  ["isMachineInputCount", { low: { value: 1, inclusive: true }, high: { value: 9999, inclusive: true } }],
 ]);
 
 const escapePattern = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -209,12 +212,15 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   {
     declaredType: "int",
     accepts: "[0, 1000]",
-    count: 106,
+    count: 105,
     reason:
       "a tile coordinate. `isTileCoordinate` bounds every one of them, and the Mod's own discovery clamps to the same " +
       "range before publishing - `DiscoverWeedTargets` and `DiscoverGrassTargets` both spell out `>= 0 && <= 1000`. A " +
       "coordinate outside it is not a place in any Stardew map. This is the largest group because a tile is on almost " +
-      "every family.",
+      "every family. The three `farmAnimalPetTargets` fields that joined it: `x`/`y` are the animal's tile, and " +
+      "`friendship` is `FarmAnimal.friendshipTowardFarmer`, which the engine itself caps with `Math.Min(1000, ...)` on " +
+      "every branch of `FarmAnimal.pet` (FarmAnimal.cs:754/758/762/774) - so `[0, 1000]` is the animal's own range, " +
+      "not a Host guess.",
   },
   {
     declaredType: "int",
@@ -229,6 +235,15 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
     accepts: "[0, 36]",
     count: 2,
     reason: "the same 36-slot backpack bound, on a field the Mod may omit entirely.",
+  },
+  {
+    declaredType: "int?",
+    accepts: "[0, 1000]",
+    count: 4,
+    reason:
+      "the nearest ripening tile on `harvestWhereabouts` and `wateringWhereabouts`, absent when the row describes another " +
+      "map. A coordinate for a map the actor is not on is not an address, so the Mod publishes its count alone; when the " +
+      "pair IS present both members are a real tile, bounded by the same `isTileCoordinate` as every other coordinate.",
   },
   {
     declaredType: "int",
@@ -318,9 +333,13 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   },
   {
     declaredType: "int?",
-    accepts: "[5, 5]",
+    accepts: "[1, 9999]",
     count: 1,
-    reason: "the single input stack the keg-load contract admits; the Mod writes the literal `5`.",
+    reason:
+      "the count a machine's own `Data/Machines` trigger row declares for the input it accepts " +
+      "(`MachineOutputTriggerRule.RequiredCount`), which the Mod publishes as `loadInputStack` and then consumes. The " +
+      "floor is the engine's: a load consumes at least one item (the same row's count decides how many, so the Host's " +
+      "9999 is an invented ceiling, not a game fact).",
   },
   {
     declaredType: "int",
@@ -589,5 +608,8 @@ function parseInterval(text: string): Interval {
  *
  * A ratchet, not a target: the number may fall as bounds are corrected, and every entry that disappears must be
  * deleted from `DECLARED_NARROWINGS` in the same change (the count test above enforces that half).
+ *
+ * RAISED FROM 166 TO 169 by `farmAnimalPetTargets`, whose three numeric fields (a tile `x`/`y` pair and the animal's
+ * `friendship`) are declared above with the engine fact that makes each legitimate.
  */
-const NARROWING_CEILING = 166;
+const NARROWING_CEILING = 169;

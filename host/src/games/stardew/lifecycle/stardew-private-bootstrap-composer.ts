@@ -18,10 +18,7 @@ import type {
 } from "../../../stardew-player-host-process-owner.js";
 import { createStardewPrivateBootstrapComposition as createProductionComposition } from "./stardew-private-bootstrap-composer.internal.js";
 
-
-export type StardewAiClientLaunch = (
-  input: LaunchAiClientInput,
-) => Readonly<{ status: StardewAiClientProcessStatus }>;
+export type StardewAiClientLaunch = (input: LaunchAiClientInput) => Readonly<{ status: StardewAiClientProcessStatus }>;
 
 export type StardewPlayerHostLaunch = (
   input: LaunchPlayerHostInput,
@@ -51,9 +48,7 @@ export type StardewPrivateBootstrapComposition = Readonly<{
   readonly broker: StardewPlayerHostBootstrapBroker;
   readonly playerHostProcessOwner: StardewPlayerHostProcessOwner;
   readonly aiClientProcessOwner: StardewAiClientProcessOwner;
-  createRoleLifecycleFacade(
-    attachment: StardewAttachmentFlow,
-  ): StardewRoleLifecycleFacade;
+  createRoleLifecycleFacade(attachment: StardewAttachmentFlow): StardewRoleLifecycleFacade;
   reserveExternalPlayerHostPhaseA(
     runtimeRoot: string,
     claim: StardewPlayerHostBootstrapClaim,

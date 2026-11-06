@@ -18,9 +18,7 @@ test("runtime-identity leaf carries no project imports or runtime facade depende
   assert.match(source, /^import \{ createHash \} from "node:crypto";$/m);
   assert.match(source, /^import \{ homedir \} from "node:os";$/m);
   assert.match(source, /^import \{ join, resolve \} from "node:path";$/m);
-  const imports = source
-    .split("\n")
-    .filter((line) => line.startsWith("import ") || line.startsWith("export "));
+  const imports = source.split("\n").filter((line) => line.startsWith("import ") || line.startsWith("export "));
   for (const line of imports) assert.doesNotMatch(line, /from "\.\.?\//u);
   assert.doesNotMatch(source, /from "\.\.?\/\.\./u);
 });
@@ -77,7 +75,10 @@ test("resolveRuntimePaths derives the same deterministic partition layout", () =
   const repeated = resolveRuntimePaths(identity, "C:\\roots\\gamedir");
   assert.deepEqual(paths, repeated);
   assert.equal(paths.agentDir, resolve(resolve("C:\\roots\\gamedir"), "contexts", identityKey(identity), "pi-agent"));
-  assert.equal(paths.runManifestPath, resolve(resolve("C:\\roots\\gamedir"), "contexts", identityKey(identity), "companion-run-manifest.json"));
+  assert.equal(
+    paths.runManifestPath,
+    resolve(resolve("C:\\roots\\gamedir"), "contexts", identityKey(identity), "companion-run-manifest.json"),
+  );
 
   // Surface session paths stay under the surface-sessions partition.
   const surfaced = resolveRuntimePaths(identity, "C:\\roots\\gamedir", "surface_01");

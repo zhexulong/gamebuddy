@@ -4,9 +4,7 @@ import {
   createStardewPrivateBootstrapCompositionForTesting,
   launchStagedPlayerHostForTesting,
 } from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import type {
-  StardewPrivateBootstrapComposition,
-} from "./stardew-private-bootstrap-composer.js";
+import type { StardewPrivateBootstrapComposition } from "./stardew-private-bootstrap-composer.js";
 import type {
   StardewAiClientProcessProbe,
   StardewAiClientProcessSpawn,

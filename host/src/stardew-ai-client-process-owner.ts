@@ -31,9 +31,7 @@ export type StopOwnedAiClientResult =
   | { readonly kind: "termination_failed"; readonly killed: false }
   | { readonly kind: "terminated"; readonly killed: true };
 
-const stardewAiClientLaunchReservationBrand: unique symbol = Symbol(
-  "stardewAiClientLaunchReservation",
-);
+const stardewAiClientLaunchReservationBrand: unique symbol = Symbol("stardewAiClientLaunchReservation");
 void stardewAiClientLaunchReservationBrand;
 
 /**
@@ -77,6 +75,4 @@ export type StardewAiClientProcessProbeResult = Readonly<{
   creationDate: string;
 }> | null;
 
-export type StardewAiClientProcessProbe = (
-  pid: number,
-) => StardewAiClientProcessProbeResult;
+export type StardewAiClientProcessProbe = (pid: number) => StardewAiClientProcessProbeResult;

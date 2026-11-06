@@ -1803,3 +1803,37 @@ test("the Host refuses a snapshot family entry the schema's shape does not allow
     );
   }
 });
+
+test("the language-neutral schema admits a whereabouts row with no tile and refuses one with half a tile", async () => {
+  // The Mod omits the pair for every map the actor is not standing on, so a schema consumer that demanded both would
+  // refuse the snapshot the Mod actually sends - and one that accepted half a tile would let `x` and `y` come from
+  // different readings of one address. Both directions are asserted here because the schema, not the Host, is what a
+  // non-TypeScript consumer validates against.
+  const validate = await schemaValidator();
+  const families: readonly (readonly [string, Record<string, number>])[] = [
+    ["harvestWhereabouts", { readyForHarvestCount: 3 }],
+    ["wateringWhereabouts", { needsWaterCount: 12 }],
+  ];
+  for (const [field, count] of families) {
+    const row = { location: "Farm", ...count };
+    assert.equal(validate(snapshotWith(field, [row])), true, `${field}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(
+      validate(snapshotWith(field, [{ ...row, nearestX: 4, nearestY: 9 }])),
+      true,
+      `${field}: ${JSON.stringify(validate.errors)}`,
+    );
+    for (const half of [{ nearestX: 4 }, { nearestY: 9 }]) {
+      assert.equal(
+        validate(snapshotWith(field, [{ ...row, ...half }])),
+        false,
+        `${field} admitted ${JSON.stringify(half)}`,
+      );
+      // The Host applies the same rule to the same row: a schema that is looser than the Host is a frame the Mod may send
+      // and the bridge then refuses whole.
+      assert.equal(
+        validateBridgeMessage(snapshotWith(field, [{ ...row, ...half }]), schemaContractScope),
+        "invalid_snapshot",
+      );
+    }
+  }
+});

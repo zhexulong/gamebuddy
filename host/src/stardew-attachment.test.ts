@@ -418,15 +418,16 @@ test("Stardew attachment flow accepts the Host fixed manifest filename only afte
   }
 });
 
-
 // A manifest exactly as the Mod writes it: camelCase keys in the C# record's
 // declaration order, with `observedSaveSlot` between `worldId` and `companionId`.
 // The signature is over this exact serialized object, so the slot is inside the
 // signed bytes on both sides.
-function modShapedManifest(input: Readonly<{
-  session: Readonly<{ saveId: string; worldId: string; nonce: string }>;
-  observedSaveSlot?: string;
-}>) {
+function modShapedManifest(
+  input: Readonly<{
+    session: Readonly<{ saveId: string; worldId: string; nonce: string }>;
+    observedSaveSlot?: string;
+  }>,
+) {
   return signed({
     schemaVersion: 1,
     requestId: "request_01",
@@ -591,12 +592,13 @@ test("Stardew attachment sole verifier requires exact player-host runtime role a
       const unsigned = { ...variant.value };
       const signature = unsigned.signature;
       delete unsigned.signature;
-      const signedValue = typeof signature === "string" && signature.length > 0
-        ? variant.value
-        : {
-            ...variant.value,
-            signature: createHmac("sha256", token).update(JSON.stringify(unsigned), "utf8").digest("base64url"),
-          };
+      const signedValue =
+        typeof signature === "string" && signature.length > 0
+          ? variant.value
+          : {
+              ...variant.value,
+              signature: createHmac("sha256", token).update(JSON.stringify(unsigned), "utf8").digest("base64url"),
+            };
       await writeFile(join(directory, "stardew-session.json"), JSON.stringify(signedValue));
       const flow = new StardewAttachmentFlow({
         sessionDirectory: directory,

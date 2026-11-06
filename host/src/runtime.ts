@@ -62,7 +62,21 @@ export async function createCompanionRuntime(
   internalMagicContextFeatureTestOverride?: Parameters<typeof createCompanionRuntimeInternal>[11],
   tavernNarrativeGateNonceSha256?: string,
 ): Promise<RuntimeSession> {
-  return await createCompanionRuntimeInternal(identity, root, integration, modelConfig, actionPolicy, presentation, gameplaySubagentEnabled, initialProfile, surfaceSessionId, worldBook, surface, internalMagicContextFeatureTestOverride, tavernNarrativeGateNonceSha256);
+  return await createCompanionRuntimeInternal(
+    identity,
+    root,
+    integration,
+    modelConfig,
+    actionPolicy,
+    presentation,
+    gameplaySubagentEnabled,
+    initialProfile,
+    surfaceSessionId,
+    worldBook,
+    surface,
+    internalMagicContextFeatureTestOverride,
+    tavernNarrativeGateNonceSha256,
+  );
 }
 
 /** Public construction never admits fixed Pi tools. */
@@ -75,5 +89,13 @@ export async function createGameCompanionRuntime(
   gameHostBindingFactory?: GameHostBindingFactory,
   attachment?: GameCompanionRuntimeAttachment,
 ): Promise<RuntimeSession> {
-  return await createGameCompanionRuntimeInternal(identity, root, integration, gameSessionId, gameOperationalGate, gameHostBindingFactory, attachment);
+  return await createGameCompanionRuntimeInternal(
+    identity,
+    root,
+    integration,
+    gameSessionId,
+    gameOperationalGate,
+    gameHostBindingFactory,
+    attachment,
+  );
 }

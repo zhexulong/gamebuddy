@@ -20,8 +20,21 @@ export type StardewGuardianBinding = Readonly<{
  * either role was contained. `contained` and `quarantined` stay the only two
  * states that record role containment.
  */
-type StardewBootstrapParentState = "reserved" | "closing" | "recovering" | "ai_settled_player_preserved" | "contained" | "quarantined";
-type StardewBootstrapGuardianState = "reserved" | "armed" | "closing" | "recovering" | "ai_settled_player_preserved" | "contained" | "quarantined";
+type StardewBootstrapParentState =
+  | "reserved"
+  | "closing"
+  | "recovering"
+  | "ai_settled_player_preserved"
+  | "contained"
+  | "quarantined";
+type StardewBootstrapGuardianState =
+  | "reserved"
+  | "armed"
+  | "closing"
+  | "recovering"
+  | "ai_settled_player_preserved"
+  | "contained"
+  | "quarantined";
 type StardewBootstrapRoleState = "reserved" | "armed" | "active" | "closing" | "contained" | "quarantined";
 
 type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
@@ -42,13 +55,15 @@ type StardewPrivateBootstrapOwnerRecordBase = Readonly<{
   managedPaths: readonly string[];
 }>;
 
-export type StardewExternalPlayerHostPhaseAOwnerOwnerRecord = StardewPrivateBootstrapOwnerRecordBase & Readonly<{
-  playerHost: Readonly<{ kind: "external_unattested" }>;
-}>;
+export type StardewExternalPlayerHostPhaseAOwnerOwnerRecord = StardewPrivateBootstrapOwnerRecordBase &
+  Readonly<{
+    playerHost: Readonly<{ kind: "external_unattested" }>;
+  }>;
 
-export type StardewOwnedPlayerHostBootstrapOwnerRecord = StardewPrivateBootstrapOwnerRecordBase & Readonly<{
-  playerHost: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
-}>;
+export type StardewOwnedPlayerHostBootstrapOwnerRecord = StardewPrivateBootstrapOwnerRecordBase &
+  Readonly<{
+    playerHost: Readonly<{ kind: "launch_reserved"; launchGeneration: string }>;
+  }>;
 
 export type StardewPrivateBootstrapOwnerRecord =
   | StardewExternalPlayerHostPhaseAOwnerOwnerRecord

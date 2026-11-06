@@ -5,11 +5,16 @@ import {
   isComposedGameProfile,
 } from "../game-browser-contract/index.js";
 import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
-import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceInstallationReader, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type {
-  StardewRoleLifecycleReader,
-  StardewRoleLifecycleView,
-} from "../stardew-role-lifecycle-facade.js";
+  StardewGameSurfaceActionAuthorityReader,
+  StardewGameSurfaceActionAuthorityView,
+  StardewGameSurfaceAttachmentReader,
+  StardewGameSurfaceAttachmentView,
+  StardewGameSurfaceInstallationReader,
+  StardewGameSurfaceLaunchReadinessReader,
+  StardewGameSurfaceLaunchReadinessView,
+} from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewRoleLifecycleReader, StardewRoleLifecycleView } from "../stardew-role-lifecycle-facade.js";
 
 const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -41,8 +46,7 @@ export function createGameBrowserStateProvider(
   installation?: StardewGameSurfaceInstallationReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
-  if (!profile.operationIds.includes("game.state.read"))
-    throw new TypeError("game_browser_state_read_not_mounted");
+  if (!profile.operationIds.includes("game.state.read")) throw new TypeError("game_browser_state_read_not_mounted");
 
   return Object.freeze({
     async readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1> {
@@ -56,7 +60,15 @@ export function createGameBrowserStateProvider(
       // registered, ready installation still projected `prerequisites: unknown`
       // until a launch happened to be staged.
       const installationView = installation === undefined ? undefined : await installation.readInstallationView();
-      return projectGameBrowserState(profile, context, lifecycleView, attachmentView, launchReadinessView, actionAuthorityView, installationView);
+      return projectGameBrowserState(
+        profile,
+        context,
+        lifecycleView,
+        attachmentView,
+        launchReadinessView,
+        actionAuthorityView,
+        installationView,
+      );
     },
   });
 }
@@ -73,12 +85,15 @@ function projectGameBrowserState(
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
   const launchFailed = launchReadiness.status === "failed";
-  const prerequisitesMet = playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
+  const prerequisitesMet =
+    playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
   const instanceStatus = launchFailed
-      ? "crashed" as const
-      : lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
-        ? "launching" as const
-        : lifecycle.playerHost.state === "authenticated" ? "running" as const : "none" as const;
+    ? ("crashed" as const)
+    : lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
+      ? ("launching" as const)
+      : lifecycle.playerHost.state === "authenticated"
+        ? ("running" as const)
+        : ("none" as const);
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
@@ -88,9 +103,14 @@ function projectGameBrowserState(
       prerequisites: prerequisitesMet
         ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
         : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
-      instance: instanceStatus === "none"
-        ? Object.freeze({ status: "none" as const, gameTitle: null, generation: launchReadiness.generation })
-        : Object.freeze({ status: instanceStatus, gameTitle: "Stardew Valley", generation: launchReadiness.generation }),
+      instance:
+        instanceStatus === "none"
+          ? Object.freeze({ status: "none" as const, gameTitle: null, generation: launchReadiness.generation })
+          : Object.freeze({
+              status: instanceStatus,
+              gameTitle: "Stardew Valley",
+              generation: launchReadiness.generation,
+            }),
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
       connectionStatus: attachment.connectionStatus,
@@ -110,13 +130,11 @@ function projectGameBrowserState(
   });
 }
 
-function projectCompatibility(
-  lifecycle: StardewRoleLifecycleView): Readonly<{
+function projectCompatibility(lifecycle: StardewRoleLifecycleView): Readonly<{
   status: "unchecked" | "compatible" | "incompatible" | "warning";
   message: string | null;
 }> {
-  if (lifecycle.playerHost.state !== "authenticated")
-    return { status: "unchecked", message: null };
+  if (lifecycle.playerHost.state !== "authenticated") return { status: "unchecked", message: null };
 
   return compatibilityProjection(lifecycle.playerHost.compatibility, lifecycle.playerHost.attachmentAllowed);
 }

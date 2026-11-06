@@ -737,7 +737,7 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
         assert.deepEqual(await execute("stardew_plan_work", { script: "builder.move_to_tile({ x: 5 });" }), {
           accepted: false,
           nodeCount: 0,
-          reasonCode: "plan_script_missing_argument:move_to_tile.y",
+          reasonCode: "plan_script_missing_argument:move_to_tile.y:integer[non_negative]:snapshot.tile.y",
           actionId: "move_to_tile",
           requiredArguments: [
             { name: "x", type: "integer" },
@@ -1617,6 +1617,143 @@ test("an expired wait reports whether the plan moved, through the real status to
     },
   );
 });
+
+/**
+ * `progress` exists because the result used to say only which nodes were in which state (`round18`): 65 status calls
+ * spent 281 s of a 24-minute run, the longest asking for the whole 30,000 ms bound, because nothing in the answer told
+ * the caller how much work was left or whether the node in front of it was moving. This reads the real tool rather than
+ * the helper, because the field is only worth anything if it reaches the model.
+ */
+test(
+  "a status call for a program with work remaining reports that work, through the real status tool",
+  { timeout: 15_000 },
+  async () => {
+    await withHelloAck(
+      "farmhand_client",
+      generation,
+      async (pipeName) => {
+        const client = await LocalStardewBridgeClient.connectFarmhand(
+          scope,
+          pipeName,
+          token,
+          generation,
+          Date.now() + 10_000,
+          testAdapter,
+        );
+        const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+          client,
+          Object.freeze({
+            playerId: "player_attestation",
+            companionId: scope.companionId,
+            continuityId,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+        );
+        const binding = await receiptBackedBinding(launch);
+        let materialized:
+          | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+          | undefined;
+        try {
+          materialized = await binding.executeWithBinding((bindingToken) =>
+            withConsumedBindingExecution(bindingToken, (execution) =>
+              createHostGameRuntimeMaterializer().materializeEnter(
+                reserveGameRuntimeMaterialization(execution),
+                enterPermit(execution),
+              ),
+            ),
+          );
+          const tools = () => observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools;
+          const execute = async (name: string, params: Record<string, unknown>) =>
+            (
+              await tools()
+                .find((tool) => tool.name === name)!
+                .execute("status_progress", params, new AbortController().signal, () => undefined)
+            ).details as {
+              code?: string;
+              progress?: {
+                total: number;
+                settled: number;
+                remaining: number;
+                running: number;
+                queued: number;
+                current: { nodeId: string; state: string; observedInStateMs: number } | null;
+              };
+            };
+          // The readers mount on a recorded submission, so one accepted program comes first.
+          await execute("stardew_submit_action_program", {
+            programId: "program_07",
+            nodes: [{ nodeId: "node_07", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+          });
+          // No `waitMs`: the point is that a plain read is already enough to decide whether waiting is worth it.
+          const status = await execute("stardew_action_program_status", { programId: "program_07" });
+          assert.equal(status.code, "found");
+          assert.equal(status.progress?.total, 4);
+          assert.equal(status.progress?.settled, 1);
+          assert.equal(status.progress?.remaining, 3, "three of four nodes are still to run");
+          assert.equal(status.progress?.running, 1, "one is dispatched with its receipt owed");
+          assert.equal(status.progress?.queued, 2, "two have not started");
+          assert.equal(status.progress?.current?.nodeId, "node_b");
+          assert.equal(status.progress?.current?.state, "running");
+          const observed = status.progress?.current?.observedInStateMs ?? -1;
+          assert.ok(observed >= 0 && observed < 5_000, `first observation of the node reported ${String(observed)} ms`);
+        } finally {
+          await materialized?.close();
+          await binding.close();
+        }
+      },
+      (request, socket) => {
+        if (request.type !== "program_submit" && request.type !== "program_status") return;
+        const programId = (request.payload as { programId: string }).programId;
+        socket.write(
+          frame(
+            request.type === "program_submit"
+              ? {
+                  ...request,
+                  messageId: "mod_program_submit_progress",
+                  type: "program_submit_result",
+                  payload: {
+                    code: "accepted",
+                    verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+                    snapshot: {
+                      programId,
+                      state: "active",
+                      catalogRevision: 1,
+                      stopEpoch: 0,
+                      eventHighWater: 0,
+                      nodes: [],
+                    },
+                  },
+                }
+              : {
+                  ...request,
+                  messageId: "mod_program_status_progress",
+                  type: "program_status_result",
+                  payload: {
+                    code: "found",
+                    snapshot: {
+                      programId,
+                      state: "active",
+                      catalogRevision: 1,
+                      stopEpoch: 0,
+                      eventHighWater: 1,
+                      nodes: [
+                        { nodeId: "node_a", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1 },
+                        { nodeId: "node_b", state: "running", nodeAttempt: 1, admissionAttempt: 1 },
+                        { nodeId: "node_c", state: "pending", nodeAttempt: 0, admissionAttempt: 0 },
+                        { nodeId: "node_d", state: "pending", nodeAttempt: 0, admissionAttempt: 0 },
+                      ],
+                    },
+                  },
+                },
+          ),
+        );
+        return true;
+      },
+    );
+  },
+);
 
 test("attested fixed closure drains the held request before revocation", async () => {
   const requests: BridgeMessage[] = [];

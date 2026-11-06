@@ -24,10 +24,10 @@ export function isExactReceiptRecoveryPort(value: unknown): value is ExactReceip
   return (
     typeof value === "object" &&
     value !== null &&
-      Object.isFrozen(value) &&
-      isExactStableStardewIdentity((value as Readonly<{ scope?: unknown }>).scope) &&
-      isExactStableStardewIdentity((value as Readonly<{ bindingIdentity?: unknown }>).bindingIdentity) &&
-      typeof (value as Readonly<{ queryExecutionReceipt?: unknown }>).queryExecutionReceipt === "function"
+    Object.isFrozen(value) &&
+    isExactStableStardewIdentity((value as Readonly<{ scope?: unknown }>).scope) &&
+    isExactStableStardewIdentity((value as Readonly<{ bindingIdentity?: unknown }>).bindingIdentity) &&
+    typeof (value as Readonly<{ queryExecutionReceipt?: unknown }>).queryExecutionReceipt === "function"
   );
 }
 
@@ -53,11 +53,7 @@ export class StardewExecutionRecoverySupervisor {
           requestId: dispatch.requestId,
           idempotencyKey: dispatch.idempotencyKey,
         });
-        if (
-          !isRecord(receipt) ||
-          receipt.requestId !== dispatch.requestId ||
-          receipt.actionId !== dispatch.actionId
-        ) {
+        if (!isRecord(receipt) || receipt.requestId !== dispatch.requestId || receipt.actionId !== dispatch.actionId) {
           const reasonCode =
             !isRecord(receipt) || receipt.requestId !== dispatch.requestId
               ? "receipt_request_mismatch"
@@ -71,11 +67,13 @@ export class StardewExecutionRecoverySupervisor {
       } catch (error) {
         const reasonCode = bridgeReasonCode(error);
         await this.coordinator.markRecoveryRequired(dispatch);
-        outcomes.push(Object.freeze({
-          requestId: dispatch.requestId,
-          result: "recovery_required",
-          reasonCode,
-        }));
+        outcomes.push(
+          Object.freeze({
+            requestId: dispatch.requestId,
+            result: "recovery_required",
+            reasonCode,
+          }),
+        );
       }
     }
     return Object.freeze(outcomes);
@@ -86,13 +84,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const STABLE_IDENTITY_KEYS = Object.freeze([
-  "product",
-  "continuityId",
-  "integrationId",
-  "saveId",
-  "worldId",
-] as const);
+const STABLE_IDENTITY_KEYS = Object.freeze(["product", "continuityId", "integrationId", "saveId", "worldId"] as const);
 
 function isExactStableStardewIdentity(value: unknown): value is StableGameRuntimeBindingIdentity {
   return isRecord(value) && Object.isFrozen(value) && sameStableStardewIdentity(value, value);
@@ -108,7 +100,8 @@ function sameStableStardewIdentity(left: unknown, right: unknown): boolean {
     rightKeys.length !== expectedKeys.length ||
     !leftKeys.every((key, index) => key === expectedKeys[index]) ||
     !rightKeys.every((key, index) => key === expectedKeys[index])
-  ) return false;
+  )
+    return false;
   return (
     left.product === "stardew" &&
     right.product === "stardew" &&

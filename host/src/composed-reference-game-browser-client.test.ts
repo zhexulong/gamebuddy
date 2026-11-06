@@ -39,8 +39,7 @@ async function start(
     server.listen(0, "127.0.0.1", () => resolve());
   });
   const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const closeServer = async () =>
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+  const closeServer = async () => await new Promise<void>((resolve) => server.close(() => resolve()));
   return {
     origin,
     async close() {
@@ -59,7 +58,7 @@ function testFetch(
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const resolved = url.startsWith("/") ? `${testOrigin}${url}` : url;
-    const headers: Record<string, string> = { ...init?.headers as Record<string, string>, origin: testOrigin };
+    const headers: Record<string, string> = { ...(init?.headers as Record<string, string>), origin: testOrigin };
     if (cookieJar !== undefined) headers.cookie = cookieJar;
     const requestInit = { ...init, headers };
     if (interceptor) {
@@ -166,8 +165,7 @@ test("composed client rejects malformed composed root with a protocol error", as
       });
       await assert.rejects(
         () => client.bootstrap(bootstrapToken),
-        (error: unknown) =>
-          error instanceof Error && error.message.includes("invalid_composed_root"),
+        (error: unknown) => error instanceof Error && error.message.includes("invalid_composed_root"),
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -191,10 +189,10 @@ test("composed client problem response throws a typed problem error", async () =
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = async () => {
-        return new Response(
-          JSON.stringify({ code: "unauthorized", status: 401, requestId: "req_01" }),
-          { status: 401, headers: { "content-type": "application/json" } },
-        );
+        return new Response(JSON.stringify({ code: "unauthorized", status: 401, requestId: "req_01" }), {
+          status: 401,
+          headers: { "content-type": "application/json" },
+        });
       };
       await assert.rejects(
         () => client.bootstrap("wrong_token"),
@@ -216,11 +214,41 @@ test("composed client enforces the exact frozen Stardew cabin DTOs", async () =>
   const originalFetch = globalThis.fetch;
   try {
     const invalidChoices = [
-      { apiVersion: 1, choices: [{ displayLabel: "", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 }] },
-      { apiVersion: 1, choices: [{ displayLabel: "x".repeat(129), availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 }] },
-      { apiVersion: 1, choices: [{ displayLabel: "Cabin", availability: "available", choiceHandle: "B".repeat(43), expiresAtMs: 1 }] },
-      { apiVersion: 1, choices: [{ displayLabel: "Cabin", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1, cabinId: "private" }] },
-      { apiVersion: 1, choices: Array.from({ length: 65 }, () => ({ displayLabel: "Cabin", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 })) },
+      {
+        apiVersion: 1,
+        choices: [{ displayLabel: "", availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 }],
+      },
+      {
+        apiVersion: 1,
+        choices: [
+          { displayLabel: "x".repeat(129), availability: "available", choiceHandle: "A".repeat(43), expiresAtMs: 1 },
+        ],
+      },
+      {
+        apiVersion: 1,
+        choices: [{ displayLabel: "Cabin", availability: "available", choiceHandle: "B".repeat(43), expiresAtMs: 1 }],
+      },
+      {
+        apiVersion: 1,
+        choices: [
+          {
+            displayLabel: "Cabin",
+            availability: "available",
+            choiceHandle: "A".repeat(43),
+            expiresAtMs: 1,
+            cabinId: "private",
+          },
+        ],
+      },
+      {
+        apiVersion: 1,
+        choices: Array.from({ length: 65 }, () => ({
+          displayLabel: "Cabin",
+          availability: "available",
+          choiceHandle: "A".repeat(43),
+          expiresAtMs: 1,
+        })),
+      },
     ];
     for (const body of invalidChoices) {
       globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200 });

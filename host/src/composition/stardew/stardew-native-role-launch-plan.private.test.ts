@@ -18,7 +18,9 @@ const makeEnvironment = (): Record<string, string> => ({
   GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "gen_player_host_1",
 });
 
-const makePlanInput = (overrides: Partial<StardewNativeRoleLaunchPlanInput> = {}): StardewNativeRoleLaunchPlanInput => ({
+const makePlanInput = (
+  overrides: Partial<StardewNativeRoleLaunchPlanInput> = {},
+): StardewNativeRoleLaunchPlanInput => ({
   guardianInstanceId: "11111111-1111-4111-8111-111111111111",
   guardianEpoch: 1,
   attemptId: "attempt-player-host",
@@ -41,18 +43,21 @@ test("minted planId is a canonical GUID D, unique and of the exact 36-char lengt
 
 test("model freezes an exact plan with exactly one fresh planId bound to the invocation", () => {
   const plan = modelStardewNativeRoleLaunchPlan(makePlanInput());
-  assert.deepEqual(Object.keys(plan).sort(), [
-    "arguments",
-    "attemptId",
-    "cwd",
-    "deadlineUnixMs",
-    "environment",
-    "executable",
-    "guardianEpoch",
-    "guardianInstanceId",
-    "planId",
-    "role",
-  ].sort());
+  assert.deepEqual(
+    Object.keys(plan).sort(),
+    [
+      "arguments",
+      "attemptId",
+      "cwd",
+      "deadlineUnixMs",
+      "environment",
+      "executable",
+      "guardianEpoch",
+      "guardianInstanceId",
+      "planId",
+      "role",
+    ].sort(),
+  );
   assert.deepEqual(Object.keys(plan.environment).sort(), [...STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS].sort());
   assert.equal(Object.keys(plan).filter((key) => key === "planId").length, 1);
   assert.match(plan.planId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
@@ -62,18 +67,21 @@ test("encode produces a JSON frame with exactly the native ParseLaunch keys", ()
   const plan = modelStardewNativeRoleLaunchPlan(makePlanInput());
   const bytes = encodeStardewNativeRoleLaunchPlan(plan);
   const decoded = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(decoded).sort(), [
-    "arguments",
-    "attemptId",
-    "cwd",
-    "deadlineUnixMs",
-    "environment",
-    "executable",
-    "guardianEpoch",
-    "guardianInstanceId",
-    "planId",
-    "role",
-  ].sort());
+  assert.deepEqual(
+    Object.keys(decoded).sort(),
+    [
+      "arguments",
+      "attemptId",
+      "cwd",
+      "deadlineUnixMs",
+      "environment",
+      "executable",
+      "guardianEpoch",
+      "guardianInstanceId",
+      "planId",
+      "role",
+    ].sort(),
+  );
   assert.equal(decoded.role, "player_host");
   assert.equal(decoded.planId, plan.planId);
   assert.equal(decoded.executable, "C:\\Stardew\\StardewModdingAPI.exe");
@@ -83,14 +91,35 @@ test("encode produces a JSON frame with exactly the native ParseLaunch keys", ()
 });
 
 test("model rejects the same non-canonical input native ParseLaunch rejects", () => {
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ executable: "relative.exe" })), /executable_invalid/);
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ executable: "relative.exe" })),
+    /executable_invalid/,
+  );
   assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ cwd: "/unix/path" })), /cwd_invalid/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ deadlineUnixMs: Date.now() - 1 })), /deadline_invalid/);
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ deadlineUnixMs: Date.now() - 1 })),
+    /deadline_invalid/,
+  );
   assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ role: "npc" as never })), /role_invalid/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ executable: "C:\\Stardew\\a\u0000b.exe" })), /executable_invalid/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ arguments: ["", "--mods"] })), /arguments_invalid/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ arguments: Array.from({ length: 129 }, (_, index) => `arg-${index}`) })), /arguments_invalid/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ arguments: ["ok", "bad\u0000arg"] })), /arguments_invalid/);
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ executable: "C:\\Stardew\\a\u0000b.exe" })),
+    /executable_invalid/,
+  );
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ arguments: ["", "--mods"] })),
+    /arguments_invalid/,
+  );
+  assert.throws(
+    () =>
+      modelStardewNativeRoleLaunchPlan(
+        makePlanInput({ arguments: Array.from({ length: 129 }, (_, index) => `arg-${index}`) }),
+      ),
+    /arguments_invalid/,
+  );
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ arguments: ["ok", "bad\u0000arg"] })),
+    /arguments_invalid/,
+  );
 });
 
 test("an empty arguments array is legal exactly as in ParseLaunch", () => {
@@ -100,13 +129,25 @@ test("an empty arguments array is legal exactly as in ParseLaunch", () => {
 
 test("rejects undeclared or missing environment keys fail-closed like ParseLaunch", () => {
   assert.throws(
-    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: { ...makeEnvironment(), COMSPEC: "C:\\Windows\\System32\\cmd.exe" } })),
+    () =>
+      modelStardewNativeRoleLaunchPlan(
+        makePlanInput({ environment: { ...makeEnvironment(), COMSPEC: "C:\\Windows\\System32\\cmd.exe" } }),
+      ),
     /environment_key_disallowed/,
   );
   const withoutGeneration = makeEnvironment();
   delete withoutGeneration.GAMEBUDDY_STARDEW_LAUNCH_GENERATION;
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: withoutGeneration })), /environment_required_missing/);
-  assert.throws(() => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: { ...makeEnvironment(), PATH: "bad\u0000value" } })), /environment_value_invalid/);
+  assert.throws(
+    () => modelStardewNativeRoleLaunchPlan(makePlanInput({ environment: withoutGeneration })),
+    /environment_required_missing/,
+  );
+  assert.throws(
+    () =>
+      modelStardewNativeRoleLaunchPlan(
+        makePlanInput({ environment: { ...makeEnvironment(), PATH: "bad\u0000value" } }),
+      ),
+    /environment_value_invalid/,
+  );
 });
 
 test("mints a fresh planId on every model call so replay cannot reuse a plan", () => {

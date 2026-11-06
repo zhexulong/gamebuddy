@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isLiveRunWindowMode, normalizeLiveRunWindowMode, shouldCaptureWindowEvidence, windowModeEnvironment, windowModeToStyle } from "./window-mode.js";
+import {
+  isLiveRunWindowMode,
+  normalizeLiveRunWindowMode,
+  shouldCaptureWindowEvidence,
+  windowModeEnvironment,
+  windowModeToStyle,
+} from "./window-mode.js";
 
 test("windowModeToStyle maps all five window modes to their native style", () => {
   assert.equal(windowModeToStyle("hidden"), "Hidden");

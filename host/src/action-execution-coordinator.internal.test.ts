@@ -310,6 +310,20 @@ test("coordinator admission observer fences synchronous ledger admission when ST
   await interruption;
 });
 
+test("an unknown write concludes the STOP barrier, so interrupt() returns instead of waiting for a cancel", async () => {
+  // The end of the hang the ledger settles: `interrupt()` awaits every registration of the epoch, and an unknown
+  // write has no execution id to cancel. Nothing may arrive to conclude it, so the barrier has to conclude itself.
+  const { coordinator } = coordinatorFixture([]);
+  const admission = coordinator.createAdmission();
+  await admission.observer.beforeWrite({ ...admission.owner, requestId: "request_01" });
+  await admission.observer.markUncertain({ ...admission.owner, requestId: "request_01" });
+
+  await Promise.race([
+    coordinator.interrupt("runtime_stopped"),
+    new Promise<undefined>((_, reject) => setTimeout(() => reject(new Error("interrupt_never_returned")), 1_000)),
+  ]);
+});
+
 test("coordinator admission observer binds a fresh response through the single audited path", async () => {
   const { coordinator } = coordinatorFixture([]);
   const admission = coordinator.createAdmission();

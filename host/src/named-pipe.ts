@@ -44,12 +44,13 @@ export class NamedPipeTransport {
       };
       const onConnect = (): void => finish();
       const onError = (error: Error): void => finish(error);
-      const timer = deadlineMs === undefined
-        ? undefined
-        : setTimeout(() => {
-          transport.close("bridge_connect_deadline_exceeded");
-          finish(new Error("bridge_connect_deadline_exceeded"));
-        }, deadlineMs - Date.now());
+      const timer =
+        deadlineMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              transport.close("bridge_connect_deadline_exceeded");
+              finish(new Error("bridge_connect_deadline_exceeded"));
+            }, deadlineMs - Date.now());
       socket.once("connect", onConnect);
       socket.once("error", onError);
     });

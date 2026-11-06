@@ -141,10 +141,30 @@ test.after(async () => {
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
 const gameDirectoryCandidate = "C:\\Games\\Stardew Valley";
 const installationChain: readonly WindowsPathObjectIdentity[] = Object.freeze([
-  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000001" }),
-  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000002" }),
-  Object.freeze({ objectKind: "directory", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000003" }),
-  Object.freeze({ objectKind: "regular_file", isReparsePoint: false, volumeIdentity: "0123456789abcdef", fileId: "00000000000000000000000000000004" }),
+  Object.freeze({
+    objectKind: "directory",
+    isReparsePoint: false,
+    volumeIdentity: "0123456789abcdef",
+    fileId: "00000000000000000000000000000001",
+  }),
+  Object.freeze({
+    objectKind: "directory",
+    isReparsePoint: false,
+    volumeIdentity: "0123456789abcdef",
+    fileId: "00000000000000000000000000000002",
+  }),
+  Object.freeze({
+    objectKind: "directory",
+    isReparsePoint: false,
+    volumeIdentity: "0123456789abcdef",
+    fileId: "00000000000000000000000000000003",
+  }),
+  Object.freeze({
+    objectKind: "regular_file",
+    isReparsePoint: false,
+    volumeIdentity: "0123456789abcdef",
+    fileId: "00000000000000000000000000000004",
+  }),
 ]);
 const packageEntries = [
   "GameBuddy.Stardew.Core.dll",
@@ -206,8 +226,12 @@ async function createAdmissionBroker() {
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
     bootstrapToken,
-    async readChat(context) { return stateForChat(context); },
-    async readGame(context) { return stateForGame(context); },
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
     gameDiscovery: {
       read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
       confirm: async () => ({ apiVersion: 1, status: "registered" }),
@@ -232,16 +256,17 @@ async function createAdmissionBroker() {
   });
   assert.equal(bootstrap.status, 200);
   const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-  const root = await bootstrap.json() as { chat: { csrfToken: string } };
+  const root = (await bootstrap.json()) as { chat: { csrfToken: string } };
   const request = (operation: IntegrationBrowserOperation): IncomingMessage => {
     const originUrl = new URL(origin);
-    const url = operation === "lifecycle_activation"
-      ? "/api/composed-reference-game/v1/lifecycle/activate"
-      : operation === "game_setup"
-        ? "/api/composed-reference-game/v1/game/prerequisites/setup"
-        : operation === "game_launch"
-          ? "/api/composed-reference-game/v1/game/launch"
-          : "/api/composed-reference-game/v1/game/create";
+    const url =
+      operation === "lifecycle_activation"
+        ? "/api/composed-reference-game/v1/lifecycle/activate"
+        : operation === "game_setup"
+          ? "/api/composed-reference-game/v1/game/prerequisites/setup"
+          : operation === "game_launch"
+            ? "/api/composed-reference-game/v1/game/launch"
+            : "/api/composed-reference-game/v1/game/create";
     return {
       method: "POST",
       url,
@@ -283,27 +308,38 @@ type IntegrationBroker = Awaited<ReturnType<typeof createAdmissionBroker>>;
 function withWindowsPlatform<T>(operation: () => Promise<T>): Promise<T> {
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
   Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
-  return operation().finally(() => { Object.defineProperty(process, "platform", descriptor); });
+  return operation().finally(() => {
+    Object.defineProperty(process, "platform", descriptor);
+  });
 }
 
 function installationInspector() {
   let index = 0;
   return createTestWindowsReparseInspector(() => {
     const child = Object.assign(new EventEmitter(), {
-      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: () => true,
     });
-    child.stdin.on("data", () => void (async () => {
-      const chain = installationChain;
-      index += 1;
-      child.stdout.end(`${JSON.stringify({
-        schemaVersion: 2,
-        operation: "inspect_path_chain_v2",
-        status: "ok",
-        components: chain,
-      })}\n`);
-      child.stderr.end();
-      queueMicrotask(() => child.emit("close", 0, null));
-    })());
+    child.stdin.on(
+      "data",
+      () =>
+        void (async () => {
+          const chain = installationChain;
+          index += 1;
+          child.stdout.end(
+            `${JSON.stringify({
+              schemaVersion: 2,
+              operation: "inspect_path_chain_v2",
+              status: "ok",
+              components: chain,
+            })}\n`,
+          );
+          child.stderr.end();
+          queueMicrotask(() => child.emit("close", 0, null));
+        })(),
+    );
     return child as unknown as ChildProcess;
   });
 }
@@ -384,7 +420,9 @@ function attachmentRequestPath(runtimeRoot: string, bootstrapId: string): string
 
 async function attachmentRequestId(runtimeRoot: string, bootstrapId: string): Promise<string | null> {
   try {
-    const request = JSON.parse(await readFile(attachmentRequestPath(runtimeRoot, bootstrapId), "utf8")) as { requestId?: unknown };
+    const request = JSON.parse(await readFile(attachmentRequestPath(runtimeRoot, bootstrapId), "utf8")) as {
+      requestId?: unknown;
+    };
     return typeof request.requestId === "string" ? request.requestId : null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -401,35 +439,45 @@ async function publishAttachmentAdmission(
   const directory = join(runtimeRoot, "stardew-private-bootstrap", bootstrapId, "session");
   const requestId = request.requestId as string;
   const now = Date.now();
-  await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(signAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    state: "ready",
-    reasonCode: "manifest_issued",
-    updatedAtUnixMs: now,
-    manifestPath: "stardew-farmhand-manifest.json",
-    signature: "",
-  })));
-  await writeFile(join(directory, "stardew-farmhand-manifest.json"), JSON.stringify(signAttachmentValue({
-    schemaVersion: 1,
-    requestId,
-    integrationId: "stardew",
-    integrationVersion: "0.1.0",
-    gameVersion: "1.6.15",
-    gameBuildNumber: 24356,
-    smapiVersion: "4.5.2",
-    multiplayerProtocol: "1.6.15",
-    endpoint: "127.0.0.1:24642",
-    saveId: "save-integration",
-    worldId: "world-integration",
-    companionId: "companion-1",
-    farmhandId: cabin.ownerFarmhandId,
-    cabinId: cabin.cabinId,
-    sessionNonce: "nonce-integration",
-    issuedAtUnixMs: now,
-    expiresAtUnixMs: now + 30_000,
-    signature: "",
-  })));
+  await writeFile(
+    join(directory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signAttachmentValue({
+        schemaVersion: 1,
+        requestId,
+        state: "ready",
+        reasonCode: "manifest_issued",
+        updatedAtUnixMs: now,
+        manifestPath: "stardew-farmhand-manifest.json",
+        signature: "",
+      }),
+    ),
+  );
+  await writeFile(
+    join(directory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      signAttachmentValue({
+        schemaVersion: 1,
+        requestId,
+        integrationId: "stardew",
+        integrationVersion: "0.1.0",
+        gameVersion: "1.6.15",
+        gameBuildNumber: 24356,
+        smapiVersion: "4.5.2",
+        multiplayerProtocol: "1.6.15",
+        endpoint: "127.0.0.1:24642",
+        saveId: "save-integration",
+        worldId: "world-integration",
+        companionId: "companion-1",
+        farmhandId: cabin.ownerFarmhandId,
+        cabinId: cabin.cabinId,
+        sessionNonce: "nonce-integration",
+        issuedAtUnixMs: now,
+        expiresAtUnixMs: now + 30_000,
+        signature: "",
+      }),
+    ),
+  );
 }
 
 /**
@@ -513,37 +561,45 @@ async function prepareIntegrationRoot(): Promise<string> {
  * closure can be applied - which is exactly the `pending rev1 + registered rev1`
  * and non-terminal attempt record a crashed create leaves behind.
  */
-function recordingCreationAuthority(
-  store: BoundRealStore,
-  crashPolicy: { unappliableSettleClosure: boolean },
-) {
+function recordingCreationAuthority(store: BoundRealStore, crashPolicy: { unappliableSettleClosure: boolean }) {
   type RecordedCall = { member: string; input: unknown; result?: unknown; error?: string };
   const calls: RecordedCall[] = [];
   const record = <T>(member: string, input: unknown, work: () => Promise<T> | T): Promise<T> => {
     const entry: RecordedCall = { member, input };
     calls.push(entry);
-    return Promise.resolve().then(work).then(
-      (value) => { entry.result = value; return value; },
-      (error: unknown) => {
-        entry.error = error instanceof Error ? error.message : String(error);
-        throw error;
-      },
-    );
+    return Promise.resolve()
+      .then(work)
+      .then(
+        (value) => {
+          entry.result = value;
+          return value;
+        },
+        (error: unknown) => {
+          entry.error = error instanceof Error ? error.message : String(error);
+          throw error;
+        },
+      );
   };
   const authority: StardewGameSessionCreationAuthority = Object.freeze({
-    createGameSessionMetadata: (input) => record("createGameSessionMetadata", input, () => store.createGameSessionMetadata(input)),
-    registerGameSessionWorldBinding: (input) => record("registerGameSessionWorldBinding", input, () => store.registerGameSessionWorldBinding(input)),
-    completeGameSessionBinding: (input) => record("completeGameSessionBinding", input, () => {
-      if (crashPolicy.unappliableSettleClosure) throw new Error("controlled_create_completion_unavailable");
-      return store.completeGameSessionBinding(input);
-    }),
-    failGameSessionCreation: (input) => record("failGameSessionCreation", input, () => store.failGameSessionCreation(input)),
-    markGameSessionWorldBindingTerminal: (input) => record("markGameSessionWorldBindingTerminal", input, () => {
-      if (crashPolicy.unappliableSettleClosure) throw new Error("controlled_create_settle_closure_unavailable");
-      return store.markGameSessionWorldBindingTerminal(input);
-    }),
+    createGameSessionMetadata: (input) =>
+      record("createGameSessionMetadata", input, () => store.createGameSessionMetadata(input)),
+    registerGameSessionWorldBinding: (input) =>
+      record("registerGameSessionWorldBinding", input, () => store.registerGameSessionWorldBinding(input)),
+    completeGameSessionBinding: (input) =>
+      record("completeGameSessionBinding", input, () => {
+        if (crashPolicy.unappliableSettleClosure) throw new Error("controlled_create_completion_unavailable");
+        return store.completeGameSessionBinding(input);
+      }),
+    failGameSessionCreation: (input) =>
+      record("failGameSessionCreation", input, () => store.failGameSessionCreation(input)),
+    markGameSessionWorldBindingTerminal: (input) =>
+      record("markGameSessionWorldBindingTerminal", input, () => {
+        if (crashPolicy.unappliableSettleClosure) throw new Error("controlled_create_settle_closure_unavailable");
+        return store.markGameSessionWorldBindingTerminal(input);
+      }),
     readGameSessionWorldBindingSlotHolder: async (input) => await store.readGameSessionWorldBindingSlotHolder(input),
-    releaseGameSessionWorldBindingSlot: (input) => record("releaseGameSessionWorldBindingSlot", input, () => store.releaseGameSessionWorldBindingSlot(input)),
+    releaseGameSessionWorldBindingSlot: (input) =>
+      record("releaseGameSessionWorldBindingSlot", input, () => store.releaseGameSessionWorldBindingSlot(input)),
   });
   return Object.freeze({
     authority,
@@ -589,12 +645,14 @@ function connectedSemanticGameLeaseFixture(onIngressActivated?: () => void) {
  * broker's player-role early return, `ai_settled_player_preserved`). It is NOT a
  * named-mutex probe and establishes no mutex ownership: see this file's header.
  */
-function createScriptedGuardianSession(input: Readonly<{
-  bootstrapId: string;
-  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
-  steps: { hook?: () => Promise<void> };
-  operations: string[];
-}>): DesktopGuardianSession {
+function createScriptedGuardianSession(
+  input: Readonly<{
+    bootstrapId: string;
+    recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
+    steps: { hook?: () => Promise<void> };
+    operations: string[];
+  }>,
+): DesktopGuardianSession {
   return Object.freeze({
     async arm() {
       input.operations.push("arm");
@@ -618,7 +676,11 @@ function createScriptedGuardianSession(input: Readonly<{
         // `recovering` CAS ran, but the native never adopts the player's world, so
         // NO role is recorded contained and the conversation stops at the player
         // position. The AI side is settled and cleaned up by the broker itself.
-        return Object.freeze({ outcome: "role_classified" as const, role: "playerHost" as const, classification: "unavailable" as const });
+        return Object.freeze({
+          outcome: "role_classified" as const,
+          role: "playerHost" as const,
+          classification: "unavailable" as const,
+        });
       }
       await recovery.roleContained("playerHost");
       await recovery.roleContained("aiClient");
@@ -656,14 +718,16 @@ type IntegrationFixture = Readonly<{
  * production), and both role launches plus the recovery drive go through the
  * REAL composition collaborator over the scripted Desktop stand-in.
  */
-async function createIntegrationFixture(input: Readonly<{
-  runtimeRoot: string;
-  bootstrapId: string;
-  slotRef: string;
-  store: BoundRealStore;
-  crashPolicy: { unappliableSettleClosure: boolean };
-  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
-}>): Promise<IntegrationFixture> {
+async function createIntegrationFixture(
+  input: Readonly<{
+    runtimeRoot: string;
+    bootstrapId: string;
+    slotRef: string;
+    store: BoundRealStore;
+    crashPolicy: { unappliableSettleClosure: boolean };
+    recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
+  }>,
+): Promise<IntegrationFixture> {
   const { runtimeRoot, bootstrapId } = input;
   const stagingRoot = join(runtimeRoot, "package");
   const packageReadEntries = packageEntries;
@@ -719,12 +783,13 @@ async function createIntegrationFixture(input: Readonly<{
     createWorldBinding: async () => Object.freeze({ bindingRef: input.slotRef }),
     runtimeLaunchContained: collaborator,
     createInstallationInspector: async () => installationInspector(),
-    connectFarmhandGameRuntimeFacade: async () => Object.freeze({
-      authority: "SEMANTIC" as const,
-      runEnter: async () => connectedSemanticGameLeaseFixture(),
-      recoverDeadOwner: async () => undefined,
-      close: async () => undefined,
-    }),
+    connectFarmhandGameRuntimeFacade: async () =>
+      Object.freeze({
+        authority: "SEMANTIC" as const,
+        runEnter: async () => connectedSemanticGameLeaseFixture(),
+        recoverDeadOwner: async () => undefined,
+        close: async () => undefined,
+      }),
   });
   const broker = await createAdmissionBroker();
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
@@ -742,7 +807,9 @@ async function createIntegrationFixture(input: Readonly<{
     authorityResultsOf: creation.resultsOf,
     recoveryTeardown: containedRuntimeTeardownFromCollaborator(collaborator),
     sessionOperations: () => Object.freeze([...sessionOperations]),
-    setRecoveryHook: (hook: () => Promise<void>) => { steps.hook = hook; },
+    setRecoveryHook: (hook: () => Promise<void>) => {
+      steps.hook = hook;
+    },
     close: async () => {
       await coordinator.close();
       await broker.close();
@@ -757,14 +824,15 @@ async function prepareLaunchedPlayerHost(fixture: IntegrationFixture): Promise<v
   await withWindowsPlatform(async () => {
     await fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation"));
     await publishSignedPlayerHostSession(fixture.runtimeRoot, fixture.bootstrapId, Date.now() + 5 * 60_000);
-    await fixture.coordinator.activationOwner.setupPlayerHost(
-      fixture.broker.issue("game_setup"),
-      { apiVersion: 1, idempotencyKey: "integration-setup-key-1" },
-    );
-    await fixture.coordinator.activationOwner.launchPlayerHost(
-      fixture.broker.issue("game_launch"),
-      { apiVersion: 1, idempotencyKey: "integration-launch-key-1", expectedInstanceGeneration: 1 },
-    );
+    await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), {
+      apiVersion: 1,
+      idempotencyKey: "integration-setup-key-1",
+    });
+    await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+      apiVersion: 1,
+      idempotencyKey: "integration-launch-key-1",
+      expectedInstanceGeneration: 1,
+    });
   });
 }
 
@@ -777,20 +845,26 @@ type CreateCommandOutcome =
  * re-admission waits for. The result is never swallowed: both terminal shapes
  * (`unavailable` and the bounded refusal) come back to the caller.
  */
-async function driveAdmittedCreate(
-  fixture: IntegrationFixture,
-  idempotencyKey: string,
-): Promise<CreateCommandOutcome> {
+async function driveAdmittedCreate(fixture: IntegrationFixture, idempotencyKey: string): Promise<CreateCommandOutcome> {
   const previousRequestId = await attachmentRequestId(fixture.runtimeRoot, fixture.bootstrapId);
   let refusal: string | null = null;
-  const creating = fixture.coordinator.activationOwner.createGameSession(
-    fixture.broker.issue("game_create"),
-    { apiVersion: 1, idempotencyKey, integrationId: "stardew", continuityIdentityId: null },
-  ).catch((error: unknown) => {
-    refusal = error instanceof Error ? error.message : String(error);
-    return undefined;
-  });
-  await publishNextAttachmentAdmission(fixture.runtimeRoot, fixture.bootstrapId, previousRequestId, availableCabins[0]!);
+  const creating = fixture.coordinator.activationOwner
+    .createGameSession(fixture.broker.issue("game_create"), {
+      apiVersion: 1,
+      idempotencyKey,
+      integrationId: "stardew",
+      continuityIdentityId: null,
+    })
+    .catch((error: unknown) => {
+      refusal = error instanceof Error ? error.message : String(error);
+      return undefined;
+    });
+  await publishNextAttachmentAdmission(
+    fixture.runtimeRoot,
+    fixture.bootstrapId,
+    previousRequestId,
+    availableCabins[0]!,
+  );
   const result = await creating;
   return refusal === null
     ? Object.freeze({ kind: "result" as const, result })
@@ -906,15 +980,19 @@ const successorAttemptId = "bootstrap-integration-attempt-b";
 const laterAttemptId = "bootstrap-integration-attempt-c";
 
 /** One shared root + one shared real store + one fixture, in that order. */
-async function integrationHarness(input: Readonly<{
-  bootstrapId: string;
-  recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
-}>): Promise<Readonly<{
-  runtimeRoot: string;
-  store: BoundRealStore;
-  fixture: IntegrationFixture;
-  control: ReturnType<typeof openProductionContinuityStore>;
-}>> {
+async function integrationHarness(
+  input: Readonly<{
+    bootstrapId: string;
+    recoveryAnswer: "contained" | "ai_settled_player_preserved" | "gate_held";
+  }>,
+): Promise<
+  Readonly<{
+    runtimeRoot: string;
+    store: BoundRealStore;
+    fixture: IntegrationFixture;
+    control: ReturnType<typeof openProductionContinuityStore>;
+  }>
+> {
   const runtimeRoot = await prepareIntegrationRoot();
   const { control, store } = openRealCreationAuthority(runtimeRoot);
   const fixture = await createIntegrationFixture({
@@ -1001,13 +1079,14 @@ test("a real crashed create leaves a registered world-slot holder, a real attemp
       continuityIdentityId: null,
     });
     await assert.rejects(
-      async () => await store.registerGameSessionWorldBinding({
-        gameSessionId: probe.gameSessionId,
-        integrationId: "stardew",
-        bindingRef: runtimeSlotRef,
-        operationId: "integration-slot-probe-operation-1",
-        holderHandle: "integration-slot-probe-holder-1",
-      }),
+      async () =>
+        await store.registerGameSessionWorldBinding({
+          gameSessionId: probe.gameSessionId,
+          integrationId: "stardew",
+          bindingRef: runtimeSlotRef,
+          operationId: "integration-slot-probe-operation-1",
+          holderHandle: "integration-slot-probe-holder-1",
+        }),
       { message: "game_session_world_binding_duplicate" },
     );
     assert.equal(
@@ -1066,17 +1145,20 @@ test("the create-side trigger refuses a held native gate as its own bounded outc
     // The slot is still occupied, so the same create that would have written a
     // binding row never got there.
     await assert.rejects(
-      async () => await store.registerGameSessionWorldBinding({
-        gameSessionId: (await store.createGameSessionMetadata({
-          creationRequestId: "integration-held-gate-probe-1",
+      async () =>
+        await store.registerGameSessionWorldBinding({
+          gameSessionId: (
+            await store.createGameSessionMetadata({
+              creationRequestId: "integration-held-gate-probe-1",
+              integrationId: "stardew",
+              continuityIdentityId: null,
+            })
+          ).gameSessionId,
           integrationId: "stardew",
-          continuityIdentityId: null,
-        })).gameSessionId,
-        integrationId: "stardew",
-        bindingRef: runtimeSlotRef,
-        operationId: "integration-held-gate-probe-operation-1",
-        holderHandle: "integration-held-gate-probe-holder-1",
-      }),
+          bindingRef: runtimeSlotRef,
+          operationId: "integration-held-gate-probe-operation-1",
+          holderHandle: "integration-held-gate-probe-holder-1",
+        }),
       { message: "game_session_world_binding_duplicate" },
     );
     // This create's own durable steps: the intent it persisted, then its failure
@@ -1104,15 +1186,16 @@ test("the create-side trigger refuses a held native gate as its own bounded outc
     // no named-mutex probe ran for it, because the native lease check has no
     // production producer yet.
     await assert.rejects(
-      async () => await store.releaseGameSessionWorldBindingSlot({
-        integrationId: "stardew",
-        bindingRef: runtimeSlotRef,
-        holderHandle: leftover!.holder.holderHandle,
-        proof: slotReleaseProof(
-          leftover!.holder.holderHandle,
-          productionGameSessionWorldBindingSlotLeaseVerdict.leaseNotProvenFree,
-        ),
-      }),
+      async () =>
+        await store.releaseGameSessionWorldBindingSlot({
+          integrationId: "stardew",
+          bindingRef: runtimeSlotRef,
+          holderHandle: leftover!.holder.holderHandle,
+          proof: slotReleaseProof(
+            leftover!.holder.holderHandle,
+            productionGameSessionWorldBindingSlotLeaseVerdict.leaseNotProvenFree,
+          ),
+        }),
       { message: productionGameSessionWorldBindingSlotRelease.holderNotProvenGone },
     );
     assert.deepEqual(await readSlotLeftover(fixture), leftover);
@@ -1160,7 +1243,10 @@ test("a create over an already-settled leftover refuses without presenting any r
         integrationId: "stardew",
         bindingRef: runtimeSlotRef,
         holderHandle: leftover!.holder.holderHandle,
-        proof: slotReleaseProof(leftover!.holder.holderHandle, productionGameSessionWorldBindingSlotLeaseVerdict.holderGone),
+        proof: slotReleaseProof(
+          leftover!.holder.holderHandle,
+          productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
+        ),
       });
     });
     const membersBefore = fixture.authorityMembers().length;
@@ -1203,12 +1289,16 @@ test("a create over an already-settled leftover refuses without presenting any r
     // terminal: a refusal, never a silent no-op, and no half-write. No production
     // create path presents one any more, so the test presents it itself.
     await assert.rejects(
-      async () => await store.releaseGameSessionWorldBindingSlot({
-        integrationId: "stardew",
-        bindingRef: runtimeSlotRef,
-        holderHandle: leftover!.holder.holderHandle,
-        proof: slotReleaseProof(leftover!.holder.holderHandle, productionGameSessionWorldBindingSlotLeaseVerdict.holderGone),
-      }),
+      async () =>
+        await store.releaseGameSessionWorldBindingSlot({
+          integrationId: "stardew",
+          bindingRef: runtimeSlotRef,
+          holderHandle: leftover!.holder.holderHandle,
+          proof: slotReleaseProof(
+            leftover!.holder.holderHandle,
+            productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
+          ),
+        }),
       { message: productionGameSessionWorldBindingSlotRelease.holderTerminal },
     );
     // The attempt record reached the terminal `contained` successor (which the
@@ -1283,7 +1373,10 @@ test("a create over an already-settled leftover refuses without presenting any r
  * performs.
  */
 test("an AI-side recovery terminal is closed out so the next lifecycle's reservation stops being blocked, while the world slot stays the player's", async () => {
-  const harness = await integrationHarness({ bootstrapId: crashedAttemptId, recoveryAnswer: "ai_settled_player_preserved" });
+  const harness = await integrationHarness({
+    bootstrapId: crashedAttemptId,
+    recoveryAnswer: "ai_settled_player_preserved",
+  });
   const { runtimeRoot, store, fixture, control } = harness;
   let successorFixture: IntegrationFixture | undefined;
   try {
@@ -1331,10 +1424,13 @@ test("an AI-side recovery terminal is closed out so the next lifecycle's reserva
     await assert.rejects(
       openRecoverableStardewBootstrapOwner({
         transactionRoot: runtimeRoot,
-        bootstrapFacts: { bootstrapId: crashedAttemptId, playerId: principal.playerId, companionId: principal.companionId },
+        bootstrapFacts: {
+          bootstrapId: crashedAttemptId,
+          playerId: principal.playerId,
+          companionId: principal.companionId,
+        },
       }),
-      (error: unknown) =>
-        error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT",
+      (error: unknown) => error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT",
       "a closed-out attempt has no durable record left to open",
     );
 
@@ -1492,7 +1588,10 @@ test("a real leftover is recovered, finalized and released, and the next lifecyc
         integrationId: "stardew",
         bindingRef: runtimeSlotRef,
         holderHandle: leftover!.holder.holderHandle,
-        proof: slotReleaseProof(leftover!.holder.holderHandle, productionGameSessionWorldBindingSlotLeaseVerdict.holderGone),
+        proof: slotReleaseProof(
+          leftover!.holder.holderHandle,
+          productionGameSessionWorldBindingSlotLeaseVerdict.holderGone,
+        ),
       }),
       {
         gameSessionId: leftover!.holder.gameSessionId,

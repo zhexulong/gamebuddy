@@ -65,6 +65,12 @@ type Correlation = ExecutionDispatch & {
   cancelSettled: Promise<void> | null;
   resolveCancelSettled: (() => void) | null;
   rejectCancelSettled: ((error: unknown) => void) | null;
+  /**
+   * This registration can never produce the cancellation a STOP barrier waits for, because its write went unknown
+   * before any execution id was bound. Every barrier for it - the one already pending and any created later - is
+   * concluded on sight; see `#concludeCancellationBarrier` for why that is not a claim the write did not happen.
+   */
+  cancelUnproducible: boolean;
 };
 
 /**
@@ -201,6 +207,9 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     if (material !== undefined && material.request.action !== receipt.actionId)
       throw new Error("execution_correlation_action_mismatch");
     correlation.executionId = receipt.executionId;
+    // A receipt is the one fact that disproves "no cancellation can ever be produced": the execution id exists now,
+    // so a barrier created from here on must wait for the exact cancel it can really send.
+    correlation.cancelUnproducible = false;
     correlation.uncertain = false;
     if (isTerminalExecutionState(receipt.state)) {
       const settle =
@@ -245,6 +254,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     const correlation = this.#require(dispatch);
     if (correlation.executionId !== null) return;
     correlation.uncertain = true;
+    this.#markCancellationUnproducible(correlation);
     const material = correlation.recoveryMaterial;
     if (this.#recoveryJournal === undefined || material === undefined) return;
     return this.#recoveryJournal
@@ -257,6 +267,27 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
           throw error;
         },
       );
+  }
+
+  /**
+   * Records that this registration's exact cancellation can never be produced, and concludes whatever barrier is
+   * already waiting for it.
+   *
+   * A barrier is created by a STOP and concluded by one of exactly three facts: a terminal receipt, an authoritative
+   * rejection, or the exact cancellation it sent settling. A registration whose write went unknown BEFORE any
+   * execution id was bound has none of them - `#sendPendingCancel` answers null without an id, and an unknown write is
+   * by definition a reply that never arrives - so its barrier stayed pending for ever. `interrupt()` awaits every
+   * registration of the epoch, so what hung was the whole runtime stop, not the action. Measured on this ledger:
+   * `stop_barrier_never_settled` on both the STOP-before and the STOP-after ordering.
+   *
+   * This is a statement about the BARRIER, never about the write: the correlation stays registered, stays `uncertain`,
+   * and stays in `uncertainDispatches()` for receipt-backed recovery. A receipt that arrives LATER binds the execution
+   * id and sends its own cancel, which is a fresh obligation the concluded barrier does not represent - exactly as a
+   * resolved promise cannot be awaited twice.
+   */
+  #markCancellationUnproducible(correlation: Correlation): void {
+    correlation.cancelUnproducible = true;
+    correlation.resolveCancelSettled?.();
   }
 
   /**
@@ -375,6 +406,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
         cancelSettled: null,
         resolveCancelSettled: null,
         rejectCancelSettled: null,
+        cancelUnproducible: false,
       });
     }
   }
@@ -402,6 +434,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
     return this.#recoveryJournal.markRecoveryRequired(material.logicalActionId).then(
       () => {
         correlation.uncertain = false;
+        this.#markCancellationUnproducible(correlation);
       },
       (error) => {
         correlation.uncertain = true;
@@ -445,6 +478,7 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       cancelSettled: null,
       resolveCancelSettled: null,
       rejectCancelSettled: null,
+      cancelUnproducible: false,
     });
   }
 
@@ -469,6 +503,9 @@ export class ExecutionCorrelationLedger implements ExecutionDispatchObserver {
       correlation.resolveCancelSettled = resolve;
       correlation.rejectCancelSettled = reject;
     });
+    // A barrier created AFTER the write went unknown waits for the same producer that will never come, so it is
+    // concluded on creation rather than left for a `interrupt()` that would never return.
+    if (correlation.cancelUnproducible) correlation.resolveCancelSettled?.();
     return correlation.cancelSettled;
   }
 

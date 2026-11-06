@@ -102,30 +102,53 @@ function isNativePositiveInt32(value: unknown): value is number {
  * would be rejected by the native Guardian, so the plan fails closed here.
  */
 function modelNativeRoleLaunchPlan(input: NativeRoleLaunchPlanInput): NativeRoleLaunchPlan {
-  if (typeof input.guardianInstanceId !== "string" || input.guardianInstanceId.length === 0 || input.guardianInstanceId.length > 1024) throw new Error("stardew_native_launch_plan_guardian_instance_invalid");
+  if (
+    typeof input.guardianInstanceId !== "string" ||
+    input.guardianInstanceId.length === 0 ||
+    input.guardianInstanceId.length > 1024
+  )
+    throw new Error("stardew_native_launch_plan_guardian_instance_invalid");
   if (!isNativePositiveInt32(input.guardianEpoch)) throw new Error("stardew_native_launch_plan_guardian_epoch_invalid");
-  if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024) throw new Error("stardew_native_launch_plan_attempt_invalid");
-  if (!Number.isSafeInteger(input.deadlineUnixMs) || input.deadlineUnixMs <= Date.now() || input.deadlineUnixMs - Date.now() > 2_147_483_647) throw new Error("stardew_native_launch_plan_deadline_invalid");
-  if (input.role !== "player_host" && input.role !== "ai_client") throw new Error("stardew_native_launch_plan_role_invalid");
+  if (typeof input.attemptId !== "string" || input.attemptId.length === 0 || input.attemptId.length > 1024)
+    throw new Error("stardew_native_launch_plan_attempt_invalid");
+  if (
+    !Number.isSafeInteger(input.deadlineUnixMs) ||
+    input.deadlineUnixMs <= Date.now() ||
+    input.deadlineUnixMs - Date.now() > 2_147_483_647
+  )
+    throw new Error("stardew_native_launch_plan_deadline_invalid");
+  if (input.role !== "player_host" && input.role !== "ai_client")
+    throw new Error("stardew_native_launch_plan_role_invalid");
   if (!isFullyQualifiedWindowsPath(input.executable)) throw new Error("stardew_native_launch_plan_executable_invalid");
   if (!isFullyQualifiedWindowsPath(input.cwd)) throw new Error("stardew_native_launch_plan_cwd_invalid");
   const args = Array.isArray(input.arguments) ? input.arguments : [...input.arguments];
-  if (args.length > 128 || args.some((argument) => typeof argument !== "string" || argument.length === 0 || argument.length > 4096 || argument.includes("\0"))) throw new Error("stardew_native_launch_plan_arguments_invalid");
-  if (typeof input.environment !== "object" || input.environment === null || Array.isArray(input.environment)) throw new Error("stardew_native_launch_plan_environment_invalid");
+  if (
+    args.length > 128 ||
+    args.some(
+      (argument) =>
+        typeof argument !== "string" || argument.length === 0 || argument.length > 4096 || argument.includes("\0"),
+    )
+  )
+    throw new Error("stardew_native_launch_plan_arguments_invalid");
+  if (typeof input.environment !== "object" || input.environment === null || Array.isArray(input.environment))
+    throw new Error("stardew_native_launch_plan_environment_invalid");
   const environment: Record<string, string> = {};
   const seen = new Set<string>();
   for (const [name, value] of Object.entries(input.environment)) {
-    if (!STARDEW_NATIVE_ENVIRONMENT_ALLOWLIST.has(name)) throw new Error("stardew_native_launch_plan_environment_key_disallowed");
+    if (!STARDEW_NATIVE_ENVIRONMENT_ALLOWLIST.has(name))
+      throw new Error("stardew_native_launch_plan_environment_key_disallowed");
     if (seen.has(name.toLowerCase())) throw new Error("stardew_native_launch_plan_environment_duplicate");
     seen.add(name.toLowerCase());
-    if (typeof value !== "string" || value.includes("\0")) throw new Error("stardew_native_launch_plan_environment_value_invalid");
+    if (typeof value !== "string" || value.includes("\0"))
+      throw new Error("stardew_native_launch_plan_environment_value_invalid");
     environment[name] = value;
   }
   for (const key of STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS) {
     if (!Object.hasOwn(environment, key)) throw new Error("stardew_native_launch_plan_environment_required_missing");
   }
   const planId = randomUUID();
-  if (!(typeof planId === "string" && planId.length === 36 && PLAN_ID_PATTERN.test(planId))) throw new Error("stardew_native_launch_plan_id_invalid");
+  if (!(typeof planId === "string" && planId.length === 36 && PLAN_ID_PATTERN.test(planId)))
+    throw new Error("stardew_native_launch_plan_id_invalid");
   return Object.freeze({
     guardianInstanceId: input.guardianInstanceId,
     guardianEpoch: input.guardianEpoch,
@@ -178,25 +201,29 @@ function requireRecoveryFact(facts: TypedPrivateGameFacts, key: string): TypedPr
 
 function requireRecoveryOpaqueGuid(facts: TypedPrivateGameFacts, key: string): string {
   const value = requireRecoveryFact(facts, key);
-  if (typeof value !== "string" || !RECOVERY_OPAQUE_GUID.test(value)) throw new Error(`contained game runtime: recovery fact ${key} is not an opaque guid`);
+  if (typeof value !== "string" || !RECOVERY_OPAQUE_GUID.test(value))
+    throw new Error(`contained game runtime: recovery fact ${key} is not an opaque guid`);
   return value;
 }
 
 function requireRecoveryPositiveInteger(facts: TypedPrivateGameFacts, key: string): number {
   const value = requireRecoveryFact(facts, key);
-  if (!isNativePositiveInt32(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a positive integer`);
+  if (!isNativePositiveInt32(value))
+    throw new Error(`contained game runtime: recovery fact ${key} is not a positive integer`);
   return value;
 }
 
 function requireRecoveryGuardianName(facts: TypedPrivateGameFacts, key: string): string {
   const value = requireRecoveryFact(facts, key);
-  if (typeof value !== "string" || !RECOVERY_GUARDIAN_NAME.test(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a guardian name`);
+  if (typeof value !== "string" || !RECOVERY_GUARDIAN_NAME.test(value))
+    throw new Error(`contained game runtime: recovery fact ${key} is not a guardian name`);
   return value;
 }
 
 function requireRecoveryRoleState(facts: TypedPrivateGameFacts, key: string): string {
   const value = requireRecoveryFact(facts, key);
-  if (typeof value !== "string" || !RECOVERY_ROLE_STATES.has(value)) throw new Error(`contained game runtime: recovery fact ${key} is not a role state`);
+  if (typeof value !== "string" || !RECOVERY_ROLE_STATES.has(value))
+    throw new Error(`contained game runtime: recovery fact ${key} is not a role state`);
   return value;
 }
 
@@ -226,13 +253,16 @@ function encodeRecoveryPreCasFrame(
   correlation: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string }>,
   gateFacts: TypedPrivateGameFacts,
 ): Uint8Array {
-  return encodeRecoveryBody({
-    guardianInstanceId: correlation.guardianInstanceId,
-    guardianEpoch: correlation.guardianEpoch,
-    attemptId: correlation.attemptId,
-    bindingRevision: requireRecoveryOpaqueGuid(gateFacts, "bindingRevision"),
-    leaseName: requireRecoveryGuardianName(gateFacts, "leaseName"),
-  }, "recovery gate frame");
+  return encodeRecoveryBody(
+    {
+      guardianInstanceId: correlation.guardianInstanceId,
+      guardianEpoch: correlation.guardianEpoch,
+      attemptId: correlation.attemptId,
+      bindingRevision: requireRecoveryOpaqueGuid(gateFacts, "bindingRevision"),
+      leaseName: requireRecoveryGuardianName(gateFacts, "leaseName"),
+    },
+    "recovery gate frame",
+  );
 }
 
 /**
@@ -242,22 +272,30 @@ function encodeRecoveryPreCasFrame(
  * still match.
  */
 function encodeRecoveryPostCasFrame(
-  correlation: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; recoveryInstanceId: string }>,
+  correlation: Readonly<{
+    guardianInstanceId: string;
+    guardianEpoch: number;
+    attemptId: string;
+    recoveryInstanceId: string;
+  }>,
   successorFacts: TypedPrivateGameFacts,
 ): Uint8Array {
-  return encodeRecoveryBody({
-    guardianInstanceId: correlation.guardianInstanceId,
-    guardianEpoch: correlation.guardianEpoch,
-    attemptId: correlation.attemptId,
-    recoveryInstanceId: correlation.recoveryInstanceId,
-    bindingRevision: requireRecoveryOpaqueGuid(successorFacts, "bindingRevision"),
-    ownerRecordRevision: requireRecoveryPositiveInteger(successorFacts, "ownerRecordRevision"),
-    leaseName: requireRecoveryGuardianName(successorFacts, "leaseName"),
-    playerJobName: requireRecoveryGuardianName(successorFacts, "playerJobName"),
-    aiJobName: requireRecoveryGuardianName(successorFacts, "aiJobName"),
-    playerHostState: requireRecoveryRoleState(successorFacts, "playerHostState"),
-    aiClientState: requireRecoveryRoleState(successorFacts, "aiClientState"),
-  }, "recovery post-CAS frame");
+  return encodeRecoveryBody(
+    {
+      guardianInstanceId: correlation.guardianInstanceId,
+      guardianEpoch: correlation.guardianEpoch,
+      attemptId: correlation.attemptId,
+      recoveryInstanceId: correlation.recoveryInstanceId,
+      bindingRevision: requireRecoveryOpaqueGuid(successorFacts, "bindingRevision"),
+      ownerRecordRevision: requireRecoveryPositiveInteger(successorFacts, "ownerRecordRevision"),
+      leaseName: requireRecoveryGuardianName(successorFacts, "leaseName"),
+      playerJobName: requireRecoveryGuardianName(successorFacts, "playerJobName"),
+      aiJobName: requireRecoveryGuardianName(successorFacts, "aiJobName"),
+      playerHostState: requireRecoveryRoleState(successorFacts, "playerHostState"),
+      aiClientState: requireRecoveryRoleState(successorFacts, "aiClientState"),
+    },
+    "recovery post-CAS frame",
+  );
 }
 
 /**
@@ -310,10 +348,7 @@ export type StardewOwnerRecoveryDriver = Readonly<{
    * the very actor the recovery recorded. A drive that could not close itself
    * out would leave the attempt occupying its registration forever.
    */
-  finalizeRecovered(
-    owner: StardewOwnedPlayerHostBootstrap,
-    request: StardewOwnerRecoveryRequest,
-  ): Promise<void>;
+  finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void>;
 }>;
 
 /**
@@ -338,7 +373,7 @@ export function readStardewOwnerRecoveryDriver(
 ): StardewOwnerRecoveryDriver | undefined {
   const candidate = collaborator as Partial<StardewOwnerRecoveryDriver>;
   return typeof candidate.recover === "function" && typeof candidate.finalizeRecovered === "function"
-    ? candidate as StardewOwnerRecoveryDriver
+    ? (candidate as StardewOwnerRecoveryDriver)
     : undefined;
 }
 
@@ -376,8 +411,13 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   // consumed exactly once here and both halves are read from that single
   // consumption. That keeps one owner path, one durable read/write seam, and
   // makes the recovery drive reachable before any launch.
-  const ownerBindings = new WeakMap<StardewOwnedPlayerHostBootstrap, ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding>>();
-  const ownerBindingFor = (owner: StardewOwnedPlayerHostBootstrap): ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding> => {
+  const ownerBindings = new WeakMap<
+    StardewOwnedPlayerHostBootstrap,
+    ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding>
+  >();
+  const ownerBindingFor = (
+    owner: StardewOwnedPlayerHostBootstrap,
+  ): ReturnType<typeof consumeStardewBootstrapGuardianOwnerBinding> => {
     let binding = ownerBindings.get(owner);
     if (binding === undefined) {
       binding = consumeStardewBootstrapGuardianOwnerBinding(createStardewBootstrapGuardianOwnerBinding(owner));
@@ -513,7 +553,7 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
               return Object.freeze({ status: "ai_settled_player_preserved" as const });
             }
             return Object.freeze({
-              status: acknowledgement.outcome === "contained" ? "recovered" as const : "unavailable" as const,
+              status: acknowledgement.outcome === "contained" ? ("recovered" as const) : ("unavailable" as const),
             });
           } catch {
             return Object.freeze({ status: "unavailable" as const });
@@ -531,16 +571,20 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
   };
   return Object.freeze({
     async launchPlayerHost(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
-      return runtimeFor(owner).launchRole("player_host", operation, launch.provideAuthorization).then((result) => {
-        if (result.status === "succeeded") launchedRolesFor(owner).add("playerHost");
-        return result;
-      });
+      return runtimeFor(owner)
+        .launchRole("player_host", operation, launch.provideAuthorization)
+        .then((result) => {
+          if (result.status === "succeeded") launchedRolesFor(owner).add("playerHost");
+          return result;
+        });
     },
     async launchAiClient(owner: StardewOwnedPlayerHostBootstrap, operation, launch) {
-      return runtimeFor(owner).launchRole("ai_client", operation, launch.provideAuthorization).then((result) => {
-        if (result.status === "succeeded") launchedRolesFor(owner).add("aiClient");
-        return result;
-      });
+      return runtimeFor(owner)
+        .launchRole("ai_client", operation, launch.provideAuthorization)
+        .then((result) => {
+          if (result.status === "succeeded") launchedRolesFor(owner).add("aiClient");
+          return result;
+        });
     },
     async containPlayerHost(owner: StardewOwnedPlayerHostBootstrap) {
       return requireRuntime(owner).containRole("player_host");
@@ -574,7 +618,10 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
      * when the recovery gate refused to open at all, the separate `gate_held`
      * that says the holder was not proven gone - and is never retried here.
      */
-    async recover(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<RedactedRecoveryOutcome> {
+    async recover(
+      owner: StardewOwnedPlayerHostBootstrap,
+      request: StardewOwnerRecoveryRequest,
+    ): Promise<RedactedRecoveryOutcome> {
       // The actor reaches a durable CAS and one native field the platform encodes
       // into a frame, so it is validated at this boundary: a malformed actor must
       // refuse here rather than turn into an uncertain native attempt. This
@@ -619,7 +666,10 @@ export function createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
      * durable engine refuses the transition, through the recovery's own
      * quarantine closure), never as a fabricated success.
      */
-    async finalizeRecovered(owner: StardewOwnedPlayerHostBootstrap, request: StardewOwnerRecoveryRequest): Promise<void> {
+    async finalizeRecovered(
+      owner: StardewOwnedPlayerHostBootstrap,
+      request: StardewOwnerRecoveryRequest,
+    ): Promise<void> {
       // The actor reaches a durable CAS that must match the one the recovery
       // recorded, so it is validated at this boundary exactly like the recovery
       // actor above: a malformed actor refuses here instead of surfacing as an
@@ -724,7 +774,8 @@ export function createDesktopGuardianGameRuntimePlatform(
     };
     for (const key of NATIVE_ARM_BINDING_KEYS) {
       const value = armFacts[key];
-      if (typeof value !== "string" || value.length === 0) throw new Error(`contained game runtime: arm authorization is missing ${key}`);
+      if (typeof value !== "string" || value.length === 0)
+        throw new Error(`contained game runtime: arm authorization is missing ${key}`);
       body[key] = value;
     }
     body.approvedExecutable = approvedExecutable;
@@ -741,11 +792,15 @@ export function createDesktopGuardianGameRuntimePlatform(
     deadlineUnixMs: number,
     role: string,
   ): NativeRoleLaunchPlanInput => {
-    if (typeof facts.executable !== "string") throw new Error("contained game runtime: launch authorization missing executable");
+    if (typeof facts.executable !== "string")
+      throw new Error("contained game runtime: launch authorization missing executable");
     if (typeof facts.cwd !== "string") throw new Error("contained game runtime: launch authorization missing cwd");
-    if (!Array.isArray(facts.arguments) || !facts.arguments.every((a) => typeof a === "string")) throw new Error("contained game runtime: launch authorization invalid arguments");
-    if (typeof facts.environment !== "object" || facts.environment === null || Array.isArray(facts.environment)) throw new Error("contained game runtime: launch authorization invalid environment");
-    if (role !== "player_host" && role !== "ai_client") throw new Error("contained game runtime: launch authorization invalid role");
+    if (!Array.isArray(facts.arguments) || !facts.arguments.every((a) => typeof a === "string"))
+      throw new Error("contained game runtime: launch authorization invalid arguments");
+    if (typeof facts.environment !== "object" || facts.environment === null || Array.isArray(facts.environment))
+      throw new Error("contained game runtime: launch authorization invalid environment");
+    if (role !== "player_host" && role !== "ai_client")
+      throw new Error("contained game runtime: launch authorization invalid role");
     return Object.freeze({
       guardianInstanceId,
       guardianEpoch,
@@ -770,12 +825,23 @@ export function createDesktopGuardianGameRuntimePlatform(
       // the ordinal-ignore-case equality gate itself remains native-only. It is
       // the ONLY launch fact the arm body takes.
       const approvedExecutable = authorization.executable;
-      if (typeof approvedExecutable !== "string" || !isFullyQualifiedWindowsPath(approvedExecutable)) throw new Error("contained game runtime: arm authorization missing approved executable");
-      await session.arm({ ...transportInput, privateFrame: encodeArmAuthorization(transportInput, armFacts, approvedExecutable) });
+      if (typeof approvedExecutable !== "string" || !isFullyQualifiedWindowsPath(approvedExecutable))
+        throw new Error("contained game runtime: arm authorization missing approved executable");
+      await session.arm({
+        ...transportInput,
+        privateFrame: encodeArmAuthorization(transportInput, armFacts, approvedExecutable),
+      });
     },
     async launch(input) {
       const { authorization, guardianInstanceId, guardianEpoch, attemptId, deadlineUnixMs, role } = input;
-      const planInput = makeLaunchPlanInput(authorization, guardianInstanceId, guardianEpoch, attemptId, deadlineUnixMs, role);
+      const planInput = makeLaunchPlanInput(
+        authorization,
+        guardianInstanceId,
+        guardianEpoch,
+        attemptId,
+        deadlineUnixMs,
+        role,
+      );
       const plan = modelNativeRoleLaunchPlan(planInput);
       const privateFrame = encodeNativeRoleLaunchPlan(plan);
       await session.launch({ guardianInstanceId, guardianEpoch, attemptId, deadlineUnixMs, role, privateFrame });

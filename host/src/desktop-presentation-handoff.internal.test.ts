@@ -77,10 +77,12 @@ test("the launcher-owned handoff pipe receives exactly one strict frame carrying
       launchUrl,
     });
     // Key order is the frame's shape here as on every other private wire.
-    assert.deepEqual(
-      Object.keys(JSON.parse(frame.subarray(0, -1).toString("utf8"))),
-      ["schema", "protocolVersion", "bootstrapId", "launchUrl"],
-    );
+    assert.deepEqual(Object.keys(JSON.parse(frame.subarray(0, -1).toString("utf8"))), [
+      "schema",
+      "protocolVersion",
+      "bootstrapId",
+      "launchUrl",
+    ]);
     assert.equal(frame[frame.length - 1], 10);
     assert.equal(frame.subarray(0, -1).includes(10), false);
     assert.equal(frame.includes(13), false);
@@ -109,10 +111,7 @@ test("the handoff refuses every entry that is not the literal-loopback launch UR
   ]) {
     assert.equal(composeDesktopPresentationHandoffFrame(bootstrapId, refused), undefined, refused);
   }
-  assert.equal(
-    composeDesktopPresentationHandoffFrame("not-a-bootstrap-id", launchUrl),
-    undefined,
-  );
+  assert.equal(composeDesktopPresentationHandoffFrame("not-a-bootstrap-id", launchUrl), undefined);
   assert.throws(
     () => desktopPresentationHandoffPipeName("not-a-bootstrap-id"),
     /desktop_presentation_handoff_bootstrap_invalid/,

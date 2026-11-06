@@ -146,14 +146,12 @@ test("Stardew adapter alone parses Stardew operator config", () => {
   assert.equal(STARDEW_INTEGRATION_LAUNCHER.integrationId, "stardew");
 });
 
-
 type Assert<T extends true> = T;
-type HasExactKeys<T, TKeys extends PropertyKey> =
-  Exclude<keyof T, TKeys> extends never
-    ? Exclude<TKeys, keyof T> extends never
-      ? true
-      : false
-    : false;
+type HasExactKeys<T, TKeys extends PropertyKey> = Exclude<keyof T, TKeys> extends never
+  ? Exclude<TKeys, keyof T> extends never
+    ? true
+    : false
+  : false;
 /** The generic provider capability stays exactly close + the optional presentation projection. */
 type GameLifecycleProviderCapabilityHasOnlyCloseAndPresentation = Assert<
   HasExactKeys<GameLifecycleProviderCapability, "close" | "presentation">
@@ -187,10 +185,7 @@ test("game presentation projection is the generic seam a provider exposes withou
   };
 
   assert.deepEqual(Object.keys(capability).sort(), ["close", "presentation"]);
-  assert.deepEqual(
-    Object.keys(projection).sort(),
-    ["gameProfile", "lifecycleActivationBindingSink", "readGame"],
-  );
+  assert.deepEqual(Object.keys(projection).sort(), ["gameProfile", "lifecycleActivationBindingSink", "readGame"]);
   assert.equal(capability.presentation, projection);
   assert.equal(capabilityHasOnlyCloseAndPresentation && projectionHasOnlyTheGameSeams, true);
   const state = await projection.readGame({ csrfToken: "A".repeat(43), browserSessionExpiresAtMs: 1 });

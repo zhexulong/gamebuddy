@@ -415,6 +415,7 @@ export type GameEnvironmentFactsSource = Pick<
   | "wateringWhereabouts"
   | "chestsSummary"
   | "cropTargets"
+  | "cookingStationTargets"
 > &
   Readonly<{ stamina?: number; exhausted?: boolean }>;
 
@@ -594,9 +595,13 @@ function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): 
   if (whereabouts !== undefined) {
     const here = whereabouts.find((entry) => entry.location === source.location);
     if (here !== undefined && here.needsWaterCount > 0)
-      return zh
-        ? `待浇水作物: ${here.needsWaterCount}（最近: ${here.nearestX},${here.nearestY}）`
-        : `unwatered crops: ${here.needsWaterCount} (nearest: ${here.nearestX},${here.nearestY})`;
+      return here.nearestX === undefined || here.nearestY === undefined
+        ? zh
+          ? `待浇水作物: ${here.needsWaterCount}`
+          : `unwatered crops: ${here.needsWaterCount}`
+        : zh
+          ? `待浇水作物: ${here.needsWaterCount}（最近: ${here.nearestX},${here.nearestY}）`
+          : `unwatered crops: ${here.needsWaterCount} (nearest: ${here.nearestX},${here.nearestY})`;
     if (whereabouts.length > 0) {
       const elsewhere = whereabouts.map((entry) => `${entry.location}:${entry.needsWaterCount}`).join(", ");
       return zh ? `本图待浇水作物: 0（其他地图: ${elsewhere}）` : `unwatered crops here: 0 (elsewhere: ${elsewhere})`;
@@ -609,6 +614,28 @@ function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): 
   return zh
     ? `附近待浇水作物: ${crops.length}（仅 6 格内）`
     : `nearby unwatered crops: ${crops.length} (within 6 tiles only)`;
+}
+
+/**
+ * Whether the map she is standing on has a kitchen.
+ *
+ * `cookingStationTargets` is the Mod's own scan of the CURRENT map for the vanilla kitchen action tile
+ * (`DiscoverCookingStationTargets`), so it is the world's answer to "is there a stove here". It is also the only
+ * published answer to the farmhouse's own form: the house gains its kitchen WITH its upgrade, so a fact rendered
+ * from this list follows the house instead of stating a fixed fact that becomes a lie the day it is upgraded.
+ * Measured 2026-11-05 (day 2, 18:00, starter farmhouse): "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" -
+ * nothing in the line contradicted the pot, so the pot was invented.
+ *
+ * ABSENT means the Mod did not measure it, because the family is published only while `cook_recipe` is
+ * advertised, and it stays silent; a measured empty list is the answer this fact exists for, exactly as a
+ * measured `chestsSummary` zero is. A placed cookout kit is not this fact: the kit is not the house's kitchen.
+ */
+function formatKitchen(source: GameEnvironmentFactsSource, zh: boolean): string {
+  const stations = source.cookingStationTargets;
+  if (stations === undefined) return "";
+  const hasKitchen = stations.some((station) => station.stationKind === "kitchen");
+  if (zh) return hasKitchen ? "厨房: 有" : "厨房: 无";
+  return hasKitchen ? "kitchen: yes" : "kitchen: none";
 }
 
 /** Which half of the line one fact speaks about: the world she stands in, or her own body. */
@@ -694,6 +721,7 @@ export function composeGameEnvironmentFacts(
     worldFact(formatGameWeather(source.weather, zh)),
     worldFact(`${formatGameLocation(source.location, zh)}`),
     worldFact(formatGameTile(source.tile, zh)),
+    worldFact(formatKitchen(source, zh)),
     bodyFact(formatHeldTool(source, zh)),
     worldFact(formatNearbyVillagers(source, zh)),
     worldFact(formatUnwateredCrops(source, zh)),

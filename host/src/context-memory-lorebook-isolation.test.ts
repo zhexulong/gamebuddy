@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
-} from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt, buildGameCompanionSystemPrompt } from "./identity-profile.js";
 import { candidateToIdentityProfile, previewStCard } from "./st-card-import.js";
-import {
-  MAX_GAME_SNAPSHOT_PROJECTION_BYTES,
-  projectGameSnapshotContext,
-} from "./snapshot-projection.js";
+import { MAX_GAME_SNAPSHOT_PROJECTION_BYTES, projectGameSnapshotContext } from "./snapshot-projection.js";
 import type { Snapshot } from "./protocol.js";
 
 test("reviewed ST-card scenario and WorldBook remain candidates and cannot cross into profile or Chat/Game prompts", () => {

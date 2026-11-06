@@ -46,8 +46,22 @@ import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/g
 import { createDesktopGuardianGameRuntimePlatform } from "./stardew-guardian-platform.js";
 
 const hostRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const guardianExecutable = resolve(hostRoot, "native", "windows-bootstrap-guardian", ".dist", "win-x64", "GameBuddy.WindowsBootstrapGuardian.exe");
-const fixtureExecutable = resolve(hostRoot, "native", "windows-bootstrap-guardian", ".dist", "fixtures", "RoleRootFixture.exe");
+const guardianExecutable = resolve(
+  hostRoot,
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "win-x64",
+  "GameBuddy.WindowsBootstrapGuardian.exe",
+);
+const fixtureExecutable = resolve(
+  hostRoot,
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "fixtures",
+  "RoleRootFixture.exe",
+);
 const isWindows = process.platform === "win32";
 const winOnly = { skip: !isWindows ? "BLOCKED: the native recovery parity test needs Windows" : false };
 
@@ -81,176 +95,289 @@ type NativeRecoveryRun = Readonly<{
   postCasFrame: Uint8Array;
 }>;
 
-test("the compiled native Guardian accepts the Host's own recovery frames, refuses a held gate, and refuses a tampered frame", { ...winOnly, timeout: 180_000 }, async (t) => {
-  for (const executable of [guardianExecutable, fixtureExecutable]) {
-    try {
-      await access(executable);
-    } catch {
-      t.skip(`published Guardian/fixture is missing; run the Windows Guardian builder first: ${executable}`);
-      return;
+test(
+  "the compiled native Guardian accepts the Host's own recovery frames, refuses a held gate, and refuses a tampered frame",
+  { ...winOnly, timeout: 180_000 },
+  async (t) => {
+    for (const executable of [guardianExecutable, fixtureExecutable]) {
+      try {
+        await access(executable);
+      } catch {
+        t.skip(`published Guardian/fixture is missing; run the Windows Guardian builder first: ${executable}`);
+        return;
+      }
     }
-  }
 
-  const correlation: RecoveryCorrelation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
-  const recoveryInstanceId = randomUUID();
-  // One durable gate binding. The pre-CAS frame the native parses is built from
-  // exactly these facts, so the accepted run and the held run below send the
-  // byte-identical Host-encoded gate body.
-  const bindingRevision = randomUUID();
-  const leaseName = `Local\\RecoveryParityLease-${randomUUID()}`;
-  const playerJobName = `Local\\RecoveryParityPlayer-${randomUUID()}`;
-  const aiJobName = `Local\\RecoveryParityAi-${randomUUID()}`;
-  const gateFacts: TypedPrivateGameFacts = Object.freeze({ bindingRevision, leaseName });
-  // A wrong-DACL Job is the only AI classification that proves the Host's
-  // encoded `aiJobName` reached the native verbatim: a corrupted name would be
-  // "file not found" and therefore `contained`, never `quarantined`.
-  const successorFacts: TypedPrivateGameFacts = Object.freeze({
-    bindingRevision,
-    ownerRecordRevision: 2,
-    leaseName,
-    playerJobName,
-    aiJobName,
-    playerHostState: "armed",
-    aiClientState: "armed",
-  });
+    const correlation: RecoveryCorrelation = Object.freeze({
+      guardianInstanceId: randomUUID(),
+      guardianEpoch: 1,
+      attemptId: randomUUID(),
+    });
+    const recoveryInstanceId = randomUUID();
+    // One durable gate binding. The pre-CAS frame the native parses is built from
+    // exactly these facts, so the accepted run and the held run below send the
+    // byte-identical Host-encoded gate body.
+    const bindingRevision = randomUUID();
+    const leaseName = `Local\\RecoveryParityLease-${randomUUID()}`;
+    const playerJobName = `Local\\RecoveryParityPlayer-${randomUUID()}`;
+    const aiJobName = `Local\\RecoveryParityAi-${randomUUID()}`;
+    const gateFacts: TypedPrivateGameFacts = Object.freeze({ bindingRevision, leaseName });
+    // A wrong-DACL Job is the only AI classification that proves the Host's
+    // encoded `aiJobName` reached the native verbatim: a corrupted name would be
+    // "file not found" and therefore `contained`, never `quarantined`.
+    const successorFacts: TypedPrivateGameFacts = Object.freeze({
+      bindingRevision,
+      ownerRecordRevision: 2,
+      leaseName,
+      playerJobName,
+      aiJobName,
+      playerHostState: "armed",
+      aiClientState: "armed",
+    });
 
-  const root = await mkdtemp(resolve(tmpdir(), "gamebuddy-guardian-parity-"));
-  const ready = resolve(root, "ai-job.ready");
-  const aiJobHolder = spawn(fixtureExecutable, ["--recovery-job", aiJobName, "wrong-dacl", "--signal", ready], {
-    windowsHide: true,
-    shell: false,
-    stdio: "ignore",
-  });
-  let acceptedPreCasFrame: Uint8Array | undefined;
-  let acceptedPostCasFrame: Uint8Array | undefined;
-  try {
-    await waitForFile(ready);
-
-    // (a) + (b): the Host's real recovery conversation, end to end against the
-    // real native child.
-    const accepted = await runHostRecoveryConversation({ correlation, recoveryInstanceId, gateFacts, successorFacts });
-    acceptedPreCasFrame = accepted.preCasFrame;
-    acceptedPostCasFrame = accepted.postCasFrame;
-    const acceptedAnswers = accepted.standIn.nativeAnswers;
-    t.diagnostic(`Host pre-CAS body: ${Buffer.from(acceptedPreCasFrame).toString("utf8")}`);
-    t.diagnostic(`Host post-CAS body: ${Buffer.from(acceptedPostCasFrame).toString("utf8")}`);
-    t.diagnostic(`native answers: ${JSON.stringify(acceptedAnswers)}`);
-    assert.deepEqual(
-      acceptedAnswers,
-      ["acquired", "unavailable", "quarantined"],
-      `(a/b) the native's own answers to the Host-encoded frames were ${JSON.stringify(acceptedAnswers)}; the first must be the gate's \`acquired\`, and the later two exist only once the native parsed the Host's post-CAS body and ran its Job classifier`,
-    );
-    assert.deepEqual(
-      accepted.standIn.outcome,
-      { outcome: "role_classified", role: "playerHost", classification: "unavailable" },
-      "(b/a) the conversation terminal must be the native's own player classification, because the native never adopts the player world",
-    );
-    assert.equal(await accepted.native.release(), true, "the native did not exit after the Host-encoded post-CAS conversation reached its release step");
-    assert.equal(accepted.native.exitCode, 0, `the native exited ${String(accepted.native.exitCode)} instead of its clean recovery termination`);
-    assert.equal(accepted.native.stderr, "", `the native refused something: ${accepted.native.stderr}`);
-
-    // (c) the exclusion gate: the same Host-encoded pre-CAS bytes, but a live
-    // handle already exists at the lease name.
-    const held = await runHostRecoveryConversation({ correlation, recoveryInstanceId, gateFacts, successorFacts, holdLease: { leaseName, ready: resolve(root, "lease.ready") } });
-    t.diagnostic(`held native answers: ${JSON.stringify(held.standIn.nativeAnswers)}`);
-    assert.equal(held.standIn.nativeAnswers[0], "held", `(c) the native answered ${String(held.standIn.nativeAnswers[0])} for a pre-held same-name gate`);
-    assert.deepEqual(held.standIn.outcome, { outcome: "gate_held" }, "(c) a held gate must surface as the conversation's separate `gate_held`, never as a recovery");
-    assert.equal(await held.native.waitForExit(10_000), true, "the native did not exit after refusing the gate");
-    assert.equal(held.native.exitCode, 0, `the native exited ${String(held.native.exitCode)} for a held gate`);
-    // The task's own claim: it is the SAME frame. Both runs were encoded by the
-    // production encoder from the identical facts, so the bytes must match.
-    assert.deepEqual(
-      Buffer.from(held.preCasFrame),
-      Buffer.from(acceptedPreCasFrame),
-      "(c) the held run must send the byte-identical Host-encoded pre-CAS frame the accepted run sent",
-    );
-
-    // (d) the falsification: a Host-encoded frame with one extra key must be
-    // REFUSED rather than accepted, which is what proves this parity test is not
-    // vacuous.
-    const tamperedPreCas = withExtraKey(acceptedPreCasFrame);
-    const controlRun = await openNativeRecovery();
+    const root = await mkdtemp(resolve(tmpdir(), "gamebuddy-guardian-parity-"));
+    const ready = resolve(root, "ai-job.ready");
+    const aiJobHolder = spawn(fixtureExecutable, ["--recovery-job", aiJobName, "wrong-dacl", "--signal", ready], {
+      windowsHide: true,
+      shell: false,
+      stdio: "ignore",
+    });
+    let acceptedPreCasFrame: Uint8Array | undefined;
+    let acceptedPostCasFrame: Uint8Array | undefined;
     try {
-      assert.equal(
-        await controlRun.sendPreCas(acceptedPreCasFrame),
-        "acquired",
-        "(d control) the untampered Host-encoded pre-CAS frame must be accepted by a fresh native",
+      await waitForFile(ready);
+
+      // (a) + (b): the Host's real recovery conversation, end to end against the
+      // real native child.
+      const accepted = await runHostRecoveryConversation({
+        correlation,
+        recoveryInstanceId,
+        gateFacts,
+        successorFacts,
+      });
+      acceptedPreCasFrame = accepted.preCasFrame;
+      acceptedPostCasFrame = accepted.postCasFrame;
+      const acceptedAnswers = accepted.standIn.nativeAnswers;
+      t.diagnostic(`Host pre-CAS body: ${Buffer.from(acceptedPreCasFrame).toString("utf8")}`);
+      t.diagnostic(`Host post-CAS body: ${Buffer.from(acceptedPostCasFrame).toString("utf8")}`);
+      t.diagnostic(`native answers: ${JSON.stringify(acceptedAnswers)}`);
+      assert.deepEqual(
+        acceptedAnswers,
+        ["acquired", "unavailable", "quarantined"],
+        `(a/b) the native's own answers to the Host-encoded frames were ${JSON.stringify(acceptedAnswers)}; the first must be the gate's \`acquired\`, and the later two exist only once the native parsed the Host's post-CAS body and ran its Job classifier`,
       );
-    } finally {
-      await controlRun.destroy();
-    }
-    const tamperedRun = await openNativeRecovery();
-    try {
-      const answer = await tamperedRun.sendPreCas(tamperedPreCas);
-      assert.equal(answer, undefined, `(d) a Host-encoded pre-CAS frame with one extra key was answered ${String(answer)} instead of being refused`);
-      assert.equal(await tamperedRun.waitForExit(10_000), true, "(d) the native did not fail closed on a tampered Host-encoded frame");
-      assert.equal(tamperedRun.exitCode, 1, `(d) the native exited ${String(tamperedRun.exitCode)} instead of its fail-closed status`);
-      assert.match(tamperedRun.stderr, /windows_bootstrap_guardian_invalid_request/, "(d) the native's fail-closed diagnostic is the observation that it refused the frame");
-    } finally {
-      await tamperedRun.destroy();
-    }
-    // The same falsification on the second Host-encoded body: the native must
-    // accept the Host's pre-CAS body and then refuse a tampered post-CAS body.
-    const tamperedPostRun = await openNativeRecovery();
-    try {
-      assert.equal(await tamperedPostRun.sendPreCas(acceptedPreCasFrame), "acquired", "(d) the pre-CAS body of the tampered-post run must be accepted first");
-      await tamperedPostRun.sendPostCas(withExtraKey(acceptedPostCasFrame));
-      assert.equal(await tamperedPostRun.waitForExit(10_000), true, "(d) the native did not fail closed on a tampered Host-encoded post-CAS frame");
-      assert.equal(tamperedPostRun.exitCode, 1, `(d) the native exited ${String(tamperedPostRun.exitCode)} instead of its fail-closed status for a tampered post-CAS body`);
-      assert.match(tamperedPostRun.stderr, /windows_bootstrap_guardian_invalid_request/, "(d) the native's fail-closed diagnostic for the tampered post-CAS body");
-    } finally {
-      await tamperedPostRun.destroy();
-    }
+      assert.deepEqual(
+        accepted.standIn.outcome,
+        { outcome: "role_classified", role: "playerHost", classification: "unavailable" },
+        "(b/a) the conversation terminal must be the native's own player classification, because the native never adopts the player world",
+      );
+      assert.equal(
+        await accepted.native.release(),
+        true,
+        "the native did not exit after the Host-encoded post-CAS conversation reached its release step",
+      );
+      assert.equal(
+        accepted.native.exitCode,
+        0,
+        `the native exited ${String(accepted.native.exitCode)} instead of its clean recovery termination`,
+      );
+      assert.equal(accepted.native.stderr, "", `the native refused something: ${accepted.native.stderr}`);
 
-    // (e) The Host's new int32 bound mirrors a real native limit rather than a
-    // guess. The native reads `guardianEpoch` and `ownerRecordRevision` with
-    // `TryGetInt32`, so the exact value the Host now refuses is one the native
-    // answers with its generic invalid-request failure, while the value below it
-    // is one the native parses. Both sides of both boundaries are observed here.
-    const outOfDomainEpoch = await openNativeRecovery();
-    try {
-      const answer = await outOfDomainEpoch.sendPreCas(withReplacedInteger(acceptedPreCasFrame, "guardianEpoch", 2_147_483_648));
-      assert.equal(answer, undefined, `(e) the native answered ${String(answer)} for guardianEpoch 2147483648 instead of refusing it`);
-      assert.equal(await outOfDomainEpoch.waitForExit(10_000), true, "(e) the native did not fail closed on an out-of-int32 guardianEpoch");
-      assert.equal(outOfDomainEpoch.exitCode, 1, "(e) the native must fail closed on an out-of-int32 guardianEpoch");
-      assert.match(outOfDomainEpoch.stderr, /windows_bootstrap_guardian_invalid_request/, "(e) the native's own refusal of an out-of-int32 guardianEpoch");
-      t.diagnostic(`(e) native refusal for out-of-int32 guardianEpoch: ${outOfDomainEpoch.stderr.trim()}`);
+      // (c) the exclusion gate: the same Host-encoded pre-CAS bytes, but a live
+      // handle already exists at the lease name.
+      const held = await runHostRecoveryConversation({
+        correlation,
+        recoveryInstanceId,
+        gateFacts,
+        successorFacts,
+        holdLease: { leaseName, ready: resolve(root, "lease.ready") },
+      });
+      t.diagnostic(`held native answers: ${JSON.stringify(held.standIn.nativeAnswers)}`);
+      assert.equal(
+        held.standIn.nativeAnswers[0],
+        "held",
+        `(c) the native answered ${String(held.standIn.nativeAnswers[0])} for a pre-held same-name gate`,
+      );
+      assert.deepEqual(
+        held.standIn.outcome,
+        { outcome: "gate_held" },
+        "(c) a held gate must surface as the conversation's separate `gate_held`, never as a recovery",
+      );
+      assert.equal(await held.native.waitForExit(10_000), true, "the native did not exit after refusing the gate");
+      assert.equal(held.native.exitCode, 0, `the native exited ${String(held.native.exitCode)} for a held gate`);
+      // The task's own claim: it is the SAME frame. Both runs were encoded by the
+      // production encoder from the identical facts, so the bytes must match.
+      assert.deepEqual(
+        Buffer.from(held.preCasFrame),
+        Buffer.from(acceptedPreCasFrame),
+        "(c) the held run must send the byte-identical Host-encoded pre-CAS frame the accepted run sent",
+      );
+
+      // (d) the falsification: a Host-encoded frame with one extra key must be
+      // REFUSED rather than accepted, which is what proves this parity test is not
+      // vacuous.
+      const tamperedPreCas = withExtraKey(acceptedPreCasFrame);
+      const controlRun = await openNativeRecovery();
+      try {
+        assert.equal(
+          await controlRun.sendPreCas(acceptedPreCasFrame),
+          "acquired",
+          "(d control) the untampered Host-encoded pre-CAS frame must be accepted by a fresh native",
+        );
+      } finally {
+        await controlRun.destroy();
+      }
+      const tamperedRun = await openNativeRecovery();
+      try {
+        const answer = await tamperedRun.sendPreCas(tamperedPreCas);
+        assert.equal(
+          answer,
+          undefined,
+          `(d) a Host-encoded pre-CAS frame with one extra key was answered ${String(answer)} instead of being refused`,
+        );
+        assert.equal(
+          await tamperedRun.waitForExit(10_000),
+          true,
+          "(d) the native did not fail closed on a tampered Host-encoded frame",
+        );
+        assert.equal(
+          tamperedRun.exitCode,
+          1,
+          `(d) the native exited ${String(tamperedRun.exitCode)} instead of its fail-closed status`,
+        );
+        assert.match(
+          tamperedRun.stderr,
+          /windows_bootstrap_guardian_invalid_request/,
+          "(d) the native's fail-closed diagnostic is the observation that it refused the frame",
+        );
+      } finally {
+        await tamperedRun.destroy();
+      }
+      // The same falsification on the second Host-encoded body: the native must
+      // accept the Host's pre-CAS body and then refuse a tampered post-CAS body.
+      const tamperedPostRun = await openNativeRecovery();
+      try {
+        assert.equal(
+          await tamperedPostRun.sendPreCas(acceptedPreCasFrame),
+          "acquired",
+          "(d) the pre-CAS body of the tampered-post run must be accepted first",
+        );
+        await tamperedPostRun.sendPostCas(withExtraKey(acceptedPostCasFrame));
+        assert.equal(
+          await tamperedPostRun.waitForExit(10_000),
+          true,
+          "(d) the native did not fail closed on a tampered Host-encoded post-CAS frame",
+        );
+        assert.equal(
+          tamperedPostRun.exitCode,
+          1,
+          `(d) the native exited ${String(tamperedPostRun.exitCode)} instead of its fail-closed status for a tampered post-CAS body`,
+        );
+        assert.match(
+          tamperedPostRun.stderr,
+          /windows_bootstrap_guardian_invalid_request/,
+          "(d) the native's fail-closed diagnostic for the tampered post-CAS body",
+        );
+      } finally {
+        await tamperedPostRun.destroy();
+      }
+
+      // (e) The Host's new int32 bound mirrors a real native limit rather than a
+      // guess. The native reads `guardianEpoch` and `ownerRecordRevision` with
+      // `TryGetInt32`, so the exact value the Host now refuses is one the native
+      // answers with its generic invalid-request failure, while the value below it
+      // is one the native parses. Both sides of both boundaries are observed here.
+      const outOfDomainEpoch = await openNativeRecovery();
+      try {
+        const answer = await outOfDomainEpoch.sendPreCas(
+          withReplacedInteger(acceptedPreCasFrame, "guardianEpoch", 2_147_483_648),
+        );
+        assert.equal(
+          answer,
+          undefined,
+          `(e) the native answered ${String(answer)} for guardianEpoch 2147483648 instead of refusing it`,
+        );
+        assert.equal(
+          await outOfDomainEpoch.waitForExit(10_000),
+          true,
+          "(e) the native did not fail closed on an out-of-int32 guardianEpoch",
+        );
+        assert.equal(outOfDomainEpoch.exitCode, 1, "(e) the native must fail closed on an out-of-int32 guardianEpoch");
+        assert.match(
+          outOfDomainEpoch.stderr,
+          /windows_bootstrap_guardian_invalid_request/,
+          "(e) the native's own refusal of an out-of-int32 guardianEpoch",
+        );
+        t.diagnostic(`(e) native refusal for out-of-int32 guardianEpoch: ${outOfDomainEpoch.stderr.trim()}`);
+      } finally {
+        await outOfDomainEpoch.destroy();
+      }
+      const maxEpoch = await openNativeRecovery();
+      try {
+        assert.equal(
+          await maxEpoch.sendPreCas(withReplacedInteger(acceptedPreCasFrame, "guardianEpoch", 2_147_483_647)),
+          "acquired",
+          "(e) the int32 max guardianEpoch must still be inside the native's domain",
+        );
+      } finally {
+        await maxEpoch.destroy();
+      }
+      const outOfDomainRevision = await openNativeRecovery();
+      try {
+        assert.equal(
+          await outOfDomainRevision.sendPreCas(acceptedPreCasFrame),
+          "acquired",
+          "(e) the unmutated pre-CAS body must acquire the gate before the post-CAS boundary is probed",
+        );
+        await outOfDomainRevision.sendPostCas(
+          withReplacedInteger(acceptedPostCasFrame, "ownerRecordRevision", 2_147_483_648),
+        );
+        assert.equal(
+          await outOfDomainRevision.waitForExit(10_000),
+          true,
+          "(e) the native did not fail closed on an out-of-int32 ownerRecordRevision",
+        );
+        assert.equal(
+          outOfDomainRevision.exitCode,
+          1,
+          "(e) the native must fail closed on an out-of-int32 ownerRecordRevision",
+        );
+        assert.match(
+          outOfDomainRevision.stderr,
+          /windows_bootstrap_guardian_invalid_request/,
+          "(e) the native's own refusal of an out-of-int32 ownerRecordRevision",
+        );
+        t.diagnostic(`(e) native refusal for out-of-int32 ownerRecordRevision: ${outOfDomainRevision.stderr.trim()}`);
+      } finally {
+        await outOfDomainRevision.destroy();
+      }
+      const maxRevision = await openNativeRecovery();
+      try {
+        assert.equal(
+          await maxRevision.sendPreCas(acceptedPreCasFrame),
+          "acquired",
+          "(e) the unmutated pre-CAS body must acquire the gate before the post-CAS boundary is probed",
+        );
+        await maxRevision.sendPostCas(withReplacedInteger(acceptedPostCasFrame, "ownerRecordRevision", 2_147_483_647));
+        await maxRevision.sendRecoverAttempt({ ...correlation, recoveryInstanceId });
+        const classification = await maxRevision.classify("playerHost");
+        assert.equal(
+          classification,
+          "unavailable",
+          `(e) the int32 max ownerRecordRevision must still be inside the native's domain; the native answered ${String(classification)}`,
+        );
+        t.diagnostic(
+          `(e) in-domain boundary answers: guardianEpoch 2147483647 -> acquired, ownerRecordRevision 2147483647 -> ${String(classification)}`,
+        );
+      } finally {
+        await maxRevision.destroy();
+      }
     } finally {
-      await outOfDomainEpoch.destroy();
+      aiJobHolder.kill();
+      await removeRoot(root);
     }
-    const maxEpoch = await openNativeRecovery();
-    try {
-      assert.equal(await maxEpoch.sendPreCas(withReplacedInteger(acceptedPreCasFrame, "guardianEpoch", 2_147_483_647)), "acquired", "(e) the int32 max guardianEpoch must still be inside the native's domain");
-    } finally {
-      await maxEpoch.destroy();
-    }
-    const outOfDomainRevision = await openNativeRecovery();
-    try {
-      assert.equal(await outOfDomainRevision.sendPreCas(acceptedPreCasFrame), "acquired", "(e) the unmutated pre-CAS body must acquire the gate before the post-CAS boundary is probed");
-      await outOfDomainRevision.sendPostCas(withReplacedInteger(acceptedPostCasFrame, "ownerRecordRevision", 2_147_483_648));
-      assert.equal(await outOfDomainRevision.waitForExit(10_000), true, "(e) the native did not fail closed on an out-of-int32 ownerRecordRevision");
-      assert.equal(outOfDomainRevision.exitCode, 1, "(e) the native must fail closed on an out-of-int32 ownerRecordRevision");
-      assert.match(outOfDomainRevision.stderr, /windows_bootstrap_guardian_invalid_request/, "(e) the native's own refusal of an out-of-int32 ownerRecordRevision");
-      t.diagnostic(`(e) native refusal for out-of-int32 ownerRecordRevision: ${outOfDomainRevision.stderr.trim()}`);
-    } finally {
-      await outOfDomainRevision.destroy();
-    }
-    const maxRevision = await openNativeRecovery();
-    try {
-      assert.equal(await maxRevision.sendPreCas(acceptedPreCasFrame), "acquired", "(e) the unmutated pre-CAS body must acquire the gate before the post-CAS boundary is probed");
-      await maxRevision.sendPostCas(withReplacedInteger(acceptedPostCasFrame, "ownerRecordRevision", 2_147_483_647));
-      await maxRevision.sendRecoverAttempt({ ...correlation, recoveryInstanceId });
-      const classification = await maxRevision.classify("playerHost");
-      assert.equal(classification, "unavailable", `(e) the int32 max ownerRecordRevision must still be inside the native's domain; the native answered ${String(classification)}`);
-      t.diagnostic(`(e) in-domain boundary answers: guardianEpoch 2147483647 -> acquired, ownerRecordRevision 2147483647 -> ${String(classification)}`);
-    } finally {
-      await maxRevision.destroy();
-    }
-  } finally {
-    aiJobHolder.kill();
-    await removeRoot(root);
-  }
-});
+  },
+);
 
 /**
  * Runs one complete Host recovery conversation against a fresh native child and
@@ -258,20 +385,23 @@ test("the compiled native Guardian accepts the Host's own recovery frames, refus
  * everything else — the platform's encoder, the wire's private-frame path, the
  * native process — is production code.
  */
-async function runHostRecoveryConversation(input: Readonly<{
-  correlation: RecoveryCorrelation;
-  recoveryInstanceId: string;
-  gateFacts: TypedPrivateGameFacts;
-  successorFacts: TypedPrivateGameFacts;
-  holdLease?: Readonly<{ leaseName: string; ready: string }>;
-}>): Promise<NativeRecoveryRun> {
-  const leaseHolder = input.holdLease === undefined
-    ? undefined
-    : spawn(fixtureExecutable, ["--hold-mutex", input.holdLease.leaseName, "--signal", input.holdLease.ready], {
-      windowsHide: true,
-      shell: false,
-      stdio: "ignore",
-    });
+async function runHostRecoveryConversation(
+  input: Readonly<{
+    correlation: RecoveryCorrelation;
+    recoveryInstanceId: string;
+    gateFacts: TypedPrivateGameFacts;
+    successorFacts: TypedPrivateGameFacts;
+    holdLease?: Readonly<{ leaseName: string; ready: string }>;
+  }>,
+): Promise<NativeRecoveryRun> {
+  const leaseHolder =
+    input.holdLease === undefined
+      ? undefined
+      : spawn(fixtureExecutable, ["--hold-mutex", input.holdLease.leaseName, "--signal", input.holdLease.ready], {
+          windowsHide: true,
+          shell: false,
+          stdio: "ignore",
+        });
   const native = new NativeRecoveryChild();
   try {
     // The exclusion gate only exists once the fixture holds the mutex, so the
@@ -288,7 +418,9 @@ async function runHostRecoveryConversation(input: Readonly<{
       recoveryInstanceId: input.recoveryInstanceId,
       gateFacts: input.gateFacts,
       beginRecovery: async () => input.successorFacts,
-      roleContained: async (role) => { roleContained.push(role); },
+      roleContained: async (role) => {
+        roleContained.push(role);
+      },
     });
     standIn.assertHealthy();
     // The native never adopts the player world (`ClassifyPlayer` is a fixed
@@ -382,8 +514,14 @@ class DesktopSupervisorStandIn implements DesktopGuardianRecoveryTransport {
       this.hostPreCasFrame = preCas;
       const answer = await this.native.sendPreCas(preCas);
       this.nativeAnswers.push(answer ?? "<refused>");
-      if (answer === "held") { this.push(this.acknowledge("unavailable")); return; }
-      if (answer !== "acquired") throw new Error(`native recovery gate did not acquire the Host-encoded pre-CAS frame: ${answer ?? "<pipe closed>"}`);
+      if (answer === "held") {
+        this.push(this.acknowledge("unavailable"));
+        return;
+      }
+      if (answer !== "acquired")
+        throw new Error(
+          `native recovery gate did not acquire the Host-encoded pre-CAS frame: ${answer ?? "<pipe closed>"}`,
+        );
       this.push(this.acknowledge("recovery_accepted"));
       return;
     }
@@ -413,7 +551,8 @@ class DesktopSupervisorStandIn implements DesktopGuardianRecoveryTransport {
     }
     if (operation === "recovery_role_cas_ack" || operation === "recovery_finalize_ack") return;
     if (operation === "release") {
-      if (!await this.native.release()) throw new Error("the native recovery child did not exit after the release frame");
+      if (!(await this.native.release()))
+        throw new Error("the native recovery child did not exit after the release frame");
       this.push(this.acknowledge("contained"));
       return;
     }
@@ -454,10 +593,17 @@ class DesktopSupervisorStandIn implements DesktopGuardianRecoveryTransport {
 /** The Host's session seam. Its `recover` is the production conversation. */
 function standInDesktopGuardianSession(transport: DesktopGuardianRecoveryTransport): DesktopGuardianSession {
   return Object.freeze({
-    arm: async () => { throw new Error("the recovery parity test never arms"); },
-    launch: async () => { throw new Error("the recovery parity test never launches"); },
-    contain: async () => { throw new Error("the recovery parity test never contains"); },
-    recover: async (input: DesktopGuardianRecovery) => await driveGuardianRecoveryConversation(transport, binding, input),
+    arm: async () => {
+      throw new Error("the recovery parity test never arms");
+    },
+    launch: async () => {
+      throw new Error("the recovery parity test never launches");
+    },
+    contain: async () => {
+      throw new Error("the recovery parity test never contains");
+    },
+    recover: async (input: DesktopGuardianRecovery) =>
+      await driveGuardianRecoveryConversation(transport, binding, input),
     close: async () => {},
   });
 }
@@ -486,16 +632,23 @@ class NativeRecoveryChild {
         GAMEBUDDY_GUARDIAN_CONTROL_TOKEN: this.token,
       },
     });
-    this.child.stderr.on("data", (chunk: Buffer) => { this.stderrText += chunk.toString("utf8"); });
+    this.child.stderr.on("data", (chunk: Buffer) => {
+      this.stderrText += chunk.toString("utf8");
+    });
     this.child.stdout.resume();
   }
 
-  public get stderr(): string { return this.stderrText; }
-  public get exitCode(): number | null { return this.child.exitCode; }
+  public get stderr(): string {
+    return this.stderrText;
+  }
+  public get exitCode(): number | null {
+    return this.child.exitCode;
+  }
 
   public async connect(): Promise<void> {
     for (let attempt = 0; attempt < 400; attempt += 1) {
-      if (this.child.exitCode !== null) throw new Error(`the native Guardian exited before its recovery pipe: ${this.stderrText}`);
+      if (this.child.exitCode !== null)
+        throw new Error(`the native Guardian exited before its recovery pipe: ${this.stderrText}`);
       const socket = net.createConnection({ path: `\\\\.\\pipe\\${this.pipeName}` });
       const connected = await new Promise<boolean>((resolveConnect) => {
         socket.once("connect", () => resolveConnect(true));
@@ -503,9 +656,15 @@ class NativeRecoveryChild {
       });
       if (connected) {
         this.socket = socket;
-        socket.on("data", (chunk: Buffer) => { this.receive(chunk.toString("utf8")); });
-        socket.on("close", () => { this.endChannel(); });
-        socket.on("error", () => { this.endChannel(); });
+        socket.on("data", (chunk: Buffer) => {
+          this.receive(chunk.toString("utf8"));
+        });
+        socket.on("close", () => {
+          this.endChannel();
+        });
+        socket.on("error", () => {
+          this.endChannel();
+        });
         return;
       }
       socket.destroy();
@@ -529,8 +688,12 @@ class NativeRecoveryChild {
     await this.writePipe(Buffer.from(body));
   }
 
-  public async sendRecoverAttempt(correlation: RecoveryCorrelation & Readonly<{ recoveryInstanceId: string }>): Promise<void> {
-    await this.writeStdin(`{"schemaVersion":1,"operation":"recover_attempt","guardianInstanceId":"${correlation.guardianInstanceId}","guardianEpoch":${correlation.guardianEpoch},"attemptId":"${correlation.attemptId}","recoveryInstanceId":"${correlation.recoveryInstanceId}"}\n`);
+  public async sendRecoverAttempt(
+    correlation: RecoveryCorrelation & Readonly<{ recoveryInstanceId: string }>,
+  ): Promise<void> {
+    await this.writeStdin(
+      `{"schemaVersion":1,"operation":"recover_attempt","guardianInstanceId":"${correlation.guardianInstanceId}","guardianEpoch":${correlation.guardianEpoch},"attemptId":"${correlation.attemptId}","recoveryInstanceId":"${correlation.recoveryInstanceId}"}\n`,
+    );
   }
 
   public async classify(role: "playerHost" | "aiClient"): Promise<string | undefined> {
@@ -548,8 +711,13 @@ class NativeRecoveryChild {
   public async waitForExit(timeoutMs: number): Promise<boolean> {
     if (this.child.exitCode !== null) return true;
     return await new Promise<boolean>((resolveExit) => {
-      const timer = setTimeout(() => { resolveExit(false); }, timeoutMs);
-      this.child.once("exit", () => { clearTimeout(timer); resolveExit(true); });
+      const timer = setTimeout(() => {
+        resolveExit(false);
+      }, timeoutMs);
+      this.child.once("exit", () => {
+        clearTimeout(timer);
+        resolveExit(true);
+      });
     });
   }
 
@@ -563,13 +731,19 @@ class NativeRecoveryChild {
     const socket = this.socket;
     if (socket === undefined) throw new Error("the native Guardian recovery pipe is not connected");
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      socket.write(Buffer.concat([bytes, Buffer.from("\n", "utf8")]), (error: Error | null | undefined) => { if (error === null || error === undefined) resolveWrite(); else rejectWrite(error); });
+      socket.write(Buffer.concat([bytes, Buffer.from("\n", "utf8")]), (error: Error | null | undefined) => {
+        if (error === null || error === undefined) resolveWrite();
+        else rejectWrite(error);
+      });
     });
   }
 
   private async writeStdin(text: string): Promise<void> {
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      this.child.stdin.write(text, (error: Error | null | undefined) => { if (error === null || error === undefined) resolveWrite(); else rejectWrite(error); });
+      this.child.stdin.write(text, (error: Error | null | undefined) => {
+        if (error === null || error === undefined) resolveWrite();
+        else rejectWrite(error);
+      });
     });
   }
 
@@ -590,7 +764,9 @@ class NativeRecoveryChild {
     const line = this.lines.shift();
     if (line !== undefined) return Promise.resolve(line);
     if (this.channelEnded) return Promise.resolve(undefined);
-    return new Promise<string | undefined>((resolveLine) => { this.waiters.push(resolveLine); });
+    return new Promise<string | undefined>((resolveLine) => {
+      this.waiters.push(resolveLine);
+    });
   }
 
   private endChannel(): void {
@@ -607,7 +783,15 @@ class NativeRecoveryChild {
  */
 function injectRecoveryToken(body: Uint8Array, token: string): Buffer {
   const text = Buffer.from(body).toString("utf8");
-  if (body.length < 2 || !text.startsWith("{") || !text.endsWith("}") || text.includes("\n") || text.includes("\r") || text.includes("\u0000") || text.includes('"token"')) {
+  if (
+    body.length < 2 ||
+    !text.startsWith("{") ||
+    !text.endsWith("}") ||
+    text.includes("\n") ||
+    text.includes("\r") ||
+    text.includes("\u0000") ||
+    text.includes('"token"')
+  ) {
     throw new Error("the supervisor stand-in refuses a body that is not a tokenless JSON object");
   }
   return Buffer.from(`{"token":"${token}",${text.slice(1)}`, "utf8");
@@ -646,14 +830,24 @@ async function openNativeRecovery(): Promise<NativeRecoveryChild> {
 
 async function waitForFile(path: string): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt += 1) {
-    try { await access(path); return; } catch { await delay(25); }
+    try {
+      await access(path);
+      return;
+    } catch {
+      await delay(25);
+    }
   }
   throw new Error(`fixture readiness file never appeared: ${path}`);
 }
 
 async function removeRoot(root: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    try { await rm(root, { recursive: true, force: true }); return; } catch { await delay(50); }
+    try {
+      await rm(root, { recursive: true, force: true });
+      return;
+    } catch {
+      await delay(50);
+    }
   }
 }
 

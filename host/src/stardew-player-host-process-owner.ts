@@ -21,9 +21,7 @@ export type StopOwnedPlayerHostResult =
   | { readonly kind: "termination_failed"; readonly killed: false }
   | { readonly kind: "terminated"; readonly killed: true };
 
-const stardewPlayerHostLaunchReservationBrand: unique symbol = Symbol(
-  "stardewPlayerHostLaunchReservation",
-);
+const stardewPlayerHostLaunchReservationBrand: unique symbol = Symbol("stardewPlayerHostLaunchReservation");
 void stardewPlayerHostLaunchReservationBrand;
 
 /**
@@ -62,6 +60,4 @@ export type StardewPlayerHostProcessProbeResult = Readonly<{
   creationDate: string;
 }> | null;
 
-export type StardewPlayerHostProcessProbe = (
-  pid: number,
-) => StardewPlayerHostProcessProbeResult;
+export type StardewPlayerHostProcessProbe = (pid: number) => StardewPlayerHostProcessProbeResult;

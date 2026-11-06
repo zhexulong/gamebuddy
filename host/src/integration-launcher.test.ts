@@ -54,9 +54,9 @@ function module(): GameIntegrationAdapter {
       details: {
         receiptJson: JSON.stringify({
           requestId: "fixture_request",
-        executionId: "fixture_execution",
-        actionId: "activate_console",
-        state: "succeeded",
+          executionId: "fixture_execution",
+          actionId: "activate_console",
+          state: "succeeded",
           reasonCode: "console_activated",
           evidence: { postcondition: "active" },
         }),
@@ -69,15 +69,11 @@ function module(): GameIntegrationAdapter {
     defaultPolicy: { policyVersion: 1, deniedActions: [], deniedFamilies: [] },
     parsePolicy: (value) => value as never,
     actorId: (connection) => {
-      if (connection.scope.integrationId !== "test-arcade")
-        throw new Error("integration_identity_binding_mismatch");
+      if (connection.scope.integrationId !== "test-arcade") throw new Error("integration_identity_binding_mismatch");
       return "arcade_actor_01";
     },
     assertIdentityBinding: (connection, boundIdentity) => {
-      if (
-        connection.scope.integrationId !== "test-arcade" ||
-        boundIdentity.companionId !== identity.companionId
-      )
+      if (connection.scope.integrationId !== "test-arcade" || boundIdentity.companionId !== identity.companionId)
         throw new Error("integration_identity_binding_mismatch");
     },
     worldScope: () => ({ integrationId: "test-arcade", saveId: "save_01", worldId: "world_01" }),
@@ -104,13 +100,15 @@ function module(): GameIntegrationAdapter {
       connected: (connection.state as { connected: boolean }).connected,
       sessionId: "arcade_session",
       capabilities: ["activate_console"],
-      registrations: [{
-        actionId: "activate_console",
-        familyId: "interaction",
-        identityVersion: 1,
-        lifecycle: "published" as const,
-        kind: "execution" as const,
-      }],
+      registrations: [
+        {
+          actionId: "activate_console",
+          familyId: "interaction",
+          identityVersion: 1,
+          lifecycle: "published" as const,
+          kind: "execution" as const,
+        },
+      ],
       capabilityRevision: 1,
       snapshotRevision: 3,
       activeExecution: null,
@@ -202,12 +200,7 @@ test("receipt-backed launcher rejects an invalid adapter-authenticated actor", (
     connection: { ...handle.connection, module: invalidActorModule },
   };
   assert.throws(
-    () =>
-      assertReceiptBackedLaunch(
-        { ...launcher, module: invalidActorModule },
-        invalidActorHandle,
-        identity,
-      ),
+    () => assertReceiptBackedLaunch({ ...launcher, module: invalidActorModule }, invalidActorHandle, identity),
     /receipt_backed_integration_actor_required/,
   );
 });
@@ -275,13 +268,15 @@ test("Stardew launch validates catalog/live capability/policy without materializ
       connected: true,
       sessionId: "stardew_session",
       capabilities: ["move_to_tile"],
-      catalogRegistrations: [{
-        actionId: "move_to_tile",
-        familyId: "movement_navigation",
-        identityVersion: 1,
-        lifecycle: "published",
-        kind: "execution",
-      }],
+      catalogRegistrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+        },
+      ],
       snapshot: { revision: 7, capabilities: ["move_to_tile"], activeExecution: null },
       latestReceipt: null,
       latestReasonCode: null,

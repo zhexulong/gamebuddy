@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  GameBrowserValidatorsV1,
-  composeGameProfile,
-} from "../game-browser-contract/index.js";
-import {
-  createGameBrowserStateProvider,
-} from "./game-browser-state-provider.js";
-import type { StardewGameSurfaceActionAuthorityReader, StardewGameSurfaceActionAuthorityView, StardewGameSurfaceAttachmentReader, StardewGameSurfaceAttachmentView, StardewGameSurfaceLaunchReadinessReader, StardewGameSurfaceLaunchReadinessView } from "../stardew-production-lifecycle-coordinator.internal.js";
+import { GameBrowserValidatorsV1, composeGameProfile } from "../game-browser-contract/index.js";
+import { createGameBrowserStateProvider } from "./game-browser-state-provider.js";
 import type {
-  StardewRoleLifecycleReader,
-  StardewRoleLifecycleView,
-} from "../stardew-role-lifecycle-facade.js";
+  StardewGameSurfaceActionAuthorityReader,
+  StardewGameSurfaceActionAuthorityView,
+  StardewGameSurfaceAttachmentReader,
+  StardewGameSurfaceAttachmentView,
+  StardewGameSurfaceLaunchReadinessReader,
+  StardewGameSurfaceLaunchReadinessView,
+} from "../stardew-production-lifecycle-coordinator.internal.js";
+import type { StardewRoleLifecycleReader, StardewRoleLifecycleView } from "../stardew-role-lifecycle-facade.js";
 
 const context = {
   csrfToken: "QWxhZGRpbjpvcGVuIHNlc2FtZQ",
@@ -91,11 +90,18 @@ function authenticatedView(
 }
 
 test("spawned Player Host projects only met prerequisite and truthful launching instance", async () => {
-  const state = await createGameBrowserStateProvider(profile(), lifecycle(Object.freeze({
-    schemaVersion: 1,
-    playerHost: Object.freeze({ state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn" }),
-    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
-  })), attachment(), launchReadiness()).readState(context);
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(
+      Object.freeze({
+        schemaVersion: 1,
+        playerHost: Object.freeze({ state: "awaiting_attestation", ownership: "gamebuddy_direct_spawn" }),
+        aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+      }),
+    ),
+    attachment(),
+    launchReadiness(),
+  ).readState(context);
   assert.deepEqual(state.game.prerequisites, { status: "met", detectedGame: "Stardew Valley", missingItems: [] });
   assert.deepEqual(state.game.instance, { status: "launching", gameTitle: "Stardew Valley", generation: 0 });
   assert.equal(JSON.stringify(state).includes("C:\\\\"), false);
@@ -116,7 +122,9 @@ test("provider projects a failed launch terminality as latestOutcome failed", as
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);
-  const state = await createGameBrowserStateProvider(profile(), reader, attachment(), launchReadiness()).readState(context);
+  const state = await createGameBrowserStateProvider(profile(), reader, attachment(), launchReadiness()).readState(
+    context,
+  );
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
@@ -135,7 +143,12 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
 });
 
 test("read-only provider projects unavailable lifecycle without fabricated attachment facts", async () => {
-  const state = await createGameBrowserStateProvider(profile(), lifecycle(unavailableView()), attachment(), launchReadiness()).readState(context);
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(unavailableView()),
+    attachment(),
+    launchReadiness(),
+  ).readState(context);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
@@ -192,7 +205,8 @@ test("provider projects only Host-owned attachment generation and connection sta
 
 test("provider requires an exact composed profile with game.state.read mounted", () => {
   assert.throws(
-    () => createGameBrowserStateProvider({ ...profile() }, lifecycle(unavailableView()), attachment(), launchReadiness()),
+    () =>
+      createGameBrowserStateProvider({ ...profile() }, lifecycle(unavailableView()), attachment(), launchReadiness()),
     /game_browser_profile_not_composed/,
   );
   const profileWithoutState = composeGameProfile({
@@ -202,7 +216,13 @@ test("provider requires an exact composed profile with game.state.read mounted",
     navigationItemIds: ["game"],
   });
   assert.throws(
-    () => createGameBrowserStateProvider(profileWithoutState, lifecycle(unavailableView()), attachment(), launchReadiness()),
+    () =>
+      createGameBrowserStateProvider(
+        profileWithoutState,
+        lifecycle(unavailableView()),
+        attachment(),
+        launchReadiness(),
+      ),
     /game_browser_state_read_not_mounted/,
   );
 });
@@ -227,12 +247,9 @@ test("provider projects the coordinator-owned action authority exactly and defau
   }
   // Without a reader the projection defaults to unavailable and never invents
   // active/paused from the attachment or connection facts.
-  const noReader = await createGameBrowserStateProvider(
-    profile(),
-    lifecycleView,
-    attached,
-    readiness,
-  ).readState(context);
+  const noReader = await createGameBrowserStateProvider(profile(), lifecycleView, attached, readiness).readState(
+    context,
+  );
   assert.equal(noReader.game.actionAuthority, "unavailable");
   assert.equal(noReader.game.connectionStatus, "connected_idle");
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(noReader), true);
@@ -240,7 +257,12 @@ test("provider projects the coordinator-owned action authority exactly and defau
 
 test("provider rejects short or non-canonical CSRF context without reading lifecycle", async () => {
   let lifecycleReads = 0;
-  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++), attachment(), launchReadiness());
+  const provider = createGameBrowserStateProvider(
+    profile(),
+    lifecycle(unavailableView(), () => lifecycleReads++),
+    attachment(),
+    launchReadiness(),
+  );
   for (const csrfToken of ["short", `${"A".repeat(21)}!`, "B".repeat(22)])
     await assert.rejects(
       () => provider.readState({ csrfToken, browserSessionExpiresAtMs: context.browserSessionExpiresAtMs }),
@@ -251,7 +273,12 @@ test("provider rejects short or non-canonical CSRF context without reading lifec
 
 test("provider rejects invalid or non-finite expiry context without reading lifecycle", async () => {
   let lifecycleReads = 0;
-  const provider = createGameBrowserStateProvider(profile(), lifecycle(unavailableView(), () => lifecycleReads++), attachment(), launchReadiness());
+  const provider = createGameBrowserStateProvider(
+    profile(),
+    lifecycle(unavailableView(), () => lifecycleReads++),
+    attachment(),
+    launchReadiness(),
+  );
   for (const browserSessionExpiresAtMs of [-1, 100_000.5, Number.NaN, Number.POSITIVE_INFINITY])
     await assert.rejects(
       () => provider.readState({ csrfToken: context.csrfToken, browserSessionExpiresAtMs }),
@@ -289,11 +316,13 @@ test("provider response redacts lifecycle internals and has no ready claim", asy
 });
 
 test("provider maps a launch in flight to launching and a launch-ready attempt to nothing running", async () => {
-  const launchInFlightView = lifecycle(Object.freeze({
-    schemaVersion: 1,
-    playerHost: Object.freeze({ state: "pending", ownership: "gamebuddy_direct_spawn" }),
-    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
-  }));
+  const launchInFlightView = lifecycle(
+    Object.freeze({
+      schemaVersion: 1,
+      playerHost: Object.freeze({ state: "pending", ownership: "gamebuddy_direct_spawn" }),
+      aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+    }),
+  );
   // `pending` is the composed lifecycle word for a launch actually in flight.
   const launching = await createGameBrowserStateProvider(
     profile(),
@@ -323,11 +352,13 @@ test("provider maps a launch in flight to launching and a launch-ready attempt t
   // client's launch gate requires.
   const readyToLaunch = await createGameBrowserStateProvider(
     profile(),
-    lifecycle(Object.freeze({
-      schemaVersion: 1,
-      playerHost: Object.freeze({ state: "not_started", ownership: "none" }),
-      aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
-    })),
+    lifecycle(
+      Object.freeze({
+        schemaVersion: 1,
+        playerHost: Object.freeze({ state: "not_started", ownership: "none" }),
+        aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+      }),
+    ),
     attachment(),
     launchReadiness(Object.freeze({ generation: 1, status: "ready" })),
   ).readState(context);
@@ -337,7 +368,6 @@ test("provider maps a launch in flight to launching and a launch-ready attempt t
   assert.equal(JSON.stringify(readyToLaunch.game).includes("player-generation"), false);
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(readyToLaunch), true);
 });
-
 
 test("a running lifecycle still projects running and is never a launch-from-idle state", async () => {
   const state = await createGameBrowserStateProvider(
@@ -350,7 +380,6 @@ test("a running lifecycle still projects running and is never a launch-from-idle
   assert.equal(state.game.instance.status, "running");
   assert.equal(state.game.instance.generation, 0);
 });
-
 
 test("terminal launch failure remains met/crashed without a retry generation", async () => {
   const failed = await createGameBrowserStateProvider(

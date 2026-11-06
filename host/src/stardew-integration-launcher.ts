@@ -1,8 +1,6 @@
 import { resolve } from "node:path";
 import type { ConfigurableIntegrationLauncher, PreparedIntegrationLaunch } from "./integration-catalog.js";
-import {
-  createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
-} from "./stardew-integration-launcher-body-program.internal.js";
+import { createStardewIntegrationLaunchHandleFromAuthenticatedBridge } from "./stardew-integration-launcher-body-program.internal.js";
 import type { IntegrationLaunchHandle } from "./integration-launcher.js";
 import { type KnowledgeBundle, loadKnowledgeBundle, parseKnowledgeBundle } from "./knowledge.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
@@ -13,7 +11,6 @@ export {
   createStardewIntegrationLaunchHandleFromAuthenticatedBridge,
   getAuthenticatedStardewPresentationPortForPreview,
 } from "./stardew-integration-launcher-body-program.internal.js";
-
 
 /** Operator-owned local configuration for the receipt-backed Stardew adapter. */
 export type StardewLauncherConfig = Readonly<{
@@ -69,14 +66,12 @@ export const STARDEW_INTEGRATION_LAUNCHER: ConfigurableIntegrationLauncher = Obj
       local.knowledge,
       local.gameVersion,
     );
-    return createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
-      bridge,
-      identity,
-      { ...local, module: STARDEW_GAME_INTEGRATION_ADAPTER },
-    );
+    return createStardewIntegrationLaunchHandleFromAuthenticatedBridge(bridge, identity, {
+      ...local,
+      module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    });
   },
 });
-
 
 export type StardewOperatorConfig = Readonly<{
   pipeName: string;
@@ -164,7 +159,6 @@ export function parseStardewLauncherConfig(value: unknown): StardewLauncherConfi
     ...(value.gameVersion === undefined ? {} : { gameVersion: value.gameVersion }),
   });
 }
-
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

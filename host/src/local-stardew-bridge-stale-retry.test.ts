@@ -116,7 +116,12 @@ async function runAgainstPeer(behaviour: PeerBehaviour) {
         if (request.type === "observe_request") {
           observes += 1;
           socket.write(
-            frame({ ...request, messageId: `observe_${observes}`, type: "snapshot", payload: snapshotPayload(behaviour.refreshedRevision) }),
+            frame({
+              ...request,
+              messageId: `observe_${observes}`,
+              type: "snapshot",
+              payload: snapshotPayload(behaviour.refreshedRevision),
+            }),
           );
           continue;
         }
@@ -191,7 +196,10 @@ async function runAgainstPeer(behaviour: PeerBehaviour) {
 }
 
 test("a stale_snapshot refusal is answered with one re-observe and one re-dispatch at the refreshed revision", async () => {
-  const { outcome, dispatches, observes } = await runAgainstPeer({ firstRefusal: "stale_snapshot", refreshedRevision: 8 });
+  const { outcome, dispatches, observes } = await runAgainstPeer({
+    firstRefusal: "stale_snapshot",
+    refreshedRevision: 8,
+  });
 
   assert.equal(outcome.kind, "receipt", `expected the retry to deliver a receipt, got ${JSON.stringify(outcome)}`);
   assert.equal(observes, 1, "exactly one re-observe");
@@ -205,7 +213,10 @@ test("a stale_snapshot refusal is answered with one re-observe and one re-dispat
 });
 
 test("a stale_snapshot refusal whose refreshed revision is unchanged is surfaced, not retried", async () => {
-  const { outcome, dispatches, observes } = await runAgainstPeer({ firstRefusal: "stale_snapshot", refreshedRevision: 7 });
+  const { outcome, dispatches, observes } = await runAgainstPeer({
+    firstRefusal: "stale_snapshot",
+    refreshedRevision: 7,
+  });
 
   assert.equal(outcome.kind, "error");
   assert.match(outcome.kind === "error" ? outcome.message : "", /bridge_rejected:stale_snapshot/);
@@ -217,7 +228,10 @@ test("every other refusal is surfaced unchanged, with no re-observe and no retry
   // The Mod now names WHO holds the body (`body_owned_by_*`). Match the family prefix so a renamed owner
   // cannot slip past the assertion, but pin the whole message to a body-ownership code so the check stays
   // as strong as the old exact code: a loose `body_owned` substring would accept an unrelated code.
-  const { outcome, dispatches, observes } = await runAgainstPeer({ firstRefusal: "body_owned_by_navigation", refreshedRevision: 8 });
+  const { outcome, dispatches, observes } = await runAgainstPeer({
+    firstRefusal: "body_owned_by_navigation",
+    refreshedRevision: 8,
+  });
 
   assert.equal(outcome.kind, "error");
   assert.match(outcome.kind === "error" ? outcome.message : "", /^bridge_rejected:body_owned(?:_by_[a-z_]+)?$/);

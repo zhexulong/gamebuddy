@@ -4,11 +4,7 @@ const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_FACT_CONTENT_BYTES = 8_192;
 const MAX_PENDING_FACTS = 128;
 
-type GameProgramFactClass =
-  | "progress"
-  | "terminal"
-  | "resource_released"
-  | "recovery_required";
+type GameProgramFactClass = "progress" | "terminal" | "resource_released" | "recovery_required";
 
 /**
  * Addressed Mod-authoritative fact. The Host carries it unchanged and never
@@ -39,11 +35,13 @@ export interface GameProgramFactIngressStore {
  * Pi composition must resolve only after its custom message is durably present
  * in the Pi session. No tool result is accepted by this boundary.
  */
-type DurablePiFactConsumer = (record: Readonly<{
-  customType: typeof GAME_PROGRAM_FACT_CUSTOM_TYPE;
-  content: string;
-  details: GameProgramFact;
-}>) => Promise<void>;
+type DurablePiFactConsumer = (
+  record: Readonly<{
+    customType: typeof GAME_PROGRAM_FACT_CUSTOM_TYPE;
+    content: string;
+    details: GameProgramFact;
+  }>,
+) => Promise<void>;
 
 /** Construction-only consumer surface. It is intentionally not a runtime capability. */
 export type GameProgramFactIngressController = Readonly<{
@@ -61,9 +59,7 @@ export type GameProgramFactIngressController = Readonly<{
  * after the Pi consumer reports its own durable custom-message write and the
  * replacement state advances the durable delivery cursor.
  */
-export function createGameProgramFactIngress(
-  store: GameProgramFactIngressStore,
-): GameProgramFactIngressController {
+export function createGameProgramFactIngress(store: GameProgramFactIngressStore): GameProgramFactIngressController {
   let operation: Promise<void> = Promise.resolve();
 
   const exclusive = async <T>(callback: () => Promise<T>): Promise<T> => {
@@ -142,7 +138,15 @@ function encodeGameProgramFact(record: GameProgramFact): string {
 function decodeGameProgramFact(value: unknown): GameProgramFact {
   if (!hasExactEnumerableDataKeys(value, ["type", "cursor", "programId", "nodeId", "nodeAttempt", "factClass", "fact"]))
     throw new Error("invalid_game_program_fact");
-  if (value.type !== GAME_PROGRAM_FACT_CUSTOM_TYPE || !isCursor(value.cursor) || !isIdentifier(value.programId) || !isIdentifier(value.nodeId) || !isCursor(value.nodeAttempt) || !isFactClass(value.factClass) || !isStrictJsonRecord(value.fact))
+  if (
+    value.type !== GAME_PROGRAM_FACT_CUSTOM_TYPE ||
+    !isCursor(value.cursor) ||
+    !isIdentifier(value.programId) ||
+    !isIdentifier(value.nodeId) ||
+    !isCursor(value.nodeAttempt) ||
+    !isFactClass(value.factClass) ||
+    !isStrictJsonRecord(value.fact)
+  )
     throw new Error("invalid_game_program_fact");
   const record = Object.freeze({
     type: GAME_PROGRAM_FACT_CUSTOM_TYPE,
@@ -160,10 +164,21 @@ function decodeGameProgramFact(value: unknown): GameProgramFact {
 
 function normalizeState(value: GameProgramFactIngressState | undefined): GameProgramFactIngressState {
   if (value === undefined) return Object.freeze({ deliveredCursor: -1, pending: Object.freeze([]) });
-  if (!hasExactEnumerableDataKeys(value, ["deliveredCursor", "pending"]) || !isDeliveryCursor(value.deliveredCursor) || !Array.isArray(value.pending) || value.pending.length > MAX_PENDING_FACTS || !hasOwnArrayEntries(value.pending))
+  if (
+    !hasExactEnumerableDataKeys(value, ["deliveredCursor", "pending"]) ||
+    !isDeliveryCursor(value.deliveredCursor) ||
+    !Array.isArray(value.pending) ||
+    value.pending.length > MAX_PENDING_FACTS ||
+    !hasOwnArrayEntries(value.pending)
+  )
     throw new Error("invalid_game_program_fact_ingress_state");
   const pending = value.pending.map(decodeGameProgramFact);
-  if (pending.some((fact, index) => fact.cursor <= value.deliveredCursor || (index > 0 && fact.cursor <= (pending[index - 1]?.cursor ?? -1))))
+  if (
+    pending.some(
+      (fact, index) =>
+        fact.cursor <= value.deliveredCursor || (index > 0 && fact.cursor <= (pending[index - 1]?.cursor ?? -1)),
+    )
+  )
     throw new Error("invalid_game_program_fact_ingress_state");
   return freezeState({ deliveredCursor: value.deliveredCursor, pending });
 }
@@ -179,24 +194,49 @@ function sameLineage(left: GameProgramFact, right: GameProgramFact): boolean {
 function isFactClass(value: unknown): value is GameProgramFactClass {
   return value === "progress" || value === "terminal" || value === "resource_released" || value === "recovery_required";
 }
-function isIdentifier(value: unknown): value is string { return typeof value === "string" && IDENTIFIER.test(value); }
-function isCursor(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
-function isDeliveryCursor(value: unknown): value is number { return value === -1 || isCursor(value); }
-function isPlainRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
-function isStrictJsonRecord(value: unknown): value is Record<string, unknown> { return isPlainRecord(value) && isStrictJsonValue(value, new Set<object>()); }
+function isIdentifier(value: unknown): value is string {
+  return typeof value === "string" && IDENTIFIER.test(value);
+}
+function isCursor(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function isDeliveryCursor(value: unknown): value is number {
+  return value === -1 || isCursor(value);
+}
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    !!value && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+function isStrictJsonRecord(value: unknown): value is Record<string, unknown> {
+  return isPlainRecord(value) && isStrictJsonValue(value, new Set<object>());
+}
 function isStrictJsonValue(value: unknown, ancestors: Set<object>): boolean {
   if (value === null || typeof value === "string" || typeof value === "boolean") return true;
   if (typeof value === "number") return Number.isFinite(value);
   if (!value || typeof value !== "object" || ancestors.has(value)) return false;
   const isArray = Array.isArray(value);
-  if ((isArray && Object.getPrototypeOf(value) !== Array.prototype) || (!isArray && !isPlainRecord(value))) return false;
+  if ((isArray && Object.getPrototypeOf(value) !== Array.prototype) || (!isArray && !isPlainRecord(value)))
+    return false;
   if (Object.getOwnPropertySymbols(value).length > 0) return false;
   const descriptors = Object.entries(Object.getOwnPropertyDescriptors(value));
-  if (descriptors.some(([key, descriptor]) => key !== "length" && (!descriptor.enumerable || "get" in descriptor || "set" in descriptor))) return false;
-  if (isArray && descriptors.some(([key]) => key !== "length" && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length))) return false;
+  if (
+    descriptors.some(
+      ([key, descriptor]) => key !== "length" && (!descriptor.enumerable || "get" in descriptor || "set" in descriptor),
+    )
+  )
+    return false;
+  if (
+    isArray &&
+    descriptors.some(([key]) => key !== "length" && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length))
+  )
+    return false;
   ancestors.add(value);
   const valid = isArray
-    ? Array.from({ length: value.length }, (_, index) => Object.hasOwn(value, index) && isStrictJsonValue(value[index], ancestors)).every(Boolean)
+    ? Array.from(
+        { length: value.length },
+        (_, index) => Object.hasOwn(value, index) && isStrictJsonValue(value[index], ancestors),
+      ).every(Boolean)
     : Object.values(value).every((entry) => isStrictJsonValue(entry, ancestors));
   ancestors.delete(value);
   return valid;
@@ -211,15 +251,23 @@ function hasExactEnumerableDataKeys(value: unknown, keys: readonly string[]): va
   if (!isPlainRecord(value) || Object.getOwnPropertySymbols(value).length > 0) return false;
   const descriptors = Object.getOwnPropertyDescriptors(value);
   const actual = Object.keys(descriptors);
-  return actual.length === keys.length && actual.every((key) => {
-    const descriptor = descriptors[key];
-    return keys.includes(key) && descriptor !== undefined && descriptor.enumerable && "value" in descriptor;
-  });
+  return (
+    actual.length === keys.length &&
+    actual.every((key) => {
+      const descriptor = descriptors[key];
+      return keys.includes(key) && descriptor !== undefined && descriptor.enumerable && "value" in descriptor;
+    })
+  );
 }
-function freezeJsonRecord(value: Record<string, unknown>): Readonly<Record<string, unknown>> { return freezeJsonValue(value) as Readonly<Record<string, unknown>>; }
+function freezeJsonRecord(value: Record<string, unknown>): Readonly<Record<string, unknown>> {
+  return freezeJsonValue(value) as Readonly<Record<string, unknown>>;
+}
 function freezeJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return Object.freeze(value.map(freezeJsonValue));
-  if (isPlainRecord(value)) return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, freezeJsonValue(entry)])));
+  if (isPlainRecord(value))
+    return Object.freeze(
+      Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, freezeJsonValue(entry)])),
+    );
   return value;
 }
 function insertPendingByCursor(pending: GameProgramFact[], fact: GameProgramFact): void {

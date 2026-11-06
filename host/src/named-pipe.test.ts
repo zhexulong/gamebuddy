@@ -51,7 +51,6 @@ test("named-pipe transport uses bounded length-prefixed JSON frames", async () =
   }
 });
 
-
 test("named-pipe transport releases socket and event subscriptions on close", async () => {
   const pipeName = `gamebuddy_cleanup_${process.pid}_${Date.now()}`;
   const pipePath = `\\\\.\\pipe\\${pipeName}`;
@@ -126,7 +125,11 @@ test("named-pipe transport reports only fixed framing stages across fragmented i
     assert.ok(stages.filter((stage) => stage === "pipe_frame_header_accepted").length >= 1);
     assert.equal(stages.filter((stage) => stage === "pipe_frame_payload_complete").length, 1);
     assert.equal(stages.filter((stage) => stage === "pipe_frame_dispatched").length, 1);
-    assert.ok(stages.every((stage) => /^pipe_(?:bytes_received|frame_(?:header_accepted|payload_complete|dispatched))$/.test(stage)));
+    assert.ok(
+      stages.every((stage) =>
+        /^pipe_(?:bytes_received|frame_(?:header_accepted|payload_complete|dispatched))$/.test(stage),
+      ),
+    );
     transport.close();
   } finally {
     peer?.destroy();

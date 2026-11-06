@@ -26,7 +26,12 @@ type DescriptorFacts = Readonly<{
 }>;
 
 /** The wire shape: hello_ack carries `arguments` (array) and `postcondition` as a record. */
-function wireDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }: DescriptorFacts): ActionRegistrationDescriptor {
+function wireDescriptor({
+  names,
+  postcondition,
+  effect = "write",
+  nativeBinding = "X.Y",
+}: DescriptorFacts): ActionRegistrationDescriptor {
   return {
     arguments: names.map((name) => ({ name, type: name === "x" || name === "y" ? "integer" : "string" })),
     effect,
@@ -36,9 +41,16 @@ function wireDescriptor({ names, postcondition, effect = "write", nativeBinding 
 }
 
 /** The action-surface shape: `argumentSchema` keyed by name. */
-function surfaceDescriptor({ names, postcondition, effect = "write", nativeBinding = "X.Y" }: DescriptorFacts): ActionRegistrationDescriptor {
+function surfaceDescriptor({
+  names,
+  postcondition,
+  effect = "write",
+  nativeBinding = "X.Y",
+}: DescriptorFacts): ActionRegistrationDescriptor {
   return {
-    argumentSchema: Object.fromEntries(names.map((name) => [name, { type: name === "x" || name === "y" ? "integer" : "string" }])),
+    argumentSchema: Object.fromEntries(
+      names.map((name) => [name, { type: name === "x" || name === "y" ? "integer" : "string" }]),
+    ),
     effect,
     postcondition: { name: postcondition },
     nativeBinding,
@@ -82,34 +94,79 @@ test("toggle_animal_door is enrolled, and its gate opens in both legal shapes", 
 });
 
 test("the gate opens for both actions in the wire descriptor shape", () => {
-  assert.equal(isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "silo_hay_taken" })), true);
-  assert.equal(isModDescriptorComplete("use_obelisk", wireDescriptor({ names: xyz, postcondition: "obelisk_arrived" })), true);
+  assert.equal(
+    isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "silo_hay_taken" })),
+    true,
+  );
+  assert.equal(
+    isModDescriptorComplete("use_obelisk", wireDescriptor({ names: xyz, postcondition: "obelisk_arrived" })),
+    true,
+  );
 });
 
 test("the gate opens for both actions in the action-surface descriptor shape", () => {
-  assert.equal(isModDescriptorComplete("withdraw_silo_hay", surfaceDescriptor({ names: xyz, postcondition: "silo_hay_taken" })), true);
-  assert.equal(isModDescriptorComplete("use_obelisk", surfaceDescriptor({ names: xyz, postcondition: "obelisk_arrived" })), true);
+  assert.equal(
+    isModDescriptorComplete("withdraw_silo_hay", surfaceDescriptor({ names: xyz, postcondition: "silo_hay_taken" })),
+    true,
+  );
+  assert.equal(
+    isModDescriptorComplete("use_obelisk", surfaceDescriptor({ names: xyz, postcondition: "obelisk_arrived" })),
+    true,
+  );
 });
 
 test("the gate stays shut when the postcondition is not the one the Mod emits", () => {
   // A gate that opened for any postcondition would be worse than no gate.
-  assert.equal(isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "something_else" })), false);
-  assert.equal(isModDescriptorComplete("use_obelisk", wireDescriptor({ names: xyz, postcondition: "something_else" })), false);
+  assert.equal(
+    isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "something_else" })),
+    false,
+  );
+  assert.equal(
+    isModDescriptorComplete("use_obelisk", wireDescriptor({ names: xyz, postcondition: "something_else" })),
+    false,
+  );
   // ...and, critically, one action's postcondition must not open the other's arm.
-  assert.equal(isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "obelisk_arrived" })), false);
+  assert.equal(
+    isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "obelisk_arrived" })),
+    false,
+  );
 });
 
 test("the gate stays shut when the argument shape is wrong", () => {
-  assert.equal(isModDescriptorComplete("use_obelisk", surfaceDescriptor({ names: ["x", "y"], postcondition: "obelisk_arrived" })), false);
   assert.equal(
-    isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: ["x", "y", "expectedTargetId", "extra"], postcondition: "silo_hay_taken" })),
+    isModDescriptorComplete("use_obelisk", surfaceDescriptor({ names: ["x", "y"], postcondition: "obelisk_arrived" })),
+    false,
+  );
+  assert.equal(
+    isModDescriptorComplete(
+      "withdraw_silo_hay",
+      wireDescriptor({ names: ["x", "y", "expectedTargetId", "extra"], postcondition: "silo_hay_taken" }),
+    ),
     false,
   );
   // Reordering is a different contract, not an equivalent one.
-  assert.equal(isModDescriptorComplete("use_obelisk", wireDescriptor({ names: ["y", "x", "expectedTargetId"], postcondition: "obelisk_arrived" })), false);
+  assert.equal(
+    isModDescriptorComplete(
+      "use_obelisk",
+      wireDescriptor({ names: ["y", "x", "expectedTargetId"], postcondition: "obelisk_arrived" }),
+    ),
+    false,
+  );
 });
 
 test("the gate stays shut when the descriptor is not a write", () => {
-  assert.equal(isModDescriptorComplete("withdraw_silo_hay", wireDescriptor({ names: xyz, postcondition: "silo_hay_taken", effect: "read" })), false);
-  assert.equal(isModDescriptorComplete("use_obelisk", surfaceDescriptor({ names: xyz, postcondition: "obelisk_arrived", effect: "none" })), false);
+  assert.equal(
+    isModDescriptorComplete(
+      "withdraw_silo_hay",
+      wireDescriptor({ names: xyz, postcondition: "silo_hay_taken", effect: "read" }),
+    ),
+    false,
+  );
+  assert.equal(
+    isModDescriptorComplete(
+      "use_obelisk",
+      surfaceDescriptor({ names: xyz, postcondition: "obelisk_arrived", effect: "none" }),
+    ),
+    false,
+  );
 });

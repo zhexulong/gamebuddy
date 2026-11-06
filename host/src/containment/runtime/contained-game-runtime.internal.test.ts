@@ -4,15 +4,32 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createContainedGameRuntime, type ContainedGameRuntimePlatform } from "./core/contained-game-runtime.js";
-import type { RoleLaunchOperation, TypedPrivateGameAuthorizationProducer, TypedPrivateGameFacts } from "./contract/game-runtime.js";
+import type {
+  RoleLaunchOperation,
+  TypedPrivateGameAuthorizationProducer,
+  TypedPrivateGameFacts,
+} from "./contract/game-runtime.js";
 
 const armFacts: TypedPrivateGameFacts = Object.freeze({ revision: "r" });
-const binding = Object.freeze({ guardianInstanceId: "g", guardianEpoch: 1, attemptId: "a", operationWaitBudgetMs: 1_000, armFacts });
-const launchOperation = (deadlineUnixMs = Date.now() + 60_000): RoleLaunchOperation => Object.freeze({ deadlineUnixMs });
+const binding = Object.freeze({
+  guardianInstanceId: "g",
+  guardianEpoch: 1,
+  attemptId: "a",
+  operationWaitBudgetMs: 1_000,
+  armFacts,
+});
+const launchOperation = (deadlineUnixMs = Date.now() + 60_000): RoleLaunchOperation =>
+  Object.freeze({ deadlineUnixMs });
 const facts: TypedPrivateGameFacts = Object.freeze({ role: "player", revision: 1 });
 const produce: TypedPrivateGameAuthorizationProducer = (authorization) => authorization(facts);
 
-type PlatformOptions = { readonly failArm?: boolean; readonly failLaunch?: boolean; readonly failContain?: boolean; readonly failSettle?: boolean; readonly onArm?: () => void };
+type PlatformOptions = {
+  readonly failArm?: boolean;
+  readonly failLaunch?: boolean;
+  readonly failContain?: boolean;
+  readonly failSettle?: boolean;
+  readonly onArm?: () => void;
+};
 
 function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGameRuntimePlatform {
   return Object.freeze({
@@ -37,18 +54,28 @@ function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGa
       log.push("settle");
       if (options.failSettle) throw new Error("settle failed");
     },
-    close: async () => { log.push("close"); },
+    close: async () => {
+      log.push("close");
+    },
   });
 }
 
 test("operation wait budgets are independent from launch deadline and are sent on arm/contain only", async () => {
   const calls: Array<{ operation: string; input: Record<string, unknown> }> = [];
   const platform: ContainedGameRuntimePlatform = Object.freeze({
-    arm: async (input) => { calls.push({ operation: "arm", input: { ...input } }); },
-    launch: async (input) => { calls.push({ operation: "launch", input: { ...input } }); },
-    contain: async (input) => { calls.push({ operation: "contain", input: { ...input } }); },
+    arm: async (input) => {
+      calls.push({ operation: "arm", input: { ...input } });
+    },
+    launch: async (input) => {
+      calls.push({ operation: "launch", input: { ...input } });
+    },
+    contain: async (input) => {
+      calls.push({ operation: "contain", input: { ...input } });
+    },
     recover: async () => Object.freeze({ outcome: "contained" as const }),
-    settle: async () => { calls.push({ operation: "settle", input: {} }); },
+    settle: async () => {
+      calls.push({ operation: "settle", input: {} });
+    },
     close: async () => {},
   });
   const deadlineUnixMs = Date.now() + 60_000;
@@ -65,8 +92,14 @@ test("operation wait budgets are independent from launch deadline and are sent o
 test("valid producer works, arm is once before launch, and contain is ordered", async () => {
   const log: string[] = [];
   const runtime = createContainedGameRuntime(fakePlatform(log), binding);
-  assert.deepEqual(await runtime.launchRole("server", launchOperation(), produce), { role: "server", status: "succeeded" });
-  assert.deepEqual(await runtime.launchRole("client", launchOperation(), produce), { role: "client", status: "succeeded" });
+  assert.deepEqual(await runtime.launchRole("server", launchOperation(), produce), {
+    role: "server",
+    status: "succeeded",
+  });
+  assert.deepEqual(await runtime.launchRole("client", launchOperation(), produce), {
+    role: "client",
+    status: "succeeded",
+  });
   assert.deepEqual(await runtime.containRole("server"), { role: "server", status: "succeeded" });
   assert.deepEqual(log, ["arm:player", "launch:server", "launch:client", "contain:server"]);
 });
@@ -75,14 +108,24 @@ test("authorization producer is called once and replay/forge/wrong role are reje
   const log: string[] = [];
   const runtime = createContainedGameRuntime(fakePlatform(log), binding);
   let calls = 0;
-  await runtime.launchRole("role", launchOperation(), (authorization) => { calls++; authorization(facts); });
+  await runtime.launchRole("role", launchOperation(), (authorization) => {
+    calls++;
+    authorization(facts);
+  });
   assert.equal(calls, 1);
   const replayRuntime = createContainedGameRuntime(fakePlatform([]), binding);
-  await assert.rejects(() => replayRuntime.launchRole("replay", launchOperation(), (authorization) => {
-    authorization(facts);
-    authorization(facts);
-  }), /replay/);
-  await assert.rejects(() => runtime.launchRole("forged", launchOperation(), (authorization) => authorization(undefined as never)), /forged/);
+  await assert.rejects(
+    () =>
+      replayRuntime.launchRole("replay", launchOperation(), (authorization) => {
+        authorization(facts);
+        authorization(facts);
+      }),
+    /replay/,
+  );
+  await assert.rejects(
+    () => runtime.launchRole("forged", launchOperation(), (authorization) => authorization(undefined as never)),
+    /forged/,
+  );
   await assert.rejects(() => runtime.containRole("never-launched"), /not launched/);
 });
 
@@ -93,20 +136,38 @@ test("expired authorization and close prevent later launch; results are redacted
   const runtime = createContainedGameRuntime(fakePlatform(log), binding);
   await runtime.close();
   await assert.rejects(() => runtime.launchRole("role", launchOperation(), produce), /closed/);
-  assert.deepEqual(Object.keys(await createContainedGameRuntime(fakePlatform([]), binding).launchRole("safe", launchOperation(), produce)), ["role", "status"]);
+  assert.deepEqual(
+    Object.keys(
+      await createContainedGameRuntime(fakePlatform([]), binding).launchRole("safe", launchOperation(), produce),
+    ),
+    ["role", "status"],
+  );
 });
 
 test("authorization is invocation-bound and binding is snapshotted", async () => {
   const log: string[] = [];
-  const mutable: { guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; armFacts: TypedPrivateGameFacts } = { ...binding };
+  const mutable: {
+    guardianInstanceId: string;
+    guardianEpoch: number;
+    attemptId: string;
+    operationWaitBudgetMs: number;
+    armFacts: TypedPrivateGameFacts;
+  } = { ...binding };
   let saved: ((facts: TypedPrivateGameFacts) => void) | undefined;
   const runtime = createContainedGameRuntime(fakePlatform(log), mutable);
   mutable.guardianEpoch = 99;
-  await runtime.launchRole("first", launchOperation(), (authorization) => { saved = authorization; authorization(facts); });
-  await assert.rejects(() => runtime.launchRole("second", launchOperation(), (authorization) => {
-    void authorization;
-    saved!(facts);
-  }), /stale/);
+  await runtime.launchRole("first", launchOperation(), (authorization) => {
+    saved = authorization;
+    authorization(facts);
+  });
+  await assert.rejects(
+    () =>
+      runtime.launchRole("second", launchOperation(), (authorization) => {
+        void authorization;
+        saved!(facts);
+      }),
+    /stale/,
+  );
   assert.deepEqual(log, ["arm:player", "launch:first"]);
 });
 
@@ -137,11 +198,14 @@ test("native containment failure is terminal and duplicate contain rejects befor
 });
 
 test("runtime source keeps native frame construction out of the generic core", () => {
-  const source = readFileSync(resolve(
-    dirname(fileURLToPath(import.meta.url)),
-    "../../../src/containment/runtime/core/contained-game-runtime.ts",
-  ), "utf8");
-  assert.match(source, /launchRole\(role, launchOperation: RoleLaunchOperation, produceAuthorization: TypedPrivateGameAuthorizationProducer\)/);
+  const source = readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../../src/containment/runtime/core/contained-game-runtime.ts"),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /launchRole\(role, launchOperation: RoleLaunchOperation, produceAuthorization: TypedPrivateGameAuthorizationProducer\)/,
+  );
   assert.match(source, /const authorization: InternalAuthorization/);
   assert.match(source, /containRole\(role\)/);
   assert.doesNotMatch(source, /encodePrivateFacts|Uint8Array|privateFrame/);
@@ -153,7 +217,9 @@ test("serialized Promise.all operations never overlap platform calls", async () 
   let active = 0;
   let maxActive = 0;
   let releaseLaunch!: () => void;
-  const launchReleased = new Promise<void>((resolve) => { releaseLaunch = resolve; });
+  const launchReleased = new Promise<void>((resolve) => {
+    releaseLaunch = resolve;
+  });
   const platform: ContainedGameRuntimePlatform = Object.freeze({
     arm: async (input) => {
       active++;
@@ -175,7 +241,9 @@ test("serialized Promise.all operations never overlap platform calls", async () 
       active--;
     },
     recover: async () => Object.freeze({ outcome: "contained" as const }),
-    settle: async () => { log.push("settle"); },
+    settle: async () => {
+      log.push("settle");
+    },
     close: async () => {},
   });
   const runtime = createContainedGameRuntime(platform, binding);
@@ -281,7 +349,9 @@ test("an armed attempt that recorded no launched role is not settled", async () 
   const platform = fakePlatform(log, {
     // Arm succeeds, then time jumps past the launch deadline before the runtime's
     // post-arm expiry check runs, so no role is ever recorded.
-    onArm: () => { Date.now = () => deadlineUnixMs; },
+    onArm: () => {
+      Date.now = () => deadlineUnixMs;
+    },
   });
   try {
     const runtime = createContainedGameRuntime(platform, binding);

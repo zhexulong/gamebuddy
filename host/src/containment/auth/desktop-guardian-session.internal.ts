@@ -1,4 +1,3 @@
-
 type ContainmentRole = string;
 
 export type ContainmentCorrelation = Readonly<{
@@ -91,9 +90,34 @@ export type DesktopGuardianRecoveryTransport = Readonly<{
 }>;
 
 export type DesktopGuardianSession = Readonly<{
-  arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck>;
-  launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: ContainmentRole; privateFrame: Uint8Array }>): Promise<GuardianAck>;
-  contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; role: ContainmentRole }>): Promise<GuardianAck>;
+  arm(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      operationWaitBudgetMs: number;
+      privateFrame: Uint8Array;
+    }>,
+  ): Promise<GuardianAck>;
+  launch(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      deadlineUnixMs: number;
+      role: ContainmentRole;
+      privateFrame: Uint8Array;
+    }>,
+  ): Promise<GuardianAck>;
+  contain(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      operationWaitBudgetMs: number;
+      role: ContainmentRole;
+    }>,
+  ): Promise<GuardianAck>;
   /**
    * Drives the complete bounded recovery conversation and reports its terminal
    * outcome. Recovery is a chain of durable transitions rather than one command,

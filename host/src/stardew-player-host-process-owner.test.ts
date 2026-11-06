@@ -7,10 +7,7 @@ import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
-import type {
-  StardewAiClientProcessProbe,
-  StardewAiClientProcessSpawn,
-} from "./stardew-ai-client-process-owner.js";
+import type { StardewAiClientProcessProbe, StardewAiClientProcessSpawn } from "./stardew-ai-client-process-owner.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type {
   StardewPlayerHostLaunchReservation,
@@ -29,12 +26,11 @@ type ReservationCannotBeStructurallyMinted = AssertFalse<
 >;
 void (0 as unknown as ReservationCannotBeStructurallyMinted);
 
-const PLAYER_EXE = process.platform === "win32"
-  ? "C:\\GameBuddy\\player-host\\StardewModdingAPI.exe"
-  : "/gamebuddy/player-host/StardewModdingAPI";
-const PLAYER_CWD = process.platform === "win32"
-  ? "C:\\GameBuddy\\player-host"
-  : "/gamebuddy/player-host";
+const PLAYER_EXE =
+  process.platform === "win32"
+    ? "C:\\GameBuddy\\player-host\\StardewModdingAPI.exe"
+    : "/gamebuddy/player-host/StardewModdingAPI";
+const PLAYER_CWD = process.platform === "win32" ? "C:\\GameBuddy\\player-host" : "/gamebuddy/player-host";
 const PLAYER_CREATION = "20250203040506.000000+000";
 const AI_CREATION = "20250102030405.000000+000";
 
@@ -45,13 +41,15 @@ type PlayerSpawnCall = Readonly<{
   options: Parameters<StardewPlayerHostProcessSpawn>[2];
 }>;
 
-function createHarness(input: Readonly<{
-  playerProbe?: (pid: number, call: number) => PlayerProbeResult;
-  playerProbeThrows?: (call: number) => boolean;
-  playerKill?: (call: number) => boolean;
-  playerKillThrows?: (call: number) => boolean;
-  playerPid?: number;
-}> = {}) {
+function createHarness(
+  input: Readonly<{
+    playerProbe?: (pid: number, call: number) => PlayerProbeResult;
+    playerProbeThrows?: (call: number) => boolean;
+    playerKill?: (call: number) => boolean;
+    playerKillThrows?: (call: number) => boolean;
+    playerPid?: number;
+  }> = {},
+) {
   const playerSpawnCalls: PlayerSpawnCall[] = [];
   const playerProbeCalls: number[] = [];
   const playerKillCalls: number[] = [];
@@ -78,14 +76,13 @@ function createHarness(input: Readonly<{
     playerProbeCalls.push(pid);
     const call = ++playerProbeCall;
     if (input.playerProbeThrows?.(call) === true) throw new Error("probe_threw");
-    return input.playerProbe === undefined
-      ? { pid, creationDate: PLAYER_CREATION }
-      : input.playerProbe(pid, call);
+    return input.playerProbe === undefined ? { pid, creationDate: PLAYER_CREATION } : input.playerProbe(pid, call);
   };
-  const rawSpawn: StardewAiClientProcessSpawn = () => Object.freeze({
-    pid: 4321,
-    kill: () => true,
-  });
+  const rawSpawn: StardewAiClientProcessSpawn = () =>
+    Object.freeze({
+      pid: 4321,
+      kill: () => true,
+    });
   const rawProbe: StardewAiClientProcessProbe = (pid) => ({ pid, creationDate: AI_CREATION });
   const composition = createStardewPrivateBootstrapComposerTestSupport({
     rawSpawn,
@@ -115,11 +112,7 @@ function createHarness(input: Readonly<{
 test("Player Host owner exposes only a distinct redacted reserve/read/stop API", () => {
   const { composition, owner } = createHarness();
 
-  assert.deepEqual(Object.keys(owner).sort(), [
-    "readStatus",
-    "reservePlayerHostLaunch",
-    "stopOwnedPlayerHost",
-  ]);
+  assert.deepEqual(Object.keys(owner).sort(), ["readStatus", "reservePlayerHostLaunch", "stopOwnedPlayerHost"]);
   assert.equal(Object.isFrozen(owner), true);
   assert.equal("launch" in owner, false);
   assert.equal("register" in owner, false);
@@ -135,10 +128,7 @@ test("Player Host reservation is frozen, empty, nominal, and singular", () => {
   assert.equal(Object.isFrozen(reservation), true);
   assert.deepEqual(Reflect.ownKeys(reservation), []);
   assert.deepEqual(owner.readStatus(), { kind: "player_host_launch_pending" });
-  assert.throws(
-    () => owner.reservePlayerHostLaunch(),
-    /owned_player_host_launch_already_active/,
-  );
+  assert.throws(() => owner.reservePlayerHostLaunch(), /owned_player_host_launch_already_active/);
 });
 
 test("structural Player Host reservation lookalike is rejected by the closed join", async () => {
@@ -162,11 +152,14 @@ test("launch injects only manager generation with exact input and hardened direc
   const harness = createHarness();
   const phaseOwner = await reserveOwned(harness);
 
-  const result = bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-    executable: PLAYER_EXE,
-    args: ["--mods-path", "private-mods"],
-    cwd: PLAYER_CWD,
-  }));
+  const result = bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch(
+    (launch) =>
+      launch({
+        executable: PLAYER_EXE,
+        args: ["--mods-path", "private-mods"],
+        cwd: PLAYER_CWD,
+      }),
+  );
 
   assert.deepEqual(result, { status: { kind: "awaiting_player_host_attestation" } });
   assert.equal(harness.playerSpawnCalls.length, 1);
@@ -176,10 +169,7 @@ test("launch injects only manager generation with exact input and hardened direc
   assert.equal(call.options.cwd, PLAYER_CWD);
   assert.equal(call.options.shell, false);
   assert.equal(call.options.windowsHide, true);
-  assert.equal(
-    call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION,
-    "player-generation-1",
-  );
+  assert.equal(call.options.env.GAMEBUDDY_STARDEW_LAUNCH_GENERATION, "player-generation-1");
   assert.deepEqual(harness.playerProbeCalls, [5432]);
   assert.deepEqual(harness.owner.readStatus(), { kind: "awaiting_player_host_attestation" });
   assert.equal(JSON.stringify(harness.owner.readStatus()).includes("5432"), false);
@@ -191,11 +181,14 @@ test("caller cannot supply Player Host environment or generation fields", async 
   const phaseOwner = await reserveOwned(harness);
 
   assert.throws(
-    () => bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-      executable: PLAYER_EXE,
-      args: ["start"],
-      env: { GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "caller-generation" },
-    } as never)),
+    () =>
+      bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+        launch({
+          executable: PLAYER_EXE,
+          args: ["start"],
+          env: { GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "caller-generation" },
+        } as never),
+      ),
     /invalid_player_host_launch_input_keys/,
   );
   assert.deepEqual(harness.playerSpawnCalls, []);
@@ -219,10 +212,13 @@ test("immediate identity failures kill only the exact spawned handle and accept 
     const harness = createHarness({ playerProbe: scenario.probe });
     const phaseOwner = await reserveOwned(harness);
     assert.throws(
-      () => bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-        executable: PLAYER_EXE,
-        args: [scenario.name],
-      })),
+      () =>
+        bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+          launch({
+            executable: PLAYER_EXE,
+            args: [scenario.name],
+          }),
+        ),
       scenario.error,
     );
     assert.deepEqual(harness.playerKillCalls, [1]);
@@ -235,10 +231,13 @@ test("throwing immediate Player Host probe kills the exact spawned handle", asyn
   const phaseOwner = await reserveOwned(harness);
 
   assert.throws(
-    () => bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-      executable: PLAYER_EXE,
-      args: ["probe-throws"],
-    })),
+    () =>
+      bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+        launch({
+          executable: PLAYER_EXE,
+          args: ["probe-throws"],
+        }),
+      ),
     /player_host_probe_failed_no_process/,
   );
   assert.deepEqual(harness.playerKillCalls, [1]);
@@ -250,10 +249,13 @@ test("invalid spawned Player Host pid is killed before ownership is accepted", a
   const phaseOwner = await reserveOwned(harness);
 
   assert.throws(
-    () => bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-      executable: PLAYER_EXE,
-      args: ["bad-pid"],
-    })),
+    () =>
+      bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+        launch({
+          executable: PLAYER_EXE,
+          args: ["bad-pid"],
+        }),
+      ),
     /spawned_player_host_child_missing_valid_pid/,
   );
   assert.deepEqual(harness.playerKillCalls, [1]);
@@ -263,10 +265,12 @@ test("invalid spawned Player Host pid is killed before ownership is accepted", a
 test("stop fresh-reprobes exact PID and CreationDate before exact-handle kill", async () => {
   const harness = createHarness();
   const phaseOwner = await reserveOwned(harness);
-  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({
-    executable: PLAYER_EXE,
-    args: ["start"],
-  }));
+  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+    launch({
+      executable: PLAYER_EXE,
+      args: ["start"],
+    }),
+  );
 
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "terminated", killed: true });
   assert.deepEqual(harness.playerProbeCalls, [5432, 5432]);
@@ -285,17 +289,16 @@ test("stop probe mismatch or absence never kills and preserves ownership for ret
     },
   });
   const phaseOwner = await reserveOwned(harness);
-  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({ executable: PLAYER_EXE, args: ["start"] }));
+  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+    launch({ executable: PLAYER_EXE, args: ["start"] }),
+  );
 
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "identity_mismatch", killed: false });
   assert.deepEqual(harness.playerKillCalls, []);
   stopProbe = "absent";
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "identity_probe_failed", killed: false });
   assert.deepEqual(harness.playerKillCalls, []);
-  assert.throws(
-    () => harness.owner.reservePlayerHostLaunch(),
-    /owned_player_host_launch_already_active/,
-  );
+  assert.throws(() => harness.owner.reservePlayerHostLaunch(), /owned_player_host_launch_already_active/);
   stopProbe = "exact";
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "terminated", killed: true });
 });
@@ -304,7 +307,9 @@ test("throwing stop probe never kills and preserves Player Host ownership", asyn
   let throwOnStop = true;
   const harness = createHarness({ playerProbeThrows: (call) => call > 1 && throwOnStop });
   const phaseOwner = await reserveOwned(harness);
-  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({ executable: PLAYER_EXE, args: ["start"] }));
+  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+    launch({ executable: PLAYER_EXE, args: ["start"] }),
+  );
 
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "identity_probe_failed", killed: false });
   assert.deepEqual(harness.playerKillCalls, []);
@@ -320,7 +325,9 @@ test("kill false and throw both preserve exact Player Host ownership for safe re
     playerKillThrows: () => outcome === "throw",
   });
   const phaseOwner = await reserveOwned(harness);
-  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) => launch({ executable: PLAYER_EXE, args: ["start"] }));
+  bindStardewPrivateBootstrapOwnerTestSupport(phaseOwner, harness.composition).consumePlayerHostLaunch((launch) =>
+    launch({ executable: PLAYER_EXE, args: ["start"] }),
+  );
 
   assert.deepEqual(harness.owner.stopOwnedPlayerHost(), { kind: "termination_failed", killed: false });
   outcome = "throw";
@@ -332,12 +339,14 @@ test("kill false and throw both preserve exact Player Host ownership for safe re
 });
 
 function mintClaim(composition: ReturnType<typeof createHarness>["composition"]) {
-  return composition.broker.confirm({
-    playerId: "player-1",
-    companionId: "companion-1",
-    browserSessionId: "browser-1",
-    expiresAtMs: 5_000,
-  }).consume("browser-1");
+  return composition.broker
+    .confirm({
+      playerId: "player-1",
+      companionId: "companion-1",
+      browserSessionId: "browser-1",
+      expiresAtMs: 5_000,
+    })
+    .consume("browser-1");
 }
 
 async function reserveOwned(harness: ReturnType<typeof createHarness>) {
@@ -353,9 +362,7 @@ async function reserveOwned(harness: ReturnType<typeof createHarness>) {
 }
 
 const temporaryRoots: string[] = [];
-test.beforeEach(() => bindWindowsStaleLockReclaimer(
-  createTestWindowsStaleLockReclaimer(simulatedLockHelper),
-));
+test.beforeEach(() => bindWindowsStaleLockReclaimer(createTestWindowsStaleLockReclaimer(simulatedLockHelper)));
 test.after(() => bindWindowsStaleLockReclaimer(undefined));
 test.after(async () => {
   for (const root of temporaryRoots.splice(0)) {

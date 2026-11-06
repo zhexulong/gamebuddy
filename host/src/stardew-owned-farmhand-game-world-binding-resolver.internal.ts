@@ -41,8 +41,7 @@ export type WorldBindingReader = (
  *   available for resume.
  */
 export type StardewWorldBindingResolveOutcome = Readonly<
-  | { ok: true; binding: ProductionGameSessionWorldBinding }
-  | { ok: false; reason: "missing_or_foreign" | "terminal" }
+  { ok: true; binding: ProductionGameSessionWorldBinding } | { ok: false; reason: "missing_or_foreign" | "terminal" }
 >;
 
 /**
@@ -64,11 +63,8 @@ export type StardewWorldBindingResolver = Readonly<{
  * Use `createStardewWorldBindingResolverFromGameAuthority` for production
  * composition where the full game authority is available.
  */
-export function createStardewWorldBindingResolver(
-  readBinding: WorldBindingReader,
-): StardewWorldBindingResolver {
-  if (typeof readBinding !== "function")
-    throw new Error("invalid_stardew_world_binding_resolver_reader");
+export function createStardewWorldBindingResolver(readBinding: WorldBindingReader): StardewWorldBindingResolver {
+  if (typeof readBinding !== "function") throw new Error("invalid_stardew_world_binding_resolver_reader");
   return Object.freeze({
     resolveWorldBinding: async (gameSessionId: string): Promise<StardewWorldBindingResolveOutcome> => {
       if (typeof gameSessionId !== "string" || !SAFE_ID_PATTERN.test(gameSessionId))
@@ -93,7 +89,5 @@ export function createStardewWorldBindingResolverFromGameAuthority(
 ): StardewWorldBindingResolver {
   if (typeof game?.readGameSessionWorldBinding !== "function")
     throw new Error("invalid_stardew_world_binding_resolver_authority");
-  return createStardewWorldBindingResolver(
-    (input) => game.readGameSessionWorldBinding(input),
-  );
+  return createStardewWorldBindingResolver((input) => game.readGameSessionWorldBinding(input));
 }

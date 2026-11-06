@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./protocol.js";
+import { diagnoseBridgeMessage, type Scope, validateBridgeMessage } from "./protocol.js";
+import { captured, hostValidators, ROOT } from "./wire-declaration.test-support.js";
 
 /**
  * THE HOST MUST ACCEPT WHAT THE MOD'S OWN PROJECTION ACTUALLY PUBLISHES.
@@ -42,6 +44,15 @@ import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./prot
  * agreement.
  * </p>
  *
+ * <h2>The family the artifact cannot construct, covered by its vocabulary</h2>
+ * <p>
+ * `worldObjectTargets` is one of the absent ones, so every loopback assertion below skips it - which is how the Mod
+ * shipped a `kind` the Host refused and this file stayed green. Teaching the headless world to place a chair would
+ * exercise ONE row, and the next kind added at a fourth emission site would be invisible in exactly the same way. So the
+ * last test here reads the population from the Mod's own emission sites and holds BOTH declarations that must admit it -
+ * the Host predicate and the wire schema - to that set, naming the drifting kind.
+ * </p>
+ *
  * red-proof: history  `a2373de3` built the rock id inline as `$"rock:{location}:{x},{y}"`, outside `opaqueId`'s
  *                   `^[A-Za-z0-9_-]{1,128}$`; the gate was red on main for it until `79cf97d1`, and replaying it
  *                   reports `rockSourceTargets: invalid_snapshot:rockSourceTargets`
@@ -49,6 +60,12 @@ import { diagnoseBridgeMessage, validateBridgeMessage, type Scope } from "./prot
  * red-proof: fixture  a `treeChopSourceTargets` entry with an unexpected key, or `health` at 0, must be refused with
  *                   its family named; dropping the name makes this gate say `a treeChopSourceTargets entry the Host
  *                   refuses must name treeChopSourceTargets; got invalid_snapshot` (host/src/snapshot-loopback.test.ts)
+ * red-proof: history  `bb76f405` taught the Mod to publish placed furniture as `kind: "placed_furniture"` while the Host
+ *                   admitted four kinds; `round31` published that row, the Host refused
+ *                   `invalid_snapshot:worldObjectTargets`, and the bridge closed at 331 ms. Reverting the two
+ *                   declarations makes the vocabulary test report
+ *                   `placed_furniture: the Mod emits it at farmhandexecutioncontroller.worldobjectactions.cs:1123 and
+ *                   isWorldObjectTargetFact refuses it` (host/src/snapshot-loopback.test.ts)
  */
 
 const ARTIFACT_URL = new URL(
@@ -228,5 +245,180 @@ test("an absent family is never counted as accepted", () => {
   assert.ok(
     ARTIFACT.absent.length > 0,
     "this sample world cannot build every family; an artifact claiming otherwise would be lying about its own limits",
+  );
+});
+
+/**
+ * One C# `new BridgeWorldObjectTarget(...)` call: where it is, and every string literal in its `Kind` argument.
+ *
+ * The argument list is read by scanning to the matching close parenthesis rather than by a regex over the call, because
+ * one site passes a TERNARY (`container ? "breakable_container" : removable ? ... : ...`) and two of them pass
+ * expressions containing their own parentheses. A regex that stopped at the first `)` would read the wrong argument and
+ * report a vocabulary the producer does not have.
+ */
+function worldObjectTargetSites(
+  source: string,
+  file: string,
+): readonly Readonly<{ at: string; kinds: readonly string[] }>[] {
+  const sites = [];
+  for (const call of source.matchAll(/new BridgeWorldObjectTarget\(/gu)) {
+    const open = (call.index ?? 0) + call[0].length - 1;
+    const args = constructorArguments(source, open, `${file}: ${call[0]} at index ${String(call.index)}`);
+    const kindArgument = args[1];
+    assert.ok(kindArgument !== undefined, `${file}: a BridgeWorldObjectTarget site declares no second argument (kind)`);
+    const kinds = [...kindArgument.matchAll(/"([a-z_]+)"/gu)].map((literal) =>
+      captured(literal, 1, `a Kind literal in ${file}`),
+    );
+    assert.ok(
+      kinds.length > 0,
+      `${file}: the Kind argument \`${kindArgument.trim()}\` carries no string literal, so this reader cannot see the ` +
+        `vocabulary it publishes`,
+    );
+    sites.push({ at: `${file}:${String(source.slice(0, open).split("\n").length)}`, kinds });
+  }
+  return sites;
+}
+
+/** The top-level argument expressions of the call whose `(` sits at `open`, quotes and nesting respected. */
+function constructorArguments(source: string, open: number, what: string): readonly string[] {
+  const args = [];
+  let current = "";
+  let depth = 0;
+  let quoted = false;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index];
+    if (quoted) {
+      current += character;
+      if (character === '"') quoted = false;
+      continue;
+    }
+    if (character === '"') {
+      quoted = true;
+      current += character;
+      continue;
+    }
+    if (character === "(") {
+      depth += 1;
+      if (depth === 1) continue;
+    } else if (character === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        args.push(current);
+        return args;
+      }
+    } else if (character === "," && depth === 1) {
+      args.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  throw new Error(`${what}: the argument list never closes, so this reader cannot see what the call publishes`);
+}
+
+/**
+ * Every kind the Mod can put on the wire, read from the Mod's own emission sites.
+ *
+ * NOT from a hand-written list: the Mod declares no enum for `Kind` (it is a `string` on `BridgeWorldObjectTarget`), so
+ * the only authority for what it publishes is the code that builds the rows. `tests/` is excluded because a fixture that
+ * names a kind is evidence about the fixture, not about the producer.
+ */
+function modWorldObjectKinds(): ReadonlyMap<string, string> {
+  const modRoot = join(ROOT, "integrations/stardew");
+  const kinds = new Map<string, string>();
+  let sites = 0;
+  for (const relative of readdirSync(modRoot, { recursive: true, encoding: "utf8" })) {
+    const file = relative.replace(/\\/gu, "/");
+    if (!file.endsWith(".cs")) continue;
+    if (file.split("/").some((segment) => segment === "tests" || segment === "bin" || segment === "obj")) continue;
+    for (const site of worldObjectTargetSites(readFileSync(join(modRoot, file), "utf8"), file)) {
+      sites += 1;
+      for (const kind of site.kinds) kinds.set(kind, site.at);
+    }
+  }
+  assert.ok(
+    sites >= 3,
+    `the Mod's BridgeWorldObjectTarget emission sites must be read (found ${sites}); a reader that finds none would ` +
+      `compare an empty vocabulary against the Host's and pass`,
+  );
+  return kinds;
+}
+
+/** The kinds `isWorldObjectTargetFact` admits, read from the predicate that decides. */
+function hostWorldObjectKinds(): ReadonlySet<string> {
+  const validator = hostValidators().get("isWorldObjectTargetFact");
+  assert.ok(
+    validator !== null && validator !== undefined,
+    "isWorldObjectTargetFact must be defined in protocol-target-facts.ts and name its key list; this gate reads it",
+  );
+  const kinds = new Set<string>();
+  for (const match of validator.body.matchAll(/value\.kind\s*===\s*"([a-z_]+)"/gu))
+    kinds.add(captured(match, 1, "a world-object kind the Host admits"));
+  return kinds;
+}
+
+/** The kinds the wire contract's schema admits for this row. */
+function schemaWorldObjectKinds(): readonly string[] {
+  const schema = JSON.parse(readFileSync(join(ROOT, "protocol/bridge-v1.schema.json"), "utf8")) as {
+    $defs: { worldObjectTarget: { properties: { kind: { enum: readonly string[] } } } };
+  };
+  const admitted = schema.$defs.worldObjectTarget.properties.kind.enum;
+  assert.ok(
+    Array.isArray(admitted) && admitted.length > 0,
+    "the schema must pin the kinds a world-object row can carry",
+  );
+  return admitted;
+}
+
+/**
+ * THE KIND VOCABULARY IS ONE FACT WITH THREE SPELLINGS, AND TWO OF THEM DECIDE WHETHER A REAL FRAME SURVIVES.
+ *
+ * <p>
+ * The Mod decides which kind it writes at an emission site; `isWorldObjectTargetFact` decides whether the Host admits
+ * it; the schema decides what the contract says. A kind added on the producer side alone disconnects the bridge on the
+ * FIRST snapshot that carries one - which is what `round31` did at 331 ms - and a kind added on the Host side alone
+ * admits a row no Mod publishes.
+ * </p>
+ */
+test("every world-object kind the Mod can emit is a kind both declarations admit", () => {
+  const emitted = modWorldObjectKinds();
+  const host = hostWorldObjectKinds();
+  const schema = new Set(schemaWorldObjectKinds());
+
+  assert.ok(emitted.size >= 4, `the Mod's vocabulary must be read (found ${emitted.size})`);
+  assert.ok(host.size >= 4, `the Host's admitted vocabulary must be read (found ${host.size})`);
+  assert.ok(schema.size >= 4, `the schema's admitted vocabulary must be read (found ${schema.size})`);
+
+  assert.deepEqual(
+    [...emitted]
+      .filter(([kind]) => !host.has(kind))
+      .map(([kind, at]) => `worldObjectTargets.${kind}: the Mod emits it at ${at}`),
+    [],
+    "these kinds are published by the Mod and `isWorldObjectTargetFact` refuses them, so the first snapshot carrying " +
+      "one is `invalid_snapshot:worldObjectTargets` and the bridge closes",
+  );
+  assert.deepEqual(
+    [...host].filter((kind) => !emitted.has(kind)).map((kind) => `worldObjectTargets.${kind}`),
+    [],
+    "`isWorldObjectTargetFact` admits these kinds and no Mod emission site publishes them: a vocabulary the producer " +
+      "does not have stays green until someone trusts it",
+  );
+  assert.deepEqual(
+    [...host]
+      .filter((kind) => !schema.has(kind))
+      .sort()
+      .map((kind) => `worldObjectTargets.${kind}`),
+    [],
+    "`isWorldObjectTargetFact` admits these kinds and the schema's `worldObjectTarget.kind` enum does not, so a second " +
+      "implementation reading the contract would refuse a row the Host accepts",
+  );
+  assert.deepEqual(
+    [...schema]
+      .filter((kind) => !host.has(kind))
+      .sort()
+      .map((kind) => `worldObjectTargets.${kind}`),
+    [],
+    "the schema admits these kinds and `isWorldObjectTargetFact` refuses them: the contract promises a row the Host " +
+      "rejects, which is the same disagreement one layer down",
   );
 });

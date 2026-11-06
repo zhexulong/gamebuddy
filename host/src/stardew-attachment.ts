@@ -108,10 +108,13 @@ export type StardewAttachmentOptions = Readonly<{
  */
 export class StardewAttachmentFlow {
   readonly #options: StardewAttachmentOptions;
-  readonly #verifiedCabinChoices = new WeakMap<object, Readonly<{
-    session: StardewSessionAdvertisement;
-    cabinId: string;
-  }>>();
+  readonly #verifiedCabinChoices = new WeakMap<
+    object,
+    Readonly<{
+      session: StardewSessionAdvertisement;
+      cabinId: string;
+    }>
+  >();
 
   public constructor(options: StardewAttachmentOptions) {
     if (
@@ -128,7 +131,11 @@ export class StardewAttachmentFlow {
     // (HostFarmhandProvisioner.cs:535 `new_binding_requires_empty_expected_id`). The request path already
     // treats it that way (`expectedFarmhandId !== ""` below); the constructor refused it, so the one mode
     // that creates a binding could not be expressed through this class at all.
-    if (options.expectedFarmhandId !== undefined && options.expectedFarmhandId !== "" && !isNativeId(options.expectedFarmhandId))
+    if (
+      options.expectedFarmhandId !== undefined &&
+      options.expectedFarmhandId !== "" &&
+      !isNativeId(options.expectedFarmhandId)
+    )
       throw new Error("invalid_expected_farmhand_id");
     this.#options = options;
   }
@@ -176,14 +183,14 @@ export class StardewAttachmentFlow {
     confirmation: Readonly<{ confirmed: boolean; expectedFarmhandId?: string }> = { confirmed: false },
   ): Promise<string> {
     if (!confirmation.confirmed) throw new Error("user_confirmation_required");
-    const choiceFacts = typeof sessionOrChoice === "object" && sessionOrChoice !== null
-      ? this.#verifiedCabinChoices.get(sessionOrChoice)
-      : undefined;
-    const session = choiceFacts?.session ?? sessionOrChoice as StardewSessionAdvertisement;
+    const choiceFacts =
+      typeof sessionOrChoice === "object" && sessionOrChoice !== null
+        ? this.#verifiedCabinChoices.get(sessionOrChoice)
+        : undefined;
+    const session = choiceFacts?.session ?? (sessionOrChoice as StardewSessionAdvertisement);
     const cabinId = choiceFacts?.cabinId ?? this.#options.cabinId;
     if (!isOpaque(cabinId)) throw new Error("invalid_cabin_id");
-    if (choiceFacts === undefined && !isRecord(sessionOrChoice))
-      throw new Error("invalid_stardew_cabin_choice");
+    if (choiceFacts === undefined && !isRecord(sessionOrChoice)) throw new Error("invalid_stardew_cabin_choice");
     const current = await this.readLiveSession();
     if (
       !verifySignature(session, this.#options.sessionToken) ||
@@ -232,10 +239,12 @@ export class StardewAttachmentFlow {
     return request.requestId;
   }
 
-  public async readCompatibilityOutcome(): Promise<Readonly<{
-    status: "compatible_unverified";
-    attachmentAllowed: true;
-  }>> {
+  public async readCompatibilityOutcome(): Promise<
+    Readonly<{
+      status: "compatible_unverified";
+      attachmentAllowed: true;
+    }>
+  > {
     await this.readLiveSession();
     return Object.freeze({ status: "compatible_unverified" as const, attachmentAllowed: true as const });
   }
@@ -298,8 +307,10 @@ export class StardewAttachmentFlow {
     if (manifest.requestId !== requestId) throw new Error("stardew_manifest_request_mismatch");
     if (manifest.expiresAtUnixMs <= now || manifest.issuedAtUnixMs > now + 30_000)
       throw new Error("stardew_manifest_expired");
-    if (manifest.companionId !== this.#options.companionId ||
-      (this.#options.cabinId !== undefined && manifest.cabinId !== this.#options.cabinId))
+    if (
+      manifest.companionId !== this.#options.companionId ||
+      (this.#options.cabinId !== undefined && manifest.cabinId !== this.#options.cabinId)
+    )
       throw new Error("stardew_manifest_identity_mismatch");
     const cabinMatches = current.cabins.filter((cabin) => cabin.cabinId === manifest.cabinId);
     const boundCabin = cabinMatches.length === 1 ? cabinMatches[0] : undefined;
@@ -410,10 +421,10 @@ function validateSession(value: unknown): StardewSessionAdvertisement {
     !isEndpoint(value.endpoint) ||
     !isOpaque(value.saveId) ||
     !isOpaque(value.worldId) ||
-     !isOpaque(value.hostPlayerId) ||
-     value.runtimeRole !== "player_host" ||
-     !isOpaque(value.launchGeneration) ||
-     !isTimestamp(value.publishedAtUnixMs) ||
+    !isOpaque(value.hostPlayerId) ||
+    value.runtimeRole !== "player_host" ||
+    !isOpaque(value.launchGeneration) ||
+    !isTimestamp(value.publishedAtUnixMs) ||
     !isTimestamp(value.expiresAtUnixMs) ||
     value.expiresAtUnixMs <= value.publishedAtUnixMs ||
     !isOpaque(value.nonce) ||

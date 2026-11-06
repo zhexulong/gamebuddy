@@ -1,4 +1,4 @@
-import { MAX_PLAN_NODES } from "./body-program-script.js";
+import { TARGETS_NAMED_PER_PLAN } from "./body-program-script.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
@@ -17,9 +17,9 @@ export interface ObservationBudget {
   readonly elidedVillagerRows: number;
   /** Learned recipes withheld because they are not craftable from the current inventory. */
   readonly withheldUnavailableRecipes: number;
-  /** Plantable tiles withheld because they are farther than the nearest `MAX_PLAN_NODES` of their held stack. */
+  /** Plantable tiles withheld because they are farther than the nearest `TARGETS_NAMED_PER_PLAN` of their held stack. */
   readonly withheldDistantSeedTargets: number;
-  /** Plantable tiles withheld because they are farther than the nearest `MAX_PLAN_NODES` of their held stack. */
+  /** Plantable tiles withheld because they are farther than the nearest `TARGETS_NAMED_PER_PLAN` of their held stack. */
   readonly withheldDistantSaplingTargets: number;
   /** Bytes the bound removed from this observation's own JSON. Zero when there was nothing to remove. */
   readonly bytesRemoved: number;
@@ -71,8 +71,8 @@ export interface ObservationBudget {
  *
  *    A row IS addressable (its `targetId` hashes location:slot:tile:item and `plant_seed` /
  *    `plant_sapling` echo it), so a row may not vanish from under a plan that already named it: the
- *    nearest `MAX_PLAN_NODES` rows of each stack are published, which is every row a single plan
- *    can reach. One plan holds `MAX_PLAN_NODES` (16) nodes, so it can plant at most 16 times; rows
+ *    nearest `TARGETS_NAMED_PER_PLAN` rows of each stack are published, which is every row a single plan
+ *    can reach. One plan holds `TARGETS_NAMED_PER_PLAN` (16) nodes, so it can plant at most 16 times; rows
  *    past the 16th nearest of a stack cannot be named by any plan that also names the nearer ones.
  *    The order is Chebyshev distance then the Mod's own published order, the same `NearestFirst`
  *    ranking the Mod applies to `weedTargets`/`caskTargets` before their own `Take`, so the first
@@ -105,6 +105,11 @@ export function boundObservedSnapshot(
   let withheldDistantSeedTargets = 0;
   let withheldDistantSaplingTargets = 0;
   const bounded: Record<string, unknown> = { ...snapshot };
+  // `chests` is deliberately absent from every bound below, which is why it reaches the model as the snapshot spread
+  // it. It is the family where a window would be most tempting and least defensible: a container's contents are a fact
+  // about that container, so shortening them would answer "this chest holds 16 items" for a chest the player is
+  // looking at. How many CONTAINERS arrive is the Mod's bound; this layer shortens neither the list nor a container.
+  // `stardew-observation-budget.test.ts` asserts the whole mirror survives, item ids included.
 
   // A surface the model has already been shown is not re-described. The revision travels WITH the omission so a
   // reader can still tell which surface the current step belongs to.
@@ -139,7 +144,7 @@ export function boundObservedSnapshot(
   // soonest, which is what a script slicing the list (`snapshot.seedTargets.slice(0, 6)`) means by "the next ones".
   // The ranking is the Mod's own `NearestFirst` convention (Chebyshev distance) that `weedTargets`/`caskTargets` are
   // ordered by before their own `Take`. A stack is a backpack slot: rows from one slot can never address another
-  // slot's item, so each slot keeps its own `MAX_PLAN_NODES` window and a plan mixing two stacks still has both.
+  // slot's item, so each slot keeps its own `TARGETS_NAMED_PER_PLAN` window and a plan mixing two stacks still has both.
   //
   // A family that fits its windows is returned EXACTLY as the Mod published it - not re-ranked - so a list small
   // enough to be published whole keeps the Mod's own order and its own indices.
@@ -148,7 +153,7 @@ export function boundObservedSnapshot(
   ): { readonly kept: readonly TRow[]; readonly withheld: number } => {
     const perStack = new Map<number, number>();
     for (const row of rows) perStack.set(row.slot, (perStack.get(row.slot) ?? 0) + 1);
-    if ([...perStack.values()].every((count) => count <= MAX_PLAN_NODES)) return { kept: rows, withheld: 0 };
+    if ([...perStack.values()].every((count) => count <= TARGETS_NAMED_PER_PLAN)) return { kept: rows, withheld: 0 };
 
     const distance = (row: TRow) => Math.max(Math.abs(row.x - snapshot.tile.x), Math.abs(row.y - snapshot.tile.y));
     const taken = new Map<number, number>();
@@ -157,15 +162,15 @@ export function boundObservedSnapshot(
       .sort((left, right) => distance(left.row) - distance(right.row) || left.index - right.index)
       .flatMap(({ row }) => {
         const count = taken.get(row.slot) ?? 0;
-        if (count >= MAX_PLAN_NODES) return [];
+        if (count >= TARGETS_NAMED_PER_PLAN) return [];
         taken.set(row.slot, count + 1);
         return [row];
       });
     return { kept, withheld: rows.length - kept.length };
   };
 
-  // A plan is at most `MAX_PLAN_NODES` nodes, so it can plant at most that many times: the rows past the nearest
-  // `MAX_PLAN_NODES` of a stack are a catalogue no plan can exhaust, and the ones before them are the choices.
+  // A plan is at most `TARGETS_NAMED_PER_PLAN` nodes, so it can plant at most that many times: the rows past the nearest
+  // `TARGETS_NAMED_PER_PLAN` of a stack are a catalogue no plan can exhaust, and the ones before them are the choices.
   for (const field of ["seedTargets", "treeSaplingTargets"] as const) {
     const rows = snapshot[field];
     if (rows === undefined) continue;

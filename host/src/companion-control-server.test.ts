@@ -473,8 +473,16 @@ test("idempotency fingerprints use validated request semantics rather than JSON 
     const runtimeInstanceId = hello.runtimeInstanceId as string;
     const first = `{"type":"player_input","requestId":"request_semantic","runtimeInstanceId":"${runtimeInstanceId}","sourceEventId":"source_semantic","text":"café","locale":"en-US"}`;
     const equivalent = `{ "locale" : "en-\\u0055S", "text" : "caf\\u00e9", "sourceEventId" : "source_semantic", "runtimeInstanceId" : "${runtimeInstanceId}", "requestId" : "request_semantic", "type" : "player_input" }`;
-    assert.deepEqual(await rawFrame(helper, "connection_01", first), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
-    assert.deepEqual(await rawFrame(helper, "connection_01", equivalent), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
+    assert.deepEqual(await rawFrame(helper, "connection_01", first), {
+      ok: true,
+      accepted: "player_input",
+      turnOutcome: "unobserved",
+    });
+    assert.deepEqual(await rawFrame(helper, "connection_01", equivalent), {
+      ok: true,
+      accepted: "player_input",
+      turnOutcome: "unobserved",
+    });
     assert.equal(executions, 1);
     const changed = equivalent.replace("source_semantic", "source_changed");
     assert.equal((await rawFrame(helper, "connection_01", changed)).code, "control_idempotency_collision");
@@ -700,7 +708,11 @@ test("original timeout then terminal settle returns cached success to a later du
     assert.equal((await frame(helper, "connection_01", request)).code, "control_request_timeout");
     release();
     await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(await frame(helper, "connection_01", request), { ok: true, accepted: "player_input", turnOutcome: "unobserved" });
+    assert.deepEqual(await frame(helper, "connection_01", request), {
+      ok: true,
+      accepted: "player_input",
+      turnOutcome: "unobserved",
+    });
     assert.equal(executions, 1);
   } finally {
     await server.close();
@@ -932,7 +944,6 @@ test("timeout reply never evicts its live idempotency reservation", async () => 
     await server.close();
   }
 });
-
 
 test("the control reply names how the delivered turn ended, not only that it was accepted", async () => {
   // This is the seam the classification travels: Pi's final message said error/aborted, the loop now keeps

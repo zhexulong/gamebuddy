@@ -113,6 +113,22 @@ function integrationWithCapabilities(
           year: 1,
           weather: "sunny",
           activeExecution: null,
+          // The row a load must copy: `machine_load` is dispatched against the machine the snapshot published, so this
+          // fixture names one furnace and its own accepted input.
+          machineTargets: [
+            {
+              targetId: "machine_load_target_01",
+              x: 39,
+              y: 40,
+              qualifiedItemId: "(BC)13",
+              displayName: "Furnace",
+              readyForHarvest: false,
+              minutesUntilReady: 0,
+              loadInputSlot: 8,
+              loadInputQualifiedItemId: "(O)378",
+              loadInputStack: 1,
+            },
+          ],
         },
         latestReceipt: null,
         latestReasonCode: null,
@@ -376,7 +392,7 @@ test("every materialized published Farmhand tool routes its exact action-specifi
       slot: 8,
       x: 39,
       y: 40,
-      expectedQualifiedItemId: "(O)433",
+      expectedQualifiedItemId: "(O)378",
       expectedTargetId: "machine_load_target_01",
     },
     machine_collect_output: {

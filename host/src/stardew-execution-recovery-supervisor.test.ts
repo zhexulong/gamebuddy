@@ -58,13 +58,27 @@ function recoveryRecord(id = "logical_recovery_01") {
     canonicalArgs: { x: 1, y: 2 },
     expectedRevision: 1,
     deadlineMs,
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
   } as const;
 }
 
 test("fresh coordinator rehydrates recoverable records with a new lifecycle owner", async () => {
-  const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const journal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const coordinator = coordinatorFixture({ recoveryJournal: journal });
   const [dispatch] = coordinator.uncertainDispatches();
   assert.equal(dispatch?.requestId, "request_recovery_01");
@@ -75,14 +89,28 @@ test("fresh coordinator rehydrates recoverable records with a new lifecycle owne
 });
 
 test("recovery supervisor queries each uncertain immutable tuple once and admits only through coordinator receipt admission", async () => {
-  const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const journal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const coordinator = coordinatorFixture({ recoveryJournal: journal });
 
   const calls: unknown[] = [];
   const supervisor = new StardewExecutionRecoverySupervisor(coordinator);
   const result = await supervisor.recoverFromFreshBinding({
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
     queryExecutionReceipt: async (query) => {
       calls.push(query);
       return receipt("succeeded");
@@ -104,24 +132,52 @@ test("isExactReceiptRecoveryPort accepts only a frozen exact stable port", () =>
     worldId: "world_01",
   });
   assert.equal(
-    isExactReceiptRecoveryPort(Object.freeze({ scope: identity, bindingIdentity: identity, queryExecutionReceipt: async () => receipt("succeeded") })),
+    isExactReceiptRecoveryPort(
+      Object.freeze({
+        scope: identity,
+        bindingIdentity: identity,
+        queryExecutionReceipt: async () => receipt("succeeded"),
+      }),
+    ),
     true,
   );
   assert.equal(isExactReceiptRecoveryPort({}), false);
-  assert.equal(isExactReceiptRecoveryPort(Object.freeze({ scope: identity, bindingIdentity: identity, queryExecutionReceipt: 1 })), false);
-  assert.equal(isExactReceiptRecoveryPort(Object.freeze({ scope: {}, bindingIdentity: {}, queryExecutionReceipt: async () => ({}) })), false);
+  assert.equal(
+    isExactReceiptRecoveryPort(Object.freeze({ scope: identity, bindingIdentity: identity, queryExecutionReceipt: 1 })),
+    false,
+  );
+  assert.equal(
+    isExactReceiptRecoveryPort(
+      Object.freeze({ scope: {}, bindingIdentity: {}, queryExecutionReceipt: async () => ({}) }),
+    ),
+    false,
+  );
   assert.equal(isExactReceiptRecoveryPort(null), false);
   assert.equal(isExactReceiptRecoveryPort(undefined), false);
 });
 
 test("receipt_not_found and mismatched receipts become durable recovery_required", async () => {
-  const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const journal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const coordinator = coordinatorFixture({ recoveryJournal: journal });
   const supervisor = new StardewExecutionRecoverySupervisor(coordinator);
 
   const missing = await supervisor.recoverFromFreshBinding({
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
     queryExecutionReceipt: async () => {
       throw new Error("bridge_rejected:receipt_not_found");
     },
@@ -132,11 +188,25 @@ test("receipt_not_found and mismatched receipts become durable recovery_required
   assert.equal(coordinator.uncertainDispatches().length, 0);
   assert.equal(journal.record("logical_recovery_01")?.state, "recovery_required");
 
-  const mismatchJournal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const mismatchJournal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const mismatchCoordinator = coordinatorFixture({ recoveryJournal: mismatchJournal });
   const mismatch = await new StardewExecutionRecoverySupervisor(mismatchCoordinator).recoverFromFreshBinding({
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
     queryExecutionReceipt: async () => ({ ...receipt("succeeded"), requestId: "other_request" }),
   });
   assert.deepEqual(mismatch, [
@@ -146,11 +216,25 @@ test("receipt_not_found and mismatched receipts become durable recovery_required
 });
 
 test("nonterminal exact receipt remains recoverable and query failure becomes durable recovery_required", async () => {
-  const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const journal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const coordinator = coordinatorFixture({ recoveryJournal: journal });
   const nonterminal = await new StardewExecutionRecoverySupervisor(coordinator).recoverFromFreshBinding({
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
     queryExecutionReceipt: async () => receipt("running"),
   });
   assert.deepEqual(nonterminal, [{ requestId: "request_recovery_01", result: "admitted", state: "running" }]);
@@ -163,19 +247,34 @@ test("nonterminal exact receipt remains recoverable and query failure becomes du
   assert.equal(coordinator.uncertainDispatches().length, 1);
   assert.equal(coordinator.uncertainDispatches()[0]?.requestId, "request_recovery_01");
 
-  const failedJournal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+  const failedJournal = new StardewLogicalActionRecoveryJournal({
+    initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+  });
   const failedCoordinator = coordinatorFixture({ recoveryJournal: failedJournal });
   const failed = await new StardewExecutionRecoverySupervisor(failedCoordinator).recoverFromFreshBinding({
-    scope: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    bindingIdentity: { product: "stardew", continuityId: "continuity_01", integrationId: "stardew", saveId: "save_01", worldId: "world_01" },
-    queryExecutionReceipt: async () => { throw new Error("bridge_rejected:bridge_timeout"); },
+    scope: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    bindingIdentity: {
+      product: "stardew",
+      continuityId: "continuity_01",
+      integrationId: "stardew",
+      saveId: "save_01",
+      worldId: "world_01",
+    },
+    queryExecutionReceipt: async () => {
+      throw new Error("bridge_rejected:bridge_timeout");
+    },
   });
   assert.deepEqual(failed, [
     { requestId: "request_recovery_01", result: "recovery_required", reasonCode: "bridge_timeout" },
   ]);
   assert.equal(failedJournal.record("logical_recovery_01")?.state, "recovery_required");
 });
-
 
 test("scope or binding mismatch does not query or admit and durably requires recovery", async () => {
   const stableIdentity = {
@@ -189,14 +288,23 @@ test("scope or binding mismatch does not query or admit and durably requires rec
     ["scope", { scope: { ...stableIdentity, saveId: "other" }, bindingIdentity: stableIdentity }],
     ["binding", { scope: stableIdentity, bindingIdentity: { ...stableIdentity, worldId: "other" } }],
   ] as const) {
-    const journal = new StardewLogicalActionRecoveryJournal({ initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }] });
+    const journal = new StardewLogicalActionRecoveryJournal({
+      initialRecords: [{ ...recoveryRecord(), state: "recovery_pending" }],
+    });
     let queried = false;
-    const outcome = await new StardewExecutionRecoverySupervisor(coordinatorFixture({ recoveryJournal: journal })).recoverFromFreshBinding({
+    const outcome = await new StardewExecutionRecoverySupervisor(
+      coordinatorFixture({ recoveryJournal: journal }),
+    ).recoverFromFreshBinding({
       ...port,
-      queryExecutionReceipt: async () => { queried = true; return receipt("succeeded"); },
+      queryExecutionReceipt: async () => {
+        queried = true;
+        return receipt("succeeded");
+      },
     });
     assert.equal(queried, false, `${field} mismatch must not query`);
-    assert.deepEqual(outcome, [{ requestId: "request_recovery_01", result: "recovery_required", reasonCode: `receipt_${field}_mismatch` }]);
+    assert.deepEqual(outcome, [
+      { requestId: "request_recovery_01", result: "recovery_required", reasonCode: `receipt_${field}_mismatch` },
+    ]);
     assert.equal(journal.record("logical_recovery_01")?.state, "recovery_required");
   }
 });

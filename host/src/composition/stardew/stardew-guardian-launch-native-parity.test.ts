@@ -113,8 +113,22 @@ import type { TypedPrivateGameFacts } from "../../containment/runtime/contract/g
 import { createDesktopGuardianGameRuntimePlatform } from "./stardew-guardian-platform.js";
 
 const hostRoot = fileURLToPath(new URL("../../../", import.meta.url));
-const guardianExecutable = resolve(hostRoot, "native", "windows-bootstrap-guardian", ".dist", "win-x64", "GameBuddy.WindowsBootstrapGuardian.exe");
-const fixtureExecutable = resolve(hostRoot, "native", "windows-bootstrap-guardian", ".dist", "fixtures", "RoleRootFixture.exe");
+const guardianExecutable = resolve(
+  hostRoot,
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "win-x64",
+  "GameBuddy.WindowsBootstrapGuardian.exe",
+);
+const fixtureExecutable = resolve(
+  hostRoot,
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "fixtures",
+  "RoleRootFixture.exe",
+);
 const isWindows = process.platform === "win32";
 const winOnly = { skip: !isWindows ? "BLOCKED: the native launch parity test needs Windows" : false };
 
@@ -168,220 +182,388 @@ const wireBinding: GuardianSessionBinding = Object.freeze({
   runtimeAdmissionSha256: "c".repeat(64),
 });
 
-test("the compiled native Guardian accepts the Host's own arm body for the exact ParseArm key set and admits the Host's launch plans for both roles", { ...winOnly, timeout: 180_000 }, async (t) => {
-  for (const executable of [guardianExecutable, fixtureExecutable]) {
+test(
+  "the compiled native Guardian accepts the Host's own arm body for the exact ParseArm key set and admits the Host's launch plans for both roles",
+  { ...winOnly, timeout: 180_000 },
+  async (t) => {
+    for (const executable of [guardianExecutable, fixtureExecutable]) {
+      try {
+        await access(executable);
+      } catch {
+        t.skip(`published Guardian/fixture is missing; run the Windows Guardian builder first: ${executable}`);
+        return;
+      }
+    }
+
+    const root = await mkdtemp(resolve(tmpdir(), "gamebuddy-launch-parity-"));
+    const natives: NativeResidentGuardian[] = [];
+    const openNative = (): NativeResidentGuardian => {
+      const native = new NativeResidentGuardian();
+      natives.push(native);
+      return native;
+    };
     try {
-      await access(executable);
-    } catch {
-      t.skip(`published Guardian/fixture is missing; run the Windows Guardian builder first: ${executable}`);
-      return;
-    }
-  }
-
-  const root = await mkdtemp(resolve(tmpdir(), "gamebuddy-launch-parity-"));
-  const natives: NativeResidentGuardian[] = [];
-  const openNative = (): NativeResidentGuardian => {
-    const native = new NativeResidentGuardian();
-    natives.push(native);
-    return native;
-  };
-  try {
-    // The production role environment: the exact seven-key allowlist both the Host
-    // encoder and the native's `IsAllowedEnvironment` carry.
-    const environment = Object.freeze({
-      PATH: process.env.PATH ?? "C:\\Windows\\System32",
-      SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
-      WINDIR: process.env.WINDIR ?? "C:\\Windows",
-      TEMP: process.env.TEMP ?? "C:\\Windows\\Temp",
-      TMP: process.env.TMP ?? "C:\\Windows\\Temp",
-      USERPROFILE: process.env.USERPROFILE ?? "C:\\Users\\Default",
-      GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "launch-parity-generation",
-    });
-    // The typed launch facts the game layer hands the contained runtime
-    // (`stardew-private-bootstrap-composer.core.ts:2120`/`:2294`). They are the
-    // LAUNCH authorization: only their `executable` reaches the arm body, as the
-    // approved executable the native `ParseLaunch` later enforces the plan against.
-    const productionFacts = (label: string): TypedPrivateGameFacts => Object.freeze({
-      executable: fixtureExecutable,
-      cwd: root,
-      arguments: Object.freeze(["--signal", resolve(root, `${label}.report`), "--exit-after-report"]),
-      environment,
-    });
-
-    // ---------------------------------------------------------------------
-    // (a) the production arm body, exactly as the live path emits it: the
-    // composition's arm frame facts plus the approved executable, on a real
-    // native, whose acceptance is the whole point.
-    // ---------------------------------------------------------------------
-    const binding: Correlation = Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() });
-    const host = hostPlatformFor(openNative(), binding);
-    const armFacts = armBindingFacts();
-    await host.platform.arm({ ...binding, operationWaitBudgetMs: 60_000, armFacts, authorization: productionFacts("player") });
-    const hostArmBody = host.standIn.hostArmBody;
-    assert.ok(hostArmBody !== undefined, "(a) the Host's arm encoder must have produced a body");
-    t.diagnostic(`(a) Host-encoded arm body: ${textOf(hostArmBody)}`);
-    // The exact-key parity gate. `ParseArm`'s `RequireExactKeys` compares the key
-    // COUNT as well as the membership, so this list is checked against the native's
-    // own: a future extra or missing key fails HERE rather than only in a live run.
-    const hostArmKeys = Object.keys(JSON.parse(textOf(hostArmBody)) as Record<string, unknown>).sort();
-    assert.deepEqual([...hostArmKeys], [...PARSE_ARM_BODY_KEYS].sort(), "(a) the Host arm body must carry exactly the ParseArm key set: the correlation, the arm frame's four binding facts, and the approved executable");
-    const hostArmFrame = JSON.parse(textOf(hostArmBody)) as Record<string, unknown>;
-    assert.equal(hostArmFrame.guardianInstanceId, binding.guardianInstanceId, "(a) the arm body must carry the correlation it was armed with");
-    assert.equal(hostArmFrame.guardianEpoch, binding.guardianEpoch, "(a) the arm body must carry the correlation it was armed with");
-    assert.equal(hostArmFrame.attemptId, binding.attemptId, "(a) the arm body must carry the correlation it was armed with");
-    assert.equal(hostArmFrame.revision, armFacts.revision, "(a) the arm body's revision must be the arm frame's own binding revision");
-    assert.equal(hostArmFrame.leaseName, armFacts.leaseName, "(a) the arm body's leaseName must be the arm frame's own lease name");
-    assert.equal(hostArmFrame.playerJobName, armFacts.playerJobName, "(a) the arm body's playerJobName must be the arm frame's own Job name");
-    assert.equal(hostArmFrame.aiJobName, armFacts.aiJobName, "(a) the arm body's aiJobName must be the arm frame's own Job name");
-    assert.equal(hostArmFrame.approvedExecutable, fixtureExecutable, "(a) the arm body must carry the approved executable the launch plan is later enforced against");
-    for (const key of ["executable", "cwd", "arguments", "environment"]) {
-      assert.equal(hostArmKeys.includes(key), false, `(a) the launch facts bag's ${key} must never enter the arm body: the native parser refuses the extra key`);
-    }
-    assert.equal(host.standIn.armBodyWasTokenless, true, "(a) the Host's arm body must be tokenless: the supervisor owns the private token");
-    assert.equal(
-      host.standIn.privateAnswer(0),
-      "accepted",
-      `(a) the native answered ${quoted(host.standIn.privateAnswer(0))} for the Host-encoded arm body`,
-    );
-    assert.equal(host.standIn.publicResults[0], "armed", "(a) the native must report its armed result for the Host-encoded arm body");
-    assert.equal(host.standIn.acknowledgementCount(), 1, "(a) the accepted arm must have produced exactly the broker's arm acknowledgement");
-    assert.equal(host.native.stderr, "", `(a) the native reported a diagnostic for the accepted arm body: ${host.native.stderr}`);
-
-    // ---------------------------------------------------------------------
-    // (c) the launch half, on the SAME native the Host's own arm frame just
-    // armed. The arm facts and the launch facts are separate inputs, so every
-    // frame below is still the Host's own encoder output. (The arm-body probe
-    // that used to sit between them is what (a) replaced.)
-    // ---------------------------------------------------------------------
-    const launchBodies: Array<Readonly<{ role: string; frame: Uint8Array }>> = [];
-    for (const role of ["player_host", "ai_client"] as const) {
-      const label = role === "player_host" ? "player" : "ai";
-      await host.platform.launch({
-        ...binding,
-        deadlineUnixMs: Date.now() + 60_000,
-        role,
-        authorization: productionFacts(label),
+      // The production role environment: the exact seven-key allowlist both the Host
+      // encoder and the native's `IsAllowedEnvironment` carry.
+      const environment = Object.freeze({
+        PATH: process.env.PATH ?? "C:\\Windows\\System32",
+        SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
+        WINDIR: process.env.WINDIR ?? "C:\\Windows",
+        TEMP: process.env.TEMP ?? "C:\\Windows\\Temp",
+        TMP: process.env.TMP ?? "C:\\Windows\\Temp",
+        USERPROFILE: process.env.USERPROFILE ?? "C:\\Users\\Default",
+        GAMEBUDDY_STARDEW_LAUNCH_GENERATION: "launch-parity-generation",
       });
-      const body = host.standIn.hostLaunchBodies.at(-1);
-      assert.ok(body !== undefined, `(c) the Host's launch encoder must have produced the ${role} frame`);
-      launchBodies.push(Object.freeze({ role, frame: body }));
-      t.diagnostic(`(c) ${role} Host-encoded launch body: ${textOf(body)}`);
-      const decoded = JSON.parse(textOf(body)) as Record<string, unknown>;
-      assert.deepEqual(Object.keys(decoded).sort(), [...PARSE_LAUNCH_KEYS], `(c) the ${role} launch frame must be exactly the ten ParseLaunch keys`);
-      assert.match(String(decoded.planId), GUID_D, `(c) the ${role} launch frame must carry a GUID D planId`);
-      assert.equal(decoded.guardianInstanceId, binding.guardianInstanceId, `(c) the ${role} launch frame must carry the Host's own correlation`);
-      assert.equal(decoded.role, role, `(c) the ${role} launch frame must carry the role the Host launched`);
-      assert.equal(decoded.executable, fixtureExecutable, `(c) the ${role} launch frame must carry the armed approved executable`);
-      assert.equal(decoded.executable, hostArmFrame.approvedExecutable, `(c) the ${role} launch frame's executable must equal the executable the Host armed`);
-      assert.deepEqual(Object.keys(decoded.environment as Record<string, unknown>).sort(), Object.keys(environment).sort(), `(c) the ${role} launch frame must carry the exact seven-key role environment`);
+      // The typed launch facts the game layer hands the contained runtime
+      // (`stardew-private-bootstrap-composer.core.ts:2120`/`:2294`). They are the
+      // LAUNCH authorization: only their `executable` reaches the arm body, as the
+      // approved executable the native `ParseLaunch` later enforces the plan against.
+      const productionFacts = (label: string): TypedPrivateGameFacts =>
+        Object.freeze({
+          executable: fixtureExecutable,
+          cwd: root,
+          arguments: Object.freeze(["--signal", resolve(root, `${label}.report`), "--exit-after-report"]),
+          environment,
+        });
+
+      // ---------------------------------------------------------------------
+      // (a) the production arm body, exactly as the live path emits it: the
+      // composition's arm frame facts plus the approved executable, on a real
+      // native, whose acceptance is the whole point.
+      // ---------------------------------------------------------------------
+      const binding: Correlation = Object.freeze({
+        guardianInstanceId: randomUUID(),
+        guardianEpoch: 1,
+        attemptId: randomUUID(),
+      });
+      const host = hostPlatformFor(openNative(), binding);
+      const armFacts = armBindingFacts();
+      await host.platform.arm({
+        ...binding,
+        operationWaitBudgetMs: 60_000,
+        armFacts,
+        authorization: productionFacts("player"),
+      });
+      const hostArmBody = host.standIn.hostArmBody;
+      assert.ok(hostArmBody !== undefined, "(a) the Host's arm encoder must have produced a body");
+      t.diagnostic(`(a) Host-encoded arm body: ${textOf(hostArmBody)}`);
+      // The exact-key parity gate. `ParseArm`'s `RequireExactKeys` compares the key
+      // COUNT as well as the membership, so this list is checked against the native's
+      // own: a future extra or missing key fails HERE rather than only in a live run.
+      const hostArmKeys = Object.keys(JSON.parse(textOf(hostArmBody)) as Record<string, unknown>).sort();
+      assert.deepEqual(
+        [...hostArmKeys],
+        [...PARSE_ARM_BODY_KEYS].sort(),
+        "(a) the Host arm body must carry exactly the ParseArm key set: the correlation, the arm frame's four binding facts, and the approved executable",
+      );
+      const hostArmFrame = JSON.parse(textOf(hostArmBody)) as Record<string, unknown>;
       assert.equal(
-        host.standIn.nativeAnswers.at(-1),
+        hostArmFrame.guardianInstanceId,
+        binding.guardianInstanceId,
+        "(a) the arm body must carry the correlation it was armed with",
+      );
+      assert.equal(
+        hostArmFrame.guardianEpoch,
+        binding.guardianEpoch,
+        "(a) the arm body must carry the correlation it was armed with",
+      );
+      assert.equal(
+        hostArmFrame.attemptId,
+        binding.attemptId,
+        "(a) the arm body must carry the correlation it was armed with",
+      );
+      assert.equal(
+        hostArmFrame.revision,
+        armFacts.revision,
+        "(a) the arm body's revision must be the arm frame's own binding revision",
+      );
+      assert.equal(
+        hostArmFrame.leaseName,
+        armFacts.leaseName,
+        "(a) the arm body's leaseName must be the arm frame's own lease name",
+      );
+      assert.equal(
+        hostArmFrame.playerJobName,
+        armFacts.playerJobName,
+        "(a) the arm body's playerJobName must be the arm frame's own Job name",
+      );
+      assert.equal(
+        hostArmFrame.aiJobName,
+        armFacts.aiJobName,
+        "(a) the arm body's aiJobName must be the arm frame's own Job name",
+      );
+      assert.equal(
+        hostArmFrame.approvedExecutable,
+        fixtureExecutable,
+        "(a) the arm body must carry the approved executable the launch plan is later enforced against",
+      );
+      for (const key of ["executable", "cwd", "arguments", "environment"]) {
+        assert.equal(
+          hostArmKeys.includes(key),
+          false,
+          `(a) the launch facts bag's ${key} must never enter the arm body: the native parser refuses the extra key`,
+        );
+      }
+      assert.equal(
+        host.standIn.armBodyWasTokenless,
+        true,
+        "(a) the Host's arm body must be tokenless: the supervisor owns the private token",
+      );
+      assert.equal(
+        host.standIn.privateAnswer(0),
         "accepted",
-        `(c) the native answered ${quoted(host.standIn.nativeAnswers.at(-1))} for the Host-encoded ${role} plan`,
+        `(a) the native answered ${quoted(host.standIn.privateAnswer(0))} for the Host-encoded arm body`,
+      );
+      assert.equal(
+        host.standIn.publicResults[0],
+        "armed",
+        "(a) the native must report its armed result for the Host-encoded arm body",
+      );
+      assert.equal(
+        host.standIn.acknowledgementCount(),
+        1,
+        "(a) the accepted arm must have produced exactly the broker's arm acknowledgement",
+      );
+      assert.equal(
+        host.native.stderr,
+        "",
+        `(a) the native reported a diagnostic for the accepted arm body: ${host.native.stderr}`,
+      );
+
+      // ---------------------------------------------------------------------
+      // (c) the launch half, on the SAME native the Host's own arm frame just
+      // armed. The arm facts and the launch facts are separate inputs, so every
+      // frame below is still the Host's own encoder output. (The arm-body probe
+      // that used to sit between them is what (a) replaced.)
+      // ---------------------------------------------------------------------
+      const launchBodies: Array<Readonly<{ role: string; frame: Uint8Array }>> = [];
+      for (const role of ["player_host", "ai_client"] as const) {
+        const label = role === "player_host" ? "player" : "ai";
+        await host.platform.launch({
+          ...binding,
+          deadlineUnixMs: Date.now() + 60_000,
+          role,
+          authorization: productionFacts(label),
+        });
+        const body = host.standIn.hostLaunchBodies.at(-1);
+        assert.ok(body !== undefined, `(c) the Host's launch encoder must have produced the ${role} frame`);
+        launchBodies.push(Object.freeze({ role, frame: body }));
+        t.diagnostic(`(c) ${role} Host-encoded launch body: ${textOf(body)}`);
+        const decoded = JSON.parse(textOf(body)) as Record<string, unknown>;
+        assert.deepEqual(
+          Object.keys(decoded).sort(),
+          [...PARSE_LAUNCH_KEYS],
+          `(c) the ${role} launch frame must be exactly the ten ParseLaunch keys`,
+        );
+        assert.match(String(decoded.planId), GUID_D, `(c) the ${role} launch frame must carry a GUID D planId`);
+        assert.equal(
+          decoded.guardianInstanceId,
+          binding.guardianInstanceId,
+          `(c) the ${role} launch frame must carry the Host's own correlation`,
+        );
+        assert.equal(decoded.role, role, `(c) the ${role} launch frame must carry the role the Host launched`);
+        assert.equal(
+          decoded.executable,
+          fixtureExecutable,
+          `(c) the ${role} launch frame must carry the armed approved executable`,
+        );
+        assert.equal(
+          decoded.executable,
+          hostArmFrame.approvedExecutable,
+          `(c) the ${role} launch frame's executable must equal the executable the Host armed`,
+        );
+        assert.deepEqual(
+          Object.keys(decoded.environment as Record<string, unknown>).sort(),
+          Object.keys(environment).sort(),
+          `(c) the ${role} launch frame must carry the exact seven-key role environment`,
+        );
+        assert.equal(
+          host.standIn.nativeAnswers.at(-1),
+          "accepted",
+          `(c) the native answered ${quoted(host.standIn.nativeAnswers.at(-1))} for the Host-encoded ${role} plan`,
+        );
+        assert.equal(
+          host.standIn.publicResults.at(-1),
+          "role_active",
+          `(c) the native must admit the Host-encoded ${role} plan and answer role_active; a rejected plan is not a pass`,
+        );
+        // The plan was admitted, not merely parsed: the role was created inside its
+        // Job and resumed, which the fixture reports as its first user code.
+        const report = resolve(root, `${label}.report`);
+        await waitForFile(report);
+        assert.equal(
+          await readFile(report, "utf8"),
+          "member=true\n",
+          `(c) the ${role} role must have run its first user code inside its Job`,
+        );
+      }
+      // The roles are contained through the platform's own relay, so this test leaves
+      // no fixture behind and covers the third command the stand-in serves.
+      for (const role of ["player_host", "ai_client"] as const) {
+        await host.platform.contain({ ...binding, operationWaitBudgetMs: 60_000, role });
+      }
+      assert.equal(
+        host.standIn.publicResults.at(-2),
+        "role_contained",
+        "(c) the player containment must be the native's own role_contained result",
       );
       assert.equal(
         host.standIn.publicResults.at(-1),
-        "role_active",
-        `(c) the native must admit the Host-encoded ${role} plan and answer role_active; a rejected plan is not a pass`,
+        "role_contained",
+        "(c) the AI containment must be the native's own role_contained result",
       );
-      // The plan was admitted, not merely parsed: the role was created inside its
-      // Job and resumed, which the fixture reports as its first user code.
-      const report = resolve(root, `${label}.report`);
-      await waitForFile(report);
-      assert.equal(await readFile(report, "utf8"), "member=true\n", `(c) the ${role} role must have run its first user code inside its Job`);
-    }
-    // The roles are contained through the platform's own relay, so this test leaves
-    // no fixture behind and covers the third command the stand-in serves.
-    for (const role of ["player_host", "ai_client"] as const) {
-      await host.platform.contain({ ...binding, operationWaitBudgetMs: 60_000, role });
-    }
-    assert.equal(host.standIn.publicResults.at(-2), "role_contained", "(c) the player containment must be the native's own role_contained result");
-    assert.equal(host.standIn.publicResults.at(-1), "role_contained", "(c) the AI containment must be the native's own role_contained result");
 
-    // ---------------------------------------------------------------------
-    // (d) the falsification: one extra key, or one field mutated, is REFUSED. This
-    // is what proves the parity assertions above are not vacuous.
-    // ---------------------------------------------------------------------
-    // (d1) the arm body. Every probe mints a FRESH control body: the native creates
-    // the exact lease/Job names the body carries, so reusing one body across two
-    // live natives would collide on those named objects and confound the refusal
-    // with a name collision instead of the tampering. The body is built here rather
-    // than taken from (a) because it must be TAMPERED; (a) is what proves the Host's
-    // own untampered bytes are accepted.
-    const armControlBody = parseArmControlBody(Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() }));
-    const armControlNative = openNative();
-    armControlNative.writePublicCommand("arm_attempt", correlationOf(armControlBody));
-    await armControlNative.connectPrivate();
-    assert.equal(await armControlNative.sendArm(armControlBody), "accepted", "(d1 control) the untampered control body must be accepted by a fresh native");
-    const armControlResult = await withTimeout(armControlNative.nextPublicResult(), 5_000);
-    assert.equal(
-      armControlResult,
-      "armed",
-      `(d1 control) the untampered control body must arm a fresh native; it answered ${quoted(armControlResult)} (exit ${String(armControlNative.exitCode)}, stderr ${JSON.stringify(armControlNative.stderr)})`,
-    );
-    await armControlNative.destroy();
-    for (const mutation of [
-      { label: "one extra key", apply: (frame: Uint8Array) => withExtraKey(frame) },
-      { label: "a mutated revision", apply: (frame: Uint8Array) => withReplacedString(frame, "revision", "not-a-guid") },
-    ]) {
-      const body = mutation.apply(parseArmControlBody(Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() })));
-      const native = openNative();
-      native.writePublicCommand("arm_attempt", correlationOf(body));
-      await native.connectPrivate();
-      native.writePrivate(injectArmToken(body, native.token));
-      const answer = await withTimeout(native.nextPrivateLine(), 5_000);
-      assert.equal(answer, undefined, `(d1) an arm body with ${mutation.label} was answered ${quoted(answer)} instead of being refused`);
-      assert.equal(await native.waitForExit(10_000), true, `(d1) the native did not fail closed on an arm body with ${mutation.label}`);
-      assert.equal(native.exitCode, 1, `(d1) the native exited ${String(native.exitCode)} for an arm body with ${mutation.label}`);
-      assert.equal(native.stderr, "windows_bootstrap_guardian_invalid_request\n", `(d1) the native's own refusal of an arm body with ${mutation.label}`);
-      t.diagnostic(`(d1) arm body with ${mutation.label} -> refused: ${native.stderr.trim()}`);
-      await native.destroy();
-    }
-
-    // (d2) the launch plan. Each probe gets a freshly armed native whose correlation
-    // and approved executable come from the captured Host frame, so the refusal can
-    // only be the tampering: the untampered frame is proven acceptable first, and
-    // every native owns its own consumed-plan set, so an identical planId is not a
-    // replay. The arm is the Host's own arm body, exactly as in (a).
-    const capturedLaunchBody = launchBodies[0]!.frame;
-    const launchProbes = [
-      { label: "the untampered frame", frame: capturedLaunchBody, refused: false },
-      { label: "one extra key", frame: withExtraKey(capturedLaunchBody), refused: true },
-      { label: "a mutated planId", frame: withReplacedString(capturedLaunchBody, "planId", "not-a-guid"), refused: true },
-    ] as const;
-    for (const probe of launchProbes) {
-      const native = openNative();
-      const correlation = correlationOf(capturedLaunchBody);
-      const armed = hostPlatformFor(native, correlation);
-      try {
-        await armed.platform.arm({ ...correlation, operationWaitBudgetMs: 60_000, armFacts: armBindingFacts(), authorization: productionFacts("player") });
-        assert.equal(armed.standIn.publicResults[0], "armed", `(d2) the Host's own arm frame must arm a fresh native before the ${probe.label} probe`);
-        // Written straight to the native pipe: the platform's encoder would never
-        // emit a tampered frame, so this is the direct native probe the recovery
-        // parity test also uses for its falsification.
-        native.writePublicCommand("launch_role", { ...correlation, role: "player_host" });
-        native.writePrivate(probe.frame);
+      // ---------------------------------------------------------------------
+      // (d) the falsification: one extra key, or one field mutated, is REFUSED. This
+      // is what proves the parity assertions above are not vacuous.
+      // ---------------------------------------------------------------------
+      // (d1) the arm body. Every probe mints a FRESH control body: the native creates
+      // the exact lease/Job names the body carries, so reusing one body across two
+      // live natives would collide on those named objects and confound the refusal
+      // with a name collision instead of the tampering. The body is built here rather
+      // than taken from (a) because it must be TAMPERED; (a) is what proves the Host's
+      // own untampered bytes are accepted.
+      const armControlBody = parseArmControlBody(
+        Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() }),
+      );
+      const armControlNative = openNative();
+      armControlNative.writePublicCommand("arm_attempt", correlationOf(armControlBody));
+      await armControlNative.connectPrivate();
+      assert.equal(
+        await armControlNative.sendArm(armControlBody),
+        "accepted",
+        "(d1 control) the untampered control body must be accepted by a fresh native",
+      );
+      const armControlResult = await withTimeout(armControlNative.nextPublicResult(), 5_000);
+      assert.equal(
+        armControlResult,
+        "armed",
+        `(d1 control) the untampered control body must arm a fresh native; it answered ${quoted(armControlResult)} (exit ${String(armControlNative.exitCode)}, stderr ${JSON.stringify(armControlNative.stderr)})`,
+      );
+      await armControlNative.destroy();
+      for (const mutation of [
+        { label: "one extra key", apply: (frame: Uint8Array) => withExtraKey(frame) },
+        {
+          label: "a mutated revision",
+          apply: (frame: Uint8Array) => withReplacedString(frame, "revision", "not-a-guid"),
+        },
+      ]) {
+        const body = mutation.apply(
+          parseArmControlBody(
+            Object.freeze({ guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() }),
+          ),
+        );
+        const native = openNative();
+        native.writePublicCommand("arm_attempt", correlationOf(body));
+        await native.connectPrivate();
+        native.writePrivate(injectArmToken(body, native.token));
         const answer = await withTimeout(native.nextPrivateLine(), 5_000);
-        if (!probe.refused) {
-          assert.equal(answer, "accepted", `(d2 control) the untampered Host-encoded launch frame must be accepted by a fresh armed native; it answered ${quoted(answer)}`);
-          assert.equal(await native.nextPublicResult(), "role_active", "(d2 control) the untampered Host-encoded launch frame must admit its plan");
-          continue;
-        }
-        assert.equal(answer, undefined, `(d2) a launch frame with ${probe.label} was answered ${quoted(answer)} instead of being refused`);
-        assert.equal(await native.waitForExit(10_000), true, `(d2) the native did not fail closed on a launch frame with ${probe.label}`);
-        assert.equal(native.exitCode, 1, `(d2) the native exited ${String(native.exitCode)} for a launch frame with ${probe.label}`);
-        assert.equal(native.stderr, "windows_bootstrap_guardian_invalid_request\n", `(d2) the native's own refusal of a launch frame with ${probe.label}`);
-        t.diagnostic(`(d2) launch frame with ${probe.label} -> refused: ${native.stderr.trim()}`);
-      } finally {
+        assert.equal(
+          answer,
+          undefined,
+          `(d1) an arm body with ${mutation.label} was answered ${quoted(answer)} instead of being refused`,
+        );
+        assert.equal(
+          await native.waitForExit(10_000),
+          true,
+          `(d1) the native did not fail closed on an arm body with ${mutation.label}`,
+        );
+        assert.equal(
+          native.exitCode,
+          1,
+          `(d1) the native exited ${String(native.exitCode)} for an arm body with ${mutation.label}`,
+        );
+        assert.equal(
+          native.stderr,
+          "windows_bootstrap_guardian_invalid_request\n",
+          `(d1) the native's own refusal of an arm body with ${mutation.label}`,
+        );
+        t.diagnostic(`(d1) arm body with ${mutation.label} -> refused: ${native.stderr.trim()}`);
         await native.destroy();
       }
+
+      // (d2) the launch plan. Each probe gets a freshly armed native whose correlation
+      // and approved executable come from the captured Host frame, so the refusal can
+      // only be the tampering: the untampered frame is proven acceptable first, and
+      // every native owns its own consumed-plan set, so an identical planId is not a
+      // replay. The arm is the Host's own arm body, exactly as in (a).
+      const capturedLaunchBody = launchBodies[0]!.frame;
+      const launchProbes = [
+        { label: "the untampered frame", frame: capturedLaunchBody, refused: false },
+        { label: "one extra key", frame: withExtraKey(capturedLaunchBody), refused: true },
+        {
+          label: "a mutated planId",
+          frame: withReplacedString(capturedLaunchBody, "planId", "not-a-guid"),
+          refused: true,
+        },
+      ] as const;
+      for (const probe of launchProbes) {
+        const native = openNative();
+        const correlation = correlationOf(capturedLaunchBody);
+        const armed = hostPlatformFor(native, correlation);
+        try {
+          await armed.platform.arm({
+            ...correlation,
+            operationWaitBudgetMs: 60_000,
+            armFacts: armBindingFacts(),
+            authorization: productionFacts("player"),
+          });
+          assert.equal(
+            armed.standIn.publicResults[0],
+            "armed",
+            `(d2) the Host's own arm frame must arm a fresh native before the ${probe.label} probe`,
+          );
+          // Written straight to the native pipe: the platform's encoder would never
+          // emit a tampered frame, so this is the direct native probe the recovery
+          // parity test also uses for its falsification.
+          native.writePublicCommand("launch_role", { ...correlation, role: "player_host" });
+          native.writePrivate(probe.frame);
+          const answer = await withTimeout(native.nextPrivateLine(), 5_000);
+          if (!probe.refused) {
+            assert.equal(
+              answer,
+              "accepted",
+              `(d2 control) the untampered Host-encoded launch frame must be accepted by a fresh armed native; it answered ${quoted(answer)}`,
+            );
+            assert.equal(
+              await native.nextPublicResult(),
+              "role_active",
+              "(d2 control) the untampered Host-encoded launch frame must admit its plan",
+            );
+            continue;
+          }
+          assert.equal(
+            answer,
+            undefined,
+            `(d2) a launch frame with ${probe.label} was answered ${quoted(answer)} instead of being refused`,
+          );
+          assert.equal(
+            await native.waitForExit(10_000),
+            true,
+            `(d2) the native did not fail closed on a launch frame with ${probe.label}`,
+          );
+          assert.equal(
+            native.exitCode,
+            1,
+            `(d2) the native exited ${String(native.exitCode)} for a launch frame with ${probe.label}`,
+          );
+          assert.equal(
+            native.stderr,
+            "windows_bootstrap_guardian_invalid_request\n",
+            `(d2) the native's own refusal of a launch frame with ${probe.label}`,
+          );
+          t.diagnostic(`(d2) launch frame with ${probe.label} -> refused: ${native.stderr.trim()}`);
+        } finally {
+          await native.destroy();
+        }
+      }
+    } finally {
+      for (const native of natives) await native.destroy();
+      await removeRoot(root);
+      await killLeftoverFixtureProcesses();
     }
-  } finally {
-    for (const native of natives) await native.destroy();
-    await removeRoot(root);
-    await killLeftoverFixtureProcesses();
-  }
-});
+  },
+);
 
 /**
  * The Host's launch-path operations bound to one real native child.
@@ -389,7 +571,10 @@ test("the compiled native Guardian accepts the Host's own arm body for the exact
  * The native child is created but not yet spoken to: the first public command is
  * the one the relay writes, exactly as the Desktop orders it.
  */
-function hostPlatformFor(native: NativeResidentGuardian, correlation: Correlation): Readonly<{
+function hostPlatformFor(
+  native: NativeResidentGuardian,
+  correlation: Correlation,
+): Readonly<{
   standIn: DesktopSupervisorStandIn;
   native: NativeResidentGuardian;
   platform: ReturnType<typeof createDesktopGuardianGameRuntimePlatform>;
@@ -408,11 +593,14 @@ function hostPlatformFor(native: NativeResidentGuardian, correlation: Correlatio
  * relay's token prefix is added by `injectArmToken`, exactly as the supervisor does.
  */
 function parseArmControlBody(correlation: Correlation): Uint8Array {
-  return Buffer.from(JSON.stringify({
-    ...correlation,
-    ...armBindingFacts(),
-    approvedExecutable: fixtureExecutable,
-  }), "utf8");
+  return Buffer.from(
+    JSON.stringify({
+      ...correlation,
+      ...armBindingFacts(),
+      approvedExecutable: fixtureExecutable,
+    }),
+    "utf8",
+  );
 }
 
 /**
@@ -470,14 +658,29 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
     public readonly correlation: Correlation,
   ) {}
 
-  public acknowledgementCount(): number { return this.acknowledgements.length; }
+  public acknowledgementCount(): number {
+    return this.acknowledgements.length;
+  }
 
-  public privateAnswer(index: number): string | undefined { return this.nativeAnswers[index]; }
+  public privateAnswer(index: number): string | undefined {
+    return this.nativeAnswers[index];
+  }
 
-  public async arm(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; privateFrame: Uint8Array }>): Promise<GuardianAck> {
+  public async arm(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      operationWaitBudgetMs: number;
+      privateFrame: Uint8Array;
+    }>,
+  ): Promise<GuardianAck> {
     // The wire hop: the broker receives the private bytes as an unpadded base64url
     // string and decodes them back with `TryDecodeFrame` (@ :446-453).
-    const wireFrame = this.commandFrame("arm_attempt", input, { operationWaitBudgetMs: input.operationWaitBudgetMs, privateFrame: input.privateFrame });
+    const wireFrame = this.commandFrame("arm_attempt", input, {
+      operationWaitBudgetMs: input.operationWaitBudgetMs,
+      privateFrame: input.privateFrame,
+    });
     const body = decodePrivateFrame(wireFrame.privateFrame as string);
     this.hostArmBody = body;
     this.armBodyWasTokenless = isTokenlessArmBody(body);
@@ -490,15 +693,31 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
     this.native.writePrivate(injectArmToken(body, this.native.token));
     const answer = await this.native.nextPrivateLine();
     this.nativeAnswers.push(answer);
-    if (answer !== "accepted") throw new Error(`the native did not accept the relayed arm body: ${answer ?? "the native closed the private pipe"}`);
+    if (answer !== "accepted")
+      throw new Error(
+        `the native did not accept the relayed arm body: ${answer ?? "the native closed the private pipe"}`,
+      );
     const result = await this.native.nextPublicResult();
     this.publicResults.push(result);
     if (result !== "armed") throw new Error(`the native answered ${result ?? "nothing"} instead of its armed result`);
     return this.acknowledge("arm_attempt", "armed");
   }
 
-  public async launch(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; deadlineUnixMs: number; role: string; privateFrame: Uint8Array }>): Promise<GuardianAck> {
-    const wireFrame = this.commandFrame("launch_role", input, { deadlineUnixMs: input.deadlineUnixMs, role: input.role, privateFrame: input.privateFrame });
+  public async launch(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      deadlineUnixMs: number;
+      role: string;
+      privateFrame: Uint8Array;
+    }>,
+  ): Promise<GuardianAck> {
+    const wireFrame = this.commandFrame("launch_role", input, {
+      deadlineUnixMs: input.deadlineUnixMs,
+      role: input.role,
+      privateFrame: input.privateFrame,
+    });
     // A launch plan is relayed verbatim: only the arm body gets a token injected
     // (`RelayResidentAsync` @ :233-235).
     const body = decodePrivateFrame(wireFrame.privateFrame as string);
@@ -507,23 +726,38 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
     this.native.writePrivate(body);
     const answer = await this.native.nextPrivateLine();
     this.nativeAnswers.push(answer);
-    if (answer !== "accepted") throw new Error(`the native did not accept the Host-encoded launch plan: ${answer ?? "the native closed the private pipe"}`);
+    if (answer !== "accepted")
+      throw new Error(
+        `the native did not accept the Host-encoded launch plan: ${answer ?? "the native closed the private pipe"}`,
+      );
     const result = await this.native.nextPublicResult();
     this.publicResults.push(result);
-    if (result !== "role_active") throw new Error(`the native answered ${result ?? "nothing"} instead of its role_active result`);
+    if (result !== "role_active")
+      throw new Error(`the native answered ${result ?? "nothing"} instead of its role_active result`);
     return this.acknowledge("launch_role", "role_active", input.role);
   }
 
-  public async contain(input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; operationWaitBudgetMs: number; role: string }>): Promise<GuardianAck> {
+  public async contain(
+    input: Readonly<{
+      guardianInstanceId: string;
+      guardianEpoch: number;
+      attemptId: string;
+      operationWaitBudgetMs: number;
+      role: string;
+    }>,
+  ): Promise<GuardianAck> {
     this.commandFrame("contain_role", input, { operationWaitBudgetMs: input.operationWaitBudgetMs, role: input.role });
     this.native.writePublicCommand("contain_role", { ...this.correlation, role: input.role });
     const result = await this.native.nextPublicResult();
     this.publicResults.push(result);
-    if (result !== "role_contained") throw new Error(`the native answered ${result ?? "nothing"} instead of its role_contained result`);
+    if (result !== "role_contained")
+      throw new Error(`the native answered ${result ?? "nothing"} instead of its role_contained result`);
     return this.acknowledge("contain_role", "role_contained", input.role);
   }
 
-  public async recover(): Promise<never> { throw new Error("the launch parity test never drives a recovery"); }
+  public async recover(): Promise<never> {
+    throw new Error("the launch parity test never drives a recovery");
+  }
 
   public async close(): Promise<void> {}
 
@@ -535,18 +769,31 @@ class DesktopSupervisorStandIn implements DesktopGuardianSession {
    * bounded wait (or the launch deadline) precedes the correlation, and the role
    * precedes the private frame.
    */
-  private commandFrame(operation: string, input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string }>, extra: Readonly<{ operationWaitBudgetMs?: number; deadlineUnixMs?: number; role?: string; privateFrame?: Uint8Array }>): Record<string, unknown> {
+  private commandFrame(
+    operation: string,
+    input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string }>,
+    extra: Readonly<{
+      operationWaitBudgetMs?: number;
+      deadlineUnixMs?: number;
+      role?: string;
+      privateFrame?: Uint8Array;
+    }>,
+  ): Record<string, unknown> {
     return Object.freeze({
       schema: "gamebuddy-desktop-guardian-session/v1",
       protocolVersion: 1,
       operation,
       ...this.binding,
-      ...(extra.deadlineUnixMs === undefined ? { operationWaitBudgetMs: extra.operationWaitBudgetMs } : { deadlineUnixMs: extra.deadlineUnixMs }),
+      ...(extra.deadlineUnixMs === undefined
+        ? { operationWaitBudgetMs: extra.operationWaitBudgetMs }
+        : { deadlineUnixMs: extra.deadlineUnixMs }),
       guardianInstanceId: input.guardianInstanceId,
       guardianEpoch: input.guardianEpoch,
       attemptId: input.attemptId,
       ...(extra.role === undefined ? {} : { role: extra.role }),
-      ...(extra.privateFrame === undefined ? {} : { privateFrame: Buffer.from(extra.privateFrame).toString("base64url") }),
+      ...(extra.privateFrame === undefined
+        ? {}
+        : { privateFrame: Buffer.from(extra.privateFrame).toString("base64url") }),
     });
   }
 
@@ -594,7 +841,9 @@ class NativeResidentGuardian {
         GAMEBUDDY_GUARDIAN_CONTROL_TOKEN: this.token,
       },
     });
-    this.child.stderr.on("data", (chunk: Buffer) => { this.stderrText += chunk.toString("utf8"); });
+    this.child.stderr.on("data", (chunk: Buffer) => {
+      this.stderrText += chunk.toString("utf8");
+    });
     readLines(
       this.child.stdout,
       (line) => {
@@ -603,20 +852,33 @@ class NativeResidentGuardian {
         try {
           const parsed = JSON.parse(line) as Record<string, unknown>;
           result = typeof parsed.result === "string" ? parsed.result : undefined;
-        } catch { result = undefined; }
+        } catch {
+          result = undefined;
+        }
         this.deliverPublic(result ?? line);
       },
-      () => { this.deliverPublic(undefined); },
+      () => {
+        this.deliverPublic(undefined);
+      },
     );
   }
 
-  public get stderr(): string { return this.stderrText; }
-  public get exitCode(): number | null { return this.child.exitCode; }
+  public get stderr(): string {
+    return this.stderrText;
+  }
+  public get exitCode(): number | null {
+    return this.child.exitCode;
+  }
 
   /** The native's public control pipe is the child's stdin, built as `GuardianRelayCommand.ToNativeFrame` does (@ GuardianSupervisor.cs:396-400). */
-  public writePublicCommand(operation: string, input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; role?: string }>): void {
+  public writePublicCommand(
+    operation: string,
+    input: Readonly<{ guardianInstanceId: string; guardianEpoch: number; attemptId: string; role?: string }>,
+  ): void {
     const role = input.role === undefined ? "" : `,"role":"${input.role}"`;
-    this.child.stdin.write(`{"schemaVersion":1,"operation":"${operation}","guardianInstanceId":"${input.guardianInstanceId}","guardianEpoch":${input.guardianEpoch},"attemptId":"${input.attemptId}"${role}}\n`);
+    this.child.stdin.write(
+      `{"schemaVersion":1,"operation":"${operation}","guardianInstanceId":"${input.guardianInstanceId}","guardianEpoch":${input.guardianEpoch},"attemptId":"${input.attemptId}"${role}}\n`,
+    );
   }
 
   /**
@@ -627,7 +889,8 @@ class NativeResidentGuardian {
   public async connectPrivate(): Promise<void> {
     if (this.socket !== undefined) return;
     for (let attempt = 0; attempt < 400; attempt += 1) {
-      if (this.child.exitCode !== null) throw new Error(`the native Guardian exited before its private launch pipe: ${this.stderrText}`);
+      if (this.child.exitCode !== null)
+        throw new Error(`the native Guardian exited before its private launch pipe: ${this.stderrText}`);
       const socket = net.createConnection({ path: `\\\\.\\pipe\\${this.pipeName}` });
       const connected = await new Promise<boolean>((resolveConnect) => {
         socket.once("connect", () => resolveConnect(true));
@@ -635,9 +898,15 @@ class NativeResidentGuardian {
       });
       if (connected) {
         this.socket = socket;
-        socket.on("data", (chunk: Buffer) => { this.receivePrivate(chunk.toString("utf8")); });
-        socket.on("close", () => { this.endPrivate(); });
-        socket.on("error", () => { this.endPrivate(); });
+        socket.on("data", (chunk: Buffer) => {
+          this.receivePrivate(chunk.toString("utf8"));
+        });
+        socket.on("close", () => {
+          this.endPrivate();
+        });
+        socket.on("error", () => {
+          this.endPrivate();
+        });
         return;
       }
       socket.destroy();
@@ -663,20 +932,29 @@ class NativeResidentGuardian {
     const line = this.privateLines.shift();
     if (line !== undefined) return Promise.resolve(line);
     if (this.privateEnded) return Promise.resolve(undefined);
-    return new Promise<string | undefined>((resolveLine) => { this.privateWaiters.push(resolveLine); });
+    return new Promise<string | undefined>((resolveLine) => {
+      this.privateWaiters.push(resolveLine);
+    });
   }
 
   public nextPublicResult(): Promise<string | undefined> {
     const result = this.publicResults.shift();
     if (result !== undefined) return Promise.resolve(result);
-    return new Promise<string | undefined>((resolveResult) => { this.publicWaiters.push(resolveResult); });
+    return new Promise<string | undefined>((resolveResult) => {
+      this.publicWaiters.push(resolveResult);
+    });
   }
 
   public async waitForExit(timeoutMs: number): Promise<boolean> {
     if (this.child.exitCode !== null) return true;
     return await new Promise<boolean>((resolveExit) => {
-      const timer = setTimeout(() => { resolveExit(false); }, timeoutMs);
-      this.child.once("exit", () => { clearTimeout(timer); resolveExit(true); });
+      const timer = setTimeout(() => {
+        resolveExit(false);
+      }, timeoutMs);
+      this.child.once("exit", () => {
+        clearTimeout(timer);
+        resolveExit(true);
+      });
     });
   }
 
@@ -688,7 +966,10 @@ class NativeResidentGuardian {
 
   private deliverPublic(line: string | undefined): void {
     const waiter = this.publicWaiters.shift();
-    if (waiter !== undefined) { waiter(line); return; }
+    if (waiter !== undefined) {
+      waiter(line);
+      return;
+    }
     if (line !== undefined) this.publicResults.push(line);
   }
 
@@ -720,7 +1001,15 @@ class NativeResidentGuardian {
  */
 function injectArmToken(body: Uint8Array, token: string): Buffer {
   const text = textOf(body);
-  if (body.length < 2 || !text.startsWith("{") || !text.endsWith("}") || text.includes("\n") || text.includes("\r") || text.includes("\u0000") || text.includes('"token"')) {
+  if (
+    body.length < 2 ||
+    !text.startsWith("{") ||
+    !text.endsWith("}") ||
+    text.includes("\n") ||
+    text.includes("\r") ||
+    text.includes("\u0000") ||
+    text.includes('"token"')
+  ) {
     throw new Error("the supervisor stand-in refuses a body that is not a tokenless JSON object");
   }
   return Buffer.from(`{"token":"${token}",${text.slice(1)}`, "utf8");
@@ -734,7 +1023,10 @@ function isTokenlessArmBody(body: Uint8Array): boolean {
 
 /** The broker's `TryDecodeFrame` (@ :446-453) for the unpadded base64url the wire writes. */
 function decodePrivateFrame(encoded: string): Uint8Array {
-  assert.ok(typeof encoded === "string" && encoded.length > 0 && !encoded.includes("="), "the wire's privateFrame must be an unpadded base64url string");
+  assert.ok(
+    typeof encoded === "string" && encoded.length > 0 && !encoded.includes("="),
+    "the wire's privateFrame must be an unpadded base64url string",
+  );
   return new Uint8Array(Buffer.from(encoded, "base64url"));
 }
 
@@ -783,14 +1075,23 @@ function readLines(stream: Readable, onLine: (line: string) => void, onEnd: () =
   stream.once("error", onEnd);
 }
 
-function textOf(frame: Uint8Array): string { return Buffer.from(frame).toString("utf8"); }
-function quoted(value: string | undefined): string { return value === undefined ? "<no answer>" : JSON.stringify(value); }
+function textOf(frame: Uint8Array): string {
+  return Buffer.from(frame).toString("utf8");
+}
+function quoted(value: string | undefined): string {
+  return value === undefined ? "<no answer>" : JSON.stringify(value);
+}
 
 /** Bounds a private-pipe read so a native that neither answers nor exits is reported, not hung on. */
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T | undefined> {
   let timer: NodeJS.Timeout | undefined;
   try {
-    return await Promise.race([promise, new Promise<undefined>((resolveTimeout) => { timer = setTimeout(() => resolveTimeout(undefined), milliseconds); })]);
+    return await Promise.race([
+      promise,
+      new Promise<undefined>((resolveTimeout) => {
+        timer = setTimeout(() => resolveTimeout(undefined), milliseconds);
+      }),
+    ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -798,14 +1099,24 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promis
 
 async function waitForFile(path: string): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt += 1) {
-    try { await access(path); return; } catch { await delay(25); }
+    try {
+      await access(path);
+      return;
+    } catch {
+      await delay(25);
+    }
   }
   throw new Error(`fixture first-user-code report never appeared: ${path}`);
 }
 
 async function removeRoot(root: string): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    try { await rm(root, { recursive: true, force: true }); return; } catch { await delay(50); }
+    try {
+      await rm(root, { recursive: true, force: true });
+      return;
+    } catch {
+      await delay(50);
+    }
   }
 }
 
@@ -816,7 +1127,11 @@ async function removeRoot(root: string): Promise<void> {
  */
 async function killLeftoverFixtureProcesses(): Promise<void> {
   await new Promise<void>((resolveKill) => {
-    const child = spawn("taskkill", ["/f", "/im", "RoleRootFixture.exe"], { windowsHide: true, shell: false, stdio: "ignore" });
+    const child = spawn("taskkill", ["/f", "/im", "RoleRootFixture.exe"], {
+      windowsHide: true,
+      shell: false,
+      stdio: "ignore",
+    });
     child.once("exit", () => resolveKill());
     child.once("error", () => resolveKill());
   });

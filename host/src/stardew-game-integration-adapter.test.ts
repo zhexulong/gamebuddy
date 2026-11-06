@@ -789,7 +789,7 @@ test("place_crab_pot completion evidence requires the exact native placement fac
     );
 });
 
-test("machine inspection, load, and collect completion evidence are exact Keg contracts", () => {
+test("machine inspection, load, and collect completion evidence prove the machine's own work, not one Keg", () => {
   const inspect = {
     state: "succeeded",
     reasonCode: "machine_inspected",
@@ -825,76 +825,132 @@ test("machine inspection, load, and collect completion evidence are exact Keg co
       malformed,
     );
 
-  const load = {
-    state: "succeeded",
-    reasonCode: "machine_coffee_loaded",
-    evidence: {
-      detail:
-        "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;expected_minutes_until_ready=120;native_check_action=true",
-    },
-  } as const;
-  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", load), true);
-  // The Mod derives the processing window from the live machine data, so any
-  // positive observed/derived pair is accepted: the content value itself is not
-  // a Host contract (a rebalance must not invalidate a real native load).
+  // TWO MACHINES, ONE PROOF. What a load receipt must show is what the MACHINE did: the item it consumed and the item
+  // it recorded are the same, the stack it took is the count its own data declared, something is held afterwards, and
+  // the observed processing window equals the one derived from the same data. A Keg eating five coffee beans and a
+  // Furnace eating one copper ore both satisfy that; a receipt that satisfies none of it does not, whatever it names.
+  const loadDetail = (
+    machine: string,
+    input: string,
+    before: number,
+    consumed: number,
+    after: number,
+    lastInput: string,
+    held: string,
+    minutes: string,
+    expected: string,
+  ) =>
+    `location=Shed;target=machine_01;tile=5,9;machine=${machine};slot=3;input=${input};input_stack_before=${before};input_consumed=${consumed};input_stack_after=${after};last_input=${lastInput};held=${held};ready_for_harvest=false;minutes_until_ready=${minutes};expected_minutes_until_ready=${expected};native_check_action=true`;
+
+  const kegLoad = loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)433", "(O)395", "1120", "1120");
+  const keg = { state: "succeeded", reasonCode: "machine_coffee_loaded", evidence: { detail: kegLoad } } as const;
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", keg), true);
+  const furnaceLoad = loadDetail("(BC)13", "(O)378", 3, 1, 2, "(O)378", "(O)335", "30", "30");
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", {
+      ...keg,
+      evidence: { detail: furnaceLoad },
+    }),
+    true,
+    "a machine whose data consumed one of a stack of three is the same proof as a Keg that consumed the whole stack",
+  );
+  // The Mod derives the processing window from the live machine data, so any agreeing pair is accepted: the content
+  // value itself is not a Host contract (a rebalance must not invalidate a real native load).
   const loadRenumbered = {
-    ...load,
+    ...keg,
     evidence: {
-      detail: load.evidence.detail
-        .replace("minutes_until_ready=120", "minutes_until_ready=90")
-        .replace("expected_minutes_until_ready=120", "expected_minutes_until_ready=90"),
+      detail: kegLoad
+        .replace("minutes_until_ready=1120", "minutes_until_ready=90")
+        .replace("expected_minutes_until_ready=1120", "expected_minutes_until_ready=90"),
     },
   } as const;
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", loadRenumbered),
     true,
   );
+  // A rule whose duration a custom output method owns states `unavailable_in_machine_data`; there is nothing to agree
+  // with, and the observed window must still be real.
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", {
+      ...keg,
+      evidence: {
+        detail: kegLoad.replace(
+          "expected_minutes_until_ready=1120",
+          "expected_minutes_until_ready=unavailable_in_machine_data",
+        ),
+      },
+    }),
+    true,
+  );
   for (const malformed of [
-    load.evidence.detail.replace("minutes_until_ready=120", "minutes_until_ready=119"),
-    load.evidence.detail.replace("expected_minutes_until_ready=120", "expected_minutes_until_ready=119"),
-    load.evidence.detail.replace(";expected_minutes_until_ready=120", ""),
-    load.evidence.detail.replace("expected_minutes_until_ready=120", "expected_minutes_until_ready=0"),
-    load.evidence.detail.replace("expected_minutes_until_ready=120", "expected_minutes_until_ready=unavailable"),
-    load.evidence.detail.replace("input_stack_after=removed", "input_stack_after=4"),
-    load.evidence.detail.replace("input_stack_before=5", "input_stack_before=4"),
-    load.evidence.detail.replace("last_input=(O)433", "last_input=none"),
-    load.evidence.detail.replace("held=(O)395", "held=(O)395_extra"),
-    load.evidence.detail.replace("native_check_action=true", "native_check_action=false"),
-    load.evidence.detail.replace("input=(O)433", "input=(O)472"),
-    `${load.evidence.detail};minutes_until_ready=120`,
+    // A malformed item id is not a smaller promise: the Mod compares it to a LIVE stack's qualified id.
+    loadDetail("(BC)12", "(O)433 ", 5, 5, 0, "(O)433", "(O)395", "1120", "1120"),
+    loadDetail("(BC)12", "(O)43a", 5, 5, 0, "(O)433", "(O)395", "1120", "1120"),
+    // What was consumed and what the machine recorded are one fact seen twice.
+    loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)378", "(O)395", "1120", "1120"),
+    // The stack difference must equal the count the machine's data declared.
+    loadDetail("(BC)12", "(O)433", 5, 5, 1, "(O)433", "(O)395", "1120", "1120"),
+    loadDetail("(BC)12", "(O)433", 5, 4, 0, "(O)433", "(O)395", "1120", "1120"),
+    // Nothing was put in.
+    loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)433", "none", "1120", "1120"),
+    loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)433", "395", "1120", "1120"),
+    // Derived and observed window disagree, or the window is not a window.
+    loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)433", "(O)395", "1119", "1120"),
+    loadDetail("(BC)12", "(O)433", 5, 5, 0, "(O)433", "(O)395", "1120", "unavailable"),
+    // Readiness is the window being zero (Object.cs:2581-2585), so this pair cannot both be true.
+    kegLoad.replace("ready_for_harvest=false", "ready_for_harvest=true"),
+    kegLoad.replace("native_check_action=true", "native_check_action=false"),
+    kegLoad.replace(";input_consumed=5", ""),
+    `${kegLoad};input_consumed=5`,
   ])
     assert.equal(
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_load", {
-        ...load,
+        ...keg,
         evidence: { detail: malformed },
       }),
       false,
       malformed,
     );
 
+  const collectDetail = (
+    machine: string,
+    output: string,
+    outputStack: number,
+    input: string,
+    before: number,
+    after: number,
+  ) =>
+    `location=Shed;target=machine_01;tile=5,9;machine=${machine};output=${output};output_stack=${outputStack};input=${input};ready_before=true;minutes_until_ready_before=0;inventory_output_before=${before};inventory_output_after=${after};held_after=none;ready_after=false;native_check_action=true`;
+
+  const kegCollect = collectDetail("(BC)12", "(O)395", 1, "(O)433", 0, 1);
   const collect = {
     state: "succeeded",
     reasonCode: "machine_coffee_collected",
-    evidence: {
-      detail:
-        "location=Shed;target=machine_01;tile=5,9;machine=(BC)12;output=(O)395;input=(O)433;ready_before=true;minutes_until_ready_before=0;inventory_coffee_before=0;inventory_coffee_after=1;held_after=none;ready_after=false;native_check_action=true",
-    },
+    evidence: { detail: kegCollect },
   } as const;
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_collect_output", collect),
     true,
   );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_collect_output", {
+      ...collect,
+      evidence: { detail: collectDetail("(BC)15", "(O)344", 2, "(O)258", 3, 5) },
+    }),
+    true,
+    "a machine's output is collected when the pack gains exactly the held stack, whatever the machine is",
+  );
   for (const malformed of [
-    collect.evidence.detail.replace("ready_before=true", "ready_before=false"),
-    collect.evidence.detail.replace(
-      "inventory_coffee_before=0;inventory_coffee_after=1",
-      "inventory_coffee_before=0;inventory_coffee_after=2",
-    ),
-    collect.evidence.detail.replace("held_after=none", "held_after=(O)395"),
-    collect.evidence.detail.replace("ready_after=false", "ready_after=true"),
-    collect.evidence.detail.replace("output=(O)395", "output=(O)348"),
-    collect.evidence.detail.replace("minutes_until_ready_before=0", "minutes_until_ready_before=0.0"),
-    `${collect.evidence.detail};native_check_action=true`,
+    kegCollect.replace("ready_before=true", "ready_before=false"),
+    // The pack must gain exactly the held stack, not \"one item\".
+    collectDetail("(BC)12", "(O)395", 2, "(O)433", 0, 1),
+    collectDetail("(BC)12", "(O)395", 1, "(O)433", 0, 2),
+    kegCollect.replace("held_after=none", "held_after=(O)395"),
+    kegCollect.replace("ready_after=false", "ready_after=true"),
+    collectDetail("(BC)12", "(O)395extra", 1, "(O)433", 0, 1),
+    kegCollect.replace("output_stack=1", "output_stack=0"),
+    kegCollect.replace("minutes_until_ready_before=0", "minutes_until_ready_before=0.0"),
+    `${kegCollect};native_check_action=true`,
   ])
     assert.equal(
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("machine_collect_output", {

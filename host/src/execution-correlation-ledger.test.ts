@@ -92,6 +92,60 @@ test("every terminal receipt settles the pre-receipt STOP barrier without sendin
   }
 });
 
+test("an unknown write with no execution id concludes the STOP barrier instead of awaiting a cancel", async () => {
+  // `markUncertain` is the ONE answer that says the write may have happened and the reply was lost. No execution
+  // id was ever bound, so `#sendPendingCancel` can only answer null: a barrier left pending for that lineage is a
+  // STOP that can never conclude, and `interrupt()` awaits every registration of the epoch - so the whole runtime
+  // stop would be the thing that hangs, not the action. Measured reading of the code: nothing else resolves it.
+  const sent: string[][] = [];
+  const ledger = new ExecutionCorrelationLedger(async (...args) => {
+    sent.push(args);
+    return receipt("cancelled");
+  });
+  ledger.beforeWrite({ ownerId: "owner_1", epoch: 4, requestId: "request_1", idempotencyKey: "idem_1" });
+  // STOP races the dispatch, so the barrier exists before the outcome is known.
+  const barrier = ledger.requestCancelEpoch(4, "stop_all");
+  await ledger.markUncertain({ ownerId: "owner_1", epoch: 4, requestId: "request_1" });
+
+  await assertSettled(Promise.all(barrier), "stop_barrier_never_settled");
+  assert.deepEqual(sent, [], "there is no execution id, so no exact cancel can be sent");
+  assert.deepEqual(
+    ledger.uncertainDispatches().map((dispatch) => dispatch.requestId),
+    ["request_1"],
+    "concluding the barrier is not a claim the write did not happen: the lineage stays recoverable",
+  );
+});
+
+test("a STOP that arrives after the write went unknown concludes without a cancel", async () => {
+  const sent: string[][] = [];
+  const ledger = new ExecutionCorrelationLedger(async (...args) => {
+    sent.push(args);
+    return receipt("cancelled");
+  });
+  ledger.beforeWrite({ ownerId: "owner_1", epoch: 4, requestId: "request_1", idempotencyKey: "idem_1" });
+  await ledger.markUncertain({ ownerId: "owner_1", epoch: 4, requestId: "request_1" });
+
+  await assertSettled(Promise.all(ledger.requestCancelEpoch(4, "stop_all")), "stop_barrier_never_settled");
+  assert.deepEqual(sent, []);
+});
+
+test("a lineage fenced by recovery concludes the STOP barrier it can never cancel", async () => {
+  // The fence is the strongest form of the same fact: after it a late receipt is REFUSED
+  // (`execution_correlation_recovery_required`), so no cancel can ever be produced for this lineage.
+  const sent: string[][] = [];
+  const ledger = new ExecutionCorrelationLedger(async (...args) => {
+    sent.push(args);
+    return receipt("cancelled");
+  });
+  const dispatch = { ownerId: "owner_1", epoch: 4, requestId: "request_1", idempotencyKey: "idem_1" } as const;
+  ledger.beforeWrite(dispatch);
+  await ledger.markUncertain(dispatch);
+  await ledger.markRecoveryRequired(dispatch);
+
+  await assertSettled(Promise.all(ledger.requestCancelEpoch(4, "stop_all")), "stop_barrier_never_settled");
+  assert.deepEqual(sent, []);
+});
+
 test("terminal receipt settles the STOP barrier even while an exact cancel is still in flight", async () => {
   const sent: string[][] = [];
   const cancelInFlight = new Promise<ExecutionReceipt>(() => undefined);
