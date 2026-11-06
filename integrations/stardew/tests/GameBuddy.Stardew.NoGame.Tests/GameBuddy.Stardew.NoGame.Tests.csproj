@@ -77,12 +77,15 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityAdmissionSourceShapeTests.cs" Link="HarvestQualityAdmissionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\HarvestQualityProjectionSourceShapeTests.cs" Link="HarvestQualityProjectionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\LevelUpSettledEvidenceTests.cs" Link="LevelUpSettledEvidenceTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MachineAcceptancePublicationTests.cs" Link="MachineAcceptancePublicationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MachineLoadMachineDataSourceShapeTests.cs" Link="MachineLoadMachineDataSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ModEntryFixtureBoundaryTests.cs" Link="ModEntryFixtureBoundaryTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MoveStallProbeFixtureSourceShapeTests.cs" Link="MoveStallProbeFixtureSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MovingTargetApproachTests.cs" Link="MovingTargetApproachTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MultiDayPlaySessionFixtureTests.cs" Link="MultiDayPlaySessionFixtureTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NameEntityActionTests.cs" Link="NameEntityActionTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NightMilestoneCompanionSleepGateSourceShapeTests.cs" Link="NightMilestoneCompanionSleepGateSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\OpenGeodeActionSourceShapeTests.cs" Link="OpenGeodeActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetSourceShapeTests.cs" Link="PlantableTargetSlotBudgetSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ReceiptRevisionMonotonicitySourceShapeTests.cs" Link="ReceiptRevisionMonotonicitySourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RedeemPrizeTicketActionTests.cs" Link="RedeemPrizeTicketActionTests.cs" />
@@ -92,6 +95,8 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolLightActionTests.cs" Link="ToolLightActionTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolPreconditionUniformityTests.cs" Link="ToolPreconditionUniformityTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TransportApproachWiringTests.cs" Link="TransportApproachWiringTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\UseMineLadderExitTests.cs" Link="UseMineLadderExitTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\WorldObjectActionTests.cs" Link="WorldObjectActionTests.cs" />
