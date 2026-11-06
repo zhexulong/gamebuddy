@@ -83,8 +83,6 @@ public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandRes
 /// <param name="Relation">The surface's own word for the relationship, e.g. `adjacent`.</param>
 /// <param name="WithinTiles">How far away that relationship allows, or null when the surface states no distance.</param>
 public sealed record FarmhandActionApproachRequirement(string Relation, int? WithinTiles);
-/// <summary>Action-specific typed binding metadata owned exclusively by Mod registration.</summary>
-public sealed record FarmhandActionObservationBindingDescriptor(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
 /// <remarks><see cref="WatchdogMs"/> is the descriptor-owned static execution
 /// budget for Body Program nodes of this action (default 60s). It is a Mod
@@ -112,7 +110,7 @@ public sealed record FarmhandActionObservationBindingDescriptor(string Type, int
 /// preflight refuses.
 /// </para>
 /// </param>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null);
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
@@ -760,6 +758,25 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
 
     private static FarmhandActionDescriptor SlotTargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade, string slotMeaning) => new(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, slotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), ToolResource(toolCategory, toolUpgrade), "write", "native_action_postcondition");
     private static FarmhandActionDescriptor TargetItem() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
+    /// <summary>
+    /// `pickup_forage` is addressed by `expectedTargetId` alone, like every other `*Targets` action.
+    ///
+    /// <para>
+    /// It used to declare a mandatory `ObservationBinding/v1` `sceneTarget` beside these four arguments, and that binding
+    /// could never be supplied: its producer was `observe_scene`'s `affordances[].ref`, while the forage row publishes
+    /// `forageTargets[].targetId`, and nothing joined the two - the only shared field was the qualified item id, which two
+    /// daffodils share. Measured: zero `pickup_forage` receipts, the authoring refusal naming `observe_scene` for a target
+    /// the snapshot had already addressed. The binding also could not survive a plan node: `RouteReenteringBodyProgramExecutor`
+    /// builds its `BridgeExecutionArgs` from the node's declared arguments, so a node carrying no binding sent none.
+    /// </para>
+    /// <para>
+    /// Nothing is lost by dropping it. `BuildForageTargetId` hashes the location, the tile, the qualified item id, the
+    /// stack and `IsSpawnedObject`; `RequestLocalPickupForage` recomputes it from the LIVE object on the game thread and
+    /// refuses `observation_binding_target_unavailable` when it differs. Every fact the binding checked - the map, the
+    /// tile, the entity's identity - is inside that hash, and the hash is unguessable, so holding the id already proves
+    /// the caller read a published row.
+    /// </para>
+    /// </summary>
     private static FarmhandActionDescriptor PickupForage() => new(
         new[]
         {
@@ -771,9 +788,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         new Dictionary<string, string>(),
         EmbodiedActorResource,
         "write",
-        "native_action_postcondition",
-        null,
-        new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
+        "native_action_postcondition");
     private static FarmhandActionDescriptor SlotTarget(string slotMeaning) => new(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, slotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition");
 
     /// <summary>

@@ -43,16 +43,6 @@ type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly 
  * precondition by being refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. A refusal that
  * teaches is worse than a shape that says so.
  */
-/**
- * The scene binding a surface declares, or its silence.
- *
- * `declared` rather than `required` to match its sibling: an optional binding means the action can also be driven from a
- * plain tile, and a declared one cannot.
- */
-type PublishedPlanSceneBindingRequirement =
-  | Readonly<{ declared: false }>
-  | Readonly<{ declared: true; requiredProperties: readonly string[] }>;
-
 type PublishedPlanApproachRequirement =
   | Readonly<{
       declared: true;
@@ -92,14 +82,6 @@ export type PublishedPlanAction = Readonly<{
   toolRequirement: PublishedPlanToolRequirement;
   /** Where the actor must stand before this action can happen, or the surface's silence. */
   approachRequirement: PublishedPlanApproachRequirement;
-  /**
-   * The scene binding the surface requires, or its silence.
-   *
-   * A binding is not an argument: `pickup_forage` cannot name its target from a tile alone, so the Mod declares an
-   * `ObservationBinding/v1` beside the argument schema. Carried for the same reason `approachRequirement` is - a
-   * pre-condition the authoring side cannot see is refused one round trip later.
-   */
-  sceneBindingRequirement: PublishedPlanSceneBindingRequirement;
   /**
    * The snapshot family that supplies this action's targets (`cropTargets`), or the surface's silence.
    *
@@ -307,28 +289,15 @@ const MAX_PLAN_BUILDER_CALLS = 1024;
 const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string", "boolean", "destination_selector"]);
 
 /**
- * The two read-only actions whose ANSWERS are the only place two arguments can come from.
+ * The read-only action whose ANSWER is the only place a destination selector can come from.
  *
- * Neither is a plan step - observation and world-map discovery are read-only, so the builder generates no method for
- * them - which is exactly why their names have to be spelled here: `pickup_forage`'s scene binding and
- * `navigate_to_destination`'s destination selector are facts the SNAPSHOT does not publish, and a refusal that names only
- * the field leaves the author with nothing to read. Both names are checked against the surface artifact in
- * `body-program-script.test.ts` (they must be published actions of kind `read_only`), so a rename fails there instead of
- * leaving a refusal that points at a name nothing publishes.
+ * It is not a plan step - world-map discovery is read-only, so the builder generates no method for it - which is exactly
+ * why the name has to be spelled here: `navigate_to_destination`'s destination selector is a fact the SNAPSHOT does not
+ * publish, and a refusal that names only the field leaves the author with nothing to read. The name is checked against
+ * the surface artifact in `body-program-script.test.ts` (it must be a published action of kind `read_only`), so a rename
+ * fails there instead of leaving a refusal that points at a name nothing publishes.
  */
-const SCENE_OBSERVATION_ACTION_ID = "observe_scene";
 const DESTINATION_DISCOVERY_ACTION_ID = "find_destination";
-
-/**
- * The prefix every scene reference the Host publishes carries (`observe_scene`'s `affordances[].ref`).
- *
- * Duplicated as ONE constant because `protocol.ts`'s `isSceneReference` is not exported and the compiler has to refuse a
- * hand-written ref at the call that wrote it rather than one round trip later: measured 2026-10-31 (`round18`), five
- * `pickup_forage` calls carried `{ observationId, ref }` the model had invented. `body-program-script.test.ts` keeps the
- * two in step by reading that predicate out of `protocol.ts` and comparing this prefix and length against it.
- */
-const SCENE_REFERENCE_PREFIX = "sr1_";
-const SCENE_REFERENCE_RANDOM_CHARS = 16;
 
 /** How many rows of one family are sampled when deriving the fields it publishes. */
 const PLAN_SOURCE_ROWS_SAMPLED = 4;
@@ -434,7 +403,6 @@ export function planActionsFromRegistrations(
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
         toolRequirement: declaredToolRequirementOf(registration),
         approachRequirement: declaredApproachRequirementOf(registration),
-        sceneBindingRequirement: declaredSceneBindingRequirementOf(registration),
         targetFamily: declaredTargetFamilyOf(registration),
       }),
     );
@@ -518,15 +486,7 @@ const TOOL_UPGRADE_LEVELS: Readonly<
  * present, so the companion can tell "the surface does not say" from "stand anywhere". The Host never derives a
  * precondition from an action id.
  */
-/** The scene binding a registration declares, read from the descriptor the Mod published. */
-function declaredSceneBindingRequirementOf(registration: ActionRegistration): PublishedPlanSceneBindingRequirement {
-  const declared = registration.descriptor?.sceneTarget;
-  if (declared === undefined || declared.required !== true) return Object.freeze({ declared: false });
-  return Object.freeze({ declared: true, requiredProperties: Object.freeze([...declared.requiredProperties]) });
-}
-
-/**
- * The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
+/** The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
  *
  * `null` is the surface's own statement that the action addresses no published family (`sleep`, `dismiss_modal`,
  * `express_emote`), which is a different answer from a family nobody filled - and the reason this is a plain value and
@@ -1100,6 +1060,27 @@ function planSnapshotScalarPath(snapshot: Snapshot, argumentWords: readonly stri
 }
 
 /**
+ * The families to read a value from, with the family the SURFACE declares for this action first.
+ *
+ * The declaration is the Mod's own answer to "which family supplies this action's targets", so it outranks this
+ * file's scoring: `talk_to_npc` declares `npcRelationshipTargets`, and the scoring handed back `forageTargets` instead -
+ * a family that publishes a field of the same name and has nothing to do with villagers.
+ *
+ * The declared family is only a candidate when it published ROWS. `planSnapshotRowFamilies` never lists an empty family,
+ * and an empty one cannot be read from, so a family the bounded `Discover*` left empty falls through to the populated
+ * family that publishes the same id - `villagerWhereabouts`, whose rows carry `targetId` for exactly this reason.
+ */
+function planDeclaredFamilyFirst(
+  action: PublishedPlanAction,
+  families: readonly PlanSnapshotRowFamily[],
+): readonly PlanSnapshotRowFamily[] {
+  if (action.targetFamily === null) return families;
+  const declared = families.filter((family) => family.name === action.targetFamily);
+  if (declared.length === 0) return families;
+  return [...declared, ...families.filter((family) => family.name !== action.targetFamily)];
+}
+
+/**
  * WHERE the value for one argument is published - the third part of every argument refusal's answer.
  *
  * Measured 2026-10-31 (`round18`): 9 of 66 plans were refused for reasons the model could not have known, and the five
@@ -1118,7 +1099,7 @@ function planArgumentSource(action: PublishedPlanAction, snapshot: Snapshot, arg
   if ((argumentName === "x" || argumentName === "y") && !planNamesATarget(action))
     return `snapshot.tile.${argumentName}`;
   const words = planArgumentFieldWords(argumentName);
-  const families = planRowFamiliesFor(action, snapshot);
+  const families = planDeclaredFamilyFirst(action, planRowFamiliesFor(action, snapshot));
   // The action's OWN family first, and only then the others: a field name that differs by a word inside the family the
   // action is about (`harvestTargets[].qualifiedHarvestItemId` for `expectedQualifiedItemId`) is a better answer than an
   // exact name in a family the action is not about (`forageTargets[].qualifiedItemId`), because the second points at rows
@@ -1163,45 +1144,6 @@ function planBoundedReasonText(value: string): string {
   return printable.length > PLAN_REASON_VALUE_CHARS ? `${printable.slice(0, PLAN_REASON_VALUE_CHARS)}...` : printable;
 }
 
-/** A scene reference exactly as the Host publishes it: the prefix, sixteen random characters, nothing else. */
-function planIsSceneReference(value: string): boolean {
-  return (
-    value.startsWith(SCENE_REFERENCE_PREFIX) &&
-    value.length === SCENE_REFERENCE_PREFIX.length + SCENE_REFERENCE_RANDOM_CHARS &&
-    /^[A-Za-z0-9_-]+$/u.test(value)
-  );
-}
-
-/** The longest a binding property may be, matching the bound every opaque id on this wire is held to. */
-const MAX_PLAN_BINDING_PROPERTY_CHARS = 128;
-
-/** The key a declared scene binding travels under: beside `argumentSchema`, never inside it. */
-const PLAN_SCENE_BINDING_NAME = "sceneTarget";
-
-/**
- * What is wrong with the binding the script supplied, or `null` when it is one `observe_scene` could have produced.
- *
- * The property list is the surface's own declaration (`requiredProperties`), so a renamed required property reaches the
- * refusal as the Mod renamed it; only the SHAPE of the two properties `ObservationBinding/v1` defines is the Host's
- * (`protocol.ts`'s `isObservationBindingV1`), and that shape is checked here because the compiler is the last reader
- * before the node is dispatched.
- */
-function planSceneBindingProblem(requiredProperties: readonly string[], value: unknown): string | null {
-  if (value === undefined) return "missing";
-  if (!isRecord(value)) return "not_an_object";
-  for (const name of Object.keys(value))
-    if (!requiredProperties.includes(name)) return `unexpected:${planBoundedReasonText(name)}`;
-  for (const name of requiredProperties) {
-    const given = value[name];
-    if (typeof given !== "string" || given.length === 0) return `not_text:${name}`;
-    if (given.length > MAX_PLAN_BINDING_PROPERTY_CHARS) return `too_long:${name}`;
-    // The two properties the Mod's ObservationBinding/v1 declares, each with the shape its own side validates.
-    if (name === "observationId" && !isOpaqueId(given)) return `not_an_opaque_id:${name}`;
-    if (name === "ref" && !planIsSceneReference(given)) return `not_a_scene_reference:${name}`;
-  }
-  return null;
-}
-
 /**
  * Refuses a call carrying an argument this action does not declare.
  *
@@ -1219,7 +1161,6 @@ function refuseUnknownArguments(
   const allowed = action.arguments.length === 0 ? "none" : action.arguments.map((argument) => argument.name).join(",");
   for (const name of Object.keys(supplied)) {
     if (action.arguments.some((argument) => argument.name === name)) continue;
-    if (name === PLAN_SCENE_BINDING_NAME && action.sceneBindingRequirement.declared) continue;
     const owners = (state.argumentOwners.get(name) ?? []).slice(0, PLAN_ARGUMENT_OWNERS_LISTED);
     const declaredBy = owners.length === 0 ? "none" : owners.join(",");
     refusePlan(
@@ -1228,52 +1169,6 @@ function refuseUnknownArguments(
       requirement,
     );
   }
-}
-
-/**
- * Refuses a call that omits the scene binding the surface demands, or supplies one `observe_scene` could not have
- * produced.
- *
- * A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY: `pickup_forage` declares an
- * `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a value the caller computes but
- * the ref of a scene observation the caller just made. Reading only `action.arguments` meant a script that omitted it
- * compiled, dispatched, and was refused `observation_binding_malformed` by the Mod (measured 2026-10-31, `round17`: five
- * calls, five refusals).
- *
- * The binding is DEMANDED and VALIDATED here. It is not CARRIED: `sceneTarget` is not an argument, and a node's
- * `bindings` map is a fact REFERENCE (`{nodeId, factName}`), so no part of a compiled node can hold an
- * `ObservationBinding/v1`; `RouteReenteringBodyProgramExecutor` builds its `BridgeExecutionArgs` with no `SceneTarget`.
- * A plan node for such an action therefore still cannot execute, and carrying it is a Mod-side change - a different
- * decision from this one, which is only that a HAND-WRITTEN binding is refused at the call that wrote it and that the
- * answer says where a real one comes from. Measured 2026-10-31 (`round18`): five calls forged `{ observationId, ref }`,
- * because the refusal before this one named the field and nothing else.
- */
-function refuseUnsatisfiedSceneBinding(
-  action: PublishedPlanAction,
-  supplied: Readonly<Record<string, unknown>>,
-  state: PlanScriptState,
-  requirement: PlanArgumentRequirement,
-): void {
-  const binding = action.sceneBindingRequirement;
-  if (!binding.declared) return;
-  // Both parts of the answer are the surface's or the Host's own, never a guess: the properties the Mod declares, and the
-  // read-only action that answers with them. The snapshot cannot: no family publishes an observation id.
-  const expects = `scene_binding{${binding.requiredProperties.join(",")}}`;
-  const from = SCENE_OBSERVATION_ACTION_ID;
-  if (Object.hasOwn(supplied, PLAN_SCENE_BINDING_NAME)) {
-    const problem = planSceneBindingProblem(binding.requiredProperties, supplied[PLAN_SCENE_BINDING_NAME]);
-    if (problem !== null)
-      refusePlan(
-        `plan_script_binding_not_canonical:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}:got:${problem}`,
-        state,
-        requirement,
-      );
-  } else
-    refusePlan(
-      `plan_script_missing_binding:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}`,
-      state,
-      requirement,
-    );
 }
 
 function emitPlanNode(
@@ -1311,7 +1206,6 @@ function emitPlanNode(
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
   refuseUnknownArguments(action, supplied, state, requirement);
-  refuseUnsatisfiedSceneBinding(action, supplied, state, requirement);
   // AN OMITTED ARGUMENT IS REFUSED, NOT INFERRED, EVEN WHEN ITS VALUE IS IN THE SNAPSHOT.
   //
   // Inferring was considered and rejected. `expectedQualifiedItemId` when exactly one target row matches the x/y of the

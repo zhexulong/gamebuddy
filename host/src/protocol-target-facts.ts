@@ -1059,7 +1059,8 @@ export function isNpcRelationshipTargetFact(value: unknown): boolean {
 export function isVillagerWhereaboutsFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["npcName", "displayName", "location", "x", "y", "inCurrentLocation"]) &&
+    hasExactKeys(value, ["targetId", "npcName", "displayName", "location", "x", "y", "inCurrentLocation"]) &&
+    isOpaqueId(value.targetId) &&
     typeof value.npcName === "string" &&
     value.npcName.length > 0 &&
     value.npcName.length <= 128 &&

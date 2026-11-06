@@ -1001,6 +1001,7 @@ test("bridge message payloads fail closed", () => {
       ],
       villagerWhereabouts: [
         {
+          targetId: "npc_relationship_abigail",
           npcName: "Abigail",
           displayName: "Abigail",
           location: "Farm",
@@ -1009,6 +1010,7 @@ test("bridge message payloads fail closed", () => {
           inCurrentLocation: true,
         },
         {
+          targetId: "npc_relationship_jodi",
           npcName: "Jodi",
           displayName: "Jodi",
           location: "SeedShop",
@@ -1831,7 +1833,6 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       y: 12,
       expectedQualifiedItemId: "(O)399",
       expectedTargetId: "forage_deadbeef",
-      sceneTarget: { observationId: "observation_deadbeef", ref: "sr1_AAAAAAAAAAAAAAAA" },
     },
   };
   const pickupItem = {
@@ -3963,7 +3964,15 @@ test("snapshot admits villagerWhereabouts and rejects malformed rows", () => {
     year: 1,
     activeExecution: null,
   };
-  const row = { npcName: "Jodi", displayName: "Jodi", location: "SeedShop", x: 3, y: 8, inCurrentLocation: false };
+  const row = {
+    targetId: "npc_relationship_jodi",
+    npcName: "Jodi",
+    displayName: "Jodi",
+    location: "SeedShop",
+    x: 3,
+    y: 8,
+    inCurrentLocation: false,
+  };
   assert.equal(
     diagnoseBridgeMessage(
       newEnvelope("snapshot", scope, { ...base, villagerWhereabouts: [row] }, "vw_ok", now),

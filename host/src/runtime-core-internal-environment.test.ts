@@ -429,6 +429,7 @@ test("formatGameEnvironmentFacts keeps the held tool when its slot is unknown, a
  */
 test("formatGameEnvironmentFacts names the villagers near her and the coordinates of the ones beyond", () => {
   const villager = (npcName: string, displayName: string, x: number, y: number) => ({
+    targetId: `npc_relationship_${npcName}`,
     npcName,
     displayName,
     location: "Farm",
@@ -490,8 +491,24 @@ test("formatGameEnvironmentFacts keeps a villager across the map out of `nearby`
       location: "Farm",
       tile: { x: 10, y: 10 },
       villagerWhereabouts: [
-        { npcName: "Haley", displayName: "海莉", location: "Farm", x: 60, y: 40, inCurrentLocation: true },
-        { npcName: "Marlon", displayName: "马龙", location: "AdventureGuild", x: 11, y: 11, inCurrentLocation: false },
+        {
+          targetId: "npc_relationship_haley",
+          npcName: "Haley",
+          displayName: "海莉",
+          location: "Farm",
+          x: 60,
+          y: 40,
+          inCurrentLocation: true,
+        },
+        {
+          targetId: "npc_relationship_marlon",
+          npcName: "Marlon",
+          displayName: "马龙",
+          location: "AdventureGuild",
+          x: 11,
+          y: 11,
+          inCurrentLocation: false,
+        },
       ],
     },
     false,
@@ -521,9 +538,33 @@ test("formatGameEnvironmentFacts stays a bounded line even with pathological nam
       exhausted: false,
       currentTool: "(T)Hoe",
       villagerWhereabouts: [
-        { npcName: "A", displayName: long, location: "Farm", x: 51, y: 50, inCurrentLocation: true },
-        { npcName: "B", displayName: long, location: "Farm", x: 52, y: 50, inCurrentLocation: true },
-        { npcName: "C", displayName: long, location: "Farm", x: 53, y: 50, inCurrentLocation: true },
+        {
+          targetId: "npc_relationship_a",
+          npcName: "A",
+          displayName: long,
+          location: "Farm",
+          x: 51,
+          y: 50,
+          inCurrentLocation: true,
+        },
+        {
+          targetId: "npc_relationship_b",
+          npcName: "B",
+          displayName: long,
+          location: "Farm",
+          x: 52,
+          y: 50,
+          inCurrentLocation: true,
+        },
+        {
+          targetId: "npc_relationship_c",
+          npcName: "C",
+          displayName: long,
+          location: "Farm",
+          x: 53,
+          y: 50,
+          inCurrentLocation: true,
+        },
       ],
     },
     true,
@@ -841,6 +882,7 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
   const villagerWhereabouts = [];
   for (let index = 0; index < 6; index += 1)
     villagerWhereabouts.push({
+      targetId: `npc_relationship_N${index}`,
       npcName: `N${index}`,
       displayName: long,
       location: "Farm",
@@ -851,6 +893,7 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
   // Far villagers become DESTINATIONS, each one spending bytes of the villager fact's own share.
   for (let index = 0; index < 20; index += 1)
     villagerWhereabouts.push({
+      targetId: `npc_relationship_F${index}`,
       npcName: `F${index}`,
       displayName: long,
       location: "Farm",

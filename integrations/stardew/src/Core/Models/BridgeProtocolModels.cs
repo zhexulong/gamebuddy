@@ -168,7 +168,6 @@ public sealed record FarmhandActionArgumentWire(string Name, string Type, IReadO
 public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string Value);
 public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
 public sealed record FarmhandActionPostconditionWire(string Name);
-public sealed record FarmhandActionObservationBindingDescriptorWire(string Type, int Version, bool Required, IReadOnlyList<string> RequiredProperties);
 /// <summary>Where the body must already stand, in the Mod's own words (<c>Relation</c>, e.g. `adjacent`), or null
 /// when that relationship states no distance.</summary>
 public sealed record FarmhandActionApproachRequirementWire(string Relation, int? WithinTiles);
@@ -179,7 +178,6 @@ public sealed record FarmhandActionDescriptorWire(
     string Effect,
     FarmhandActionPostconditionWire Postcondition,
     string? NativeBinding = null,
-    FarmhandActionObservationBindingDescriptorWire? SceneTarget = null,
     // The Mod's OWN watchdog for this action, in milliseconds: hang protection it already owns
     // (`FarmhandActionDescriptor.WatchdogMs`; the lifecycle actions deliberately carry 600s because a night waits
     // on other players, the save, and the day start). Published so the Host can size a dispatch deadline the way
@@ -397,7 +395,19 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 /// only instantiated, non-event villagers on a loaded location appear.
 /// </para>
 /// </summary>
-public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
+/// <summary>
+/// One instantiated villager and where she is, ADDRESSED BY THE SAME ID `talk_to_npc` TAKES.
+///
+/// <para>
+/// The id is `BuildNpcRelationshipTargetId(location, name)` - the identical value `npcRelationshipTargets` publishes and
+/// the action re-resolves on the game thread. It is published here because the two families answer one question and only
+/// one of them was addressable: `npcRelationshipTargets` is bounded to the 6-tile discovery envelope, so a villager 40
+/// tiles away on the actor's own map appeared in this roster with a tile and no id, and `talk_to_npc` could not be called
+/// for her at all. Measured: 18 observations, `npcRelationshipTargets` empty in every one, 39 roster rows, zero
+/// `talk_to_npc` receipts.
+/// </para>
+/// </summary>
+public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
 /// One farm location's ready-for-harvest crop summary, across the loaded world.
@@ -945,7 +955,6 @@ public sealed class BridgeExecutionArgs
     /// <summary>How many units to buy. Only shop_purchase uses it today; the Mod clamps it
     /// against the live stock and the player's purse on the game thread.</summary>
     public int? Quantity { get; init; }
-    public ObservationBindingV1? SceneTarget { get; init; }
     public BridgeNavigationDestinationSelector? Destination { get; init; }
     public string? Emote { get; init; }
     public string? Direction { get; init; }
@@ -1158,9 +1167,6 @@ public sealed record ObserveSceneRequestPayload(int Radius = 15)
     public const int DefaultRadius = 15;
 }
 
-/// <summary>Short-lived exact target binding produced by a scene observation.</summary>
-public sealed record ObservationBindingV1(string ObservationId, string Ref);
-
 public sealed record ObserveSceneAffordancePayload(
     string Ref,
     string Kind,
@@ -1177,19 +1183,21 @@ public sealed record ObserveSceneAffordancePayload(
     // and "absent" must never mean `false`.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Reachable = null,
     /// <summary>
-    /// The opaque entity identity this ref binds to, for the affordance kinds whose action needs it.
+    /// The opaque identity this ref binds to, for the affordance kinds whose action needs one: the exact value the
+    /// action compares as `expectedTargetId`.
     ///
     /// <para>
-    /// WITHOUT THIS, `pickup_forage` COULD NOT BE CALLED AT ALL even after the binding became visible. Its
-    /// `sceneTarget` resolves to an `SceneAffordanceBinding` whose `OpaqueEntityIdentity` must equal the target's
-    /// `QualifiedItemId` (`farmhandexecutioncontroller.gatheringactions.cs:64`), and the model has to send that same id as
-    /// `expectedQualifiedItemId` (`:65`). The affordance published `ref` and a human `Name`, so the model held a ref and
-    /// could not say which item it bound to - the id existed on both sides and never met.
+    /// WITHOUT THIS, AN AFFORDANCE CANNOT BE JOINED TO THE ROW THAT ADDRESSES IT. The row families publish `targetId`
+    /// (`forageTargets[].targetId` = `BuildForageTargetId(...)`) while the affordance publishes `ref` and a human `Name`,
+    /// so a caller holding both lists has no key to match them on - the id existed on both sides and never met. It must
+    /// therefore be the SAME value the action validates, never a description of the entity: this used to carry the
+    /// qualified item id (`(O)18`), which two daffodils share, and the measured result was zero `pickup_forage` receipts
+    /// with every authoring attempt either refused or aimed at the wrong tile.
     /// </para>
     /// <para>
-    /// Omitted when the source has none, and bounded to the same 128 characters the binding validates, so the payload
-    /// cost is one short id per affordance of a kind that has one.
+    /// Omitted when the source has none, and bounded to the same 128 characters every opaque id on this wire is held to.
     /// </para>
+    /// </summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Identity = null
 );
 

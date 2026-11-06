@@ -37,7 +37,10 @@ export interface ObservationBudget {
  *    `location === snapshot.location` before it reads a tile. A tile on a map the actor is not on
  *    can address no action, so its two integers are not published; the roster fact - which villager,
  *    which map - is what the family exists for (protocol.ts "the only fact that tells the Agent a
- *    villager is elsewhere instead of making it search map by map") and it stays.
+ *    villager is elsewhere instead of making it search map by map") and it stays, together with the
+ *    row's `targetId`: the address is what `talk_to_npc` is dispatched with, it names the villager on
+ *    THAT map, and it is the one field a row for a villager out of the 6-tile discovery envelope has
+ *    to keep for the action to be callable at all once the actor walks over.
  *
  *    Re-measured on 2026-10-30 (`round8`): this family was 173,597 B of 688,746 B - 25.2% of every
  *    observation byte, the single largest family in the run. `inCurrentLocation` was the most
@@ -131,7 +134,10 @@ export function boundObservedSnapshot(
       elidedVillagerRows += 1;
       // Reachable only when BOTH signals said "elsewhere", so the flag here could only be `false`: it is the
       // elided tile's own reason, spelled a second time, and `location` still names the map the villager is on.
-      return { npcName: row.npcName, displayName: row.displayName, location: row.location };
+      // The ADDRESS stays: it is what `talk_to_npc` is dispatched with, and it is location-scoped, so the id a
+      // roster row carries here is the same id the action resolves once the actor walks onto that map. Only the tile
+      // and its `false` flag go - the two facts a row for a villager on another map cannot be dispatched at.
+      return { targetId: row.targetId, npcName: row.npcName, displayName: row.displayName, location: row.location };
     });
   }
 

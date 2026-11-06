@@ -34,12 +34,6 @@ type SurfaceAction = Readonly<{
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
   postcondition?: Readonly<{ name?: string }>;
-  sceneTarget?: Readonly<{
-    type: string;
-    version: number;
-    required: boolean;
-    requiredProperties: readonly string[];
-  }>;
 }>;
 
 const SURFACE = (
@@ -61,9 +55,6 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
-            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
-            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
-            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   }),
@@ -601,13 +592,6 @@ function callScript(
   for (const argument of action.arguments)
     if (!omit.includes(argument.name))
       parts.push(`${argument.name}: ${options.values?.[argument.name] ?? sampleLiteral(argument)}`);
-  const binding = action.sceneBindingRequirement;
-  if (binding.declared && !omit.includes("sceneTarget"))
-    parts.push(
-      `sceneTarget: { ${binding.requiredProperties
-        .map((property) => `${property}: ${property === "ref" ? "'sr1_0123456789abcdef'" : "'observation_1'"}`)
-        .join(", ")} }`,
-    );
   for (const [name, literal] of Object.entries(options.add ?? {})) parts.push(`${name}: ${literal}`);
   return `builder.${action.actionId}({ ${parts.join(", ")} });`;
 }
@@ -787,80 +771,18 @@ test("a value of the wrong kind names the argument, its expectation, its source 
 });
 
 /**
- * The five forged bindings of `round18`, and the one call that can satisfy the same demand.
+ * The read-only name a refusal sends the caller to must be a name the surface publishes.
  *
- * The binding is not an argument and cannot be computed: the Mod publishes which properties it needs, and only
- * `observe_scene` answers with them. So the refusal says that, a hand-written pair is refused at the call that wrote it,
- * and the shape the refusal enforces is the shape `protocol.ts` validates.
+ * `find_destination` is not a plan step - it is read-only, so the builder generates no method for it - which is why the
+ * refusal has to spell it. Read from the artifact, so a rename fails here instead of in a refusal that points at
+ * nothing.
  */
-test("a mandatory scene binding says where a real one comes from, and a forged one is refused at the call", () => {
-  const withBinding = ACTIONS.filter((action) => action.sceneBindingRequirement.declared);
-  assert.ok(withBinding.length >= 1, "the surface still declares a mandatory binding");
-  for (const action of withBinding) {
-    const binding = action.sceneBindingRequirement;
-    assert.ok(binding.declared);
-    const expectation = `scene_binding{${binding.requiredProperties.join(",")}}`;
-    assert.equal(
-      refusalOf(compile(callScript(action, { omit: ["sceneTarget"] }))),
-      `plan_script_missing_binding:${action.actionId}.sceneTarget:${expectation}:observe_scene`,
-    );
-  }
-
-  const forged =
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    "sceneTarget: { observationId: 'observation_forage_01', ref: 'forage_01' } });";
+test("the refusal's named source is a published read-only action", () => {
   assert.equal(
-    refusalOf(compile(forged, { ...SOURCE_SNAPSHOT })),
-    "plan_script_binding_not_canonical:pickup_forage.sceneTarget:scene_binding{observationId,ref}:observe_scene:got:not_a_scene_reference:ref",
+    SURFACE.find((action) => action.actionId === "find_destination")?.kind,
+    "read_only",
+    "find_destination is a published read-only action, so a refusal may name it",
   );
-  // A binding that only invents the observation id is refused for that, by name.
-  assert.match(
-    refusalOf(
-      compile(
-        "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-          "sceneTarget: { observationId: 'not an id', ref: 'sr1_0123456789abcdef' } });",
-        { ...SOURCE_SNAPSHOT },
-      ),
-    ),
-    /got:not_an_opaque_id:observationId$/u,
-  );
-  // And the call the surface actually asks for is accepted: the binding is validated, not impossible.
-  const real =
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    "sceneTarget: { observationId: 'observation_1', ref: 'sr1_0123456789abcdef' } });";
-  assert.ok(compile(real, { ...SOURCE_SNAPSHOT }).ok, "a binding of the right shape compiles");
-});
-
-/**
- * The two read-only names a refusal sends the caller to must be names the surface publishes, and the scene-reference
- * shape the compiler enforces must be the one `protocol.ts` validates - both read from source, so a rename or a
- * reformat fails here instead of in a refusal that points at nothing.
- */
-test("the refusals' named sources are published actions, and their shapes are the Host's own", () => {
-  for (const actionId of ["observe_scene", "find_destination"])
-    assert.equal(
-      SURFACE.find((action) => action.actionId === actionId)?.kind,
-      "read_only",
-      `${actionId} is a published read-only action, so a refusal may name it`,
-    );
-
-  // Read through the repository root, the same way SURFACE_PATH is resolved, so this holds from the source tree and from
-  // the compiled test artifact alike.
-  const protocol = readFileSync(resolve(hostRoot, "../host/src/protocol.ts"), "utf8");
-  const declared = /function isSceneReference\(value: unknown\): value is string \{[\s\S]{0,200}?\/(\^[^/]+)\//u.exec(
-    protocol,
-  )?.[1];
-  assert.ok(declared, "protocol.ts still declares the scene-reference shape");
-  const isSceneReference = new RegExp(declared, "u");
-  const reference = `sr1_${"a".repeat(16)}`;
-  assert.equal(isSceneReference.test(reference), true, "the protocol predicate accepts the sample reference");
-  const call = (ref: string) =>
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    `sceneTarget: { observationId: 'observation_1', ref: '${ref}' } });`;
-  assert.ok(compile(call(reference), { ...SOURCE_SNAPSHOT }).ok, "the compiler accepts the shape the protocol accepts");
-  const tooShort = `sr1_${"a".repeat(15)}`;
-  assert.equal(isSceneReference.test(tooShort), false, "the protocol predicate refuses a short reference");
-  assert.match(refusalOf(compile(call(tooShort), { ...SOURCE_SNAPSHOT })), /got:not_a_scene_reference:ref$/u);
 });
 
 test("a builder method is generated for exactly the lifecycles the Mod's Body Program catalog admits", () => {
@@ -1576,9 +1498,6 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
-            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
-            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
-            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   });

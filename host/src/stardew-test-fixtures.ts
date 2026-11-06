@@ -40,18 +40,6 @@ export const TEST_MOD_REGISTRATIONS: readonly ActionRegistration[] = Object.free
       identityVersion: 1,
       lifecycle: "published" as const,
       kind: "execution" as const,
-      ...(actionId === "pickup_forage"
-        ? {
-            descriptor: Object.freeze({
-              sceneTarget: Object.freeze({
-                type: "ObservationBinding",
-                version: 1,
-                required: true,
-                requiredProperties: Object.freeze(["observationId", "ref"]),
-              }),
-            }),
-          }
-        : {}),
     }),
   ),
 );

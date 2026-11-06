@@ -47,7 +47,15 @@ const snapshot: Snapshot = {
   ],
   chestsSummary: { chestCount: 1, itemCount: 1, fullCount: 0 },
   villagerWhereabouts: [
-    { npcName: "Abigail", displayName: "Abigail", location: "Town", x: 40, y: 12, inCurrentLocation: false },
+    {
+      targetId: "npc_relationship_0123456789abcdef",
+      npcName: "Abigail",
+      displayName: "Abigail",
+      location: "Town",
+      x: 40,
+      y: 12,
+      inCurrentLocation: false,
+    },
   ],
 };
 

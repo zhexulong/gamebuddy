@@ -21,7 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// <para>
 /// <c>pickup_forage</c> DECLARES its precondition (<c>FarmhandActionDefinitions.cs:212</c>) and, in exchange, its
-/// request path must NOT walk in: it refuses <c>observation_binding_target_out_of_range</c>. The walk is the
+/// request path must NOT walk in: it refuses <c>forage_target_out_of_range</c>. The walk is the
 /// caller's own <c>move_to_tile</c> step; if the handler started one, the declaration would be a redundant
 /// sentence and the refusal would arrive after a walk nobody planned.
 /// </para>
@@ -80,7 +80,7 @@ public sealed class ApproachClassificationTests
         // (`TryBeginToolApproach` mints `Accepted, "accepted"`) and settle later, so requiring a terminal
         // Rejected with this action's own code is exactly the difference between "refused" and "walked instead".
         receipt.State.Should().Be(ExecutionState.Rejected, "pickup_forage refuses from range; it is not the walk");
-        receipt.ReasonCode.Should().Be("observation_binding_target_out_of_range");
+        receipt.ReasonCode.Should().Be("forage_target_out_of_range");
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class ApproachClassificationTests
         LocalExecutionReceipt receipt = world.RequestForage(3, 3);
 
         receipt.ReasonCode.Should().NotBe(
-            "observation_binding_target_out_of_range",
+            "forage_target_out_of_range",
             "an in-range target must clear the radius gate the declaration describes");
     }
 
@@ -272,22 +272,18 @@ public sealed class ApproachClassificationTests
         public void PlaceActorAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
 
         /// <summary>
-        /// `pickup_forage` through its real request path. The scene resolver is supplied because it is a Mod wiring
-        /// slot, not game state: without it the body refuses `observation_binding_precondition_failed` before it
-        /// ever measures the radius, and the radius branch would be unreachable.
+        /// `pickup_forage` through its real request path. The address is `expectedTargetId`, the id the forage row
+        /// publishes, so the request carries nothing the caller could not have copied out of an observation.
         /// </summary>
         public LocalExecutionReceipt RequestForage(int targetX, int targetY)
         {
-            BoundarySceneBinding binding = this.BoundForage(targetX, targetY);
             ExecutionManager executions = this.Manager("pickup_forage");
-            executions.SetSceneTargetResolver(binding.Resolve);
             return executions.RequestLocalPickupForage(
                 $"req_forage_{targetX}_{targetY}",
                 targetX,
                 targetY,
                 "(O)18",
                 "forage_target_1",
-                null,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
         }
 
@@ -309,25 +305,6 @@ public sealed class ApproachClassificationTests
             var publication = FarmhandCapabilityPublication.Initial(
                 new HashSet<string>(StringComparer.Ordinal) { actionId });
             return new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
-        }
-
-        /// <summary>The scene binding the Mod's own resolver would publish for this tile, in its own shape.</summary>
-        private BoundarySceneBinding BoundForage(int targetX, int targetY) => new(targetX, targetY);
-
-        private readonly record struct BoundarySceneBinding(int TileX, int TileY)
-        {
-            public bool Resolve(ObservationBindingV1? requested, out SceneAffordanceBinding? binding, out string reasonCode)
-            {
-                binding = new SceneAffordanceBinding(
-                    SceneAffordanceKind.Forage,
-                    "(O)18",
-                    Game1.player.currentLocation!.NameOrUniqueName,
-                    this.TileX,
-                    this.TileY,
-                    1);
-                reasonCode = "accepted";
-                return true;
-            }
         }
 
         private static void SetField(object target, string name, object value) =>

@@ -108,7 +108,7 @@ test(
       if (parsed.type !== "hello_ack") return;
       const actions = planActionsFromRegistrations(parsed.payload.registrations);
 
-      // The declaring half: `pickup_forage` enforces `observation_binding_target_out_of_range` beyond Chebyshev 1,
+      // The declaring half: `pickup_forage` enforces `forage_target_out_of_range` beyond Chebyshev 1,
       // and says so before the companion is refused.
       const declaring = planShape(actions, { actionId: "pickup_forage" });
       assert.equal(declaring.ok, true);

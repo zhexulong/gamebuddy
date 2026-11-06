@@ -13,8 +13,6 @@ namespace GameBuddy.Stardew;
 // FarmhandExecutionController game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
-    private SceneTargetResolver? sceneTargetResolver;
-
     /// <summary>
     /// How long after the last publication that still saw a ground chunk the actor's own inventory count may be read
     /// as proof that the chunk was delivered to them.
@@ -27,13 +25,8 @@ internal sealed partial class ExecutionManager
     /// </remarks>
     private const int ItemPickupMagnetClaimTicks = 60 * 60 * 5;
 
-    internal void SetSceneTargetResolver(SceneTargetResolver resolver)
-    {
-        this.sceneTargetResolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
-    }
-
     /// <summary>Published native forage pickup. The native location action owns inventory and object removal.</summary>
-    public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, ObservationBindingV1? sceneTarget, long requestedDeadlineMs)
+    public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
             return existing;
@@ -49,12 +42,6 @@ internal sealed partial class ExecutionManager
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
-        SceneAffordanceBinding? binding = null;
-        string sceneReason = "scene_ref_invalid";
-        if (this.sceneTargetResolver is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_precondition_failed", null);
-        if (!this.sceneTargetResolver(sceneTarget, out binding, out sceneReason))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sceneReason, null);
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity), behavior-equivalent to the inline sequence it
         // replaced: identical reasonCodes, identical order. Geometry, target
@@ -62,21 +49,19 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_out_of_range", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_out_of_range", $"target={targetX},{targetY}");
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        if (binding is null
-            || !string.Equals(binding.LocationName, location.NameOrUniqueName, StringComparison.Ordinal)
-            || binding.TileX != targetX
-            || binding.TileY != targetY
-            || !location.objects.TryGetValue(tile, out StardewValley.Object? forage)
+        // The address IS the identity: `expectedTargetId` hashes the location, the tile, the qualified item id, the stack
+        // and `IsSpawnedObject`, and the two comparisons below recompute it from the LIVE object on this thread. Nothing
+        // else has to agree for the target to be the one the caller read.
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? forage)
             || !forage.isForage())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_unavailable", $"target={targetX},{targetY}");
-        if (!string.Equals(binding.OpaqueEntityIdentity, forage.QualifiedItemId, StringComparison.Ordinal)
-            || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable", $"target={targetX},{targetY}");
+        if (!string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
             || !string.Equals(BuildForageTargetId(location, targetX, targetY, forage), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "observation_binding_target_unavailable", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable", $"target={targetX},{targetY}");
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY}");
 
