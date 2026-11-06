@@ -115,17 +115,6 @@ test("fails closed for unavailable and non-active lifecycle surfaces", () => {
     activeExecutionCategory: "none",
     latestAuthoritativeReceiptOutcome: "none",
   });
-  assert.deepEqual(projectGameStatus({ ...currentActive, surface: "recovery_required" }), {
-    availability: "unavailable",
-    category: "recovery_required",
-    label: "Game recovery required",
-    surfaceStatus: "recovery_required",
-    freshnessLabel: "Current game state",
-    availableCapabilityCount: 0,
-    availableCapabilityCategory: "none",
-    activeExecutionCategory: "none",
-    latestAuthoritativeReceiptOutcome: "none",
-  });
 });
 
 test("rejects malformed snapshots and unexpected raw lifecycle fields rather than projecting them", () => {
@@ -134,6 +123,11 @@ test("rejects malformed snapshots and unexpected raw lifecycle fields rather tha
     { ...currentActive, availableCapabilities: { category: "available", count: -1 } },
     { ...currentActive, requestId: "request_01" },
     { ...currentActive, snapshotRevision: 7 },
+    // The removed recovery surface word. This adapter's only producer never emitted it - the
+    // durable Game recovery state lives in the semantic store and is healed by the CLI-only
+    // `recover-dead-owner` operation - so a snapshot that still carries the word is not a shape
+    // this projection accepts, and it fails closed instead of reporting a recovery state.
+    { ...currentActive, surface: "recovery_required" },
   ]) {
     assert.deepEqual(projectGameStatus(snapshot), {
       availability: "unavailable",

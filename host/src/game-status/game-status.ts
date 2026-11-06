@@ -2,10 +2,15 @@
  * Closed, Host-owned lifecycle input for the player-safe Game status adapter.
  * Its deliberately categorical fields must be reduced by Host lifecycle code;
  * it accepts neither browser/bridge payloads nor raw adapter state.
+ *
+ * `surface` has no recovery state: the durable Game recovery word belongs to the semantic
+ * store, whose only cure is the CLI-only `recover-dead-owner` operation, so nothing in this
+ * Host-owned adapter could ever produce one for a player to read. The word was declared and
+ * never emitted, which is a name that promises a state the product does not have.
  */
 export type HostGameLifecycleSnapshot = Readonly<{
   availability: "available" | "unavailable";
-  surface: "active" | "returning" | "recovery_required";
+  surface: "active" | "returning";
   freshness: "current" | "absent" | "stale" | "mismatch";
   availableCapabilities: Readonly<{
     category: "available" | "none";
@@ -17,15 +22,9 @@ export type HostGameLifecycleSnapshot = Readonly<{
 
 export type GameStatus = Readonly<{
   availability: "available" | "unavailable";
-  category: "unavailable" | "awaiting_state" | "ready" | "busy" | "returning" | "recovery_required";
-  label:
-    | "Game unavailable"
-    | "Awaiting current game state"
-    | "Ready"
-    | "Game action running"
-    | "Returning from game"
-    | "Game recovery required";
-  surfaceStatus: "unavailable" | "active" | "returning" | "recovery_required";
+  category: "unavailable" | "awaiting_state" | "ready" | "busy" | "returning";
+  label: "Game unavailable" | "Awaiting current game state" | "Ready" | "Game action running" | "Returning from game";
+  surfaceStatus: "unavailable" | "active" | "returning";
   freshnessLabel: "Current game state" | "Game state unavailable" | "Game state stale" | "Game state mismatch";
   availableCapabilityCount: number;
   availableCapabilityCategory: "available" | "none";
@@ -45,8 +44,6 @@ export function projectGameStatus(snapshot: HostGameLifecycleSnapshot | undefine
     return unavailableStatus("unavailable", "Game unavailable", snapshot.surface, freshnessLabel);
   if (snapshot.surface === "returning")
     return unavailableStatus("returning", "Returning from game", "returning", freshnessLabel);
-  if (snapshot.surface === "recovery_required")
-    return unavailableStatus("recovery_required", "Game recovery required", "recovery_required", freshnessLabel);
   if (snapshot.freshness !== "current")
     return unavailableStatus("awaiting_state", "Awaiting current game state", "active", freshnessLabel);
 
@@ -65,11 +62,8 @@ export function projectGameStatus(snapshot: HostGameLifecycleSnapshot | undefine
 }
 
 function unavailableStatus(
-  category: Extract<GameStatus["category"], "unavailable" | "awaiting_state" | "returning" | "recovery_required">,
-  label: Extract<
-    GameStatus["label"],
-    "Game unavailable" | "Awaiting current game state" | "Returning from game" | "Game recovery required"
-  >,
+  category: Extract<GameStatus["category"], "unavailable" | "awaiting_state" | "returning">,
+  label: Extract<GameStatus["label"], "Game unavailable" | "Awaiting current game state" | "Returning from game">,
   surfaceStatus: GameStatus["surfaceStatus"],
   freshnessLabel: GameStatus["freshnessLabel"],
 ): GameStatus {
@@ -110,7 +104,7 @@ function isSnapshot(value: unknown): value is HostGameLifecycleSnapshot {
   const capabilities = value.availableCapabilities;
   return (
     (value.availability === "available" || value.availability === "unavailable") &&
-    (value.surface === "active" || value.surface === "returning" || value.surface === "recovery_required") &&
+    (value.surface === "active" || value.surface === "returning") &&
     (value.freshness === "current" ||
       value.freshness === "absent" ||
       value.freshness === "stale" ||

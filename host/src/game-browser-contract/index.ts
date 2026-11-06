@@ -114,6 +114,15 @@ const PrerequisiteStatus = Type.Union([
   Type.Literal("failed"),
 ]);
 
+/**
+ * The Player Host instance slot `game.state.read` publishes.
+ *
+ * `unread` is the Host's own word for "the read of the player's game produced no fact":
+ * the coordinator's Player Host slot answered `unavailable` (the evidence read failed) or
+ * `unknown` (a player-external game it could not verify). It is deliberately not `none`,
+ * which means "nothing is running yet"; a game the Host has not read has established no
+ * instance fact at all. `game-browser/game-browser-state-provider.ts` is its only writer.
+ */
 const InstanceStatus = Type.Union([
   Type.Literal("none"),
   Type.Literal("detected"),
@@ -121,6 +130,7 @@ const InstanceStatus = Type.Union([
   Type.Literal("running"),
   Type.Literal("stopped"),
   Type.Literal("crashed"),
+  Type.Literal("unread"),
 ]);
 
 const CompatibilityStatus = Type.Union([

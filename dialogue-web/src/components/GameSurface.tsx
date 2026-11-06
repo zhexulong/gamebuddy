@@ -1136,6 +1136,7 @@ export function GameSurface({
         setContinuityIdentity: setContinuityIdentityInput,
         confirmCabin: (choice) => void handleCabinConfirmation(choice),
         refreshCabins: () => void readCabins(true),
+        reread: () => void rereadGame(),
       }}
     />
   );

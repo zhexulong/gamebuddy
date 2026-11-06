@@ -89,6 +89,12 @@ const en = {
     "This attempt failed in a way that stops GameBuddy from starting the game again until it is restarted. Close GameBuddy completely, open it again, then play with your companion.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
+  // The state whose step is the read itself. The subject is the Host's read of the player's
+  // game - not the game's configuration and not a fault of the player's - and the sentence
+  // names the step that answers it.
+  gameNotRead:
+    "GameBuddy has not read your game yet, so it cannot say what your companion could do here. Read it again.",
+  gameReadAgain: "Read my game again",
   stardewCabinSelection: "Stardew cabin selection",
   stardewCabinsLoading: "Loading available cabins…",
   // The list is read once, when the page opens, and the Host serves it only while
@@ -560,6 +566,23 @@ const en = {
   // The problem screen's one control, whose call the shell owns: it re-reads the composed state the
   // screen came from, so it says what it does rather than naming a mechanism.
   problemRetryRead: "Read it again",
+  // The step, in the card's own words, for every failure whose answer is not a control this card
+  // can draw. `problemStepElsewhere` is the one that names a control on the surface the refusal came
+  // from: the sentence above it already says which one, and this line is what keeps the card from
+  // reading as a dead end. The `SelfHeals` three say the condition ends by itself, the
+  // `OutsideSurface` three say where the step is instead, and the `NoStep` three say what makes the
+  // request impossible - a step the player was promised and cannot take is worse than this.
+  problemStepElsewhere: "The step is the control this sentence names. GameBuddy has no second one for it.",
+  problemStepSelfHealsHostRetries: "Nothing to press: GameBuddy finishes what it is doing, and this clears on its own.",
+  problemStepSelfHealsNextRead: "Nothing to press: this clears on its own when the page reads again.",
+  problemStepSelfHealsStreamResumes: "Nothing to press: GameBuddy reconnects on its own and the page catches up.",
+  problemStepOpenSettings: "The step is in Settings: open Settings from the bar and change it there.",
+  problemStepRetryBootstrap: "The step is a fresh start: open GameBuddy again.",
+  problemStepRestartGamebuddy: "The step is a fresh GameBuddy: start it again, then open the page it shows.",
+  problemStepNoStepOverACeiling: "Nothing here can change this: what you are saving is over a size GameBuddy keeps.",
+  problemStepNoStepAlreadyTrue: "Nothing to do here: this is already the state you asked for.",
+  problemStepNoStepNotThisArtifact:
+    "Nothing here can change this: what this names is not something GameBuddy can act on.",
   problemInternalErrorTitle: "Unable to read chat",
   problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
   problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
@@ -854,6 +877,7 @@ const en = {
   gameInstanceRunning: "Running",
   gameInstanceStopped: "Stopped",
   gameInstanceCrashed: "Stopped unexpectedly",
+  gameInstanceUnread: "Not read yet",
 
   gameCompatibilityUnchecked: "Not checked yet",
   gameCompatibilityCompatible: "Compatible",
@@ -1205,6 +1229,8 @@ const zh: Messages = {
   gameLaunchQuarantined:
     "这次启动失败的方式会让 GameBuddy 在重启之前无法再次启动游戏。请完全关闭 GameBuddy，重新打开，然后再启动伴玩。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
+  gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的同伴能做什么。请再读一次。",
+  gameReadAgain: "再读一次我的游戏",
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
@@ -1538,6 +1564,16 @@ const zh: Messages = {
   problemRouteUnavailableTitle: "无法访问聊天",
   problemRouteUnavailableDetail: "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
   problemRetryRead: "重新读取",
+  problemStepElsewhere: "下一步就是这句话里点名的那个控件，GameBuddy 没有第二个。",
+  problemStepSelfHealsHostRetries: "不用点：GameBuddy 会把手上的事做完，这个状态自己就消失了。",
+  problemStepSelfHealsNextRead: "不用点：页面再读一次时就自己恢复了。",
+  problemStepSelfHealsStreamResumes: "不用点：GameBuddy 会自己重连，页面随后跟上。",
+  problemStepOpenSettings: "下一步在设置里：从上方进入设置，在那里改。",
+  problemStepRetryBootstrap: "下一步是重新开始：再次打开 GameBuddy。",
+  problemStepRestartGamebuddy: "下一步是重开 GameBuddy：重新启动，然后打开它给出的页面。",
+  problemStepNoStepOverACeiling: "这里改变不了：要保存的东西超过了 GameBuddy 保留的尺寸。",
+  problemStepNoStepAlreadyTrue: "这里不用做什么：这已经就是你要的状态。",
+  problemStepNoStepNotThisArtifact: "这里改变不了：这个名字指向的东西不是 GameBuddy 能对它做什么的东西。",
   problemInternalErrorTitle: "无法读取聊天",
   problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
   problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
@@ -1783,6 +1819,7 @@ const zh: Messages = {
   gameInstanceRunning: "运行中",
   gameInstanceStopped: "已停止",
   gameInstanceCrashed: "意外退出",
+  gameInstanceUnread: "尚未读取",
 
   gameCompatibilityUnchecked: "尚未检查",
   gameCompatibilityCompatible: "兼容",

@@ -308,6 +308,10 @@ export function sessionForwardActionHolds(controls, action) {
       return controls.reopenAvailable;
     case "wait_for_game":
       return controls.waitingForGame;
+    case "reread_game":
+      // The Host has not read the player's game: the step is the read, and the
+      // sentence that names it is what the panel draws.
+      return controls.rereadAvailable;
     case "restart_gamebuddy":
       // A step the surface cannot draw. It is a step only because the sentence
       // that names it is drawn instead, so the flag is the whole proof.
@@ -476,6 +480,58 @@ test("session-forward-path.5 (mutation): a phase whose flags offer nothing is re
     "the real phase in the same population passes: the comparison is not simply always-red",
   );
   t.diagnostic(`session-forward-path.5: planted -> ${findings.join(" | ")}`);
+});
+
+/**
+ * The state this file exists for on the read side: the Host has not read the player's game.
+ *
+ * `game.state.read` used to publish `instance.status: "none"` for that case - the word for
+ * "nothing is running yet" - so the surface offered setup and activation to a player whose
+ * game the Host had not read at all: two controls pointing at a premise that does not hold,
+ * and no way to say so. The population below is the real Host chain (the facade's own view,
+ * the production composition rule, the production `game.state.read`) followed by the
+ * component's own derivation, so neither side can drift back to that word alone.
+ */
+test("a player game the Host has not read offers the read, not setup or activation", async (t) => {
+  const unreadFacadeView = Object.freeze({
+    schemaVersion: 1,
+    playerHost: Object.freeze({ state: "unavailable", ownership: "player_external" }),
+    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+  });
+  // The facade is authoritative here: an inactive lifecycle owns no Player Host slot.
+  assert.equal(composeCoordinatorRoleLifecycleView("inactive", unreadFacadeView), unreadFacadeView);
+
+  // A registered installation is the shape that used to read as `met` + `none` + generation 0,
+  // i.e. the pre-activation state that offers setup and activation.
+  const gameState = await readState(unreadFacadeView, { status: "none", generation: 0 }, "registered");
+  assert.equal(gameState.game.instance.status, "unread", "the publishable word for an unread game is not `none`");
+  assert.equal(gameState.game.instance.gameTitle, null, "an unread game has no title to publish");
+  assert.deepEqual(clientControls(gameState), {
+    activationAvailable: false,
+    setupAvailable: false,
+    launchAvailable: false,
+    launchGeneration: null,
+  });
+
+  const controls = deriveGameSessionControls({
+    ready: true,
+    game: gameState,
+    resumeFailureSurface: false,
+    resumeAttemptFailed: false,
+  });
+  assert.equal(controls.phase, "game_not_read");
+  assert.deepEqual([...controls.forwardActions], ["reread_game"]);
+  assert.equal(controls.rereadAvailable, true, "the panel's own read is the step");
+  // The negative half: no control exists here whose premise the Host has not established.
+  assert.equal(controls.reopenAvailable, false);
+  assert.equal(controls.resumeAvailable, false);
+  assert.equal(controls.createAvailable, false);
+  assert.equal(controls.stopAvailable, false);
+  assert.equal(controls.disconnectAvailable, false);
+  assert.equal(controls.endgameAvailable, false);
+  assert.equal(controls.waitingForGame, false, "this is not a wait for the game");
+  assert.equal(controls.restartRequired, false, "a re-read is the step, not a restart");
+  t.diagnostic(`game-not-read: ${controls.phase} -> ${controls.forwardActions.join("+")}`);
 });
 
 test("session-forward-path.6: the phase list, the union and the derivation are one authority", (t) => {

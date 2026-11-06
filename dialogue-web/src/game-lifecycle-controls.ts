@@ -55,6 +55,9 @@ export function deriveGameLifecycleControlAvailability(
 ): GameLifecycleControlAvailability {
   if (!view.ready || view.game === null) return NO_CONTROLS;
   const { instance, prerequisites } = view.game.game;
+  // `unread` is not "nothing is running": the Host holds no read of the game at all, so
+  // no lifecycle control is offered either - see `game_not_read` in the session
+  // derivation below, which is the state that says so.
   const nothingRunning = instance.status === "none";
   const launchable = nothingRunning && prerequisites.status === "met" && instance.generation >= 1;
   const preActivation = nothingRunning && !launchable;
@@ -114,6 +117,14 @@ export type GameSessionPhase =
    * GameBuddy, and the surface's job is to name it.
    */
   | "launch_failed"
+  /**
+   * No attachment and the Host has not read the player's game (`instance.status:
+   * "unread"`, from the coordinator's own `unavailable`/`unknown` Player Host slot).
+   * Every control the getting-going guide offers acts on a premise that read would
+   * establish - the installation's standing, the staged attempt, the expected
+   * generation - so none of them is offered here and the step is the read itself.
+   */
+  | "game_not_read"
   /** Attached and connected with actions live. */
   | "attached_connected"
   /** Attached and connected with action authority paused (ready-actions-paused). */
@@ -173,6 +184,7 @@ type GameSessionForwardAction =
   | "create"
   | "reopen"
   | "wait_for_game"
+  | "reread_game"
   | "restart_gamebuddy";
 
 export type GameSessionControls = Readonly<{
@@ -202,6 +214,11 @@ export type GameSessionControls = Readonly<{
    * of the getting-going guide. True exactly in `launch_failed`.
    */
   restartRequired: boolean;
+  /**
+   * Whether this state's step is the panel's own read of the game, in place of the
+   * getting-going guide. True exactly in `game_not_read`.
+   */
+  rereadAvailable: boolean;
 }>;
 
 const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
@@ -238,7 +255,9 @@ export function deriveGameSessionControls(
 ): GameSessionControls {
   const build = (
     phase: GameSessionPhase,
-    flags: Partial<Omit<GameSessionControls, "phase" | "forwardActions" | "waitingForGame" | "restartRequired">>,
+    flags: Partial<
+      Omit<GameSessionControls, "phase" | "forwardActions" | "waitingForGame" | "restartRequired" | "rereadAvailable">
+    >,
     forwardActions: readonly GameSessionForwardAction[],
   ): GameSessionControls =>
     Object.freeze({
@@ -255,6 +274,7 @@ export function deriveGameSessionControls(
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
       restartRequired: phase === "launch_failed",
+      rereadAvailable: phase === "game_not_read",
     });
 
   if (!view.ready || view.game === null) return build("no_projection", {}, ["terminal"]);
@@ -319,6 +339,10 @@ export function deriveGameSessionControls(
   // the staging controls are the same derivation the getting-going guide renders.
   if (instance.status === "crashed") return build("launch_failed", {}, ["restart_gamebuddy"]);
   if (instance.status === "launching") return build("launching", {}, ["wait_for_game"]);
+  // Before any lifecycle control is considered: the Host has not read the game, so
+  // there is no installation standing, staged attempt or expected generation for those
+  // controls to act on. The step is the read the panel already owns.
+  if (instance.status === "unread") return build("game_not_read", {}, ["reread_game"]);
   if (instance.status !== "none") return build("running_without_attachment", {}, ["wait_for_game"]);
   const lifecycle = deriveGameLifecycleControlAvailability(view);
   if (lifecycle.launchAvailable) return build("activated_not_launched", {}, ["launch"]);
@@ -333,6 +357,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
   "launching",
   "running_without_attachment",
   "launch_failed",
+  "game_not_read",
   "attached_connected",
   "attached_actions_paused",
   "attached_stopping",
@@ -411,6 +436,12 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
         game({
           instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },
           latestOutcome: "failed",
+        }),
+      ),
+      game_not_read: input(
+        game({
+          instance: { status: "unread", gameTitle: null, generation: 0 },
+          actionAuthority: "unavailable",
         }),
       ),
       attached_connected: input(attached("connected_idle")),

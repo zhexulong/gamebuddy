@@ -152,7 +152,7 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
   assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
   assert.deepEqual(state.game, {
     prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
-    instance: { status: "none", gameTitle: null, generation: 0 },
+    instance: { status: "unread", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
     attachment: { status: "none", generation: 0 },
     connectionStatus: "none",
@@ -164,6 +164,37 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
     capabilitySummary: { available: false, count: 0 },
     latestOutcome: "none",
   });
+});
+
+/**
+ * The player's game was not read, and that is a different fact from "nothing is
+ * running". The facade answers `unavailable` for a read that produced no fact and
+ * `unknown` for a player-external game it could not verify; both were projected as
+ * `instance.status: "none"`, which is the word for "nothing is running yet", so the
+ * surface told a player whose game the Host had not read to set up and activate.
+ */
+test("a player game the Host has not read is projected as unread, never as nothing running", async () => {
+  const unreadSlots = [
+    Object.freeze({ state: "unavailable", ownership: "player_external" }),
+    Object.freeze({ state: "unknown", ownership: "player_external" }),
+  ] as const;
+  for (const playerHost of unreadSlots) {
+    const state = await createGameBrowserStateProvider(
+      profile(),
+      lifecycle(
+        Object.freeze({
+          schemaVersion: 1,
+          playerHost,
+          aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+        }),
+      ),
+      attachment(),
+      launchReadiness(),
+    ).readState(context);
+    assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
+    assert.equal(state.game.instance.status, "unread", `${playerHost.state} is not the fact "nothing is running"`);
+    assert.equal(state.game.instance.generation, 0);
+  }
 });
 
 test("compatibility mapping is explicit and does not attest attachment readiness", async () => {

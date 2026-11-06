@@ -87,13 +87,7 @@ function projectGameBrowserState(
   const launchFailed = launchReadiness.status === "failed";
   const prerequisitesMet =
     playerHostStarted || launchReadiness.status === "ready" || launchFailed || installation === "registered";
-  const instanceStatus = launchFailed
-    ? ("crashed" as const)
-    : lifecycle.playerHost.state === "pending" || lifecycle.playerHost.state === "awaiting_attestation"
-      ? ("launching" as const)
-      : lifecycle.playerHost.state === "authenticated"
-        ? ("running" as const)
-        : ("none" as const);
+  const instanceStatus = launchFailed ? ("crashed" as const) : projectInstanceStatus(lifecycle.playerHost);
   return Object.freeze({
     apiVersion: 1,
     build: Object.freeze({ browserContract: GAME_BROWSER_API_V1, profileId: profile.profileId }),
@@ -103,14 +97,13 @@ function projectGameBrowserState(
       prerequisites: prerequisitesMet
         ? Object.freeze({ status: "met" as const, detectedGame: "Stardew Valley", missingItems: [] })
         : Object.freeze({ status: "unknown" as const, detectedGame: null, missingItems: [] }),
-      instance:
-        instanceStatus === "none"
-          ? Object.freeze({ status: "none" as const, gameTitle: null, generation: launchReadiness.generation })
-          : Object.freeze({
-              status: instanceStatus,
-              gameTitle: "Stardew Valley",
-              generation: launchReadiness.generation,
-            }),
+      instance: Object.freeze({
+        status: instanceStatus,
+        // A game the Host has not read has no title to publish: naming one here would be
+        // the projection naming a game it has just said it could not see.
+        gameTitle: instanceStatus === "none" || instanceStatus === "unread" ? null : "Stardew Valley",
+        generation: launchReadiness.generation,
+      }),
       compatibility: Object.freeze(compatibility),
       attachment: Object.freeze({ status: attachment.status, generation: attachment.generation }),
       connectionStatus: attachment.connectionStatus,
@@ -128,6 +121,33 @@ function projectGameBrowserState(
       latestOutcome: launchFailed ? "failed" : "none",
     }),
   });
+}
+
+/**
+ * The coordinator's Player Host slot as the browser's instance word.
+ *
+ * `unavailable` and `unknown` are the facade's two answers for a read of the player's
+ * game that produced no fact: the evidence read threw, or a player-external game it
+ * could not verify. Neither is `none` - that word means "nothing is running yet", and
+ * it is the state the surface offers setup and activation from, which an unread game
+ * has not established.
+ */
+function projectInstanceStatus(
+  playerHost: StardewRoleLifecycleView["playerHost"],
+): GameBrowserStateV1["game"]["instance"]["status"] {
+  switch (playerHost.state) {
+    case "pending":
+    case "awaiting_attestation":
+      return "launching";
+    case "authenticated":
+      return "running";
+    case "unavailable":
+    case "unknown":
+      return "unread";
+    case "not_started":
+    case "stopped":
+      return "none";
+  }
 }
 
 function projectCompatibility(lifecycle: StardewRoleLifecycleView): Readonly<{

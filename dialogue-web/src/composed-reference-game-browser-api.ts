@@ -62,7 +62,7 @@ const MAX_GAME_MESSAGE_LENGTH = 512;
 const MAX_GAME_MISSING_ITEMS = 50;
 
 const PREREQUISITE_STATUSES = ["unknown", "met", "unmet", "checking", "failed"] as const;
-const INSTANCE_STATUSES = ["none", "detected", "launching", "running", "stopped", "crashed"] as const;
+const INSTANCE_STATUSES = ["none", "detected", "launching", "running", "stopped", "crashed", "unread"] as const;
 const COMPATIBILITY_STATUSES = ["unchecked", "compatible", "incompatible", "warning"] as const;
 const ATTACHMENT_STATUSES = ["none", "pending", "attached", "detaching", "failed"] as const;
 const CONNECTION_STATUSES = [

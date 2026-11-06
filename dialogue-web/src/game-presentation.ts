@@ -81,6 +81,8 @@ export function instanceLabel(labels: Messages, instance: GameProjection["instan
       return labels.gameInstanceStopped;
     case "crashed":
       return labels.gameInstanceCrashed;
+    case "unread":
+      return labels.gameInstanceUnread;
     default:
       return exhaustive(instance.status);
   }

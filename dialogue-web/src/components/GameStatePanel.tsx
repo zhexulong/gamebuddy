@@ -195,6 +195,8 @@ export type GameStatePanelProps = Readonly<{
     setContinuityIdentity(value: string): void;
     confirmCabin(choice: StardewCabinChoiceV1): void;
     refreshCabins(): void;
+    /** The panel's own re-read of the composed state, which is the step in `game_not_read`. */
+    reread(): void;
   }>;
 }>;
 
@@ -334,7 +336,28 @@ export function GameStatePanel({
                 {labels.gameWaitingForGame}
               </p>
             )}
-            {session.controls.restartRequired ? null : companionInFarm ? (
+            {/* The Host has not read the player's game. Every control in the guide below acts
+                on a premise that read would establish, so the guide is held back and the
+                step that belongs to this state - the read itself - is the only one drawn. */}
+            {session.controls.rereadAvailable && (
+              <p className="game-status" data-tone="progress" role="status" data-testid="game-not-read">
+                {labels.gameNotRead}
+              </p>
+            )}
+            {session.controls.rereadAvailable && (
+              <div className="game-actions">
+                <button
+                  type="button"
+                  className="game-action primary"
+                  data-testid="game-reread"
+                  onClick={handlers.reread}
+                >
+                  <RefreshCw size={16} aria-hidden="true" />
+                  {labels.gameReadAgain}
+                </button>
+              </div>
+            )}
+            {session.controls.restartRequired || session.controls.rereadAvailable ? null : companionInFarm ? (
               <div className="game-actions">
                 {session.controls.reopenAvailable && (
                   <button
