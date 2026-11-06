@@ -28,6 +28,8 @@ import {
   waitForActionable,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
+// prelive-l3-opt-out b: this is a program-level A/B gate, launched directly by its own contract test rather than
+// through an action->runner mapping, so `tools/stardew-action-gate-descriptors.mjs` has no entry for it.
 const SCENARIO = "native_machine_coffee_load_v1";
 const EXPECTED_ACTIONS = ["move_to_tile", "machine_inspect", "machine_load"];
 const REQUIRED_CAPABILITIES = [
@@ -40,7 +42,9 @@ const REQUIRED_CAPABILITIES = [
 
 /** Load the emitted Host client from the local dist-test artifact. */
 async function loadDistTestClient(entry) {
-  const { LocalStardewBridgeClient, bindLocalStardewBridgeBodyNodeAdmission } = await import(`../host/dist-test/${entry}`);
+  const { LocalStardewBridgeClient, bindLocalStardewBridgeBodyNodeAdmission } = await import(
+    `../host/dist-test/${entry}`
+  );
   return { LocalStardewBridgeClient, bindLocalStardewBridgeBodyNodeAdmission };
 }
 
@@ -148,15 +152,16 @@ export async function runMachineABSmoke(
     const submit = await client.programSubmit(program);
     trace.push({ phase: "program_submit", code: submit.code, diagnostics: submit.verification?.diagnostics ?? [] });
     if (submit.code !== "accepted")
-      throw new Error(`program_submit_not_accepted:${submit.code}:${JSON.stringify(submit.verification?.diagnostics ?? [])}`);
+      throw new Error(
+        `program_submit_not_accepted:${submit.code}:${JSON.stringify(submit.verification?.diagnostics ?? [])}`,
+      );
 
     // The Mod-owned controller now advances the graph on the game thread:
     // inspect executes first, its machine_target_id fact materializes B's
     // expectedTargetId binding, and load executes without any Agent turn.
     const terminal = await waitForProgramTerminal(client, programId, { timeoutMs: terminalTimeoutMs });
     trace.push({ phase: "program_terminal", state: terminal.state });
-    if (terminal.state !== "succeeded")
-      throw new Error(`program_terminal_not_succeeded:${terminal.state}`);
+    if (terminal.state !== "succeeded") throw new Error(`program_terminal_not_succeeded:${terminal.state}`);
 
     // Collect the B node terminal receipt from the fact stream.
     const loadNodes = terminal.snapshot?.nodes ?? [];
@@ -167,7 +172,9 @@ export async function runMachineABSmoke(
         ["succeeded", "failed", "cancelled", "expired", "uncertain"].includes(receipt?.state),
     );
     if (loadNode?.state !== "succeeded" || terminalReceipt?.state !== "succeeded")
-      throw new Error(`machine_load_node_not_succeeded:${loadNode?.state ?? "missing"}/${terminalReceipt?.state ?? "no_receipt"}`);
+      throw new Error(
+        `machine_load_node_not_succeeded:${loadNode?.state ?? "missing"}/${terminalReceipt?.state ?? "no_receipt"}`,
+      );
     const evidence = parseEvidence(terminalReceipt.evidence);
 
     const after = await waitForFreshSnapshot(client, {
@@ -260,8 +267,14 @@ function validateNativeLocalFixtureConfig(value) {
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }
 
+// The harness's own ceiling is private to it; this probe waits long enough for a warp to land and no longer.
+const MACHINE_ACTIONABLE_WAIT_MS = 60_000;
+
 async function requireActionableMachineSnapshot(client) {
-  const snapshot = await observeFresh(client, { actionable: true });
+  // A warp in flight reports `actionable: false` for a moment, and a one-shot read of that moment made this probe
+  // fail on a world that was merely mid-transition - the same shape the geode slice hit. Wait for the actor to be
+  // actionable, then assert the FACTS this probe exists for.
+  const snapshot = await waitForActionable(client, await observeFresh(client), MACHINE_ACTIONABLE_WAIT_MS);
   if (
     !Number.isInteger(snapshot?.tile?.x) ||
     !Number.isInteger(snapshot?.tile?.y) ||
@@ -355,5 +368,10 @@ function summarizeWithMachines(snapshot) {
 }
 
 function same(left, right) {
-  return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index]);
+  return (
+    Array.isArray(left) &&
+    Array.isArray(right) &&
+    left.length === right.length &&
+    left.every((value, index) => value === right[index])
+  );
 }

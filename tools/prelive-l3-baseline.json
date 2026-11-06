@@ -4,7 +4,9 @@
   "ratchet": "An unlisted (file, fact) site is red immediately. A listed site that no longer violates, or a listed site whose count dropped, is red too - so this list can only shrink and cannot rot. Remove an entry by fixing the runner.",
   "classification": {
     "how": "For each one-shot actionable observe, take the statement that follows it. A site is a violation unless every field that statement can read is actionability-independent. The fields are derived from the code, not from the callee's name: a callee is resolved in the runner itself first, then in tools/lib/stardew-native-smoke-harness-v1.mjs, and the fields it reads on its first parameter are extracted from that body. An unresolved callee is treated as reading the whole snapshot, so a helper that passes the snapshot wholesale is red.",
-    "actionabilityIndependentFields": ["capabilities"],
+    "actionabilityIndependentFields": [
+      "capabilities"
+    ],
     "exemptBecause": "snapshot.capabilities is a property of the Mod's capability surface, which no warp, modal or in-flight execution can falsify. Asserting only that is not the defect this gate exists for.",
     "measured": "11 rule-(a) sites in 11 runners, plus 4 rule-(b) sites. A rule-(b) violation's `fact` is the rule's constant (`not in the descriptor map`), so the FILE is the identity: each entry's `reason` records what world fact that runner asserts and why no resolver declaration can name it. Rule (b)'s reachable population is the union of the three declarations `tools/resolve-stardew-action-gate-runner.mjs` reads (published gate table, experimental/harness map, published-action gate exemptions); before that union, the exemption list went unread and `navigate_to_destination`'s declared gate was reported unreachable - a defect of the ladder's boundary, not of the runner.",
     "consideredAndExcluded": [
@@ -45,18 +47,6 @@
       "reason": "requireActionableHarvestSnapshot reads revision/tile/warps/harvestTargets"
     },
     {
-      "file": "run-stardew-native-local-player-machine-ab-smoke.mjs",
-      "fact": "tile",
-      "count": 1,
-      "reason": "`if (!Number.isInteger(snapshot.tile.x) || ...) throw` over a one-shot observation"
-    },
-    {
-      "file": "run-stardew-native-local-player-machine-ab-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "count": 1,
-      "reason": "auxiliary PROGRAM gate, not an action gate: it submits ONE two-node Body Program (A `machine_inspect` produces the machine_target_id fact, B `machine_load` binds expectedTargetId to it) and asserts the Mod-owned controller advances it on the game thread to a terminal `machine_coffee_loaded` receipt whose evidence is machine (BC)12 fed (O)433 in the same location. No resolver declaration can name it: `machine_inspect` and `machine_load` each have their own published gate runner, and the program is the subject, not either action"
-    },
-    {
       "file": "run-stardew-native-local-player-machine-collect-output-smoke.mjs",
       "fact": "revision",
       "count": 1,
@@ -67,24 +57,6 @@
       "fact": "machineTargets",
       "count": 1,
       "reason": "`if (!Array.isArray(snapshot.machineTargets)) throw` - the target projection, empty while the world settles"
-    },
-    {
-      "file": "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "count": 1,
-      "reason": "auxiliary SESSION DRIVER: one long-lived two-process shared world driven by a plan whose steps name published actions, and what it asserts is the record of that session (timeline/positions/plan JSONL plus the companion behaviour rubric) - an unadvertised action name is refused into the plan rather than dropped. It has no single action id, so no gate entry exists to carry it; `tools/run-stardew-multiplayer-live-loop.mjs` launches it directly"
-    },
-    {
-      "file": "run-stardew-native-local-player-navigation-read-only-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "count": 1,
-      "reason": "auxiliary ZERO-MUTATION probe: it asserts that `inspect_world_map` and `find_destination` change nothing (revision unchanged across both reads, no execution receipt) and that an invalid request is refused by name. Its subject is the absence of an action, so no action id can resolve to it; `navigate_to_destination`'s declared runner is the navigation-mutation gate"
-    },
-    {
-      "file": "run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "count": 1,
-      "reason": "auxiliary FIXTURE-SURFACE probe: it asserts the fixture arms an adjacent live crab-pot target holding (O)710 and sends no production request (`productionRequestSent: false`). `place_crab_pot` is published and already resolves to `place-crab-pot-smoke.mjs`, so this one is deliberately unreachable by action id"
     },
     {
       "file": "run-stardew-native-local-player-ride-minecart-smoke.mjs",

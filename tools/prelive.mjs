@@ -69,6 +69,10 @@ export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
 export const L0_GATES = Object.freeze([
   "tools/check-catalog-fact-ownership.mjs",
   "tools/audit-stardew-discovery-channels.mjs",
+  // The totality audit: 148 ms, and it asks whether each defect CLASS has a rule, deriving its
+  // population from the declarations rather than a list. A gate nobody schedules is a gate that
+  // cannot fail, which is why it is here rather than in a document.
+  "tools/audit-totality-head.mjs",
   "tools/check-stardew-fixture-action-coverage.mjs",
   "tools/check-harness-conformance.mjs",
   "tools/check-stardew-task-action-coverage.mjs",
