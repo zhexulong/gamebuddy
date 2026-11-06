@@ -29,7 +29,15 @@ const SEAM_SOURCE = `private static void ${STARDEW_NATIVE_TOOL_USE_SEAM}(Tool to
  * `seamCall` is the handler's native swing: a compliant handler routes it through
  * the shared seam, and the bypass case below replaces it with a bare `DoFunction`.
  */
-function handlerSource(handler, entry, { stamina = STAMINA, includeTerminal = true, seamCall = `UseNativeToolOnTile(tool, location, 1, 2, Game1.player, staminaBefore);` } = {}) {
+function handlerSource(
+  handler,
+  entry,
+  {
+    stamina = STAMINA,
+    includeTerminal = true,
+    seamCall = `UseNativeToolOnTile(tool, location, 1, 2, Game1.player, staminaBefore);`,
+  } = {},
+) {
   const receipt = includeTerminal
     ? `string evidence = $"a=1;${stamina}";
       return this.RememberTerminal(requestId, "x", ExecutionState.Succeeded, "${entry.terminal}", evidence);`
@@ -57,9 +65,13 @@ test("a complete tool family passes with no violations", () => {
 test("a handler whose receipt omits the stamina half is reported", () => {
   const sources = completeSources();
   // Corrupt exactly one handler (till_soil) by dropping stamina from its receipt.
-  sources["fake/RequestLocalTillSoil.cs"] = handlerSource("RequestLocalTillSoil", STARDEW_TOOL_FAMILY.RequestLocalTillSoil, {
-    stamina: "unrelated=true",
-  });
+  sources["fake/RequestLocalTillSoil.cs"] = handlerSource(
+    "RequestLocalTillSoil",
+    STARDEW_TOOL_FAMILY.RequestLocalTillSoil,
+    {
+      stamina: "unrelated=true",
+    },
+  );
   const failures = validateToolFamilyStaminaEvidence(sources);
   assert.equal(failures.length, 1);
   assert.match(failures[0], /RequestLocalTillSoil.*lacks stamina_before/);
@@ -76,9 +88,13 @@ test("a direct-dispatch tool that hand-rolls DoFunction without the seam is repo
   const sources = completeSources();
   // A direct-dispatch tool (axe) that bypasses the shared seam never inherits
   // Farmer.useTool's lastClick/checkForExhaustion steps.
-  sources["fake/RequestLocalChopTreeSource.cs"] = handlerSource("RequestLocalChopTreeSource", STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource, {
-    seamCall: "axe.DoFunction(location, 1, 2, 1, Game1.player);",
-  });
+  sources["fake/RequestLocalChopTreeSource.cs"] = handlerSource(
+    "RequestLocalChopTreeSource",
+    STARDEW_TOOL_FAMILY.RequestLocalChopTreeSource,
+    {
+      seamCall: "axe.DoFunction(location, 1, 2, 1, Game1.player);",
+    },
+  );
   const failures = validateToolFamilyStaminaEvidence(sources);
   assert.ok(
     failures.some((f) => /RequestLocalChopTreeSource/.test(f) && /UseNativeToolOnTile/.test(f)),
@@ -122,9 +138,7 @@ test("an animation-driven tool is exempt from the manual exhaustion call", () =>
   // must not hand-roll it; the vanilla fatigue consequence still applies.
   const sources = completeSources();
   const failures = validateToolFamilyStaminaEvidence(sources);
-  assert.ok(
-    failures.every((f) => !/RequestLocalCollectAnimalProduct/.test(f)),
-  );
+  assert.ok(failures.every((f) => !/RequestLocalCollectAnimalProduct/.test(f)));
 });
 
 test("the shipped execution manager sources satisfy the family contract", async () => {
@@ -142,7 +156,8 @@ test("a thin wrapper delegating to a shared execution body still satisfies the c
   // only acceptable because the reachable body carries the whole contract, so
   // this case pins the delegation form the shipped sources use.
   const sources = completeSources();
-  sources["fake/RequestLocalChopTreeSource.cs"] = `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
+  sources["fake/RequestLocalChopTreeSource.cs"] =
+    `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
 {
     return this.ExecuteChopTreeSource(requestId);
 }`;
@@ -162,7 +177,8 @@ test("delegation cannot hide a violation: a body missing the stamina half is rep
   // that is wrong, so only a checker that actually inspects the reachable body
   // reports it.
   const sources = completeSources();
-  sources["fake/RequestLocalChopTreeSource.cs"] = `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
+  sources["fake/RequestLocalChopTreeSource.cs"] =
+    `public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId)
 {
     return this.ExecuteChopTreeSource(requestId);
 }`;

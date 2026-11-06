@@ -32,7 +32,8 @@ function withFixtureRoot(build) {
 test("flags a cross-module comparison against another module's typed error message", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
-    "b.ts": 'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "foo_failed";\n}\n',
+    "b.ts":
+      'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "foo_failed";\n}\n',
   }));
   assert.equal(findings.length, 1);
   assert.equal(findings[0].file, "b.ts");
@@ -58,7 +59,8 @@ test("flags a local copy of another module's typed error message", () => {
 
 test("does not flag a local copy compared against a literal that is not an error identity", () => {
   const { findings } = withFixtureRoot(() => ({
-    "b.ts": 'export function classify(error: Error): boolean {\n  const message = error.message;\n  return message === "not_an_identity";\n}\n',
+    "b.ts":
+      'export function classify(error: Error): boolean {\n  const message = error.message;\n  return message === "not_an_identity";\n}\n',
   }));
   assert.deepEqual(findings, []);
 });
@@ -66,7 +68,8 @@ test("does not flag a local copy compared against a literal that is not an error
 test("does not follow an alias declared after the comparison", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
-    "b.ts": 'export function classify(error: Error): boolean {\n  const hit = message === "foo_failed";\n  const message = error.message;\n  return hit;\n}\n',
+    "b.ts":
+      'export function classify(error: Error): boolean {\n  const hit = message === "foo_failed";\n  const message = error.message;\n  return hit;\n}\n',
   }));
   assert.deepEqual(findings, []);
 });
@@ -74,7 +77,8 @@ test("does not follow an alias declared after the comparison", () => {
 test("does not follow a local copy of a property other than .message", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts": 'export class FooFailedError extends Error {\n  constructor() {\n    super("foo_failed");\n  }\n}\n',
-    "b.ts": 'export function classify(error: { name: string }): boolean {\n  const label = error.name;\n  return label === "foo_failed";\n}\n',
+    "b.ts":
+      'export function classify(error: { name: string }): boolean {\n  const label = error.name;\n  return label === "foo_failed";\n}\n',
   }));
   assert.deepEqual(findings, []);
 });
@@ -91,14 +95,16 @@ test("does not flag a literal that also has a bare Error producer", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts":
       'export class AmbiguousError extends Error {\n  constructor() {\n    super("ambiguous_failed");\n  }\n}\nexport function alsoThrow(): never {\n  throw new Error("ambiguous_failed");\n}\n',
-    "b.ts": 'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "ambiguous_failed";\n}\n',
+    "b.ts":
+      'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "ambiguous_failed";\n}\n',
   }));
   assert.deepEqual(findings, []);
 });
 
 test("does not flag comparison against a literal that is not an error identity", () => {
   const { findings } = withFixtureRoot(() => ({
-    "a.ts": 'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "not_an_identity";\n}\n',
+    "a.ts":
+      'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "not_an_identity";\n}\n',
   }));
   assert.deepEqual(findings, []);
 });
@@ -107,7 +113,8 @@ test("does not resolve a class whose message is a constructor argument", () => {
   const { findings } = withFixtureRoot(() => ({
     "a.ts":
       'export class CodeError extends Error {\n  constructor(readonly code: string) {\n    super(code);\n  }\n}\nexport function make(): never {\n  throw new CodeError("variable_message_failed");\n}\n',
-    "b.ts": 'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "variable_message_failed";\n}\n',
+    "b.ts":
+      'export function classify(error: unknown): boolean {\n  return error instanceof Error && error.message === "variable_message_failed";\n}\n',
   }));
   assert.deepEqual(findings, []);
 });

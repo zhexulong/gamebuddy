@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { validatePromotionSources } from "./check-stardew-action-promotion.mjs";
+import { readDurableLiveEvidence, validatePromotionSources } from "./check-stardew-action-promotion.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -27,8 +27,27 @@ const sources = await Object.fromEntries(
   ),
 );
 
+// The durable recorded runs, read the same way the CLI's `main()` reads them: the
+// lag check is only worth its failure message if it is driven by the real stores.
+const evidence = await readDurableLiveEvidence({ root });
+
+/**
+ * Flip one live registration back to `experimental` in the catalog text - the real
+ * defect this gate exists for, injected at the exact place it happens (a promotion
+ * that never landed). Anchored on the registration's own action id so a rename
+ * makes the mutation fail loudly instead of silently editing a neighbour.
+ */
+function flipToExperimental(source, actionId) {
+  const mutated = source.replace(
+    new RegExp(`(\\bE\\("${actionId}"[^\\n]*?)FarmhandActionLifecycle\\.LiveVerified`),
+    "$1FarmhandActionLifecycle.Experimental",
+  );
+  assert.notEqual(mutated, source, `the mutation must actually apply: ${actionId}`);
+  return mutated;
+}
+
 function failuresFor(mutated) {
-  return validatePromotionSources({ ...sources, ...mutated }).failures;
+  return validatePromotionSources({ ...sources, promotionEvidence: evidence.receipts, ...mutated }).failures;
 }
 
 test("promotion checker accepts the Mod-owned registration projection", () => {
@@ -172,5 +191,110 @@ test("promotion rejects a target-bearing action with no declared snapshot field"
   assert.ok(
     failures.includes("published_target_action_missing_snapshot_field:build_farm_building"),
     JSON.stringify(failures),
+  );
+});
+
+test("promotion rejects an action a recorded receipt already proved and the catalog still calls experimental", () => {
+  // The defect this whole ladder keeps producing: the run passed, its receipt is in
+  // the corpus, and the status never moved - so the Agent cannot see the action.
+  const failures = failuresFor({
+    farmhandActionDefinitions: flipToExperimental(sources.farmhandActionDefinitions, "talk_to_npc"),
+  });
+
+  assert.ok(
+    failures.includes(
+      "experimental_action_has_live_evidence:talk_to_npc:host/src/test-fixtures/stardew-live-receipts.json",
+    ),
+    JSON.stringify(failures),
+  );
+});
+
+test("promotion rejects a lag whose evidence is a native-local live-run bundle", () => {
+  // The second durable store, which is the only one a native-local run can reach:
+  // the runner's stdout is ephemeral, so the run is recorded as a
+  // `gamebuddy-stardew-native-local-live-run-evidence/v1` bundle or not at all.
+  const failures = failuresFor({
+    farmhandActionDefinitions: flipToExperimental(sources.farmhandActionDefinitions, "express_emote"),
+  });
+
+  assert.ok(
+    failures.includes(
+      "experimental_action_has_live_evidence:express_emote:integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/target-version-evidence/expression-native-local-live-run.json",
+    ),
+    JSON.stringify(failures),
+  );
+});
+
+test("promotion refuses to check the lag at all when the evidence sources are not supplied", () => {
+  const failures = validatePromotionSources({ ...sources }).failures;
+  assert.ok(failures.includes("live_evidence_sources_not_supplied"), JSON.stringify(failures));
+});
+
+test("a run that did not succeed is not evidence", () => {
+  // Only `succeeded` proves the action ran. A blocked or rejected run is the
+  // failure the live gate caught, and promoting on it would promote a defect.
+  const { failures } = validatePromotionSources({
+    ...sources,
+    promotionEvidence: [
+      { actionId: "pet_farm_animal", state: "blocked", reasonCode: "x", artifact: "a.json" },
+      { actionId: "pet_farm_animal", state: "rejected", reasonCode: "y", artifact: "b.json" },
+    ],
+  });
+  assert.deepEqual(
+    failures.filter((failure) => failure.startsWith("experimental_action_has_live_evidence:")),
+    [],
+  );
+});
+
+test("the promoted actions' terminals are re-derivable from the recorded runs", () => {
+  // This is the evidence rule itself: the status of each of these three is what it
+  // is because a run recorded it, not because someone wrote `live_verified`.
+  assert.deepEqual(evidence.problems, []);
+  const byAction = new Map();
+  for (const receipt of evidence.receipts) {
+    if (receipt.state !== "succeeded") continue;
+    byAction.set(receipt.actionId, receipt);
+  }
+  const expected = {
+    use_mine_ladder: {
+      reasonCode: "mine_left",
+      artifact:
+        "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/target-version-evidence/use-mine-ladder-native-local-live-run.json",
+    },
+    move_placed_furniture: {
+      reasonCode: "placed_furniture_picked_up",
+      artifact:
+        "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/target-version-evidence/move-placed-furniture-native-local-live-run.json",
+    },
+    pet_farm_animal: {
+      reasonCode: "farm_animal_petted",
+      artifact:
+        "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/target-version-evidence/pet-farm-animal-native-local-live-run.json",
+    },
+  };
+  for (const [actionId, { reasonCode, artifact }] of Object.entries(expected)) {
+    assert.deepEqual(byAction.get(actionId), { actionId, state: "succeeded", reasonCode, artifact });
+  }
+  const definitions = validatePromotionSources({ ...sources, promotionEvidence: evidence.receipts }).definitions;
+  for (const actionId of Object.keys(expected))
+    assert.equal(
+      definitions.find((definition) => definition.actionId === actionId)?.lifecycle,
+      "live_verified",
+      `${actionId} is only live_verified because the run above says so`,
+    );
+});
+
+test("an unreadable evidence store is a failure, not an empty pass", async () => {
+  // A renamed corpus that reads as zero receipts would turn the lag check into a
+  // silent no-op while the gate still reported a pass.
+  const { receipts, problems } = await readDurableLiveEvidence({ root: resolve(root, "tools") });
+  assert.deepEqual(receipts, []);
+  assert.ok(
+    problems.some((problem) => problem.startsWith("live_evidence_corpus_unreadable:")),
+    JSON.stringify(problems),
+  );
+  assert.ok(
+    problems.some((problem) => problem.startsWith("live_evidence_directory_unreadable:")),
+    JSON.stringify(problems),
   );
 });

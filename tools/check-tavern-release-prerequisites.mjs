@@ -103,8 +103,8 @@ function isExactWindowsReparseLiveGateSuccess(child) {
     output.reason === "passed" &&
     typeof output.helperSha256 === "string" &&
     /^[0-9a-f]{64}$/.test(output.helperSha256) &&
-      JSON.stringify(output.probes) ===
-        JSON.stringify({ regular: "passed", junction: "passed", directorySymlink: "passed" }) &&
+    JSON.stringify(output.probes) ===
+      JSON.stringify({ regular: "passed", junction: "passed", directorySymlink: "passed" }) &&
     JSON.stringify(output.consumers) === JSON.stringify({ browserGenerator: "passed", hostStaticVerifier: "passed" })
   );
 }
@@ -206,7 +206,10 @@ export function hermeticScratchCandidates(environment = process.env) {
  * fail deterministically. That is an environment artifact, not a source
  * regression, so the proof runs in a scratch root above any git repository.
  */
-export function createHermeticScratchRoot({ environment = process.env, candidates = hermeticScratchCandidates(environment) } = {}) {
+export function createHermeticScratchRoot({
+  environment = process.env,
+  candidates = hermeticScratchCandidates(environment),
+} = {}) {
   for (const base of candidates) {
     // A base inside a git repository cannot host the proof: the collapse is
     // exactly what the scratch root exists to avoid.

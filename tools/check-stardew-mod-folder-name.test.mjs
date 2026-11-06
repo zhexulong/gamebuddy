@@ -1,94 +1,153 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 /**
- * The check is three literal assertions about three files, so its falsifiers have
- * to prove the scan is looking at the right thing rather than trusting the green.
- * Each case builds a miniature copy of the three files and runs the same logic
- * against it by pointing the check at that tree.
+ * The check asserts one name across the csproj, two JavaScript seams and every PowerShell harness under `tools/`.
+ * Its falsifiers therefore run the check itself (through `--root`) against a miniature tree, so a passing green here
+ * cannot come from a rule that was re-implemented in the test.
  *
- * Because the check resolves its paths from its own location, the cases exercise
- * it through the exported rule instead: a fixture writes the three files, and the
- * predicate below is the check's own body with the paths substituted. That keeps
- * one implementation of the rule - duplicating it here would let the two drift.
+ * red-proof: fixture  the PowerShell case spells `Mods/GameBuddy.Stardew/config.json` - the exact string four real
+ * harnesses carried on 2026-11-04, when a correct lane died at preflight with `Missing harness path`.
  */
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
 const CHECK = join(REPO, "tools", "check-stardew-mod-folder-name.mjs");
 
-function runCheck() {
+function runCheck(...args) {
   try {
-    const out = execFileSync(process.execPath, [CHECK], { encoding: "utf8" });
+    const out = execFileSync(process.execPath, [CHECK, ...args], { encoding: "utf8" });
     return { code: 0, out };
   } catch (error) {
     return { code: error.status ?? 1, out: `${error.stdout ?? ""}${error.stderr ?? ""}` };
   }
 }
 
+/** A tree that satisfies every clause, so each case below can break exactly one. */
+async function agreeingTree() {
+  const root = await mkdtemp(join(tmpdir(), "modfolder-"));
+  const write = async (path, contents) => {
+    const target = join(root, path);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, contents, "utf8");
+  };
+  await write(
+    "integrations/stardew/GameBuddy.Stardew.csproj",
+    "<Project><PropertyGroup><ModFolderName>GameBuddy</ModFolderName></PropertyGroup></Project>\n",
+  );
+  await write("tools/lib/stardew-fixture-profile.mjs", "export const modRoot = join(mods, STARDEW_MOD_FOLDER);\n");
+  await write("tools/lib/stardew-mod-config.ps1", "function Get-GameBuddyStardewModConfigPath([string]$ModsPath) {}\n");
+  await write(
+    "tools/live-run/game/launch-ladder-live.mjs",
+    "const config = join(mods, STARDEW_MOD_FOLDER, 'config.json');\n",
+  );
+  await write(
+    "tools/run-fixture.ps1",
+    '. (Join-Path $PSScriptRoot "lib/stardew-mod-config.ps1")\n$clientConfig = Get-GameBuddyStardewModConfigPath $ModsPath\n',
+  );
+  return root;
+}
+
 test("the tree agrees today", () => {
   const result = runCheck();
   assert.equal(result.code, 0, result.out);
   assert.match(result.out, /stardew_mod_folder: GameBuddy/u);
+  assert.match(result.out, /every tools\/ PowerShell harness/u);
 });
 
-test("the check names the three places it compares", async () => {
-  // A check that compares fewer places than it claims is the failure mode this
-  // guards. Read the implementation and assert the three paths are all consulted.
-  const { readFileSync } = await import("node:fs");
-  const source = readFileSync(CHECK, "utf8");
-  assert.match(source, /GameBuddy\.Stardew\.csproj/u, "must read the csproj");
-  assert.match(source, /stardew-fixture-profile\.mjs/u, "must read the fixture profile");
-  assert.match(source, /launch-ladder-live\.mjs/u, "must read the launcher");
+test("the agreeing tree passes, so the failing cases below fail for their own reason", async () => {
+  const root = await agreeingTree();
+  try {
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 0, result.out);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("a csproj that declares the MSBuild default is a mismatch, not a pass", async () => {
-  const root = await mkdtemp(join(tmpdir(), "modfolder-"));
+  const root = await agreeingTree();
   try {
-    const project = join(root, "GameBuddy.Stardew.csproj");
     await writeFile(
-      project,
+      join(root, "integrations/stardew/GameBuddy.Stardew.csproj"),
       "<Project><PropertyGroup><ModFolderName>GameBuddy.Stardew</ModFolderName></PropertyGroup></Project>\n",
       "utf8",
     );
-    const { readFileSync } = await import("node:fs");
-    const declared = /<ModFolderName>\s*([^<]+?)\s*<\/ModFolderName>/u.exec(readFileSync(project, "utf8"));
-    assert.equal(declared?.[1], "GameBuddy.Stardew", "the scan must see the declared name");
-    assert.notEqual(declared[1], "GameBuddy", "and the two names must be distinguishable");
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /GameBuddy\.Stardew\.csproj:declares ModFolderName=GameBuddy\.Stardew/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a file that spells the folder name under Mods is detected by the same pattern the check uses", async () => {
-  const root = await mkdtemp(join(tmpdir(), "modfolder-"));
+test("a JavaScript seam that spells the folder under Mods is named", async () => {
+  const root = await agreeingTree();
   try {
-    const file = join(root, "launcher.mjs");
-    await writeFile(file, 'const p = join(modsPath, "GameBuddy.Stardew", "config.json");\n', "utf8");
-    const { readFileSync } = await import("node:fs");
-    const source = readFileSync(file, "utf8");
-    const spelled = /"Mods"\s*,\s*"GameBuddy\.Stardew"/u;
-    // This literal is not written as two adjacent strings, so the check must not
-    // claim it found one - proving the pattern is specific rather than broad.
-    assert.equal(spelled.test(source), false, "a single join argument is not a Mods path split");
-    const realSplit = 'relativePath: ["Mods", "GameBuddy.Stardew", "config.json"]';
-    assert.equal(spelled.test(realSplit), true, "the pattern must catch the real shape");
+    await writeFile(
+      join(root, "tools/lib/stardew-fixture-profile.mjs"),
+      'export const config = join(profile, "Mods", "GameBuddy.Stardew", "config.json");\n',
+      "utf8",
+    );
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /stardew-fixture-profile\.mjs:spells "GameBuddy\.Stardew" literally under Mods/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a file that ignores the constant is a mismatch", async () => {
-  const root = await mkdtemp(join(tmpdir(), "modfolder-"));
+test("a PowerShell harness that spells the folder is named, including one added later", async () => {
+  const root = await agreeingTree();
   try {
-    const file = join(root, "profile.mjs");
-    await mkdir(root, { recursive: true });
-    await writeFile(file, "export const modRoot = join(namespace, profile);\n", "utf8");
-    const { readFileSync } = await import("node:fs");
-    assert.equal(readFileSync(file, "utf8").includes("STARDEW_MOD_FOLDER"), false, "the constant is the required seam");
+    // The historical line, verbatim: this is what four fixtures carried while the fixtures deployed GameBuddy.
+    await writeFile(
+      join(root, "tools/run-fixture.ps1"),
+      '$clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"\n',
+      "utf8",
+    );
+    // A file the check has never seen, in a subdirectory it must still reach.
+    await mkdir(join(root, "tools/lib"), { recursive: true });
+    await writeFile(
+      join(root, "tools/lib/new-harness.ps1"),
+      '$cfg = Join-Path $ModsPath "GameBuddy.Stardew\\config.json"\n',
+      "utf8",
+    );
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /run-fixture\.ps1:spells "GameBuddy\.Stardew", which every fixture contradicts/u);
+    assert.match(result.out, /lib\/new-harness\.ps1:spells "GameBuddy\.Stardew"/u);
+    assert.match(result.out, /Get-GameBuddyStardewModConfigPath/u, "the failure must name the seam to use");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the deployed name and the assembly file names are not folder splits", async () => {
+  const root = await agreeingTree();
+  try {
+    await writeFile(
+      join(root, "tools/run-fixture.ps1"),
+      '$cfg = Join-Path $ModsPath "GameBuddy/config.json"\nCopy-Item (Join-Path $ModsPath "GameBuddy/GameBuddy.Stardew.dll") $out\n',
+      "utf8",
+    );
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 0, result.out);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a tree without the PowerShell seam is a mismatch", async () => {
+  const root = await agreeingTree();
+  try {
+    await writeFile(join(root, "tools/lib/stardew-mod-config.ps1"), "Set-StrictMode -Version Latest\n", "utf8");
+    const result = runCheck("--root", root);
+    assert.equal(result.code, 1, result.out);
+    assert.match(result.out, /stardew-mod-config\.ps1:must define Get-GameBuddyStardewModConfigPath/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

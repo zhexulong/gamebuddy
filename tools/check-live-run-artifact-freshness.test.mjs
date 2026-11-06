@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { mkdtemp, mkdir, rm, utimes, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
+import {
+  COPIED_TEST_ARTIFACT_ASSETS,
+  TEST_ARTIFACT_BUILD_MANIFEST,
+  writeTestArtifactBuildManifest,
+} from "../host/scripts/test-artifact-build-manifest.mjs";
 import { assessLiveRunArtifactFreshness, REBUILD_COMMAND } from "./lib/live-run-artifact-freshness.mjs";
 
 /**
@@ -114,4 +119,142 @@ test("the message a run sees names the locked rebuild entry, never a bare tsc", 
   // overlay, and `--noEmitOnError false` emits a partial tree that reads as unrelated failures.
   assert.match(REBUILD_COMMAND, /build:test/u);
   assert.doesNotMatch(REBUILD_COMMAND, /\btsc\b/u);
+});
+
+/**
+ * A tree that carries everything the build manifest records - the production sources, the copied assets, the compiler
+ * configuration, an emitted module - and the manifest itself, written by the REAL producer
+ * (`writeTestArtifactBuildManifest`), so these cases drive one side's real output instead of a hand-written copy of it.
+ *
+ * Every input is then rewritten after the build with the bytes it already had: that is the state that refused a live
+ * run for nothing (`provider-catalog.ts` touched with unchanged content), and the state each case below starts from.
+ */
+async function builtFixture() {
+  const root = await mkdtemp(join(tmpdir(), "gb-freshness-built-"));
+  const host = join(root, "host");
+  const sourceDir = join(host, "src");
+  const outputDir = join(host, "dist-test");
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(outputDir, { recursive: true });
+  await writeFile(join(sourceDir, "bridge.ts"), "export const x = 1;\n");
+  await writeFile(join(sourceDir, "bridge.test.ts"), "export const t = 1;\n");
+  const configurations = ["package.json", "tsconfig.json", "tsconfig.test.json"];
+  for (const configuration of configurations) await writeFile(join(host, configuration), "{}\n");
+  for (const asset of COPIED_TEST_ARTIFACT_ASSETS) {
+    await mkdir(join(host, asset.source, ".."), { recursive: true });
+    await writeFile(join(host, asset.source), "# copied asset\n");
+  }
+  await writeFile(join(outputDir, "bridge.js"), "export const x = 1;\n");
+  await utimes(join(outputDir, "bridge.js"), earlier, earlier);
+  await writeTestArtifactBuildManifest({ repositoryRoot: root, outputRoot: outputDir, builtAtMs: earlier.getTime() });
+  for (const path of [
+    join(sourceDir, "bridge.ts"),
+    ...COPIED_TEST_ARTIFACT_ASSETS.map((asset) => join(host, asset.source)),
+    ...configurations.map((configuration) => join(host, configuration)),
+  ])
+    await utimes(path, later, later);
+  return { root, host, sourceDir, outputDir, configurations };
+}
+
+test("a newer modification time with identical content is NOT stale", async () => {
+  // The false positive this whole rule replaces: a checkout, a formatter pass or a branch switch rewrites a file with
+  // the bytes it already had, and the mtime rule refused a live run whose artifact was exactly right.
+  const fixture = await builtFixture();
+  try {
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.stale, false);
+    assert.equal(verdict.rule, "content");
+    assert.equal(verdict.reason, undefined);
+    assert.match(verdict.detail, /content is unchanged/u);
+    assert.match(verdict.detail, /modification times are not consulted/u);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("changed content under an unchanged modification time is stale, naming the path", async () => {
+  const fixture = await builtFixture();
+  try {
+    const changed = join(fixture.sourceDir, "bridge.ts");
+    await writeFile(changed, "export const x = 2;\n");
+    await utimes(changed, later, later);
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.stale, true);
+    assert.equal(verdict.reason, "artifact_content_mismatch:host/src/bridge.ts");
+    assert.match(verdict.detail, /host\/src\/bridge\.ts/u);
+    assert.equal(verdict.drift.length, 1);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("an input added after the build is stale, because the build never read it", async () => {
+  const fixture = await builtFixture();
+  try {
+    await writeFile(join(fixture.sourceDir, "added-later.ts"), "export const added = 1;\n");
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.stale, true);
+    assert.equal(verdict.reason, "artifact_input_unrecorded:host/src/added-later.ts");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a recorded input that is gone is stale, because the artifact still contains it", async () => {
+  const fixture = await builtFixture();
+  try {
+    await rm(join(fixture.sourceDir, "bridge.ts"), { force: true });
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.stale, true);
+    assert.equal(verdict.reason, "artifact_input_missing:host/src/bridge.ts");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a test source is outside the input population on both sides of the comparison", async () => {
+  // Measured: four consecutive live runs were refused because another lane edited a `*.test.ts` seconds after each
+  // rebuild. The manifest must not record one, or the content rule would refuse them again.
+  const fixture = await builtFixture();
+  try {
+    await writeFile(join(fixture.sourceDir, "bridge.test.ts"), "export const t = 2;\n");
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.stale, false);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("without a build manifest the modification-time rule answers, and says no_manifest", async () => {
+  const fixture = await builtFixture();
+  try {
+    await rm(join(fixture.outputDir, TEST_ARTIFACT_BUILD_MANIFEST), { force: true });
+    const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: fixture.root });
+    assert.equal(verdict.rule, "modification_time");
+    assert.equal(verdict.stale, true);
+    assert.equal(verdict.reason, "artifact_older_than_inputs");
+    assert.match(verdict.detail, /no_manifest/u);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("a copied artifact is accepted while the lane's sources are identical, and refused the moment one differs", async () => {
+  // A lane cannot build: `host/node_modules` is a junction, so the compiler entry escapes the repository root. Sharing
+  // the main tree's artifact is the only way a lane gets one, and it is legal exactly while the sources are identical.
+  const main = await builtFixture();
+  const lane = await builtFixture();
+  try {
+    await rm(lane.outputDir, { recursive: true, force: true });
+    await cp(main.outputDir, lane.outputDir, { recursive: true, force: true });
+    const identical = await assessLiveRunArtifactFreshness({ repositoryRoot: lane.root });
+    assert.equal(identical.stale, false, "identical sources must accept the copied artifact");
+    await writeFile(join(lane.sourceDir, "bridge.ts"), "export const x = 3;\n");
+    const drifted = await assessLiveRunArtifactFreshness({ repositoryRoot: lane.root });
+    assert.equal(drifted.stale, true);
+    assert.equal(drifted.reason, "artifact_content_mismatch:host/src/bridge.ts");
+  } finally {
+    await rm(main.root, { recursive: true, force: true });
+    await rm(lane.root, { recursive: true, force: true });
+  }
 });

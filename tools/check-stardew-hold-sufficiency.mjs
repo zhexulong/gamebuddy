@@ -97,8 +97,7 @@ export function enclosingMethod(lines, index) {
   return null;
 }
 
-const COMPANION_RE = (members) =>
-  new RegExp(`(?:${members.join("|")})\\s*(?:=[^=]|\\.Value\\s*=|\\.Add)`, "i");
+const COMPANION_RE = (members) => new RegExp(`(?:${members.join("|")})\\s*(?:=[^=]|\\.Value\\s*=|\\.Add)`, "i");
 
 function calledNames(body) {
   const names = new Set();
@@ -123,7 +122,9 @@ export function searchCounterExamples({ root, heldFact = HELD_FACT, companionRea
     const text = readFileSync(file, "utf8");
     if (!heldFalseRe.test(text)) continue;
     const lines = text.split("\n");
-    const declIndex = lines.findIndex((l) => /^\s*(public|private|protected|internal)[^;=]*\bcanMove\b\s*=\s*true\s*;/.test(l));
+    const declIndex = lines.findIndex((l) =>
+      /^\s*(public|private|protected|internal)[^;=]*\bcanMove\b\s*=\s*true\s*;/.test(l),
+    );
     lines.forEach((line, i) => {
       if (!heldFalseRe.test(line)) return;
       if (/==|!=/.test(line)) return;
@@ -197,7 +198,9 @@ if (invokedDirectly) {
     "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json",
   );
   const model = JSON.parse(readFileSync(modelPath, "utf8"));
-  const companions = model.environmentReads.map((r) => r.member).filter((m) => memberOf(m).toLowerCase() !== memberOf(HELD_FACT).toLowerCase());
+  const companions = model.environmentReads
+    .map((r) => r.member)
+    .filter((m) => memberOf(m).toLowerCase() !== memberOf(HELD_FACT).toLowerCase());
   const residual = model.orphanHoldResidual ?? [];
   const r = searchCounterExamples({ root, companionReads: companions, residual });
 

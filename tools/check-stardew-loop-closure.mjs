@@ -26,7 +26,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { SELECTOR_VERDICTS, METHOD_VERDICTS } from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
+import {
+  SELECTOR_VERDICTS,
+  METHOD_VERDICTS,
+} from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
 import { REJECTED_LAYER_VERDICTS } from "../integrations/stardew/action-development/src/analysis/stardew-rejected-layer-verdicts.mjs";
 import { resolveStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
 
@@ -73,10 +76,12 @@ function methodBody(src, member) {
 
 /** The native effect signals, aligned with the extractor vocabulary. */
 const SIGNALS = {
-  realtime: /didPlayerJustRightClick|didPlayerJustClickAtAll|isAnyGamePadButtonBeingPressed|Game1\.(oldMouseState|mouseState|oldKBState|inputState|isKeyDown)|receiveLeftClick|receiveKeyPress/,
+  realtime:
+    /didPlayerJustRightClick|didPlayerJustClickAtAll|isAnyGamePadButtonBeingPressed|Game1\.(oldMouseState|mouseState|oldKBState|inputState|isKeyDown)|receiveLeftClick|receiveKeyPress/,
   menu: /activeClickableMenu\s*=\s*new|ShowMenu\(|TryOpenShopMenu|OpenDonationMenu|createQuestionDialogue/,
   dialogue: /Game1\.drawDialogue|drawObjectDialogue|drawDialogue\(/,
-  worldWrite: /\.Value\s*=[^=]|health\s*[-+]?=|numberOfWeeds|heldObject\s*=|displayItem|fruit\[|\.Add\(|\.Remove\(|\bSeedDropItems\b|TryGetDrop/,
+  worldWrite:
+    /\.Value\s*=[^=]|health\s*[-+]?=|numberOfWeeds|heldObject\s*=|displayItem|fruit\[|\.Add\(|\.Remove\(|\bSeedDropItems\b|TryGetDrop/,
   warp: /warpFarmer|MinecartWarp|enterMine|PassOutNewDay|new\s+Warp\s*\(/,
   giveItem: /addItemToInventory|StoreHayInAnySilo|TryAdd|Items\.Add|DropObject/,
   state: /\b\w+\.Value\s*=\s*(?:true|false)|\bon\s*=|\bisRafting\b|\bopen\s*=|lightSourceId/,
@@ -132,7 +137,8 @@ async function anchorExists(hop) {
   if (!p) return { exists: false, why: `file ${hop.file} not found in decompile` };
   const text = await readFile(p, "utf8");
   const lines = text.split("\n");
-  if (hop.line > lines.length) return { exists: false, why: `line ${hop.line} beyond ${hop.file} (${lines.length} lines)` };
+  if (hop.line > lines.length)
+    return { exists: false, why: `line ${hop.line} beyond ${hop.file} (${lines.length} lines)` };
   return { exists: true, text, lines, line: hop.line };
 }
 
@@ -144,11 +150,16 @@ function checkHop(anchor, hop, { lines, line }) {
   // case branch segment (this case until the next `case ` / `break;`).
   if (/^\s*case\s*"[^"]*"\s*:/.test(lineText)) {
     const decl = enclosingDeclaration(lines, line);
-    if (!decl) return { vis: "UNRESOLVED", body: null, why: `no enclosing declaration for selector at ${hop.file}:${line}` };
+    if (!decl)
+      return { vis: "UNRESOLVED", body: null, why: `no enclosing declaration for selector at ${hop.file}:${line}` };
     const branch = caseBranch(lines, line);
     if (!branch) return { vis: decl.vis, body: null, why: `no branch body resolved for ${hop.file}:${line}` };
     const rt = SIGNALS.realtime.test(branch);
-    const terminal = SIGNALS.worldWrite.test(branch) || SIGNALS.warp.test(branch) || SIGNALS.giveItem.test(branch) || SIGNALS.state.test(branch);
+    const terminal =
+      SIGNALS.worldWrite.test(branch) ||
+      SIGNALS.warp.test(branch) ||
+      SIGNALS.giveItem.test(branch) ||
+      SIGNALS.state.test(branch);
     const menuOnly = SIGNALS.menu.test(branch) && !terminal;
     return { vis: decl.vis, rt, terminal, menuOnly, bodyLength: branch.length, why: null, selector: true };
   }
@@ -157,18 +168,29 @@ function checkHop(anchor, hop, { lines, line }) {
   let declText = "";
   for (let l = line; l >= Math.max(1, line - 120); l--) {
     const t = lines[l - 1];
-    if (/^\s*(public|private|protected|internal)\s/.test(t) && /\w+\s*\([^)]*\)/.test(t) && !t.trim().startsWith("//")) {
+    if (
+      /^\s*(public|private|protected|internal)\s/.test(t) &&
+      /\w+\s*\([^)]*\)/.test(t) &&
+      !t.trim().startsWith("//")
+    ) {
       declLine = l;
       declText = t;
       break;
     }
   }
-  const vis = declText ? (/^\s*public\s/.test(declText) ? "public" : /^\s*protected\s/.test(declText) ? "protected" : "private") : "UNRESOLVED";
+  const vis = declText
+    ? /^\s*public\s/.test(declText)
+      ? "public"
+      : /^\s*protected\s/.test(declText)
+        ? "protected"
+        : "private"
+    : "UNRESOLVED";
   // Extract the body of that declared member by balancing from the first `{`.
   const body = extractBodyFromLine(lines, declLine);
   if (!body) return { vis, body: null, why: `no body resolved for ${hop.file}:${declLine}` };
   const rt = SIGNALS.realtime.test(body);
-  const terminal = SIGNALS.worldWrite.test(body) || SIGNALS.warp.test(body) || SIGNALS.giveItem.test(body) || SIGNALS.state.test(body);
+  const terminal =
+    SIGNALS.worldWrite.test(body) || SIGNALS.warp.test(body) || SIGNALS.giveItem.test(body) || SIGNALS.state.test(body);
   const menuOnly = SIGNALS.menu.test(body) && !terminal;
   return { vis, rt, terminal, menuOnly, bodyLength: body.length, why: null };
 }
@@ -177,7 +199,11 @@ function checkHop(anchor, hop, { lines, line }) {
 function enclosingDeclaration(lines, line) {
   for (let l = line; l >= Math.max(1, line - 3000); l--) {
     const t = lines[l - 1];
-    if (/^\s*(public|private|protected|internal)\s/.test(t) && /\w+\s*\([^)]*\)/.test(t) && !t.trim().startsWith("//")) {
+    if (
+      /^\s*(public|private|protected|internal)\s/.test(t) &&
+      /\w+\s*\([^)]*\)/.test(t) &&
+      !t.trim().startsWith("//")
+    ) {
       const vis = /^\s*public\s/.test(t) ? "public" : /^\s*protected\s/.test(t) ? "protected" : "private";
       return { vis, declLine: l };
     }
@@ -242,13 +268,16 @@ function extractBodyFromLine(lines, declLine) {
 function collectCandidates() {
   const rows = [];
   for (const [key, v] of Object.entries(SELECTOR_VERDICTS)) {
-    if (v?.group === "new_primitive_needed") rows.push({ key, at: v.at, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
+    if (v?.group === "new_primitive_needed")
+      rows.push({ key, at: v.at, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
   }
   for (const [key, v] of Object.entries(METHOD_VERDICTS)) {
-    if (v?.group === "new_primitive_needed") rows.push({ key, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
+    if (v?.group === "new_primitive_needed")
+      rows.push({ key, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
   }
   for (const [key, v] of Object.entries(REJECTED_LAYER_VERDICTS)) {
-    if (v?.group === "new_primitive_needed") rows.push({ key, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
+    if (v?.group === "new_primitive_needed")
+      rows.push({ key, actionId: v.actionId, anchor: v.anchor, reason: v.reason });
   }
   return rows;
 }
@@ -297,7 +326,11 @@ async function main() {
       const hop = hops[i];
       const st = await anchorExists(hop);
       if (!st.exists) {
-        failures.push({ id: labelOf(cand), code: "anchor_not_in_decompile", message: `${hop.file}:${hop.line} ${st.why}` });
+        failures.push({
+          id: labelOf(cand),
+          code: "anchor_not_in_decompile",
+          message: `${hop.file}:${hop.line} ${st.why}`,
+        });
         checked.push({ hop, exists: false, why: st.why });
         verdict = "blocked";
         why = st.why;
@@ -334,7 +367,20 @@ async function main() {
       verdict = "verify_chain";
       why = "public entry with no terminal in the hop bodies checked; chain terminal needs live receipt";
     }
-    results.push({ ...cand, verdict, why, hops: checked.map((c) => ({ file: c.hop.file, line: c.hop.line, exists: c.exists, vis: c.vis, rt: c.rt, terminal: c.terminal ?? null, menuOnly: c.menuOnly ?? null })) });
+    results.push({
+      ...cand,
+      verdict,
+      why,
+      hops: checked.map((c) => ({
+        file: c.hop.file,
+        line: c.hop.line,
+        exists: c.exists,
+        vis: c.vis,
+        rt: c.rt,
+        terminal: c.terminal ?? null,
+        menuOnly: c.menuOnly ?? null,
+      })),
+    });
   }
 
   const quiet = process.argv.includes("--quiet");
@@ -356,7 +402,9 @@ async function main() {
   }
   const closable = results.filter((r) => r.verdict === "closable").length;
   const chain = results.filter((r) => r.verdict === "verify_chain").length;
-  console.log(`loop-closure gate: ${results.length} candidates, ${closable} closable, ${chain} verify-chain, 0 blocked`);
+  console.log(
+    `loop-closure gate: ${results.length} candidates, ${closable} closable, ${chain} verify-chain, 0 blocked`,
+  );
 }
 
 main().catch((e) => {

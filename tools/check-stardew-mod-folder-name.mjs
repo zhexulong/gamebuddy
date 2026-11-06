@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One mod, one directory name, in three places that must agree.
+ * One mod, one directory name, in every place that names it.
  *
  * A split between them is not cosmetic and it is not self-announcing. Measured
  * 2026-10-24: MSBuild's `ModFolderName` defaulted to `GameBuddy.Stardew` while the
@@ -11,27 +11,56 @@
  * hand did not help, because the next fixture transaction restored what it had
  * deployed.
  *
- * So the three places are asserted together, against one exported constant:
+ * Measured 2026-11-04, the same split one layer up: four PowerShell fixtures read
+ * `Mods/GameBuddy.Stardew/config.json` while every fixture deploys `Mods/GameBuddy`,
+ * so a correct lane died at preflight with `Missing harness path` naming a directory
+ * nothing had written. The scan below is what makes that a gate rather than four
+ * repairs: its population is a directory walk of `tools/`, not a list of files whose
+ * authors remembered the rule.
+ *
+ * Three things are asserted against one exported constant:
  *
  *   1. `integrations/stardew/GameBuddy.Stardew.csproj` sets `ModFolderName`;
- *   2. the fixture profile builds its Mod paths from `STARDEW_MOD_FOLDER`;
- *   3. the ladder launcher reads the Mod config from the same constant.
+ *   2. the fixture profile and the ladder launcher build their Mod paths from
+ *      `STARDEW_MOD_FOLDER` rather than spelling the name;
+ *   3. no PowerShell harness under `tools/` spells a folder name that disagrees with
+ *      it - a harness asks `Get-GameBuddyStardewModConfigPath`
+ *      (tools/lib/stardew-mod-config.ps1), which asks this repo's own resolver.
  *
- * The scan is literal-string based on purpose: it is checking that no file spells
- * the name a second time, which is exactly the thing a shared constant prevents.
+ * The JavaScript scan is literal-string based on purpose: it is checking that no file
+ * spells the name a second time, which is exactly the thing a shared constant prevents.
+ * The PowerShell scan names only the DISAGREEING aliases, so a harness that spells the
+ * deployed name is not forced to change: repeating a true fact is not the split, and a
+ * rule that flagged it would need an exception list instead of a property.
  *
- * red-proof: inject  a csproj declaring the MSBuild default folder name -> a mismatch, not a pass
- *                    (tools/check-stardew-mod-folder-name.test.mjs)
+ * red-proof: `node tools/check-stardew-mod-folder-name.mjs --root <tree>` over a copy
+ *            whose csproj declares the MSBuild default, or whose PowerShell harness
+ *            spells `GameBuddy.Stardew`, reports a mismatch rather than a pass
+ *            (tools/check-stardew-mod-folder-name.test.mjs)
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 
 import { STARDEW_MOD_FOLDER, STARDEW_MOD_FOLDER_ALIASES } from "./lib/stardew-mod-folder.mjs";
 
-const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
-const PROJECT = join(REPO, "integrations", "stardew", "GameBuddy.Stardew.csproj");
-const PROFILE = join(REPO, "tools", "lib", "stardew-fixture-profile.mjs");
-const LAUNCHER = join(REPO, "tools", "live-run", "game", "launch-ladder-live.mjs");
+const DEFAULT_ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
+
+function parseRoot(argv) {
+  const index = argv.indexOf("--root");
+  if (index === -1) return DEFAULT_ROOT;
+  const value = argv[index + 1];
+  if (value === undefined) {
+    process.stderr.write("usage: check-stardew-mod-folder-name.mjs [--root <tree>]\n");
+    process.exit(2);
+  }
+  return value;
+}
+
+const ROOT = parseRoot(process.argv.slice(2));
+const PROJECT = join(ROOT, "integrations", "stardew", "GameBuddy.Stardew.csproj");
+const PROFILE = join(ROOT, "tools", "lib", "stardew-fixture-profile.mjs");
+const LAUNCHER = join(ROOT, "tools", "live-run", "game", "launch-ladder-live.mjs");
+const POWERSHELL_HELPER = join(ROOT, "tools", "lib", "stardew-mod-config.ps1");
 
 const findings = [];
 const report = (path, message) => findings.push({ path, message });
@@ -65,10 +94,43 @@ for (const [label, path] of [
   }
 }
 
+/** Every PowerShell harness in the tree: the population is the directory, not a list. */
+function powershellFiles(directory) {
+  const found = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    // Dot-prefixed files are local scratch (`/tools/.tmp-*` in .gitignore), not the harness surface.
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...powershellFiles(path));
+    else if (entry.name.toLowerCase().endsWith(".ps1")) found.push(path);
+  }
+  return found;
+}
+
+const configPathHelper = "Get-GameBuddyStardewModConfigPath (tools/lib/stardew-mod-config.ps1)";
+if (!readFileSync(POWERSHELL_HELPER, "utf8").includes("function Get-GameBuddyStardewModConfigPath")) {
+  report("tools/lib/stardew-mod-config.ps1", "must define Get-GameBuddyStardewModConfigPath, the PowerShell seam");
+}
+
+const DISAGREEING_ALIASES = STARDEW_MOD_FOLDER_ALIASES.filter((alias) => alias !== STARDEW_MOD_FOLDER);
+for (const path of powershellFiles(join(ROOT, "tools"))) {
+  const label = relative(ROOT, path).replaceAll("\\", "/");
+  const source = readFileSync(path, "utf8");
+  for (const alias of DISAGREEING_ALIASES) {
+    // A path segment: the alias followed by a separator, so `GameBuddy.Stardew.dll` is not a folder spelling.
+    const spelled = new RegExp(`(?:^|[\\s"'\\\\/])${alias.replace(/\./gu, "\\.")}[/\\\\]`, "mu");
+    if (spelled.test(source)) {
+      report(label, `spells "${alias}", which every fixture contradicts; ask ${configPathHelper} for the path`);
+    }
+  }
+}
+
 if (findings.length === 0) {
-  console.log(`stardew_mod_folder: ${STARDEW_MOD_FOLDER} (csproj, fixture profile, launcher agree)`);
+  console.log(
+    `stardew_mod_folder: ${STARDEW_MOD_FOLDER} (csproj, fixture profile, launcher and every tools/ PowerShell harness agree)`,
+  );
   process.exit(0);
 }
 for (const finding of findings) console.error(`stardew_mod_folder_mismatch:${finding.path}:${finding.message}`);
-console.error(`stardew_mod_folder_mismatch: ${findings.length} of 3 places disagree`);
+console.error(`stardew_mod_folder_mismatch: ${findings.length} place(s) disagree with ${STARDEW_MOD_FOLDER}`);
 process.exit(1);

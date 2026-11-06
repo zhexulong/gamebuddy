@@ -100,9 +100,7 @@ const SEAM_REQUIRED_STEPS = Object.freeze(["DoFunction(", "lastClick = Vector2.Z
  * they must NOT hand-roll it (a second call would be redundant, not wrong, but
  * asserting absence keeps the ownership unambiguous).
  */
-export const STARDEW_NATIVE_ANIMATION_FAMILY = Object.freeze([
-  "RequestLocalCollectAnimalProduct",
-]);
+export const STARDEW_NATIVE_ANIMATION_FAMILY = Object.freeze(["RequestLocalCollectAnimalProduct"]);
 
 /** Extract one handler body by brace balance from its declaration. */
 function handlerBody(source, signature) {
@@ -234,7 +232,8 @@ export function validateToolFamilyStaminaEvidence(sources) {
       const idx = allSources.indexOf(terminal);
       if (idx >= 0) {
         const close = allSources.indexOf(");", idx);
-        const window = close >= 0 ? allSources.slice(Math.max(0, idx - 40), close + 2) : allSources.slice(idx, idx + 1500);
+        const window =
+          close >= 0 ? allSources.slice(Math.max(0, idx - 40), close + 2) : allSources.slice(idx, idx + 1500);
         if (window.includes("ExecutionState.Succeeded")) scanned = window;
       }
     }
@@ -250,8 +249,8 @@ export function validateToolFamilyStaminaEvidence(sources) {
     // that hand-rolls a bare `DoFunction` bypasses it, and a seam that drops or
     // reorders a native step stops providing it for every caller at once.
     if (
-      STARDEW_EXHAUSTION_FAMILY.includes(handler)
-      && !executionBodies.some((candidate) => candidate.includes(`${STARDEW_NATIVE_TOOL_USE_SEAM}(`))
+      STARDEW_EXHAUSTION_FAMILY.includes(handler) &&
+      !executionBodies.some((candidate) => candidate.includes(`${STARDEW_NATIVE_TOOL_USE_SEAM}(`))
     ) {
       failures.push(
         `${handler}: direct tool dispatch does not route through ${STARDEW_NATIVE_TOOL_USE_SEAM}(), so it bypasses Farmer.useTool's lastClick/checkForExhaustion steps and the companion escapes the vanilla cross-day exhaustion penalty`,

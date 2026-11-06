@@ -67,7 +67,7 @@ function stripComments(source) {
       continue;
     }
     if ((character === '"' || character === "'") && source[index - 1] !== "\\") {
-      inString = inString === character ? null : inString ?? character;
+      inString = inString === character ? null : (inString ?? character);
     }
     output += character;
   }
@@ -80,7 +80,7 @@ function matchingParen(source, open) {
   for (let index = open; index < source.length; index += 1) {
     const character = source[index];
     if ((character === '"' || character === "'") && source[index - 1] !== "\\") {
-      quote = quote === character ? null : quote ?? character;
+      quote = quote === character ? null : (quote ?? character);
       continue;
     }
     if (quote) continue;
@@ -98,7 +98,7 @@ function splitArguments(source) {
   for (let index = 0; index < source.length; index += 1) {
     const character = source[index];
     if ((character === '"' || character === "'") && source[index - 1] !== "\\") {
-      quote = quote === character ? null : quote ?? character;
+      quote = quote === character ? null : (quote ?? character);
       continue;
     }
     if (quote) continue;
@@ -132,7 +132,11 @@ function inspectSource(path, source) {
     const open = clean.indexOf("(", match.index);
     const close = matchingParen(clean, open);
     if (close < 0) {
-      findings.push({ path: sourcePath(path), line: lineNumber(clean, match.index), code: "pathfinder_call_unbalanced" });
+      findings.push({
+        path: sourcePath(path),
+        line: lineNumber(clean, match.index),
+        code: "pathfinder_call_unbalanced",
+      });
       continue;
     }
     const args = splitArguments(clean.slice(open + 1, close));
@@ -151,7 +155,10 @@ function inspectSource(path, source) {
 
   // Call-site evidence is intentionally source-local. A future caller cannot
   // satisfy this by pointing to an unrelated planner's receipt elsewhere.
-  if (callCount > 0 && !/(pathToEndPoint|planned_tiles\s*=|bed_walk_unplanned|no_native_path|path_unplanned|movement_refused)/u.test(clean)) {
+  if (
+    callCount > 0 &&
+    !/(pathToEndPoint|planned_tiles\s*=|bed_walk_unplanned|no_native_path|path_unplanned|movement_refused)/u.test(clean)
+  ) {
     findings.push({
       path: sourcePath(path),
       line: 1,
@@ -189,7 +196,9 @@ export function checkStardewNativePathfinderSource({ roots = DEFAULT_ROOTS, sour
 function main() {
   const report = checkStardewNativePathfinderSource();
   for (const finding of report.findings) {
-    process.stdout.write(`  ${finding.path}:${finding.line} ${finding.code}${finding.detail ? ` (${finding.detail})` : ""}\n`);
+    process.stdout.write(
+      `  ${finding.path}:${finding.line} ${finding.code}${finding.detail ? ` (${finding.detail})` : ""}\n`,
+    );
   }
   process.stdout.write(`stardew native pathfinder source gate: ${report.findings.length} finding(s)\n`);
   process.exit(report.ok ? 0 : 1);

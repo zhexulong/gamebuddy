@@ -102,7 +102,11 @@ function declarationSpan(text, start) {
   const paren = text.indexOf("(", start);
   if (paren < 0 || paren - start > 2000) return text.slice(start, start + 2000);
   const parametersEnd = matchingIndex(text, paren, "(", ")");
-  for (let brace = text.indexOf("{", parametersEnd); brace >= 0 && brace < text.length; brace = text.indexOf("{", brace + 1)) {
+  for (
+    let brace = text.indexOf("{", parametersEnd);
+    brace >= 0 && brace < text.length;
+    brace = text.indexOf("{", brace + 1)
+  ) {
     const end = matchingIndex(text, brace, "{", "}");
     if (/^[ \t]*\r?\n/u.test(text.slice(end + 1, end + 6))) return text.slice(start, end + 1);
   }
@@ -146,7 +150,8 @@ export function deriveStoreOpeners(root) {
 export function closeLines(text) {
   const lines = [];
   CLOSE_SITE.lastIndex = 0;
-  for (let match = CLOSE_SITE.exec(text); match !== null; match = CLOSE_SITE.exec(text)) lines.push(lineOf(text, match.index));
+  for (let match = CLOSE_SITE.exec(text); match !== null; match = CLOSE_SITE.exec(text))
+    lines.push(lineOf(text, match.index));
   return lines;
 }
 

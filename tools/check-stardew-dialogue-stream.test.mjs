@@ -29,7 +29,9 @@ test("a multi-page dialogue in one box passes", () => {
 test("a dialogue the game split across boxes ALSO passes, counted across its facts", () => {
   // The reviewer's finding, pinned: a correct pager reports one fact per box, so a per-fact ">= 2 pages" test would
   // fail this run.
-  const verdict = judgeDialogueStream(result([dialogueFact("npc_dialogue_900_1", ["a"]), dialogueFact("npc_dialogue_901_2", ["b"])]));
+  const verdict = judgeDialogueStream(
+    result([dialogueFact("npc_dialogue_900_1", ["a"]), dialogueFact("npc_dialogue_901_2", ["b"])]),
+  );
   assert.equal(verdict.state, "passed");
   assert.equal(verdict.observed.pagedAs, "chain_of_boxes");
   assert.equal(verdict.observed.maxPages, 1);
@@ -61,7 +63,9 @@ test("the wrong speaker fails G3", () => {
 });
 
 test("a shared identity across two facts fails G4", () => {
-  const verdict = judgeDialogueStream(result([dialogueFact("npc_dialogue_900_1", ["a"]), dialogueFact("npc_dialogue_900_1", ["b"])]));
+  const verdict = judgeDialogueStream(
+    result([dialogueFact("npc_dialogue_900_1", ["a"]), dialogueFact("npc_dialogue_900_1", ["b"])]),
+  );
   assert.equal(verdict.state, "blocked");
   assert.match(verdict.reason, /g4/);
 });

@@ -41,7 +41,7 @@ test("flags the marker the shipping incident used", () => {
 
 test("flags a marker on a multi-line call whose literal starts on the next line", () => {
   const { violations } = withFixtureRoot(() => ({
-    "a.ts": 'export function go(): void {\n  process.stderr.write(\n    `[DEBUG-x] stage=${stage}\\n`,\n  );\n}\n',
+    "a.ts": "export function go(): void {\n  process.stderr.write(\n    `[DEBUG-x] stage=${stage}\\n`,\n  );\n}\n",
   }));
   assert.equal(violations.length, 1);
   assert.equal(violations[0].line, 2);
@@ -51,7 +51,7 @@ test("flags the DEBUG, XDEBUG, TRACE and DBG markers, and not other words", () =
   const { violations } = withFixtureRoot(() => ({
     "a.ts":
       'export const a = (): void => console.log("[DEBUG-x] a");\n' +
-      'export const b = (): void => console.log(`[XDEBUG] b`);\n' +
+      "export const b = (): void => console.log(`[XDEBUG] b`);\n" +
       'export const c = (): void => console.log("[trace] c");\n' +
       'export const d = (): void => console.log("[dbg] d");\n' +
       'export const e = (): void => console.log("[verbose] output disabled");\n',
@@ -64,7 +64,8 @@ test("flags the DEBUG, XDEBUG, TRACE and DBG markers, and not other words", () =
 
 test("does not flag console.debug itself, only a message that declares itself debug output", () => {
   const { violations } = withFixtureRoot(() => ({
-    "a.ts": 'export const m = (stage: string): void => console.debug(`GameBuddy native chat ingress stage=${stage}`);\n',
+    "a.ts":
+      "export const m = (stage: string): void => console.debug(`GameBuddy native chat ingress stage=${stage}`);\n",
   }));
   assert.deepEqual(violations, []);
 });
@@ -72,7 +73,7 @@ test("does not flag console.debug itself, only a message that declares itself de
 test("does not flag the bounded operational record shape the product keeps", () => {
   const { violations } = withFixtureRoot(() => ({
     "a.ts":
-      'export const read = (error: unknown): void => {\n  process.stderr.write(`[memory] read failed: ${boundedReason(error)}\\n`);\n};\n',
+      "export const read = (error: unknown): void => {\n  process.stderr.write(`[memory] read failed: ${boundedReason(error)}\\n`);\n};\n",
   }));
   assert.deepEqual(violations, []);
 });
@@ -80,7 +81,7 @@ test("does not flag the bounded operational record shape the product keeps", () 
 test("counts a text-first print call and ignores one whose first argument is not text", () => {
   const { counts } = withFixtureRoot(() => ({
     "a.ts":
-      'export const write = (bytes: Uint8Array): void => {\n  process.stdout.write(bytes);\n};\n' +
+      "export const write = (bytes: Uint8Array): void => {\n  process.stdout.write(bytes);\n};\n" +
       'export const log = (): void => console.log("a bounded record");\n',
   }));
   assert.deepEqual(counts, { "a.ts": 1 });
@@ -128,7 +129,7 @@ test("the ratchet reports growth past the recorded count and nothing else", () =
   const baseline = { counts: { "a.ts": 1, "b.ts": 2 } };
   assert.deepEqual(ratchet({ baseline, counts: { "a.ts": 1, "b.ts": 2 } }), []);
   assert.deepEqual(ratchet({ baseline, counts: { "a.ts": 2, "b.ts": 2 } }), ["a.ts"]);
-  assert.deepEqual(ratchet({ baseline, counts: { "a.ts": 0 } }), [], );
+  assert.deepEqual(ratchet({ baseline, counts: { "a.ts": 0 } }), []);
   assert.deepEqual(ratchet({ baseline, counts: { "a.ts": 1, "b.ts": 2, "new.ts": 1 } }), ["new.ts"]);
 });
 
@@ -159,10 +160,14 @@ function runGate(build, { baseline = { counts: {} } } = {}) {
     }
     const baselinePath = join(root, "baseline.json");
     writeFileSync(baselinePath, JSON.stringify({ note: "planted", revision: "planted", total: 0, ...baseline }));
-    const result = spawnSync(process.execPath, [GATE, join(root, "src"), "--baseline", baselinePath, "--include-dirty"], {
-      encoding: "utf8",
-      windowsHide: true,
-    });
+    const result = spawnSync(
+      process.execPath,
+      [GATE, join(root, "src"), "--baseline", baselinePath, "--include-dirty"],
+      {
+        encoding: "utf8",
+        windowsHide: true,
+      },
+    );
     return { status: result.status, stdout: result.stdout };
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -185,9 +190,12 @@ test("the CLI reports a planted print site the baseline does not record and exit
 });
 
 test("the CLI passes a planted tree that stays within its baseline", () => {
-  const { status, stdout } = runGate(() => ({ "b.ts": 'process.stderr.write("[memory] read failed: bounded\\n");\n' }), {
-    baseline: { counts: { "b.ts": 1 } },
-  });
+  const { status, stdout } = runGate(
+    () => ({ "b.ts": 'process.stderr.write("[memory] read failed: bounded\\n");\n' }),
+    {
+      baseline: { counts: { "b.ts": 1 } },
+    },
+  );
   assert.equal(status, 0);
   assert.match(stdout, /host_diagnostic_output_ok sites=1 files=1/u);
 });

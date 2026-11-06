@@ -81,9 +81,7 @@ export function checkProductionPackLoad({ distRoot = distRootDefault } = {}) {
   }
   report.generation = generation;
 
-  const generationRoot = isAbsolute(generation)
-    ? generation
-    : join(distRoot, "generations", generation);
+  const generationRoot = isAbsolute(generation) ? generation : join(distRoot, "generations", generation);
   if (!existsSync(generationRoot)) {
     report.failures.push(`generation_missing:${generation}`);
     return report;
@@ -141,8 +139,7 @@ export function checkProductionPackLoad({ distRoot = distRootDefault } = {}) {
     env: { ...process.env, NODE_NO_WARNINGS: "1" },
   });
 
-  const loadOk =
-    probe.status === 0 && /PACK_LOAD_BOOTSTRAP_OK/.test(probe.stdout ?? "");
+  const loadOk = probe.status === 0 && /PACK_LOAD_BOOTSTRAP_OK/.test(probe.stdout ?? "");
   report.bootstrapImport = {
     status: probe.status,
     stdout: (probe.stdout ?? "").trim().slice(0, 2000),
@@ -205,7 +202,8 @@ function verifyVoicePackLoad(report, generationRoot, runtimePath) {
     stderr: (probe.stderr ?? "").trim().slice(0, 500),
     ok,
   };
-  if (!ok) report.failures.push(`voice_pack_load_failed:${(probe.stderr ?? "").trim().slice(0, 400) || "unexpected status"}`);
+  if (!ok)
+    report.failures.push(`voice_pack_load_failed:${(probe.stderr ?? "").trim().slice(0, 400) || "unexpected status"}`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {

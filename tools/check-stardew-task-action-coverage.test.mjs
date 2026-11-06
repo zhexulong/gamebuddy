@@ -159,7 +159,7 @@ test("the sweep is the remainder: no action twice, and nothing a scenario task a
 });
 
 test("the sweep tasks follow the scenario tasks in the rotation", () => {
-  // Appended, not interleaved: the eighteen scenario tasks are a coverage plan in an argued order, and reordering
+  // Appended, not interleaved: the nineteen scenario tasks are a coverage plan in an argued order, and reordering
   // them would silently change what every future run covers first.
   assert.deepEqual(
     DAILY_TASK_ROTATION.slice(-SWEEP_DAILY_TASKS.length),

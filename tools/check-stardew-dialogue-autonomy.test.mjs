@@ -107,10 +107,7 @@ test("a transcript that carries only the SPEAKER does not satisfy A5: it must ca
 });
 
 test("a dialogue fact with no talk receipt is BLOCKED: the fact alone does not prove the Agent acted", () => {
-  const verdict = judgeDialogueAutonomy(
-    result({ bridgeFacts: [result().bridgeFacts[0]] }),
-    {},
-  );
+  const verdict = judgeDialogueAutonomy(result({ bridgeFacts: [result().bridgeFacts[0]] }), {});
   assert.equal(verdict.state, "blocked");
   assert.match(verdict.reason, /a3/);
 });

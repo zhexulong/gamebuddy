@@ -80,24 +80,30 @@ export function judgeDialogueAutonomy(result, { sessionText = null, pinnedPrompt
   g.a1 = true;
 
   const facts = Array.isArray(result?.bridgeFacts) ? result.bridgeFacts : [];
-  const dialogueFacts = facts.filter(
-    (fact) => fact?.type === "world_fact" && fact?.worldFactKind === DIALOGUE_KIND,
-  );
+  const dialogueFacts = facts.filter((fact) => fact?.type === "world_fact" && fact?.worldFactKind === DIALOGUE_KIND);
   g.a2 = dialogueFacts.length > 0;
   if (!g.a2)
     return {
       state: "unobserved",
       reason: "no_dialogue_fact:the_agent_never_talked_to_a_villager",
       g,
-      observed: { facts: facts.length, attempted: result?.attemptedActionIds ?? [], succeeded: result?.succeededActionIds ?? [] },
+      observed: {
+        facts: facts.length,
+        attempted: result?.attemptedActionIds ?? [],
+        succeeded: result?.succeededActionIds ?? [],
+      },
     };
 
   // A3 + A4: a talk receipt reached a terminal, dispatched with an identity that is not the harness's.
   const receipts = facts.filter((fact) => fact?.type === "execution_receipt");
-  const talkReceipts = receipts.filter((receipt) => /talk_to_npc|npc_talk|talked/.test(String(receipt?.reasonCode ?? "")));
+  const talkReceipts = receipts.filter((receipt) =>
+    /talk_to_npc|npc_talk|talked/.test(String(receipt?.reasonCode ?? "")),
+  );
   g.a3 = talkReceipts.length > 0;
   const requestIds = talkReceipts.map((receipt) => String(receipt?.requestId ?? ""));
-  g.a4 = requestIds.length > 0 && requestIds.every((id) => id.length > 0 && !/^native_local_(wia|dialogue_stream)_/.test(id));
+  g.a4 =
+    requestIds.length > 0 &&
+    requestIds.every((id) => id.length > 0 && !/^native_local_(wia|dialogue_stream)_/.test(id));
 
   // A5: the fact reached the Agent's CONTEXT. Only assertable when a session transcript is supplied, and reported
   // as `not_checked` (not as a pass) when it is not.

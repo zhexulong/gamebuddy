@@ -67,11 +67,14 @@ function resolveRead(member) {
   // A property's opening brace can be on the NEXT line, so end-of-line is a legal terminator; and an
   // expression-bodied member ends with `=>`. Missing the first case made three real declarations
   // (Game1.activeClickableMenu, Farmer.UsingTool, Farmer.stamina) look unresolvable.
-  const decl = new RegExp(`^\\s*(?:public|internal|private|protected|readonly|static|virtual|override)[^;=()]*\\b${name}\\b\\s*(?:;[^;]*$|=|=>|\\{|$)`);
+  const decl = new RegExp(
+    `^\\s*(?:public|internal|private|protected|readonly|static|virtual|override)[^;=()]*\\b${name}\\b\\s*(?:;[^;]*$|=|=>|\\{|$)`,
+  );
   for (const f of candidates) {
     const lines = readFileSync(f, "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
-      if (decl.test(lines[i])) return { file: relative(ROOT, f).replace(/\\/g, "/"), line: i + 1, text: lines[i].trim() };
+      if (decl.test(lines[i]))
+        return { file: relative(ROOT, f).replace(/\\/g, "/"), line: i + 1, text: lines[i].trim() };
     }
   }
   return null;
@@ -89,7 +92,8 @@ function writeSites(member) {
     for (let i = 0; i < lines.length; i++) {
       const t = lines[i];
       if (!re.test(t)) continue;
-      if (/\bpublic\b[^;=]*\b/.test(t) && /(;|=|$)/.test(t) && /^\s*(public|internal|private|protected)/.test(t)) continue; // a declaration, not a write
+      if (/\bpublic\b[^;=]*\b/.test(t) && /(;|=|$)/.test(t) && /^\s*(public|internal|private|protected)/.test(t))
+        continue; // a declaration, not a write
       out.push({ file: basename(f), line: i + 1 });
     }
   }
@@ -108,7 +112,12 @@ function writeSites(member) {
       if (!admissible && !cause) rows.push(`${action.id} x ${state.id}: neither admissible nor a named cause`);
     }
   }
-  record("INV-1 totality", rows.length === 0, `${model.actions.length} actions x ${model.states.length} states all decided`, rows);
+  record(
+    "INV-1 totality",
+    rows.length === 0,
+    `${model.actions.length} actions x ${model.states.length} states all decided`,
+    rows,
+  );
 }
 
 // ---------------------------------------------------------------- INV-3 liveness
@@ -131,10 +140,17 @@ function writeSites(member) {
       }
       for (const a of blocked)
         if (!(a.admissibleIn ?? []).includes(r.establishes))
-          rows.push(`${cause.id}: after "${r.action ?? r.kind}" the state is ${r.establishes}, where ${a.id} is still inadmissible`);
+          rows.push(
+            `${cause.id}: after "${r.action ?? r.kind}" the state is ${r.establishes}, where ${a.id} is still inadmissible`,
+          );
     }
   }
-  record("INV-3 liveness", rows.length === 0, `${model.causes.length} causes, each with a remedy that restores the blocked actions`, rows);
+  record(
+    "INV-3 liveness",
+    rows.length === 0,
+    `${model.causes.length} causes, each with a remedy that restores the blocked actions`,
+    rows,
+  );
 }
 
 // ---------------------------------------------------------------- INV-4 acyclicity
@@ -162,12 +178,20 @@ function writeSites(member) {
     seen.add(n);
   };
   for (const n of edges.keys()) visit(n);
-  record("INV-4 acyclicity", rows.length === 0, `${edges.size} non-idle states, remedy graph is a DAG settling at idle`, rows);
+  record(
+    "INV-4 acyclicity",
+    rows.length === 0,
+    `${edges.size} non-idle states, remedy graph is a DAG settling at idle`,
+    rows,
+  );
 }
 
 // ---------------------------------------------------------------- decision sites (shared by INV-2 and INV-5)
 const DECISION_PATTERNS = [
-  { id: "body-env triple (fork)", re: /Game1\.activeClickableMenu is not null \|\| Game1\.eventUp \|\| !(Game1\.player|actor)\.CanMove/ },
+  {
+    id: "body-env triple (fork)",
+    re: /Game1\.activeClickableMenu is not null \|\| Game1\.eventUp \|\| !(Game1\.player|actor)\.CanMove/,
+  },
   { id: "body-env guards, split", re: /player_menu_open|player_cannot_move|player_event_active/ },
   { id: "legacy collapse code", re: /"player_not_actionable"/ },
   { id: "derived boolean decision", re: /!\s*snapshot\.actionable\b/ },
@@ -203,7 +227,8 @@ function declaredVerdict(file) {
   for (const [file, count] of [...byFile].sort()) {
     const d = declaredVerdict(file);
     if (!d) rows.push(`UNDECLARED decision site: ${file} (${count} occurrences)`);
-    else if (d.verdict === "fork_to_remove") rows.push(`unconverged fork: ${file} (${count}) - declared as fork_to_remove`);
+    else if (d.verdict === "fork_to_remove")
+      rows.push(`unconverged fork: ${file} (${count}) - declared as fork_to_remove`);
   }
   // The declaration must also be true: every adjudicated file must still DECIDE something, or the row is
   // stale and is hiding a site that moved (or a mechanism that stopped deciding).
@@ -231,7 +256,12 @@ function declaredVerdict(file) {
       rows.push(`${h.file}:${h.line} decides on ${d.form} (${d.id}) - ${d.why_forbidden.slice(0, 80)}`);
     }
   }
-  record("INV-5 no hidden input", rows.length === 0, `${model.derivedInputs.length} derived input(s) forbidden as decision inputs`, rows);
+  record(
+    "INV-5 no hidden input",
+    rows.length === 0,
+    `${model.derivedInputs.length} derived input(s) forbidden as decision inputs`,
+    rows,
+  );
 }
 
 // ---------------------------------------------------------------- IFACE-1 reads resolve
@@ -300,7 +330,9 @@ for (const r of results) {
 console.log(`\n-- algebra coverage (a QUERY, not a report to interpret) --`);
 console.log(`   registered actions:            ${catalog.length}`);
 console.log(`   with admissibility declared:   ${inAlgebra.size - staleInAlgebra.length}`);
-console.log(`   NO admissibility declared:     ${notInAlgebra.length}  (first: ${notInAlgebra.slice(0, 8).join(", ") || "none"})`);
+console.log(
+  `   NO admissibility declared:     ${notInAlgebra.length}  (first: ${notInAlgebra.slice(0, 8).join(", ") || "none"})`,
+);
 if (staleInAlgebra.length) console.log(`   in the algebra but NOT in the catalog: ${staleInAlgebra.join(", ")}`);
 console.log(`\n=== ${failed === 0 ? "DESIGN CLOSED" : failed + " invariant(s) or interface check(s) FAILED"} ===\n`);
 process.exit(failed === 0 ? 0 : 1);

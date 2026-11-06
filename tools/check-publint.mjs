@@ -67,15 +67,10 @@ async function readActiveKnownGaps() {
   const activeGaps = [];
   const exports = packageJson.exports;
 
-  const missingTypesPaths = PUBLINT_EXPORT_PATHS.filter(
-    (exportPath) => !hasTypesCondition(exports?.[exportPath]),
-  );
+  const missingTypesPaths = PUBLINT_EXPORT_PATHS.filter((exportPath) => !hasTypesCondition(exports?.[exportPath]));
   if (missingTypesPaths.length > 0) {
     activeGaps.push(
-      knownGap(
-        KNOWN_VENDOR_GAP_RULES[0].id,
-        `missing types condition for exports: ${missingTypesPaths.join(", ")}`,
-      ),
+      knownGap(KNOWN_VENDOR_GAP_RULES[0].id, `missing types condition for exports: ${missingTypesPaths.join(", ")}`),
     );
   }
 
@@ -137,7 +132,7 @@ async function main() {
 
   const blocked = [];
   const ignored = [];
-  const lines = (`${stdout}\n${stderr}`).split("\n");
+  const lines = `${stdout}\n${stderr}`.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;

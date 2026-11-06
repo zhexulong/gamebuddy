@@ -254,9 +254,7 @@ function main(argv) {
   }
   if (violations.length > 0) failMarkers(violations);
   for (const file of grew)
-    process.stdout.write(
-      `  ${file}: ${baseline.counts[file] ?? 0} -> ${counts[file]} diagnostic print site(s)\n`,
-    );
+    process.stdout.write(`  ${file}: ${baseline.counts[file] ?? 0} -> ${counts[file]} diagnostic print site(s)\n`);
   if (grew.length > 0)
     process.stdout.write(
       "new diagnostic output in production host/src; use a bounded operational record (which store operation failed, and why) or re-record deliberately with: node tools/check-host-diagnostic-output.mjs --update\n",

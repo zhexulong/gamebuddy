@@ -106,8 +106,7 @@ export function collectErrorIdentities(root) {
     let classBase;
     for (const line of lines) {
       CLASS_HEAD.lastIndex = 0;
-      for (let match = CLASS_HEAD.exec(line); match !== null; match = CLASS_HEAD.exec(line))
-        classBase = match[1];
+      for (let match = CLASS_HEAD.exec(line); match !== null; match = CLASS_HEAD.exec(line)) classBase = match[1];
       SUPER_LITERAL.lastIndex = 0;
       for (let match = SUPER_LITERAL.exec(line); match !== null; match = SUPER_LITERAL.exec(line)) {
         if (classBase === undefined || !ERROR_BASE.test(classBase)) continue;
@@ -116,8 +115,7 @@ export function collectErrorIdentities(root) {
         identityByLiteral.set(match[1], definedIn);
       }
       BARE_ERROR.lastIndex = 0;
-      for (let match = BARE_ERROR.exec(line); match !== null; match = BARE_ERROR.exec(line))
-        bareLiterals.add(match[1]);
+      for (let match = BARE_ERROR.exec(line); match !== null; match = BARE_ERROR.exec(line)) bareLiterals.add(match[1]);
     }
   }
   return { files, identityByLiteral, bareLiterals };
@@ -164,9 +162,7 @@ export function main(argv = process.argv.slice(2)) {
   process.stdout.write(`error_identity_classification_failed findings=${findings.length}\n`);
   for (const finding of findings) {
     const subject =
-      finding.form === "aliased-local"
-        ? `the local "${finding.local}", a copy of a .message`
-        : "error.message";
+      finding.form === "aliased-local" ? `the local "${finding.local}", a copy of a .message` : "error.message";
     process.stdout.write(
       `  ${finding.file}:${finding.line} compares ${subject} to "${finding.literal}", an error identity defined in ${finding.definedIn}\n`,
     );

@@ -4,7 +4,8 @@ import test from "node:test";
 
 import { judgeWiaLoop } from "./check-stardew-wia-agent-loop.mjs";
 
-const PROMPT = "现在是星露谷春季的一个早晨,你在农场里。农场另一头那片地我还没顾上看——你过去看看那边是什么情况,顺手做点该做的。回来跟我说说那边什么样、你做了什么(两三句话就行,总共控制在 120 字以内)。";
+const PROMPT =
+  "现在是星露谷春季的一个早晨,你在农场里。农场另一头那片地我还没顾上看——你过去看看那边是什么情况,顺手做点该做的。回来跟我说说那边什么样、你做了什么(两三句话就行,总共控制在 120 字以内)。";
 const PROMPT_HASH = createHash("sha256").update(PROMPT).digest("hex");
 
 const bp = {
@@ -14,8 +15,20 @@ const bp = {
   executionId: "exec_bp",
   evidence: { detail: "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15" },
 };
-const dismiss = { type: "execution_receipt", reasonCode: "modal_dismissed", requestId: "req_d", executionId: "exec_d", evidence: { detail: "modal_type=DialogueBox" } };
-const resume = { type: "execution_receipt", reasonCode: "target_reached", requestId: "req_r", executionId: "exec_r", evidence: { detail: "target=35,35;arrived=true" } };
+const dismiss = {
+  type: "execution_receipt",
+  reasonCode: "modal_dismissed",
+  requestId: "req_d",
+  executionId: "exec_d",
+  evidence: { detail: "modal_type=DialogueBox" },
+};
+const resume = {
+  type: "execution_receipt",
+  reasonCode: "target_reached",
+  requestId: "req_r",
+  executionId: "exec_r",
+  evidence: { detail: "target=35,35;arrived=true" },
+};
 
 const OK = {
   ladder: "6",
@@ -24,7 +37,13 @@ const OK = {
   sessionTurns: [{ goal: PROMPT }],
   factLog: [bp, dismiss, resume],
   actionTrace: [
-    { action: "move_to_tile", requestId: "req_r", args: { x: 35, y: 35 }, state: "succeeded", reasonCode: "target_reached" },
+    {
+      action: "move_to_tile",
+      requestId: "req_r",
+      args: { x: 35, y: 35 },
+      state: "succeeded",
+      reasonCode: "target_reached",
+    },
   ],
 };
 
@@ -36,7 +55,10 @@ test("the full chain with the pinned pure prompt passes (strong: same intent)", 
 });
 
 test("a never-interrupted run is UNOBSERVED, not passed", () => {
-  const never = { ...OK, factLog: [{ type: "execution_receipt", reasonCode: "target_reached", requestId: "r", executionId: "e" }] };
+  const never = {
+    ...OK,
+    factLog: [{ type: "execution_receipt", reasonCode: "target_reached", requestId: "r", executionId: "e" }],
+  };
   const verdict = judgeWiaLoop(never, { pinnedPromptHash: PROMPT_HASH });
   assert.equal(verdict.state, "unobserved");
 });

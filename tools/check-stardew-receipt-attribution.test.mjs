@@ -13,7 +13,10 @@ test("the shipped movement attribution carries a run measurement", () => {
 test("receipt validator rejects an attribution without a measurement and accepts undecided", () => {
   assert.equal(validateReceiptAttribution("path_search=native_budget_exhausted;budget=40000").ok, false);
   assert.equal(validateReceiptAttribution("path_search=undecided;budget=undecided").ok, true);
-  assert.equal(validateReceiptAttribution("measurement=cardinal_flood;path_search=no_cardinal_route;budget=undecided").ok, true);
+  assert.equal(
+    validateReceiptAttribution("measurement=cardinal_flood;path_search=no_cardinal_route;budget=undecided").ok,
+    true,
+  );
 });
 
 test("mutation: removing the measurement from a producer is blocked", () => {

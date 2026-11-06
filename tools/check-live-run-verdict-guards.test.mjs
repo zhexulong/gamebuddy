@@ -60,7 +60,7 @@ test("a verdict-vocabulary form and a named exception are both accepted", async 
     "const contentVerdict = judgeExpectation({ expectation: expectedProfile, observed: contentGate?.profileRead === true, ok: contentGate?.personaPresent === true });",
     "const contentPassed = isPass(contentVerdict);",
     "// absence-as-pass: only the active ladder rung is judged, see LADDER guards below",
-    "const ladderOnePassed = LADDER === \"1\" ? walkReceipt !== undefined : true;",
+    'const ladderOnePassed = LADDER === "1" ? walkReceipt !== undefined : true;',
     "",
   ].join("\n");
   await withFixture(fixed, async (root) => {
@@ -71,11 +71,7 @@ test("a verdict-vocabulary form and a named exception are both accepted", async 
 });
 
 test("the marker requires a reason - a bare marker is not an exception", async () => {
-  const bare = [
-    "// absence-as-pass:",
-    "const contentPassed = expectation === null ? true : observed;",
-    "",
-  ].join("\n");
+  const bare = ["// absence-as-pass:", "const contentPassed = expectation === null ? true : observed;", ""].join("\n");
   await withFixture(bare, async (root) => {
     assert.equal(findAbsencePassBranches({ root }).length, 1, "a reasonless marker must not exempt the branch");
   });
@@ -133,7 +129,6 @@ test("a camelCase pass identifier is not skipped", async () => {
   });
 });
 
-
 test("a pass-shaped name that is true when its observation is ABSENT is reported", async () => {
   // The third spelling: a disjunction whose absence branch makes a pass-shaped name true. Measured in the game
   // ladder: `const interactionPassed = interactionAssessment === null || interactionAssessment.passed;` — a
@@ -158,7 +153,12 @@ test("a pass-shaped name that is true when its observation is ABSENT is reported
     // A non-absence disjunction is ordinary logic, not this shape: the rule is about ABSENCE, not about `||`.
     await writeFile(
       join(root, "ordinary.mjs"),
-      ['export function decide(state) {', '  const passed = state === "ok" || state === "done";', "  return passed;", "}"].join("\n"),
+      [
+        "export function decide(state) {",
+        '  const passed = state === "ok" || state === "done";',
+        "  return passed;",
+        "}",
+      ].join("\n"),
     );
     const afterOrdinary = findAbsencePassBranches({ root });
     assert.equal(afterOrdinary.length, 1, "an ordinary || must not be reported");

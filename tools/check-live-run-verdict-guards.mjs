@@ -126,16 +126,25 @@ function main() {
   const argv = process.argv.slice(2);
   const json = argv.includes("--json");
   const rootIndex = argv.indexOf("--root");
-  const root = rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : join(repositoryRoot, "tools");
+  const root =
+    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string"
+      ? resolve(argv[rootIndex + 1])
+      : join(repositoryRoot, "tools");
   const findings = findAbsencePassBranches({ root });
   if (json) {
     process.stdout.write(`${JSON.stringify({ root, findings }, null, 2)}\n`);
   } else if (findings.length === 0) {
-    process.stdout.write(`live-run verdict guards: 0 absence-as-pass branches under ${relative(repositoryRoot, root) || root}\n`);
+    process.stdout.write(
+      `live-run verdict guards: 0 absence-as-pass branches under ${relative(repositoryRoot, root) || root}\n`,
+    );
   } else {
-    process.stdout.write(`live-run verdict guards: ${findings.length} absence-as-pass branch(es) - a gate must not pass because there was nothing to look at:\n`);
+    process.stdout.write(
+      `live-run verdict guards: ${findings.length} absence-as-pass branch(es) - a gate must not pass because there was nothing to look at:\n`,
+    );
     for (const finding of findings) process.stdout.write(`  ${finding.file}:${finding.line}  ${finding.snippet}\n`);
-    process.stdout.write("  fix: judge it with tools/live-run/core/evidence-verdict.mjs, or mark it `absence-as-pass: <reason>` if the absence genuinely is the expected outcome\n");
+    process.stdout.write(
+      "  fix: judge it with tools/live-run/core/evidence-verdict.mjs, or mark it `absence-as-pass: <reason>` if the absence genuinely is the expected outcome\n",
+    );
   }
   process.exit(findings.length === 0 ? 0 : 1);
 }

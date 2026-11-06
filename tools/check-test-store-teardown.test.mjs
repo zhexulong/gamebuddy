@@ -5,13 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  HOST_SOURCE,
-  deriveStoreOpeners,
-  inspect,
-  openingLines,
-  ratchet,
-} from "./check-test-store-teardown.mjs";
+import { HOST_SOURCE, deriveStoreOpeners, inspect, openingLines, ratchet } from "./check-test-store-teardown.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = join(REPOSITORY_ROOT, "tools", "check-test-store-teardown.mjs");
@@ -46,20 +40,17 @@ const STORE_MODULE =
 test("the openers are derived from the production modules that open a file-backed database", () => {
   const { modules, names } = deriveStoreOpeners(HOST_SOURCE);
   assert.deepEqual([...names].sort(), REAL_OPENERS);
-  assert.deepEqual(
-    [...modules].map(([module, list]) => `${module}: ${list.join(",")}`).sort(),
-    [
-      "continuity-semantic-store/continuity-semantic-production-store.ts: openProductionContinuityStore",
-      "tavern/chat-thread-store.ts: createChatThreadStore",
-    ],
-  );
+  assert.deepEqual([...modules].map(([module, list]) => `${module}: ${list.join(",")}`).sort(), [
+    "continuity-semantic-store/continuity-semantic-production-store.ts: openProductionContinuityStore",
+    "tavern/chat-thread-store.ts: createChatThreadStore",
+  ]);
 });
 
 test("a construction that is not in an exported declaration is not derived", () => {
   const { modules, names } = withFixtureTree(
     () => ({
       "private.ts":
-        'function privateOpener(): void {\n  const db = new DatabaseSync(path);\n}\nexport function publicThing(): void {}\n',
+        "function privateOpener(): void {\n  const db = new DatabaseSync(path);\n}\nexport function publicThing(): void {}\n",
     }),
     (root) => deriveStoreOpeners(root),
   );
@@ -70,7 +61,8 @@ test("a construction that is not in an exported declaration is not derived", () 
 test("flags a test file that opens a store and never closes it", () => {
   const { openers, openings, closes } = withFixtureRoot(() => ({
     "a.ts": STORE_MODULE,
-    "a.test.ts": 'test("x", () => {\n  const store = createChatThreadStore(root);\n  assert.equal(store.read(), 1);\n});\n',
+    "a.test.ts":
+      'test("x", () => {\n  const store = createChatThreadStore(root);\n  assert.equal(store.read(), 1);\n});\n',
   }));
   assert.deepEqual(openers, ["createChatThreadStore"]);
   assert.deepEqual(openings, { "a.test.ts": [2] });
@@ -90,8 +82,7 @@ test("counts a test that opens the SQLite file itself, and ignores an in-memory 
 test("does not count a construction whose throw is the assertion", () => {
   const { openings } = withFixtureRoot(() => ({
     "a.ts": STORE_MODULE,
-    "a.test.ts":
-      'test("x", () => {\n  assert.throws(() => createChatThreadStore(root), /unsupported_schema/);\n});\n',
+    "a.test.ts": 'test("x", () => {\n  assert.throws(() => createChatThreadStore(root), /unsupported_schema/);\n});\n',
   }));
   assert.deepEqual(openings, {});
 });
@@ -146,7 +137,7 @@ test("an uncommitted test file is skipped", () => {
 });
 
 test("openingLines reads a file that only opens without closing", () => {
-  assert.deepEqual(openingLines('const store = createChatThreadStore(root, key);\n', ["createChatThreadStore"]), [1]);
+  assert.deepEqual(openingLines("const store = createChatThreadStore(root, key);\n", ["createChatThreadStore"]), [1]);
   assert.deepEqual(openingLines("const store = createChatThreadStore(root, key);\n", []), []);
 });
 
@@ -160,7 +151,10 @@ function runGate(build, { baseline, update = false } = {}) {
       writeFileSync(path, contents);
     }
     const baselinePath = join(root, "baseline.json");
-    writeFileSync(baselinePath, JSON.stringify(baseline ?? { note: "planted", revision: "planted", files: 0, openings: {} }));
+    writeFileSync(
+      baselinePath,
+      JSON.stringify(baseline ?? { note: "planted", revision: "planted", files: 0, openings: {} }),
+    );
     const args = [GATE, join(root, "src"), "--baseline", baselinePath, "--include-dirty"];
     if (update) args.push("--update");
     const result = spawnSync(process.execPath, args, { encoding: "utf8", windowsHide: true });

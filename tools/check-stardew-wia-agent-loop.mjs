@@ -32,44 +32,70 @@ const EXPECTED_FIXTURE = "native_wia_modal_dismiss_chain_v1";
 const PINNED_PROMPT_HASH = process.env.GAMEBUDDY_WIA_PROMPT_SHA256 ?? null;
 
 /** Action ids / coordinate patterns / sequence words / interruption terms a pure player-goal must NOT contain. */
-const IMPURE = [/[a-z]+_[a-z_]{3,}/, /\d+\s*,\s*\d+/, /先|然后|接着|最后/, /弹窗|对话框|挡住|中断|恢复|recover|dismiss/i];
+const IMPURE = [
+  /[a-z]+_[a-z_]{3,}/,
+  /\d+\s*,\s*\d+/,
+  /先|然后|接着|最后/,
+  /弹窗|对话框|挡住|中断|恢复|recover|dismiss/i,
+];
 
-export function judgeWiaLoop(result, { fixtureScenario = EXPECTED_FIXTURE, pinnedPromptHash = PINNED_PROMPT_HASH } = {}) {
+export function judgeWiaLoop(
+  result,
+  { fixtureScenario = EXPECTED_FIXTURE, pinnedPromptHash = PINNED_PROMPT_HASH } = {},
+) {
   if (result?.configuredFixtureScenario !== fixtureScenario)
     return {
       state: "blocked",
       reason: `fixture_scenario_mismatch:expected=${fixtureScenario};actual=${String(result?.configuredFixtureScenario)}`,
-      d1: false, d2: false, d3: false, ordered: false, unresumedSameIntent: false,
+      d1: false,
+      d2: false,
+      d3: false,
+      ordered: false,
+      unresumedSameIntent: false,
     };
 
   // The ladder-6 runner writes the bridge facts under `bridgeFacts`; the sibling gate harness used `factLog`.
   // Reading only `factLog` made a run that was genuinely interrupted (the evidence is fully there) judge as
   // `unobserved`, which is the exact vacuity this judge exists to prevent - a wrong empty array read as "never
   // happened". Accept both, prefer the one the actual result carries.
-  const rawFacts = Array.isArray(result?.bridgeFacts) && result.bridgeFacts.length > 0
-    ? result.bridgeFacts
-    : (Array.isArray(result?.factLog) ? result.factLog : []);
+  const rawFacts =
+    Array.isArray(result?.bridgeFacts) && result.bridgeFacts.length > 0
+      ? result.bridgeFacts
+      : Array.isArray(result?.factLog)
+        ? result.factLog
+        : [];
   const facts = rawFacts.map((fact) => ({ ...fact, evidence: fact?.evidence ?? null }));
   const trace = Array.isArray(result?.actionTrace) ? result.actionTrace : [];
 
   // O1: the breakpoint must be in the FACT stream (delivered to the Agent), not only in the harness log.
   const bp = facts.find((f) => f?.reasonCode === "modal_interrupted" && f?.type === "execution_receipt");
-  if (!bp) return { state: "unobserved", reason: "no_interruption_in_fact_stream", d1: false, d2: false, d3: false, ordered: false, unresumedSameIntent: false };
+  if (!bp)
+    return {
+      state: "unobserved",
+      reason: "no_interruption_in_fact_stream",
+      d1: false,
+      d2: false,
+      d3: false,
+      ordered: false,
+      unresumedSameIntent: false,
+    };
 
   const bpEvidence = typeof bp.evidence === "string" ? bp.evidence : (bp.evidence?.detail ?? String(bp.evidence ?? ""));
   const d1 = bp.state === "invalidated" || String(bp.evidence?.state ?? "") === "invalidated" || true; // facts carry reasonCode; state is implied by the terminal code
 
   // D2: a dismiss whose executionId is new vs bp.
-  const seenBefore = new Set(facts.filter((f) => f !== bp && facts.indexOf(f) < facts.indexOf(bp)).map((f) => f.executionId));
+  const seenBefore = new Set(
+    facts.filter((f) => f !== bp && facts.indexOf(f) < facts.indexOf(bp)).map((f) => f.executionId),
+  );
   const dismiss = facts.find((f) => f?.reasonCode === "modal_dismissed" && !seenBefore.has(f?.executionId));
   const d2 = dismiss !== undefined;
 
   // D3: a NEW move_to_tile after the dismiss that reaches target_reached, with a different requestId/executionId.
   const bpRequestId = String(bp.requestId ?? "");
   const afterDismissIdx = facts.findIndex((f) => f?.reasonCode === "modal_dismissed");
-  const resume = facts.slice(afterDismissIdx + 1).find(
-    (f) => f?.reasonCode === "target_reached" && String(f.requestId ?? "") !== bpRequestId,
-  );
+  const resume = facts
+    .slice(afterDismissIdx + 1)
+    .find((f) => f?.reasonCode === "target_reached" && String(f.requestId ?? "") !== bpRequestId);
   const d3 = resume !== undefined;
   // Same-intent strong reading: target_tile from the breakpoint equals the resumed move's requested/x,y target.
   // The breakpoint evidence carries `target_tile=35,35`; the resumed move may name its target as `x,y` args or,
@@ -92,13 +118,26 @@ export function judgeWiaLoop(result, { fixtureScenario = EXPECTED_FIXTURE, pinne
   const goalHash = createHash("sha256").update(goalText).digest("hex");
   const promptPure = pinnedPromptHash ? goalHash === pinnedPromptHash : false;
   if (!promptPure)
-    return { state: "blocked", reason: "prompt_not_pure_or_hash_unpinned", d1, d2, d3, ordered, unresumedSameIntent, goalHash };
+    return {
+      state: "blocked",
+      reason: "prompt_not_pure_or_hash_unpinned",
+      d1,
+      d2,
+      d3,
+      ordered,
+      unresumedSameIntent,
+      goalHash,
+    };
 
   if (!d2 || !d3 || !ordered)
     return {
       state: "blocked",
       reason: `incomplete_chain:${d1 ? "d1" : ""}${d2 ? "+d2" : ""}${d3 ? "+d3" : ""}${ordered ? "" : "+order"}`,
-      d1, d2, d3, ordered, unresumedSameIntent,
+      d1,
+      d2,
+      d3,
+      ordered,
+      unresumedSameIntent,
     };
 
   return { state: "passed", reason: "wia_agent_loop_closed", d1, d2, d3, ordered, unresumedSameIntent };

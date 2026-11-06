@@ -225,18 +225,17 @@ async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) 
     // toggleGate, tryToAddHay, shake, DropObject, ...). Seams the register
     // does not declare are still gated by the pattern list.
     for (const name of declaredSeamMembers) {
-      if (!calledSet.has(name) && new RegExp(`\\b(?:[A-Za-z_]\\w*\\.)*${name}\\s*\\(`).test(body))
-        calledSet.add(name);
+      if (!calledSet.has(name) && new RegExp(`\\b(?:[A-Za-z_]\\w*\\.)*${name}\\s*\\(`).test(body)) calledSet.add(name);
     }
     const called = [...calledSet].sort();
     /** Follow one recorded delegation hop: `eatHeldObject()` → `eatObject(..)` */
     const reached = new Set(called);
     if (NATIVE_DELEGATING_CALL.test(body)) reached.add("eatHeldObject");
-  // A hop whose source is a MOD-LOCAL method appears in the body as a bare call (no receiver), which
-  // the native detector above cannot see. Seed those from the table itself, one enumerated name each.
-  for (const [from] of SEAM_DELEGATION_TARGETS) {
-    if (new RegExp("\\b" + from + "\\s*\\(").test(body)) reached.add(from);
-  }
+    // A hop whose source is a MOD-LOCAL method appears in the body as a bare call (no receiver), which
+    // the native detector above cannot see. Seed those from the table itself, one enumerated name each.
+    for (const [from] of SEAM_DELEGATION_TARGETS) {
+      if (new RegExp("\\b" + from + "\\s*\\(").test(body)) reached.add(from);
+    }
     for (const [from, to] of SEAM_DELEGATION_TARGETS) if (reached.has(from)) reached.add(to);
     /**
      * The tool animation owns the native seam on a later frame. When the handler

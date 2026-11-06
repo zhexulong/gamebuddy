@@ -54,7 +54,7 @@ async function main() {
       errors.push("dist/tavern/index.js inappropriately exports raw renderer: renderGameBuddyStableContextBlock");
     }
 
-    if (!errors.some(e => e.includes("dist/tavern"))) {
+    if (!errors.some((e) => e.includes("dist/tavern"))) {
       console.log("  [PASS] tavern dist export closure verified");
     }
   } catch (err) {
@@ -80,7 +80,7 @@ async function main() {
       }
     }
 
-    if (!errors.some(e => e.includes("dist/memory"))) {
+    if (!errors.some((e) => e.includes("dist/memory"))) {
       console.log("  [PASS] memory dist export closure verified");
     }
   } catch (err) {
