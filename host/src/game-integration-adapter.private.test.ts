@@ -556,13 +556,13 @@ test("Stardew clear-hoedirt completion evidence requires exact removal fields", 
   );
 });
 
-test("Stardew chop-tree-source completion evidence requires exact terminal source transformation facts", () => {
+test("Stardew chop-tree-source completion evidence requires the felled tree plus its health pair and swing count", () => {
   const valid = {
     state: "succeeded",
     reasonCode: "tree_source_chopped",
     evidence: {
       detail:
-        "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", valid), true);
@@ -571,7 +571,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
       ...valid,
       evidence: {
         detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;drop=(O)388",
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20;drop=(O)388",
       },
     }),
     false,
@@ -581,7 +581,40 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
       ...valid,
       evidence: {
         detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=4;stump_before=false;stump_after=true;source_transformed=true",
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=4;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
+      },
+    }),
+    false,
+    "a damaged tree is not a felled one: the engine assigns a felled stump health 5",
+  );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=0;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
+      },
+    }),
+    false,
+    "a chop that reports zero swings has not touched the tree",
+  );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=0;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=1;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      },
+    }),
+    false,
+    "a tree with no remaining health was never the living target this action admits",
+  );
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
+      ...valid,
+      evidence: {
+        detail:
+          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;tree=Oak",
       },
     }),
     false,
@@ -591,17 +624,7 @@ test("Stardew chop-tree-source completion evidence requires exact terminal sourc
       ...valid,
       evidence: {
         detail:
-          "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;tree=Oak",
-      },
-    }),
-    false,
-  );
-  assert.equal(
-    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", {
-      ...valid,
-      evidence: {
-        detail:
-          "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true",
+          "target=tree chop;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
       },
     }),
     false,

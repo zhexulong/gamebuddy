@@ -65,6 +65,16 @@ internal sealed partial class ExecutionManager
     /// and the target first because an approach leg may have taken several ticks and
     /// either can have changed while walking. Terminal receipts are minted here so
     /// the in-range path and the post-approach path share one execution body.
+    ///
+    /// <para>
+    /// ONE REQUEST FELLS THE TREE. `Axe.DoFunction` swings once (Axe.cs:63-97) and `Tree.performToolAction` removes
+    /// `upgradeLevel switch { 0 => 1f, ... }` from `health` (Tree.cs:1177-1200), so a mature tree needs ten basic-axe
+    /// hits - and a one-swing action therefore cost one plan node, one engine round trip and one model decision per
+    /// hit. This body keeps swinging the same selected axe at the same tile until the engine marks the tree felled,
+    /// which is the shape `break_resource_clump` already uses for a clump and `chop_stump` for a stump. The stump is
+    /// left standing on purpose: a felled tree and a cleared stump are different terminal states and `chop_stump`
+    /// owns the second one.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
@@ -89,31 +99,96 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
             float before = tree.health.Value;
             bool stumpBefore = tree.stump.Value;
+            string treeType = tree.treeType.Value;
+            // HOW MANY HITS THE LOOP IS WILLING TO SPEND. `Tree.performToolAction` removes at least one point per swing
+            // (`upgradeLevel switch { 0 => 1f, 1 => 1.25f, ... }`, Tree.cs:1177-1200), so the ceiling of the remaining
+            // health is the worst case this tree can need at any axe tier and the +4 is the same headroom
+            // `break_resource_clump` carries for fractional health. It is a bound on ONE request's swings, not a budget
+            // on the action: a target the axe cannot finish ends in a named stop instead of a loop.
+            int swingsWorstCase = Math.Max(1, (int)Math.Ceiling(before));
+            int swingCap = swingsWorstCase + 4;
+            // The stamina red line, priced against the worst case the loop may spend. The engine does not refuse a
+            // swing for lack of stamina; it lets it run negative and then faints the actor (Game1.cs:6452), which
+            // halves next day's stamina and ends a multi-day routine. Same guard and refusal code as `chop_stump`.
+            ToolStaminaVerdict stamina = ToolStaminaGuard.Check(
+                Game1.player.Stamina,
+                ToolStaminaGuard.EstimatedCost(swingsWorstCase, Game1.player.ForagingLevel, axe.IsEfficient));
+            if (!stamina.Allowed)
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    stamina.ReasonCode,
+                    $"target={expectedTargetId};tree_type={treeType};swings_worst_case={swingsWorstCase};{stamina.Evidence}");
+
             float staminaBefore = Game1.player.Stamina;
-            UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
+            int swingCount = 0;
+            float lastHealth = before;
+            string? stoppedBy = null;
+            string stopEvidence = string.Empty;
+            // THE STOP FENCE RUNS BETWEEN SWINGS, NEVER INSIDE ONE.
+            //
+            // `UseNativeToolOnTile` is one atomic native effect, and every decision here is taken before the next one
+            // starts: nothing may inspect or interrupt a `DoFunction` call once it is underway. The fence reads the live
+            // world rather than a counter, in the order the engine can make each fact true: the target still being the
+            // SAME tree at this tile, then its felled marker (the success terminal), then the axe still being in hand,
+            // then the actor's own pass-out floor, and last the source not moving at all - a swing that takes nothing
+            // from the tree is a tool that no longer satisfies it, and never a reason to keep swinging. A Host STOP
+            // remains a receipt-boundary decision for the same reason: bridge dispatch is serialized on this game
+            // thread, so it cannot arrive between two C# statements; what can end the loop early are these world facts.
+            while (swingCount < swingCap)
+            {
+                if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? standing) || !ReferenceEquals(standing, tree))
+                {
+                    stoppedBy = "tree_changed_during_swings";
+                    stopEvidence = $"tree_at_tile={(standing is null ? "none" : standing.GetType().Name)}";
+                    break;
+                }
+                if (tree.stump.Value)
+                    break;
+                if (Game1.player.CurrentTool is not Axe held || !ReferenceEquals(held, axe))
+                {
+                    stoppedBy = "tool_no_longer_satisfies";
+                    stopEvidence = $"held={DescribeToolCategory(Game1.player.CurrentTool) ?? "none"}";
+                    break;
+                }
+                if (Game1.player.Stamina <= WorldModel.PassOutStaminaFloor)
+                {
+                    stoppedBy = $"stamina_exhausted_after_{swingCount.ToString(CultureInfo.InvariantCulture)}_swings";
+                    stopEvidence = $"stamina={Game1.player.Stamina.ToString("0.####", CultureInfo.InvariantCulture)};floor={WorldModel.PassOutStaminaFloor.ToString("0.####", CultureInfo.InvariantCulture)}";
+                    break;
+                }
+                if (swingCount > 0 && tree.health.Value >= lastHealth)
+                {
+                    stoppedBy = "tool_no_longer_satisfies";
+                    stopEvidence = $"health_before_swing={lastHealth.ToString("0.##", CultureInfo.InvariantCulture)};health_after_swing={tree.health.Value.ToString("0.##", CultureInfo.InvariantCulture)}";
+                    break;
+                }
+                lastHealth = tree.health.Value;
+                UseNativeToolOnTile(axe, location, targetX, targetY, Game1.player, staminaBefore);
+                swingCount++;
+            }
+
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
-            float expectedStaminaCost = axe.IsEfficient ? 0f : 2f - (Game1.player.ForagingLevel * 0.1f);
+            float perSwingStaminaCost = ToolStaminaGuard.PerSwingCharge(Game1.player.ForagingLevel, axe.IsEfficient);
+            // THE POSTCONDITION IS THE WORLD, not the loop's counter: read the tile again after the swings. `Axe.DoFunction`
+            // returns nothing useful about the tree, and on the swing that reaches `<= 0` the engine sets
+            // `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497) - so the felled stump is
+            // the terminal state, and a tree that is merely damaged is NOT a completed chop.
             bool sameTree = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && ReferenceEquals(afterFeature, tree);
             float after = sameTree ? tree.health.Value : float.NaN;
             bool stumpAfter = sameTree && tree.stump.Value;
-            // ONE SWING, TWO LEGAL OUTCOMES, and neither of them is a particular health value.
-            //
-            // `Axe.DoFunction` swings once (Axe.cs:63-97) and `Tree.performToolAction` removes `upgradeLevel switch { 0 => 1f,
-            // ... }` (Tree.cs:1177-1200) - so a basic axe takes a mature tree from 10 to 9. On the swing that reaches <= 0 the
-            // engine sets `stump = true; health = 5f; falling = true` and returns FALSE (Tree.cs:1489-1497), which is why the
-            // stump stays for `chop_stump` to target next.
-            //
-            // The old predicate was `after == 5f && stumpAfter`, which encoded the second outcome only - and encoded it with the
-            // engine's own felled-stump constant, so it read as if one swing had taken five points and felled the tree. A live
-            // tree therefore never satisfied it: every chop reported `tree_source_chop_postcondition_unavailable` and settled
-            // `Uncertain`. It came from a fixture that stubbed `health = 1f` so a single swing would fell it.
             bool felled = !stumpBefore && stumpAfter;
-            bool damaged = !stumpBefore && !stumpAfter && after < before;
-            bool succeeded = sameTree && (felled || damaged);
-            evidence = $"target={expectedTargetId};tool=axe;slot={selection.Slot};tree={tree.treeType.Value};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={(float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing")};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={succeeded.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-            reasonCode = succeeded ? "tree_source_chopped" : "tree_source_chop_postcondition_unavailable";
+            string healthAfterText = float.IsFinite(after) ? after.ToString("0.##", CultureInfo.InvariantCulture) : "missing";
+            // The receipt keeps ONE identity (`tree_source_chopped`) and adds the three facts the model would otherwise
+            // have to observe again: the health pair the swings moved between and how many swings it took. The Host
+            // pins this exact key set, so the stop facts below are appended on the failure path only.
+            evidence = $"target={expectedTargetId};tool=axe;slot={selection.Slot};tree={treeType};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={felled.ToString().ToLowerInvariant()};swings={swingCount.ToString(CultureInfo.InvariantCulture)};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={(perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture)}";
+            if (stoppedBy is not null)
+                evidence += $";stopped_by={stoppedBy};{stopEvidence}";
+            state = felled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = felled ? "tree_source_chopped" : stoppedBy ?? "tree_source_chop_postcondition_unavailable";
         }
         finally
         {

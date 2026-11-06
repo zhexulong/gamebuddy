@@ -1396,7 +1396,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chop_tree,
         label: "Chop Stardew Tree",
         description:
-          "Use one equipped Axe swing on a live ordinary mature tree. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only source transformation in the authoritative receipt determines completion.",
+          "Chop one live ordinary mature tree. The Mod keeps swinging the equipped Axe until the tree is felled and reports how many swings it took, so one call completes the chop. slot, x, y and expectedTargetId must be copied exactly from the treeChopSourceTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the felled tree in the authoritative receipt determines completion.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
