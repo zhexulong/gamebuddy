@@ -273,6 +273,10 @@ test("the Game data disclosure is closed by default and reveals the Host's own p
   // Closed by default: the dump is not part of the panel's reading order until
   // the player asks for it.
   expect(await disclosure.evaluate((node) => (node as HTMLDetailsElement).open)).toBe(false);
+  // Closed, the dump's own DOM is not mounted at all: a collapsed disclosure that
+  // keeps a few hundred lines of JSON in the document is still a node the layout
+  // walks and an assistive technology can reach.
+  expect(await disclosure.evaluate((node) => node.querySelector("pre") === null)).toBe(true);
 
   await disclosure.locator("summary").click();
   const dump = page.getByTestId("game-diagnostics-json");
@@ -289,6 +293,10 @@ test("the Game data disclosure is closed by default and reveals the Host's own p
   // localized player outcomes and never as the Host's raw enum spellings.
   const panelText = await page.getByTestId("game-state-panel").innerText();
   expect(panelText).not.toContain("connected_idle");
+  // Closing it again takes the dump back out of the document, so the mount follows
+  // the open state and is not a one-way flag.
+  await disclosure.locator("summary").click();
+  await expect(page.getByTestId("game-diagnostics-json")).toHaveCount(0);
 });
 
 test("composed profile renders game null honestly without exposing mutation controls", async ({ page }) => {
