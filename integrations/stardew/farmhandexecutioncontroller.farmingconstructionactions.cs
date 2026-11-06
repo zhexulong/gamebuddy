@@ -24,10 +24,14 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
-        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
+        // Ask before walking: a pack that cannot satisfy the action's own `tool:watering_can` claim is refused now
+        // rather than after an approach leg the action could never finish, and a can that needs no water is refused
+        // before the walk for the same reason. The slot the caller named is recorded, never obeyed.
+        DeclaredToolResolution can = ResolveDeclaredTool(Game1.player.Items, "refill_watering_can");
+        if (can.RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusal, slot));
+        if (Game1.player.Items[can.Slot] is not WateringCan ownedCan || ownedCan.IsBottomless || ownedCan.WaterLeft >= ownedCan.waterCanMax)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={can.Slot}");
         GameLocation location = Game1.player.currentLocation;
         if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
@@ -54,30 +58,50 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Executes refill_watering_can against the current world, re-validating the can
-    /// and the water tile because an approach leg may have taken several ticks. Shared
-    /// by the in-range path and the post-approach path.
+    /// Executes refill_watering_can against the current world, re-validating the can and the
+    /// water tile because an approach leg may have taken several ticks. The can is not the
+    /// caller's to name: the action's own registration claims `tool:watering_can`, so this
+    /// selects the best owned can it needs and restores the actor's own selection afterwards.
+    /// Shared by the in-range path and the post-approach path.
     /// </summary>
     private LocalExecutionReceipt ExecuteRefillWateringCan(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not WateringCan wateringCan || !ReferenceEquals(Game1.player.CurrentTool, wateringCan))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_equipped_in_requested_slot", $"slot={slot}");
-        if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
-        int before = wateringCan.WaterLeft;
-        int max = wateringCan.waterCanMax;
-        float staminaBefore = Game1.player.Stamina;
-        UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
-        int after = wateringCan.WaterLeft;
-        bool succeeded = ReferenceEquals(Game1.player.Items[slot], wateringCan) && before < max && after == max;
-        string evidence = $"target={expectedTargetId};slot={slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
-        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain, succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable", evidence);
+        // Selection facts are deliberately NOT published here: this action takes the can its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
+        // (`hasRefillWateringCanCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must
+        // extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "refill_watering_can", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not WateringCan wateringCan)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            if (wateringCan.IsBottomless || wateringCan.WaterLeft >= wateringCan.waterCanMax)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_not_refillable", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            if (!location.CanRefillWateringCanOnTile(targetX, targetY) || !string.Equals(BuildRefillWateringCanTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "refill_target_changed", $"target={targetX},{targetY}");
+            int before = wateringCan.WaterLeft;
+            int max = wateringCan.waterCanMax;
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeToolOnTile(wateringCan, location, targetX, targetY, Game1.player, staminaBefore);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
+            int after = wateringCan.WaterLeft;
+            bool succeeded = ReferenceEquals(Game1.player.Items[selection.Slot], wateringCan) && before < max && after == max;
+            evidence = $"target={expectedTargetId};slot={selection.Slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -1561,6 +1585,10 @@ internal sealed partial class ExecutionManager
         // identity and the postcondition stay action-specific.
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        // Ask before walking: a pack that cannot satisfy the action's own `tool:scythe` claim is refused now rather
+        // than after an approach leg the action could never finish. The slot the caller named is recorded, never obeyed.
+        if (ResolveDeclaredTool(Game1.player.Items, "scythe_crop").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusal, slot));
         if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
         {
             // Out of the native interaction radius: walk in and then swing, like `harvest_crop` and
@@ -1630,61 +1658,79 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not MeleeWeapon weapon || !weapon.isScythe() || !ReferenceEquals(Game1.player.CurrentTool, weapon))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_not_equipped_in_requested_slot", $"slot={slot}");
-        GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is null
-            || weapon.ItemId == "66"
-            || !ScytheCropTarget(
-                hasCrop: true,
-                forageCrop: dirt.crop.forageCrop.Value,
-                readyForHarvest: dirt.readyForHarvest(),
-                harvestMethod: dirt.crop.GetHarvestMethod(),
-                dead: dirt.crop.dead.Value,
-                out bool deadCrop)
-            || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
+        // Selection facts are deliberately NOT published here: this action takes the scythe its own claim declares and
+        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
+        // `scythe_crop` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
+        // Whoever adds those keys must extend that validator in the same commit.
+        if (!TrySelectDeclaredTool(Game1.player, "scythe_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusalCode, slot));
+        ExecutionState state;
+        string reasonCode;
+        string evidence;
+        try
+        {
+            if (selection.Tool is not MeleeWeapon weapon || !weapon.isScythe())
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
+            GameLocation location = Game1.player.currentLocation;
+            Vector2 tile = new(targetX, targetY);
+            if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
+                || dirt.crop is null
+                || weapon.ItemId == "66"
+                || !ScytheCropTarget(
+                    hasCrop: true,
+                    forageCrop: dirt.crop.forageCrop.Value,
+                    readyForHarvest: dirt.readyForHarvest(),
+                    harvestMethod: dirt.crop.GetHarvestMethod(),
+                    dead: dirt.crop.dead.Value,
+                    out bool deadCrop)
+                || !string.Equals(BuildScytheCropTargetId(location, targetX, targetY, dirt.crop), expectedTargetId, StringComparison.Ordinal))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "scythe_crop_target_unavailable", $"target={targetX},{targetY}");
 
-        StardewValley.Crop crop = dirt.crop;
-        string? harvestId = crop.indexOfHarvest.Value;
-        string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
-        string? harvestQualifiedItemId = harvestId is null ? null : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
-        // Native scythe harvest drops the crop as ground debris
-        // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
-        // into the player inventory, and HoeDirt.performToolAction always
-        // returns false for this path. The real postcondition is therefore
-        // crop-gone + a matching ground drop, not inventory growth.
-        //
-        // A DEAD crop takes the engine's other branch (HoeDirt.cs:732-735): destroyCrop and no drop at all,
-        // because Crop.harvest refuses a dead crop outright (Crop.cs:484-491). Its postcondition is the one
-        // thing that branch guarantees - the crop is gone - and it promises nothing to the pack.
-        int debrisBefore = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
-        float staminaBefore = Game1.player.Stamina;
-        dirt.performToolAction(weapon, 0, tile);
+            StardewValley.Crop crop = dirt.crop;
+            string? harvestId = crop.indexOfHarvest.Value;
+            string? cropSeedId = crop.netSeedIndex.Value ?? harvestId;
+            string? harvestQualifiedItemId = harvestId is null ? null : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
+            // Native scythe harvest drops the crop as ground debris
+            // (Crop.harvest Scythe branch calls Game1.createItemDebris), never
+            // into the player inventory, and HoeDirt.performToolAction always
+            // returns false for this path. The real postcondition is therefore
+            // crop-gone + a matching ground drop, not inventory growth.
+            //
+            // A DEAD crop takes the engine's other branch (HoeDirt.cs:732-735): destroyCrop and no drop at all,
+            // because Crop.harvest refuses a dead crop outright (Crop.cs:484-491). Its postcondition is the one
+            // thing that branch guarantees - the crop is gone - and it promises nothing to the pack.
+            int debrisBefore = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+            float staminaBefore = Game1.player.Stamina;
+            dirt.performToolAction(weapon, 0, tile);
 
-        int debrisAfter = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
-        bool debrisGained = debrisAfter > debrisBefore;
-        // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
-        // terrainFeature, so the postcondition is crop-gone (crop is null or
-        // the HoeDirt itself was removed), not HoeDirt-gone.
-        bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
-            || !ReferenceEquals(afterFeature, dirt)
-            || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
-        float staminaAfter = Game1.player.Stamina;
-        float staminaDelta = staminaAfter - staminaBefore;
-        // Scythe harvest goes through HoeDirt.performToolAction with a MeleeWeapon;
-        // no native path deducts stamina for a melee swing, so the expected
-        // embodied cost is exactly zero.
-        float expectedStaminaCost = 0f;
-        // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
-        bool succeeded = cropGone && (deadCrop || debrisGained);
-        string evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
-        if (!succeeded)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "scythe_crop_harvest_postcondition_unavailable", evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, deadCrop ? "dead_crop_cleared" : "scythe_crops_harvested", evidence);
+            int debrisAfter = harvestQualifiedItemId is null ? 0 : location.debris.Count(entry => entry?.item?.QualifiedItemId == harvestQualifiedItemId);
+            bool debrisGained = debrisAfter > debrisBefore;
+            // native HoeDirt.destroyCrop() clears crop but keeps the HoeDirt
+            // terrainFeature, so the postcondition is crop-gone (crop is null or
+            // the HoeDirt itself was removed), not HoeDirt-gone.
+            bool cropGone = !location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature)
+                || !ReferenceEquals(afterFeature, dirt)
+                || ((StardewValley.TerrainFeatures.HoeDirt)afterFeature).crop is null;
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // Scythe harvest goes through HoeDirt.performToolAction with a MeleeWeapon;
+            // no native path deducts stamina for a melee swing, so the expected
+            // embodied cost is exactly zero.
+            float expectedStaminaCost = 0f;
+            // The dead branch clears and drops nothing; the harvest branch must also have produced its debris.
+            bool succeeded = cropGone && (deadCrop || debrisGained);
+            evidence = $"target={expectedTargetId};crop={cropSeedId ?? "unknown"};harvested_item={harvestQualifiedItemId ?? "none"};crop_dead={deadCrop.ToString().ToLowerInvariant()};debris_before={debrisBefore};debris_after={debrisAfter};crop_removed={cropGone.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};native_scythe={debrisGained.ToString().ToLowerInvariant()}";
+            state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = !succeeded
+                ? "scythe_crop_harvest_postcondition_unavailable"
+                : deadCrop ? "dead_crop_cleared" : "scythe_crops_harvested";
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>

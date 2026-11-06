@@ -181,12 +181,13 @@ public static class FarmhandActionCatalog
     });
 
     /// <summary>
-    /// The SAME claim shape as <see cref="EmbodiedActorResource"/>, with the TOOL the handler requires the actor to be
-    /// holding as its subject: `tool:&lt;category&gt;` plus the upgrade-level requirement that handler enforces. It is a
-    /// resource claim and not a new descriptor field because it names a native resource the action needs; the one
-    /// fact the Host cannot derive from the world and therefore could not plan around (it used to guess, then eat a
+    /// The SAME claim shape as <see cref="EmbodiedActorResource"/>, with the TOOL the handler needs as its subject:
+    /// `tool:&lt;category&gt;` plus the upgrade-level requirement that handler enforces. It is a resource claim and not a
+    /// new descriptor field because it names a native resource the action needs; the one fact the Host cannot derive
+    /// from the world and therefore could not plan around (it used to guess, then eat a
     /// `*_not_equipped_in_requested_slot` refusal). Category vocabulary is <see cref="FarmhandActionCatalog.ToolEnum"/>,
-    /// the same one `equip_tool` selects on, so a planner can satisfy the claim with the action it already has.
+    /// the same one `equip_tool` selects on, so a planner can satisfy the claim with the action it already has - and
+    /// the handler takes that tool out of the pack instead of requiring it in the actor's hand.
     /// </summary>
     private static IReadOnlyList<FarmhandActionResourceTemplateClaim> ToolResource(string category, FarmhandResourceTemplateValue upgrade) => Array.AsReadOnly(new[]
     {
@@ -373,7 +374,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.
         E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
-        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
+        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SlotTargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
@@ -399,8 +400,8 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.Experimental, "farmAnimalPetTargets"),
-        E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),
-        E("water_slime_hutch_trough", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Target(), FarmhandActionLifecycle.LiveVerified, "slimeHutchTroughTargets"),
+        E("water_pet_bowl", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified, "petBowlTargets"),
+        E("water_slime_hutch_trough", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, TargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), FarmhandActionLifecycle.LiveVerified, "slimeHutchTroughTargets"),
         E("interact_npc_with_item", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SlotItemTarget(), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         // Talking is the OTHER half of NPC.checkAction (NPC.cs:2464) and is its own
         // action rather than an optional argument on the gift action, because the
@@ -436,7 +437,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // mailbox claim is the TALK/claim verb on a map Action tile. All three stay
         // Experimental until each passes its own native-local live gate.
         E("use_warp_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "warp_item_arrived", "Object.performUseAction"), FarmhandActionLifecycle.LiveVerified, "warpItemTargets"),
-        E("pan_ore", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, ToolSlotMeaning), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "ore_panned", "Pan.DoFunction"), FarmhandActionLifecycle.LiveVerified, "panSites"),
+        E("pan_ore", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, AutoSelectedToolSlotMeaning), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer") }, new Dictionary<string, string>(), ToolResource("pan", FarmhandResourceTemplateValue.AnyUpgrade), "write", "ore_panned", "Pan.DoFunction"), FarmhandActionLifecycle.LiveVerified, "panSites"),
         E("claim_mail_attachment", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mail_claimed", "GameLocation.mailbox"), FarmhandActionLifecycle.LiveVerified, "mailboxTargets"),
         // The building-chest pair. Some buildings declare their OWN storage in Data/Buildings
         // (BuildingData.Chests: the Mill's Input/Output, the Junimo Hut's Output), reached by
@@ -450,7 +451,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // to LiveVerified is a separate catalog edit owned by the parent.
         E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestLoad(), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
         E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, BuildingChestCollect(), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
-        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTarget(ToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
+        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Target(), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),
@@ -649,6 +650,15 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// its handler selects the tool its own claim names and restores the actor's selection afterwards, so a slot that
     /// differs from `currentToolSlot` is recorded rather than refused. `InventoryAddressabilityTests` reads each published
     /// claim and fails when an action's slot description and its enforcement disagree.
+    /// </para>
+    ///
+    /// <para>
+    /// WHO STILL PUBLISHES THIS SENTENCE, and why it is a gap rather than a design: the five actions whose requirement is
+    /// a native PREDICATE rather than a category - `clear_cask` and `break_container` (any `isHeavyHitter()` tool),
+    /// `remove_placed_item` (an Axe OR a Pickaxe), `toggle_tool_light` (a Lantern) and `use_raft` (a Raft). A
+    /// `tool:&lt;category&gt;` claim names one category and cannot say "any of these", so those handlers still demand the
+    /// hand. `ToolPreconditionUniformityTests.TheActionsWhoseToolRequirementIsAPredicateAreNamed` prints them on every
+    /// run; that list shrinking is the measure of this gap closing, and it is what stops the sentence from spreading.
     /// </para>
     /// </summary>
     private const string ToolSlotMeaning = "The TOOL's backpack slot, which must also be `snapshot.currentToolSlot`: the tool family validates `CurrentToolIndex == slot` and the tool's own type. `equipFor` writes the equip step and answers this slot for you.";
