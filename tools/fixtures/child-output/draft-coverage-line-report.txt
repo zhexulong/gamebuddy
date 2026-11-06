@@ -1,0 +1,61 @@
+
+Running 1 test using 1 worker
+
+[1A[2K[1/1] [chromium] › tests\draft-declaration-coverage.spec.ts:293:3 › every text field the product renders is a declared draft surface › the population the draft journey walks is the population the product renders
+[1A[2K[chromium] › tests\draft-declaration-coverage.spec.ts:293:3 › every text field the product renders is a declared draft surface › the population the draft journey walks is the population the product renders
+SURFACES [{"name":"chat","label":"Chat","testId":"chat-surface"},{"name":"game","label":"Game","testId":"game-surface"},{"name":"chats","label":"Chats","testId":"chats-surface"},{"name":"characters","label":"Characters","testId":"characters-surface"},{"name":"settings","label":"Settings","testId":"settings-surface"},{"name":"memory","label":"Memory","testId":"memory-surface"}]
+
+[1A[2KINVENTORY chat: ["textarea[data-testid]","textarea[aria-label=\"Type a message to your companion… (Enter to send, Shift+Enter for newline)\"]"] revealers=["button[data-testid=\"message-edit\"]"] onArrival=2
+
+[1A[2KMEASURE chat: fields=2 revealers=1 openers=5 openers_pressed=5 revealing=1 elapsedMs=932
+
+[1A[2KINVENTORY game: [] revealers=[] onArrival=0
+
+[1A[2KUNASSESSED-SURFACE game: every field the Game surface renders is inside its own creation form, which is a disclosure the player opens deliberately and answers with one Create; the creation form's binding id is the one text field there and is gated by game-presentation, not by a draft that outlives a surface
+
+[1A[2KINVENTORY chats: ["input[data-testid]"] revealers=["button[data-draft-revealer]"] onArrival=1
+
+[1A[2KMEASURE chats: fields=1 revealers=1 openers=7 openers_pressed=4 revealing=1 elapsedMs=794
+
+[1A[2KINVENTORY characters: ["input[aria-label=\"New companion\"]","textarea[aria-label=\"Paste card text\"]","#character-voice-text","#persona-name","#persona-description","#scenario-name","#scenario-description","#opening-label","#opening-variant-0-text","#companion-world-book-entry-0-title","#companion-world-book-entry-0-keys","#companion-world-book-entry-0-body","#world-book-item-title","#world-book-item-summary","#world-book-entry-0-title","#world-book-entry-0-summary","#world-book-entry-0-keys","#world-book-entry-0-secondary-keys"] revealers=["button[data-companion-world-book-edit]","button[data-world-book-create]"] onArrival=18
+
+
+[1A[2Kunassessed: characters :: button[data-companion-world-book-edit] — declared, and pressing it revealed no field outside the arrival population
+
+[1A[2Kunassessed: characters :: button[data-world-book-create] — declared, and pressing it revealed no field outside the arrival population
+
+[1A[2KMEASURE characters: fields=18 revealers=2 openers=23 openers_pressed=18 revealing=1 elapsedMs=8057
+
+[1A[2KINVENTORY settings: ["#companion-language","#model-profile-level-chat","#model-profile-level-game","#game-prompt-addition"] revealers=[] onArrival=4
+
+[1A[2KMEASURE settings: fields=4 revealers=0 openers=1 openers_pressed=0 revealing=0 elapsedMs=3579
+
+[1A[2KINVENTORY memory: ["input[data-memory-search]","textarea[aria-label=\"Memory content: Semantic memory\"]","textarea[aria-label=\"Memory content\"]"] revealers=["button[data-draft-revealer]"] onArrival=3
+
+[1A[2KMEASURE memory: fields=3 revealers=1 openers=3 openers_pressed=3 revealing=0 elapsedMs=812
+
+[1A[2KMEASURE inventory [{"surface":"chat","key":"textarea[data-testid]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"chat","key":"textarea[aria-label=\"Type a message to your companion… (Enter to send, Shift+Enter for newline)\"]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"game","key":"(no text field)","status":"exempt","note":"every field the Game surface renders is inside its own creation form, which is a disclosure the player opens deliberately and answers with one Create; the creation form's binding id is the one text field there and is gated by game-presentation, not by a draft that outlives a surface"},{"surface":"chats","key":"input[data-testid]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"input[aria-label=\"New companion\"]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"textarea[aria-label=\"Paste card text\"]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#character-voice-text","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#persona-name","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#persona-description","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#scenario-name","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#scenario-description","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#opening-label","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#opening-variant-0-text","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#companion-world-book-entry-0-title","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#companion-world-book-entry-0-keys","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#companion-world-book-entry-0-body","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-item-title","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-item-summary","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-entry-0-title","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-entry-0-summary","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-entry-0-keys","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"#world-book-entry-0-secondary-keys","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"characters","key":"button[data-companion-world-book-edit]","status":"declared","note":"declared, and pressing it revealed no field outside the arrival population"},{"surface":"characters","key":"button[data-world-book-create]","status":"declared","note":"declared, and pressing it revealed no field outside the arrival population"},{"surface":"characters","key":"#world-book-entry-1-title","status":"exempt","note":"it adds a ROW to the book the editor already drafts whole, and it stays on screen rather than replacing itself, so it cannot be a revealer: the row's title, summary and keys are the same `characters.world-book-item` draft the row above them is"},{"surface":"characters","key":"#world-book-entry-1-summary","status":"exempt","note":"it adds a ROW to the book the editor already drafts whole, and it stays on screen rather than replacing itself, so it cannot be a revealer: the row's title, summary and keys are the same `characters.world-book-item` draft the row above them is"},{"surface":"characters","key":"#world-book-entry-1-keys","status":"exempt","note":"it adds a ROW to the book the editor already drafts whole, and it stays on screen rather than replacing itself, so it cannot be a revealer: the row's title, summary and keys are the same `characters.world-book-item` draft the row above them is"},{"surface":"characters","key":"#world-book-entry-1-secondary-keys","status":"exempt","note":"it adds a ROW to the book the editor already drafts whole, and it stays on screen rather than replacing itself, so it cannot be a revealer: the row's title, summary and keys are the same `characters.world-book-item` draft the row above them is"},{"surface":"settings","key":"#companion-language","status":"declared","note":"on arrival"},{"surface":"settings","key":"#model-profile-level-chat","status":"declared","note":"on arrival"},{"surface":"settings","key":"#model-profile-level-game","status":"declared","note":"on arrival"},{"surface":"settings","key":"#game-prompt-addition","status":"declared","note":"on arrival"},{"surface":"memory","key":"input[data-memory-search]","status":"exempt","note":"a filter over rows already in hand: it selects nothing and authors nothing, so re-typing it costs one keystroke rather than work"},{"surface":"memory","key":"textarea[aria-label=\"Memory content: Semantic memory\"]","status":"declared","note":"on arrival; revealed editors are declared"},{"surface":"memory","key":"textarea[aria-label=\"Memory content\"]","status":"declared","note":"on arrival; revealed editors are declared"}]
+
+[1A[2Kunassessed: game — every field the Game surface renders is inside its own creation form, which is a disclosure the player opens deliberately and answers with one Create; the creation form's binding id is the one text field there and is gated by game-presentation, not by a draft that outlives a surface
+
+[1A[2Kunassessed: #connection-api-key — outside this gate's population; the retention journey keeps this exemption honest
+
+[1A[2Kunassessed: #ui-language — outside this gate's population; the retention journey keeps this exemption honest
+
+[1A[2Kunassessed: #voice-output-device — outside this gate's population; the retention journey keeps this exemption honest
+
+[1A[2Kunassessed: #voice-persona — outside this gate's population; the retention journey keeps this exemption honest
+
+frontend_coverage group=wire modules=4 lines=7347 covered=5019 pct=68.31 floor=87%
+  68.31% (5019/7347) over 4 module(s), floor 87%
+  unreached: pi-settings-model.ts
+frontend_coverage group=catalogue modules=3 lines=3148 covered=3125 pct=99.27 floor=98%
+  99.27% (3125/3148) over 3 module(s), floor 98%
+frontend_coverage group=rendered modules=30 lines=16357 covered=10292 pct=62.92 floor=86%
+  62.92% (10292/16357) over 30 module(s), floor 86%
+frontend_coverage group=state modules=16 lines=3309 covered=2641 pct=79.81 floor=80%
+  79.81% (2641/3309) over 16 module(s), floor 80%
+frontend_coverage measured=52/53 modules journeys=1/77 verdict=partial summary=coverage/summary.json
+frontend_coverage partial run: floors not applied
+[1A[2K  1 passed (20.8s)
+[1A[2K[2m[WebServer] [22m[2m12:12:54[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [2m[console.error] [22mEncountered two children with the same key, `world-book-row-1`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version.
