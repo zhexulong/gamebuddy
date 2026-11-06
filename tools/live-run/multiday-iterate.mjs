@@ -14,7 +14,7 @@
  * that from a defect.
  */
 import { spawnSync } from "node:child_process";
-import { cleanOutputLines } from "../../lib/subprocess-output.mjs";
+import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
