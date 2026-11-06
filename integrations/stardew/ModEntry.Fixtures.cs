@@ -2079,6 +2079,24 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             return;
         }
 
+        if (fixture.FixtureScenario == "native_rotate_furniture_v1")
+        {
+            // Establish ONLY the declared Given: two pieces of the game's own furniture standing beside
+            // the actor - one whose own data allows a turn (`rotations >= 2`) and one whose data does
+            // not - chosen and asserted through the product's own predicates. Production alone turns the
+            // first one and refuses the second; this fixture emits no receipt.
+            InitializeNativeLocalRotateFurnitureFixture(player, farm);
+            return;
+        }
+
+        if (fixture.FixtureScenario == "native_remove_fence_v1")
+        {
+            // Establish ONLY the declared Given: one placed wood fence beside a standable tile, the actor
+            // standing on it, and an axe equipped in the slot the request names. Production alone swings.
+            InitializeNativeLocalRemoveFenceFixture(player, farm);
+            return;
+        }
+
         if (fixture.FixtureScenario == "native_accept_special_order_v1")
         {
             // Establish ONLY the declared Given: the team offers exactly one special order no board has
