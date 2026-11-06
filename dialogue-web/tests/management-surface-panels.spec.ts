@@ -14,6 +14,7 @@
  * for the profile ids that exist: only `composed-reference-game` is mounted.
  */
 import { type Locator, type Page, expect, test } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -265,6 +266,70 @@ test("the Chats rename editor saves on Enter and dismisses on Escape, and each g
   for (const step of ["dismissed", "saved"] as const)
     expect(log[step], `${step}: focus returns to the pencil that opened the field`).toEqual({ tag: "button", name: "Rename Chat" });
   await expect(surface.getByTestId("chat-select")).toHaveText("A chat renamed by keyboard");
+});
+
+/**
+ * A refused rename keeps the title the player typed, in the editor they typed it in.
+ *
+ * The handler cleared the draft and closed the editor BEFORE it sent `chat/title`, so every refusal
+ * - a stale revision, a dead connection, a refusal the Host named - spent the player's words on a
+ * rename that never happened, and the retry was a retyped title. It is the rule the product already
+ * holds itself to (AGENTS.md, "Draft preservation": user input is never discarded on an API,
+ * validation or network failure), and the editor now closes on the one fact that says the rename
+ * landed.
+ */
+test("a refused rename keeps the typed title in the editor it was typed in", async ({ page }) => {
+  const catalogue = messages("en");
+  const TYPED_TITLE = "A title the Host refused";
+  const titleWrites: unknown[] = [];
+  let rootTitle: string | null = null;
+
+  const root = () => ({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: rootTitle } } });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(root())));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(root())));
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(json200(composedDraft)));
+  await page.route("**/api/tavern/v1/chats?*", (route) =>
+    route.fulfill(
+      json200({
+        apiVersion: 1,
+        chats: [
+          { handle: chatHandle, title: rootTitle, status: "active", managementRevision: 1, isSelected: true, updatedAtMs: 1_760_000_000_000, preview: null },
+        ],
+      }),
+    ),
+  );
+  await page.route("**/api/tavern/v1/chat/title", (route) => {
+    titleWrites.push(route.request().postDataJSON());
+    return route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        type: "about:blank",
+        title: "Refused",
+        status: 409,
+        code: "state_reconciliation_required",
+        requestId: csrfToken,
+        retryable: false,
+      }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const surface = page.getByTestId("chats-surface");
+  await surface.getByTitle("Rename Chat").click();
+  const field = surface.getByTestId("chat-rename-field");
+  await field.fill(TYPED_TITLE);
+  await surface.getByRole("button", { name: "Save" }).click();
+
+  // The press really left the page and the Host really refused it: the editor's survival has to be a
+  // fact about a failed save, not about a press that never happened.
+  await expect.poll(() => titleWrites.length).toBe(1);
+  await expect(field).toBeVisible();
+  await expect(field).toHaveValue(TYPED_TITLE);
+  // The refusal is stated beside the words it kept, and nothing claimed the rename landed.
+  await expect(surface.getByRole("status")).toContainText(catalogue.problemReconciliationFailedDetail);
+  expect(rootTitle, "a refused rename is not shown as the row's own title").toBeNull();
 });
 
 /**
@@ -3216,3 +3281,71 @@ for (const operation of ["archive", "trash"] as const) {
     await expect(surface.getByTestId("chat-item").first()).toHaveAttribute("data-selected", "true");
   });
 }
+
+/**
+ * A Chats list that could not be read says so, and offers that read again.
+ *
+ * The failed branch rendered one sentence - `labels.failure` - and nothing else, so the only way to
+ * ask the Host again was reloading the page, which also discarded the surface's own companion and
+ * settings reads. The retry is the read that failed (`api.listChats`), and it is named with the
+ * catalogue's own "Read it again" rather than a fifth word for retry.
+ */
+test("a Chats list that could not be read offers the read again", async ({ page }) => {
+  let failing = true;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedRoot) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composedDraft) }),
+  );
+  await page.route("**/api/tavern/v1/chats?*", (route) => {
+    if (failing)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/problem+json",
+        body: JSON.stringify({
+          type: "about:blank",
+          title: "Runtime unavailable",
+          status: 503,
+          code: "runtime_unavailable",
+          requestId: csrfToken,
+          retryable: true,
+        }),
+      });
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        apiVersion: 1,
+        chats: [
+          {
+            handle: chatHandle,
+            title: null,
+            status: "active",
+            managementRevision: 1,
+            isSelected: true,
+            updatedAtMs: 1_760_000_000_000,
+            preview: null,
+          },
+        ],
+      }),
+    });
+  });
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const surface = page.getByTestId("chats-surface");
+  const failed = surface.locator("[data-chat-list-unavailable]");
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText("Operation failed.");
+
+  failing = false;
+  const reread = page.waitForRequest((request) => request.url().includes("/api/tavern/v1/chats"));
+  await failed.locator("[data-chat-list-retry]").click();
+  await reread;
+  await expect(surface.locator("[data-chat-list-unavailable]")).toHaveCount(0);
+  await expect(surface.getByTestId("chat-select")).toHaveText("New chat 1");
+});

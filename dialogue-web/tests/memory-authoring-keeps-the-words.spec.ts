@@ -79,6 +79,17 @@ const sealedChapter = {
   editedByPlayer: false,
 };
 
+/** One memory the Host already holds, so a row exists to correct on arrival. */
+const storedMemory = {
+  handle: "R".repeat(42) + "A",
+  title: "Semantic memory",
+  content: "A stored memory the Host already holds.",
+  category: "semantic",
+  status: "active",
+  origin: "player",
+  pinned: false,
+};
+
 type Command = Readonly<{ operation: string; content?: string; handle?: string }>;
 
 /**
@@ -90,11 +101,16 @@ type Command = Readonly<{ operation: string; content?: string; handle?: string }
  */
 async function stubMemory(
   page: Page,
-  options: Readonly<{ refusals: number; refusal: unknown | "offline"; rereadFails?: boolean }>,
+  options: Readonly<{
+    refusals: number;
+    refusal: unknown | "offline";
+    rereadFails?: boolean;
+    seedMemories?: ReadonlyArray<Record<string, unknown>>;
+  }>,
 ): Promise<{ writes: Command[] }> {
   const writes: Command[] = [];
   let reads = 0;
-  let memories: ReadonlyArray<Record<string, unknown>> = [];
+  let memories: ReadonlyArray<Record<string, unknown>> = options.seedMemories ?? [];
   let chapters: ReadonlyArray<Record<string, unknown>> = [sealedChapter];
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
@@ -138,6 +154,12 @@ async function stubMemory(
           pinned: false,
         },
       ];
+    // A corrected memory: the projection the Host answers with is the new body, so a save that
+    // landed is read back rather than assumed.
+    if (command.operation === "update")
+      memories = memories.map((memory) =>
+        memory.handle === command.handle ? { ...memory, content: command.content } : memory,
+      );
     // The Host's answer to a correction: the body and the provenance change, the chapter's lifecycle does
     // not. It is still the chapter the fold sealed - only the words in it are now the player's.
     if (command.operation === "update_chapter")
@@ -277,6 +299,29 @@ test.describe("the player's correction of a chapter", () => {
     await expect(panel.locator('[data-memory-chapter-badge="sealed"]')).toHaveText(catalogue.memoryChapterSealed);
   });
 
+  test("a correction survives leaving the surface and coming back", async ({ page }) => {
+    // The failure this catches: the open row and the player's words were this panel's own
+    // `useState`, and the shell renders every surface conditionally (`shownSurface === …`), so
+    // looking at Settings unmounted the corrigible row with the half-typed correction in it - and
+    // the chapter came back CLOSED, which does not lose the words so much as make them
+    // unreachable. Both facts are the shell's drafts now, keyed by the chapter's own handle.
+    await stubMemory(page, { refusals: 0, refusal: "offline" });
+    const surface = await openMemory(page);
+    const panel = surface.locator("[data-memory-chapters]");
+    await panel.getByRole("button", { name: catalogue.memoryChapterEdit, exact: true }).click();
+    await panel.locator("textarea").fill(SENTINEL_CHAPTER);
+
+    await page.getByRole("button", { name: catalogue.settingsPanel, exact: true }).click();
+    await expect(page.getByTestId("settings-surface")).toBeVisible();
+    await page.getByRole("button", { name: catalogue.memoryPanel, exact: true }).click();
+    await expect(surface).toBeVisible();
+
+    // The surface re-read her notebook on the way back, and the player's correction still wins over
+    // what the projection seeded the editor with.
+    await expect(panel.getByRole("button", { name: catalogue.memoryChapterSave, exact: true })).toBeVisible();
+    await expect(panel.locator("textarea")).toHaveValue(SENTINEL_CHAPTER);
+  });
+
   test("a correction lost before the Host answered keeps its draft too", async ({ page }) => {
     const stub = await stubMemory(page, { refusals: 1, refusal: "offline" });
     const surface = await openMemory(page);
@@ -291,5 +336,48 @@ test.describe("the player's correction of a chapter", () => {
     await expect(draft).toBeVisible();
     await expect(draft).toHaveValue(SENTINEL_CHAPTER);
     await expect(panel.locator("[data-memory-chapter-refusal]")).toHaveText(catalogue.failure);
+  });
+});
+
+/**
+ * One memory's correction, held by the shell for the same reason the chapter's is.
+ *
+ * `MemoryRow` was the last of these editors still holding its words in its own `useState`, and the
+ * panel is rendered only while Memory is the selected surface - so a correction the player was
+ * part-way through came back CLOSED, the row showing what the Host holds and the words out of reach.
+ * The editor and the text are the shell's drafts now, keyed by the row's own handle.
+ */
+test.describe("the player's correction of one memory", () => {
+  test("a correction of a row survives leaving the surface and coming back", async ({ page }) => {
+    await stubMemory(page, { refusals: 0, refusal: "offline", seedMemories: [storedMemory] });
+    const surface = await openMemory(page);
+    const row = surface.locator(`[data-memory-handle="${storedMemory.handle}"]`);
+    await row.getByRole("button", { name: catalogue.editMemory, exact: true }).click();
+    await row.locator("textarea").fill(SENTINEL_MEMORY);
+
+    await page.getByRole("button", { name: catalogue.settingsPanel, exact: true }).click();
+    await expect(page.getByTestId("settings-surface")).toBeVisible();
+    await page.getByRole("button", { name: catalogue.memoryPanel, exact: true }).click();
+    await expect(surface).toBeVisible();
+
+    // The surface re-read the notebook on the way back and re-seeded the row with what the Host
+    // holds; the editor is open and holds the player's own correction, not that seed.
+    await expect(row.locator("textarea")).toHaveValue(SENTINEL_MEMORY);
+  });
+
+  test("a landed correction hands the editor back to the Host's own words", async ({ page }) => {
+    const stub = await stubMemory(page, { refusals: 0, refusal: "offline", seedMemories: [storedMemory] });
+    const surface = await openMemory(page);
+    const row = surface.locator(`[data-memory-handle="${storedMemory.handle}"]`);
+
+    await row.getByRole("button", { name: catalogue.editMemory, exact: true }).click();
+    await row.locator("textarea").fill(SENTINEL_MEMORY);
+    await row.getByRole("button", { name: catalogue.save, exact: true }).click();
+    await expect.poll(() => stub.writes.length).toBe(1);
+
+    // The save landed, so the editor closes and the row reads the projection again - a draft that
+    // outlived its own save would pin the row to a copy of what the Host already says.
+    await expect(row.locator("textarea")).toHaveCount(0);
+    await expect(row.locator("p")).toContainText(SENTINEL_MEMORY);
   });
 });

@@ -1313,15 +1313,26 @@ export function MemoryPanel({
   // panel unmounts whenever the player looks at another surface, and a form that re-opens collapsed
   // puts the words the player typed out of reach even when they still exist.
   const authoringOpen = useOpenDraft("memory.authoring-open", false);
-  // Which chapter is being corrected, and the player's draft for it. The draft is
-  // per-open, so switching chapters never carries one draft into another.
-  const [correctingHandle, setCorrectingHandle] = useState<string | null>(null);
-  const [chapterDraft, setChapterDraft] = useState("");
-  // Why the last chapter save was refused, shown beside the draft that is still in the field.
-  const [chapterRefusal, setChapterRefusal] = useState<string | null>(null);
-  const [chapterSaving, setChapterSaving] = useState(false);
+  // Which chapter is being corrected, and the player's own words for it. Both are the SHELL's, for
+  // the reason the world book's editor is: this panel unmounts whenever the player looks at another
+  // surface (`shownSurface === …` in `ComposedReferenceGameApp`), so a `useState` here took a
+  // half-typed correction with it and brought the row back CLOSED - which does not lose the words so
+  // much as make them unreachable. The open row is keyed by the chapter's own handle and its words by
+  // that same handle, so a correction belongs to the chapter it was typed on and reopening finds it
+  // where it was left. `""` is no row, because a chapter handle is never empty.
+  const chapterEditOpen = useChoiceDraft<string>("memory.chapter-open", "");
   const rows = memoryView.kind === "ready" ? memoryView.rows : [];
   const chapters = memoryView.kind === "ready" || memoryView.kind === "empty" ? memoryView.chapters : [];
+  /** The chapter whose correction is open, or `null` when no row is (or its row is gone). */
+  const openChapter = chapters.find((chapter) => chapter.handle === chapterEditOpen.value) ?? null;
+  const correctingHandle = openChapter === null ? null : openChapter.handle;
+  // Seeded from the open chapter's own body, so an untouched editor shows what the Host holds and a
+  // correction the player typed WINS over it until the save that carries it lands.
+  const chapterDraft = useDraft(`memory.chapter.${correctingHandle ?? "closed"}`, openChapter?.content ?? "");
+  // Why the last chapter save was refused, shown beside the draft that is still in the field. The
+  // refusal is a fact about one request rather than the player's words, so it stays with the mount.
+  const [chapterRefusal, setChapterRefusal] = useState<string | null>(null);
+  const [chapterSaving, setChapterSaving] = useState(false);
   const needle = search.trim().toLowerCase();
   const visibleRows = rows.filter(
     (item) =>
@@ -1422,8 +1433,8 @@ export function MemoryPanel({
                       <textarea
                         className="form-textarea"
                         aria-label={labels.memoryChapterEdit}
-                        value={chapterDraft}
-                        onChange={(event) => setChapterDraft(event.target.value)}
+                        value={chapterDraft.value}
+                        onChange={(event) => chapterDraft.type(event.target.value)}
                         rows={3}
                       />
                       {/* The refusal sits under the draft it is about: the words stay in the
@@ -1437,19 +1448,24 @@ export function MemoryPanel({
                         <button
                           type="button"
                           className="small-button"
-                          disabled={chapterSaving || chapterDraft.trim().length === 0}
+                          disabled={chapterSaving || chapterDraft.value.trim().length === 0}
                           onClick={() => {
+                            const sent = chapterDraft.value;
                             setChapterSaving(true);
                             void (async () => {
                               const outcome = await onMutate({
                                 operation: "update_chapter",
                                 handle: chapter.handle,
-                                content: chapterDraft,
+                                content: sent,
                               });
                               setChapterSaving(false);
                               if (outcome.kind === "saved") {
                                 setChapterRefusal(null);
-                                setCorrectingHandle(null);
+                                // Released only if the field still holds what this save sent: text typed
+                                // during the request is the player's, and the editor keeps it for the
+                                // retry rather than closing over it.
+                                chapterDraft.release(sent);
+                                chapterEditOpen.clear();
                               } else setChapterRefusal(outcome.text);
                             })();
                           }}
@@ -1461,7 +1477,8 @@ export function MemoryPanel({
                           className="small-button"
                           onClick={() => {
                             setChapterRefusal(null);
-                            setCorrectingHandle(null);
+                            chapterDraft.clear();
+                            chapterEditOpen.clear();
                           }}
                         >
                           {labels.memoryChapterCancel}
@@ -1482,9 +1499,8 @@ export function MemoryPanel({
                         type="button"
                         className="small-button"
                         onClick={() => {
-                          setChapterDraft(chapter.content);
                           setChapterRefusal(null);
-                          setCorrectingHandle(chapter.handle);
+                          chapterEditOpen.type(chapter.handle);
                         }}
                       >
                         {labels.memoryChapterEdit}

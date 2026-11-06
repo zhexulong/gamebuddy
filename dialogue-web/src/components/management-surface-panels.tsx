@@ -133,6 +133,9 @@ type ChatListEntry = Readonly<{
 
 type ChatListView = readonly ChatListEntry[] | "loading" | "error";
 
+/** One choice in the opening picker: her authored opening, and the id this read minted for it. */
+type OpeningOption = Readonly<{ label: string | null; text: string; optionId: string }>;
+
 function chatListRows(view: ChatListView): readonly ChatListEntry[] {
   return view === "loading" || view === "error" ? [] : view;
 }
@@ -312,13 +315,12 @@ export function ChatsSurfacePanel({
   // greeting message 0 before it claims success, and the created Chat is NOT the mounted one.
   const [created, setCreated] = useState<Readonly<{ opening: string }> | null>(null);
   const [creating, setCreating] = useState(false);
-  // The companion's own greeting set, as `greeting.read` publishes it. `null` is "there is nothing
-  // here to choose" - the companion has no record, the read failed, or she has exactly one opening -
-  // and the New Chat control then stays the single button it has always been: an affordance with one
-  // option is worse than none.
-  const [openings, setOpenings] = useState<
-    readonly Readonly<{ label: string | null; text: string; optionId: string }>[] | null
-  >(null);
+  // The companion's own greeting set, from the route that already serves it: the same record a new
+  // Chat opens on and the same set `chat.opening` pages through, so the picker can never name an
+  // opening the Host would not commit. A set with one entry is not a choice, and an unreadable one is
+  // not inventable: `null` is either of those, and the New Chat control then stays the single button
+  // it has always been.
+  const [openings, setOpenings] = useState<readonly OpeningOption[] | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   // One opening at a time: the chooser is a list of choices, and a player who asks to read one
   // is deciding about that one - collapsing the previous keeps the list scannable and the
@@ -379,29 +381,25 @@ export function ChatsSurfacePanel({
     };
   }, [api]);
 
-  // The companion's own greeting set, from the route that already serves it: the same record a new
-  // Chat opens on and the same set `chat.opening` pages through, so the picker can never name an
-  // opening the Host would not commit. A set with one entry is not a choice, and an unreadable one is
-  // not inventable: both leave the New Chat control exactly as it is.
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const greeting = await api.readGreeting();
-        if (active)
-          setOpenings(
-            greeting.present && greeting.variants.length > 1
-              ? greeting.variants.map((variant, position) => ({ ...variant, optionId: `opening-${position}` }))
-              : null,
-          );
-      } catch {
-        if (active) setOpenings(null);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [api]);
+  // The companion's own greeting set is read when the drawer OPENS, not once per mount: it is her
+  // authored opening, the player edits it on the Characters surface, and a set read at mount answered
+  // the press with the opening they had already corrected away from. Nothing else in this panel needs
+  // the set beforehand - the control is one button either way - so there is one read and it is the
+  // drawer's own (see `pressNewChat`).
+  const readOpenings = async (): Promise<readonly OpeningOption[] | null> => {
+    try {
+      const greeting = await api.readGreeting();
+      const current =
+        greeting.present && greeting.variants.length > 1
+          ? greeting.variants.map((variant, position) => ({ ...variant, optionId: `opening-${position}` }))
+          : null;
+      setOpenings(current);
+      return current;
+    } catch {
+      setOpenings(null);
+      return null;
+    }
+  };
 
   // An armed confirmation is armed against one exact row: the same discipline the
   // endgame block uses, so a stale arm cannot fire an action on a row the player
@@ -436,9 +434,9 @@ export function ChatsSurfacePanel({
   };
 
   const rename = (handle: string, title: string): void => {
-    closeRename();
     const entry = chatListRows(list).find((chat) => chat.handle === handle);
     if (entry === undefined) {
+      closeRename();
       report({ kind: "failure", text: labels.failure });
       return;
     }
@@ -453,6 +451,11 @@ export function ChatsSurfacePanel({
           },
           csrfToken,
         );
+        // The editor closes on the fact that says the rename LANDED, never before it. Closing first
+        // spent the typed title on every refusal - an offline request, a stale revision, a refusal
+        // the Host named - so the player had to type it again to retry a rename that had not
+        // happened (AGENTS.md, "Draft preservation").
+        closeRename();
         onRenamedTitle?.(handle, result);
         setList((current) =>
           chatListRows(current).map((chat) =>
@@ -464,7 +467,8 @@ export function ChatsSurfacePanel({
         report({ kind: "success", text: labels.success });
       } catch (error) {
         // Every rejection re-reads the durable list so the panel never shows a
-        // stale revision; the problem is then player-visible.
+        // stale revision; the problem is then player-visible. The editor stays open with the
+        // player's own words in it, and the row's fresh title is the value the next save CASes on.
         await reread();
         report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
       }
@@ -544,6 +548,23 @@ export function ChatsSurfacePanel({
     } finally {
       setCreating(false);
     }
+  };
+
+  /**
+   * The New Chat press: read her current opening set, then either offer it or create.
+   *
+   * `null` from the read means there is nothing to choose - she has no record, the read failed, or
+   * she has exactly one opening - and the press is the single-button creation it has always been.
+   * The read belongs here rather than to a mount effect because the set is her authored opening and
+   * the player edits it on another surface: a set read once per mount answered this press with the
+   * opening they had already corrected away from.
+   */
+  const pressNewChat = (): void => {
+    void (async () => {
+      const current = await readOpenings();
+      if (current === null) void createChat();
+      else setPickerOpen(true);
+    })();
   };
 
   /**
@@ -775,10 +796,7 @@ export function ChatsSurfacePanel({
             type="button"
             className="small-button"
             data-testid="new-chat"
-            onClick={() => {
-              if (openings === null) void createChat();
-              else setPickerOpen(true);
-            }}
+            onClick={pressNewChat}
             disabled={creating}
           >
             {labels.newChat}

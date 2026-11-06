@@ -74,7 +74,8 @@ export function advancedPiSettingsText(locale: Locale): Readonly<{
       hint: "直接编辑 Pi 的 models.json：providers 下每个条目就是 Pi 读取的 provider 记录（baseUrl、api、apiKey、models 等），字段与 Pi 完全一致。",
       save: "保存高级配置",
       applied: "已保存。将在下次启动运行时读取。",
-      unavailable: "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
+      unavailable:
+        "这是 Pi 自己的 models.json：providers 映射，每个 provider 的 baseUrl、api、apiKey、models 都在里面。该文件由 Host 根据你在上面设置的 Provider 写入；当前 Host 没有发布读写它的路由，所以这里没有可编辑的内容。",
       invalidJson: "这不是合法的 JSON：请检查括号、逗号和引号后重试。未写入任何内容。",
       invalidShape: "这不是 Pi 的 models.json：顶层只能有 providers，且每个 provider 条目必须是对象。未写入任何内容。",
     };

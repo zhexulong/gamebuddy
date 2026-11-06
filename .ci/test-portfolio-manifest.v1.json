@@ -8,7 +8,11 @@
       "owner": "gamebuddy-ci",
       "evidenceKind": "automated",
       "command": "node --test tools/test-portfolio-manifest.test.mjs",
-      "triggerPaths": ["tools/test-portfolio-manifest.mjs", "tools/test-portfolio-manifest.test.mjs", ".ci/test-portfolio-manifest.v1.json"],
+      "triggerPaths": [
+        "tools/test-portfolio-manifest.mjs",
+        "tools/test-portfolio-manifest.test.mjs",
+        ".ci/test-portfolio-manifest.v1.json"
+      ],
       "timeoutSeconds": 60,
       "retryPolicy": { "maxAttempts": 1, "backoffSeconds": 0 },
       "requiredOn": ["pull_request", "main"],

@@ -138,6 +138,8 @@ type Fixture = Readonly<{
   /** Set by the create route, so a journey can tell the Chat the control wrote really exists. */
   isCreated: () => boolean;
   mountedGeneration: () => number;
+  /** The player correcting one opening in place, on the surface that owns her authored record. */
+  editOpening: (position: number, text: string) => void;
 }>;
 
 /**
@@ -148,6 +150,7 @@ type Fixture = Readonly<{
  */
 async function mountHost(page: Page, options: Readonly<{ openings?: readonly { label: string; text: string }[]; refuseOpening?: boolean }>): Promise<Fixture> {
   const openings = options.openings ?? OPENINGS;
+  let edited: readonly { label: string; text: string }[] = openings;
   let created = false;
   let mounted = "first";
   let generation = 1;
@@ -178,7 +181,7 @@ async function mountHost(page: Page, options: Readonly<{ openings?: readonly { l
     route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
   );
   await page.route("**/api/tavern/v1/greeting", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 1, label: null, variants: openings })),
+    route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 1, label: null, variants: edited })),
   );
   await page.route(/(\/api\/tavern\/v1\/chats)(\?|$)/, (route) => {
     if (route.request().method() === "POST") {
@@ -224,7 +227,7 @@ async function mountHost(page: Page, options: Readonly<{ openings?: readonly { l
     // switch just minted, never the one the Chats panel held before the switch.
     expect(command.selectionGeneration).toBe(generation);
     if (options.refuseOpening === true) return route.fulfill(problem(409, "chat_opening_locked"));
-    const variant = openings[command.targetIndex];
+    const variant = edited[command.targetIndex];
     expect(variant).toBeDefined();
     messageZero = variant!.text;
     return route.fulfill(
@@ -244,6 +247,9 @@ async function mountHost(page: Page, options: Readonly<{ openings?: readonly { l
   return {
     isCreated: () => created,
     mountedGeneration: () => generation,
+    editOpening: (position, text) => {
+      edited = edited.map((variant, index) => (index === position ? { ...variant, text } : variant));
+    },
   };
 }
 
@@ -319,6 +325,38 @@ test("names each opening once, without the strip's counter, in both languages", 
   await expect(chinese).toBeVisible();
   await expect(chinese.getByTestId("opening-option-name")).toHaveText(["默认", "备用 1", "备用 2"]);
   await expect(chinese.getByTestId("opening-option-name").nth(1)).toHaveText("备用 1");
+});
+
+/**
+ * The chooser reads her opening as it stands NOW, not as it stood when the surface mounted.
+ *
+ * Her opening set is an authored record the player edits on the Characters surface, and it was read
+ * once per mount (`useEffect(…, [api])`): a set read at mount can never see an edit made while the
+ * panel is up, so the drawer answered the press with the opening the player had already corrected
+ * away from. The read belongs to the press - the control is one button either way, so nothing in
+ * this panel needs the set beforehand.
+ */
+test("the chooser shows the opening that was edited while the surface was mounted", async ({ page }) => {
+  const host = await mountHost(page, {});
+  await boot(page);
+  await openChats(page);
+
+  // The player corrects the second opening in place, on the surface that owns it.
+  const CORRECTED = "Rain on the roof, and the kettle is already on the stove.";
+  host.editOpening(1, CORRECTED);
+
+  await page.getByTestId("new-chat").click();
+  const picker = page.getByTestId("opening-picker");
+  await expect(picker).toBeVisible();
+  await expect(picker.getByTestId("opening-option-line").nth(1)).toHaveText(CORRECTED);
+  // The rest of the set is untouched: one edit is not a new list.
+  await expect(picker.getByTestId("opening-option-line").nth(0)).toHaveText(
+    "Good morning, farmer. The valley is quiet today.",
+  );
+  // And the press still creates on the opening the drawer named.
+  await picker.getByTestId("opening-option-commit").nth(1).click();
+  await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(CORRECTED);
+  expect(host.isCreated()).toBe(true);
 });
 
 test("offers no chooser when the companion has one opening", async ({ page }) => {
