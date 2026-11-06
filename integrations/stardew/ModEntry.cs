@@ -2636,7 +2636,17 @@ public sealed partial class ModEntry : Mod
                 SceneAffordanceKind.Stone => "break_rock",
                 _ => null,
             };
-            candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, item.QualifiedItemId, location.NameOrUniqueName,
+            // THE IDENTITY IS THE ID THE ACTION VALIDATES, for the kinds whose action takes one.
+            //
+            // This used to be `item.QualifiedItemId` for every kind - a DESCRIPTION of the entity, not its address. Two
+            // daffodils share `(O)18`, and `pickup_forage` compares `expectedTargetId` against `BuildForageTargetId`, so a
+            // caller holding this affordance and the matching `forageTargets` row had no key to join them on and no way to
+            // say which ref belonged to which flower. Measured: zero `pickup_forage` receipts. The tree branch below was
+            // fixed the same way (`BuildTreeChopSourceTargetId`); this is the other half of that one fact.
+            string identity = resolvedKind == SceneAffordanceKind.Forage
+                ? ExecutionManager.BuildForageTargetId(location, (int)tile.X, (int)tile.Y, item)
+                : item.QualifiedItemId;
+            candidates.Add(new SceneAffordanceSource(resolvedKind, item.Name, identity, location.NameOrUniqueName,
                 (int)tile.X, (int)tile.Y, actionHint, SceneAffordanceKindWire.DefaultPriority(resolvedKind)));
         }
         foreach (StardewValley.NPC npc in location.characters)

@@ -227,9 +227,6 @@ public sealed class DeclaredArgumentAcceptanceTests
             // A descriptor declaring a scene binding must receive a well-formed one: the
             // acceptance layer validates it as its own contract member, so omitting it fails
             // with observation_binding_malformed rather than a missing-argument error.
-            SceneTarget = descriptor.SceneTarget is null
-                ? null
-                : new ObservationBindingV1("obs_0000000000000000", "ref_0000000000000000"),
         };
     }
 

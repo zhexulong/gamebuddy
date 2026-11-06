@@ -2805,6 +2805,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (location is null || string.IsNullOrWhiteSpace(villager.Name))
                 return true;
             result.Add(new BridgeVillagerWhereabouts(
+                BuildNpcRelationshipTargetId(location, villager.Name),
                 villager.Name,
                 string.IsNullOrWhiteSpace(villager.displayName) ? villager.Name : villager.displayName,
                 location.NameOrUniqueName,

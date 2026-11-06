@@ -26,12 +26,11 @@ import { fileURLToPath } from "node:url";
  * <h2>What this asserts</h2>
  * <p>
  * For every affordance kind whose hint names a registered action, that action must be satisfiable from what the
- * affordance publishes. Two shapes are legal, and the gate names which one each kind uses:
+ * affordance publishes: an action that takes `expectedTargetId` needs the affordance to publish an `Identity`, and the
+ * third test below adds the half that took two defects to learn - that `Identity` must be THE ID THE ACTION VALIDATES,
+ * not a description of the entity. `pickup_forage` published the qualified item id there (two daffodils share `(O)18`)
+ * while the action compared `BuildForageTargetId`, so no caller could join an affordance to the row that addresses it.
  * </p>
- * <ul>
- *   <li>the action declares an `ObservationBinding` (`sceneTarget`), so the ref IS the identifier - `pickup_forage`;</li>
- *   <li>the action takes `expectedTargetId`, so the affordance must publish an `Identity` - `chop_tree_source`.</li>
- * </ul>
  * <p>
  * Neither is a naming convention the gate is inventing: both are read from the generated catalog and from the Mod's own
  * `SceneAffordanceSource` construction sites, so a kind added on either side is covered without editing this file.
@@ -48,7 +47,7 @@ function repoRoot(start: string): string {
 }
 
 const ROOT = repoRoot(dirname(fileURLToPath(import.meta.url)));
-type CatalogAction = { actionId: string; sceneTarget?: unknown; argumentSchema?: Record<string, unknown> };
+type CatalogAction = { actionId: string; argumentSchema?: Record<string, unknown> };
 const CATALOG: { actions?: CatalogAction[] } = JSON.parse(
   readFileSync(
     join(ROOT, "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"),
@@ -70,14 +69,11 @@ function captured(match: readonly (string | undefined)[], index: number, what: s
   return value;
 }
 
-/** actionId -> does it declare an ObservationBinding, and does it take `expectedTargetId`? */
-const actionSurface = new Map<string, { requiresSceneBinding: boolean; takesExpectedTargetId: boolean }>(
+/** actionId -> does it take `expectedTargetId`? */
+const actionSurface = new Map<string, { takesExpectedTargetId: boolean }>(
   (CATALOG.actions ?? []).map((action: CatalogAction) => [
     action.actionId,
-    {
-      requiresSceneBinding: action.sceneTarget !== undefined,
-      takesExpectedTargetId: Object.hasOwn(action.argumentSchema ?? {}, "expectedTargetId"),
-    },
+    { takesExpectedTargetId: Object.hasOwn(action.argumentSchema ?? {}, "expectedTargetId") },
   ]),
 );
 
@@ -149,7 +145,6 @@ test("an affordance that names an action offers the identifier that action valid
     // A hint is only recorded when the catalog publishes that name, so this cannot miss; a miss would mean the two
     // halves of this gate read different catalogs, which is a failure of the gate rather than a finding about the Mod.
     assert.ok(surface !== undefined, `\`${actionId}\` came from the catalog, so the lookup must find it`);
-    if (surface.requiresSceneBinding) continue; // the ref IS the identifier; `pickup_forage` validates it
     if (!surface.takesExpectedTargetId) continue; // nothing to match
     if (withIdentity.has(kind)) continue;
     // No identity: legal when SOME published family carries target ids at all, so the companion can copy one from the
@@ -201,12 +196,49 @@ test("Identity is never published for a kind whose action ignores it", () => {
     if (!withIdentity.has(kind)) continue;
     const surface = actionSurface.get(actionId);
     assert.ok(surface !== undefined, `\`${actionId}\` came from the catalog, so the lookup must find it`);
-    if (surface.requiresSceneBinding) continue; // the ref is the identifier and Identity is still useful to the caller
     if (!surface.takesExpectedTargetId)
       pointless.push(`${kind} publishes an Identity, but its \`${actionId}\` takes no expectedTargetId`);
   }
 
   assert.deepEqual(pointless, [], pointless.join("\n"));
+});
+/**
+ * THE IDENTITY A KIND PUBLISHES MUST BE THE ID ITS ACTION VALIDATES.
+ *
+ * The published `Identity` exists so a caller can join an affordance to the snapshot row that addresses the same
+ * object: the row carries `targetId` (`forage_8010...`), the affordance carries `ref` (`sr1_...`), and `Identity` is
+ * the only field both sides can share. Publishing a DESCRIPTION there instead - `item.QualifiedItemId`, `(O)18`,
+ * which two daffodils share - leaves the caller holding two lists with no key between them, which is exactly what
+ * happened: zero `pickup_forage` receipts while every authoring attempt was either refused or aimed at the wrong
+ * flower. The check is structural rather than a naming convention: the construction of that kind's identity must call
+ * one of the Mod's own `Build*TargetId` helpers, which is what the action compares against.
+ */
+test("an identity-carrying kind builds the id its action validates, not a description of the entity", () => {
+  const modEntry = readFileSync(join(ROOT, "integrations", "stardew", "ModEntry.cs"), "utf8");
+  const hints = modAffordanceHints();
+  const withIdentity = kindsCarryingIdentity();
+  const problems: string[] = [];
+  for (const { kind, actionId } of hints.values()) {
+    if (!withIdentity.has(kind)) continue;
+    const surface = actionSurface.get(actionId);
+    if (surface === undefined || !surface.takesExpectedTargetId) continue;
+    // The window is the construction site and the statements that build its identity: a helper assigned just above
+    // the `SceneAffordanceSource` counts, because it is the same expression one line further out.
+    const site = new RegExp(`SceneAffordanceKind\\.${kind}\\b`, "gu");
+    let matched = false;
+    for (const match of modEntry.matchAll(site)) {
+      const from = Math.max(0, match.index - 900);
+      const window = modEntry.slice(from, match.index + 400);
+      if (/Build[A-Za-z]*TargetId\(/u.test(window)) matched = true;
+    }
+    if (!matched)
+      problems.push(
+        `${kind} publishes an Identity for \`${actionId}\`, which validates \`expectedTargetId\`, but nothing at its ` +
+          `construction site calls a Build*TargetId helper - so the published id is a description of the entity rather ` +
+          `than the address the action compares, and a caller cannot join the affordance to the row that names it`,
+      );
+  }
+  assert.deepEqual(problems, [], problems.join("\n"));
 });
 test("the hints were parsed, so neither assertion is vacuous", () => {
   const hints = [...modAffordanceHints().keys()];

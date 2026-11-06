@@ -399,7 +399,7 @@ public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, 
 /// only instantiated, non-event villagers on a loaded location appear.
 /// </para>
 /// </summary>
-public sealed record BridgeVillagerWhereabouts(string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
+public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, string DisplayName, string Location, int X, int Y, bool InCurrentLocation);
 
 /// <summary>
 /// One farm location's ready-for-harvest crop summary, across the loaded world.

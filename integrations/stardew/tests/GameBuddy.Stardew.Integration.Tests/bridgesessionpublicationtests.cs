@@ -55,14 +55,12 @@ public sealed class BridgeSessionPublicationTests
          pickupForage.Descriptor.Should().NotBeNull();
          pickupForage.Descriptor!.Arguments.Select(argument => argument.Name)
              .Should().Equal("x", "y", "expectedQualifiedItemId", "expectedTargetId");
-         pickupForage.Descriptor.SceneTarget.Should().BeEquivalentTo(
-             new FarmhandActionObservationBindingDescriptorWire("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
          pickupForage.Descriptor.Effect.Should().Be("write");
          pickupForage.Descriptor.Postcondition.Name.Should().Be("native_action_postcondition");
-         // The spatial precondition this action ENFORCES (`observation_binding_target_out_of_range` from beyond
-         // Chebyshev 1) travels on the wire, so `plan_shape` can say it instead of the companion learning it from a
-         // refusal. Before this member existed the declaration stopped at the surface artifact and every action
-         // answered `approach_requirement_undeclared`.
+         // The spatial precondition this action ENFORCES (`forage_target_out_of_range` from beyond Chebyshev 1)
+         // travels on the wire, so `plan_shape` can say it instead of the companion learning it from a refusal. Before
+         // this member existed the declaration stopped at the surface artifact and every action answered
+         // `approach_requirement_undeclared`.
          pickupForage.Descriptor.Approach.Should().Be(new FarmhandActionApproachRequirementWire("adjacent", 1));
          payload.Registrations.Single(registration => registration.ActionId == "move_to_tile")
              .Descriptor!.Approach.Should().BeNull("an action that declares no precondition publishes none");

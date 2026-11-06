@@ -71,7 +71,7 @@ test("ride_bus declares no approach requirement, and its shape is the cross-map 
 
 test("pickup_forage declares exactly (adjacent, 1) - it is not the walk, and it says so", () => {
   // The declared half of the classification. `pickup_forage`'s handler measures the native Chebyshev-1 radius and
-  // REFUSES outside it (`observation_binding_target_out_of_range`), so the declaration is a true statement: stand
+  // REFUSES outside it (`forage_target_out_of_range`), so the declaration is a true statement: stand
   // adjacent first, in your own step, and the action will work. Exactly a relation and a distance - a third field
   // invented beside them would be a precondition nobody enforces.
   assert.deepEqual(surfaceAction("pickup_forage").approach, { relation: "adjacent", withinTiles: 1 });

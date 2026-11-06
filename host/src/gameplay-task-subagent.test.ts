@@ -148,7 +148,6 @@ test("pickup_forage authoritative completion binds evidence target identity to p
     requestId: "request_01",
     executionId: "execution_01",
     expectedTargetId: "forage_01",
-    sceneTargetRef: "sr1_target_01",
   } as const;
   const report = {
     state: "completed",
