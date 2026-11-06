@@ -1,0 +1,32 @@
+<Configuration>
+  <!--
+    The sandbox side of the file-bus control channel.
+
+    Everything the host needs to control this session travels through one mapped folder:
+    the host writes tasks into `tasks/`, this session's worker executes them and writes
+    `results/`, and a host-side agent reads those. No port, no agent inside the guest, no
+    dependency: the guest filesystem is the only thing that crosses the RDP boundary, so it
+    is what the channel is built on.
+
+    `LogonCommand` starts the worker as soon as the session is usable, which is why the host
+    does not have to wake anything up - it polls for `guest-ready.txt` and starts sending work.
+  -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>__BUS_HOST_FOLDER__</HostFolder>
+      <SandboxFolder>C:\gamebuddy-bus</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <Networking>Enable</Networking>
+  <LogonCommand>
+    <!--
+      A bare `cmd /c server ; redirect` form does NOT run here: measured, the guest booted, the
+      share was mounted and writable (the host's own marker file was visible inside), and the logon
+      command still produced nothing. Wrapping the whole command in quotes so cmd receives one argv
+      element is what makes it execute. Verified: with the quoted form the guest wrote its marker
+      file 15 seconds after launch.
+    -->
+    <Command>cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File C:\gamebuddy-bus\guest-worker.ps1"</Command>
+  </LogonCommand>
+</Configuration>

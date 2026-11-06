@@ -1,0 +1,43 @@
+# Windows Sandbox: clean-machine acceptance for the player install path
+#
+# Level 3 of the verification plan: a machine with NO developer tooling at all.
+# Windows Sandbox is exactly that machine - no .NET runtime, no Node, no pnpm, no
+# repository checkout - so it answers the one question the in-repo gates cannot:
+# does a player who has none of our tooling get a working product from one double-click?
+#
+# HOW TO RUN (only a human can do this step; the agent cannot drive the sandbox's
+# remote desktop session):
+#   1. Build the artifacts:  pnpm build:player-distribution
+#                            dotnet publish desktop/installer/GameBuddy.Setup \
+#                              -c Debug -p:GameBuddyPlayerDistributionPayload=<abs payload.zip> \
+#                              -o desktop/dist/setup
+#   2. Create a folder for the share, e.g. %USERPROFILE%\gamebuddy-sandbox
+#   3. Copy into it:  GameBuddy.Setup.exe  (from desktop/dist/setup)
+#                     sandbox-verify.cmd     (this repo: tools/sandbox/sandbox-verify.cmd)
+#   4. Edit the <HostFolder> below to that folder, then double-click this .wsb.
+#
+# WHAT IT PROVES, with no developer tooling on the machine:
+#   * Setup.exe starts at all (a framework-dependent installer would open the
+#     "you need .NET 8.0 Desktop Runtime" dialog here and never reach step 1)
+#   * the install completes and reports installer_ok
+#   * the program root carries the launcher, the generation pointer and its generation
+#   * the generation carries the SMAPI payload and its LGPL licence
+#   * the desktop shortcut exists and points at the launcher
+#   * the launcher starts from the installed location
+#   * the uninstaller exists and can run
+#
+# The results land in sandbox-result-*.txt in the shared folder, which the host reads
+# after the sandbox closes. The sandbox discards everything else on close.
+<Configuration>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>%USERPROFILE%\gamebuddy-sandbox</HostFolder>
+      <SandboxFolder>C:\gamebuddy-share</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <Networking>Enable</Networking>
+  <LogonCommand>
+    <Command>cmd.exe /c "C:\gamebuddy-share\sandbox-verify.cmd"</Command>
+  </LogonCommand>
+</Configuration>

@@ -4,6 +4,9 @@
       "entry": [
         "tools/*.mjs",
         "tools/perf/*.bench.mjs",
+        // The Windows Sandbox harness: a human runs these by hand from tools/sandbox/FINDINGS.md, so no npm
+        // script reaches them and `sandbox-bus.mjs` is an entry rather than dead code.
+        "tools/sandbox/*.mjs",
         "tools/lib/stardew-csharp-syntax-structural-canary.mjs",
         "tools/live-run/**/*.mjs",
         "tools/lib/chat-run-audit.mjs!",
