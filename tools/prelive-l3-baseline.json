@@ -87,21 +87,6 @@
       "fact": "revision",
       "count": 1,
       "reason": "requireActionableUseItemSnapshot reads revision/stamina/health/foodTargets"
-    },
-    {
-      "file": "run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "reason": "multi-action or read-only probe with no single action id to resolve; asserts its own world facts"
-    },
-    {
-      "file": "run-stardew-native-local-player-navigation-read-only-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "reason": "multi-action or read-only probe with no single action id to resolve; asserts its own world facts"
-    },
-    {
-      "file": "run-stardew-native-local-player-place-crab-pot-fixture-smoke.mjs",
-      "fact": "not in the descriptor map",
-      "reason": "multi-action or read-only probe with no single action id to resolve; asserts its own world facts"
     }
   ]
 }
