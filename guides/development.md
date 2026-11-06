@@ -12,7 +12,7 @@
 
 ```bash
 pnpm install
-pnpm build          # 语音协议 + Host + 前端
+pnpm build          # Host + 前端
 ```
 
 `vendor/pi-koe` 是独立 workspace 的 submodule；首次检出后如果缺少它，先初始化 submodule 再安装依赖。
@@ -50,14 +50,14 @@ pnpm --dir host test   # Host 编译产物测试（Node runner）
 
 - **Host 套件跑编译产物。** `host/scripts/run-tests.mjs` 从 `host/dist-test` 运行并校验其新鲜度；改动 `host/src` 后先 `pnpm --dir host build:test`，否则会因产物过期而拒绝运行。直接 `bun test src/...` 会缺少编译产物与 `node:test` 能力，产生的红灯不是产品回归。
 - **真实游戏验证不等于单元测试。** live-run 需要已安装的游戏、隔离的 Mod profile 与存档；同一时间只允许一个 lane 启动 SMAPI/Stardew 进程。
-- **语音门禁验证的是网关，不是产品输入。** 产品界面没有录音路径（无 `getUserMedia` / `MediaRecorder` / 语音上传）；`tools/run-windows-voice-input-gate.mjs` 等验证的是网关侧能力，不能当作语音输入已接入。
+- **产品只有 Chat 与 Game 两个表面。** 仓库里可能存在语音/网关等实验资产，但它们不是产品表面，不能当作 release claim。
 - **门禁先红后绿。** 新增断言要先在真实注入的违规上看到失败，再修到通过；只在“当前树通过”不算证明。
 
 ## Live run 与游戏验证
 
 从现有工具开始，不要另写一套：
 
-- [tools/README.md](../tools/README.md)：live-run、游戏表面检查、语音门禁与各类审计工具索引。
+- [tools/README.md](../tools/README.md)：live-run、游戏表面检查与各类审计工具索引。
 - [fixtures/stardew/RUNBOOK.md](../fixtures/stardew/RUNBOOK.md)：本地 fixture 与多 lane 隔离。
 - `tools/live-run/game/`：游戏 ladder、live bundle 与真实游戏 runner。
 - 游戏侧的 typed action 走 `game-action-boundary → game-action-implement → game-action-close` 流程，不跳过边界冻结与 live gate。

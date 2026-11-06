@@ -2,7 +2,7 @@
 
 # 🎮 GameBuddy
 
-**AIRP for all — 一个跨越 Chat、Game 与 Voice 的长期 AI 角色伴侣**
+**AIRP for all — 一个跨越 Chat 与 Game 的长期 AI 角色伴侣**
 
 *不是浮在游戏画面上的聊天窗，而是一个有连续身份、记得共同经历、并能沿着受约束的原生游戏接口真正行动的开源角色伴侣。*
 
@@ -23,10 +23,10 @@
 
 大多数 AI 游戏助手只是一个**浮在画面上的通用聊天窗**：看不懂游戏内部状态，不能在游戏里真正行动，也无法把一次对话延续成一段关系。
 
-GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某次会话里的临时人设，而是一个在多个产品表面持续存在的身份。
+GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某次会话里的临时人设，而是一个在 Chat 与 Game 之间持续存在的身份。
 
-1. **一个连续身份，不是三个互不相干的产品。**
-   Chat、Game、Voice 可以同时运行、各自启停、互不接管。绑定同一 continuity 时，它们共享同一份身份与受治理的长期 Memory；原始聊天记录、实时游戏状态、执行能力和行动回执始终各自独立。
+1. **一个连续身份，不是两个互不相干的产品。**
+   Chat 与 Game 可以同时运行、各自启停、互不接管。绑定同一 continuity 时，它们共享同一份身份与受治理的长期 Memory；原始聊天记录、实时游戏状态、执行能力和行动回执始终各自独立。
 
 2. **真实具身，不是画面外的建议。**
    在《星露谷物语》中，伴侣以原生 Farmhand 身份进入世界：真实的碰撞、寻路、工具与农务操作。每个会改变世界的动作都在游戏线程重新校验 scope、policy、revision、deadline 与实时前置条件，并在执行后给出 action-owned receipt、evidence 和 fresh postcondition。
@@ -44,7 +44,7 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 
 ## 🧭 当前能力边界
 
-第一条、也是当前唯一正式支持的游戏集成是 **Stardew Valley 1.6 + SMAPI 4.x（Windows x64）**。“AIRP for all”指同一个长期角色跨越产品表面，不代表已支持所有游戏。
+首个、也是当前唯一正式支持的游戏集成是 **Stardew Valley 1.6 + SMAPI 4.x（Windows x64）**。“AIRP for all”指同一个长期角色跨越产品表面，不代表已支持所有游戏。
 
 | 能力 | 状态 |
 | :--- | :--- |
@@ -54,8 +54,6 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 | 世界书：条目管理与绑定 | 🚧 管理能力存在；selective Lorebook 仍是独立 release-candidate |
 | 长期 Memory：章节折叠、语义记忆、跨会话召回 | ✅ |
 | 跨表面连续性（Chat ↔ Game 同一身份） | ✅ 绑定同一 continuity 时 |
-| 语音输出：流式 TTS、打断、播放 epoch | 🚧 预览；需要配置 TTS provider（Desktop 语音是输出通道） |
-| 语音输入（PTT 麦克风 / ASR） | ⬜ 尚未接入产品；网关侧有实验门禁，产品无录音路径 |
 | Windows 安装包（per-user、免 Node/.NET 运行时） | 🚧 可构建并通过干净机沙箱验收；签名公开发行通道仍在收敛 |
 | 多游戏 / 社区 Connector | ⬜ 尚未支持（Host 已留 integration seam，但不是通用游戏协议） |
 | macOS / Linux | ⬜ 尚未支持 |
@@ -114,7 +112,7 @@ pnpm run:sandbox-level3 -- --setup desktop/dist/setup/GameBuddy.Setup.exe
 ```bash
 pnpm install
 
-# 构建 Host、前端与语音协议
+# 构建 Host 与前端
 pnpm build
 
 # 桌面外壳 / 安装包
@@ -137,14 +135,12 @@ flowchart TB
         Player["玩家"]
         ChatUI["Chat / Tavern 界面"]
         GameUI["Game 界面"]
-        Mic["麦克风 / 扬声器"]
     end
 
     subgraph HostLayer["Companion Host (Node.js / TypeScript)"]
         Identity["身份与连续性 (Identity / Continuity)"]
         Memory["长期 Memory (Magic Context)<br/>章节折叠 / 语义记忆 / 召回"]
         PiRuntime["受限 Pi Runtime<br/>显式工具 allowlist"]
-        VoiceGW["Voice Gateway<br/>流式 TTS / 打断"]
         ActionRouter["Game Action Router<br/>policy / 前置检查 / 回执"]
     end
 
@@ -157,10 +153,8 @@ flowchart TB
 
     Player <--> ChatUI
     Player <--> GameUI
-    Player <--> Mic
     ChatUI <--> Identity
     GameUI <--> ActionRouter
-    Mic <--> VoiceGW
     Identity <--> Memory
     Identity <--> PiRuntime
     PiRuntime <--> ActionRouter
@@ -188,9 +182,7 @@ ai-game-companion/
 ├── packages/              # 共享契约（如 Game Action Program 模型与校验器）
 ├── protocol/              # 跨语言 Bridge 协议与 schema
 ├── desktop/               # Windows 桌面外壳与安装器
-├── voice-gateway/         # 本地语音网关（当前为输出通道：TTS / 打断）
 ├── vendor/
-│   ├── pi-koe/            # 第一方语音中枢（submodule）
 │   └── magic-context/     # 长期 Memory 引擎（定制 fork）
 ├── assets/tavern/         # 角色卡与提示词预设
 ├── fixtures/              # 场景、角色卡与协议验证样本
@@ -213,7 +205,6 @@ ai-game-companion/
 - [ ] **发布收敛**
   - [ ] 签名公开发行通道与自动更新
   - [ ] 安装 → 识别游戏 → 部署 Mod → 首次真实行动 的完整玩家旅程验收
-  - [ ] 语音输入资产与完整语音体验验收
 - [ ] **生态**
   - [ ] 社区游戏 Connector
   - [ ] 跨游戏的通用 Companion Protocol
