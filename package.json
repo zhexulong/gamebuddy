@@ -178,7 +178,7 @@
     "test:first-viewport-forward-path": "cd dialogue-web && pnpm exec playwright test tests/first-viewport-forward-path.spec.ts --project=chromium --workers=1",
     "test:format-ratchet": "node --test tools/scripts/check-format-ratchet.test.mjs",
     "test:gate-red-proofs": "node --test tools/audit-gate-red-proofs.test.mjs",
-    "test:game-ladder-live": "node --test tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs tools/lib/system-findings.test.mjs",
+    "test:game-ladder-live": "node --test tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs tools/live-run/game/night-verdict.test.mjs tools/lib/system-findings.test.mjs",
     "test:gameplay-capability-catalog": "node --test tools/check-gameplay-capability-catalog.test.mjs",
     "test:host-diagnostic-output": "node --test tools/check-host-diagnostic-output.test.mjs",
     "test:host-game-physical-seam": "node --test tools/check-host-game-physical-seam.test.mjs",
