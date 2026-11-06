@@ -221,3 +221,14 @@ voice-gateway/scripts/player-turn-*.wav
 
 # The reconciliation tests write these beside themselves and do not always clean up.
 integrations/stardew/action-development/tests/.tmp-*
+
+# Root-level scratch that agents produce by redirecting a command (`> write`, `> .t.txt`) or by dumping a
+# diff, a git status, or a file they wanted to read. None of it is source; all of it appears as untracked
+# noise in every `git status`, and one such dump held another lane's only copy of a diff, so these are
+# ignored rather than deleted.
+/.t*.txt
+/.tmp_*
+/echo-redirect-*
+/write
+/write-journal
+/.unipi/
