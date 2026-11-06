@@ -960,7 +960,7 @@ builder.move_to_tile({ x: 11, y: 10 });
   assert.equal(refusalOf(compile("throw new TypeError('nope');")), "plan_script_threw:TypeError");
   assert.equal(refusalOf(compile("while (true) {}")), "plan_script_timeout:50");
   assert.equal(refusalOf(compile("   ")), "plan_script_invalid");
-  assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty");
+  assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty_no_builder_call");
 });
 
 /**
@@ -989,6 +989,40 @@ test("a script that throws answers with the engine's own message and the line it
   assert.equal(threwOf(compile("const steps = 2;\n}"))?.line, null);
   // A script that never ran has no account to give.
   assert.equal(threwOf(compile("   ")), undefined);
+});
+
+test("an empty plan says whether the script never asked for a step or asked and added none", () => {
+  // A filter that matched nothing is the measured case: six plans in one run answered `plan_script_empty`, which
+  // told the companion neither that its loop body never ran nor that its calls were refused. Zero builder calls is
+  // the first of those, said by name.
+  assert.equal(
+    refusalOf(compile("const rows = snapshot.cropTargets ?? [];\nconst count = rows.length;")),
+    "plan_script_empty_no_builder_call",
+  );
+  // The other shape: the builder WAS called and added no node (`equipFor` asked for a tool already in hand). The
+  // count is the point - `no_builder_call` and `no_node_added:1` are different mistakes with different repairs.
+  assert.equal(
+    refusalOf(
+      compile("builder.equipFor('cut_weeds');", {
+        currentToolSlot: 3,
+        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+      }),
+    ),
+    "plan_script_empty_no_node_added:1",
+  );
+  // A swallowed refusal is still the refusal, and it names more than the count would: the call, the argument and
+  // where a legal value comes from. The split must not hide it behind `no_node_added`.
+  assert.match(
+    refusalOf(
+      compile("try { builder.cut_weeds({ x: 5, y: 6, slot: 3 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');", {
+        currentToolSlot: 3,
+        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+      }),
+    ),
+    /^plan_script_missing_argument:cut_weeds\.expectedTargetId:/u,
+  );
+  // And the split does not touch the happy path: one added node is a plan.
+  assert.equal(nodesOf(compile("builder.move_to_tile({ x: 4, y: 9 });")).length, 1);
 });
 
 test("a plan with no snapshot refuses rather than compiling from nothing", () => {

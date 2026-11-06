@@ -699,6 +699,7 @@ export function compilePlanScript(
     nodes: [],
     refusal: null,
     calls: 0,
+    builderCalls: 0,
     argumentOwners: planArgumentOwners(dependencies.actions),
   };
   const frozen = deepFreeze(structuredClone(snapshot));
@@ -735,7 +736,18 @@ export function compilePlanScript(
   // A script may swallow a builder refusal with its own try/catch; the plan is still refused, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote.
   if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
-  if (state.nodes.length === 0) return refused("plan_script_empty", scriptSource, snapshotRevision);
+  // A script that produced no node has asked for nothing, in one of two ways that need different answers:
+  // it never called a builder at all (it only computed), or it called one N times and every call was refused
+  // inside the script's own try/catch. The count is the whole point - "0 calls" and "6 refused calls" are
+  // different mistakes, and a bare `plan_script_empty` told the companion neither.
+  if (state.nodes.length === 0)
+    return refused(
+      state.builderCalls === 0
+        ? "plan_script_empty_no_builder_call"
+        : `plan_script_empty_no_node_added:${state.builderCalls}`,
+      scriptSource,
+      snapshotRevision,
+    );
   // A plan is only meaningful against a revision: an accepted plan whose revision is unknown could not be
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
   if (snapshotRevision === null) return refused("plan_snapshot_missing", scriptSource, null);
@@ -783,6 +795,12 @@ type PlanScriptState = {
   requirement?: PlanArgumentRequirement;
   calls: number;
   /**
+   * How many times the SCRIPT called a per-action builder, counted where that builder is entered and before any
+   * argument is validated. `calls` counts emitted nodes instead, which is what the call cap and the node cap need;
+   * this counts the author's attempts, which is what an empty plan has to report.
+   */
+  builderCalls: number;
+  /**
    * The vocabulary's own answer to "which actions declare this argument name", built once per compile.
    *
    * An unknown argument is nearly always a name carried over from another action (`water_crop` with a `slot`, because
@@ -804,8 +822,14 @@ function createPlanBuilder(
 ): unknown {
   const methods = new Map<string, (arguments_: unknown) => void>();
   for (const action of actions)
-    methods.set(action.actionId, (arguments_) => emitPlanNode(action, arguments_, snapshot, state));
-  const equipFor = (actionId: unknown, target: unknown) => equipForAction(actions, snapshot, actionId, target, state);
+    methods.set(action.actionId, (arguments_) => {
+      state.builderCalls += 1;
+      emitPlanNode(action, arguments_, snapshot, state);
+    });
+  const equipFor = (actionId: unknown, target: unknown) => {
+    state.builderCalls += 1;
+    return equipForAction(actions, snapshot, actionId, target, state);
+  };
   return new Proxy(
     {},
     {

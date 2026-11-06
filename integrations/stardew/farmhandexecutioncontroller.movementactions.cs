@@ -56,6 +56,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Uncertain, "body_release_unavailable", null);
 
         string executionId = Guid.NewGuid().ToString("N");
+        if (Game1.player.currentLocation is not { } moveLocation)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "location_unavailable", null);
         // The wall-clock deadline is authoritative: body ticks also check it,
         // so a lagging game tick can never extend a Host/player-bound request.
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
@@ -75,7 +77,14 @@ internal sealed partial class ExecutionManager
         //    silent.
         Vector2 effectiveTarget = targetTile;
         bool approachSubstituted = false;
-        if (!StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, targetTile))
+        // A PERSON IS NOT A WALL. A villager, pet or farm animal standing on the named tile is a body that will walk
+        // away, not a map fact; the planner walks happily onto its tile (`pathfinding: true` skips characters,
+        // GameLocation.cs:2697) and the BODY then cannot enter it (`Farmer.MovePosition` uses the non-pathfinding
+        // collision test), so the walk stalls one tile short and the request used to end as `no_native_path` / a stall.
+        // The postcondition of a move is to be able to act on that tile, so the honest walk is the tile beside them -
+        // and only a tile with NO free neighbour at all is `target_tile_occupied`.
+        RefusalLayerToken stoodAsideFor = RefusalProbe.CharacterOn(moveLocation, targetTile);
+        if (stoodAsideFor.Refused || !StardewBodyController.IsWalkableTile(moveLocation, Game1.player, targetTile))
         {
             Vector2? approach = SelectStandingApproachTile(
                 targetTile,
@@ -84,10 +93,10 @@ internal sealed partial class ExecutionManager
                 // it here (design §3.1.1's three-way warp rule). Without it the substitution picked the exit
                 // blanket whenever that was the nearest walkable ring tile. The NAMED target stays unfiltered: a
                 // warp tile as the destination is a cross-map intent, handled by `nativeWarpTarget` above.
-                candidate => StardewBodyController.IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate)
-                    && !IsWarpBufferTile(Game1.player.currentLocation, ((int)candidate.X, (int)candidate.Y)),
+                candidate => StardewBodyController.IsWalkableTile(moveLocation, Game1.player, candidate)
+                    && !IsWarpBufferTile(moveLocation, ((int)candidate.X, (int)candidate.Y)),
                 // The actor's OWN walkable component, not just "is this tile free".
-                StardewBodyController.BuildWalkableComponent(Game1.player.currentLocation, Game1.player)
+                StardewBodyController.BuildWalkableComponent(moveLocation, Game1.player)
                     ?? (_ => true));
             if (approach is not null)
             {
@@ -100,6 +109,17 @@ internal sealed partial class ExecutionManager
                 // tiles away, too far to act on the door it was asked to approach.
                 adjacentArrival = false;
                 approachSubstituted = true;
+            }
+            else if (stoodAsideFor.Refused)
+            {
+                // Every ring tile is taken or is a warp buffer, so there is nowhere to stand that reaches this tile
+                // through a body: the refusal names the OCCUPANT, because waiting for them is the only next step.
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"{StardewBodyController.TargetTileOccupiedReasonCode}:{RefusalProbe.ReasonCodeToken(stoodAsideFor)}",
+                    $"target={FormatTile(targetTile)};actor={FormatTile(Game1.player.Tile)};reach=1;approach=none;blocked_by={stoodAsideFor.Format()};standable_neighbour=none");
             }
         }
 
@@ -123,9 +143,10 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Succeeded,
                 "target_reached",
-                approachSubstituted
+                (approachSubstituted
                     ? $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
-                    : $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(targetTile)}");
+                    : $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(targetTile)}")
+                    + (stoodAsideFor.Refused ? $";stood_aside_for={stoodAsideFor.Format()}" : string.Empty));
 
         LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
@@ -163,6 +184,8 @@ internal sealed partial class ExecutionManager
         string acceptedEvidence = approachSubstituted
             ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
             : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}";
+        if (stoodAsideFor.Refused)
+            acceptedEvidence += $";stood_aside_for={stoodAsideFor.Format()}";
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, acceptedEvidence);
         this.Remember(accepted);
         this.AddTrace(accepted);

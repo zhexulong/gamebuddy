@@ -224,9 +224,10 @@ public sealed class WorldInterruptionTests
     {
         string source = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
         source.Should().Contain("stopped_by={DetectStalledBy(localPlayer)}");
-        source.Should().Contain("return \"Pet\";");
-        source.Should().Contain("return \"Horse\";");
-        source.Should().Contain("return \"Npc\";");
+        // The token names the THING, not its class: `character:<name>@<tile>` is the same vocabulary the refusal
+        // probe uses for an occupant, so a model reading either field reads one spelling. The class words (`Pet`,
+        // `Horse`, `Npc`) are gone - they named a type the caller cannot wait for or ask about.
+        source.Should().Contain("character:{RefusalProbe.WithoutSpaces(name)}@");
         source.Should().Contain("return \"unknown\";");
     }
 

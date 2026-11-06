@@ -616,7 +616,11 @@ test("actual attested pipe mounts only the program submit tool until a submissio
         const emptyPlan = await execute("stardew_plan_work", {
           script: "for (const crop of snapshot.cropTargets ?? []) builder.move_to_tile({ x: crop.x, y: crop.y });",
         });
-        assert.deepEqual(emptyPlan.details, { accepted: false, nodeCount: 0, reasonCode: "plan_script_empty" });
+        assert.deepEqual(emptyPlan.details, {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: "plan_script_empty_no_builder_call",
+        });
         const unpublishedPlan = await execute("stardew_plan_work", {
           script: "builder.move_to_tile({ x: 5, y: 8 });",
         });

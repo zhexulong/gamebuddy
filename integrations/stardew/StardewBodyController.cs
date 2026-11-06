@@ -98,6 +98,56 @@ internal sealed class StardewBodyController
     /// </summary>
     internal const string NoNativePathReasonCode = "no_native_path";
 
+    /// <summary>
+    /// The refusal for a target tile a PERSON is standing on, when there is no tile beside it to work from.
+    ///
+    /// <para>
+    /// Separate from <see cref="NoNativePathReasonCode"/> because the two are different worlds: `no_native_path` says the
+    /// map has no road to that tile, and this says the road is there and a body is on the end of it. Told apart, they
+    /// lead to different next steps - replan a route versus wait, or work from the other side - and the measured failure
+    /// was the two collapsed: a villager standing on `24,22` for a whole run read as "the road does not exist", and the
+    /// companion hand-planned a two-map detour with guessed coordinates.
+    /// </para>
+    /// </summary>
+    internal const string TargetTileOccupiedReasonCode = "target_tile_occupied";
+
+    /// <summary>
+    /// The refusal for a walk a CHARACTER is standing in the middle of. Its subject is the person, and its remedy is to
+    /// wait for them to move or to aim somewhere else - never a route that does not exist.
+    /// </summary>
+    internal const string PathBlockedByCharacterReasonCode = "path_blocked_by_character";
+
+    /// <summary>
+    /// The refusal code for a walk that failed, given the layer that refused it.
+    ///
+    /// One mapping for both refusal branches (the cardinal flood's verdict and the native finder's null path), so a
+    /// character in the way cannot be reported as a map verdict by one of them and correctly by the other. Any other
+    /// layer keeps the reachability verdict.
+    /// </summary>
+    internal static string WalkRefusalCode(RefusalLayerToken blocked, string unreachableCode) =>
+        blocked.Layer == RefusalLayerKind.Character
+            ? $"{TargetTileOccupiedReasonCode}:{RefusalProbe.ReasonCodeToken(blocked)}"
+            : unreachableCode;
+
+    /// <summary>
+    /// The refusal code for a walk that stalled, given what the body loop found in front of the actor.
+    ///
+    /// `DetectStalledBy` answers the token `character:&lt;name&gt;@&lt;tile&gt;` when a body is in the way and `unknown`
+    /// otherwise, so the same fact decides both the code and the evidence: a person who does not move turns a 5-second
+    /// no-progress window into a named blocker the caller can wait out, instead of `native_path_ended`, which reads as
+    /// the walk itself being broken.
+    /// </summary>
+    internal static string StallRefusalCode(string stalledBy)
+    {
+        const string prefix = "character:";
+        if (!stalledBy.StartsWith(prefix, StringComparison.Ordinal))
+            return "native_path_ended";
+        string name = stalledBy.Substring(prefix.Length).Split('@')[0];
+        return name.Length == 0
+            ? PathBlockedByCharacterReasonCode
+            : $"{PathBlockedByCharacterReasonCode}:{RefusalProbe.ReasonCodeToken(name)}";
+    }
+
     public string? ActiveExecutionId => this.active?.ExecutionId;
 
     /// <summary>
@@ -347,11 +397,14 @@ internal sealed class StardewBodyController
             string next = fresh is null ? string.Empty : $";{fresh.Evidence}";
             // The ONE `no_native_path` refusal that used to omit the field: every other mint site carried it, so this one
             // read as "nothing is in the way" about a world the caller had just failed to walk through.
-            string blockedBy = RefusalProbe
-                .Describe(action: null, localPlayer.currentLocation, arrived.Requested.TargetTile, localPlayer)
-                .Format();
+            RefusalLayerToken resumedBlocker = RefusalProbe.Describe(
+                action: null,
+                localPlayer.currentLocation,
+                arrived.Requested.TargetTile,
+                localPlayer);
+            string blockedBy = resumedBlocker.Format();
             this.Fail(
-                NoNativePathReasonCode,
+                WalkRefusalCode(resumedBlocker, NoNativePathReasonCode),
                 $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true;blocked_by={blockedBy}{next}");
             return;
         }
@@ -403,9 +456,9 @@ internal sealed class StardewBodyController
         // No action row: a WALK declares no tool, no item and no approach, so the layers that can honestly answer are the
         // world ones (a character or an object on the tile, then the map). Passing the caller's action here would let
         // `blocked_by` blame its inventory for a route the planner refused.
-        string blockedBy = RefusalProbe
-            .Describe(action: null, localPlayer.currentLocation, specification.TargetTile, localPlayer)
-            .Format();
+        RefusalLayerToken blockedLayer = RefusalProbe
+            .Describe(action: null, localPlayer.currentLocation, specification.TargetTile, localPlayer);
+        string blockedBy = blockedLayer.Format();
         if (this.active is not null)
         {
             // The body controller can hold exactly one ownership: an in-flight local move. It names it through the
@@ -460,7 +513,7 @@ internal sealed class StardewBodyController
         // actually succeed.
         if (AssessNativeReachability(localPlayer, specification, findClosestReachable: true) is { ComponentContainsTarget: false } unreachable)
         {
-            reasonCode = NoNativePathReasonCode;
+            reasonCode = WalkRefusalCode(blockedLayer, NoNativePathReasonCode);
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
@@ -482,7 +535,7 @@ internal sealed class StardewBodyController
         PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
-            reasonCode = NoNativePathReasonCode;
+            reasonCode = WalkRefusalCode(blockedLayer, NoNativePathReasonCode);
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
             // A refusal is only actionable if it names WHY. The bare verdict plus a probe field
             // that can contradict it sent a live agent into ten blind re-aims at neighbouring
@@ -755,7 +808,7 @@ internal sealed class StardewBodyController
             PathFindController resumedPath = this.BuildNativePath(specification, localPlayer);
             if (resumedPath.pathToEndPoint is null || resumedPath.pathToEndPoint.Count == 0)
             {
-                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
                 return;
             }
 
@@ -788,7 +841,7 @@ internal sealed class StardewBodyController
             }
             else
             {
-                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
             }
             return;
         }
@@ -836,7 +889,7 @@ internal sealed class StardewBodyController
         StallWatchdogAction stallAction = AssessStall(tick, this.lastProgressTick, this.hasEmittedStalledWaiting);
         if (stallAction == StallWatchdogAction.TimedOut)
         {
-            this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+            this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
             return;
         }
 
@@ -1771,6 +1824,17 @@ internal sealed class StardewBodyController
     private static int ChebyshevDistance(Point left, Point right) =>
         Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
 
+    /// <summary>
+    /// What is standing in front of the walking body, as one bounded token: `character:&lt;name&gt;@&lt;tile&gt;`, or
+    /// `unknown`.
+    ///
+    /// <para>
+    /// It used to answer the TYPE (`Pet` / `Horse` / `Npc`), which names a class rather than a thing: a model told
+    /// `stopped_by=Npc` cannot tell whether the villager in front of it will walk away or which one to ask about. The
+    /// token now keeps the same `character:` vocabulary the refusal probe uses (`blocked_by=character:Haley@24,22`), so
+    /// the two places that name an occupant spell it the same way and one reader handles both.
+    /// </para>
+    /// </summary>
     private static string DetectStalledBy(Farmer localPlayer)
     {
         GameLocation? location = localPlayer.currentLocation;
@@ -1780,12 +1844,14 @@ internal sealed class StardewBodyController
         Point frontTile = GetFrontTile(localPlayer);
         try
         {
-            if (location.characters.OfType<Pet>().Any(character => IsAtTile(character, frontTile)))
-                return "Pet";
-            if (location.characters.OfType<Horse>().Any(character => IsAtTile(character, frontTile)))
-                return "Horse";
-            if (location.characters.OfType<NPC>().Any(character => IsAtTile(character, frontTile)))
-                return "Npc";
+            Character? blocker = location.characters.OfType<Pet>().FirstOrDefault(character => IsAtTile(character, frontTile))
+                ?? location.characters.OfType<Horse>().FirstOrDefault(character => IsAtTile(character, frontTile))
+                ?? location.characters.OfType<NPC>().FirstOrDefault(character => IsAtTile(character, frontTile));
+            if (blocker is not null)
+            {
+                string name = string.IsNullOrWhiteSpace(blocker.Name) ? blocker.GetType().Name : blocker.Name;
+                return $"character:{RefusalProbe.WithoutSpaces(name)}@{frontTile.X},{frontTile.Y}";
+            }
         }
         catch
         {

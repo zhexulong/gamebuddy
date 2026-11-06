@@ -249,33 +249,38 @@ public sealed class RefusalLayerNamingTests
     [Fact]
     public void EveryNoNativePathRefusalNamesALayer()
     {
-        // The refusal paths this vocabulary was built for. The population is derived from the constant itself: every
-        // assignment of `NoNativePathReasonCode` and every `Fail(NoNativePathReasonCode, ...)` site must carry the field
-        // in the evidence it pieces together. The count floor is the guard against the derivation silently matching
-        // nothing after a rename.
+        // The refusal paths this vocabulary was built for. The population is derived from the mapping itself: every
+        // `WalkRefusalCode(...)` call is one reachability verdict, and each must be handed the layer token AND have
+        // `blocked_by=` in the evidence it pieces together. The count floor is the guard against the derivation
+        // silently matching nothing after a rename.
         string source = Read("integrations/stardew/StardewBodyController.cs");
         var sites = new List<(int Index, string Shape)>();
-        foreach (string shape in new[] { "reasonCode = NoNativePathReasonCode;", "NoNativePathReasonCode," })
+        const string shape = "WalkRefusalCode(";
+        int index = 0;
+        while ((index = source.IndexOf(shape, index, StringComparison.Ordinal)) >= 0)
         {
-            int index = 0;
-            while ((index = source.IndexOf(shape, index, StringComparison.Ordinal)) >= 0)
-            {
-                // The declaration and the comparisons are not mint sites.
-                bool isComparison = index > 0 && source[index - 1] == '=';
-                if (!isComparison)
-                    sites.Add((index, shape));
-                index += shape.Length;
-            }
+            // The declaration itself is not a site; the three call sites are.
+            bool isDeclaration = index >= 20 && source[(index - 20)..index].Contains("static ", StringComparison.Ordinal);
+            if (!isDeclaration)
+                sites.Add((index, shape));
+            index += shape.Length;
         }
 
         sites.Count.Should().BeGreaterThanOrEqualTo(3,
             "the Mod refuses with `no_native_path` from the flood, the native finder and the resumed clear-approach walk - fewer means this derivation stopped matching");
-        foreach ((int index, string shape) in sites)
+        foreach ((int site, string _) in sites)
         {
-            string window = source[index..Math.Min(source.Length, index + 1200)];
+            string window = source[site..Math.Min(source.Length, site + 1200)];
             window.Should().Contain("blocked_by=",
-                $"the refusal minted at StardewBodyController.cs:{(LineOf(source, index))} ({shape}) must name the layer it knows");
+                $"the refusal minted at StardewBodyController.cs:{(LineOf(source, site))} ({shape}) must name the layer it knows");
         }
+
+        // And no site may bypass the mapping: a bare `no_native_path` assignment is a verdict about the MAP, which is
+        // exactly what a body standing on the target tile is not. The two shapes below are the ones this file used
+        // before the mapping existed.
+        source.Should().NotContain("reasonCode = NoNativePathReasonCode;",
+            "a reachability verdict must go through WalkRefusalCode so a character in the way is never reported as an absent route");
+        source.Should().NotContain("Fail(NoNativePathReasonCode,");
     }
 
     [Fact]
