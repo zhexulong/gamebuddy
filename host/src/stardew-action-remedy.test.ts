@@ -7,10 +7,17 @@ test("every named hold gets a countermeasure, and none of them is the same text"
   const codes = ["actor_held_by_modal", "transient_busy", "cutscene_active", "actor_passed_out"];
   const guidances = codes.map((code) => remedyForBodyHold(code, null)?.guidance);
   for (const [index, guidance] of guidances.entries()) {
-    assert.ok(guidance, `${codes[index]} must have a countermeasure: a named hold with no remedy is only a ` + "prettier dead end");
+    assert.ok(
+      guidance,
+      `${codes[index]} must have a countermeasure: a named hold with no remedy is only a ` + "prettier dead end",
+    );
   }
   // The point of the whole change: one code used to cover all of these, so five states gave one answer.
-  assert.equal(new Set(guidances).size, codes.length, "each hold must be answered differently or the Agent still cannot choose");
+  assert.equal(
+    new Set(guidances).size,
+    codes.length,
+    "each hold must be answered differently or the Agent still cannot choose",
+  );
 });
 
 test("a modal points at the tool that matches whether an answer is owed", () => {
@@ -18,7 +25,10 @@ test("a modal points at the tool that matches whether an answer is owed", () => 
   assert.equal(question?.action, "stardew_answer_dialogue");
   assert.match(question?.guidance ?? "", /stardew_answer_dialogue/);
 
-  const informational = remedyForBodyHold("actor_held_by_modal", "modal_type=DialogueBox;is_question=false;can_move=false");
+  const informational = remedyForBodyHold(
+    "actor_held_by_modal",
+    "modal_type=DialogueBox;is_question=false;can_move=false",
+  );
   assert.equal(informational?.action, "stardew_dismiss_modal");
   assert.match(informational?.guidance ?? "", /stardew_dismiss_modal/);
 });
@@ -26,14 +36,20 @@ test("a modal points at the tool that matches whether an answer is owed", () => 
 test("an unreadable answer state is honest rather than promising a close that may be refused", () => {
   // A non-dialogue operation menu: the question flag is absent because it does not apply, and dismiss_modal's
   // audited whitelist may refuse it. The guidance must not claim the close will work.
-  const remedy = remedyForBodyHold("actor_held_by_modal", "modal_type=LetterViewerMenu;is_question=unknown;can_move=false");
+  const remedy = remedyForBodyHold(
+    "actor_held_by_modal",
+    "modal_type=LetterViewerMenu;is_question=unknown;can_move=false",
+  );
   assert.equal(remedy?.action, "stardew_dismiss_modal");
   assert.match(remedy?.guidance ?? "", /refuses menus it is not allowed to close/);
   assert.match(remedy?.guidance ?? "", /report the blockage/, "the Agent must be told what to do if the remedy fails");
 });
 
 test("a transient hold tells the Agent to wait and to keep the SAME target", () => {
-  const remedy = remedyForBodyHold("transient_busy", "transient_kind=toolAnimation;retry_window_ms=2000;can_move=false");
+  const remedy = remedyForBodyHold(
+    "transient_busy",
+    "transient_kind=toolAnimation;retry_window_ms=2000;can_move=false",
+  );
   assert.equal(remedy?.action, null, "no tool can shorten a transient, so none may be named");
   assert.match(remedy?.guidance ?? "", /toolAnimation/);
   assert.match(remedy?.guidance ?? "", /2000/);
@@ -110,9 +126,32 @@ test("the bare legacy body_owned stays a dead end for the prefix fallback", () =
   assert.equal(remedyForBodyHold("body_owned", null), null);
 });
 
+test("a queued request that outlived its wait names the owner it waited for", () => {
+  // The Mod parks a request behind the actor's OWN in-flight work and dispatches it when that work ends. When the
+  // boundary is crossed, the wait answers with `waiting_for_body:<owner>` - a code neither the named table nor the
+  // `body_owned_` prefix fallback covers. It must still give the Agent a next step, and it must name the owner.
+  const remedy = remedyForBodyHold(
+    "waiting_for_body:body_owned_by_activity",
+    "owner_execution_id=exec_1;owner_action=pickup_item",
+  );
+  assert.equal(remedy?.action, null, "the wait is over: there is no tool to call");
+  assert.match(remedy?.guidance ?? "", /pickup_item/, "the guidance must name the owner, not just the hold");
+  assert.match(remedy?.guidance ?? "", /Re-issue the same request/);
+  // Evidence is optional: without it the code itself still says which owner the wait was for.
+  const withoutDetail = remedyForBodyHold("waiting_for_body:body_owned_by_movement", null);
+  assert.match(withoutDetail?.guidance ?? "", /body_owned_by_movement/);
+});
+
 test("a reason code that is not a body hold gets no remedy", () => {
   // Attaching a remedy here would tell the Agent to close a dialogue that is not open.
-  for (const code of ["player_not_actionable", "invalid_target_tile", "no_native_path", "body_owned", "accepted", null]) {
+  for (const code of [
+    "player_not_actionable",
+    "invalid_target_tile",
+    "no_native_path",
+    "body_owned",
+    "accepted",
+    null,
+  ]) {
     assert.equal(remedyForBodyHold(code, "modal_type=DialogueBox"), null, `${String(code)} is not a body hold`);
   }
 });

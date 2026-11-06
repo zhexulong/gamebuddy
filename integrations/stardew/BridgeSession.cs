@@ -13,11 +13,6 @@ using StardewValley;
 
 namespace GameBuddy.Stardew;
 
-internal delegate bool SceneTargetResolver(
-    ObservationBindingV1? requested,
-    out SceneAffordanceBinding? binding,
-    out string reasonCode);
-
 /// <summary>Transport-neutral, SMAPI-game-thread-only authenticated session.</summary>
 internal sealed class BridgeSession : IBodyProgramAdmissionTransport
 {
@@ -131,7 +126,6 @@ string? bodyProgramUnavailableReason = null,
         this.sceneObservationProvider = sceneObservationProvider ?? (() => null);
         this.sceneObservationProjection = new SceneObservationProjection(this.sceneObservations);
         this.executions.SetHeldRequestResolver(this.ResolveHeldRequest);
-        this.executions.SetSceneTargetResolver(this.TryResolveSceneTarget);
         this.executions.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(
             this.navigationReferences,
             this.navigationRuntimeInstanceId,
@@ -270,12 +264,15 @@ string? bodyProgramUnavailableReason = null,
                          descriptor.Effect,
                          new FarmhandActionPostconditionWire(descriptor.Postcondition),
                          descriptor.NativeBinding,
+                         // The observation binding the action declares, or null when it addresses nothing a scene read
+                         // names. Passed positionally here would have shifted every later argument when the field was
+                         // added, so the call site names what it means.
                          descriptor.SceneTarget is { } sceneTarget
                              ? new FarmhandActionObservationBindingDescriptorWire(
                                  sceneTarget.Type,
                                  sceneTarget.Version,
                                  sceneTarget.Required,
-                                 sceneTarget.RequiredProperties)
+                                 sceneTarget.RequiredProperties.ToArray())
                              : null,
                          // The Mod's own watchdog for this action, so the Host can wait as long as the action
                          // was designed to be waited on (see the wire record).
@@ -380,97 +377,6 @@ string? bodyProgramUnavailableReason = null,
           ObserveSceneResultPayload payload = BuildObserveScenePayload(projection);
          response = Reply("observe_scene_result", envelope.CorrelationId, payload);
          reasonCode = "accepted";
-        return true;
-    }
-
-    /// <summary>
-    /// Resolves a typed scene binding only on the game thread. The binding is
-    /// observation-local; the caller must still compare its copied target facts
-    /// with the live native object before invoking an action.
-    /// </summary>
-    internal bool TryResolveSceneTarget(
-        ObservationBindingV1? requested,
-        out SceneAffordanceBinding? binding,
-        out string reasonCode)
-    {
-        binding = null;
-        if (!this.actionRouter.IsOnOwnerThread)
-        {
-            reasonCode = "game_thread_required";
-            return false;
-        }
-        if (requested is null
-            || !BridgeProtocol.IsOpaqueId(requested.ObservationId)
-            || !BridgeProtocol.IsOpaqueId(requested.Ref))
-        {
-            reasonCode = "observation_binding_malformed";
-            return false;
-        }
-
-        SceneObservationContext? active = this.sceneObservations.ActiveObservation;
-        if (active is null
-            || this.sceneObservationGeneration != this.authenticatedGeneration
-            || !string.Equals(requested.ObservationId, this.sceneObservationId, StringComparison.Ordinal))
-        {
-            reasonCode = "observation_binding_stale";
-            return false;
-        }
-
-        SceneObservationInput? current;
-        try
-        {
-            current = this.sceneObservationProvider();
-        }
-        catch
-        {
-            this.ClearSceneForBridgeLifecycle();
-            reasonCode = "observation_binding_target_unavailable";
-            return false;
-        }
-        if (current is null || !current.IsValid)
-        {
-            this.ClearSceneForBridgeLifecycle();
-            reasonCode = "observation_binding_target_unavailable";
-            return false;
-        }
-
-        bool locationChanged = !string.Equals(current.CurrentRegion, active.LocationName, StringComparison.Ordinal);
-        bool actorMoved = this.sceneLocationName is not null
-            && (this.sceneActorTileX != current.ActorTileX || this.sceneActorTileY != current.ActorTileY);
-        if (locationChanged || actorMoved)
-        {
-            this.sceneMovementSequence = Math.Max(this.sceneMovementSequence + 1, active.MovementSequence + 1);
-            this.sceneLocationName = current.CurrentRegion;
-            this.sceneActorTileX = current.ActorTileX;
-            this.sceneActorTileY = current.ActorTileY;
-            this.sceneObservations.InvalidateForMove(
-                this.navigationRuntimeInstanceId,
-                this.scope,
-                current.CurrentRegion,
-                this.sceneMovementSequence);
-            this.sceneObservationId = null;
-            reasonCode = "observation_binding_stale";
-            return false;
-        }
-
-        if (!this.sceneObservations.TryResolve(requested.Ref, active, out binding, out string storeReason))
-        {
-            reasonCode = storeReason switch
-            {
-                "scene_ref_invalid" => "observation_binding_malformed",
-                "scene_ref_stale" => "observation_binding_stale",
-                _ => "observation_binding_target_unavailable",
-            };
-            return false;
-        }
-        if (binding is null || binding.Kind != SceneAffordanceKind.Forage)
-        {
-            binding = null;
-            reasonCode = "observation_binding_precondition_failed";
-            return false;
-        }
-
-        reasonCode = "accepted";
         return true;
     }
 

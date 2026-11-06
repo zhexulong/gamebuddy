@@ -185,20 +185,15 @@ public sealed class BridgeProtocolSerializationTests
     }
 
     [Fact]
-    public void PickupForageExecutionRequest_RequiresTypedSceneTargetAndRoundTripsIt()
+    public void PickupForageExecutionRequest_RoundTripsItsFourArguments()
     {
         var request = new BridgeExecutionRequest("req_forage", "idemp_forage", "pickup_forage",
-            new BridgeExecutionArgs { X = 12, Y = 34, ExpectedQualifiedItemId = "(O)16", ExpectedTargetId = "forage_target", SceneTarget = new ObservationBindingV1("observation_1", "forage_target") }, 1, 5000);
+            new BridgeExecutionArgs { X = 12, Y = 34, ExpectedQualifiedItemId = "(O)16", ExpectedTargetId = "forage_target" }, 1, 5000);
         var envelope = new BridgeEnvelope<BridgeExecutionRequest>(1, "msg_forage", "corr_forage", 1000L, SampleScope, "execution_request", request);
 
         BridgeProtocol.TrySerialize(envelope, out string json, out string serializeReason).Should().BeTrue(serializeReason);
         BridgeProtocol.TryDeserializeExecutionRequest(json, out BridgeEnvelope<BridgeExecutionRequest>? parsed, out string deserializeReason).Should().BeTrue(deserializeReason);
-        parsed!.Payload.Args.SceneTarget.Should().BeEquivalentTo(request.Args.SceneTarget);
-
-        var missing = System.Text.Json.Nodes.JsonNode.Parse(json)!;
-        missing["payload"]!["args"]!.AsObject().Remove("sceneTarget");
-        BridgeProtocol.TryDeserializeExecutionRequest(missing.ToJsonString(), out _, out string missingReason).Should().BeFalse();
-        missingReason.Should().Be("invalid_envelope");
+        parsed!.Payload.Args.Should().BeEquivalentTo(request.Args);
     }
 
     /// <summary>
@@ -629,8 +624,8 @@ public sealed class BridgeProtocolSerializationTests
         // must survive the wire unchanged and keep a hard entry bound.
         var entries = new List<BridgeVillagerWhereabouts>
         {
-            new("Jodi", "Jodi", "SeedShop", 3, 8, false),
-            new("Abigail", "Abigail", "Farm", 10, 12, true),
+            new("npc_relationship_jodi", "Jodi", "Jodi", "SeedShop", 3, 8, false),
+            new("npc_relationship_abigail", "Abigail", "Abigail", "Farm", 10, 12, true),
         };
         var json = JsonSerializer.Serialize(entries, BridgeProtocol.JsonOptions);
         var round = JsonSerializer.Deserialize<List<BridgeVillagerWhereabouts>>(json, BridgeProtocol.JsonOptions)!;
@@ -638,11 +633,11 @@ public sealed class BridgeProtocolSerializationTests
         round[0].InCurrentLocation.Should().BeFalse();
         round[1].InCurrentLocation.Should().BeTrue();
         round[0].DisplayName.Should().Be("Jodi");
-        // Exactly the six published keys, no more: the Host validator rejects any
+        // Exactly the published keys, no more: the Host validator rejects any
         // unknown key, so the wire shape is a contract, not a convention.
         using var document = JsonDocument.Parse(json);
         document.RootElement[0].EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo(
-            new[] { "npcName", "displayName", "location", "x", "y", "inCurrentLocation" });
+            new[] { "targetId", "npcName", "displayName", "location", "x", "y", "inCurrentLocation" });
     }
 
     [Fact]
@@ -692,79 +687,6 @@ public sealed class BridgeProtocolSerializationTests
         deserialized.Should().BeFalse();
         reasonCode.Should().Be("invalid_navigation_read_request");
         envelope.Should().BeNull();
-    }
-
-    [Fact]
-    public void ObservationBindingV1_RoundTripsExactKeysAndOpaqueValues()
-    {
-        var binding = new ObservationBindingV1("observation_1", "sr1_AAAAAAAAAAAAAAAA");
-
-        BridgeProtocol.TrySerialize(binding, out string json, out string serializeReason).Should().BeTrue();
-        serializeReason.Should().Be("accepted");
-        using (JsonDocument document = JsonDocument.Parse(json))
-        {
-            document.RootElement.EnumerateObject().Select(property => property.Name)
-                .Should().BeEquivalentTo("observationId", "ref");
-            document.RootElement.GetProperty("observationId").GetString().Should().Be(binding.ObservationId);
-            document.RootElement.GetProperty("ref").GetString().Should().Be(binding.Ref);
-        }
-
-        BridgeProtocol.TryDeserializeObservationBindingV1(json, out ObservationBindingV1? parsed, out string deserializeReason).Should().BeTrue();
-        deserializeReason.Should().Be("accepted");
-        parsed.Should().BeEquivalentTo(binding);
-    }
-
-    [Theory]
-    [InlineData("{}")]
-    [InlineData("{\"observationId\":\"observation_1\"}")]
-    [InlineData("{\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
-    [InlineData("{\"observationId\":\"observation_1\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\",\"kind\":\"npc\"}")]
-    [InlineData("{\"ObservationId\":\"observation_1\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
-    [InlineData("{\"observationId\":null,\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
-    [InlineData("{\"observationId\":\"observation_1\",\"ref\":17}")]
-    [InlineData("{\"observationId\":\"bad id\",\"ref\":\"sr1_AAAAAAAAAAAAAAAA\"}")]
-    [InlineData("{\"observationId\":\"observation_1\",\"ref\":\"\"}")]
-    public void TryDeserializeObservationBindingV1_RejectsNonExactOrNonOpaquePayload(string json)
-    {
-        BridgeProtocol.TryDeserializeObservationBindingV1(json, out ObservationBindingV1? binding, out string reasonCode).Should().BeFalse();
-
-        reasonCode.Should().Be("observation_binding_malformed");
-        binding.Should().BeNull();
-    }
-
-    [Fact]
-    public void ObservationBindingV1_RejectsInvalidDirectValuesAndOversizedOpaqueStrings()
-    {
-        var invalidValues = new[]
-        {
-            new ObservationBindingV1("", "ref_1"),
-            new ObservationBindingV1("observation_1", ""),
-            new ObservationBindingV1("bad id", "ref_1"),
-            new ObservationBindingV1(new string('o', 129), "ref_1"),
-            new ObservationBindingV1("observation_1", new string('r', 129)),
-        };
-
-        foreach (ObservationBindingV1 invalid in invalidValues)
-        {
-            BridgeProtocol.TrySerialize(invalid, out string json, out string reasonCode).Should().BeFalse();
-            json.Should().BeEmpty();
-            reasonCode.Should().Be("observation_binding_malformed");
-        }
-    }
-
-    [Fact]
-    public void TryDeserializeObservationBindingV1_RejectsMalformedJsonAndOversizedFrame()
-    {
-        BridgeProtocol.TryDeserializeObservationBindingV1("{", out _, out string malformedReason).Should().BeFalse();
-        malformedReason.Should().Be("observation_binding_malformed");
-
-        string tooLong = "{\"observationId\":\"" + new string('o', 129) + "\",\"ref\":\"ref_1\"}";
-        BridgeProtocol.TryDeserializeObservationBindingV1(tooLong, out _, out string tooLongReason).Should().BeFalse();
-        tooLongReason.Should().Be("observation_binding_malformed");
-
-        string oversized = "{\"observationId\":\"" + new string('o', 128) + "\",\"ref\":\"" + new string('r', 128) + "\"}";
-        BridgeProtocol.TryDeserializeObservationBindingV1(oversized + new string(' ', BridgeProtocol.MaximumMessageBytes), out _, out string oversizedReason).Should().BeFalse();
-        oversizedReason.Should().Be("message_too_large");
     }
 
     [Fact]

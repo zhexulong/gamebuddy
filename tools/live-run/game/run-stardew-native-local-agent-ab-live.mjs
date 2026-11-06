@@ -118,6 +118,7 @@ import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { installLiveRunInterrupt, killedReasonCode } from "../../lib/live-run-teardown.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
@@ -249,6 +250,29 @@ const SCENARIO = (() => {
 async function writeFailureDump(reason) {
   const thrown = classifyFailure(reason);
   console.error("RUNNER_FAILED", thrown.reasonCode, thrown.errorMessage, thrown.errorFrame ?? "no_frame_published");
+  return writeRunDump({ state: "blocked", reasonCode: thrown.reasonCode, thrown });
+}
+/**
+ * The same dump for a run that was ended FROM OUTSIDE — a timeout's SIGTERM, an operator's Ctrl+C.
+ *
+ * Measured 2026-11-06: a run killed at 19:37 left its run directory holding `launch.json` and nothing else, its fixture
+ * transaction unreleased, and 184 s of accumulated work unreadable — because the process simply stopped mid-await. The
+ * only difference between this exit and the escaped-error one is WHY it happened: nothing about the product was
+ * measured, so the run is `killed` (its own state, see `tools/lib/evidence-bundle.mjs`) and its accumulated day records
+ * and counters travel with it rather than dying in memory. The reason is a code and names the signal, never the shape
+ * of an absent field.
+ */
+async function writeKilledDump(signal) {
+  const reasonCode = killedReasonCode(signal);
+  // Only the code is logged here; the accumulated day records and counters are reported by `writeRunDump` once the
+  // assembly has actually read them, so the log line cannot disagree with the artifact.
+  console.error("RUNNER_KILLED", reasonCode);
+  return writeRunDump({ state: "killed", reasonCode, thrown: null });
+}
+/**
+ * The ONE assembly behind the two exits above, so a run's result cannot depend on how it ended.
+ */
+async function writeRunDump({ state, reasonCode, thrown }) {
   try {
     // The evidence is BEST-EFFORT, and this is the one place a guard is the right answer rather than a way of hiding a bug.
     //
@@ -266,32 +290,35 @@ async function writeFailureDump(reason) {
     // failure, so the death keeps its name.
     let evidence;
     try {
-      evidence = failureDumpEvidence(thrown);
+      evidence = failureDumpEvidence({ reasonCode });
     } catch (error) {
       evidence = Object.freeze({
-        settlement: Object.freeze({ reasonCode: thrown.reasonCode, component: "runner" }),
+        settlement: Object.freeze({ reasonCode, component: "runner" }),
         evidenceUnavailable: classifyFailure(error),
       });
     }
     const result = await buildRunResult({
-      state: "blocked",
-      error: thrown.reasonCode,
+      state,
+      error: thrown === null ? null : thrown.reasonCode,
+      reasonCode,
       errorDetail: thrown,
       ...evidence,
     });
     console.error(
-      "RUNNER_FAILED dump published",
+      `${state === "killed" ? "RUNNER_KILLED" : "RUNNER_FAILED"} dump published`,
       JSON.stringify({
         error: result.error,
+        reasonCode: result.reasonCode ?? null,
         errorFrame: result.failure?.errorFrame ?? null,
         attemptedActionIds: result.attemptedActionIds,
         executionTrace: result.executionTrace,
+        dayRecords: result.multiday?.dayRecords?.length ?? 0,
         bundle: result.bundle?.state ?? null,
       }),
     );
     return result;
   } catch (assemblyError) {
-    writeUnassembledFailure(thrown, assemblyError);
+    writeUnassembledFailure({ state, thrown: thrown ?? { reasonCode }, assemblyError });
     return null;
   }
 }
@@ -301,14 +328,14 @@ async function writeFailureDump(reason) {
  * the root error beside the assembly error, so the run is still analysable — and this record can never be mistaken for
  * the run's result, which is what the stub it replaces got wrong.
  */
-function writeUnassembledFailure(thrown, assemblyError) {
+function writeUnassembledFailure({ state, thrown, assemblyError }) {
   const assembly = classifyFailure(assemblyError);
   console.error("RUNNER_FAILED assembly failed", assembly.reasonCode, assembly.errorMessage, assembly.errorFrame);
   try {
     const path = process.env.GAMEBUDDY_RESULT_FILE;
     if (typeof path !== "string" || path.length === 0) return;
     const payload = {
-      state: "blocked",
+      state,
       scenario: SCENARIO,
       legacyLadder: LEGACY_LADDER,
       reason: "failure_dump_assembly_failed",
@@ -384,6 +411,17 @@ const exitAfterDump = (error) => {
 };
 process.once("uncaughtException", exitAfterDump);
 process.once("unhandledRejection", exitAfterDump);
+/**
+ * An EXTERNAL stop is its own exit, not a crash and not a failure.
+ *
+ * Measured 2026-11-06: a run killed at 19:37:14 left its run directory holding `launch.json` and nothing else, so the
+ * session's day records and counters existed only in the memory of a process that was gone. A timeout's SIGTERM and an
+ * operator's Ctrl+C therefore walk the same assembly the escaped-error exit walks, named by their signal.
+ *
+ * The trap is the launcher's too (`tools/lib/live-run-teardown.mjs`): Ctrl+C reaches every process on a Windows console,
+ * so both halves see the same signal, and the first one to arrive owns the unwind while a second exits immediately.
+ */
+installLiveRunInterrupt({ onInterrupt: writeKilledDump });
 
 // This file imports fifteen modules of `host/dist-test` directly, so a stale artifact silently tests the wrong
 // code — observed as an `Unsupported candidate action:` for an action that was already committed. Refuse to
@@ -2736,7 +2774,13 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     const deadline = Date.now() + MULTIDAY_NIGHT_TIMEOUT_MS;
     for (;;) {
       if (bridgeDisconnections.length > 0) {
-        return `night_watched_over_a_dead_bridge:${String(bridgeDisconnections[0]?.reasonCode ?? "unknown")}`;
+        // Name what actually happened. A closed pipe before any `sleep` dispatch is the game process going away,
+        // not a night we watched: measured 2026-11-06, a `STATUS_STACK_OVERFLOW` crash inside the game surfaced as
+        // `night_watched_over_a_dead_bridge:pipe_closed` on a run that had recorded one day and never slept once.
+        const disconnection = String(bridgeDisconnections[0]?.reasonCode ?? "unknown");
+        return bedTimeWhenSheCommitted === null
+          ? `game_process_exited_before_the_night:${disconnection}`
+          : `night_watched_over_a_dead_bridge:${disconnection}`;
       }
       // The night BEGINS when the companion dispatches `sleep`, read from EITHER channel. Reading only the
       // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
@@ -4995,6 +5039,10 @@ function bundleCrossingRecord(outcome) {
 async function buildRunResult({
   state,
   error = null,
+  // The run's NAMED outcome when nothing was thrown: a killed run publishes `run_killed_by_signal:<signal>` here,
+  // beside `state: "killed"`, so the reason is a code the artifact can be matched on instead of the shape of an
+  // absent field.
+  reasonCode = null,
   // The classified throw when the run CRASHED (`classifyFailure`), so the failure record names the class, the message
   // and the first frame. A run that was refused rather than crashed passes none and publishes `null` in those fields.
   errorDetail = null,
@@ -5011,8 +5059,11 @@ async function buildRunResult({
   // ONE derivation for the reason a run is not passed, so a code that came from a crash and a code a caller decided on
   // cannot both be written. A refused run names its own code; a crashed run is named by its classified throw.
   const failureReasonCode = errorDetail?.reasonCode ?? error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`;
+  // A killed run has NO failure moment: nothing the product did ended it, so there is no block to locate and no dump
+  // a replay could re-enter - and every aggregate that counts `failure` would otherwise count an external interrupt as
+  // a product defect.
   const failure =
-    state === "passed"
+    state === "passed" || state === "killed"
       ? null
       : buildFailureSnapshot({
           reasonCode: failureReasonCode,
@@ -5075,6 +5126,7 @@ async function buildRunResult({
     endedAtMs: Date.now(),
     state,
     ...(error === null ? {} : { error }),
+    ...(reasonCode === null ? {} : { reasonCode }),
     scenario: SCENARIO,
     legacyLadder: LEGACY_LADDER,
     // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
@@ -5167,7 +5219,9 @@ async function writeRunBundle({
   // The narrative the run wrote, judged from its own captured runtime root. The CALLER judges it (the verdict needs
   // the same answer); this falls back to judging here so the bundle is never silent about it.
   const historianRubricOutcome = historianRubric ?? judgeRunHistorianRubric(runtimeRoot);
-  const verdictState = result?.state === "passed" ? "passed" : "failed";
+  // Three outcomes, not two: a killed run is neither a pass nor a failure, and collapsing it into `failed` is exactly
+  // how an external interrupt becomes a product verdict.
+  const verdictState = result?.state === "passed" ? "passed" : result?.state === "killed" ? "killed" : "failed";
   const failed = verdictState === "failed";
   const slot = snapshot?.slot ?? process.env.GAMEBUDDY_DAY_START_SLOT ?? null;
   const repro = failed
@@ -5234,8 +5288,9 @@ async function writeRunBundle({
     },
     verdict: {
       state: verdictState,
-      // The same reason the failure dump carries, so the two do not disagree about why the run is red.
-      reasonCode: failure?.reasonCode ?? null,
+      // The same reason the failure dump carries, so the two do not disagree about why the run is red. A killed run has
+      // no failure dump; its reason is the one the signal trap named.
+      reasonCode: failure?.reasonCode ?? result?.reasonCode ?? null,
       rubric: {
         broken: Object.entries(result ?? {})
           .filter(([key, value]) => key.endsWith("Passed") && value === false)

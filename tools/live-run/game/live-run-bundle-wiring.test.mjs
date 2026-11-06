@@ -68,7 +68,13 @@ test("the runner writes its bundle through the shared validator, and names a ref
 });
 
 test("the failure dump is built from the bridge's own facts and the trace's own budget", () => {
-  assert.match(SOURCE, /const failure =\n\s*state === "passed"\n\s*\? null\n\s*: buildFailureSnapshot\(\{/);
+  // A PASSED run has no dump. A KILLED run has none either, and for a different reason: nothing the product did ended
+  // it, so there is no moment to locate and no work to replay - and a dump there would let an external interrupt be
+  // counted as a product defect. Every other outcome builds one from the bridge's own facts.
+  assert.match(
+    SOURCE,
+    /const failure =\n\s*state === "passed" \|\| state === "killed"\n\s*\? null\n\s*: buildFailureSnapshot\(\{/,
+  );
   assert.match(
     SOURCE,
     /const repro = failed\n?\s*\? buildReproPlan\(\{[\s\S]{0,300}?slot,\n\s*scenario,\n\s*\/\/ The nights this run had already crossed[\s\S]{0,200}?crossings: multidayOutcome\?\.crossings \?\? 0,/,

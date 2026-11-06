@@ -1153,7 +1153,7 @@ test("published chop_tree mounts only from a live Mod capability and forwards th
         revision: 4,
         evidence: {
           detail:
-            "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=1;health_after=5;stump_before=false;stump_after=true;source_transformed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+            "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
         },
       };
     },

@@ -747,6 +747,14 @@ export type Snapshot = Readonly<{
    * search map by map.
    */
   villagerWhereabouts?: readonly Readonly<{
+    /**
+     * The villager's address: `BuildNpcRelationshipTargetId(location, npcName)`, the identical id `npcRelationshipTargets`
+     * publishes and `talk_to_npc` re-resolves on the game thread.
+     *
+     * Published here because that family is bounded to the Mod's 6-tile discovery envelope: a villager 40 tiles away on
+     * the actor's own map had a tile in this roster and no id anywhere, so no legal `talk_to_npc` node could name her.
+     */
+    targetId: string;
     npcName: string;
     displayName: string;
     location: string;
@@ -1528,13 +1536,6 @@ export type ActionDescriptorArgument = Readonly<{
 export type ActionRegistrationDescriptor = Readonly<{
   arguments?: readonly ActionDescriptorArgument[];
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
-  /** Mod-owned opt-in required before Host can project pickup_forage sceneTarget. */
-  sceneTarget?: Readonly<{
-    type: string;
-    version: number;
-    required: boolean;
-    requiredProperties: readonly string[];
-  }>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }> | string;
   effect?: "read" | "write";
@@ -2595,12 +2596,6 @@ function isSceneReference(value: unknown): value is string {
   return typeof value === "string" && /^sr1_[A-Za-z0-9_-]{16}$/.test(value);
 }
 
-/** Exact Host projection of the Mod-owned ObservationBinding/v1 opt-in target. */
-function isObservationBindingV1(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ["observationId", "ref"])) return false;
-  return isOpaqueId(value.observationId) && isSceneReference(value.ref);
-}
-
 function validateNavigationReadRequest(value: Record<string, unknown>): string | null {
   if (!hasExactKeys(value, ["operation", "args"]) || !isRecord(value.args)) return "invalid_navigation_read_request";
   if (value.operation === "inspect_world_map") {
@@ -3058,8 +3053,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
 
     if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_soil_target";
   } else if (value.action === "pickup_forage") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId", "sceneTarget"]))
-      return "invalid_args";
+    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
 
     if (
       !isTileCoordinate(value.args.x) ||
@@ -3068,8 +3062,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
       value.args.expectedQualifiedItemId.length === 0 ||
       value.args.expectedQualifiedItemId.length > 128 ||
       typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId) ||
-      !isObservationBindingV1(value.args.sceneTarget)
+      !isOpaqueId(value.args.expectedTargetId)
     )
       return "invalid_forage_target";
   } else if (value.action === "pickup_item") {
@@ -4794,7 +4787,6 @@ function validateMachineLoadAgainstPublishedRow(args: Record<string, unknown>, s
 const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "arguments",
   "argumentSchema",
-  "sceneTarget",
   "outputFacts",
   "resourceTemplate",
   "effect",
@@ -4852,26 +4844,6 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
         if (!prop.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
       }
     }
-  }
-
-  if ("sceneTarget" in value && value.sceneTarget !== undefined) {
-    if (
-      !isRecord(value.sceneTarget) ||
-      !hasExactKeys(value.sceneTarget, ["type", "version", "required", "requiredProperties"]) ||
-      typeof value.sceneTarget.type !== "string" ||
-      value.sceneTarget.type.length === 0 ||
-      value.sceneTarget.type.length > 64 ||
-      typeof value.sceneTarget.version !== "number" ||
-      !Number.isSafeInteger(value.sceneTarget.version) ||
-      value.sceneTarget.version < 1 ||
-      typeof value.sceneTarget.required !== "boolean" ||
-      !Array.isArray(value.sceneTarget.requiredProperties) ||
-      value.sceneTarget.requiredProperties.length > 16 ||
-      !value.sceneTarget.requiredProperties.every(
-        (property) => typeof property === "string" && /^[a-z][a-zA-Z0-9_]{0,63}$/.test(property),
-      )
-    )
-      return false;
   }
 
   if ("outputFacts" in value && value.outputFacts !== undefined) {

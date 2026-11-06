@@ -98,6 +98,56 @@ internal sealed class StardewBodyController
     /// </summary>
     internal const string NoNativePathReasonCode = "no_native_path";
 
+    /// <summary>
+    /// The refusal for a target tile a PERSON is standing on, when there is no tile beside it to work from.
+    ///
+    /// <para>
+    /// Separate from <see cref="NoNativePathReasonCode"/> because the two are different worlds: `no_native_path` says the
+    /// map has no road to that tile, and this says the road is there and a body is on the end of it. Told apart, they
+    /// lead to different next steps - replan a route versus wait, or work from the other side - and the measured failure
+    /// was the two collapsed: a villager standing on `24,22` for a whole run read as "the road does not exist", and the
+    /// companion hand-planned a two-map detour with guessed coordinates.
+    /// </para>
+    /// </summary>
+    internal const string TargetTileOccupiedReasonCode = "target_tile_occupied";
+
+    /// <summary>
+    /// The refusal for a walk a CHARACTER is standing in the middle of. Its subject is the person, and its remedy is to
+    /// wait for them to move or to aim somewhere else - never a route that does not exist.
+    /// </summary>
+    internal const string PathBlockedByCharacterReasonCode = "path_blocked_by_character";
+
+    /// <summary>
+    /// The refusal code for a walk that failed, given the layer that refused it.
+    ///
+    /// One mapping for both refusal branches (the cardinal flood's verdict and the native finder's null path), so a
+    /// character in the way cannot be reported as a map verdict by one of them and correctly by the other. Any other
+    /// layer keeps the reachability verdict.
+    /// </summary>
+    internal static string WalkRefusalCode(RefusalLayerToken blocked, string unreachableCode) =>
+        blocked.Layer == RefusalLayerKind.Character
+            ? $"{TargetTileOccupiedReasonCode}:{RefusalProbe.ReasonCodeToken(blocked)}"
+            : unreachableCode;
+
+    /// <summary>
+    /// The refusal code for a walk that stalled, given what the body loop found in front of the actor.
+    ///
+    /// `DetectStalledBy` answers the token `character:&lt;name&gt;@&lt;tile&gt;` when a body is in the way and `unknown`
+    /// otherwise, so the same fact decides both the code and the evidence: a person who does not move turns a 5-second
+    /// no-progress window into a named blocker the caller can wait out, instead of `native_path_ended`, which reads as
+    /// the walk itself being broken.
+    /// </summary>
+    internal static string StallRefusalCode(string stalledBy)
+    {
+        const string prefix = "character:";
+        if (!stalledBy.StartsWith(prefix, StringComparison.Ordinal))
+            return "native_path_ended";
+        string name = stalledBy.Substring(prefix.Length).Split('@')[0];
+        return name.Length == 0
+            ? PathBlockedByCharacterReasonCode
+            : $"{PathBlockedByCharacterReasonCode}:{RefusalProbe.ReasonCodeToken(name)}";
+    }
+
     public string? ActiveExecutionId => this.active?.ExecutionId;
 
     /// <summary>
@@ -347,11 +397,14 @@ internal sealed class StardewBodyController
             string next = fresh is null ? string.Empty : $";{fresh.Evidence}";
             // The ONE `no_native_path` refusal that used to omit the field: every other mint site carried it, so this one
             // read as "nothing is in the way" about a world the caller had just failed to walk through.
-            string blockedBy = RefusalProbe
-                .Describe(action: null, localPlayer.currentLocation, arrived.Requested.TargetTile, localPlayer)
-                .Format();
+            RefusalLayerToken resumedBlocker = RefusalProbe.Describe(
+                action: null,
+                localPlayer.currentLocation,
+                arrived.Requested.TargetTile,
+                localPlayer);
+            string blockedBy = resumedBlocker.Format();
             this.Fail(
-                NoNativePathReasonCode,
+                WalkRefusalCode(resumedBlocker, NoNativePathReasonCode),
                 $"from={FormatTile(currentTile)};to={FormatTile(arrived.Requested.TargetTile)};location={localPlayer.currentLocation?.NameOrUniqueName ?? "unknown"};native=attempted;clear_step_cleared=true;blocked_by={blockedBy}{next}");
             return;
         }
@@ -403,9 +456,9 @@ internal sealed class StardewBodyController
         // No action row: a WALK declares no tool, no item and no approach, so the layers that can honestly answer are the
         // world ones (a character or an object on the tile, then the map). Passing the caller's action here would let
         // `blocked_by` blame its inventory for a route the planner refused.
-        string blockedBy = RefusalProbe
-            .Describe(action: null, localPlayer.currentLocation, specification.TargetTile, localPlayer)
-            .Format();
+        RefusalLayerToken blockedLayer = RefusalProbe
+            .Describe(action: null, localPlayer.currentLocation, specification.TargetTile, localPlayer);
+        string blockedBy = blockedLayer.Format();
         if (this.active is not null)
         {
             // The body controller can hold exactly one ownership: an in-flight local move. It names it through the
@@ -460,7 +513,7 @@ internal sealed class StardewBodyController
         // actually succeed.
         if (AssessNativeReachability(localPlayer, specification, findClosestReachable: true) is { ComponentContainsTarget: false } unreachable)
         {
-            reasonCode = NoNativePathReasonCode;
+            reasonCode = WalkRefusalCode(blockedLayer, NoNativePathReasonCode);
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;component_tiles={unreachable.ComponentTiles};target_enclosed={unreachable.TargetEnclosed.ToString().ToLowerInvariant()};gate=reachability_flood"
                 + (unreachable.TargetEnclosed ? $";approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}" : string.Empty)
                 + $";target_standable={(IsStandableTile(localPlayer.currentLocation, localPlayer, specification.TargetTile) ? "true" : "false")}"
@@ -482,7 +535,7 @@ internal sealed class StardewBodyController
         PathFindController plannedPath = this.BuildNativePath(specification, localPlayer);
         if (plannedPath.pathToEndPoint is null || plannedPath.pathToEndPoint.Count == 0)
         {
-            reasonCode = NoNativePathReasonCode;
+            reasonCode = WalkRefusalCode(blockedLayer, NoNativePathReasonCode);
             evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName}";
             // A refusal is only actionable if it names WHY. The bare verdict plus a probe field
             // that can contradict it sent a live agent into ten blind re-aims at neighbouring
@@ -755,7 +808,7 @@ internal sealed class StardewBodyController
             PathFindController resumedPath = this.BuildNativePath(specification, localPlayer);
             if (resumedPath.pathToEndPoint is null || resumedPath.pathToEndPoint.Count == 0)
             {
-                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
                 return;
             }
 
@@ -788,7 +841,7 @@ internal sealed class StardewBodyController
             }
             else
             {
-                this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+                this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
             }
             return;
         }
@@ -836,7 +889,7 @@ internal sealed class StardewBodyController
         StallWatchdogAction stallAction = AssessStall(tick, this.lastProgressTick, this.hasEmittedStalledWaiting);
         if (stallAction == StallWatchdogAction.TimedOut)
         {
-            this.Fail("native_path_ended", FormatStallEvidence(localPlayer, specification, tick));
+            this.Fail(StallRefusalCode(DetectStalledBy(localPlayer)), FormatStallEvidence(localPlayer, specification, tick));
             return;
         }
 
@@ -1195,45 +1248,202 @@ internal sealed class StardewBodyController
         return removable ? $"{direction}:{occupant}[removable]" : $"{direction}:{occupant}";
     }
 
-    /// <summary>
-    /// The four cardinal approaches to a tile, each with its blocker, as one bounded token.
-    ///
-    /// A refusal that says `target_standable=true; target_walkable=true; blocked_by=none` next to
-    /// `target_enclosed=true` reads as a contradiction: the tile is free, yet nothing can walk to it. Both
-    /// statements are true, and what the receipt was missing is the middle -- the tile's own approaches can be
-    /// individually walled, which leaves a free tile enclosed by its neighbours. Measured consequence: a live
-    /// agent re-aimed at such a tile eight times. This names the wall instead of leaving it to be guessed.
-    /// </summary>
-    internal static string DescribeTargetApproaches(Farmer actor, GameLocation location, Vector2 tile)
+    /// <summary>What one cardinal ring tile is, to the one predicate that decides the ring.</summary>
+    internal enum CardinalRingKind
     {
-        var parts = new List<string>(CardinalOffsets.Length);
+        /// <summary>The planner admits it AND it is inside the actor's own walkable component.</summary>
+        Open,
+
+        /// <summary>Free ground the planner admits, walled off from where the actor stands.</summary>
+        Unreachable,
+
+        /// <summary>Off the map, or something the planner will not step onto.</summary>
+        Blocked,
+    }
+
+    /// <summary>One cardinal ring tile: its direction, its tile, and the two texts the receipts use.</summary>
+    internal sealed record CardinalRingEntry(
+        string Direction,
+        Point Tile,
+        CardinalRingKind Kind,
+        string Text,
+        string Blocker);
+
+    /// <summary>
+    /// The four cardinal approaches to one goal, all answered by the ONE predicate the walk enforces, plus the tile
+    /// the body approaches from - or none, with the culprit named.
+    /// </summary>
+    internal sealed record CardinalRing(IReadOnlyList<CardinalRingEntry> Entries, Vector2? Approach, string BlockedBy)
+    {
+        /// <summary>The four entries as one bounded token, in the declared cardinal order.</summary>
+        internal string Evidence => string.Join(",", this.Entries.Select(entry => entry.Text));
+    }
+
+    /// <summary>
+    /// Whether the actor may stand on <paramref name="tile"/> AND walk there from where it stands: the one answer
+    /// both the refusal that DESCRIBES an approach and the leg that WALKS one are built from.
+    ///
+    /// <para>
+    /// They used to be two answers, and a companion spent three map crossings and 40 minutes on the difference.
+    /// The refusal described the ring from the planner's LOCAL step test alone, so a free tile walled off from the
+    /// actor read `open`; the Navigation approach leg asked a private third predicate - `isTilePassable` plus the
+    /// `CollisionMask.All` occupant mask - and answered `approach=unavailable` naming no tile at all. Measured in
+    /// one session: `no_native_path` x3 with `approaches=east:open,south:open` beside `route_exists_cardinal=false`
+    /// for ring tiles six tiles outside the actor's component, then `navigation_approach_unavailable` x2 with
+    /// `phase=approved;approach=unavailable` and nothing else. `All` includes `TerrainFeatures`, the collection
+    /// grass and tilled soil live in, so that leg also refused the ordinary farm ground the agent had just been
+    /// told to stand on (`stand_at=40,10`).
+    /// </para>
+    ///
+    /// <para>
+    /// What `open` therefore means here, and nowhere else: the planner would admit the tile
+    /// (<see cref="IsStandableTile"/>, which composes <see cref="IsWalkableTile"/>) and the tile is inside the
+    /// actor's own walkable component. A tile that passes the first and fails the second is `unreachable` - the
+    /// answer the ring could not give before, and the one that ends a hunt for a door that is not connected.
+    /// </para>
+    ///
+    /// <para>
+    /// Bounded by construction: the component flood carries the same <see cref="ReachabilityProbeLimit"/> as every
+    /// other probe in this file, and a component that exceeded it is left UNDECIDED (every free tile counts as
+    /// reachable) so the native planner rules - an exhausted probe must never be read as "nothing is reachable".
+    /// </para>
+    /// </summary>
+    internal static CardinalRing RingAroundGoal(Farmer? actor, GameLocation? location, Vector2 goalTile)
+    {
+        Func<Vector2, bool>? reachable = actor is null || location is null
+            ? null
+            : BuildWalkableComponent(location, actor);
+        var entries = new List<CardinalRingEntry>(CardinalOffsets.Length);
         foreach (Point offset in CardinalOffsets)
         {
-            Point neighbour = new((int)tile.X + offset.X, (int)tile.Y + offset.Y);
-            Vector2 neighbourTile = new(neighbour.X, neighbour.Y);
-            string direction = offset switch
+            Point tile = new((int)goalTile.X + offset.X, (int)goalTile.Y + offset.Y);
+            Vector2 tileAsVector = new(tile.X, tile.Y);
+            string direction = RingDirection(offset);
+            if (location is null || !location.isTileOnMap(tileAsVector))
             {
-                { X: 0, Y: -1 } => "north",
-                { X: 0, Y: 1 } => "south",
-                { X: -1, Y: 0 } => "west",
-                _ => "east",
-            };
-            if (!location.isTileOnMap(neighbourTile))
-            {
-                parts.Add($"{direction}:off_map");
+                entries.Add(new CardinalRingEntry(
+                    direction, tile, CardinalRingKind.Blocked, $"{direction}:off_map", $"off_map@{tile.X},{tile.Y}"));
                 continue;
             }
-            string occupant = DescribeTargetOccupant(location, neighbourTile, actor).Format();
-            bool walkable = IsWalkableTile(location, actor, neighbourTile);
-            // A blocked tile that holds a REMOVABLE object is a different message from one that does not: the first
-            // tells the caller the wall can be taken down with a tool it already has, the second that it cannot. The
-            // distinction is what turns "no route" into a next step, and it costs no reachability query at all.
-            bool removable = !walkable
-                && location.objects.TryGetValue(neighbourTile, out StardewValley.Object? blockedItem)
-                && IsRemovableLitter(blockedItem);
-            parts.Add(FormatApproachEntry(direction, walkable, occupant, removable));
+            if (!IsStandableTile(location, actor, tileAsVector))
+            {
+                string occupant = DescribeTargetOccupant(location, tileAsVector, actor).Format();
+                bool removable = location.objects.TryGetValue(tileAsVector, out StardewValley.Object? blockedItem)
+                    && IsRemovableLitter(blockedItem);
+                // ONE name for the thing in the way, used by the ring entry AND by the refusal's
+                // `approach_blocked_by:`: the clearing vocabulary where it applies, the engine's layer token
+                // otherwise. A second spelling here is a second fact for a reader to reconcile.
+                string name = ClearableRingName(location, actor, tileAsVector) ?? occupant;
+                entries.Add(new CardinalRingEntry(
+                    direction,
+                    tile,
+                    CardinalRingKind.Blocked,
+                    FormatApproachEntry(direction, walkable: false, name, removable),
+                    name == "none" ? $"blocked@{tile.X},{tile.Y}" : name));
+                continue;
+            }
+            if (reachable is not null && !reachable(tileAsVector))
+            {
+                entries.Add(new CardinalRingEntry(
+                    direction,
+                    tile,
+                    CardinalRingKind.Unreachable,
+                    $"{direction}:unreachable",
+                    $"unreachable_ground@{tile.X},{tile.Y}"));
+                continue;
+            }
+            entries.Add(new CardinalRingEntry(
+                direction, tile, CardinalRingKind.Open, $"{direction}:open", string.Empty));
         }
-        return string.Join(",", parts);
+
+        CardinalRingEntry? approach = actor is null
+            ? null
+            : NearestOpenEntry(entries, new Point((int)actor.Tile.X, (int)actor.Tile.Y));
+        Vector2? approachTile = approach is null ? null : new Vector2(approach.Tile.X, approach.Tile.Y);
+        return new CardinalRing(entries, approachTile, NamedBlocker(entries));
+    }
+
+    /// <summary>
+    /// The four cardinal approaches to a tile, each with its blocker, as one bounded token - the token
+    /// <see cref="RingAroundGoal"/> decides, so the ring an Agent is told about and the ring the walk enforces cannot
+    /// describe different worlds.
+    ///
+    /// <para>
+    /// A refusal that says `target_standable=true; target_walkable=true; blocked_by=none` next to
+    /// `target_enclosed=true` reads as a contradiction: the tile is free, yet nothing can walk to it. Both
+    /// statements are true, and what the receipt was missing is the middle - each approach can be individually
+    /// walled, which leaves a free tile enclosed by its neighbours. This names the wall instead of leaving it to be
+    /// guessed, and it names a free-but-walled tile `unreachable` where it used to say `open`.
+    /// </para>
+    /// </summary>
+    internal static string DescribeTargetApproaches(Farmer actor, GameLocation location, Vector2 tile) =>
+        RingAroundGoal(actor, location, tile).Evidence;
+
+    private static string RingDirection(Point offset) => offset switch
+    {
+        { X: 0, Y: -1 } => "north",
+        { X: 0, Y: 1 } => "south",
+        { X: -1, Y: 0 } => "west",
+        _ => "east",
+    };
+
+    /// <summary>
+    /// What stands on a ring tile, in the clearing vocabulary, when it is something a priced tool can remove
+    /// (`rock@9,2`, `weed@40,9`) - the word the same receipt's `clear_to_reach` already publishes, and the word an
+    /// Agent can act on with the tool it is holding. Null when the occupant is not a clearable object, so the caller
+    /// keeps the engine's own layer token (`clump:ResourceClump@x,y`, `buildings_tile:blocked@x,y`), which the
+    /// `blocked_by` field has published since the layer probe was written.
+    /// </summary>
+    private static string? ClearableRingName(GameLocation location, Farmer? actor, Vector2 tile)
+    {
+        if (actor is null)
+            return null;
+        return ClearableAt(location, actor, tile) is { } priced
+            ? $"{priced.Kind}@{(int)tile.X},{(int)tile.Y}"
+            : null;
+    }
+
+    /// <summary>
+    /// The open ring tile nearest the actor, ties kept in the declared cardinal order - the rule every other
+    /// approach leg uses (<see cref="Core.ApproachTileSelector"/>), so one world state always yields one tile.
+    /// </summary>
+    private static CardinalRingEntry? NearestOpenEntry(IReadOnlyList<CardinalRingEntry> entries, Point actor)
+    {
+        CardinalRingEntry? best = null;
+        int bestDistance = int.MaxValue;
+        foreach (CardinalRingEntry entry in entries)
+        {
+            if (entry.Kind != CardinalRingKind.Open)
+                continue;
+            int distance = Math.Abs(entry.Tile.X - actor.X) + Math.Abs(entry.Tile.Y - actor.Y);
+            if (distance >= bestDistance)
+                continue;
+            best = entry;
+            bestDistance = distance;
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// The culprit a ring with no open tile reports: free-but-walled ground first, because "that tile is free and you
+    /// cannot walk to it" is the fact this ring exists to add and the one the receipt could not say before; then a
+    /// named obstacle (already published by `blocked_by=` and `clear_to_reach=` in the same receipt); then the map
+    /// edge. One rule, so nothing here can grow an exception list.
+    /// </summary>
+    private static string NamedBlocker(IReadOnlyList<CardinalRingEntry> entries)
+    {
+        foreach (CardinalRingEntry entry in entries)
+        {
+            if (entry.Kind == CardinalRingKind.Unreachable)
+                return entry.Blocker;
+        }
+        foreach (CardinalRingEntry entry in entries)
+        {
+            if (entry.Kind == CardinalRingKind.Blocked
+                && !entry.Blocker.StartsWith("off_map@", StringComparison.Ordinal))
+                return entry.Blocker;
+        }
+        return entries[0].Blocker;
     }
 
     /// <summary>
@@ -1301,6 +1511,34 @@ internal sealed class StardewBodyController
         Dictionary<Point, int> clearable,
         Dictionary<Point, string> kinds)
     {
+        var layer = location.map.Layers[0];
+        for (int x = 0; x < layer.LayerWidth; x += 1)
+        {
+            for (int y = 0; y < layer.LayerHeight; y += 1)
+            {
+                if (ClearableAt(location, localPlayer, new Vector2(x, y)) is not { } priced)
+                    continue;
+                clearable[new Point(x, y)] = priced.Cost;
+                kinds[new Point(x, y)] = priced.Kind;
+            }
+        }
+    }
+
+    /// <summary>
+    /// What one tile's occupant would cost to remove, and the clear kind it prices as, for THIS actor's tools and
+    /// skills - or null when the tile is empty, or holds something no priced tool removes (a wall is not a bill).
+    ///
+    /// <para>
+    /// ONE mapping, read by two callers that must not drift: the clearing plan behind <c>clear_to_reach</c>, and the
+    /// approach ring's name for the thing in the way (<c>approach_blocked_by:rock@9,2</c>). The containers are visited
+    /// in the engine's order - resourceClumps, objects, terrainFeatures - because a tile holds at most one of them.
+    /// </para>
+    /// </summary>
+    private static (string Kind, int Cost)? ClearableAt(
+        StardewValley.GameLocation location,
+        Farmer localPlayer,
+        Vector2 tile)
+    {
         int toolPower = localPlayer.CurrentTool is { } heldTool ? heldTool.UpgradeLevel + 1 : 1;
         int mining = localPlayer.MiningLevel;
         int foraging = localPlayer.ForagingLevel;
@@ -1308,55 +1546,45 @@ internal sealed class StardewBodyController
 
         foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
         {
+            if (clump.Tile != tile)
+                continue;
             if (!ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _))
-                continue;
-            string? kind = ClearableKind.Map("resourceClump", toolKind);
-            if (kind is null)
-                continue;
-            int? cost = ClearCostTable.Cost(
-                kind,
+                return null;
+            if (ClearableKind.Map("resourceClump", toolKind) is not { } clumpKind)
+                return null;
+            int? clumpCost = ClearCostTable.Cost(
+                clumpKind,
                 toolPower,
-                kind == "stump" ? foraging : mining,
+                clumpKind == "stump" ? foraging : mining,
                 efficient: false);
-            if (cost is null)
-                continue;
-            var tile = new Point((int)clump.Tile.X, (int)clump.Tile.Y);
-            clearable[tile] = cost.Value;
-            kinds[tile] = kind;
+            return clumpCost is { } paid ? (clumpKind, paid) : null;
         }
 
-        foreach (KeyValuePair<Vector2, StardewValley.Object> entry in location.objects.Pairs)
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
         {
-            string detail = entry.Value.QualifiedItemId == "(O)2" ? "stone" : entry.Value.IsWeeds() ? "weed" : string.Empty;
-            string? kind = ClearableKind.Map("object", detail);
-            if (kind is null)
-                continue;
-            int? cost = ClearCostTable.Cost(kind, toolPower, mining, efficient: false);
-            if (cost is null)
-                continue;
-            var tile = new Point((int)entry.Key.X, (int)entry.Key.Y);
-            clearable[tile] = cost.Value;
-            kinds[tile] = kind;
+            string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
+            if (ClearableKind.Map("object", detail) is not { } objectKind)
+                return null;
+            int? objectCost = ClearCostTable.Cost(objectKind, toolPower, mining, efficient: false);
+            return objectCost is { } paid ? (objectKind, paid) : null;
         }
 
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> entry in location.terrainFeatures.Pairs)
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is not null)
         {
-            string detail = entry.Value switch
+            string detail = feature switch
             {
                 StardewValley.TerrainFeatures.Grass => "grass",
                 StardewValley.TerrainFeatures.HoeDirt dirt when dirt.crop is not null => "crop",
                 _ => string.Empty,
             };
-            string? kind = ClearableKind.Map("terrain", detail);
-            if (kind is null)
-                continue;
-            int? cost = ClearCostTable.Cost(kind, toolPower, farming, efficient: false);
-            if (cost is null)
-                continue;
-            var tile = new Point((int)entry.Key.X, (int)entry.Key.Y);
-            clearable[tile] = cost.Value;
-            kinds[tile] = kind;
+            if (ClearableKind.Map("terrain", detail) is not { } terrainKind)
+                return null;
+            int? terrainCost = ClearCostTable.Cost(terrainKind, toolPower, farming, efficient: false);
+            return terrainCost is { } paid ? (terrainKind, paid) : null;
         }
+
+        return null;
     }
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
@@ -1771,6 +1999,17 @@ internal sealed class StardewBodyController
     private static int ChebyshevDistance(Point left, Point right) =>
         Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
 
+    /// <summary>
+    /// What is standing in front of the walking body, as one bounded token: `character:&lt;name&gt;@&lt;tile&gt;`, or
+    /// `unknown`.
+    ///
+    /// <para>
+    /// It used to answer the TYPE (`Pet` / `Horse` / `Npc`), which names a class rather than a thing: a model told
+    /// `stopped_by=Npc` cannot tell whether the villager in front of it will walk away or which one to ask about. The
+    /// token now keeps the same `character:` vocabulary the refusal probe uses (`blocked_by=character:Haley@24,22`), so
+    /// the two places that name an occupant spell it the same way and one reader handles both.
+    /// </para>
+    /// </summary>
     private static string DetectStalledBy(Farmer localPlayer)
     {
         GameLocation? location = localPlayer.currentLocation;
@@ -1780,12 +2019,14 @@ internal sealed class StardewBodyController
         Point frontTile = GetFrontTile(localPlayer);
         try
         {
-            if (location.characters.OfType<Pet>().Any(character => IsAtTile(character, frontTile)))
-                return "Pet";
-            if (location.characters.OfType<Horse>().Any(character => IsAtTile(character, frontTile)))
-                return "Horse";
-            if (location.characters.OfType<NPC>().Any(character => IsAtTile(character, frontTile)))
-                return "Npc";
+            Character? blocker = location.characters.OfType<Pet>().FirstOrDefault(character => IsAtTile(character, frontTile))
+                ?? location.characters.OfType<Horse>().FirstOrDefault(character => IsAtTile(character, frontTile))
+                ?? location.characters.OfType<NPC>().FirstOrDefault(character => IsAtTile(character, frontTile));
+            if (blocker is not null)
+            {
+                string name = string.IsNullOrWhiteSpace(blocker.Name) ? blocker.GetType().Name : blocker.Name;
+                return $"character:{RefusalProbe.WithoutSpaces(name)}@{frontTile.X},{frontTile.Y}";
+            }
         }
         catch
         {

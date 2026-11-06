@@ -318,6 +318,9 @@
           "postcondition": {
             "name": "raft_launched"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "raftTargets"
         },
         "handlerGroup": null
@@ -355,6 +358,9 @@
           "effect": "write",
           "postcondition": {
             "name": "horse_mounted"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "horseTargets"
         },
@@ -394,6 +400,9 @@
           "postcondition": {
             "name": "mine_entered"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "mineEntranceTargets"
         },
         "handlerGroup": null
@@ -431,6 +440,9 @@
           "effect": "write",
           "postcondition": {
             "name": "mine_left"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "mineEntranceTargets"
         },
@@ -506,6 +518,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "soilTiles"
         },
@@ -602,6 +617,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "itemTargets"
         },
         "handlerGroup": null
@@ -643,6 +661,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "cropTargets"
         },
@@ -689,6 +710,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "seedTargets"
         },
         "handlerGroup": null
@@ -734,6 +758,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "fertilizerTargets"
         },
         "handlerGroup": null
@@ -773,6 +800,9 @@
           "effect": "read",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "machineTargets"
         },
@@ -820,6 +850,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "machineTargets"
         },
         "handlerGroup": null
@@ -857,6 +890,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "machineTargets"
         },
@@ -900,6 +936,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "animalProductTargets"
         },
         "handlerGroup": null
@@ -941,6 +980,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "feedTroughTargets"
         },
@@ -1019,6 +1061,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "harvestTargets"
         },
         "handlerGroup": null
@@ -1064,6 +1109,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "woodFenceTargets"
         },
@@ -1111,6 +1159,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "crabPotTargets"
         },
         "handlerGroup": null
@@ -1157,6 +1208,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "baitCrabPotTargets"
         },
         "handlerGroup": null
@@ -1201,6 +1255,9 @@
           "effect": "write",
           "postcondition": {
             "name": "owned_object_placed"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets"
         },
@@ -1247,6 +1304,9 @@
           "effect": "write",
           "postcondition": {
             "name": "placed_item_removed"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets"
         },
@@ -1332,6 +1392,9 @@
           "effect": "write",
           "postcondition": {
             "name": "container_source_broken"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "worldObjectTargets"
         },
@@ -1553,6 +1616,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "treeChopSourceTargets"
         },
         "handlerGroup": null
@@ -1598,6 +1664,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "rockSourceTargets"
         },
@@ -1645,6 +1714,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "clearHoeDirtTargets"
         },
         "handlerGroup": null
@@ -1691,6 +1763,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "artifactSpotTargets"
         },
         "handlerGroup": null
@@ -1736,6 +1811,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "refillWateringCanTargets"
         },
@@ -1878,6 +1956,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "debrisTargets"
         },
         "handlerGroup": null
@@ -1954,6 +2035,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "npcRelationshipTargets"
         },
         "handlerGroup": null
@@ -1992,6 +2076,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "petTargets"
         },
         "handlerGroup": null
@@ -2029,6 +2116,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "farmAnimalPetTargets"
         },
@@ -2072,6 +2162,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "petBowlTargets"
         },
         "handlerGroup": null
@@ -2113,6 +2206,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "slimeHutchTroughTargets"
         },
@@ -2159,6 +2255,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "npcRelationshipTargets"
         },
         "handlerGroup": null
@@ -2196,6 +2295,9 @@
           "effect": "write",
           "postcondition": {
             "name": "npc_talked"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "npcRelationshipTargets"
         },
@@ -2325,6 +2427,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "chests"
         },
         "handlerGroup": null
@@ -2361,6 +2466,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "chests"
         },
@@ -2408,6 +2516,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "treeStumpTargets"
         },
         "handlerGroup": null
@@ -2452,6 +2563,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "treeSaplingTargets"
         },
@@ -2499,6 +2613,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "weedTargets"
         },
         "handlerGroup": null
@@ -2544,6 +2661,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "grassTargets"
         },
@@ -2591,6 +2711,9 @@
           "postcondition": {
             "name": "cask_cleared"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "caskTargets"
         },
         "handlerGroup": null
@@ -2632,6 +2755,9 @@
           "effect": "write",
           "postcondition": {
             "name": "mannequin_dressed"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "mannequinTargets"
         },
@@ -2675,6 +2801,9 @@
           "postcondition": {
             "name": "sign_display_set"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "signTargets"
         },
         "handlerGroup": null
@@ -2716,6 +2845,9 @@
           "effect": "write",
           "postcondition": {
             "name": "silo_hay_deposited"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "siloTargets"
         },
@@ -2798,6 +2930,9 @@
           "postcondition": {
             "name": "silo_hay_taken"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "siloTargets"
         },
         "handlerGroup": null
@@ -2877,6 +3012,9 @@
           "effect": "write",
           "postcondition": {
             "name": "animal_door_toggled"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "animalDoorTargets"
         },
@@ -2995,6 +3133,9 @@
           "postcondition": {
             "name": "mail_claimed"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "mailboxTargets"
         },
         "handlerGroup": null
@@ -3037,6 +3178,9 @@
           "postcondition": {
             "name": "building_chest_loaded"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "buildingChestTargets"
         },
         "handlerGroup": null
@@ -3074,6 +3218,9 @@
           "effect": "write",
           "postcondition": {
             "name": "building_chest_output_collected"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "buildingChestTargets"
         },
@@ -3121,6 +3268,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "scytheCropTargets"
         },
         "handlerGroup": null
@@ -3158,6 +3308,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "bushTargets"
         },
@@ -3197,6 +3350,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "fruitTreeTargets"
         },
         "handlerGroup": null
@@ -3234,6 +3390,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "shakeTreeTargets"
         },
@@ -3273,6 +3432,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "pedestalTargets"
         },
         "handlerGroup": null
@@ -3310,6 +3472,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "fenceGateTargets"
         },
@@ -3413,6 +3578,9 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "crabPotCollectTargets"
         },
         "handlerGroup": null
@@ -3493,6 +3661,9 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "shippingBinTargets"
         },
@@ -3796,6 +3967,9 @@
           "postcondition": {
             "name": "placed_object_recolored"
           },
+          "approach": {
+            "relation": "self_walked"
+          },
           "targetFamily": "colorTargets"
         },
         "handlerGroup": null
@@ -3833,6 +4007,9 @@
           "effect": "write",
           "postcondition": {
             "name": "fish_pond_cleared"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "fishPondTargets"
         },
@@ -3874,6 +4051,9 @@
           "effect": "write",
           "postcondition": {
             "name": "farm_building_built"
+          },
+          "approach": {
+            "relation": "self_walked"
           },
           "targetFamily": "farmBuildingTargets"
         },

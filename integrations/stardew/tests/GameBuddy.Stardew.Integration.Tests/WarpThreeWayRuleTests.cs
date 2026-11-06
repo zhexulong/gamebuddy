@@ -213,9 +213,9 @@ public sealed class WarpThreeWayRuleTests
         // And the shipped closure IS that composition: both clauses, on the candidate, inside the substitution.
         string move = MethodBody(Read(MovementActions), "public LocalExecutionReceipt RequestLocalMove(");
         string substitution = SliceBetween(move, "Vector2? approach = SelectStandingApproachTile(", "if (approach is not null)");
-        substitution.Should().Contain("IsWalkableTile(Game1.player.currentLocation, Game1.player, candidate)",
+        substitution.Should().Contain("IsWalkableTile(moveLocation, Game1.player, candidate)",
             "the substitution keeps the planner's own traversal reading");
-        substitution.Should().Contain("&& !IsWarpBufferTile(Game1.player.currentLocation, ((int)candidate.X, (int)candidate.Y))",
+        substitution.Should().Contain("&& !IsWarpBufferTile(moveLocation, ((int)candidate.X, (int)candidate.Y))",
             "joined to the one stop rule, on the CANDIDATE - not on the named destination");
 
         // The named destination is deliberately untouched: a warp tile AS the destination is a cross-map intent

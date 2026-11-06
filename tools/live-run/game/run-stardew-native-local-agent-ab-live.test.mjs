@@ -19,6 +19,7 @@ import {
 } from "../../lib/multiday-baseline.mjs";
 import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
+import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
@@ -2881,6 +2882,8 @@ test("an error that escapes the run still publishes the work it had already reco
       "failureDumpEvidence",
       "writeUnassembledFailure",
       "writeFailureDump",
+      "writeRunDump",
+      "writeKilledDump",
     ],
     {
       executedActionIds,
@@ -2939,6 +2942,7 @@ test("an error that escapes the run still publishes the work it had already reco
     // THE REAL INCIDENT (`2026-11-05T11-37-35-764Z-multiday_routine`): a ReferenceError escaped the run's own exit path
     // and its message was published as the reason code. The code is now closed and the site is in the record.
     await writeFailureDump(new ReferenceError("path is not defined"));
+    assert.ok(written[0] !== undefined, `the dump wrote nothing; it reported: ${logged.join(" | ")}`);
     refused = JSON.parse(written[0].contents);
     crashed = JSON.parse(written[1].contents);
   } finally {
@@ -2947,7 +2951,10 @@ test("an error that escapes the run still publishes the work it had already reco
     else process.env.GAMEBUDDY_RESULT_FILE = previousResultFile;
   }
   const dump = written.find((entry) => entry.path === resultFile);
-  assert.ok(dump !== undefined, "an escaped error must leave the run's result, not nothing");
+  assert.ok(
+    dump !== undefined,
+    `an escaped error must leave the run's result, not nothing; the dump reported: ${logged.join(" | ")}`,
+  );
   const published = refused;
   assert.equal(published.state, "blocked");
   // A declared code (`throw new Error("stable_token:detail")`) keeps its name; a message that is NOT a code becomes the
@@ -3017,6 +3024,172 @@ test("an error that escapes the run still publishes the work it had already reco
   assert.equal(bundleFailures[1].reasonCode, "runner_internal_error");
   assert.equal(bundleFailures[1].errorFrame, failure.errorFrame);
   assert.equal(bundleFailures[1].errorStack[0], failure.errorStack[0]);
+});
+
+test("a run interrupted from outside publishes its own verdict, with the evidence it had accumulated", async () => {
+  // Measured 2026-11-06: a run killed at 19:37:14 left its run directory holding `launch.json` and nothing else. Its
+  // day records and counters existed only in the memory of a process that was gone, and "we stopped it" was
+  // indistinguishable on disk from "the product failed". The killed exit therefore walks the SAME assembly every other
+  // exit walks, with the state and the reason the signal gives it - and the bundle is written through the REAL
+  // contract, so this asserts the artifact a reader opens rather than a paraphrase of it.
+  const captureDir = mkdtempSync(join(tmpdir(), "gb-killed-bundle-"));
+  const runtimeRoot = mkdtempSync(join(tmpdir(), "gb-killed-root-"));
+  const written = [];
+  const previousWindowMode = process.env.GAMEBUDDY_WINDOW_MODE;
+  process.env.GAMEBUDDY_WINDOW_MODE = "hidden";
+  const dayRecords = [
+    {
+      day: 1,
+      reasonCode: "day_advanced",
+      terminal: { state: "passed", reasonCode: "slept" },
+      after: { dayOfMonth: 2 },
+    },
+  ];
+  const actionTrace = [
+    {
+      requestId: "r1",
+      action: "harvest_crop",
+      args: { targetX: 12, targetY: 8 },
+      state: "succeeded",
+      reasonCode: "crop_harvested",
+      inGameTime: "620",
+      day: 2,
+      season: "spring",
+      year: 1,
+      dispatchedAtMs: 1_700_000_000_000,
+    },
+  ];
+  const factLog = [{ type: "execution_receipt", reasonCode: "crop_harvested", requestId: "r1", executionId: "e1" }];
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.map(String).join(" "));
+  let writeKilledDump;
+  try {
+    const [, , , , , , killedDump] = extractRunnerFunction(
+      RUNNER_SOURCE,
+      [
+        "summarizeDispatchedActions",
+        "buildRunResult",
+        "failureDumpEvidence",
+        "writeUnassembledFailure",
+        "writeFailureDump",
+        "writeRunDump",
+        "writeKilledDump",
+        "bundleCrossingRecord",
+        "writeRunBundle",
+      ],
+      {
+        // The run's accumulated evidence: this is what a killed run must not lose.
+        executedActionIds,
+        NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
+        phaseTimings: { runStartedAtMs: 1_700_000_000_000, marks: {} },
+        lastObservedSnapshot: null,
+        lastObservedPose: null,
+        actionTrace,
+        factLog,
+        programSubmissions: [{ programId: "p_harvest", code: "accepted", accepted: true }],
+        programOutcomes: [],
+        programOutcomesReadAtSubmissionCount: 1,
+        sampleProgramOutcomes: async () => [],
+        programExecutionRows,
+        executionTraceInvariant,
+        readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+        TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+        multidayOutcome: { crossings: 1, assessment: { state: "passed", ok: true, violations: [] }, dayRecords },
+        historianRubricOutcome: Object.freeze({
+          state: "unmeasured",
+          reasonCode: "no_compartments_written",
+          obligations: [],
+          compartmentsChecked: 0,
+        }),
+        killedReasonCode,
+        runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
+        providerReadiness: null,
+        SCENARIO: "multiday_routine",
+        LEGACY_LADDER: null,
+        summarizeActionCadence: () => ({ spans: [] }),
+        summarizePresentationEvidence: () => ({ pieces: [] }),
+        buildFailureSnapshot,
+        classifyFailure,
+        writeFileSync: () => {},
+        buildReproPlan: () => ({
+          command: "node tools/live-run/game/launch-ladder-live.mjs --scenario multiday_routine",
+          expectedWallClockMs: 900_000,
+          reach: "the_failing_day",
+        }),
+        buildRunObservation: (input) => input,
+        assessCompanionInteraction: () => ({ passed: true }),
+        findProtectedCovenantShipment: () => undefined,
+        PROTECTED_COVENANT_ITEM_ID: "(O)400",
+        capture: { dir: captureDir },
+        runtimeRoot,
+        covenantSeed: null,
+        presentedSummary: null,
+        voiceResult: null,
+        agentTurnResult: null,
+        client: { state: { authenticated: true, snapshot: { revision: 42 } } },
+        closeCapture: async () => ({ state: "closed" }),
+        writeFile: async (path, contents) => written.push({ path, contents }),
+        // The bundle's own leaves: the contract and the writer are REAL, so what this asserts is the manifest on disk.
+        identity: {},
+        identityKey: () => "identity-key",
+        gameSessionId: "game-session-1",
+        environmentFacts: { adapter: null, resolution: null },
+        PROGRAM_TRACE_FILE: "programTrace.jsonl",
+        writeProgramExecutionTrace: async () => {},
+        writeEvidenceBundle: (await import("../../lib/evidence-bundle.mjs")).writeEvidenceBundle,
+        existsSync,
+        join,
+        process,
+        ledger: { snapshot: () => ({ clock: "run_monotonic", entries: [] }), entries: () => [] },
+        ledgerSpans: () => [],
+        ledgerSummary: () => ({ count: 0, open: 0, medianMs: null, maxMs: null, sumMs: 0 }),
+      },
+    );
+    writeKilledDump = killedDump;
+    await writeKilledDump("SIGINT");
+  } finally {
+    console.error = originalError;
+    if (previousWindowMode === undefined) delete process.env.GAMEBUDDY_WINDOW_MODE;
+    else process.env.GAMEBUDDY_WINDOW_MODE = previousWindowMode;
+  }
+
+  // 1. The run's own record, published where a reader looks first.
+  assert.ok(
+    written.length === 1,
+    `the killed run must publish exactly one result, got ${written.length}; the dump reported: ${logged.join(" | ")}`,
+  );
+  const published = JSON.parse(written[0].contents);
+  assert.equal(published.state, "killed", "a killed run is not reported as a failed one");
+  assert.equal(published.reasonCode, "run_killed_by_signal:SIGINT");
+  assert.equal(published.error, undefined, "nothing errored: the run was stopped from outside");
+  assert.equal(published.failure, null, "a killed run has no failure moment to locate or replay");
+  assert.equal(published.multiday.crossings, 1);
+  assert.deepEqual(published.multiday.dayRecords, dayRecords, "the day records the run had already accumulated travel");
+  assert.deepEqual(published.attemptedActionIds, ["harvest_crop"], "and so do its counters");
+
+  // 2. The bundle contract's own face of the same run: the killed state reaches the manifest, the day records reach the
+  //    manifest, and no failure dump is claimed.
+  const manifest = JSON.parse(readFileSync(join(captureDir, "manifest.json"), "utf8"));
+  assert.equal(manifest.verdict.state, "killed");
+  assert.equal(manifest.verdict.reasonCode, "run_killed_by_signal:SIGINT");
+  assert.equal(manifest.failure, null);
+  assert.equal(manifest.repro, null);
+  assert.equal(manifest.multiday.crossings, 1);
+  assert.equal(manifest.multiday.dayRecords.length, 1);
+  const traceRows = readFileSync(join(captureDir, "actionTrace.jsonl"), "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+  assert.deepEqual(
+    validateEvidenceBundle(manifest, { actionTrace: traceRows }).violations,
+    [],
+    "the killed bundle must satisfy the contract, not merely exist",
+  );
+  assert.ok(
+    logged.some((line) => line.includes("RUNNER_KILLED run_killed_by_signal:SIGINT")),
+    "the kill is announced by its code",
+  );
 });
 
 test("an unobserved program is not a program that dispatched nothing", async () => {

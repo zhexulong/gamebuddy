@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
  *   Catalog omits   action-surface.mjs:454 builds the entry without `sceneTarget`
  *   Host requires   protocol.ts:2812 hasExactKeys(args, [... , "sceneTarget"])
  *   The model       can only copy fields the snapshot publishes; forageTargets has no observationId
+ *
+ *   (The binding was removed afterwards: no producer published a joinable `ref`, and a Body Program node could not
+ *   carry one. `pickup_forage` is addressed by `expectedTargetId` alone, like every other `*Targets` action.)
  * </pre>
  *
  * <p>
@@ -62,11 +65,20 @@ const CATALOG = JSON.parse(
 ) as {
   actions?: readonly {
     actionId: string;
-    argumentSchema?: Record<string, unknown>;
-    sceneTarget?: { type: string; version: number; required: boolean; requiredProperties: readonly string[] };
+    argumentSchema?: Record<string, { type: string; enum?: readonly string[] }>;
+    targetFamily?: string;
   }[];
 };
 const PROTOCOL = readFileSync(join(ROOT, "host", "src", "protocol.ts"), "utf8");
+const SCHEMA = JSON.parse(readFileSync(join(ROOT, "protocol", "bridge-v1.schema.json"), "utf8")) as {
+  $defs?: Record<
+    string,
+    {
+      snapshot?: { properties?: Record<string, { items?: { $ref?: string } }> };
+      [definition: string]: unknown;
+    }
+  >;
+};
 
 export {};
 
@@ -97,7 +109,7 @@ function hostRequiredArguments(): Map<string, string[] | null> {
 }
 
 test("every argument the Host demands is published in the catalog", () => {
-  const published = new Map<string, { argumentSchema?: Record<string, unknown>; sceneTarget?: { required: boolean } }>(
+  const published = new Map<string, { argumentSchema?: Record<string, unknown> }>(
     (CATALOG.actions ?? []).map((action) => [action.actionId, action]),
   );
   const demanded = hostRequiredArguments();
@@ -114,10 +126,6 @@ test("every argument the Host demands is published in the catalog", () => {
       continue;
     }
     const schemaKeys = new Set(Object.keys(entry.argumentSchema ?? {}));
-    // `sceneTarget` is a BINDING, not an argument: the catalog carries it as a top-level descriptor because that is
-    // what it describes (which properties a caller must supply, per `ObservationBinding/v1`), while the Host reads it
-    // as one more field of `args`. Both are right; the gate has to know that they are the same fact in two places.
-    if (entry.sceneTarget !== undefined) schemaKeys.add("sceneTarget");
     for (const key of keys) {
       if (key === "requestId" || key === "idempotencyKey" || key === "expectedRevision" || key === "deadlineMs")
         continue;
@@ -136,20 +144,6 @@ test("every argument the Host demands is published in the catalog", () => {
   );
 });
 
-test("pickup_forage publishes the scene binding its validator demands", () => {
-  // The named case, kept as its own assertion so a regression reports the action rather than a list.
-  const entry = (CATALOG.actions ?? []).find((action) => action.actionId === "pickup_forage");
-  assert.ok(entry !== undefined, "pickup_forage is published");
-  assert.ok(
-    entry.sceneTarget !== undefined,
-    "the catalog must carry the ObservationBinding/v1 descriptor the Host validates against",
-  );
-  assert.equal(entry.sceneTarget.type, "ObservationBinding");
-  assert.equal(entry.sceneTarget.version, 1);
-  assert.equal(entry.sceneTarget.required, true);
-  assert.deepEqual(entry.sceneTarget.requiredProperties, ["observationId", "ref"]);
-});
-
 test("the gate is not vacuous: the parser finds a requirement that exists", () => {
   // A parser that silently matched nothing would report agreement with everything. `enter_exit` is a branch with an
   // exact key list, so it must be found with the args the Host really checks.
@@ -157,4 +151,128 @@ test("the gate is not vacuous: the parser finds a requirement that exists", () =
   const enterExit = demanded.get("enter_exit");
   assert.ok(Array.isArray(enterExit), "enter_exit is parsed as a branch WITH a key list");
   assert.ok(enterExit.includes("x"), `enter_exit demands x; parsed [${enterExit.join(", ")}]`);
+});
+
+/**
+ * EVERY ACTION A CALLER CAN ONLY ADDRESS BY COPYING AN ID MUST HAVE A FAMILY THAT PUBLISHES IT.
+ *
+ * <p>
+ * `pickup_forage` and `talk_to_npc` both failed this and neither had a gate:
+ * </p>
+ * <ul>
+ *   <li>`pickup_forage` required a `sceneTarget` whose producer published `identity` = the qualified item id, while the
+ *       action compared `BuildForageTargetId` - two ids for one object and no key between them;</li>
+ *   <li>`talk_to_npc` required `npcRelationshipTargets[].targetId`, a family bounded to the 6-tile discovery envelope,
+ *       while the roster that lists every villager published a tile and no id at all.</li>
+ * </ul>
+ * <p>
+ * Both are the same class: an argument that is an opaque identifier can only be COPIED out of an observation, so some
+ * published family must carry it - and every family that publishes the same subject must carry it too, or the row the
+ * model can see is not the row the action accepts. The population is the catalog's own argument list and `targetFamily`
+ * declarations; the row shapes are the wire schema's `$defs`. Nothing here is a list of actions.
+ * </p>
+ */
+test("every action addressed by a copied id has a family that publishes it", () => {
+  const definitions = SCHEMA.$defs ?? {};
+  /** family -> row property -> its declared shape, so a closed vocabulary can be told from a name. */
+  const families = new Map<string, ReadonlyMap<string, { type?: unknown; enum?: unknown }>>();
+  for (const [field, spec] of Object.entries(definitions.snapshot?.properties ?? {})) {
+    const reference = spec?.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const definition = definitions[reference.slice(reference.lastIndexOf("/") + 1)] as
+      | { properties?: Record<string, { type?: unknown; enum?: unknown }> }
+      | undefined;
+    const properties = definition?.properties;
+    if (properties === undefined) continue;
+    families.set(field, new Map(Object.entries(properties)));
+  }
+  assert.ok(families.size > 40, `the wire's snapshot families must have been read (found ${families.size})`);
+
+  /** `expectedTargetId` -> `targetId`: the row property the argument is checked against. */
+  const rowPropertyOf = (argumentName: string) => {
+    if (!argumentName.startsWith("expected")) return argumentName;
+    const rest = argumentName.slice("expected".length);
+    return rest[0]!.toLowerCase() + rest.slice(1);
+  };
+
+  /**
+   * The row properties that name the SUBJECT of a row, rather than its address, its coordinates or its label.
+   *
+   * Two families share a subject when they share one of these: `npcRelationshipTargets` and `villagerWhereabouts` both
+   * carry `npcName`, which is the villager - so both must be able to name her. `displayName` and `location` are
+   * excluded because they describe rather than identify: every family with a readable name has a `displayName`.
+   */
+  const subjectProperties = (family: string, addressing: ReadonlySet<string>) =>
+    [...(families.get(family) ?? new Map())]
+      .filter(
+        ([property, spec]) =>
+          !addressing.has(property) &&
+          property !== "displayName" &&
+          property !== "location" &&
+          property !== "x" &&
+          property !== "y" &&
+          !/Id$/u.test(property) &&
+          // A closed vocabulary names a CATEGORY (`kind`, `branch`, `status`), not one entity: it cannot be the
+          // subject two families share, because two rows of different families routinely share the category.
+          spec?.type === "string" &&
+          spec?.enum === undefined,
+      )
+      .map(([property]) => property);
+
+  const problems: string[] = [];
+  let examined = 0;
+  for (const action of CATALOG.actions ?? []) {
+    const declaredFamily = (action as { targetFamily?: string }).targetFamily;
+    // The argument this gate is about is the one an action re-resolves against live state: an opaque id it compares
+    // after copying it out of a row. `qualifiedItemId` and `chestId` are copyable facts too, but they name an item or a
+    // container inside a row rather than the row's own target, so they are a different question.
+    const addressing = Object.entries(action.argumentSchema ?? {})
+      .filter(([name, spec]) => name === "expectedTargetId" && spec.type === "string" && spec.enum === undefined)
+      .map(([name]) => rowPropertyOf(name));
+    if (addressing.length === 0) continue;
+    examined += 1;
+    if (declaredFamily === undefined) {
+      problems.push(`${action.actionId} -> (no targetFamily) -> ${addressing.join(",")}`);
+      continue;
+    }
+    const declared = families.get(declaredFamily);
+    if (declared === undefined) {
+      problems.push(
+        `${action.actionId} -> ${declaredFamily} -> ${addressing.join(",")} (the wire publishes no such family)`,
+      );
+      continue;
+    }
+    for (const property of addressing)
+      if (!declared.has(property))
+        problems.push(
+          `${action.actionId} -> ${declaredFamily} -> ${property} (the family it declares does not publish it)`,
+        );
+
+    const addressingNames = new Set(addressing);
+    const subject = subjectProperties(declaredFamily, addressingNames);
+    if (subject.length === 0) continue;
+    for (const [family, properties] of families) {
+      if (family === declaredFamily) continue;
+      // A sibling has to describe the SAME subject AT A TILE: that is what makes its rows alternative addresses for
+      // the same dispatch. A family that shares a word but publishes no coordinates (`tailoringTargets` and
+      // `fixedInteractionPoints` both say `kind`) is answering a different question.
+      if (!properties.has("x") || !properties.has("y")) continue;
+      const shared = subject.filter((property) => properties.has(property));
+      if (shared.length === 0) continue;
+      for (const property of addressing)
+        if (!properties.has(property))
+          problems.push(
+            `${action.actionId} -> ${family} -> ${property} (it publishes ${shared.join(",")}, the same subject ` +
+              `${declaredFamily} publishes, but not the id \`${action.actionId}\` is called with)`,
+          );
+    }
+  }
+
+  assert.ok(examined > 25, `the catalog must declare id-addressed actions (found ${examined})`);
+  assert.deepEqual(
+    problems,
+    [],
+    `a caller can only COPY an opaque id out of an observation, so a family must publish it - and a family that lists ` +
+      `the same subject without the id is a row the model can see and cannot act on.\n${problems.join("\n")}`,
+  );
 });

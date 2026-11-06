@@ -69,15 +69,6 @@ public sealed class FarmhandActionSurfaceExportTests
     }
 
     [Fact]
-    public void PickupForageDeclaresRequiredObservationBindingV1SceneTarget()
-    {
-        FarmhandActionRegistration pickup = FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "pickup_forage");
-
-        pickup.Descriptor!.SceneTarget.Should().BeEquivalentTo(new FarmhandActionObservationBindingDescriptor(
-            "ObservationBinding", 1, true, new[] { "observationId", "ref" }));
-    }
-
-    [Fact]
     public void SerializeToJson_IsCanonicalAndDeterministic()
     {
         string first = FarmhandActionSurfaceExport.SerializeToJson();

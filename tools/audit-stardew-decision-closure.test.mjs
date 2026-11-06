@@ -907,6 +907,7 @@ test("an approach declaration is admitted at exactly the shape the Host enforces
   for (const approach of [
     { relation: "adjacent" },
     { relation: "adjacent", withinTiles: 1 },
+    { relation: "self_walked" },
     { relation: "x".repeat(64), withinTiles: 2 },
   ]) {
     assert.equal(validateDescriptorProjection(descriptorWith({ approach })), true, JSON.stringify(approach));

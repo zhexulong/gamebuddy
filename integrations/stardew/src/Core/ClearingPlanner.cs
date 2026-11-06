@@ -35,6 +35,23 @@ public static class ClearingPlanner
     private static readonly (int Dx, int Dy)[] Cardinal = { (0, -1), (0, 1), (-1, 0), (1, 0) };
 
     /// <summary>
+    /// How many distinct targets one plan may expand. A field full of weeds is a chain of clearable tiles, and
+    /// `FinishWithTargetClear` asks `Plan` for each clearable neighbour, so the search is recursive by
+    /// construction: without a bound it walks that chain one stack frame per tile.
+    ///
+    /// <para>
+    /// Measured 2026-11-06: a live run died with `STATUS_STACK_OVERFLOW` (exit 0xC00000FD) inside
+    /// `ClearingPlanner.FinishWithTargetClear` while picking up an item across a weedy field - the game process
+    /// was gone and the run reported `night_watched_over_a_dead_bridge:pipe_closed`, which named nothing.
+    /// </para>
+    /// <para>
+    /// Exceeding the budget answers `Unreachable`, which is the honest answer available here ("I did not find a
+    /// route within what I will pay to look"); it is NOT a claim that no route exists, and the caller says so.
+    /// </para>
+    /// </summary>
+    private const int ExpansionBudget = 256;
+
+    /// <summary>
     /// The cheapest set of clears that opens a route from <paramref name="actor"/> to
     /// <paramref name="target"/>, searching over walkable tiles plus clearable ones.
     ///
@@ -48,9 +65,56 @@ public static class ClearingPlanner
         IReadOnlySet<(int X, int Y)> walkable,
         IReadOnlyDictionary<(int X, int Y), int> clearable)
     {
+        var memo = new Dictionary<(int X, int Y), ClearingPlan>();
+        var expanding = new HashSet<(int X, int Y)>();
+        int budget = ExpansionBudget;
+        return PlanCore(actor, target, walkable, clearable, memo, expanding, ref budget);
+    }
+
+    private static ClearingPlan PlanCore(
+        (int X, int Y) actor,
+        (int X, int Y) target,
+        IReadOnlySet<(int X, int Y)> walkable,
+        IReadOnlyDictionary<(int X, int Y), int> clearable,
+        Dictionary<(int X, int Y), ClearingPlan> memo,
+        HashSet<(int X, int Y)> expanding,
+        ref int budget)
+    {
         if (actor == target)
             return new ClearingPlan(true, Array.Empty<(int X, int Y)>(), 0);
+        if (memo.TryGetValue(target, out ClearingPlan? cached) && cached is not null)
+            return cached;
 
+        // A target already on the expansion path cannot be part of a cheaper route: clearing A to reach B to
+        // reach A again costs strictly more than the prefix it repeats.
+        if (!expanding.Add(target))
+            return ClearingPlan.Unreachable;
+
+        try
+        {
+            if (budget <= 0)
+                return ClearingPlan.Unreachable;
+            budget -= 1;
+
+            ClearingPlan result = Expand(actor, target, walkable, clearable, memo, expanding, ref budget);
+            memo[target] = result;
+            return result;
+        }
+        finally
+        {
+            expanding.Remove(target);
+        }
+    }
+
+    private static ClearingPlan Expand(
+        (int X, int Y) actor,
+        (int X, int Y) target,
+        IReadOnlySet<(int X, int Y)> walkable,
+        IReadOnlyDictionary<(int X, int Y), int> clearable,
+        Dictionary<(int X, int Y), ClearingPlan> memo,
+        HashSet<(int X, int Y)> expanding,
+        ref int budget)
+    {
         // The target may itself be the thing to clear: a rock is a legitimate destination for a swing.
         //
         // It is also the one tile where "walkable" and "clearable" can both be true - the tile under a
@@ -60,7 +124,7 @@ public static class ClearingPlanner
         if (!walkable.Contains(target) && !targetIsClearable)
             return ClearingPlan.Unreachable;
         if (targetIsClearable)
-            return FinishWithTargetClear(actor, target, walkable, clearable);
+            return FinishWithTargetClear(actor, target, walkable, clearable, memo, expanding, ref budget);
 
         var best = new Dictionary<(int X, int Y), int> { [actor] = 0 };
         var clearedBy = new Dictionary<(int X, int Y), List<(int X, int Y)>> { [actor] = new() };
@@ -127,7 +191,10 @@ public static class ClearingPlanner
         (int X, int Y) actor,
         (int X, int Y) target,
         IReadOnlySet<(int X, int Y)> walkable,
-        IReadOnlyDictionary<(int X, int Y), int> clearable)
+        IReadOnlyDictionary<(int X, int Y), int> clearable,
+        Dictionary<(int X, int Y), ClearingPlan> memo,
+        HashSet<(int X, int Y)> expanding,
+        ref int budget)
     {
         int targetCost = clearable[target];
 
@@ -138,7 +205,7 @@ public static class ClearingPlanner
             (int X, int Y) from = (target.X + dx, target.Y + dy);
             if (!walkable.Contains(from) && !clearable.ContainsKey(from))
                 continue;
-            ClearingPlan approach = Plan(actor, from, walkable, clearable);
+            ClearingPlan approach = PlanCore(actor, from, walkable, clearable, memo, expanding, ref budget);
             if (!approach.Reachable)
                 continue;
             var clears = new List<(int X, int Y)>(approach.Clear);

@@ -170,6 +170,19 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
           "or pedestal taking). Wait for it to finish, then re-issue the same request.",
       };
     default:
+      // A QUEUED REQUEST THAT OUTLIVED ITS WAIT. The Mod parks a request that collides with the actor's own in-flight
+      // work and dispatches it the moment that work ends; when the owner outlasts the Mod's bounded window the wait
+      // ends in this code, which names the owner the wait was for. Nothing was started, so this is recoverable by
+      // re-issuing against the world as it is now - and the owner itself travels in the evidence.
+      if (reasonCode !== null && reasonCode.startsWith("waiting_for_body:")) {
+        const owner = evidenceField(detail, "owner_action") ?? reasonCode.slice("waiting_for_body:".length);
+        return {
+          action: null,
+          guidance:
+            `The farmhand was still busy with ${owner}, so the request waited and was not started. Re-issue the same ` +
+            `request: if that work is still running it will wait again rather than being lost, so do not change the target.`,
+        };
+      }
       // The Mod keeps the `body_owned_` prefix on every named hold, so a named code this table does not list
       // yet still gets actionable guidance instead of degrading to an unknown error. The bare legacy
       // `body_owned` names no owner and carries no countermeasure, so it keeps returning null.

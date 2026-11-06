@@ -7,8 +7,27 @@ import { join } from "node:path";
 const AGGREGATE = new URL("./roll-aggregate.mjs", import.meta.url).pathname.replace(/^\/([A-Z]):\//, "$1:/");
 
 /** Regression-plus-behavior wrappers around reading a run's observation. */
-function observation({ ladder = "3", promptSha256 = "abc123", turnMs = 120000, actionCount = 12, rejectionRate = 0.08, summaryChars = 60 } = {}) {
-  return { schema: "game_ladder_observation/v1", promptSha256, promptOverridden: false, ladder, contextAssembled: true, worldBookAssembled: true, turnMs, actionCount, rejectionRate, receiptCount: 3, summaryChars };
+function observation({
+  ladder = "3",
+  promptSha256 = "abc123",
+  turnMs = 120000,
+  actionCount = 12,
+  rejectionRate = 0.08,
+  summaryChars = 60,
+} = {}) {
+  return {
+    schema: "game_ladder_observation/v1",
+    promptSha256,
+    promptOverridden: false,
+    ladder,
+    contextAssembled: true,
+    worldBookAssembled: true,
+    turnMs,
+    actionCount,
+    rejectionRate,
+    receiptCount: 3,
+    summaryChars,
+  };
 }
 
 function makeRun(options = {}) {
@@ -33,7 +52,9 @@ test("summarizes one group with means and stddevs per metric", async () => {
   try {
     await writeRuns(dir, {
       "a.json": makeRun({ observationOverrides: { turnMs: 100000, actionCount: 10, rejectionRate: 0.1 } }),
-      "b.json": makeRun({ observationOverrides: { turnMs: 140000, actionCount: 14, rejectionRate: 0.1, summaryChars: 80 } }),
+      "b.json": makeRun({
+        observationOverrides: { turnMs: 140000, actionCount: 14, rejectionRate: 0.1, summaryChars: 80 },
+      }),
     });
     const { code, stdout } = await runAggregate(["--runs", dir]);
     assert.equal(code, 0);
@@ -52,6 +73,31 @@ test("summarizes one group with means and stddevs per metric", async () => {
   }
 });
 
+test("a run interrupted from outside is not a draw about the product", async () => {
+  // The aggregate exists to decide whether a CHANGE beat its baseline, and a killed run measured nothing about it. Its
+  // gate metric would otherwise read 0 - an external interrupt scored as a regression in the prompt under test.
+  const dir = await mkdtemp(join(tmpdir(), "roll-killed-"));
+  try {
+    await writeRuns(dir, {
+      "kept.json": makeRun({ observationOverrides: { turnMs: 100000 } }),
+      "killed.json": JSON.stringify({
+        state: "killed",
+        reasonCode: "run_killed_by_signal:SIGINT",
+        observation: observation({ turnMs: 900000 }),
+      }),
+    });
+    const { code, stdout } = await runAggregate(["--runs", dir]);
+    assert.equal(code, 0);
+    const out = JSON.parse(stdout);
+    assert.equal(out.groups[0].count, 1, "the killed run must not be one of the samples");
+    assert.equal(out.groups[0].values.turnMs.mean, 100000, "and its numbers must not move the mean");
+    assert.equal(out.excludedOldRuns.length, 1);
+    assert.equal(out.excludedOldRuns[0].reason, "killed:run_killed_by_signal:SIGINT", "the exclusion says why");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("declares improved when the change exceeds the noise window", async () => {
   const base = await mkdtemp(join(tmpdir(), "roll-base-"));
   const changed = await mkdtemp(join(tmpdir(), "roll-changed-"));
@@ -59,8 +105,12 @@ test("declares improved when the change exceeds the noise window", async () => {
     const baseFiles = {};
     const changedFiles = {};
     for (let i = 0; i < 5; i += 1) {
-      baseFiles[`b${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.3 + i * 0.01, turnMs: 150000 + i * 1000 } });
-      changedFiles[`c${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.05 + i * 0.005, turnMs: 90000 + i * 1000 } });
+      baseFiles[`b${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.3 + i * 0.01, turnMs: 150000 + i * 1000 },
+      });
+      changedFiles[`c${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.05 + i * 0.005, turnMs: 90000 + i * 1000 },
+      });
     }
     await writeRuns(base, baseFiles);
     await writeRuns(changed, changedFiles);
@@ -84,8 +134,12 @@ test("declares no_conclusion when the difference sits inside the noise window", 
     const baseFiles = {};
     const changedFiles = {};
     for (let i = 0; i < 5; i += 1) {
-      baseFiles[`b${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.1 + i * 0.008, turnMs: 120000 + i * 3000 } });
-      changedFiles[`c${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.1 + i * 0.008, turnMs: 121000 + i * 3000 } });
+      baseFiles[`b${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.1 + i * 0.008, turnMs: 120000 + i * 3000 },
+      });
+      changedFiles[`c${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.1 + i * 0.008, turnMs: 121000 + i * 3000 },
+      });
     }
     await writeRuns(base, baseFiles);
     await writeRuns(changed, changedFiles);
@@ -164,8 +218,12 @@ test("t-based noise window is wider than z at small n (audit M3)", async () => {
     const baseFiles = {};
     const changedFiles = {};
     for (let i = 0; i < 3; i += 1) {
-      baseFiles[`b${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.2 + i * 0.01, turnMs: 100000 + i * 1000 } });
-      changedFiles[`c${i}.json`] = makeRun({ observationOverrides: { rejectionRate: 0.18 + i * 0.01, turnMs: 98000 + i * 1000 } });
+      baseFiles[`b${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.2 + i * 0.01, turnMs: 100000 + i * 1000 },
+      });
+      changedFiles[`c${i}.json`] = makeRun({
+        observationOverrides: { rejectionRate: 0.18 + i * 0.01, turnMs: 98000 + i * 1000 },
+      });
     }
     await writeRuns(base, baseFiles);
     await writeRuns(changed, changedFiles);
@@ -199,8 +257,14 @@ test("degenerate zero-variance pairs are flagged, never declared significant (au
     assert.equal(code, 0);
     const out = JSON.parse(stdout);
     const degen = out.verdicts.filter((v) => v.verdict === "degenerate_variance");
-    assert.ok(degen.length >= 2, `expected degenerate_variance for spread metrics, got: ${JSON.stringify(out.verdicts)}`);
-    assert.equal(out.verdicts.some((v) => v.verdict === "improved"), false);
+    assert.ok(
+      degen.length >= 2,
+      `expected degenerate_variance for spread metrics, got: ${JSON.stringify(out.verdicts)}`,
+    );
+    assert.equal(
+      out.verdicts.some((v) => v.verdict === "improved"),
+      false,
+    );
   } finally {
     await rm(base, { recursive: true, force: true });
     await rm(changed, { recursive: true, force: true });

@@ -34,12 +34,6 @@ type SurfaceAction = Readonly<{
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
   postcondition?: Readonly<{ name?: string }>;
-  sceneTarget?: Readonly<{
-    type: string;
-    version: number;
-    required: boolean;
-    requiredProperties: readonly string[];
-  }>;
 }>;
 
 const SURFACE = (
@@ -61,23 +55,28 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
-            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
-            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
-            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   }),
 );
 
-/** The surface's own declaration of one action's arguments, in the order the artifact lists them. */
+/**
+ * The surface's own declaration of one action's arguments, in the order the artifact lists them.
+ *
+ * `required` is not on the artifact because the Mod's protocol has NO optional arguments
+ * (`FarmhandActionDefinitions.cs:438-439`: "the protocol has no optional arguments") - every declared argument must be
+ * present or the call is refused. That is the compiler's rule, and the gate at "every declared argument, omitted, is
+ * refused" is what keeps this line honest: it compiles an omission of every argument of every action.
+ */
 function surfaceArguments(
   actionId: string,
-): readonly Readonly<{ name: string; type: string; enum?: readonly string[]; description?: string }>[] {
+): readonly Readonly<{ name: string; type: string; required: true; enum?: readonly string[]; description?: string }>[] {
   const action = SURFACE.find((candidate) => candidate.actionId === actionId);
   assert.ok(action, `${actionId} is on the published surface`);
   return Object.entries(action.argumentSchema ?? {}).map(([name, declared]) => ({
     name,
     type: declared.type,
+    required: true as const,
     ...(declared.enum === undefined ? {} : { enum: declared.enum }),
     ...(declared.description === undefined ? {} : { description: declared.description }),
   }));
@@ -123,6 +122,22 @@ function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPla
 function refusalOf(result: CompiledPlan): string {
   if (result.ok) assert.fail("expected a refusal");
   return result.reasonCode;
+}
+
+/**
+ * The calls a compile refused while the rest of the script compiled.
+ *
+ * A refused call is not a refused plan any more, so every gate below reads the calls by name and by position instead of
+ * asserting that nothing came out.
+ */
+function rejectionsOf(result: CompiledPlan): readonly Readonly<{
+  call: number;
+  actionId: string | null;
+  reasonCode: string;
+  missingArguments?: readonly string[];
+}>[] {
+  if (!result.ok) assert.fail(`expected a plan beside the refusals, received ${result.reasonCode}`);
+  return result.rejected;
 }
 
 /** The action shape a refused builder call answered with, read from the result the materializer publishes. */
@@ -387,7 +402,16 @@ builder.move_to_tile({ x: 12, y: 8 });
 builder.sleep();
 builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
 `);
-  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
+  // The refused step cannot exist in the plan, and the walk and the sleep either side of it are exactly the plan the
+  // script asked for minus that step. Both halves matter: a plan that kept the step would aim at a world that is gone,
+  // and a refusal that discarded the walk as well would be the all-or-nothing batch this change removed.
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "sleep"],
+  );
+  assert.deepEqual(rejectionsOf(result), [
+    { call: 3, actionId: "cut_weeds", reasonCode: "plan_script_action_after_world_reset:cut_weeds:sleep" },
+  ]);
 });
 
 test("a node compiled after talk_to_npc is refused, because the dialogue leaves the body unable to act", () => {
@@ -399,10 +423,18 @@ test("a node compiled after talk_to_npc is refused, because the dialogue leaves 
   builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
   builder.move_to_tile({ x: 12, y: 8 });
   `);
-  assert.equal(
-    refusalOf(result),
-    "plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=dismiss_modal",
+  // The refused call is named and the two steps before it still compile: talking to her IS the work the script asked for.
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "talk_to_npc"],
   );
+  assert.deepEqual(rejectionsOf(result), [
+    {
+      call: 3,
+      actionId: "move_to_tile",
+      reasonCode: "plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=dismiss_modal",
+    },
+  ]);
 });
 
 test("a modal-clearing step is what makes a continuation legal after talk_to_npc", () => {
@@ -474,8 +506,14 @@ test("every action the surface declares day_advanced refuses a step written afte
   );
   assert.ok(dayAdvanced.length > 0, "the surface still declares the day_advanced postcondition");
   for (const actionId of dayAdvanced) {
+    const result = compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`);
+    assert.deepEqual(
+      nodesOf(result).map((node) => node.actionId),
+      [actionId],
+      `${actionId} declares day_advanced, so it is the last node of the plan it starts`,
+    );
     assert.equal(
-      refusalOf(compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`)),
+      rejectionsOf(result)[0]?.reasonCode,
       `plan_script_action_after_world_reset:move_to_tile:${actionId}`,
       `${actionId} declares day_advanced, so a plan may not write a node after it`,
     );
@@ -601,13 +639,6 @@ function callScript(
   for (const argument of action.arguments)
     if (!omit.includes(argument.name))
       parts.push(`${argument.name}: ${options.values?.[argument.name] ?? sampleLiteral(argument)}`);
-  const binding = action.sceneBindingRequirement;
-  if (binding.declared && !omit.includes("sceneTarget"))
-    parts.push(
-      `sceneTarget: { ${binding.requiredProperties
-        .map((property) => `${property}: ${property === "ref" ? "'sr1_0123456789abcdef'" : "'observation_1'"}`)
-        .join(", ")} }`,
-    );
   for (const [name, literal] of Object.entries(options.add ?? {})) parts.push(`${name}: ${literal}`);
   return `builder.${action.actionId}({ ${parts.join(", ")} });`;
 }
@@ -787,80 +818,18 @@ test("a value of the wrong kind names the argument, its expectation, its source 
 });
 
 /**
- * The five forged bindings of `round18`, and the one call that can satisfy the same demand.
+ * The read-only name a refusal sends the caller to must be a name the surface publishes.
  *
- * The binding is not an argument and cannot be computed: the Mod publishes which properties it needs, and only
- * `observe_scene` answers with them. So the refusal says that, a hand-written pair is refused at the call that wrote it,
- * and the shape the refusal enforces is the shape `protocol.ts` validates.
+ * `find_destination` is not a plan step - it is read-only, so the builder generates no method for it - which is why the
+ * refusal has to spell it. Read from the artifact, so a rename fails here instead of in a refusal that points at
+ * nothing.
  */
-test("a mandatory scene binding says where a real one comes from, and a forged one is refused at the call", () => {
-  const withBinding = ACTIONS.filter((action) => action.sceneBindingRequirement.declared);
-  assert.ok(withBinding.length >= 1, "the surface still declares a mandatory binding");
-  for (const action of withBinding) {
-    const binding = action.sceneBindingRequirement;
-    assert.ok(binding.declared);
-    const expectation = `scene_binding{${binding.requiredProperties.join(",")}}`;
-    assert.equal(
-      refusalOf(compile(callScript(action, { omit: ["sceneTarget"] }))),
-      `plan_script_missing_binding:${action.actionId}.sceneTarget:${expectation}:observe_scene`,
-    );
-  }
-
-  const forged =
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    "sceneTarget: { observationId: 'observation_forage_01', ref: 'forage_01' } });";
+test("the refusal's named source is a published read-only action", () => {
   assert.equal(
-    refusalOf(compile(forged, { ...SOURCE_SNAPSHOT })),
-    "plan_script_binding_not_canonical:pickup_forage.sceneTarget:scene_binding{observationId,ref}:observe_scene:got:not_a_scene_reference:ref",
+    SURFACE.find((action) => action.actionId === "find_destination")?.kind,
+    "read_only",
+    "find_destination is a published read-only action, so a refusal may name it",
   );
-  // A binding that only invents the observation id is refused for that, by name.
-  assert.match(
-    refusalOf(
-      compile(
-        "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-          "sceneTarget: { observationId: 'not an id', ref: 'sr1_0123456789abcdef' } });",
-        { ...SOURCE_SNAPSHOT },
-      ),
-    ),
-    /got:not_an_opaque_id:observationId$/u,
-  );
-  // And the call the surface actually asks for is accepted: the binding is validated, not impossible.
-  const real =
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    "sceneTarget: { observationId: 'observation_1', ref: 'sr1_0123456789abcdef' } });";
-  assert.ok(compile(real, { ...SOURCE_SNAPSHOT }).ok, "a binding of the right shape compiles");
-});
-
-/**
- * The two read-only names a refusal sends the caller to must be names the surface publishes, and the scene-reference
- * shape the compiler enforces must be the one `protocol.ts` validates - both read from source, so a rename or a
- * reformat fails here instead of in a refusal that points at nothing.
- */
-test("the refusals' named sources are published actions, and their shapes are the Host's own", () => {
-  for (const actionId of ["observe_scene", "find_destination"])
-    assert.equal(
-      SURFACE.find((action) => action.actionId === actionId)?.kind,
-      "read_only",
-      `${actionId} is a published read-only action, so a refusal may name it`,
-    );
-
-  // Read through the repository root, the same way SURFACE_PATH is resolved, so this holds from the source tree and from
-  // the compiled test artifact alike.
-  const protocol = readFileSync(resolve(hostRoot, "../host/src/protocol.ts"), "utf8");
-  const declared = /function isSceneReference\(value: unknown\): value is string \{[\s\S]{0,200}?\/(\^[^/]+)\//u.exec(
-    protocol,
-  )?.[1];
-  assert.ok(declared, "protocol.ts still declares the scene-reference shape");
-  const isSceneReference = new RegExp(declared, "u");
-  const reference = `sr1_${"a".repeat(16)}`;
-  assert.equal(isSceneReference.test(reference), true, "the protocol predicate accepts the sample reference");
-  const call = (ref: string) =>
-    "builder.pickup_forage({ x: 12, y: 10, expectedQualifiedItemId: '(O)22', expectedTargetId: 'forage_01', " +
-    `sceneTarget: { observationId: 'observation_1', ref: '${ref}' } });`;
-  assert.ok(compile(call(reference), { ...SOURCE_SNAPSHOT }).ok, "the compiler accepts the shape the protocol accepts");
-  const tooShort = `sr1_${"a".repeat(15)}`;
-  assert.equal(isSceneReference.test(tooShort), false, "the protocol predicate refuses a short reference");
-  assert.match(refusalOf(compile(call(tooShort), { ...SOURCE_SNAPSHOT })), /got:not_a_scene_reference:ref$/u);
 });
 
 test("a builder method is generated for exactly the lifecycles the Mod's Body Program catalog admits", () => {
@@ -947,20 +916,29 @@ test("the builder admits and refuses exactly the lifecycles the Mod's catalog do
     );
 });
 
-test("a script that swallows a builder refusal still fails the plan, and a clock or a throw is named", () => {
-  // try/catch around the builder must not turn a refused step into a silently shorter plan.
+test("a refused call is reported instead of swallowed, and a clock or a throw is named", () => {
+  // A try/catch around the builder can no longer turn a refused step into a silently shorter plan, because the refusal is
+  // answered at the call boundary and never thrown into the script: the call is reported by name and the walk beside it
+  // still compiles. Silently shorter was the danger; reported and shorter is the point.
   const swallowed = compile(`
 try { builder.move_to_tile({ x: 10, y: 10, unexpected: 1 }); } catch (error) {}
 builder.move_to_tile({ x: 11, y: 10 });
 `);
-  assert.equal(
-    refusalOf(swallowed),
-    "plan_script_unknown_argument:move_to_tile.unexpected:allowed:x,y:declared_by:none",
+  assert.deepEqual(
+    nodesOf(swallowed).map((node) => node.actionId),
+    ["move_to_tile"],
   );
+  assert.deepEqual(rejectionsOf(swallowed), [
+    {
+      call: 1,
+      actionId: "move_to_tile",
+      reasonCode: "plan_script_unknown_argument:move_to_tile.unexpected:allowed:x,y:declared_by:none",
+    },
+  ]);
   assert.equal(refusalOf(compile("throw new TypeError('nope');")), "plan_script_threw:TypeError");
   assert.equal(refusalOf(compile("while (true) {}")), "plan_script_timeout:50");
   assert.equal(refusalOf(compile("   ")), "plan_script_invalid");
-  assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty");
+  assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty_no_builder_call");
 });
 
 /**
@@ -989,6 +967,40 @@ test("a script that throws answers with the engine's own message and the line it
   assert.equal(threwOf(compile("const steps = 2;\n}"))?.line, null);
   // A script that never ran has no account to give.
   assert.equal(threwOf(compile("   ")), undefined);
+});
+
+test("an empty plan says whether the script never asked for a step or asked and added none", () => {
+  // A filter that matched nothing is the measured case: six plans in one run answered `plan_script_empty`, which
+  // told the companion neither that its loop body never ran nor that its calls were refused. Zero builder calls is
+  // the first of those, said by name.
+  assert.equal(
+    refusalOf(compile("const rows = snapshot.cropTargets ?? [];\nconst count = rows.length;")),
+    "plan_script_empty_no_builder_call",
+  );
+  // The other shape: the builder WAS called and added no node (`equipFor` asked for a tool already in hand). The
+  // count is the point - `no_builder_call` and `no_node_added:1` are different mistakes with different repairs.
+  assert.equal(
+    refusalOf(
+      compile("builder.equipFor('cut_weeds');", {
+        currentToolSlot: 3,
+        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+      }),
+    ),
+    "plan_script_empty_no_node_added:1",
+  );
+  // A swallowed refusal is still the refusal, and it names more than the count would: the call, the argument and
+  // where a legal value comes from. The split must not hide it behind `no_node_added`.
+  assert.match(
+    refusalOf(
+      compile("try { builder.cut_weeds({ x: 5, y: 6, slot: 3 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');", {
+        currentToolSlot: 3,
+        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+      }),
+    ),
+    /^plan_script_missing_argument:cut_weeds\.expectedTargetId:/u,
+  );
+  // And the split does not touch the happy path: one added node is a plan.
+  assert.equal(nodesOf(compile("builder.move_to_tile({ x: 4, y: 9 });")).length, 1);
 });
 
 test("a plan with no snapshot refuses rather than compiling from nothing", () => {
@@ -1058,7 +1070,7 @@ test("a refused builder call answers with the action id, its required argument n
 
 /** `stardew_plan_shape` answers from this function, so its answer is the surface's own vocabulary, not a second copy. */
 test("plan_shape names the surface's own arguments, output facts and resource claims for one action", () => {
-  const cutWeeds = planShape(ACTIONS, { actionId: "cut_weeds" });
+  const cutWeeds = planShape(ACTIONS, { actionIds: ["cut_weeds"] });
   assert.ok(cutWeeds.ok, "cut_weeds is a plannable action");
   assert.deepEqual(
     cutWeeds.actions.map((action) => action.actionId),
@@ -1070,7 +1082,7 @@ test("plan_shape names the surface's own arguments, output facts and resource cl
   );
   assert.deepEqual(cutWeeds.actions[0]!.arguments, surfaceArguments("cut_weeds"));
 
-  const inspect = planShape(ACTIONS, { actionId: "machine_inspect" });
+  const inspect = planShape(ACTIONS, { actionIds: ["machine_inspect"] });
   assert.ok(inspect.ok);
   assert.deepEqual(inspect.actions[0]!.outputFacts, [{ name: "machine_target_id", type: "string" }]);
   assert.deepEqual(
@@ -1091,11 +1103,11 @@ test("plan_shape answers a whole family, and a selector that names nothing with 
   );
 
   assert.deepEqual(planShape(ACTIONS, {}), { ok: false, reasonCode: "plan_shape_selector_invalid" });
-  assert.deepEqual(planShape(ACTIONS, { actionId: "cut_weeds", family: "fixture_family" }), {
+  assert.deepEqual(planShape(ACTIONS, { actionIds: ["cut_weeds"], family: "fixture_family" }), {
     ok: false,
     reasonCode: "plan_shape_selector_invalid",
   });
-  const unknown = planShape(ACTIONS, { actionId: "brew_potion" });
+  const unknown = planShape(ACTIONS, { actionIds: ["brew_potion"] });
   assert.ok(!unknown.ok);
   assert.equal(unknown.reasonCode, "plan_shape_unknown_action:brew_potion");
   // The ids it offers are the vocabulary's own head, bounded: a wrong name teaches without spending the turn on all of it.
@@ -1149,7 +1161,7 @@ test("plan_shape reports the tool the surface declares, and tool_requirement_und
   ]);
 
   const shapeOf = (actionId: string) => {
-    const shape = planShape(actions, { actionId });
+    const shape = planShape(actions, { actionIds: [actionId] });
     assert.ok(shape.ok, `${actionId} is plannable`);
     return shape.actions[0]!.toolRequirement;
   };
@@ -1576,9 +1588,6 @@ const CATALOG_REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
-            // The binding a `pickup_forage` call must carry is published BESIDE the argument schema, so it has to reach
-            // the registration the same way or the compiler cannot tell a call that omits it from one that does not.
-            ...(action.sceneTarget === undefined ? {} : { sceneTarget: action.sceneTarget }),
           },
         }),
   });
@@ -1745,4 +1754,220 @@ test("neither program tool description tells the model to poll", () => {
       .filter((sentence) => prescription.test(sentence) && progressNoun.test(sentence) && !prohibition.test(sentence));
     assert.deepEqual(offending, [], `${tool} tells the model to poll for progress: ${offending.join(" | ")}`);
   }
+});
+
+/**
+ * ONE `plan_shape` CALL ANSWERS THE ARGUMENT TABLE FOR EVERY ACTION THE COMPANION ASKED ABOUT.
+ *
+ * Measured in `.tmp/fork-why-slow.jsonl` (73 `stardew_plan_work` calls, 6 `stardew_plan_shape` calls): every one of the
+ * six named a SINGLE action id, so a companion writing a batch over several families had to spend one round trip per
+ * action before it could write the script - and the companion's own account is that it kept the batch small instead.
+ * The table it reads has to carry the one fact whose absence produced 7 of the 14 voided batches: every argument listed
+ * is REQUIRED. `harvest_crop` publishes four, the measured script passed `x`, `y` and `expectedTargetId`, and the whole
+ * batch of six calls died on the fourth.
+ */
+test("one plan_shape call answers three actions whose argument tables differ, each argument marked required", () => {
+  const requested = ["cut_weeds", "move_to_tile", "respond_level_up"];
+  const shape = planShape(ACTIONS, { actionIds: requested });
+  assert.ok(shape.ok, "three published actions are plannable");
+  assert.deepEqual(
+    shape.actions.map((action) => action.actionId),
+    requested,
+    "the answer keeps the order the caller asked in, so it can be read positionally against the script",
+  );
+  for (const action of shape.actions) assert.deepEqual(action.arguments, surfaceArguments(action.actionId));
+  const tables = shape.actions.map((action) => action.arguments.map((argument) => argument.name).join(","));
+  assert.equal(new Set(tables).size, 3, "three genuinely different tables, not one repeated");
+  // A closed set travels with the argument that declares it, and a `description` with the argument the Mod explains.
+  const choice = shape.actions
+    .find((action) => action.actionId === "respond_level_up")!
+    .arguments.find((argument) => argument.name === "choice");
+  assert.deepEqual(choice?.enum, ["confirm", "branch_a", "branch_b"]);
+  assert.equal(choice?.required, true, "a bounded argument is no more optional than an unbounded one");
+  const slot = shape.actions
+    .find((action) => action.actionId === "cut_weeds")!
+    .arguments.find((argument) => argument.name === "slot");
+  assert.ok(
+    (slot?.description?.length ?? 0) > 0,
+    "the Mod's own words for `slot` travel with the action that takes it",
+  );
+  // The two fields that used to be one call away per action: which family supplies targets, and where the body must stand.
+  for (const action of shape.actions) {
+    assert.ok("targetFamily" in action, `${action.actionId} answers its target family, null included`);
+    assert.ok("approachRequirement" in action, `${action.actionId} answers its approach requirement`);
+    const approach = action.approachRequirement;
+    if (approach.declared) assert.equal(typeof approach.relation, "string", `${action.actionId} names its relation`);
+    else assert.equal(approach.reasonCode, "approach_requirement_undeclared");
+  }
+});
+
+/**
+ * The `required` flag is not a constant this file added: it is the compiler's own rule, and this gate ties the two
+ * together over the published surface. Every argument the shape marks required must be one whose omission the builder
+ * refuses by name - and an argument the shape would mark optional has to be one an omission survives, which is the
+ * case that does not exist today and the reason the Mod's protocol has no optional arguments.
+ */
+test("every argument plan_shape marks required is one whose omission the builder refuses", () => {
+  const faults: string[] = [];
+  for (const action of ACTIONS.filter((candidate) => candidate.arguments.length > 0)) {
+    const shape = planShape(ACTIONS, { actionIds: [action.actionId] });
+    if (!shape.ok) {
+      faults.push(`${action.actionId}: a published action answered ${shape.reasonCode}`);
+      continue;
+    }
+    for (const argument of shape.actions[0]!.arguments) {
+      const omitted = compilePlanScript(
+        { script: callScript(action, { omit: [argument.name] }) },
+        { snapshot: snapshot(SOURCE_SNAPSHOT), actions: ACTIONS },
+      );
+      const code = omitted.ok ? "accepted" : omitted.reasonCode;
+      const refuses = code.startsWith(`plan_script_missing_argument:${action.actionId}.${argument.name}:`);
+      if (argument.required === true && !refuses)
+        faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
+      if (argument.required !== true && refuses)
+        faults.push(`${action.actionId}.${argument.name}: marked optional, but an omission is refused as ${code}`);
+    }
+  }
+  assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * A wrong id inside a batch must not void the read: the companion asks about nine actions at once and ONE typo must not
+ * cost the round trip. It is named, and the rest of the table still arrives. Only a read that found nothing is the
+ * refusal, and that one carries the vocabulary that does exist.
+ */
+test("a shape call for several actions answers the ones that exist and names the ones that do not", () => {
+  const partial = planShape(ACTIONS, { actionIds: ["cut_weeds", "brew_potion", "move_to_tile"] });
+  assert.ok(partial.ok, "one unknown id must not void a shape read of three actions");
+  assert.deepEqual(
+    partial.actions.map((action) => action.actionId),
+    ["cut_weeds", "move_to_tile"],
+  );
+  assert.deepEqual(partial.unknownActionIds, ["brew_potion"]);
+
+  const repeated = planShape(ACTIONS, { actionIds: ["cut_weeds", "cut_weeds"] });
+  assert.ok(repeated.ok);
+  assert.deepEqual(
+    repeated.actions.map((action) => action.actionId),
+    ["cut_weeds"],
+    "the same action asked twice is answered once",
+  );
+
+  const nothing = planShape(ACTIONS, { actionIds: ["brew_potion", "mend_fence"] });
+  assert.ok(!nothing.ok, "a read that found nothing is the refusal");
+  assert.equal(nothing.reasonCode, "plan_shape_unknown_action:brew_potion");
+  assert.deepEqual(
+    nothing.legalActionIds,
+    ACTIONS.slice(0, 20).map((action) => action.actionId),
+  );
+});
+
+/**
+ * ONE BAD NODE MUST NOT VOID THE BATCH.
+ *
+ * This is the first of the fourteen voided batches measured in `.tmp/fork-why-slow.jsonl`, replayed verbatim: six calls,
+ * two of which pass every argument and four of which omit `expectedQualifiedItemId` on a `harvest_crop` that declares
+ * it. The whole plan was refused, so the companion's own words - "write 30 nodes and any one miss zeroes the batch" -
+ * were the measurement, and it kept its bets at an average of 2.8 nodes per plan. The three walks are executable work
+ * and must survive; the refusal names which call failed, by its 1-based position in the script.
+ */
+test("a node that is refused does not void the nodes around it, and the answer names the call", () => {
+  const measured = `
+builder.move_to_tile({ x: 60, y: 11 });
+builder.harvest_crop({ x: 60, y: 10, expectedTargetId: "crop_72f6ce55311cf7c3" });
+builder.move_to_tile({ x: 60, y: 8 });
+builder.harvest_crop({ x: 60, y: 9, expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_2a7e1fd59d0206a0" });
+builder.move_to_tile({ x: 59, y: 14 });
+builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_5481d34df6f60c18" });
+`;
+  const result = compile(measured, { ...SOURCE_SNAPSHOT });
+  assert.ok(result.ok, "the three walks are a plan even though one harvest was refused");
+  // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
+  // gate reads as "one refused call kept five nodes", which is the property, not the session's arithmetic.
+  assert.deepEqual(
+    result.program.nodes.map((node) => node.actionId),
+    ["move_to_tile", "move_to_tile", "harvest_crop", "move_to_tile", "harvest_crop"],
+  );
+  assert.deepEqual(result.rejected, [
+    {
+      call: 2,
+      actionId: "harvest_crop",
+      reasonCode:
+        "plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
+      missingArguments: ["expectedQualifiedItemId"],
+    },
+  ]);
+  // The accepted nodes keep the order the script wrote them in, and the plan is still one the Mod accepts.
+  assert.deepEqual(
+    result.program.nodes.map((node) => node.dependsOn),
+    [[], ["n01"], ["n02"], ["n03"], ["n04"]],
+  );
+  assert.equal(
+    validateBodyProgramCandidateRequest({
+      programId: planProgramId(11, result.program.nodes),
+      nodes: result.program.nodes,
+    }),
+    null,
+  );
+});
+
+/**
+ * The dependent case, with the one dependency a script can actually express: `equipFor` ANSWERS a slot, and the call
+ * after it consumes that answer. When the equip step is refused there is no slot, so the action that would have named it
+ * must not become a node - it is refused too, not silently written with a missing argument the Mod would hit at runtime.
+ * Both refusals are reported against the call that caused them.
+ */
+test("a call that consumes a refused call's answer does not run, and dependencies stay closed", () => {
+  const result = compile(
+    `
+builder.move_to_tile({ x: 12, y: 8 });
+const slot = builder.equipFor('cut_weeds');
+builder.cut_weeds({ x: 10, y: 10, slot: slot, expectedTargetId: 'weed_01' });
+`,
+    // No pack slot publishes a category at all, so the scythe cannot be resolved and the equip step is refused by name.
+    {},
+  );
+  assert.ok(result.ok, "the walk written before the refusal is still a plan");
+  assert.deepEqual(
+    result.program.nodes.map((node) => node.actionId),
+    ["move_to_tile"],
+  );
+  assert.deepEqual(
+    result.rejected.map(({ call, actionId }) => ({ call, actionId })),
+    [
+      { call: 2, actionId: "cut_weeds" },
+      { call: 3, actionId: "cut_weeds" },
+    ],
+  );
+  assert.equal(result.rejected[0]?.reasonCode, "plan_script_tool_slot_unresolved:cut_weeds:scythe");
+  assert.match(result.rejected[1]?.reasonCode ?? "", /^plan_script_argument_not_canonical:cut_weeds\.slot:/u);
+  assert.match(result.rejected[1]?.reasonCode ?? "", /:got:missing$/u);
+  // The graph stays closed over the nodes that were accepted: a refused call leaves no id behind for anyone to name.
+  const accepted = new Set(result.program.nodes.map((node) => node.nodeId));
+  for (const node of result.program.nodes)
+    for (const dependency of node.dependsOn)
+      assert.ok(accepted.has(dependency), `${node.nodeId} depends on ${dependency}, which no accepted node declares`);
+});
+
+/**
+ * `accepted: false` survives for the one case it was always true of: a script whose every call was refused has no plan.
+ * The teaching payload is still there, and it now names EVERY missing argument - the measured refusal 12
+ * (`claim_mail_attachment({ expectedTargetId })`) named `x` alone, so fixing `x` bought a second refusal for `y`.
+ */
+test("a batch in which nothing was accepted is still a refusal, and it names every missing argument", () => {
+  const result = compile(`
+builder.claim_mail_attachment({ expectedTargetId: 'mailbox_a21663c33741df54' });
+builder.move_to_tile({ x: 10 });
+`);
+  assert.ok(!result.ok, "no accepted node is not a plan");
+  assert.match(result.reasonCode, /^plan_script_missing_argument:claim_mail_attachment\.x:/u);
+  assert.deepEqual(result.missingArguments, ["x", "y"]);
+  assert.equal(result.requirement?.actionId, "claim_mail_attachment");
+  assert.deepEqual(
+    result.rejected.map(({ call, actionId, missingArguments }) => ({ call, actionId, missingArguments })),
+    [
+      { call: 1, actionId: "claim_mail_attachment", missingArguments: ["x", "y"] },
+      { call: 2, actionId: "move_to_tile", missingArguments: ["y"] },
+    ],
+  );
 });

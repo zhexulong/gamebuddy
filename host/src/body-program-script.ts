@@ -18,8 +18,23 @@ import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from
  * it runs (`plan_script_uses_forbidden:<name>`), and the context does not carry it either.
  */
 
-/** One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set. */
-type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly string[]; description?: string }>;
+/**
+ * One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set.
+ *
+ * `required` is always `true`, and it is not decoration: the Mod's protocol has no optional arguments
+ * (`FarmhandActionDefinitions.cs:438-439`, written when a gift-with-item action was split in two for exactly this reason),
+ * and this compiler refuses any declared argument that is omitted. Measured in `.tmp/fork-why-slow.jsonl`: seven of the
+ * fourteen voided batches omitted `expectedQualifiedItemId` or `slot` while supplying the action's other arguments, which
+ * is what a flat name list reads like when nothing says the list is closed. The field states the rule the loop below
+ * enforces, and `body-program-script.test.ts` ties the two together over every published action.
+ */
+type PlanArgumentShape = Readonly<{
+  name: string;
+  type: string;
+  required: true;
+  enum?: readonly string[];
+  description?: string;
+}>;
 
 /**
  * The tool one action must be holding, as the surface itself declares it, or the surface's silence.
@@ -43,20 +58,17 @@ type PlanArgumentShape = Readonly<{ name: string; type: string; enum?: readonly 
  * precondition by being refused, then added `move_to_tile(3,11)` on its second attempt and succeeded. A refusal that
  * teaches is worse than a shape that says so.
  */
-/**
- * The scene binding a surface declares, or its silence.
- *
- * `declared` rather than `required` to match its sibling: an optional binding means the action can also be driven from a
- * plain tile, and a declared one cannot.
- */
-type PublishedPlanSceneBindingRequirement =
-  | Readonly<{ declared: false }>
-  | Readonly<{ declared: true; requiredProperties: readonly string[] }>;
-
 type PublishedPlanApproachRequirement =
   | Readonly<{
       declared: true;
-      /** The surface's own word for the relationship the actor must have with the target. */
+      /**
+       * The surface's own word for the relationship the actor must have with the target, verbatim.
+       *
+       * The Mod publishes two: `adjacent` - you must already stand beside it, in a step of your own - and
+       * `self_walked` - the action closes the distance itself, so no separate move is needed and no distance is
+       * stated. `self_walked` is why this field exists in its present form: the handlers that walk in used to declare
+       * nothing, and `declared: false` then meant both "no constraint" and "nobody decided".
+       */
       relation: string;
       /** How many tiles away that relationship allows, or `null` when the surface states no distance. */
       withinTiles: number | null;
@@ -92,14 +104,6 @@ export type PublishedPlanAction = Readonly<{
   toolRequirement: PublishedPlanToolRequirement;
   /** Where the actor must stand before this action can happen, or the surface's silence. */
   approachRequirement: PublishedPlanApproachRequirement;
-  /**
-   * The scene binding the surface requires, or its silence.
-   *
-   * A binding is not an argument: `pickup_forage` cannot name its target from a tile alone, so the Mod declares an
-   * `ObservationBinding/v1` beside the argument schema. Carried for the same reason `approachRequirement` is - a
-   * pre-condition the authoring side cannot see is refused one round trip later.
-   */
-  sceneBindingRequirement: PublishedPlanSceneBindingRequirement;
   /**
    * The snapshot family that supplies this action's targets (`cropTargets`), or the surface's silence.
    *
@@ -148,12 +152,40 @@ type PlanArgumentRequirement = Readonly<{
  */
 type PlanScriptThrow = Readonly<{ message: string; line: number | null }>;
 
+/**
+ * One builder call the compiler refused, and the script position that wrote it.
+ *
+ * `call` is the 1-based index among the script's builder calls - the same order the builder was entered in, refused calls
+ * included - so a companion that wrote thirty calls reads back WHICH of its thirty was wrong without counting the nodes
+ * that survived.
+ */
+export type PlanCallRejection = Readonly<{
+  call: number;
+  actionId: string | null;
+  reasonCode: string;
+  /** The arguments this call left out, when that is what refused it. */
+  missingArguments?: readonly string[];
+}>;
+
+/**
+ * How many refusals one answer carries back, and why the count is separate from the list.
+ *
+ * A loop over a family the snapshot publishes can call the builder hundreds of times; a hundred refusal entries would spend
+ * the turn's context on the same sentence repeated. The list is bounded, `rejectedCount` is not, so the answer says how
+ * many there were without carrying all of them.
+ */
+const MAX_REPORTED_PLAN_REJECTIONS = 16;
+
 export type CompiledPlan =
   | Readonly<{
       ok: true;
       scriptSource: string;
       snapshotRevision: number;
       program: Readonly<{ nodes: readonly PlanNode[] }>;
+      /** The calls that were refused while the rest of the script compiled. Empty is the ordinary case. */
+      rejected: readonly PlanCallRejection[];
+      /** Every refusal, including the ones past `MAX_REPORTED_PLAN_REJECTIONS`. */
+      rejectedCount: number;
     }>
   | Readonly<{
       ok: false;
@@ -162,6 +194,10 @@ export type CompiledPlan =
       reasonCode: string;
       /** Present when the refusal was a builder call, so the answer names what that action demands. */
       requirement?: PlanArgumentRequirement;
+      /** Every argument the refused call left out, so a correction fixes all of them and not only the first. */
+      missingArguments?: readonly string[];
+      rejected: readonly PlanCallRejection[];
+      rejectedCount: number;
       /** Present when the script threw, so the answer says what the engine said and where. */
       threw?: PlanScriptThrow;
     }>;
@@ -307,28 +343,15 @@ const MAX_PLAN_BUILDER_CALLS = 1024;
 const PLAN_ARGUMENT_TYPES: readonly string[] = Object.freeze(["integer", "string", "boolean", "destination_selector"]);
 
 /**
- * The two read-only actions whose ANSWERS are the only place two arguments can come from.
+ * The read-only action whose ANSWER is the only place a destination selector can come from.
  *
- * Neither is a plan step - observation and world-map discovery are read-only, so the builder generates no method for
- * them - which is exactly why their names have to be spelled here: `pickup_forage`'s scene binding and
- * `navigate_to_destination`'s destination selector are facts the SNAPSHOT does not publish, and a refusal that names only
- * the field leaves the author with nothing to read. Both names are checked against the surface artifact in
- * `body-program-script.test.ts` (they must be published actions of kind `read_only`), so a rename fails there instead of
- * leaving a refusal that points at a name nothing publishes.
+ * It is not a plan step - world-map discovery is read-only, so the builder generates no method for it - which is exactly
+ * why the name has to be spelled here: `navigate_to_destination`'s destination selector is a fact the SNAPSHOT does not
+ * publish, and a refusal that names only the field leaves the author with nothing to read. The name is checked against
+ * the surface artifact in `body-program-script.test.ts` (it must be a published action of kind `read_only`), so a rename
+ * fails there instead of leaving a refusal that points at a name nothing publishes.
  */
-const SCENE_OBSERVATION_ACTION_ID = "observe_scene";
 const DESTINATION_DISCOVERY_ACTION_ID = "find_destination";
-
-/**
- * The prefix every scene reference the Host publishes carries (`observe_scene`'s `affordances[].ref`).
- *
- * Duplicated as ONE constant because `protocol.ts`'s `isSceneReference` is not exported and the compiler has to refuse a
- * hand-written ref at the call that wrote it rather than one round trip later: measured 2026-10-31 (`round18`), five
- * `pickup_forage` calls carried `{ observationId, ref }` the model had invented. `body-program-script.test.ts` keeps the
- * two in step by reading that predicate out of `protocol.ts` and comparing this prefix and length against it.
- */
-const SCENE_REFERENCE_PREFIX = "sr1_";
-const SCENE_REFERENCE_RANDOM_CHARS = 16;
 
 /** How many rows of one family are sampled when deriving the fields it publishes. */
 const PLAN_SOURCE_ROWS_SAMPLED = 4;
@@ -434,7 +457,6 @@ export function planActionsFromRegistrations(
         resourceClaims: Object.freeze(declaredResourceClaimsOf(registration)),
         toolRequirement: declaredToolRequirementOf(registration),
         approachRequirement: declaredApproachRequirementOf(registration),
-        sceneBindingRequirement: declaredSceneBindingRequirementOf(registration),
         targetFamily: declaredTargetFamilyOf(registration),
       }),
     );
@@ -451,6 +473,7 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
       Object.freeze({
         name: argument.name,
         type: argument.type,
+        required: true as const,
         ...(argument.enum === undefined ? {} : { enum: Object.freeze([...argument.enum]) }),
         // Carried through because it is the reason `plan_shape` answers better than a name can: the Mod says what the
         // argument means, and an absent description stays absent rather than becoming an empty string.
@@ -466,6 +489,7 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
       Object.freeze({
         name,
         type: declared.type,
+        required: true as const,
         ...(declared.enum === undefined ? {} : { enum: Object.freeze([...declared.enum]) }),
         ...(declared.description === undefined ? {} : { description: declared.description }),
       }),
@@ -518,15 +542,7 @@ const TOOL_UPGRADE_LEVELS: Readonly<
  * present, so the companion can tell "the surface does not say" from "stand anywhere". The Host never derives a
  * precondition from an action id.
  */
-/** The scene binding a registration declares, read from the descriptor the Mod published. */
-function declaredSceneBindingRequirementOf(registration: ActionRegistration): PublishedPlanSceneBindingRequirement {
-  const declared = registration.descriptor?.sceneTarget;
-  if (declared === undefined || declared.required !== true) return Object.freeze({ declared: false });
-  return Object.freeze({ declared: true, requiredProperties: Object.freeze([...declared.requiredProperties]) });
-}
-
-/**
- * The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
+/** The snapshot family that supplies this action's targets, read from the descriptor the Mod published.
  *
  * `null` is the surface's own statement that the action addresses no published family (`sleep`, `dismiss_modal`,
  * `express_emote`), which is a different answer from a family nobody filled - and the reason this is a plain value and
@@ -568,17 +584,33 @@ function declaredToolRequirementOf(registration: ActionRegistration): PublishedP
 }
 
 /**
- * One read-only answer about the plan vocabulary: what a script must pass for one action, or for every plannable action
- * of one family. A selection that names nothing answers with the vocabulary that DOES exist, so one wrong guess teaches.
+ * One read-only answer about the plan vocabulary: what a script must pass for the actions it names, or for every plannable
+ * action of one family. A selection that names nothing answers with the vocabulary that DOES exist, so one wrong guess,
+ * or one wrong id beside right ones, teaches.
  */
 export type PlanShape =
-  | Readonly<{ ok: true; actions: readonly PublishedPlanAction[] }>
+  | Readonly<{
+      ok: true;
+      actions: readonly PublishedPlanAction[];
+      /** The ids that were asked for and are not plannable, named so the rest of the answer stays usable. */
+      unknownActionIds?: readonly string[];
+    }>
   | Readonly<{
       ok: false;
       reasonCode: string;
       legalActionIds?: readonly string[];
       legalFamilies?: readonly string[];
     }>;
+
+/**
+ * What a shape read asked about: any number of action ids, or one family.
+ *
+ * The ids are a LIST because the unit the companion writes is a whole piece of work: measured in
+ * `.tmp/fork-why-slow.jsonl`, all six `stardew_plan_shape` calls in a session named one action each, and a companion
+ * writing a batch over several families had to spend one round trip per action before it could write the script. One
+ * call over the actions it is about to use is the shape that matches the unit.
+ */
+export type PlanShapeRequest = Readonly<{ actionIds?: readonly string[]; family?: string }>;
 
 /** Bounded so a wrong name teaches instead of spending the turn's context on the whole vocabulary. */
 const MAX_LISTED_PLAN_IDS = 20;
@@ -592,27 +624,38 @@ function legalPlanFamilies(actions: readonly PublishedPlanAction[]): readonly st
 }
 
 /**
- * Reads the shape of one action or one family straight out of the vocabulary the Mod published for Body Programs.
- * Nothing here is a hand-written table: a renamed argument, a new closed set or a new output fact reaches the answer as
- * soon as the surface reaches the builder.
+ * Reads the shape of the actions or the family a request names, straight out of the vocabulary the Mod published for Body
+ * Programs. Nothing here is a hand-written table: a renamed argument, a new closed set or a new output fact reaches the
+ * answer as soon as the surface reaches the builder.
  */
-export function planShape(
-  actions: readonly PublishedPlanAction[],
-  request: Readonly<{ actionId?: string; family?: string }>,
-): PlanShape {
-  const actionId = request.actionId;
+export function planShape(actions: readonly PublishedPlanAction[], request: PlanShapeRequest): PlanShape {
+  // A repeated id is answered once, and the ORDER the caller asked in is kept, so it can be read positionally against
+  // the script it is about to write.
+  const actionIds = request.actionIds === undefined ? undefined : Object.freeze([...new Set(request.actionIds)]);
   const family = request.family;
-  if ((actionId === undefined) === (family === undefined))
+  if ((actionIds === undefined) === (family === undefined) || actionIds?.length === 0)
     return Object.freeze({ ok: false as const, reasonCode: "plan_shape_selector_invalid" });
-  if (actionId !== undefined) {
-    const action = actions.find((candidate) => candidate.actionId === actionId);
-    if (action === undefined)
+  if (actionIds !== undefined) {
+    const found: PublishedPlanAction[] = [];
+    const unknown: string[] = [];
+    for (const actionId of actionIds) {
+      const action = actions.find((candidate) => candidate.actionId === actionId);
+      if (action === undefined) unknown.push(actionId);
+      else found.push(action);
+    }
+    // A read that found nothing is the refusal, and it names the vocabulary: one typo beside eight good ids must not cost
+    // the whole answer, which is why only an EMPTY result reaches the `unknown_action` branch below.
+    if (found.length === 0)
       return Object.freeze({
         ok: false as const,
-        reasonCode: `plan_shape_unknown_action:${actionId}`,
+        reasonCode: `plan_shape_unknown_action:${unknown[0]}`,
         legalActionIds: legalPlanActionIds(actions),
       });
-    return Object.freeze({ ok: true as const, actions: Object.freeze([action]) });
+    return Object.freeze({
+      ok: true as const,
+      actions: Object.freeze(found),
+      ...(unknown.length === 0 ? {} : { unknownActionIds: Object.freeze(unknown) }),
+    });
   }
   const members = actions.filter((candidate) => candidate.familyId === family);
   if (members.length === 0)
@@ -647,7 +690,7 @@ export function planShape(
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape for one action's argument names. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. One call the compiler refuses does not void the batch: the nodes around it compile and the answer names the refused call by position, so write the whole piece of work and read back which steps were dropped. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
@@ -699,6 +742,9 @@ export function compilePlanScript(
     nodes: [],
     refusal: null,
     calls: 0,
+    builderCalls: 0,
+    rejected: [],
+    rejectedCount: 0,
     argumentOwners: planArgumentOwners(dependencies.actions),
   };
   const frozen = deepFreeze(structuredClone(snapshot));
@@ -724,26 +770,69 @@ export function compilePlanScript(
       lineOffset: -1,
     });
   } catch (error) {
-    if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
+    if (state.refusal !== null)
+      return refused(state.refusal, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
     if (isTimeout(error))
-      return refused(`plan_script_timeout:${PLAN_SCRIPT_BUDGET_MS}`, scriptSource, snapshotRevision);
-    return refused(`plan_script_threw:${thrownName(error)}`, scriptSource, snapshotRevision, undefined, {
-      message: thrownMessage(error),
-      line: thrownLine(error, scriptSource),
-    });
+      return refused(
+        `plan_script_timeout:${PLAN_SCRIPT_BUDGET_MS}`,
+        scriptSource,
+        snapshotRevision,
+        undefined,
+        undefined,
+        state,
+      );
+    return refused(
+      `plan_script_threw:${thrownName(error)}`,
+      scriptSource,
+      snapshotRevision,
+      undefined,
+      undefined,
+      state,
+      {
+        message: thrownMessage(error),
+        line: thrownLine(error, scriptSource),
+      },
+    );
   }
-  // A script may swallow a builder refusal with its own try/catch; the plan is still refused, because the
-  // node it asked for was not added and a program missing that node is not the plan the companion wrote.
-  if (state.refusal !== null) return refused(state.refusal, scriptSource, snapshotRevision, state.requirement);
-  if (state.nodes.length === 0) return refused("plan_script_empty", scriptSource, snapshotRevision);
+  // A script may swallow a refusal with its own try/catch; a refusal that ends the SCRIPT still ends it, because the
+  // node it asked for was not added and a program missing that node is not the plan the companion wrote. A refusal that
+  // ends only its own CALL never reaches here: the call boundary answers it, and the nodes written before and after it
+  // stand. That is the whole of the difference between `refusePlan` and `rejectPlanCall`.
+  if (state.refusal !== null)
+    return refused(state.refusal, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
+  // A script that produced no node has asked for nothing, in one of three ways that need different answers:
+  // it never called a builder at all (it only computed), it called one N times and every call added nothing, or every
+  // call was refused. The count is the whole point - "0 calls" and "6 refused calls" are different mistakes, and a bare
+  // `plan_script_empty` told the companion neither.
+  if (state.nodes.length === 0 && state.rejectedCount === 0)
+    return refused(
+      state.builderCalls === 0
+        ? "plan_script_empty_no_builder_call"
+        : `plan_script_empty_no_node_added:${state.builderCalls}`,
+      scriptSource,
+      snapshotRevision,
+      undefined,
+      undefined,
+      state,
+    );
+  // The one case `accepted: false` was always right about: not one call produced a node, so there is no plan. The refusal
+  // is the FIRST call's, with the shape it demanded, because that is the one to fix first; every other refusal travels
+  // beside it.
+  if (state.nodes.length === 0) {
+    const first = state.rejected[0]!;
+    return refused(first.reasonCode, scriptSource, snapshotRevision, state.requirement, first.missingArguments, state);
+  }
   // A plan is only meaningful against a revision: an accepted plan whose revision is unknown could not be
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
-  if (snapshotRevision === null) return refused("plan_snapshot_missing", scriptSource, null);
+  if (snapshotRevision === null)
+    return refused("plan_snapshot_missing", scriptSource, null, undefined, undefined, state);
   return Object.freeze({
     ok: true as const,
     scriptSource,
     snapshotRevision,
     program: Object.freeze({ nodes: Object.freeze([...state.nodes]) }),
+    rejected: Object.freeze([...state.rejected]),
+    rejectedCount: state.rejectedCount,
   });
 }
 
@@ -765,6 +854,8 @@ function refused(
   scriptSource: string,
   snapshotRevision: number | null,
   requirement?: PlanArgumentRequirement,
+  missingArguments?: readonly string[],
+  state?: PlanScriptState,
   threw?: PlanScriptThrow,
 ): CompiledPlan {
   return Object.freeze({
@@ -773,7 +864,10 @@ function refused(
     snapshotRevision,
     reasonCode,
     ...(requirement === undefined ? {} : { requirement }),
+    ...(missingArguments === undefined ? {} : { missingArguments }),
     ...(threw === undefined ? {} : { threw }),
+    rejected: Object.freeze(state === undefined ? [] : [...state.rejected]),
+    rejectedCount: state?.rejectedCount ?? 0,
   });
 }
 
@@ -781,7 +875,19 @@ type PlanScriptState = {
   nodes: PlanNode[];
   refusal: string | null;
   requirement?: PlanArgumentRequirement;
+  missingArguments?: readonly string[];
   calls: number;
+  /**
+   * How many times the SCRIPT called a per-action builder, counted where that builder is entered and before any
+   * argument is validated. `calls` counts emitted nodes instead, which is what the call cap and the node cap need;
+   * this counts the author's attempts, which is what an empty plan has to report - and what a refusal's `call` index
+   * names, so a companion can point at the call it wrote.
+   */
+  builderCalls: number;
+  /** The calls whose node was refused, in the order the script wrote them, bounded to `MAX_REPORTED_PLAN_REJECTIONS`. */
+  rejected: PlanCallRejection[];
+  /** Every refusal, `rejected` list included, so a bounded list never reads as "that was all of them". */
+  rejectedCount: number;
   /**
    * The vocabulary's own answer to "which actions declare this argument name", built once per compile.
    *
@@ -804,8 +910,16 @@ function createPlanBuilder(
 ): unknown {
   const methods = new Map<string, (arguments_: unknown) => void>();
   for (const action of actions)
-    methods.set(action.actionId, (arguments_) => emitPlanNode(action, arguments_, snapshot, state));
-  const equipFor = (actionId: unknown, target: unknown) => equipForAction(actions, snapshot, actionId, target, state);
+    methods.set(action.actionId, (arguments_) => {
+      state.builderCalls += 1;
+      atPlanCall(state, action.actionId, () => emitPlanNode(action, arguments_, snapshot, state));
+    });
+  const equipFor = (actionId: unknown, target: unknown) => {
+    state.builderCalls += 1;
+    return atPlanCall(state, typeof actionId === "string" ? actionId : null, () =>
+      equipForAction(actions, snapshot, actionId, target, state),
+    );
+  };
   return new Proxy(
     {},
     {
@@ -844,19 +958,19 @@ function equipForAction(
   state: PlanScriptState,
 ): number {
   if (typeof actionId !== "string" || actionId.length === 0)
-    refusePlan("plan_script_equip_for_selector_invalid", state);
+    rejectPlanCall("plan_script_equip_for_selector_invalid", state);
   const action = actions.find((candidate) => candidate.actionId === actionId);
-  if (action === undefined) refusePlan(`plan_script_unknown_action:${actionId}`, state);
+  if (action === undefined) rejectPlanCall(`plan_script_unknown_action:${actionId}`, state);
   const fromTarget = declaredToolOf(target);
   const requirement = action.toolRequirement;
   const category = requirement.declared ? requirement.category : fromTarget?.toolKind;
   if (category === undefined)
-    refusePlan(`plan_script_tool_requirement_undeclared:${action.actionId}`, state, requirementOf(action));
+    rejectPlanCall(`plan_script_tool_requirement_undeclared:${action.actionId}`, state, requirementOf(action));
   const slot =
     publishedSlotOfCategory(snapshot, category, requirement) ??
     (fromTarget !== undefined && fromTarget.toolKind === category ? fromTarget.slot : null);
   if (slot === null)
-    refusePlan(
+    rejectPlanCall(
       `plan_script_${toolRefusalReason(snapshot)}:${action.actionId}:${category}`,
       state,
       requirementOf(action),
@@ -865,7 +979,7 @@ function equipForAction(
   if (publishedToolSlot(snapshot) === slot) return slot;
   const equip = actions.find((candidate) => candidate.actionId === EQUIP_TOOL_ACTION_ID);
   if (equip === undefined)
-    refusePlan(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
+    rejectPlanCall(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
   // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
   // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
   emitPlanNode(equip, { tool: category }, snapshot, state);
@@ -1100,6 +1214,27 @@ function planSnapshotScalarPath(snapshot: Snapshot, argumentWords: readonly stri
 }
 
 /**
+ * The families to read a value from, with the family the SURFACE declares for this action first.
+ *
+ * The declaration is the Mod's own answer to "which family supplies this action's targets", so it outranks this
+ * file's scoring: `talk_to_npc` declares `npcRelationshipTargets`, and the scoring handed back `forageTargets` instead -
+ * a family that publishes a field of the same name and has nothing to do with villagers.
+ *
+ * The declared family is only a candidate when it published ROWS. `planSnapshotRowFamilies` never lists an empty family,
+ * and an empty one cannot be read from, so a family the bounded `Discover*` left empty falls through to the populated
+ * family that publishes the same id - `villagerWhereabouts`, whose rows carry `targetId` for exactly this reason.
+ */
+function planDeclaredFamilyFirst(
+  action: PublishedPlanAction,
+  families: readonly PlanSnapshotRowFamily[],
+): readonly PlanSnapshotRowFamily[] {
+  if (action.targetFamily === null) return families;
+  const declared = families.filter((family) => family.name === action.targetFamily);
+  if (declared.length === 0) return families;
+  return [...declared, ...families.filter((family) => family.name !== action.targetFamily)];
+}
+
+/**
  * WHERE the value for one argument is published - the third part of every argument refusal's answer.
  *
  * Measured 2026-10-31 (`round18`): 9 of 66 plans were refused for reasons the model could not have known, and the five
@@ -1118,7 +1253,7 @@ function planArgumentSource(action: PublishedPlanAction, snapshot: Snapshot, arg
   if ((argumentName === "x" || argumentName === "y") && !planNamesATarget(action))
     return `snapshot.tile.${argumentName}`;
   const words = planArgumentFieldWords(argumentName);
-  const families = planRowFamiliesFor(action, snapshot);
+  const families = planDeclaredFamilyFirst(action, planRowFamiliesFor(action, snapshot));
   // The action's OWN family first, and only then the others: a field name that differs by a word inside the family the
   // action is about (`harvestTargets[].qualifiedHarvestItemId` for `expectedQualifiedItemId`) is a better answer than an
   // exact name in a family the action is not about (`forageTargets[].qualifiedItemId`), because the second points at rows
@@ -1163,45 +1298,6 @@ function planBoundedReasonText(value: string): string {
   return printable.length > PLAN_REASON_VALUE_CHARS ? `${printable.slice(0, PLAN_REASON_VALUE_CHARS)}...` : printable;
 }
 
-/** A scene reference exactly as the Host publishes it: the prefix, sixteen random characters, nothing else. */
-function planIsSceneReference(value: string): boolean {
-  return (
-    value.startsWith(SCENE_REFERENCE_PREFIX) &&
-    value.length === SCENE_REFERENCE_PREFIX.length + SCENE_REFERENCE_RANDOM_CHARS &&
-    /^[A-Za-z0-9_-]+$/u.test(value)
-  );
-}
-
-/** The longest a binding property may be, matching the bound every opaque id on this wire is held to. */
-const MAX_PLAN_BINDING_PROPERTY_CHARS = 128;
-
-/** The key a declared scene binding travels under: beside `argumentSchema`, never inside it. */
-const PLAN_SCENE_BINDING_NAME = "sceneTarget";
-
-/**
- * What is wrong with the binding the script supplied, or `null` when it is one `observe_scene` could have produced.
- *
- * The property list is the surface's own declaration (`requiredProperties`), so a renamed required property reaches the
- * refusal as the Mod renamed it; only the SHAPE of the two properties `ObservationBinding/v1` defines is the Host's
- * (`protocol.ts`'s `isObservationBindingV1`), and that shape is checked here because the compiler is the last reader
- * before the node is dispatched.
- */
-function planSceneBindingProblem(requiredProperties: readonly string[], value: unknown): string | null {
-  if (value === undefined) return "missing";
-  if (!isRecord(value)) return "not_an_object";
-  for (const name of Object.keys(value))
-    if (!requiredProperties.includes(name)) return `unexpected:${planBoundedReasonText(name)}`;
-  for (const name of requiredProperties) {
-    const given = value[name];
-    if (typeof given !== "string" || given.length === 0) return `not_text:${name}`;
-    if (given.length > MAX_PLAN_BINDING_PROPERTY_CHARS) return `too_long:${name}`;
-    // The two properties the Mod's ObservationBinding/v1 declares, each with the shape its own side validates.
-    if (name === "observationId" && !isOpaqueId(given)) return `not_an_opaque_id:${name}`;
-    if (name === "ref" && !planIsSceneReference(given)) return `not_a_scene_reference:${name}`;
-  }
-  return null;
-}
-
 /**
  * Refuses a call carrying an argument this action does not declare.
  *
@@ -1219,61 +1315,14 @@ function refuseUnknownArguments(
   const allowed = action.arguments.length === 0 ? "none" : action.arguments.map((argument) => argument.name).join(",");
   for (const name of Object.keys(supplied)) {
     if (action.arguments.some((argument) => argument.name === name)) continue;
-    if (name === PLAN_SCENE_BINDING_NAME && action.sceneBindingRequirement.declared) continue;
     const owners = (state.argumentOwners.get(name) ?? []).slice(0, PLAN_ARGUMENT_OWNERS_LISTED);
     const declaredBy = owners.length === 0 ? "none" : owners.join(",");
-    refusePlan(
+    rejectPlanCall(
       `plan_script_unknown_argument:${action.actionId}.${name}:allowed:${allowed}:declared_by:${declaredBy}`,
       state,
       requirement,
     );
   }
-}
-
-/**
- * Refuses a call that omits the scene binding the surface demands, or supplies one `observe_scene` could not have
- * produced.
- *
- * A DECLARED PRE-CONDITION IS NOT AN ARGUMENT, AND IT IS STILL MANDATORY: `pickup_forage` declares an
- * `ObservationBinding/v1` as `sceneTarget` - outside `argumentSchema`, because it is not a value the caller computes but
- * the ref of a scene observation the caller just made. Reading only `action.arguments` meant a script that omitted it
- * compiled, dispatched, and was refused `observation_binding_malformed` by the Mod (measured 2026-10-31, `round17`: five
- * calls, five refusals).
- *
- * The binding is DEMANDED and VALIDATED here. It is not CARRIED: `sceneTarget` is not an argument, and a node's
- * `bindings` map is a fact REFERENCE (`{nodeId, factName}`), so no part of a compiled node can hold an
- * `ObservationBinding/v1`; `RouteReenteringBodyProgramExecutor` builds its `BridgeExecutionArgs` with no `SceneTarget`.
- * A plan node for such an action therefore still cannot execute, and carrying it is a Mod-side change - a different
- * decision from this one, which is only that a HAND-WRITTEN binding is refused at the call that wrote it and that the
- * answer says where a real one comes from. Measured 2026-10-31 (`round18`): five calls forged `{ observationId, ref }`,
- * because the refusal before this one named the field and nothing else.
- */
-function refuseUnsatisfiedSceneBinding(
-  action: PublishedPlanAction,
-  supplied: Readonly<Record<string, unknown>>,
-  state: PlanScriptState,
-  requirement: PlanArgumentRequirement,
-): void {
-  const binding = action.sceneBindingRequirement;
-  if (!binding.declared) return;
-  // Both parts of the answer are the surface's or the Host's own, never a guess: the properties the Mod declares, and the
-  // read-only action that answers with them. The snapshot cannot: no family publishes an observation id.
-  const expects = `scene_binding{${binding.requiredProperties.join(",")}}`;
-  const from = SCENE_OBSERVATION_ACTION_ID;
-  if (Object.hasOwn(supplied, PLAN_SCENE_BINDING_NAME)) {
-    const problem = planSceneBindingProblem(binding.requiredProperties, supplied[PLAN_SCENE_BINDING_NAME]);
-    if (problem !== null)
-      refusePlan(
-        `plan_script_binding_not_canonical:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}:got:${problem}`,
-        state,
-        requirement,
-      );
-  } else
-    refusePlan(
-      `plan_script_missing_binding:${action.actionId}.${PLAN_SCENE_BINDING_NAME}:${expects}:${from}`,
-      state,
-      requirement,
-    );
 }
 
 function emitPlanNode(
@@ -1291,7 +1340,11 @@ function emitPlanNode(
   // cannot run.
   const previousNode = state.nodes.length === 0 ? undefined : state.nodes[state.nodes.length - 1]!;
   if (previousNode !== undefined && WORLD_RESETTING_PLAN_ACTION_IDS.includes(previousNode.actionId))
-    refusePlan(`plan_script_action_after_world_reset:${action.actionId}:${previousNode.actionId}`, state, requirement);
+    rejectPlanCall(
+      `plan_script_action_after_world_reset:${action.actionId}:${previousNode.actionId}`,
+      state,
+      requirement,
+    );
   if (
     previousNode !== undefined &&
     BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId) &&
@@ -1299,7 +1352,7 @@ function emitPlanNode(
   )
     // The reason names the step that would make it legal, because the author's next move is to add it - not to guess why
     // the dialogue they just opened is in the way.
-    refusePlan(
+    rejectPlanCall(
       `plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
       state,
       requirement,
@@ -1307,11 +1360,10 @@ function emitPlanNode(
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))
-    refusePlan(`plan_script_argument_not_canonical:${action.actionId}`, state, requirement);
+    rejectPlanCall(`plan_script_argument_not_canonical:${action.actionId}`, state, requirement);
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
   refuseUnknownArguments(action, supplied, state, requirement);
-  refuseUnsatisfiedSceneBinding(action, supplied, state, requirement);
   // AN OMITTED ARGUMENT IS REFUSED, NOT INFERRED, EVEN WHEN ITS VALUE IS IN THE SNAPSHOT.
   //
   // Inferring was considered and rejected. `expectedQualifiedItemId` when exactly one target row matches the x/y of the
@@ -1328,20 +1380,28 @@ function emitPlanNode(
   //   4. `planProgramId` is content-addressed on the nodes, and a journal replays a node's arguments as written. A
   //      Host-inferred value has no provenance to replay.
   const canonical: Record<string, PlanArgument> = {};
+  // EVERY ARGUMENT THAT IS MISSING, not the first one: measured in `.tmp/fork-why-slow.jsonl`, the refusal for
+  // `claim_mail_attachment({ expectedTargetId })` named `x` alone, so a correction that fixed `x` bought a second
+  // refusal for `y`. The code names the first (with what it must be and where the value is published) and the answer
+  // carries the whole set beside it.
+  const missing = [...declared.values()].filter((declaration) => !Object.hasOwn(supplied, declaration.name));
+  if (missing.length > 0) {
+    const first = missing[0]!;
+    rejectPlanCall(
+      `plan_script_missing_argument:${action.actionId}.${first.name}:${planArgumentExpectation(first)}:${planArgumentSource(action, snapshot, first.name)}`,
+      state,
+      requirement,
+      Object.freeze(missing.map((declaration) => declaration.name)),
+    );
+  }
   for (const [name, declaration] of declared) {
     const argumentPath = `${action.actionId}.${name}`;
-    if (!Object.hasOwn(supplied, name)) {
-      // Both halves of the answer are derived from what the caller already holds: the declaration, and the snapshot.
-      const expects = planArgumentExpectation(declaration);
-      const from = planArgumentSource(action, snapshot, name);
-      refusePlan(`plan_script_missing_argument:${argumentPath}:${expects}:${from}`, state, requirement);
-    }
     const value = canonicalPlanArgument(declaration, supplied[name]);
     if (value === undefined) {
       const expects = planArgumentExpectation(declaration);
       const from = planArgumentSource(action, snapshot, name);
       const received = planReceivedValue(supplied[name]);
-      refusePlan(
+      rejectPlanCall(
         `plan_script_argument_not_canonical:${argumentPath}:${expects}:${from}:got:${received}`,
         state,
         requirement,
@@ -1495,11 +1555,90 @@ function canonicalDestinationSelector(value: unknown): PlanArgument | undefined 
   return undefined;
 }
 
-/** Records the named refusal and stops the script at the statement that caused it. */
-function refusePlan(reasonCode: string, state: PlanScriptState, requirement?: PlanArgumentRequirement): never {
+/**
+ * A refusal raised by one builder call, and whether it ends the script or only that call.
+ *
+ * It unwinds the script's stack either way, because a call cannot produce a node once it is refused. What differs is who
+ * catches it: `refusePlan` is re-thrown out of the call boundary and ends the script, while `rejectPlanCall` is answered
+ * by `atPlanCall`, which records the call and lets the script carry on.
+ */
+class PlanScriptRefusal extends Error {
+  readonly reasonCode: string;
+  readonly requirement: PlanArgumentRequirement | undefined;
+  readonly missingArguments: readonly string[] | undefined;
+  readonly wholeScript: boolean;
+
+  constructor(
+    reasonCode: string,
+    wholeScript: boolean,
+    requirement?: PlanArgumentRequirement,
+    missingArguments?: readonly string[],
+  ) {
+    super(reasonCode);
+    this.name = "PlanScriptRefusal";
+    this.reasonCode = reasonCode;
+    this.requirement = requirement;
+    this.missingArguments = missingArguments;
+    this.wholeScript = wholeScript;
+  }
+}
+
+/** Refuses the whole script: the calls after this one cannot fix what this one broke, so no plan is produced at all. */
+function refusePlan(
+  reasonCode: string,
+  state: PlanScriptState,
+  requirement?: PlanArgumentRequirement,
+  missingArguments?: readonly string[],
+): never {
   state.refusal = reasonCode;
   if (requirement !== undefined) state.requirement = requirement;
-  throw new Error(reasonCode);
+  if (missingArguments !== undefined) state.missingArguments = missingArguments;
+  throw new PlanScriptRefusal(reasonCode, true, requirement, missingArguments);
+}
+
+/**
+ * Refuses ONE builder call. The nodes written before and after it stand, and the answer names this call.
+ *
+ * This is the difference the user's own words asked for: writing thirty nodes used to mean thirty chances for the whole
+ * batch to be thrown away on one bad argument, so the batch was kept small on purpose. A node that cannot run is not a
+ * reason to discard the nodes that can - the plan is what the script asked for MINUS the steps the compiler refused BY
+ * NAME, and the companion reads which calls those were.
+ */
+function rejectPlanCall(
+  reasonCode: string,
+  state: PlanScriptState,
+  requirement?: PlanArgumentRequirement,
+  missingArguments?: readonly string[],
+): never {
+  // The first rejection's shape is the one the refusal answer carries when NOTHING was accepted, so the teaching payload
+  // is the same one a single refused call has always produced.
+  if (state.rejected.length === 0 && state.rejectedCount === 0) {
+    if (requirement !== undefined) state.requirement = requirement;
+  }
+  throw new PlanScriptRefusal(reasonCode, false, requirement, missingArguments);
+}
+
+/**
+ * The one boundary every builder call passes through: a refusal that ends only its call is answered HERE, so the script's
+ * own `try/catch` cannot silently shorten a plan and cannot see a refusal either - there is nothing for it to catch.
+ */
+function atPlanCall<TResult>(state: PlanScriptState, actionId: string | null, run: () => TResult): TResult | undefined {
+  try {
+    return run();
+  } catch (error) {
+    if (!(error instanceof PlanScriptRefusal) || error.wholeScript) throw error;
+    if (state.rejected.length < MAX_REPORTED_PLAN_REJECTIONS)
+      state.rejected.push(
+        Object.freeze({
+          call: state.builderCalls,
+          actionId,
+          reasonCode: error.reasonCode,
+          ...(error.missingArguments === undefined ? {} : { missingArguments: error.missingArguments }),
+        }),
+      );
+    state.rejectedCount += 1;
+    return undefined;
+  }
 }
 
 /** Word-bounded, so an argument value or target id that merely contains the token is not a false hit on it. */

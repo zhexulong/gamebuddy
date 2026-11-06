@@ -76,9 +76,9 @@ test("every mount forwards the arguments its action declares", () => {
     // TWO legitimate forms. The explicit one names each declared argument from the tool's own input. The generic one
     // delegates to a helper that takes the names off the descriptor - the stronger design, because the schema and the
     // wire args then come from one source. That helper is asserted below, so "delegates to something" is not a loophole.
-    const delegated = new RegExp("declaredArguments\\(\\s*registration\\.descriptor\\s*,\\s*" + source + "\\s*\\)").test(
-      block.body,
-    );
+    const delegated = new RegExp(
+      "declaredArguments\\(\\s*registration\\.descriptor\\s*,\\s*" + source + "\\s*\\)",
+    ).test(block.body);
     const forwardsAll =
       delegated ||
       declared!.every((name) =>

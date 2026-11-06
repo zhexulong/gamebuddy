@@ -267,7 +267,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter(
     "chop_tree",
     "Chop a tree",
-    "Use one equipped Axe swing on a live ordinary mature tree; source transformation is the completion boundary.",
+    "Chop one live ordinary mature tree: the Mod swings the equipped Axe until the tree is felled. Felling is the completion boundary, and the receipt names the health pair and the swing count.",
     ["tree_source", "tool"],
   ),
   actionAdapter("express_emote", "Express an emote", "Express a character emote in the game world.", [
@@ -601,23 +601,6 @@ export type StardewActionId = (typeof STARDEW_ACTION_ADAPTERS)[number]["actionId
 
 /** A current restrictive projection: registration facts remain Mod-owned. */
 export type VisibleStardewAction = StardewActionAdapter & ActionRegistration;
-
-/**
- * The Mod must explicitly opt this action into ObservationBinding/v1. A Host
- * schema cannot add that capability when the authenticated registration omits it.
- */
-export function acceptsObservationBindingV1(registration: ActionRegistration): boolean {
-  const sceneTarget = registration.descriptor?.sceneTarget;
-  return (
-    registration.actionId === "pickup_forage" &&
-    sceneTarget?.type === "ObservationBinding" &&
-    sceneTarget.version === 1 &&
-    sceneTarget.required === true &&
-    sceneTarget.requiredProperties.length === 2 &&
-    sceneTarget.requiredProperties[0] === "observationId" &&
-    sceneTarget.requiredProperties[1] === "ref"
-  );
-}
 
 /**
  * Tool construction remains action-specific, but this closed projection forces
@@ -1370,8 +1353,7 @@ export function visibleActionsFromModCatalog(
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||
-      deniedFamilies.has(registration.familyId) ||
-      (registration.actionId === "pickup_forage" && !acceptsObservationBindingV1(registration))
+      deniedFamilies.has(registration.familyId)
     ) {
       continue;
     }

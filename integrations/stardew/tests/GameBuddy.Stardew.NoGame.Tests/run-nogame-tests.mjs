@@ -93,6 +93,16 @@ const stale = included.filter((name) => !suite.includes(name));
 if (stale.length > 0) {
   throw new Error(`stardew_nogame_tests_include_missing: ${stale.join(", ")} is not in the suite any more`);
 }
+// The excluded half drifts the same way: a row for a file that was renamed or deleted keeps claiming a
+// reason for something no longer in the suite, and the printed counts then add up to more than the
+// population. The row is stale either way, so it fails by name exactly like a stale include does.
+const staleExcluded = excluded.filter((row) => !suite.includes(row.name));
+if (staleExcluded.length > 0) {
+  throw new Error(
+    `stardew_nogame_tests_excluded_missing: ${staleExcluded.map((row) => row.name).join(", ")} is recorded here ` +
+      "but is not in the suite any more - delete the row, or rename it to the file that replaced it",
+  );
+}
 const accounted = new Set([...included, ...excluded.map((row) => row.name)]);
 const unaccounted = suite.filter((name) => !accounted.has(name));
 if (unaccounted.length > 0) {

@@ -39,7 +39,7 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
  * `dismount_transport`, an argument-less action whose `{}` the protocol accepts, reached `execute()` in the
  * same harness: that control is what proved the harness itself was right. `travel` additionally declared an
  * OPTIONAL `expectedTargetId` the protocol refuses, and `pickup_forage` required a `sceneTarget` its
- * description never mentioned.
+ * description never mentioned - the latter is gone with the binding, which no producer could fill.
  *
  * Each test asserts one rule over whatever the Mod publishes, so it follows the catalog rather than a
  * hand-maintained list.
@@ -103,16 +103,6 @@ function registrationFor(action: SurfaceAction): ActionRegistration {
     effect: (action.effect ?? "write") as "read" | "write",
     nativeBinding: "Fixture.Binding",
     ...(postconditionName === undefined ? {} : { postcondition: { name: postconditionName } }),
-    ...(action.actionId === "pickup_forage"
-      ? {
-          sceneTarget: {
-            type: "ObservationBinding",
-            version: 1,
-            required: true,
-            requiredProperties: ["observationId", "ref"],
-          },
-        }
-      : {}),
   };
   return {
     actionId: action.actionId,
@@ -409,7 +399,6 @@ test("the protocol's exact wire shape matches the Mod-declared arguments for eve
     const args: JsonObject = {};
     for (const [name, schema] of Object.entries(action.argumentSchema ?? {}))
       args[name] = valueFor(schema as unknown as JsonObject, name, action.actionId);
-    if (action.actionId === "pickup_forage") args.sceneTarget = { observationId: "gateObservation", ref: SCENE_REF };
     const verdict = validateExecutionRequest(
       {
         requestId: "gateRequestId",

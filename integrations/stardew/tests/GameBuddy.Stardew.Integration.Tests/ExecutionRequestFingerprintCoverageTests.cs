@@ -42,15 +42,6 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             .SelectMany(registration => registration.Descriptor!.Arguments
                 .Select(argument => new object[] { registration.ActionId, argument.Name }));
 
-    /// <summary>
-    /// The same population for the actions that declare a scene binding, which is a contract member
-    /// of the request without being a named argument.
-    /// </summary>
-    public static IEnumerable<object[]> SceneBoundActions() =>
-        ExecutionActions()
-            .Where(registration => registration.Descriptor!.SceneTarget is not null)
-            .Select(registration => new object[] { registration.ActionId });
-
     [Theory]
     [MemberData(nameof(DeclaredArguments))]
     public void ChangingAnyDeclaredArgumentChangesTheFingerprint(string actionId, string argumentName)
@@ -65,31 +56,6 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             + "requests sharing a fingerprint are answered as one: the second is handed the first's receipt "
             + "(idempotent_replay / request_id_conflict) and its own intent is never dispatched. The material must be "
             + "derived from the request's declared argument set, not from a hand-written subset of it.");
-    }
-
-    [Theory]
-    [MemberData(nameof(SceneBoundActions))]
-    public void ChangingTheSceneBindingChangesTheFingerprint(string actionId)
-    {
-        FarmhandActionDescriptor descriptor = Descriptor(actionId);
-        BridgeExecutionRequest baseline = RequestFor(actionId, descriptor);
-        ObservationBindingV1 binding = baseline.Args.SceneTarget!;
-
-        foreach (ObservationBindingV1 other in new[]
-                 {
-                     binding with { ObservationId = binding.ObservationId + "_other" },
-                     binding with { Ref = binding.Ref + "_other" },
-                 })
-        {
-            BridgeExecutionArgs changedArgs = Copy(baseline.Args);
-            ArgsProperty(nameof(BridgeExecutionArgs.SceneTarget)).SetValue(changedArgs, other);
-            BridgeExecutionRequest changed = baseline with { Args = changedArgs };
-
-            ExecutionRequestFingerprint.Of(changed).Should().NotBe(
-                ExecutionRequestFingerprint.Of(baseline),
-                $"{actionId} declares a scene binding, so the binding is part of its identity: "
-                + $"'{binding.ObservationId}/{binding.Ref}' and '{other.ObservationId}/{other.Ref}' name different targets.");
-        }
     }
 
     /// <summary>
@@ -261,9 +227,6 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             Choice = choice,
             Text = text,
             Destination = destination,
-            SceneTarget = descriptor.SceneTarget is null
-                ? null
-                : new ObservationBindingV1("obs_0000000000000000", "ref_0000000000000000"),
         };
     }
 
@@ -307,8 +270,6 @@ public sealed class ExecutionRequestFingerprintCoverageTests
             {
                 Label = ((BridgeNavigationDestinationSelector)current!).Label + "_other",
             },
-        _ when type == typeof(ObservationBindingV1) =>
-            (ObservationBindingV1)current! with { Ref = ((ObservationBindingV1)current!).Ref + "_other" },
         _ => throw new XunitException(
             $"'{argumentName}' has wire type {type.Name}, which this test has no perturbation for. Add one rather than "
             + "skipping the argument: an argument it cannot change is an argument whose absence from the identity "

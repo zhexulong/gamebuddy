@@ -63,7 +63,6 @@ export type GameplayTaskRecord = Readonly<{
     executionId: string;
     state: string;
     expectedTargetId?: string;
-    sceneTargetRef?: string;
   }>[];
   /** A request was written but its execute response has not yet been reconciled. */
   pendingDispatch: Readonly<{
@@ -72,7 +71,6 @@ export type GameplayTaskRecord = Readonly<{
     state: "dispatching" | "uncertain";
     cancelRequired: boolean;
     expectedTargetId?: string;
-    sceneTargetRef?: string;
   }> | null;
   /** Receipt reference only; evidence remains Mod-owned and is never copied into worker trace. */
   terminalReceipt: Readonly<{
@@ -131,7 +129,6 @@ type MutableTaskRecord = {
     executionId: string;
     state: string;
     expectedTargetId?: string;
-    sceneTargetRef?: string;
   }>;
   /**
    * Task-owned full receipts keyed by `requestId|executionId`. This private
@@ -148,7 +145,6 @@ type MutableTaskRecord = {
     state: "dispatching" | "uncertain";
     cancelRequired: boolean;
     expectedTargetId?: string;
-    sceneTargetRef?: string;
   } | null;
   terminalReceipt: {
     requestId: string;
@@ -846,7 +842,6 @@ export function hasAuthoritativeCompletion(
     requestId: string;
     executionId: string;
     expectedTargetId?: string;
-    sceneTargetRef?: string;
   }>[],
   catalog: IntegrationActionCatalog,
 ): boolean {
@@ -893,12 +888,11 @@ export function hasActionPostconditionEvidence(
 function hasTargetedCompletionIdentity(
   actionId: string,
   receipt: IntegrationExecutionReceipt,
-  execution: Readonly<{ expectedTargetId?: string; sceneTargetRef?: string }>,
+  execution: Readonly<{ expectedTargetId?: string }>,
 ): boolean {
   if (actionId !== "pickup_forage") return true;
   const expectedTargetId = execution.expectedTargetId;
-  const sceneTargetRef = execution.sceneTargetRef;
-  if (expectedTargetId === undefined || sceneTargetRef === undefined) return false;
+  if (expectedTargetId === undefined) return false;
   const detail = receipt.evidence?.detail;
   if (typeof detail !== "string") return false;
   const fields = new Map<string, string>();
@@ -907,8 +901,8 @@ function hasTargetedCompletionIdentity(
     if (separator <= 0 || fields.has(part.slice(0, separator))) return false;
     fields.set(part.slice(0, separator), part.slice(separator + 1));
   }
-  // The Mod binds sceneTarget to the same target identity before native pickup;
-  // Host verifies that exact request-bound target, without a universal receipt field.
+  // The Mod re-derives the target id from the LIVE object before native pickup, so the
+  // receipt's identity is proof of the exact request-bound target, without a universal receipt field.
   return fields.get("targetIdentity") === expectedTargetId;
 }
 
@@ -971,17 +965,12 @@ function taskScopedTool(
         // execution id or issue a cancel until the Mod has returned one.
         const expectedTargetId =
           isRecord(params) && typeof params.expectedTargetId === "string" ? params.expectedTargetId : undefined;
-        const sceneTargetRef =
-          isRecord(params) && isRecord(params.sceneTarget) && typeof params.sceneTarget.ref === "string"
-            ? params.sceneTarget.ref
-            : undefined;
         record.pendingDispatch = {
           actionId,
           requestId,
           state: "dispatching",
           cancelRequired: false,
           ...(expectedTargetId === undefined ? {} : { expectedTargetId }),
-          ...(sceneTargetRef === undefined ? {} : { sceneTargetRef }),
         };
         try {
           const result = await tool.execute(toolCallId, params, signal, onUpdate, ctx);
@@ -1269,7 +1258,6 @@ function settlePendingCorrelation(
       executionId,
       state: resolvedState,
       ...(pending.expectedTargetId === undefined ? {} : { expectedTargetId: pending.expectedTargetId }),
-      ...(pending.sceneTargetRef === undefined ? {} : { sceneTargetRef: pending.sceneTargetRef }),
     });
   } else existing.state = resolvedState;
   if (latest !== null && latest.requestId === requestId && latest.executionId === executionId)
