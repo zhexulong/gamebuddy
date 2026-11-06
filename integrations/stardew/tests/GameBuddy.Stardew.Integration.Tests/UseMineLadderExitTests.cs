@@ -49,9 +49,9 @@ public sealed class UseMineLadderExitTests
         registration.Kind.Should().Be(FarmhandOperationKind.Execution);
         registration.FamilyId.Should().Be("world_navigation");
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.Movement);
-        // Experimental: it has no live gate yet, so it stays off the default Agent surface until promotion, which is a
+        // The native-local live gate passed and left a receipt, so the rung is LiveVerified; this asserts the rung by name. a
         // catalog edit owned by the parent.
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
 
         FarmhandActionDescriptor descriptor = registration.Descriptor!;
         descriptor.Effect.Should().Be("write");
@@ -372,8 +372,14 @@ public sealed class UseMineLadderGateRegistrationTests
             .Should().Contain("if (action === \"use_mine_ladder\") return [\"move_to_tile\", \"use_mine_ladder\"];")
             .And.Contain($"if (action === \"use_mine_ladder\") return \"{Scenario}\";",
                 "the harness action must select this scenario, not the enter_mine one");
+        // Promoted: it is a `gate(...)` row now, so the runner and the action id sit in one entry rather than a
+        // `use_mine_ladder: "…"` map pair. The assertion follows the shape promotion produced, and still fails if the
+        // row loses either half.
         ReadRepositoryFile("tools/stardew-action-gate-descriptors.mjs")
-            .Should().Contain("use_mine_ladder: \"run-stardew-native-local-player-use-mine-ladder-smoke.mjs\"");
+            .Should()
+            .MatchRegex(
+                "\"use_mine_ladder\"[\\s\\S]{0,240}run-stardew-native-local-player-use-mine-ladder-smoke\\.mjs",
+                "the published gate row must name this action and its own runner");
     }
 
     private static string StripLineComments(string source)

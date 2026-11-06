@@ -63,8 +63,8 @@ public sealed class MovePlacedFurnitureActionTests
         registration.FamilyId.Should().Be("buildings_farm_management");
         registration.Kind.Should().Be(FarmhandOperationKind.Execution);
         registration.HandlerGroup.Should().Be(FarmhandActionHandlerGroup.ResourceTools);
-        // Experimental until its own native-local live gate passes; promotion is a separate catalog edit.
-        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.Experimental);
+        // The native-local live gate passed and left a receipt, so the rung is LiveVerified. This asserts the rung by
+        registration.Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
         registration.Descriptor!.Arguments.Select(argument => argument.Name)
             .Should().Equal(
                 new[] { "x", "y", "expectedTargetId" },
@@ -89,7 +89,7 @@ public sealed class MovePlacedFurnitureActionTests
         System.Text.Json.JsonElement published = document.RootElement.GetProperty("actions").EnumerateArray()
             .Single(action => action.GetProperty("actionId").GetString() == ActionId);
 
-        published.GetProperty("lifecycle").GetString().Should().Be("experimental");
+        published.GetProperty("lifecycle").GetString().Should().Be("live_verified");
         published.GetProperty("kind").GetString().Should().Be("execution");
         published.GetProperty("postcondition").GetProperty("name").GetString().Should().Be("placed_furniture_picked_up");
         published.GetProperty("targetFamily").GetString().Should().Be("worldObjectTargets");

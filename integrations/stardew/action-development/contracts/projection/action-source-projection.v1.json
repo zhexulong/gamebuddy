@@ -401,12 +401,12 @@
       {
         "actionId": "use_mine_ladder",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "use_mine_ladder",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1255,12 +1255,12 @@
       {
         "actionId": "move_placed_furniture",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "move_placed_furniture",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -1999,12 +1999,12 @@
       {
         "actionId": "pet_farm_animal",
         "identityVersion": 1,
-        "lifecycle": "experimental",
+        "lifecycle": "live_verified",
         "kind": "execution",
         "descriptor": {
           "actionId": "pet_farm_animal",
           "identityVersion": 1,
-          "lifecycle": "experimental",
+          "lifecycle": "live_verified",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -4155,6 +4155,7 @@
       "use_raft",
       "mount_transport",
       "enter_mine",
+      "use_mine_ladder",
       "enter_exit",
       "till_soil",
       "pickup_forage",
@@ -4174,6 +4175,7 @@
       "bait_crab_pot",
       "place_owned_object",
       "remove_placed_item",
+      "move_placed_furniture",
       "break_container",
       "chop_tree",
       "break_rock",
@@ -4184,6 +4186,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "pet_farm_animal",
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
@@ -4248,6 +4251,7 @@
       "use_raft",
       "mount_transport",
       "enter_mine",
+      "use_mine_ladder",
       "till_soil",
       "pickup_forage",
       "pickup_item",
@@ -4266,6 +4270,7 @@
       "bait_crab_pot",
       "place_owned_object",
       "remove_placed_item",
+      "move_placed_furniture",
       "break_container",
       "chop_tree",
       "break_rock",
@@ -4276,6 +4281,7 @@
       "clear_debris",
       "npc_relationship",
       "pet_animal",
+      "pet_farm_animal",
       "water_pet_bowl",
       "water_slime_hutch_trough",
       "interact_npc_with_item",
@@ -4337,14 +4343,11 @@
       "observe_scene"
     ],
     "experimentalActionIds": [
-      "use_mine_ladder",
-      "move_placed_furniture",
       "rotate_furniture",
       "remove_fence",
       "put_item_in_fish_tank",
       "place_item_on_pedestal",
       "break_resource_clump",
-      "pet_farm_animal",
       "open_geode"
     ],
     "helloAdvertisement": "catalog_projection",
@@ -5749,6 +5752,21 @@
         "actionId": "talk_to_npc",
         "runner": "run-stardew-native-local-player-talk-to-npc-smoke.mjs",
         "fixtureScenario": "native_talk_to_npc_v1"
+      },
+      {
+        "actionId": "use_mine_ladder",
+        "runner": "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
+        "fixtureScenario": "native_mine_use_ladder_exit_v1"
+      },
+      {
+        "actionId": "move_placed_furniture",
+        "runner": "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
+        "fixtureScenario": null
+      },
+      {
+        "actionId": "pet_farm_animal",
+        "runner": "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+        "fixtureScenario": "native_pet_farm_animal_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",

@@ -129,9 +129,10 @@ const BASELINE = "tools/prelive-l3-baseline.json";
  * allowed - an empty scenario is indistinguishable from a missing branch, so every empty has to be argued here.
  */
 export const NO_SCENARIO_REASON = Object.freeze({
-  move_placed_furniture:
-    "the fixture returns the ordinary world on purpose: the bed it lifts is the game's own starter furniture, and a " +
-    "fixture Given would move it (tools/lib/stardew-native-local-player-fixture.mjs, `fixtureScenario`)",
+  // `move_placed_furniture` left this table when its promotion gave it a scenario: the freshRow witness
+  // (`placed_furniture_picked_up`) now comes from a fixture that places the piece itself, so the ordinary-world
+  // reason stopped being true. The gate that says so is `rule a` itself, which is why this entry is gone rather
+  // than reworded.
   scene_reachable_probe:
     "its only action is read-only `observe_scene`; the probe measures reachability of the ordinary world from the " +
     "actor's own start tile and provisions no fixture fact",

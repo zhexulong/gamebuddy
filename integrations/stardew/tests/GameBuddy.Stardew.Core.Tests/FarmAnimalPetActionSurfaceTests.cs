@@ -51,7 +51,7 @@ public sealed class FarmAnimalPetActionSurfaceTests
     }
 
     [Fact]
-    public void PetFarmAnimal_PublishesTheIdentityBindingShapeAndNoLiveClaim()
+    public void PetFarmAnimal_PublishesTheIdentityBindingShapeAndItsLiveRung()
     {
         FarmhandActionDescriptor descriptor = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == "pet_farm_animal").Descriptor!;
@@ -67,9 +67,9 @@ public sealed class FarmAnimalPetActionSurfaceTests
         FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == "pet_farm_animal").Lifecycle
             .Should().Be(
-                FarmhandActionLifecycle.Experimental,
-                "no live run has observed this seam in the shipped build; Experimental keeps it off the default Agent "
-                + "surface until it has earned the rung, which is the same rule every other new action follows");
+                FarmhandActionLifecycle.LiveVerified,
+                "a target-version live slice observed this seam and left a receipt, so the rung is earned; the assertion "
+                + "names the rung rather than pinning the old one, which is what a lifecycle test must do");
 
         BridgeProtocol.ExecutionArgumentProperties("pet_farm_animal")
             .Should().BeEquivalentTo(
