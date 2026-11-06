@@ -5306,10 +5306,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         string canonicalDestinationIdentity = nextPlan.Resolution.Binding?.CanonicalDestinationIdentity ?? nextLeg.TargetLocation;
-        Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg);
+        Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
         if (approachTarget is null)
         {
-            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", "phase=multi_hop;approach=unavailable;never_retry=true");
+            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{DescribeApproachRing(approachRing)}");
             return;
         }
 
@@ -5372,40 +5372,59 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         && evidence.Contains("postcondition=true", StringComparison.Ordinal)
         && evidence.Contains("arrived=true", StringComparison.Ordinal);
 
-    private Vector2? SelectSafeApproachTarget(NavigationTransitionLeg leg)
+    /// <summary>
+    /// The tile this leg's approach walks to, or <c>null</c> when the leg has none - decided by
+    /// <see cref="StardewBodyController.RingAroundGoal"/>, the SAME predicate the refusal that describes the ring
+    /// publishes, so the two cannot describe different worlds.
+    ///
+    /// <para>
+    /// This leg used to ask a private third predicate: <c>isTilePassable</c> plus the <c>CollisionMask.All</c>
+    /// occupant mask, with no question about whether the actor could walk to the tile at all. It disagreed with the
+    /// rest of the Mod in both directions - `All` contains <c>TerrainFeatures</c>, so ordinary farm ground (grass,
+    /// tilled soil) was refused as a place to stand, and a free tile walled off from the actor was accepted and
+    /// handed to the engine as a walk it answers <c>no_native_path</c>. The refusal it produced was
+    /// <c>approach=unavailable</c> with no tile, which is unreadable: measured live, a companion crossed
+    /// Farm -&gt; Backwoods -&gt; Mountain three times rather than resolve it.
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="ring"/> is the account the caller publishes, and it is null only when the native seam below
+    /// is wired - that seam (<see cref="SetNavigationApproachNative"/>) replaces the world with the caller's own
+    /// candidate test and is never wired in production, so its evidence stays the shape it always had.
+    /// </para>
+    /// </summary>
+    internal Vector2? SelectSafeApproachTarget(NavigationTransitionLeg leg, out StardewBodyController.CardinalRing? ring)
     {
         Vector2 sourceTile = new(leg.SourceX, leg.SourceY);
-        Vector2[] candidates =
+        if (this.navigationApproachNative?.EvaluateCandidate is { } evaluate)
         {
-            sourceTile + new Vector2(-1f, 0f),
-            sourceTile + new Vector2(1f, 0f),
-            sourceTile + new Vector2(0f, -1f),
-            sourceTile + new Vector2(0f, 1f),
-        };
-        foreach (Vector2 candidate in candidates)
-        {
-            if (this.IsSafeApproachCandidate(candidate))
-                return candidate;
+            ring = null;
+            Vector2[] candidates =
+            {
+                sourceTile + new Vector2(-1f, 0f),
+                sourceTile + new Vector2(1f, 0f),
+                sourceTile + new Vector2(0f, -1f),
+                sourceTile + new Vector2(0f, 1f),
+            };
+            foreach (Vector2 candidate in candidates)
+            {
+                if (evaluate(candidate))
+                    return candidate;
+            }
+            return null;
         }
-        return null;
+
+        ring = StardewBodyController.RingAroundGoal(Game1.player, Game1.player?.currentLocation, sourceTile);
+        return ring.Approach;
     }
 
-    private bool IsSafeApproachCandidate(Vector2 candidate) =>
-        this.navigationApproachNative?.EvaluateCandidate?.Invoke(candidate)
-        ?? this.DefaultSafeApproachCandidate(candidate);
-
-    private bool DefaultSafeApproachCandidate(Vector2 candidate)
-    {
-        Farmer? player = Game1.player;
-        StardewValley.GameLocation? location = player?.currentLocation;
-        if (location is null)
-            return false;
-        if (candidate == player!.Tile)
-            return true;
-        return location.isTileOnMap(candidate)
-            && location.isTilePassable(candidate)
-            && !location.IsTileOccupiedBy(candidate, (CollisionMask)255, (CollisionMask)0, false);
-    }
+    /// <summary>
+    /// The ring's own account of why a leg has no approach: which tile stands in the way, and where. A caller that
+    /// reads <c>approach_blocked_by:weed@40,9</c> can clear it or route around it; <c>approach=unavailable</c> is a
+    /// verdict with no next step in it.
+    /// </summary>
+    internal static string DescribeApproachRing(StardewBodyController.CardinalRing? ring) =>
+        ring is null ? string.Empty : $";approaches={ring.Evidence};approach_blocked_by:{ring.BlockedBy}";
 
     private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null)
     {
