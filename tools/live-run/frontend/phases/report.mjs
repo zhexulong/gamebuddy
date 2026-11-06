@@ -3,9 +3,14 @@
 // per-item facts file (<out>/<driver>.txt). Every item is a MEASURED NUMBER or a QUOTED STRING taken
 // from the live page through the browser's own layout engine — never a class name and never a pixel
 // reading. When a lane could not run, the driver writes a named skip and this generator repeats it.
+//
+// Before either file names a commit, the phase proves the artifacts it is about to cite belong to THIS
+// run (G-D below): the claimed sha must be the pinned worktree's HEAD, and no cited artifact may
+// predate the run's own start. A report that cannot prove both writes a named refusal instead of a pin.
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadRunConfig, runPaths } from "../lib/config.mjs";
+import { KIT_ROOT, loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
 
 const DRIVER_OUTS = [
   "a-surfaces",
@@ -141,9 +146,10 @@ function section(lines, title) {
   lines.push("");
 }
 
-function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup }) {
+function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup, evidence }) {
   const L = [];
   const driverTexts = Object.fromEntries(DRIVER_OUTS.map((key) => [key, driver(paths, key)]));
+  const iso = (ms) => new Date(ms).toISOString();
 
   L.push(`GameBuddy ${run.tag} — README`);
   L.push("===============================");
@@ -151,6 +157,22 @@ function buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup
   section(L, "WHERE THIS CAME FROM");
   L.push(`  pinned commit      ${run.commit}`);
   L.push(`                     (HEAD or sha pinned; \`git rev-parse\` was the runner's first command)`);
+  // G-D, space: the pin names the tree these artifacts came from, and git is the only thing that can
+  // confirm it. Nothing below this line is written unless this reading agreed.
+  L.push(
+    `  pinned sha check   git -C <worktree> rev-parse HEAD = ${evidence.worktreeHead} — the tree that built these artifacts`,
+  );
+  if (evidence.mainHead !== null && evidence.mainHead !== run.commit) {
+    L.push(`  HEAD now           ${evidence.mainHead}`);
+    L.push(`                     (observation only, NOT a verdict: the pinned worktree above is what built these`);
+    L.push(`                     artifacts, and \`--commit <sha>\` legitimately pins a commit that is not HEAD)`);
+  }
+  // G-D, time: the count, the oldest mtime and the run start are the three readings that make the
+  // freshness claim checkable by hand instead of trusted.
+  L.push(
+    `  evidence           ${evidence.artifacts.length} cited artifacts · oldest mtime ${iso(evidence.artifacts[0].mtimeMs)} · run start ${iso(evidence.runStart.ms)}`,
+  );
+  L.push(`                     (run start = mtime of ${evidence.runStart.source}; every cited artifact is newer)`);
   L.push(`  OVERLAYS: none     Built and run straight from the pinned commit. NO overlay, NO patch, NO`);
   L.push(`                     source edit of any kind; the pinned worktree reports 0 changed files,`);
   L.push(`                     before AND after the build (pin.ps1 + build.ps1 both check).`);
@@ -933,6 +955,244 @@ function buildReport({ paths, run, launch, rootLayout, cleanupLogText }) {
   return R.join("\n");
 }
 
+/* ---------- G-D: a pin is written only over evidence this run produced ---------- */
+
+/*
+ * Two assertions, and neither implies the other:
+ *
+ *   space  the sha the report names IS the sha the pinned worktree is at, read with the command the pin
+ *          itself wrote (`git -C <worktree> rev-parse HEAD`, printed by pin.ps1 as `worktree HEAD=`).
+ *          It refuses the case this report cannot see otherwise: the claim says commit A while the tree
+ *          under audit - the one that built these artifacts - is at commit B (a `report` re-run from a
+ *          stage whose run.json still names the previous pin).
+ *   time   every artifact the report cites is newer than this run's start. Space cannot catch the
+ *          2026-11-05 run: there the worktree really was at 250bd142 and the pin really was written from
+ *          it, while the 115 PNGs the report listed were dated 11-04 and came from another commit into a
+ *          reused --out. Only the mtimes say that.
+ *
+ * The main checkout's HEAD is NOT a verdict: `--commit <sha>` (the release-verification shape) pins a
+ * commit that is usually not main HEAD, and any other lane committing during a 20-minute run would turn a
+ * healthy run red. It is printed beside the pin as an observation instead.
+ */
+
+/*
+ * How far before the run's start a cited artifact may sit and still be read as a resumed batch rather
+ * than as another run's leftovers. It is a policy threshold, and it lives here once so the two verdicts
+ * cannot drift: a restart inside one working session (re-run `pin`, a second `capture` after a crash)
+ * takes seconds to minutes, while a --out reused across runs is separated by hours or days — the
+ * 2026-11-05 incident reused a set of PNGs that were two days old. Ten minutes is longer than any one
+ * pin→capture restart and far shorter than any real reuse interval, so the classification is unambiguous
+ * at both ends, and the boundary is asserted at exactly this value in report-freshness.test.mjs.
+ */
+const STALE_BATCH_WINDOW_MS = 10 * 60 * 1000;
+
+// capture.mjs gives exit 4 to "this run verified nothing"; the report gives 5 to "the evidence it was
+// asked to publish cannot be attributed to this run". run.mjs's phase runner turns either into a failed
+// run, so the caller sees a failed phase rather than a report it must read carefully.
+const EXIT_STALE_EVIDENCE = 5;
+
+const REPORT_OUTPUT_NAMES = new Set(["README.txt", "REPORT.txt"]);
+const CAPTURE_PHASE = join(KIT_ROOT, "phases", "capture.mjs");
+
+const pathMtime = (path) => {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * `git rev-parse HEAD` in a directory, or null when git cannot answer there.
+ *
+ * The pinned worktree survives the run (cleanup.ps1 keeps it and itself prints this same reading), so the
+ * worktree that built the artifacts is still on disk when the report asks what it was.
+ */
+function gitHead(directory) {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: directory, encoding: "utf8", windowsHide: true });
+  const sha = (result.stdout ?? "").trim();
+  return result.status === 0 && /^[0-9a-f]{40}$/u.test(sha) ? sha : null;
+}
+
+/**
+ * When this run started, from the run's own files.
+ *
+ * `logs/pin.log` is the run's start fact: pin.ps1 deletes it (`Remove-Item $Log`) and writes it again as
+ * the first thing a run does, and every artifact a report cites is written by the capture phase minutes
+ * after that pin. `state/run.json` is deliberately NOT used, even though it is the obvious-looking
+ * candidate: run.mjs re-saves it on EVERY invocation - including the `report` invocation that is asking
+ * this question - so its mtime is the last invocation rather than the run's start, and it carries no
+ * timestamp of its own. `state/launch.json` is the same kind of fact one phase later, for a stage whose
+ * pin log is gone; with neither, the run root's oldest top-level entry is the earliest thing the launcher
+ * wrote. No new "started at" field is invented, because the file mtimes already say it.
+ */
+function runStartFor(paths) {
+  for (const candidate of [paths.pinLog, paths.launchStateFile]) {
+    const ms = pathMtime(candidate);
+    if (ms !== null) return { ms, source: candidate };
+  }
+  let oldest = null;
+  try {
+    for (const entry of readdirSync(paths.runRoot, { withFileTypes: true })) {
+      const ms = pathMtime(join(paths.runRoot, entry.name));
+      if (ms === null) continue;
+      if (oldest === null || ms < oldest.ms) oldest = { ms, name: entry.name };
+    }
+  } catch {
+    /* no run root: nothing to date the run by */
+  }
+  return oldest === null ? null : { ms: oldest.ms, source: `${paths.runRoot} (oldest entry ${oldest.name})` };
+}
+
+/** Every artifact the README/REPORT will cite, oldest first. */
+function citedArtifacts(paths) {
+  const artifacts = [];
+  const add = (path, name, kind) => {
+    const ms = pathMtime(path);
+    if (ms !== null) artifacts.push({ path, name, kind, mtimeMs: ms });
+  };
+  let entries = [];
+  try {
+    entries = readdirSync(paths.outRoot, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const lower = entry.name.toLowerCase();
+    const path = join(paths.outRoot, entry.name);
+    // The report's own two files are not evidence: a re-run would otherwise refuse on the previous
+    // report sitting in the same directory.
+    if (lower.endsWith(".png")) add(path, entry.name, "screenshot");
+    else if (lower.endsWith(".txt") && !REPORT_OUTPUT_NAMES.has(entry.name)) add(path, entry.name, "facts");
+  }
+  add(paths.wireRequestsFile, "wire-requests.jsonl", "wire");
+  return artifacts.sort((left, right) => left.mtimeMs - right.mtimeMs);
+}
+
+/**
+ * The facts files a run is supposed to write, from the authority that decides it: the capture phase's own
+ * DRIVERS table. A driver added tomorrow is therefore covered without editing this file. capture.mjs runs
+ * the phase at module scope and cannot be imported, so its table is read as text - the same reading
+ * capture-gate.test.mjs takes of the same table.
+ */
+function declaredFactsFiles() {
+  try {
+    return [...readFileSync(CAPTURE_PHASE, "utf8").matchAll(/out:\s*"([^"]+\.txt)"/gu)].map((match) => match[1]);
+  } catch {
+    return [];
+  }
+}
+
+function examineEvidence(paths, run) {
+  const runStart = runStartFor(paths);
+  const artifacts = citedArtifacts(paths);
+  const worktreeHead = gitHead(paths.worktree);
+  const mainHead = gitHead(REPO_ROOT);
+  const declared = declaredFactsFiles();
+  const presentFacts = artifacts.filter((artifact) => artifact.kind === "facts").map((artifact) => artifact.name);
+  const screenshots = artifacts.filter((artifact) => artifact.kind === "screenshot").length;
+
+  const violations = [];
+  const contamination = [];
+  const iso = (ms) => new Date(ms).toISOString();
+
+  if (worktreeHead === null) {
+    violations.push(
+      `report_pin_worktree_unreadable:${paths.worktree}:git rev-parse HEAD did not answer there, so the claim cannot be checked`,
+    );
+  } else if (worktreeHead !== run.commit) {
+    violations.push(`report_pinned_sha_mismatch:${run.commit}!=${worktreeHead}`);
+  }
+
+  if (runStart === null) {
+    violations.push(
+      `report_run_start_unknown:${paths.stageRoot}:no pin log, no launch state and no run root entry dates this run`,
+    );
+  } else {
+    for (const artifact of artifacts) {
+      const gap = runStart.ms - artifact.mtimeMs;
+      if (gap <= 0) continue;
+      violations.push(`report_evidence_predates_run:${artifact.name}:${iso(artifact.mtimeMs)} < ${iso(runStart.ms)}`);
+      if (gap > STALE_BATCH_WINDOW_MS) contamination.push(artifact);
+    }
+  }
+
+  if (artifacts.length === 0) {
+    violations.push(`report_no_artifacts:no_cited_evidence_under_${paths.outRoot}:an empty set cannot certify a pin`);
+  } else if (screenshots === 0) {
+    violations.push(`report_no_artifacts:no_screenshots_under_${paths.outRoot}:every driver wrote no PNG`);
+  }
+
+  return {
+    runStart,
+    artifacts,
+    worktreeHead,
+    mainHead,
+    violations,
+    contamination,
+    setDifference: {
+      missing: declared.filter((name) => !presentFacts.includes(name)),
+      newlyAdded: presentFacts.filter((name) => !declared.includes(name)),
+    },
+  };
+}
+
+/**
+ * What the out root carries INSTEAD of a report when the evidence cannot be attributed to this run.
+ * Nothing is re-published from the suspect set: no measurement, no screenshot listing and no pin, so the
+ * refusal cannot become the next stale artifact.
+ */
+function refusalText({ paths, run, evidence }) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const oldest = evidence.artifacts[0] ?? null;
+  const L = [];
+  L.push(`${run.tag} — REPORT REFUSED: the evidence this run would cite is not this run's`);
+  L.push("=".repeat(76));
+  L.push("");
+  L.push("The sha-and-artifact line is deliberately ABSENT from this file. This run cites artifacts it did");
+  L.push("not produce, and naming a commit above them is exactly the 2026-11-05 report: `--commit HEAD`");
+  L.push("into an --out that still held 115 PNGs dated two days earlier rewrote the pin over those files,");
+  L.push("claiming `pinned 250bd142` for screenshots that never came from it.");
+  L.push("");
+  L.push(`  claimed sha (NOT published, NOT verified)  ${run.commit}`);
+  L.push(`  pinned worktree                            ${paths.worktree}`);
+  L.push(`                            git rev-parse HEAD = ${evidence.worktreeHead ?? "unreadable"}`);
+  L.push(`  main checkout HEAD (observation only)      ${evidence.mainHead ?? "unreadable"}`);
+  L.push(
+    `  run start                                  ${
+      evidence.runStart === null ? "UNKNOWN" : `${iso(evidence.runStart.ms)} (mtime of ${evidence.runStart.source})`
+    }`,
+  );
+  L.push(
+    `  examined                                   ${evidence.artifacts.length} cited artifact(s) — oldest ${
+      oldest === null ? "none" : `${oldest.name} @ ${iso(oldest.mtimeMs)}`
+    }`,
+  );
+  L.push("");
+  L.push(`NAMED VIOLATIONS (${evidence.violations.length}):`);
+  for (const violation of evidence.violations) L.push(`  ${violation}`);
+  if (evidence.contamination.length > 0) {
+    const worst = evidence.contamination[0];
+    L.push("");
+    L.push(
+      `STALE_ARTIFACT_CONTAMINATION: ${evidence.contamination.length} cited artifact(s) predate the run's start by more than ${
+        STALE_BATCH_WINDOW_MS / 60000
+      } minutes, so they belong to an earlier batch — the oldest is ${worst.name} @ ${iso(worst.mtimeMs)}`,
+    );
+  }
+  const { missing, newlyAdded } = evidence.setDifference;
+  if (missing.length > 0 || newlyAdded.length > 0) {
+    L.push("");
+    L.push("SET DIFFERENCE — the capture phase's DRIVERS table against the facts files in the out root:");
+    if (newlyAdded.length > 0) L.push(`  + newly added: ${newlyAdded.join(", ")}`);
+    if (missing.length > 0) L.push(`  - missing: ${missing.join(", ")}`);
+  }
+  L.push("");
+  L.push("Fix: run against a fresh --out (or re-run capture with --force) so the artifacts are this run's.");
+  return L.join("\n");
+}
+
 /* ---------- entry ---------- */
 
 async function main() {
@@ -972,10 +1232,26 @@ async function main() {
     cleanupLogText = "";
   }
 
-  const readme = buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup: cleanupLogText });
+  const evidence = examineEvidence(paths, run);
+  if (evidence.violations.length > 0) {
+    const refused = refusalText({ paths, run, evidence });
+    writeFileSync(join(paths.outRoot, "README.txt"), refused, "utf8");
+    writeFileSync(join(paths.outRoot, "REPORT.txt"), refused, "utf8");
+    console.log(refused);
+    console.log(`REPORT REFUSED: examined ${evidence.artifacts.length} artifact(s); no pin was written`);
+    process.exit(EXIT_STALE_EVIDENCE);
+  }
+
+  const readme = buildReadme({ paths, run, launch, rootLayout, pinLog, buildLog, cleanup: cleanupLogText, evidence });
   const report = buildReport({ paths, run, launch, rootLayout, cleanupLogText });
   writeFileSync(join(paths.outRoot, "README.txt"), readme, "utf8");
   writeFileSync(join(paths.outRoot, "REPORT.txt"), report, "utf8");
+  console.log(
+    `REPORT: examined ${evidence.artifacts.length} artifacts — oldest mtime ${new Date(evidence.artifacts[0].mtimeMs).toISOString()} >= run start ${new Date(evidence.runStart.ms).toISOString()} (${evidence.runStart.source})`,
+  );
+  console.log(
+    `REPORT: pinned ${run.commit} = git -C <worktree> rev-parse HEAD ${evidence.worktreeHead}${evidence.mainHead !== run.commit ? `; HEAD now ${evidence.mainHead} (observation only)` : ""}`,
+  );
   console.log(
     `REPORT: wrote README.txt (${readme.length} chars) and REPORT.txt (${report.length} chars) to ${paths.outRoot}`,
   );
