@@ -386,7 +386,18 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-ci-coverage.mjs",
     reason:
-      "compares two inventories (gate scripts vs workflow invocation); its falsifier needs synthetic inventories, which is real work rather than a flag - recorded here so the gap is visible instead of silent",
+      "compares two inventories (gate scripts vs workflow invocation). Its falsifier exists - " +
+      "tools/check-ci-coverage.test.mjs, 21 cases that drive real subprocess gates in a temporary workspace and " +
+      "carry four red-proof markers - so the earlier 'needs synthetic inventories, real work not done yet' reason " +
+      "had stopped being true and was replaced by this one rather than kept as a comfortable excuse",
+  },
+  {
+    gate: "check-head-self-contained.mjs",
+    reason:
+      "reads the commit's own module graph (`git ls-tree HEAD` + `git cat-file --batch`, not the index); its " +
+      "falsifier is tools/check-head-self-contained.test.mjs, which builds six throwaway `git init` repositories " +
+      "and plants a staged-but-uncommitted module, a never-written target and a gitignored build output, and the " +
+      "gate's own red-proof marker names them",
   },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
   {

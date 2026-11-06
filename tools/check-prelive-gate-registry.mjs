@@ -221,6 +221,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-head-self-contained.mjs",
+    reason:
+      "elsewhere: reads the commit's own module graph (`git ls-tree HEAD`, not the index), runs on every push in " +
+      "the CI gates job",
+    runsIn: "pnpm check:head-self-contained",
+  },
+  {
     path: "tools/check-credential-export-isolation.mjs",
     reason: "elsewhere: static scan that no long-lived credential reaches an artifact, runs on every push",
     runsIn: "pnpm check:credential-export-isolation",
