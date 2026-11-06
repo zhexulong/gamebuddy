@@ -40,6 +40,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SUITE_RELATIVE = "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests";
@@ -211,8 +212,7 @@ export function deriveGameFreeFiles() {
           rounds,
           total: all.length,
           exit: 1,
-          stalled: result.output
-            .split("\n")
+          stalled: cleanOutputLines(result.output)
             .filter((line) => line.includes("error"))
             .slice(0, 20),
         };

@@ -80,6 +80,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 // TypeScript is a per-package dependency here (`host/node_modules`), so it is resolved through the Host's own
 // manifest rather than from the repository root, where no `typescript` is installed.
@@ -2493,7 +2494,7 @@ const DELEGATED = Object.freeze([
 function parseTap(output) {
   const failures = [];
   const diagnostics = [];
-  const lines = output.split("\n");
+  const lines = cleanOutputLines(output);
   let current = null;
   for (const line of lines) {
     const failed = /^not ok \d+ - (.*)$/u.exec(line);

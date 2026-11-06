@@ -15,6 +15,7 @@
  * Usage: node tools/audit-stardew-handler-actor-guard.mjs [--rev <sha>]
  */
 import { execFileSync } from "node:child_process";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 
 const argv = process.argv.slice(2);
 let rev = "HEAD";
@@ -23,12 +24,11 @@ for (let index = 0; index < argv.length; index += 1) {
   else throw new Error(`unknown_argument:${argv[index]}`);
 }
 
-const files = execFileSync("git", ["ls-tree", "-r", "--name-only", rev, "--", "integrations/stardew/"], {
-  encoding: "utf8",
-})
-  .split("\n")
-  .map((line) => line.trim())
-  .filter((file) => file.length > 0 && /farmhandexecutioncontroller.*[.]cs$/.test(file));
+const files = cleanOutputLines(
+  execFileSync("git", ["ls-tree", "-r", "--name-only", rev, "--", "integrations/stardew/"], {
+    encoding: "utf8",
+  }),
+).filter((file) => file.length > 0 && /farmhandexecutioncontroller.*[.]cs$/.test(file));
 
 const DECLARATION = "LocalExecutionReceipt RequestLocal";
 const GUARD = "TryGetBoundActor";
